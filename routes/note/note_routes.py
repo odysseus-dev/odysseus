@@ -35,6 +35,7 @@ class NoteCreate(BaseModel):
     source: str = "user"
     session_id: Optional[str] = None
     image_url: Optional[str] = None
+    gallery_id: Optional[str] = None
     repeat: Optional[str] = "none"
     sort_order: Optional[int] = None
 
@@ -50,6 +51,7 @@ class NoteUpdate(BaseModel):
     archived: Optional[bool] = None
     due_date: Optional[str] = None
     image_url: Optional[str] = None
+    gallery_id: Optional[str] = None
     repeat: Optional[str] = None
     sort_order: Optional[int] = None
     agent_session_id: Optional[str] = None
@@ -89,6 +91,7 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
         "session_id": note.session_id,
         "sort_order": note.sort_order or 0,
         "image_url": note.image_url,
+        "gallery_id": getattr(note, "gallery_id", None),
         "repeat": note.repeat or "none",
         "ai_classification": ai_cls,
         "ai_content_hash": getattr(note, "ai_content_hash", None),
@@ -674,6 +677,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 source=body.source,
                 session_id=body.session_id,
                 image_url=body.image_url,
+                gallery_id=body.gallery_id,
                 repeat=body.repeat or "none",
                 sort_order=body.sort_order if body.sort_order is not None else 0,
             )
@@ -724,30 +728,35 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             )
             if body.title is not None:
                 note.title = body.title
-            if body.content is not None:
+            # Omitted fields preserve their values; explicit null clears the
+            # nullable fields used by the editor's removal controls.
+            supplied = body.model_fields_set
+            if "content" in supplied:
                 note.content = body.content
-            if body.items is not None:
-                note.items = json.dumps(body.items)
+            if "items" in supplied:
+                note.items = json.dumps(body.items) if body.items is not None else None
                 flag_modified(note, "items")
             if body.note_type is not None:
                 note.note_type = body.note_type
-            if body.color is not None:
+            if "color" in supplied:
                 note.color = body.color
-            if body.label is not None:
+            if "label" in supplied:
                 note.label = body.label
             if body.pinned is not None:
                 note.pinned = body.pinned
             if body.archived is not None:
                 note.archived = body.archived
-            if body.due_date is not None:
+            if "due_date" in supplied:
                 note.due_date = body.due_date
-            if body.image_url is not None:
+            if "image_url" in supplied:
                 note.image_url = body.image_url
+            if "gallery_id" in supplied:
+                note.gallery_id = body.gallery_id
             if body.repeat is not None:
                 note.repeat = body.repeat
             if body.sort_order is not None:
                 note.sort_order = body.sort_order
-            if body.agent_session_id is not None:
+            if "agent_session_id" in supplied:
                 note.agent_session_id = body.agent_session_id
 
             db.commit()

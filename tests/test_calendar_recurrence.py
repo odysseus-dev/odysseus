@@ -225,6 +225,38 @@ def test_expand_monthly_all_day():
         assert r["all_day"] is True
 
 
+def test_expand_monthly_first_and_last_monday():
+    cal = import_calendar_routes()
+    ev = _make_event(
+        uid="evt-trash",
+        summary="Take out unburnable trash",
+        dtstart=datetime(2026, 8, 31, 8, 0),
+        dtend=datetime(2026, 8, 31, 8, 30),
+        rrule="FREQ=MONTHLY;BYDAY=1MO,-1MO",
+    )
+
+    results = cal._expand_rrule(ev, datetime(2026, 9, 1), datetime(2026, 11, 1))
+    dates = [r["dtstart"][:10] for r in results]
+
+    assert dates == ["2026-09-07", "2026-09-28", "2026-10-05", "2026-10-26"]
+
+
+def test_expand_monthly_second_thursday_and_last_sunday():
+    cal = import_calendar_routes()
+    ev = _make_event(
+        uid="evt-maintenance",
+        summary="Maintenance",
+        dtstart=datetime(2026, 9, 10, 8, 0),
+        dtend=datetime(2026, 9, 10, 8, 30),
+        rrule="FREQ=MONTHLY;BYDAY=2TH,-1SU",
+    )
+
+    results = cal._expand_rrule(ev, datetime(2026, 9, 1), datetime(2026, 11, 1))
+    dates = [r["dtstart"][:10] for r in results]
+
+    assert dates == ["2026-09-10", "2026-09-27", "2026-10-08", "2026-10-25"]
+
+
 def test_expand_bad_rrule_graceful():
     """Malformed rrule should fall back to returning the base event,
     but only when the base event overlaps the requested window."""

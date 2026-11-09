@@ -1,24 +1,8 @@
-"""Independent validation test for the claim that
-`SkillsManager.update_skill` mutates the first skill on disk matching
-`name` regardless of the caller's owner, and that `owner` is in its
-`scalar_keys` whitelist allowing cross-user ownership reassignment.
+"""Skills operations must preserve ownership across same-slug skills.
 
-This test sets up two user-owned skills on disk with the SAME slug
-(`login-flow`) — Alice's and Bob's — and then calls `update_skill` with
-NO `owner` argument. If the bug is real, exactly one of the two files
-will be mutated (whichever `_iter_skill_files` yields first) and the
-caller will have effectively re-stamped the file as owned by the value
-in `updates["owner"]` ("attacker"). If the manager method is safe (or
-the slug uniqueness invariant makes the bug moot), the call should
-either:
-  * raise (it requires an `owner` argument), OR
-  * be a no-op (no other side effect on Bob's file), OR
-  * the file that gets modified should still belong to its original
-    owner (no ownership reassignment).
-
-We assert the safer behaviors; the test FAILS only when update_skill
-silently mutates a file owned by a different user AND overwrites the
-`owner` field with an attacker's value.
+An unscoped update may match only ownerless skills. With Alice's and Bob's
+skills sharing a slug, it must return False and leave both files unchanged.
+Unexpected implementation errors must fail the regression test.
 """
 
 import os
@@ -26,9 +10,6 @@ import sys
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
-
 
 # ── module-load stubbing (matches other tests in this repo) ──────────
 # Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
@@ -100,37 +81,34 @@ def test_update_skill_does_not_mutate_foreign_owned_skill(tmp_path):
     sm = SkillsManager(str(tmp_path))
 
     # Snapshot before.
-    before_alice = alice_path.read_text(encoding="utf-8")
-    before_bob = bob_path.read_text(encoding="utf-8")
+    before_alice = alice_path.read_bytes()
+    before_bob = bob_path.read_bytes()
 
     # Try to reassign + mutate. The caller does NOT supply an owner
     # arg, mirroring the in-process callers in tool_implementations.py
     # (lines 716, 740, 753) which call sm.update_skill(name, updates).
-    try:
-        result = sm.update_skill(
-            "login-flow",
-            {"owner": "attacker", "description": "pwned"},
-        )
-    except TypeError as e:
-        # If the method were fixed to require an owner arg, this is
-        # the desired (safe) behavior — the call refused.
-        pytest.skip(
-            f"update_skill raised TypeError (refused unsafe call): {e}"
-        )
-        return
+    result = sm.update_skill(
+        "login-flow",
+        {"owner": "attacker", "description": "pwned"},
+    )
 
     # After: read what each file now contains.
-    after_alice = alice_path.read_text(encoding="utf-8")
-    after_bob = bob_path.read_text(encoding="utf-8")
+    after_alice = alice_path.read_bytes()
+    after_bob = bob_path.read_bytes()
+
+    assert after_alice == before_alice
+    assert after_bob == before_bob
+    assert b"owner: alice" in after_alice
+    assert b"owner: bob" in after_bob
 
     # Invariant 1: a file that was owned by `alice` (resp. `bob`) MUST
     # NOT end up owned by `attacker` after the call. If it does, that's
     # the cross-user ownership reassignment bug.
-    assert "owner: attacker" not in after_alice, (
+    assert b"owner: attacker" not in after_alice, (
         "BUG: Alice's file was silently re-owned as 'attacker' by "
         "update_skill (cross-user ownership reassignment)."
     )
-    assert "owner: attacker" not in after_bob, (
+    assert b"owner: attacker" not in after_bob, (
         "BUG: Bob's file was silently re-owned as 'attacker' by "
         "update_skill (cross-user ownership reassignment)."
     )
@@ -138,23 +116,19 @@ def test_update_skill_does_not_mutate_foreign_owned_skill(tmp_path):
     # Invariant 2: a file that was owned by `alice` and contained
     # description "alice original" must not be silently mutated into
     # "pwned" by a caller that did not supply an owner.
-    if "alice original" in before_alice:
-        assert "alice original" in after_alice, (
+    if b"alice original" in before_alice:
+        assert b"alice original" in after_alice, (
             "BUG: Alice's skill description was overwritten by a call "
             "to update_skill that did not scope to her owner."
         )
 
-    if "bob original" in before_bob:
-        assert "bob original" in after_bob, (
+    if b"bob original" in before_bob:
+        assert b"bob original" in after_bob, (
             "BUG: Bob's skill description was overwritten by a call "
             "to update_skill that did not scope to his owner."
         )
 
-    # The return value should not lie about success — if the manager
-    # touched nothing because both files were foreign-owned, the safer
-    # behavior is to return False, not True. (A return of True is the
-    # buggy path; we don't assert False, we just don't assert True.)
-    _ = result  # not asserted; documented behavior is not the point.
+    assert result is False, "an unscoped update must not report a foreign-owner mutation"
 
 
 def test_update_skill_scalar_keys_exclude_owner():
@@ -288,7 +262,16 @@ def test_usage_sidecar_is_owner_scoped(tmp_path):
 
     sm = SkillsManager(str(tmp_path))
     sm.record_use("shared-flow", owner="alice")
-    sm.set_audit("shared-flow", "pass", by_teacher=False, owner="bob")
+    sm.set_audit(
+        "shared-flow",
+        "pass",
+        by_teacher=False,
+        owner="bob",
+        saved_turns=3,
+        saved_tool_calls=1,
+        baseline_verdict="better",
+        usefulness=0.9,
+    )
     sm.set_necessity("shared-flow", False, ["other-flow"], "redundant", owner="bob")
 
     alice = sm.load(owner="alice")[0]
@@ -299,8 +282,48 @@ def test_usage_sidecar_is_owner_scoped(tmp_path):
     assert alice["necessity"] is None
     assert bob["uses"] == 0
     assert bob["audit_verdict"] == "pass"
+    assert bob["audit_version"] == 2
+    assert bob["saved_turns"] == 3
+    assert bob["saved_tool_calls"] == 1
+    assert bob["baseline_verdict"] == "better"
+    assert bob["usefulness"] == 0.9
     assert bob["necessity"] == {
         "necessary": False,
         "redundant_with": ["other-flow"],
         "reason": "redundant",
     }
+
+
+def test_legacy_inconclusive_audit_is_eligible_for_fixed_protocol(tmp_path):
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    _write_skill_md(
+        skills_root, category="general", name="release-checklist",
+        owner="alice", description="Prepare a release checklist.",
+    )
+    usage_file = skills_root / "_usage.json"
+    usage_file.write_text(
+        '{"alice::release-checklist":{"uses":1,"audit_verdict":"inconclusive",'
+        '"audited_at":1234}}',
+        encoding="utf-8",
+    )
+
+    skill = SkillsManager(str(tmp_path)).load(owner="alice")[0]
+
+    assert skill["audit_verdict"] is None
+    assert skill["audited_at"] is None
+    assert skill["audit_version"] == 0
+
+
+def test_audit_explanation_survives_reload_and_is_replaced(tmp_path):
+    root = tmp_path / "skills"
+    root.mkdir()
+    _write_skill_md(root, category="general", name="release-checklist",
+                    owner="alice", description="Prepare a release checklist.")
+    manager = SkillsManager(str(tmp_path))
+    manager.set_audit("release-checklist", "inconclusive", owner="alice",
+                      audit_summary="Missing a safe test fixture.")
+    assert SkillsManager(str(tmp_path)).load(owner="alice")[0]["audit_summary"] == "Missing a safe test fixture."
+    assert SkillsManager(str(tmp_path)).load(owner="bob") == []
+    manager.set_audit("release-checklist", "pass", owner="alice")
+    assert manager.load(owner="alice")[0]["audit_summary"] == ""

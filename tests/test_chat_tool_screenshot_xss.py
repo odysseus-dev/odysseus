@@ -14,6 +14,40 @@ def test_live_tool_screenshot_does_not_template_raw_sse_value():
     assert 'details.innerHTML = `<summary>Screenshot</summary><img src="${json.screenshot}"' not in chat
 
 
+def test_private_browser_preview_uses_sanitized_screenshot_src():
+    chat = (_REPO / "static" / "js" / "chat.js").read_text(encoding="utf-8")
+
+    assert "function _updatePrivateBrowserPreview(json" in chat
+    assert "_isPrivateBrowserTool(json.tool)" in chat
+    assert "private-browser-preview-img" in chat
+    assert "const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot)" in chat
+    assert "preview.img.src = screenshotSrc" in chat
+    assert "preview.root.innerHTML = json.screenshot" not in chat
+
+
+def test_browser_screenshot_is_persisted_for_history_reload():
+    loop = (_REPO / "src" / "agent_loop.py").read_text(encoding="utf-8")
+
+    assert 'tool_output_data["screenshot"] = f"data:{img[\'mimeType\']};base64,{img[\'data\']}"' in loop
+    assert 'tool_event["screenshot"] = f"data:{img[\'mimeType\']};base64,{img[\'data\']}"' in loop
+
+
+def test_restored_private_browser_preview_uses_module_escape():
+    renderer = (_REPO / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+
+    assert "private-browser-preview-img" in renderer
+    assert "uiModule.esc(screenshotSrc)" in renderer
+    assert "uiModule.esc(_privateBrowserActionLabel(command))" in renderer
+    assert "${esc(screenshotSrc)}" not in renderer
+
+
+def test_restored_generic_tool_screenshot_uses_module_escape():
+    renderer = (_REPO / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+
+    assert '${uiModule.esc(screenshotSrc)}' in renderer
+    assert '${esc(screenshotSrc)}' not in renderer
+
+
 def test_restored_tool_screenshot_uses_raster_data_url_whitelist():
     renderer = (_REPO / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
 

@@ -1,0 +1,21 @@
+# High-trust host network access. Enable only when the Odysseus agent needs
+# host-native LAN/VPN/mDNS behavior that Docker bridge networking cannot
+# provide. Linux only; Docker Desktop does not provide equivalent host
+# networking semantics.
+#   COMPOSE_FILE=docker-compose.yml:docker/host-workspace.yml:docker/host-network.yml
+#   APP_PORT=7011
+services:
+  odysseus:
+    network_mode: host
+    ports: !reset []
+    environment:
+      - APP_PORT=${APP_PORT:-7011}
+      - APP_BIND=${APP_BIND:-0.0.0.0}
+      - SEARXNG_INSTANCE=${ODYSSEUS_HOST_NETWORK_SEARXNG_INSTANCE:-http://127.0.0.1:8080}
+      - CHROMADB_HOST=${ODYSSEUS_HOST_NETWORK_CHROMADB_HOST:-127.0.0.1}
+      - CHROMADB_PORT=${ODYSSEUS_HOST_NETWORK_CHROMADB_PORT:-8100}
+      - ODYSSEUS_CONTAINER_NETWORK_MODE=host
+    command:
+      - sh
+      - -c
+      - exec uvicorn app:app --host "$${APP_BIND:-0.0.0.0}" --port "$${APP_PORT:-7011}"

@@ -15,6 +15,7 @@ import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+import pytest
 
 # The helper resolves `from src.database import ModelEndpoint` at call time.
 # Stub the module so we can hand it a fake declarative class whose column
@@ -73,12 +74,17 @@ class _DB:
         return _Query(self._rows)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_model_endpoint(monkeypatch):
+    import src.database
+    monkeypatch.setattr(src.database, "ModelEndpoint", _ModelEndpoint)
+
+
 def _ep(eid, owner, *, is_enabled=True):
     return SimpleNamespace(id=eid, owner=owner, is_enabled=is_enabled, api_key="sk-secret")
 
 
 def _resolve(rows, owner, endpoint_id=None):
-    sys.modules["src.database"].ModelEndpoint = _ModelEndpoint
     return _owned_enabled_endpoint(_DB(rows), owner, endpoint_id)
 
 

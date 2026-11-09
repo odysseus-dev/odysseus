@@ -1,7 +1,8 @@
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
-CSS = Path("static/style.css").read_text(encoding="utf-8")
+CSS = app_css()
 INIT_JS = Path("static/js/init.js").read_text(encoding="utf-8")
 
 

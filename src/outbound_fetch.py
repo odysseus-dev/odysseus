@@ -286,7 +286,6 @@ def _get_public_url(
     for _ in range(max_redirects + 1):
         ips = resolve_public_ips(current)
         req_headers = dict(headers or {})
-        req_headers["Accept-Encoding"] = "identity"
 
         with httpx.Client(
             headers=req_headers,
@@ -311,19 +310,17 @@ def _get_public_url(
                     continue
 
                 enc = (response.headers.get("content-encoding") or "").strip().lower()
-                if enc and enc != "identity":
-                    raise httpx.RequestError(
-                        f"Refusing compressed response (Content-Encoding: {enc}) after "
-                        "requesting identity: cannot bound decoded body size",
-                        request=httpx.Request("GET", current),
-                    )
 
                 declared = None
                 raw_len = response.headers.get("content-length")
                 if raw_len and raw_len.isdigit():
                     declared = int(raw_len)
 
-                if declared is not None and declared > WEB_FETCH_HARD_MAX_BYTES:
+                if (
+                    (not enc or enc == "identity")
+                    and declared is not None
+                    and declared > WEB_FETCH_HARD_MAX_BYTES
+                ):
                     raise BodyTooLargeError(current, declared)
 
                 chunks = []

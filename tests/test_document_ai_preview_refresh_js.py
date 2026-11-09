@@ -2,13 +2,13 @@
 
 import re
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 
-SRC = Path(__file__).resolve().parent.parent / "static/js/document.js"
 
 
 def _function_body(name: str) -> str:
-    text = SRC.read_text(encoding="utf-8")
+    text = document_source()
     match = re.search(rf"\n\s*(?:export\s+)?(?:async\s+)?function\s+{name}\([^)]*\)\s*\{{", text)
     assert match, f"{name} not found"
 
@@ -42,12 +42,21 @@ def test_doc_update_refreshes_preview_instead_of_hidden_editor_animation():
     exit_preview = "if (markdownPreviewWasVisible) _setMarkdownPreviewActive(false, { remember: false });"
     diff = "enterDiffMode(oldContent, newContent);"
     refresh = "markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)"
-    animate = "_animateDocEdit(textarea, newContent);"
+    saved_content = "textarea.value = newContent;"
 
     assert visible in body
-    assert exit_preview in body
-    assert diff in body
-    assert body.index(exit_preview) < body.index(diff)
+    assert exit_preview not in body
+    assert diff not in body
     assert refresh in body
-    assert body.index(refresh) < body.index(animate)
+    assert saved_content in body
+    assert "_animateDocEdit(textarea, newContent);" not in body
     assert "_refreshMarkdownPreviewIfVisible(docId, newContent);" in body
+
+
+def test_doc_update_shows_saved_rich_text_without_a_transient_diff():
+    body = _function_body("handleDocUpdate")
+
+    assert "const isRichTextUpdate = _isRichTextLang(docLang);" in body
+    assert "if (isRichTextUpdate && updatedDocForRichText)" in body
+    assert "_showRichTextEditor(updatedDocForRichText);" in body
+    assert "_animateRichTextEdit" not in body

@@ -1,11 +1,12 @@
 // compare/vote.js — voting, revealing, confetti
+import { spawnConfetti } from '../shared/ui/confetti.js';
 import Storage from '../storage.js';
 import state from './state.js';
 import { _modelDisplayNames } from './models.js';
-import { getModelCost } from '../chatRenderer.js';
-import uiModule from '../ui.js';
-import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js';
-import { showScoreboard } from './scoreboard.js';
+import { getModelCost } from '../chatRenderer.js?v=20260914metricssummary1';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js?v=20260908compareprompts1';
+import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
 
 var escapeHtml = uiModule.esc;
 
@@ -74,7 +75,7 @@ function buildVoteBar(n) {
   // before a prompt) since viewing the scoreboard is always allowed.
   const scoreBtn = document.createElement('button');
   scoreBtn.className = 'compare-vote-btn compare-score-btn';
-  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Score';
+  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span class="compare-score-label">Score</span>';
   scoreBtn.title = 'Scoreboard';
   scoreBtn.addEventListener('click', () => showScoreboard());
   bar.insertBefore(scoreBtn, tieBtn); // furthest left, before Tie
@@ -219,35 +220,6 @@ function handleVote(winnerIdx) {
       setTimeout(() => spawnConfetti(cx - 30, cy, 25), 150);
       setTimeout(() => spawnConfetti(cx + 30, cy, 25), 300);
     }
-  }
-}
-
-/** Spawn confetti particles from a point. */
-function spawnConfetti(cx, cy, count) {
-  const colors = ['#ffd700', '#ff6b6b', '#5b8def', '#51cf66', '#ff922b', '#cc5de8', '#22b8cf', '#fff'];
-  for (let i = 0; i < count; i++) {
-    const el = document.createElement('div');
-    el.className = 'confetti-piece';
-    const color = colors[Math.floor(Math.random() * colors.length)];
-    const size = 5 + Math.random() * 8;
-    const isCircle = Math.random() > 0.5;
-    el.style.width = size + 'px';
-    el.style.height = (isCircle ? size : size * 0.6) + 'px';
-    el.style.background = color;
-    el.style.borderRadius = isCircle ? '50%' : '2px';
-    el.style.left = cx + 'px';
-    el.style.top = cy + 'px';
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 60 + Math.random() * 160;
-    const dx = Math.cos(angle) * speed;
-    const dy = Math.sin(angle) * speed - 100;
-    const duration = 1.0 + Math.random() * 1.0;
-    el.animate([
-      { transform: 'translate(0, 0) rotate(0deg) scale(1)', opacity: 1 },
-      { transform: `translate(${dx}px, ${dy + 200}px) rotate(${400 + Math.random() * 400}deg) scale(0)`, opacity: 0 }
-    ], { duration: duration * 1000, easing: 'cubic-bezier(0.15, 0.6, 0.35, 1)', fill: 'forwards' });
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), duration * 1000 + 50);
   }
 }
 

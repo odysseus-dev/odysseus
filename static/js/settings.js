@@ -1,32 +1,32 @@
 // static/js/settings.js — Settings panel module (ES6)
 // User-facing preferences: AI models, search, appearance
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import searchModule from './search.js';
 import { byId } from './settings/dom.js';
-import {
-  getSettingsRegistryIssues,
-  isAdminManagedSettingsTab,
-} from './settings/registry.js';
+import { postSettings as _postSettings } from './settings/api.js';
+import { initTtsSettings, initSttSettings } from './settings/speech.js';
+import { initDocumentWritingStyle } from './settings/writingStyle.js';
+import { initImageSettings } from './settings/imageModels.js';
+import { initAgentSettings } from './settings/agent.js';
+import { getSettingsRegistryIssues } from './settings/registry.js';
 import { bindSettingsSearch } from './settings/search.js';
 import { bindSettingsSidebar } from './settings/sidebar.js';
-import {
-  activateSettingsPanel,
-  getActiveSettingsTab,
-  bindSettingsNavigation,
-} from './settings/navigation.js';
+import { bindSettingsNavigation } from './settings/navigation.js';
 import {
   bindSettingsDrag,
   bindSettingsClose,
   bindOpenPromptModalLink,
-  showSettingsModal,
-  hideSettingsModal,
 } from './settings/lifecycle.js';
+import { bindSettingsPeekToggle } from './settings/peek.js';
+import { createSettingsShell } from './settings/shell.js';
+import { handleSettingsOauthReturn } from './settings/oauthReturn.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { invalidateSettings } from './appConfig.js';
+import { SEARCH_PROVIDER_LOGOS as _SEARCH_PROVIDER_LOGOS } from './searchProviderIcons.js';
 
 let initialized = false;
 let modalEl = null;
@@ -44,18 +44,6 @@ let _authPolicy = { password_min_length: 8 };
  * Reads in this file deliberately stay direct fetches: this panel is the writer
  * and edits what it reads, so it must see the authoritative state, not a cache.
  */
-async function _postSettings(body) {
-  try {
-    return await fetch('/api/auth/settings', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } finally {
-    invalidateSettings();
-  }
-}
 
 const el = byId;
 function esc(s) { return uiModule.esc(s); }
@@ -64,79 +52,18 @@ function safeRasterDataUrl(raw) {
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
 }
 
-/* ── Settings shell coordination ── */
-function onSettingsPanelActivated(tab) {
-  // Appearance keeps its existing transparent preview behavior.
-  document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-  syncAppearanceOpacity(tab === 'appearance');
-
-  // AI endpoints are intentionally refreshed only when entering the AI panel.
-  if (tab === 'ai') refreshAiModelEndpoints();
-}
-
-function openAdminSettingsTab(tab) {
-  if (window.adminModule && typeof window.adminModule.open === 'function') {
-    window.adminModule.open(tab);
-    return true;
-  }
-  return false;
-}
-
-/* ── Appearance-tab opacity slider ──
-   Mirrors the Theme customizer's slider: fades the settings modal's
-   background (and inner cards) via color-mix so the user can watch the
-   rest of the UI react to toggles, while keeping text/controls crisp
-   (no element opacity). Only shown/active on the Appearance tab. */
-const _SETTINGS_PEEK = 55; // % opacity when the Peek toggle is on
-function _applySettingsOpacity(on) {
-  const content = modalEl && modalEl.querySelector('.settings-modal-content, .modal-content');
-  if (!content) return;
-  const cards = content.querySelectorAll('.admin-card');
-  if (on) {
-    const bgMix = `color-mix(in srgb, var(--bg) ${_SETTINGS_PEEK}%, transparent)`;
-    const panelMix = `color-mix(in srgb, var(--panel) ${_SETTINGS_PEEK}%, transparent)`;
-    content.style.setProperty('background', bgMix, 'important');
-    content.style.setProperty('backdrop-filter', 'none', 'important');
-    content.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
-    cards.forEach(c => {
-      c.style.setProperty('background', panelMix, 'important');
-      c.style.setProperty('backdrop-filter', 'none', 'important');
-      c.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
-    });
-  } else {
-    content.style.removeProperty('background');
-    content.style.removeProperty('backdrop-filter');
-    content.style.removeProperty('-webkit-backdrop-filter');
-    cards.forEach(c => {
-      c.style.removeProperty('background');
-      c.style.removeProperty('backdrop-filter');
-      c.style.removeProperty('-webkit-backdrop-filter');
-    });
-  }
-}
-
-// Show/hide the Peek toggle for the Appearance tab and apply or clear the fade.
-function syncAppearanceOpacity(active) {
-  const toggle = el('settings-opacity-wrap');
-  if (toggle) toggle.classList.toggle('hidden', !active);
-  if (active) {
-    _applySettingsOpacity(toggle ? toggle.classList.contains('active') : false);
-  } else {
-    _applySettingsOpacity(false); // clear the fade off the Appearance tab
-  }
-}
-
-function initOpacityToggle() {
-  const toggle = el('settings-opacity-wrap');
-  if (!toggle || toggle.dataset.bound === '1') return;
-  toggle.dataset.bound = '1';
-  toggle.addEventListener('click', () => {
-    const on = !toggle.classList.contains('active');
-    toggle.classList.toggle('active', on);
-    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-    _applySettingsOpacity(on);
-  });
-}
+/* ── Settings shell coordination ──
+   Panel activation side effects, the admin handoff, admin-only visibility and
+   the public open/close API live in ./settings/shell.js. This coordinator only
+   supplies the panel-owned pieces the shell needs. */
+const _shell = createSettingsShell({
+  getModal: () => modalEl,
+  ensureInitialized: () => { if (!initialized) initAll(); },
+  syncAppearanceCheckboxes: () => syncAppearanceCheckboxes(),
+  refreshAiModelEndpoints: () => refreshAiModelEndpoints(),
+  isAdmin: () => !!window._isAdmin,
+  getAdminModule: () => window.adminModule,
+});
 
 /* ═══════════════════════════════════════════
    AI TAB
@@ -147,8 +74,17 @@ let _aiEndpointRefreshInFlight = null;
 
 async function _fetchModelEndpoints() {
   const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+  if (!epRes.ok) throw new Error(`HTTP ${epRes.status}`);
   const endpoints = await epRes.json();
   return Array.isArray(endpoints) ? endpoints : [];
+}
+
+function _selectableEndpointModels(endpoint) {
+  if (!endpoint) return [];
+  return Array.from(new Set([
+    ...(Array.isArray(endpoint.models) ? endpoint.models : []),
+    ...(Array.isArray(endpoint.pinned_models) ? endpoint.pinned_models : []),
+  ].filter(Boolean).map(String)));
 }
 
 function _endpointLabel(ep) {
@@ -276,9 +212,11 @@ function _bindFallbackWidget(opts) {
   var endpointsRef = opts.endpoints;       // mutable list reference
   var modelsFilter = opts.modelsFilter || function() { return true; };
   var settingKey = opts.settingKey;
-  var current = opts.initial || [];        // [{endpoint_id, model}]
+  var current = opts.initial || [];        // [{endpoint_id, model, reasoning_effort}]
+  var supportsEffort = Boolean(opts.supportsEffort);
+  var getEffortLevels = opts.getEffortLevels;
 
-  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {} };
+  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {}, refresh: function() {} };
 
   function enabledEps() { return (endpointsRef() || []).filter(function(e) { return e.is_enabled; }); }
 
@@ -297,8 +235,36 @@ function _bindFallbackWidget(opts) {
     if (selected) selectEl.value = selected;
   }
 
+  function fillEffort(selectEl, epId, modelId, selected) {
+    if (!selectEl) return;
+    while (selectEl.options.length) selectEl.remove(0);
+    var levels = getEffortLevels ? getEffortLevels(epId, modelId) : [];
+    var base = document.createElement('option');
+    base.value = '';
+    base.textContent = 'Provider default';
+    selectEl.appendChild(base);
+    levels.forEach(function(lvl) {
+      var val = typeof lvl === 'string' ? lvl : (lvl && lvl.effort);
+      if (val) {
+        var o = document.createElement('option');
+        o.value = val.toLowerCase();
+        o.textContent = val;
+        selectEl.appendChild(o);
+      }
+    });
+    var validValues = [''].concat(levels.map(function(l) { return (typeof l === 'string' ? l : l.effort).toLowerCase(); }));
+    selectEl.value = validValues.indexOf((selected || '').toLowerCase()) >= 0 ? (selected || '').toLowerCase() : '';
+    selectEl.style.display = levels.length > 0 ? '' : 'none';
+  }
+
   async function save() {
-    var clean = current.filter(function(f) { return f.endpoint_id && f.model; });
+    var clean = current.filter(function(f) { return f.endpoint_id && f.model; }).map(function(f) {
+      var item = { endpoint_id: f.endpoint_id, model: f.model };
+      if (supportsEffort && typeof f.reasoning_effort !== 'undefined') {
+        item.reasoning_effort = f.reasoning_effort || '';
+      }
+      return item;
+    });
     var body = {};
     body[settingKey] = clean;
     try {
@@ -334,13 +300,36 @@ function _bindFallbackWidget(opts) {
       fb.endpoint_id = epS.value;
       fb.model = mS.value;
 
+      var effS = null;
+      if (supportsEffort) {
+        effS = document.createElement('select');
+        effS.className = 'settings-select settings-fallback-effort';
+        fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
+        fb.reasoning_effort = effS.value;
+        effS.addEventListener('change', function() {
+          fb.reasoning_effort = effS.value;
+          save();
+        });
+      }
+
       epS.addEventListener('change', function() {
         fb.endpoint_id = epS.value;
         fillModels(mS, epS.value, '');
         fb.model = mS.value;
+        if (effS) {
+          fillEffort(effS, epS.value, mS.value, '');
+          fb.reasoning_effort = effS.value;
+        }
         save();
       });
-      mS.addEventListener('change', function() { fb.model = mS.value; save(); });
+      mS.addEventListener('change', function() {
+        fb.model = mS.value;
+        if (effS) {
+          fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
+          fb.reasoning_effort = effS.value;
+        }
+        save();
+      });
 
       var rm = document.createElement('button');
       rm.type = 'button';
@@ -356,6 +345,7 @@ function _bindFallbackWidget(opts) {
       row.appendChild(num);
       row.appendChild(epS);
       row.appendChild(mS);
+      if (effS) row.appendChild(effS);
       row.appendChild(rm);
       fbContainer.appendChild(row);
     });
@@ -363,7 +353,7 @@ function _bindFallbackWidget(opts) {
 
   addBtn.addEventListener('click', function() {
     var first = enabledEps()[0];
-    current.push({ endpoint_id: first ? first.id : '', model: '' });
+    current.push({ endpoint_id: first ? first.id : '', model: '', reasoning_effort: '' });
     render();
     save();
   });
@@ -386,7 +376,7 @@ async function initDefaultChat() {
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
+    _fillModelSelect(selectEl, _selectableEndpointModels(ep), selected, false);
   }
 
   try {
@@ -403,7 +393,10 @@ async function initDefaultChat() {
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
+    if (settings.default_endpoint_id
+        && _endpoints.some(function(ep) { return ep.id === settings.default_endpoint_id && ep.is_enabled; })) {
+      epSel.value = settings.default_endpoint_id;
+    }
     refreshModels(settings.default_model || '');
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
@@ -412,13 +405,14 @@ async function initDefaultChat() {
 
   async function saveDefault() {
     try {
-      await _postSettings({
+      var response = await _postSettings({
         default_endpoint_id: epSel.value,
         default_model: modelSel.value
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   _registerAiEndpointRefresh(function(endpoints) {
@@ -431,9 +425,14 @@ async function initDefaultChat() {
 async function initUtilityModel() {
   var epSel = el('set-utilityEpSelect');
   var modelSel = el('set-utilityModelSelect');
+  var effortSel = el('set-utilityEffortSelect');
+  var effortRow = el('set-utilityEffortRow');
+  var effortHelp = el('set-utilityEffortHelp');
+  var effortQualifier = el('set-utilityEffortQualifier');
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
   var fallbackWidget = null;
+  var _levelsByEndpoint = {};
   if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
   if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
 
@@ -442,24 +441,110 @@ async function initUtilityModel() {
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
 
+  // Effort levels come from /api/models `models_metadata` (same evidence the
+  // chat composer uses); /api/model-endpoints does not carry them.
+  async function loadEffortLevels() {
+    try {
+      var r = await fetch('/api/models', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      var data = await r.json();
+      var items = Array.isArray(data) ? data : (data.models || data.items || []);
+      _levelsByEndpoint = {};
+      items.forEach(function(item) {
+        if (item && item.endpoint_id) _levelsByEndpoint[item.endpoint_id] = item.models_metadata || {};
+      });
+    } catch (e) { console.warn('Failed to load reasoning levels for utility model', e); }
+  }
+
+  function refreshEffort(selected) {
+    if (!effortSel) return;
+    var targetEp = epSel.value;
+    var targetModel = modelSel.value;
+    if (!targetEp) {
+      var defEp = el('set-defaultEpSelect');
+      var defModel = el('set-defaultModelSelect');
+      if (defEp) targetEp = defEp.value;
+      if (defModel) targetModel = defModel.value;
+    }
+    var meta = (_levelsByEndpoint[targetEp] || {})[targetModel] || {};
+    var levels = Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels.slice() : [];
+    var isInherited = !epSel.value;
+    if (isInherited && levels.length === 0) {
+      var allLevels = {};
+      Object.keys(_levelsByEndpoint).forEach(function(epId) {
+        var models = _levelsByEndpoint[epId] || {};
+        Object.keys(models).forEach(function(mId) {
+          var mLevels = (models[mId] || {}).supported_reasoning_levels;
+          if (Array.isArray(mLevels)) {
+            mLevels.forEach(function(lvl) {
+              var val = typeof lvl === 'string' ? lvl : (lvl && lvl.effort);
+              if (val) allLevels[val.toLowerCase()] = true;
+            });
+          }
+        });
+      });
+      levels = Object.keys(allLevels);
+      if (levels.length === 0) {
+        levels = ['low', 'medium', 'high'];
+      }
+    }
+    while (effortSel.options.length) effortSel.remove(0);
+    var base = document.createElement('option');
+    base.value = '';
+    base.textContent = isInherited ? 'Same as chat' : 'Provider default';
+    if (effortQualifier) effortQualifier.style.display = isInherited ? '' : 'none';
+    effortSel.appendChild(base);
+    if (isInherited) {
+      var offOpt = document.createElement('option');
+      offOpt.value = 'off';
+      offOpt.textContent = 'Provider default';
+      effortSel.appendChild(offOpt);
+    }
+    levels.forEach(function(level) {
+      var opt = document.createElement('option');
+      opt.value = level;
+      opt.textContent = level;
+      effortSel.appendChild(opt);
+    });
+    var validValues = [''].concat(isInherited ? ['off'] : []).concat(levels);
+    effortSel.value = validValues.indexOf(selected) >= 0 ? selected : '';
+    var show = isInherited || levels.length > 0;
+    if (effortRow) effortRow.style.display = show ? '' : 'none';
+    if (effortHelp) effortHelp.style.display = show ? '' : 'none';
+  }
+
   function refreshModels(selectedModel) {
     var epId = epSel.value;
     var ep = _endpoints.find(function(e) { return e.id === epId; });
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
+  await loadEffortLevels();
+
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.utility_endpoint_id) epSel.value = settings.utility_endpoint_id;
     refreshModels(settings.utility_model || '');
+    refreshEffort(settings.utility_reasoning_effort || '');
     fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
       endpoints: function() { return _endpoints; },
       settingKey: 'utility_model_fallbacks',
+      supportsEffort: true,
+      getEffortLevels: function(epId, modelId) {
+        var meta = (_levelsByEndpoint[epId] || {})[modelId] || {};
+        return Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels : [];
+      },
       initial: Array.isArray(settings.utility_model_fallbacks)
-        ? settings.utility_model_fallbacks.map(function(f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
+        ? settings.utility_model_fallbacks.map(function(f) {
+            return {
+              endpoint_id: (f && f.endpoint_id) || '',
+              model: (f && f.model) || '',
+              reasoning_effort: (f && f.reasoning_effort) || '',
+            };
+          })
         : [],
     });
   } catch (e) { console.warn('Failed to load utility model settings', e); }
@@ -471,20 +556,30 @@ async function initUtilityModel() {
     try {
       await _postSettings({
         utility_endpoint_id: epSel.value || '',
-        utility_model: modelSel.value || ''
+        utility_model: modelSel.value || '',
+        utility_reasoning_effort: effortSel ? (effortSel.value || '') : ''
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
-  modelSel.addEventListener('change', saveUtility);
+  // A new endpoint/model may not advertise the saved effort; refreshEffort
+  // resets it to the provider default, and saveUtility persists that.
+  epSel.addEventListener('change', function() { refreshModels(''); refreshEffort(''); saveUtility(); });
+  modelSel.addEventListener('change', function() { refreshEffort(effortSel ? effortSel.value : ''); saveUtility(); });
+  if (effortSel) effortSel.addEventListener('change', saveUtility);
+  var defEp = el('set-defaultEpSelect');
+  var defModel = el('set-defaultModelSelect');
+  if (defEp) defEp.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
+  if (defModel) defModel.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(async function(endpoints) {
     _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
     refreshModels(modelSel.value);
+    await loadEffortLevels();
+    refreshEffort(effortSel ? effortSel.value : '');
     if (fallbackWidget && fallbackWidget.refresh) fallbackWidget.refresh();
   });
 }
@@ -568,7 +663,7 @@ async function initTeacherModel() {
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   if (enabledToggle) {
@@ -588,66 +683,6 @@ async function initTeacherModel() {
 }
 
 /* ── Image Generation ── */
-async function initImageSettings() {
-  const modelSel = el('set-imgModelSelect');
-  const qualSel = el('set-imgQualitySelect');
-  const msg = el('set-imgSettingsMsg');
-  const enabledToggle = el('set-imgEnabledToggle');
-  const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
-  try {
-    const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
-    const modelsData = await modelsRes.json();
-    // Inpaint-compat allowlist — image gen here is scoped to inpainting only,
-    // so DALL-E / GPT-Image-1 (no inpaint API) are excluded. Currently:
-    //   - any model with 'inpaint' in the id
-    //   - Stable Diffusion 3.5 Medium (inpaint via diffusers pipeline)
-    const _isInpaintModel = (mid) => {
-      const lower = String(mid || '').toLowerCase();
-      return lower.includes('inpaint')
-        || lower.includes('3.5-medium')
-        || lower.includes('3-5-medium')
-        || lower.includes('sd-3.5-med');
-    };
-    const imageModels = [];
-    (modelsData.items || []).forEach(item => {
-      (item.models || []).forEach(mid => {
-        if (_isInpaintModel(mid)) imageModels.push(mid);
-      });
-    });
-    sortModelIds(imageModels).forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
-    // Hardcoded fallbacks shown as "(not detected)" so users know what to
-    // download/serve to enable inpaint here.
-    ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
-      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + ' (not detected)'; modelSel.appendChild(opt); }
-    });
-  } catch (e) { console.warn('Failed to load models for image settings', e); }
-  try {
-    const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await settingsRes.json();
-    if (settings.image_model) modelSel.value = settings.image_model;
-    if (settings.image_quality) qualSel.value = settings.image_quality;
-    if (enabledToggle) enabledToggle.checked = settings.image_gen_enabled === true;
-  } catch (e) { console.warn('Failed to load settings', e); }
-
-  function syncImgDisabled() {
-    var off = enabledToggle && !enabledToggle.checked;
-    var card = enabledToggle ? enabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.45' : '';
-    if (configWrap) configWrap.style.pointerEvents = off ? 'none' : '';
-  }
-  syncImgDisabled();
-
-  async function saveSettings() {
-    try {
-      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value });
-      if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
-  }
-  modelSel.addEventListener('change', saveSettings);
-  qualSel.addEventListener('change', saveSettings);
-  if (enabledToggle) enabledToggle.addEventListener('change', function() { syncImgDisabled(); saveSettings(); });
-}
 
 /* ── Vision ── */
 async function initVisionSettings() {
@@ -715,7 +750,7 @@ async function initVisionSettings() {
     try {
       await _postSettings({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
   vlSel.addEventListener('change', saveSettings);
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncVisionDisabled(); saveSettings(); });
@@ -729,246 +764,8 @@ async function initVisionSettings() {
 /* ── Face Recognition ── */
 
 /* ── Text to Speech ── */
-async function initTtsSettings() {
-  var provSel = el('set-ttsProviderSelect');
-  var modelSelect = el('set-ttsModelSelect');
-  var modelInput = el('set-ttsModelInput');
-  var voiceSelect = el('set-ttsVoiceSelect');
-  var voiceInput = el('set-ttsVoiceInput');
-  var modelRow = el('set-ttsModelRow');
-  var voiceRow = el('set-ttsVoiceRow');
-  var speedSelect = el('set-ttsSpeedSelect');
-  var speedRow = el('set-ttsSpeedRow');
-  var ttsMsg = el('set-ttsSettingsMsg');
-  var ttsEnabledToggle = el('set-ttsEnabledToggle');
-  var ttsConfigWrap = provSel ? provSel.closest('div[style*="flex-direction"]') : null;
-
-  function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
-  function getModel() { return isEndpoint() ? modelSelect.value : modelInput.value; }
-  function getVoice() { return isEndpoint() ? voiceSelect.value : voiceInput.value; }
-
-  function updateVisibility() {
-    var prov = provSel.value;
-    modelRow.style.display = prov.startsWith('endpoint:') ? 'flex' : 'none';
-    voiceRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    speedRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    if (isEndpoint()) {
-      modelSelect.style.display = ''; modelInput.style.display = 'none';
-      voiceSelect.style.display = ''; voiceInput.style.display = 'none';
-    } else {
-      modelSelect.style.display = 'none'; modelInput.style.display = '';
-      voiceSelect.style.display = 'none'; voiceInput.style.display = prov === 'disabled' ? 'none' : '';
-    }
-  }
-
-  var ttsKeywords = ['tts', 'audio'];
-  try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
-      if (!hasTTS) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
-    });
-  } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
-
-  try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await settingsRes.json();
-    if (settings.tts_provider) provSel.value = settings.tts_provider;
-    if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
-    if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
-    if (settings.tts_speed) { speedSelect.value = settings.tts_speed; }
-    if (ttsEnabledToggle) ttsEnabledToggle.checked = settings.tts_enabled !== false;
-  } catch (e) { console.warn('Failed to load TTS settings', e); }
-
-  function syncTtsDisabled() {
-    var off = ttsEnabledToggle && !ttsEnabledToggle.checked;
-    var card = ttsEnabledToggle ? ttsEnabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.45' : '';
-    if (ttsConfigWrap) ttsConfigWrap.style.pointerEvents = off ? 'none' : '';
-  }
-  syncTtsDisabled();
-  updateVisibility();
-
-  async function saveTTS() {
-    try {
-      await _postSettings({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' });
-      ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
-      if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
-    } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
-  }
-
-  async function saveAndClearCache() {
-    await saveTTS();
-    fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
-  }
-
-  provSel.addEventListener('change', function() {
-    var prov = provSel.value;
-    if (prov === 'local') voiceInput.value = 'af_heart';
-    else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
-    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
-    updateVisibility();
-    saveTTS();
-  });
-  modelSelect.addEventListener('change', saveAndClearCache);
-  modelInput.addEventListener('change', saveTTS);
-  voiceSelect.addEventListener('change', saveAndClearCache);
-  voiceInput.addEventListener('change', saveTTS);
-  speedSelect.addEventListener('change', saveAndClearCache);
-  if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function() { syncTtsDisabled(); saveTTS(); });
-
-  // Preview / test button
-  var previewBtn = el('set-ttsPreviewBtn');
-  if (previewBtn) {
-    var previewAudio = null;
-    var previewPlaying = false;
-    function resetPreview() { previewPlaying = false; previewBtn.textContent = 'Preview'; previewBtn.style.borderColor = ''; }
-
-    previewBtn.addEventListener('click', async function() {
-      if (previewPlaying) {
-        if (previewAudio) { previewAudio.pause(); previewAudio = null; }
-        window.speechSynthesis.cancel();
-        resetPreview(); return;
-      }
-      var prov = provSel.value;
-      if (prov === 'disabled') {
-        ttsMsg.textContent = 'Select a provider first'; ttsMsg.style.color = 'var(--red, #e55)';
-        setTimeout(function() { ttsMsg.textContent = ''; }, 2000); return;
-      }
-      var testText = 'Hello, this is a test of text to speech.';
-      previewPlaying = true; previewBtn.textContent = 'Loading...';
-      try {
-        if (prov === 'browser') {
-          if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
-          var utt = new SpeechSynthesisUtterance(testText);
-          var voiceVal = getVoice();
-          if (voiceVal) {
-            var voices = window.speechSynthesis.getVoices();
-            var target = voiceVal.toLowerCase();
-            var match = voices.find(function(v) { return v.name.toLowerCase() === target; }) ||
-                        voices.find(function(v) { return v.name.toLowerCase().includes(target); });
-            if (match) utt.voice = match;
-          }
-          utt.rate = parseFloat(speedSelect.value) || 1;
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
-            utt.onend = resolve;
-            utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
-            window.speechSynthesis.speak(utt);
-          });
-        } else {
-          var res = await fetch('/api/tts/synthesize', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: testText, format: 'audio' })
-          });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
-          var blob = await res.blob();
-          var url = URL.createObjectURL(blob);
-          previewAudio = new Audio(url);
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
-            previewAudio.onended = function() { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
-            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
-            previewAudio.play().catch(reject);
-          });
-        }
-      } catch (e) {
-        ttsMsg.textContent = 'Preview failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
-        setTimeout(function() { ttsMsg.textContent = ''; }, 3000);
-      } finally {
-        resetPreview();
-      }
-    });
-  }
-}
 
 /* ── Speech to Text ── */
-async function initSttSettings() {
-  var provSel = el('set-sttProviderSelect');
-  var modelSelect = el('set-sttModelSelect');
-  var modelInput = el('set-sttModelInput');
-  var modelRow = el('set-sttModelRow');
-  var langRow = el('set-sttLangRow');
-  var langInput = el('set-sttLangInput');
-  var sttMsg = el('set-sttSettingsMsg');
-  var sttEnabledToggle = el('set-sttEnabledToggle');
-  var sttConfigWrap = el('set-sttConfigWrap');
-  // STT was removed from AI Defaults — bail if the UI isn't present.
-  if (!provSel) return;
-
-  function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
-  function getModel() { return isEndpoint() ? modelInput.value : modelSelect.value; }
-
-  function updateVisibility() {
-    var prov = provSel.value;
-    var showModel = prov === 'local' || prov.startsWith('endpoint:');
-    var showLang = prov !== 'disabled';
-    modelRow.style.display = showModel ? 'flex' : 'none';
-    langRow.style.display = showLang ? 'flex' : 'none';
-    if (isEndpoint()) {
-      modelSelect.style.display = 'none'; modelInput.style.display = '';
-    } else {
-      modelSelect.style.display = ''; modelInput.style.display = 'none';
-    }
-  }
-
-  function syncSttDisabled() {
-    var off = sttEnabledToggle && !sttEnabledToggle.checked;
-    var card = sttEnabledToggle ? sttEnabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.45' : '';
-    if (sttConfigWrap) sttConfigWrap.style.pointerEvents = off ? 'none' : '';
-  }
-
-  // Effective provider: if toggle is off, treat as disabled regardless of provider select
-  function effectiveProvider() {
-    if (sttEnabledToggle && !sttEnabledToggle.checked) return 'disabled';
-    return provSel.value;
-  }
-
-  // Add API endpoints that might support STT
-  try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
-    });
-  } catch (e) { console.warn('Failed to load endpoints for STT', e); }
-
-  // Load saved settings
-  try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await settingsRes.json();
-    if (settings.stt_provider) provSel.value = settings.stt_provider;
-    if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }
-    if (settings.stt_language) langInput.value = settings.stt_language;
-    if (sttEnabledToggle) sttEnabledToggle.checked = settings.stt_enabled !== false;
-  } catch (e) { console.warn('Failed to load STT settings', e); }
-
-  syncSttDisabled();
-  updateVisibility();
-
-  async function saveSTT() {
-    try {
-      var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
-      await _postSettings({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() });
-      sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
-      // Notify voiceRecorder of effective provider and update send button icon
-      if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
-      if (window._updateSendBtnIcon) window._updateSendBtnIcon();
-    } catch (e) { sttMsg.textContent = 'Failed to save'; sttMsg.style.color = 'var(--red)'; }
-  }
-
-  provSel.addEventListener('change', function() { updateVisibility(); saveSTT(); });
-  modelSelect.addEventListener('change', saveSTT);
-  modelInput.addEventListener('change', saveSTT);
-  langInput.addEventListener('change', saveSTT);
-  if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function() { syncSttDisabled(); saveSTT(); });
-}
 
 /* ═══════════════════════════════════════════
    SEARCH TAB
@@ -1115,7 +912,7 @@ async function initSearchSettings() {
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
       if (searchModule && searchModule.refresh) searchModule.refresh();
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
@@ -1266,7 +1063,7 @@ async function initSearchSettings() {
       await _postSettings({ search_fallback_chain: chain });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
     _renderFallbackChain();
   }
   _renderFallbackChain();
@@ -1329,17 +1126,6 @@ async function initSearchSettings() {
     });
   }
 }
-
-// SVG logos for each search provider (16×16 viewBox normalised to 24×24).
-var _SEARCH_PROVIDER_LOGOS = {
-  searxng:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0-2a8 8 0 1 1-4.93 14.32l-3.4 3.4a1 1 0 1 1-1.4-1.4l3.4-3.4A8 8 0 0 1 10 2zM13 8.5L11.5 10 13 11.5l-1 1L10.5 11 9 12.5l-1-1L9.5 10 8 8.5l1-1L10.5 9 12 7.5z"/></svg>',
-  duckduckgo:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.5 5.5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm5 0a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zM12 13c-1.5 0-3.6.8-3.6 2.5C8.4 17.2 10.4 18 12 18s3.6-.8 3.6-2.5C15.6 13.8 13.5 13 12 13z"/></svg>',
-  brave:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 4l-1.5 1L15 3l-3 .5L9 3 6.5 5 5 4 3 7l1.5 2L4 12l3 5 4 3 1 1 1-1 4-3 3-5-.5-3L21 7l-2-3zM12 17l-2.5-2 .5-3-2-1.5 2-1.5L11 7l3-1 3 1-.5 2 2 1.5-2 1.5.5 3L14.5 17 12 17z"/></svg>',
-  google_pse:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1H12v3.2h5.35c-.5 2.4-2.55 4-5.35 4-3.25 0-5.9-2.65-5.9-5.9s2.65-5.9 5.9-5.9c1.55 0 2.95.55 4.05 1.55l2.4-2.4C16.85 4.05 14.55 3 12 3 7 3 3 7 3 12s4 9 9 9c5.2 0 8.65-3.65 8.65-8.8 0-.4-.05-.7-.3-1.1z"/></svg>',
-  tavily:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 8.5l4 2.5v6l6 3.5 6-3.5v-6l4-2.5L12 2zm-4 9.5L12 14l4-2.5V16l-4 2.5L8 16v-4.5z"/></svg>',
-  serper:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a7 7 0 1 0 4.2 12.6l4.5 4.5 1.4-1.4-4.5-4.5A7 7 0 0 0 11 4zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm-1 2v2H8v2h2v2h2v-2h2V10h-2V8h-2z"/></svg>',
-  disabled:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-};
 
 /* ── Deep Research Model (AI tab) ── */
 async function initResearchSettings() {
@@ -1430,7 +1216,7 @@ async function initResearchSettings() {
       await _postSettings(payload);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(showStatus, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', async function() {
@@ -1494,63 +1280,13 @@ async function initResearchSearchSettings() {
       await _postSettings({ research_search_provider: searchSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   searchSel.addEventListener('change', function() { updateSearchLogo(); saveResearchSearch(); });
 }
 
 /* ── Agent Settings (AI tab) ── */
-async function initAgentSettings() {
-  var toolsInput = el('set-agentMaxTools');
-  var roundsInput = el('set-agentMaxRounds');
-  var supInput = el('set-agentSupervisorLadder');
-  var msg = el('set-agentMsg');
-  if (!toolsInput) return;
-
-  try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
-    if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
-    if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
-    if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
-  } catch (e) {}
-
-  // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
-  // when blank/non-numeric. Mirrors the server-side validation.
-  function clampInt(raw, lo, hi, dflt) {
-    var n = parseInt(raw, 10);
-    if (isNaN(n)) return dflt;
-    return Math.max(lo, Math.min(n, hi));
-  }
-
-  async function save() {
-    var tools = clampInt(toolsInput.value, 0, 1000, 0);
-    var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
-    toolsInput.value = tools;                       // reflect the clamped value
-    if (roundsInput) roundsInput.value = rounds;
-    var payload = { agent_max_tool_calls: tools };
-    if (rounds != null) payload.agent_max_rounds = rounds;
-    if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
-    try {
-      await _postSettings(payload);
-      msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
-        (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
-        (supInput && supInput.checked ? ' · supervisor on' : '');
-      msg.style.color = 'var(--fg)';
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
-  }
-
-  toolsInput.addEventListener('change', save);
-  if (roundsInput) roundsInput.addEventListener('change', save);
-  if (supInput) supInput.addEventListener('change', save);
-  var cur = parseInt(toolsInput.value, 10) || 0;
-  var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
-  msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
-    (curR != null ? ' · ' + curR + ' steps/message' : '') +
-    (supInput && supInput.checked ? ' · supervisor on' : '');
-
-}
 
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
@@ -1652,7 +1388,7 @@ function syncPrivacyCheckboxes() {
 
 const SHORTCUT_DEFAULTS = {
   search:         'ctrl+k',
-  toggle_sidebar: 'ctrl+b',
+  toggle_sidebar: 'ctrl+alt+b',
   new_session:    'ctrl+alt+n',
   fav_session:    'ctrl+alt+f',
   delete_session: 'ctrl+alt+d',
@@ -1670,6 +1406,7 @@ const SHORTCUT_DEFAULTS = {
   open_gallery:   '',
   open_library:   '',
   open_memory:    '',
+  open_skills:    '',
   open_notes:     '',
   open_tasks:     '',
   open_theme:     '',
@@ -1693,6 +1430,7 @@ const SHORTCUT_ICONS = {
   open_gallery:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
   open_library:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
   open_memory:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>',
+  open_skills:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
   open_notes:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>',
   open_tasks:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>',
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
@@ -1716,6 +1454,7 @@ const SHORTCUT_LABELS = {
   open_gallery:   'Open Gallery',
   open_library:   'Open Library',
   open_memory:    'Open Memory',
+  open_skills:    'Open Skills',
   open_notes:     'Open Notes',
   open_tasks:     'Open Tasks',
   open_theme:     'Open Theme',
@@ -1725,7 +1464,7 @@ const SHORTCUT_CATEGORIES = [
   { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
   { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
   { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_skills', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
 function _formatKeyCaps(combo) {
@@ -1771,6 +1510,9 @@ async function initShortcuts() {
     const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await res.json();
     if (settings.keybinds) keybinds = { ...keybinds, ...settings.keybinds };
+    if (keybinds.toggle_sidebar === 'ctrl+b') {
+      keybinds.toggle_sidebar = SHORTCUT_DEFAULTS.toggle_sidebar;
+    }
   } catch (e) {}
 
   function _findConflicts() {
@@ -1934,6 +1676,7 @@ async function initShortcuts() {
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
     } catch (e) {
       console.error('Failed to save keybinds:', e);
+      if (uiModule && uiModule.showToast) uiModule.showToast('Failed to save shortcut');
     }
   }
 
@@ -2142,8 +1885,8 @@ function initAll() {
   modalEl = el('settings-modal');
 
   bindSettingsNavigation(modalEl, {
-    openAdminTab: openAdminSettingsTab,
-    onPanelActivated: onSettingsPanelActivated,
+    openAdminTab: _shell.openAdminTab,
+    onPanelActivated: _shell.onPanelActivated,
   });
 
   bindSettingsSearch(modalEl, {
@@ -2173,7 +1916,7 @@ function initAll() {
     closeSettings: close,
   });
 
-  initOpacityToggle();
+  bindSettingsPeekToggle(modalEl);
   initialized = true;
   initDefaultChat();
   initTeacherModel();
@@ -2194,7 +1937,9 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  initDocumentWritingStyle();
 }
+
 
 function notifyIntegrationsChanged() {
   try {
@@ -2465,7 +2210,7 @@ async function initReminderSettings() {
     const personaSel = el('set-reminder-llm-persona');
     if (personaSel) {
       try {
-        const presetsMod = await import('./presets.js');
+        const presetsMod = await import('./presets.js?v=20260908personaname1');
         const tpl = presetsMod.PROMPT_TEMPLATES || [];
         const chars = tpl.filter(t => t.isCharacter);
         for (const c of chars) {
@@ -2665,16 +2410,18 @@ async function initEmailAccountsSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
 
-  el('set-email-open-library-settings')?.addEventListener('click', async () => {
+  const emailPreferences = el('settings-email-preferences');
+  if (emailPreferences && emailPreferences.dataset.emailSettingsBound !== '1') {
+    emailPreferences.dataset.emailSettingsBound = '1';
     try {
-      const mod = await import('./emailLibrary.js?v=20260815approvalsave1');
-      if (typeof mod.openEmailLibrarySettings === 'function') {
-        await mod.openEmailLibrarySettings();
+      const mod = await import('./emailLibrary.js?v=20260915trashmove2');
+      if (typeof mod.mountEmailSettings === 'function') {
+        await mod.mountEmailSettings(emailPreferences);
       }
     } catch (e) {
-      console.warn('Failed to open Email settings page', e);
+      console.warn('Failed to mount Email settings', e);
     }
-  });
+  }
   const manageBtn = el('set-email-open-integrations');
   if (manageBtn && manageBtn.dataset.bound !== '1') {
     manageBtn.dataset.bound = '1';
@@ -2685,7 +2432,7 @@ async function initEmailAccountsSettings() {
     tasksBtn.dataset.bound = '1';
     tasksBtn.addEventListener('click', async () => {
       try {
-        const mod = await import('./tasks.js');
+        const mod = await import('./tasks.js?v=20260914taskmodel1');
         const openTasks = mod.openTasks || (mod.default && mod.default.openTasks);
         if (typeof openTasks === 'function') openTasks(null, { filter: 'Email' });
         else document.getElementById('tool-tasks-btn')?.click();
@@ -5036,7 +4783,11 @@ async function initUnifiedIntegrations() {
         fd.append('transport', transport);
         if (transport === 'stdio') {
           fd.append('command', el('uf-mcp-cmd').value);
-          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
+          // Unlike env below, an unparseable args value is not silently
+          // defaulted: it would spawn the subprocess with an empty argv.
+          let args;
+          try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); }
+          catch (_) { el('uf-mcp-msg').textContent = 'Args must be valid JSON, e.g. ["-y", "pkg"]'; return; }
           let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
           fd.append('args', args);
           fd.append('env', env);
@@ -5058,7 +4809,12 @@ async function initUnifiedIntegrations() {
           } else if (r.ok) {
             el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {
-            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+            // Surface the server's reason. The Args validation above rejects
+            // unparseable JSON, but `"x"` and `{}` parse and are refused by
+            // routes/mcp/mcp_routes.py with a message naming the expected
+            // shape; a bare status code sends the user looking in the wrong
+            // place. Matches what admin.js shows for the same endpoint.
+            el('uf-mcp-msg').textContent = data.detail || `Failed (${r.status})`;
           }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
         finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }
@@ -5569,85 +5325,14 @@ async function initUnifiedIntegrations() {
   await renderList();
 }
 
-/* ── Admin visibility sync ── */
-function syncAdminVisibility() {
-  if (!modalEl) return;
-  const isAdmin = !!window._isAdmin;
-  modalEl.querySelectorAll('.admin-only').forEach(el => {
-    el.style.display = isAdmin ? '' : 'none';
-  });
-}
-
 /* ═══════════════════════════════════════════
    PUBLIC API
    ═══════════════════════════════════════════ */
-export function open(tab) {
-  if (!initialized) initAll();
+export function open(tab) { _shell.open(tab); }
+export function close() { _shell.close(); }
+function syncAdminVisibility() { _shell.syncAdminVisibility(); }
 
-  syncAppearanceCheckboxes();
-  showSettingsModal(modalEl);
-  syncAdminVisibility();
-
-  if (tab) {
-    activateSettingsPanel(modalEl, tab);
-  }
-
-  // Preserve existing panel-specific side effects when Settings is opened
-  // directly to a tab as well as when the user navigates there.
-  const activeTab = tab || getActiveSettingsTab(modalEl);
-  onSettingsPanelActivated(activeTab);
-
-  // Auto-init admin data if showing an admin tab.
-  if (isAdminManagedSettingsTab(activeTab) && window.adminModule && !window.adminModule._initialized) {
-    window.adminModule._initData();
-  }
-}
-
-export function close() {
-  if (!modalEl) return;
-
-  // Always clear the Appearance state so the rest of the app does not remain
-  // dimmed if Settings is closed while that panel is active.
-  document.body.classList.remove('settings-appearance-open');
-  syncAppearanceOpacity(false);
-
-  hideSettingsModal(modalEl);
-}
-
-// Handle redirect back from Google OAuth2 — open settings to integrations and show status.
-(function _handleOauthRedirect() {
-  const sp = new URLSearchParams(window.location.search);
-  if (!sp.has('email_oauth_success') && !sp.has('email_oauth_error')) return;
-  // Strip params from URL without a page reload.
-  const clean = window.location.pathname + window.location.hash;
-  window.history.replaceState(null, '', clean);
-  const success = sp.has('email_oauth_success');
-  const errMsg = sp.get('email_oauth_error') || '';
-  // Open settings → integrations once the document is ready. This module owns
-  // the open() API, so it does not need to wait for a window-level alias.
-  function _showResult() {
-    open('integrations');
-    // Brief toast-style banner.
-    const banner = document.createElement('div');
-    banner.textContent = success
-      ? 'Google account connected — email is ready'
-      : `Google OAuth failed: ${errMsg || 'unknown error'}`;
-    Object.assign(banner.style, {
-      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-      background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
-      color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
-      fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
-      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
-    });
-    document.body.appendChild(banner);
-    setTimeout(() => banner.remove(), 4000);
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _showResult, { once: true });
-  } else {
-    _showResult();
-  }
-})();
+handleSettingsOauthReturn({ openSettings: open });
 
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
 

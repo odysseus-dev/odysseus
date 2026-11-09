@@ -54,5 +54,28 @@ def test_model_context_queries_models_for_v1_base(monkeypatch):
     assert model_context._query_context_length("http://127.0.0.1:8080/v1", "qwen3") == (32768, True)
     assert seen == [
         "http://127.0.0.1:8080/slots",
+        "http://127.0.0.1:8080/props",
         "http://127.0.0.1:8080/v1/models",
     ]
+
+
+def test_model_context_prefers_llama_props_when_slots_are_disabled(monkeypatch):
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+
+    def fake_get(url, timeout=None):
+        request = httpx.Request("GET", url)
+        if url.endswith("/slots"):
+            return httpx.Response(501, json={"error": {"code": 501}}, request=request)
+        if url.endswith("/props"):
+            return httpx.Response(
+                200,
+                json={"default_generation_settings": {"n_ctx": 4096}},
+                request=request,
+            )
+        raise AssertionError("/models should not be queried when /props reports n_ctx")
+
+    monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+    assert model_context._query_context_length(
+        "http://127.0.0.1:8080/v1", "qwen3"
+    ) == (4096, True)

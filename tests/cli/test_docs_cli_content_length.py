@@ -3,7 +3,7 @@ from tests.helpers.db_stubs import make_core_db_stub
 
 
 def test_text_len_ignores_non_string_values(monkeypatch):
-    make_core_db_stub(monkeypatch, models=["Document", "DocumentVersion"])
+    make_core_db_stub(monkeypatch, models=["Document", "DocumentVersion", "ChatMessage", "Session"])
     cli = load_script("odysseus-docs")
 
     assert cli._text_len("hello") == 5

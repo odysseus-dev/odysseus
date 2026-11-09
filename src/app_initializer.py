@@ -2,10 +2,11 @@
 """Initialize all application components and dependencies."""
 import os
 import logging
+import stat
 from typing import Dict, Any
 
 from src.constants import (
-    DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
+    DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR, AGENT_WORKSPACE_DIR,
     SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
 )
 from src.memory import MemoryManager
@@ -30,7 +31,35 @@ def create_directories():
     """Create necessary directories if they don't exist."""
     for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
         os.makedirs(directory, exist_ok=True)
-        
+
+    # The model-controlled workspace must be a real child of DATA_DIR.  Never
+    # follow a pre-existing symlink here: it would silently move the default
+    # native-file root outside the application volume before any resolver runs.
+    data_root = os.path.realpath(os.path.abspath(os.path.expanduser(DATA_DIR)))
+    workspace = os.path.abspath(os.path.expanduser(AGENT_WORKSPACE_DIR))
+    expected_workspace = os.path.join(data_root, "agent_workspace")
+    # Validate the real parent so a supported DATA_DIR bind/symlink works, but
+    # require the fixed internal carve-out name and reject a link at the model-
+    # controlled workspace entry itself.
+    if (
+        os.path.basename(workspace) != "agent_workspace"
+        or os.path.realpath(os.path.dirname(workspace)) != data_root
+    ):
+        raise RuntimeError("agent workspace must be the canonical child of DATA_DIR")
+    if os.path.lexists(workspace):
+        mode = os.lstat(workspace).st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise RuntimeError("agent workspace must be a real directory")
+    else:
+        os.mkdir(workspace, 0o700)
+    resolved_workspace = os.path.realpath(workspace)
+    if resolved_workspace != expected_workspace:
+        raise RuntimeError("agent workspace must be the canonical child of DATA_DIR")
+    try:
+        os.chmod(workspace, 0o700)
+    except OSError:
+        pass
+
 def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     """
     Initialize all manager and handler instances.

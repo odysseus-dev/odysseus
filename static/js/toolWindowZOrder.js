@@ -1,4 +1,4 @@
-export const TOOL_WINDOW_SELECTOR = 'body > .modal, body > .research-overlay, body > .notes-pane-backdrop';
+export const TOOL_WINDOW_SELECTOR = 'body > .modal:not(#styled-confirm-overlay), body > .research-overlay, body > .notes-pane-backdrop';
 
 export function topToolWindowZ(options = {}) {
   const {

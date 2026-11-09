@@ -18,9 +18,10 @@
  * }} deps
  */
 import { state } from '../state.js';
+import { selectionModeForEvent } from '../selection-modifiers.js';
 import { canvasCoords } from '../canvas-coords.js';
 
-export function createWandTool({ activeLayer, saveState, composite, wandHits, runMagicWand }) {
+export function createWandTool({ activeLayer, saveState, composite, wandHits, runMagicWand, deselectSelection }) {
   return {
     click(e) {
       const layer = activeLayer();
@@ -28,14 +29,18 @@ export function createWandTool({ activeLayer, saveState, composite, wandHits, ru
       const coords = canvasCoords(e, state.mainCanvas);
       // Persistent toggle sets the default mode; Shift forces add, Alt
       // forces subtract regardless of the toggle (modifiers always win).
-      let mode = state.wandMode || 'replace';
-      if (e.shiftKey) mode = 'add';
-      else if (e.altKey) mode = 'subtract';
+      const mode = selectionModeForEvent(e, state.wandMode || 'replace');
       // Click INSIDE the existing selection with no modifier → deselect.
       if (mode === 'replace' && wandHits(coords.x, coords.y)) {
+        if (deselectSelection) {
+          deselectSelection();
+          return;
+        }
         saveState();
         state.wandMask = null;
         state.wandLayerId = null;
+        state.wandMaskSpace = 'layer';
+        state.selectionSource = null;
         state.wandLastSeed = null;
         composite();
         return;

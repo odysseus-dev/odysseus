@@ -1,0 +1,1570 @@
+/* Email, calendar, notes and tasks panels.
+ *
+ * This is an eagerly loaded tail segment of the app stylesheet cascade. The
+ * former static/style.css now lives in the numbered 00-17 fragments; these
+ * three pre-existing panel files follow those fragments without changing
+ * their relative order. Nothing here is lazy-loaded.
+ *
+ * LOAD ORDER IS PART OF THE CONTRACT. static/index.html and the PRECACHE list
+ * in static/sw.js must agree:
+ *   1. static/css/00-tokens.css through static/css/17-research.css,
+ *      in numeric order
+ *   2. static/css/documents-gallery-editor.css
+ *   3. static/css/email-calendar-notes-tasks.css
+ *   4. static/css/cookbook-research-memory-settings.css
+ *
+ * Rules in this file retain their existing cascade position. Shared rules
+ * formerly kept in static/style.css now live in the numbered fragments.
+ */
+
+@keyframes email-notif-breathe {
+      0%, 100% {
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
+        opacity: 0.85;
+      }
+      50% {
+        box-shadow: 0 0 6px 2px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+        opacity: 1;
+      }
+    }
+.memory-item.task-paused:hover {
+  opacity: 0.85 !important;
+  filter: saturate(0.9);
+}
+.email-folder-picker .email-folder-select-control {
+  padding-left: 26px;
+}
+/* Email bulk-select mode owns the whole card. Sender names and tags must not
+   open search/filter actions until Select is cancelled. */
+#email-lib-grid.email-selecting .email-meta-sender,
+#email-lib-grid.email-selecting .email-card-tags,
+#email-lib-grid.email-selecting .email-card-favorite,
+#email-lib-grid.email-selecting .email-card-nav-arrows,
+#email-lib-grid.email-selecting .email-card-status,
+#email-lib-grid.email-selecting .email-card-actions {
+  pointer-events: none !important;
+}
+.email-reader-actions-inline > .email-reader-more-wrap { order: 5; }
+/* ── Tasks ── */
+#tool-tasks-btn.task-failure-pending,
+#rail-tasks.task-failure-pending {
+  color: var(--red, #f87171);
+}
+#tool-tasks-btn.task-completion-pending,
+#rail-tasks.task-completion-pending {
+  color: var(--accent, var(--green, #86efac));
+}
+#tool-tasks-btn.task-failure-pending::after,
+#rail-tasks.task-failure-pending::after,
+#tool-tasks-btn.task-completion-pending::after,
+#rail-tasks.task-completion-pending::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--red, #f87171);
+  box-shadow: 0 0 7px var(--red, #f87171), 0 0 3px var(--red, #f87171);
+  flex: 0 0 auto;
+}
+#tool-tasks-btn.task-completion-pending::after,
+#rail-tasks.task-completion-pending::after {
+  background: var(--accent, var(--green, #86efac));
+  box-shadow: 0 0 7px var(--accent, var(--green, #86efac)), 0 0 3px var(--accent, var(--green, #86efac));
+}
+#tool-tasks-btn.task-failure-pending.task-completion-pending,
+#rail-tasks.task-failure-pending.task-completion-pending {
+  color: var(--red, #f87171);
+}
+#tool-tasks-btn.task-failure-pending.task-completion-pending::after,
+#rail-tasks.task-failure-pending.task-completion-pending::after {
+  background: var(--red, #f87171);
+  box-shadow: 0 0 7px var(--red, #f87171), 0 0 3px var(--red, #f87171);
+}
+#rail-tasks.task-failure-pending::after,
+#rail-tasks.task-completion-pending::after {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
+.tasks-activity-card,
+.tasks-activity-list {
+  min-height: 0;
+}
+.tasks-activity-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.task-log-row.task-log-row-error .task-log-task-icon svg {
+  opacity: 0.82 !important;
+}
+.task-log-running-inline .task-log-running-label { font-weight: 500; }
+.task-log-running-elapsed {
+  margin-left: 6px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.task-log-time {
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes task-log-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #60a5fa 60%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, #60a5fa 0%, transparent); }
+}
+.task-log-row-body li { margin: 2px 0; }
+.task-log-row-body hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  margin: 8px 0;
+}
+.task-log-row-toggle::before {
+  color: color-mix(in srgb, var(--accent, var(--fg)) 80%, transparent);
+  opacity: 0.8;
+}
+.task-log-row-toggle:hover::before { opacity: 1; }
+/* A <select>'s closed width otherwise grows to its widest option (the long
+   action descriptions), overflowing the modal — clip it to the field width. */
+select.task-form-input { text-overflow: ellipsis; }
+.task-form-textarea { resize: vertical; min-height: 60px; }
+.task-form-notif-switch::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  left: 3px;
+  top: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 62%, transparent);
+  transition: transform 0.15s, background 0.15s;
+}
+.task-form-notif-toggle input:checked + .task-form-notif-switch::after {
+  transform: translateX(13px);
+  background: var(--accent, var(--red));
+}
+.email-list { overflow-y: auto; max-height: 400px; }
+.email-item:hover .email-menu-btn { opacity: 0.5; }
+.email-item-spam { opacity: 0.4; }
+/* Auto-done flash: when a row gets marked done because the user just sent
+   a reply, briefly tint the whole row with the accent and pop the check
+   so the state change is hard to miss. Self-removes after ~1.2s. */
+@keyframes email-auto-done-row {
+  0%   { background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent); }
+  60%  { background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes email-auto-done-check {
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 45%, transparent); }
+  40%  { transform: scale(1.4); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+  100% { transform: scale(1); }
+}
+.email-item.email-auto-done-flash { animation: email-auto-done-row 1.2s ease-out; }
+.email-item.email-auto-done-flash .email-done-check { animation: email-auto-done-check 0.6s ease-out; }
+/* Email titles that carry a cached AI summary get a thin underline-dot hint
+   so the user knows a hover-preview is available. */
+.memory-item-title.email-card-has-summary {
+  cursor: help;
+  text-decoration: underline dotted color-mix(in srgb, var(--accent) 60%, transparent) 1px;
+  text-underline-offset: 3px;
+}
+#email-lib-grid .doclib-card.email-card-unread:not(.email-card-expanded) {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 58%, var(--border)) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 24%, transparent),
+    0 0 10px -4px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+#email-lib-grid .doclib-card.email-card-unread:not(.email-card-expanded):hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 76%, var(--border)) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 32%, transparent),
+    0 0 12px -3px color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
+}
+.email-card-favorite.active:hover,
+.email-card-favorite.active:focus-visible { opacity: 1; }
+.email-card-favorite:active { transform: scale(0.88); }
+.email-card-favorite svg { pointer-events: none; }
+.email-card-done.just-checked {
+  animation: check-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+/* Reverse animation when un-checking — shrink-and-fade so the click is
+   obviously felt even when hover styling otherwise keeps the icon visible. */
+.email-card-done.just-unchecked {
+  animation: check-unpop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.email-card-reader-loading .spinner-whirlpool,
+.email-card-reader-loading .ai-spinner-whirlpool {
+  opacity: 0.85;
+}
+.email-skeleton-row.compact { min-height: 42px; opacity: 0.72; }
+.email-skeleton-line.title { width: min(88%, 520px); height: 9px; }
+.email-skeleton-line.meta { width: min(72%, 420px); height: 7px; opacity: 0.78; }
+.email-skeleton-line.date { width: 72px; height: 7px; flex: 0 0 auto; opacity: 0.72; }
+@keyframes email-skeleton-shimmer {
+  0% { background-position: 120% 0; opacity: 0.68; }
+  50% { opacity: 1; }
+  100% { background-position: -120% 0; opacity: 0.68; }
+}
+@keyframes email-search-progress-pulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.55; box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary, var(--red)) 35%, transparent); }
+  50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 0 5px transparent; }
+}
+@keyframes email-inline-image-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes email-card-unread-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent);
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    /* currentColor here is unreliable (background, not color) — use a
+       subtle white-tinted halo so the glow shows on any sender hue. */
+    box-shadow: 0 0 6px 2px rgba(255, 255, 255, 0.18);
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .email-card-unread-dot { animation: none; }
+}
+#email-lib-pills::-webkit-scrollbar { display: none; }
+.email-reader-meta-details[hidden] { display: none; }
+.email-reader-header > .email-reader-meta {
+  flex: 1; min-width: 0;
+  opacity: 0.85; line-height: 1.7; font-size: 11px;
+}
+/* When rendering HTML emails, override pre-wrap so layout works */
+.email-reader-body.html-body {
+  white-space: normal;
+}
+.email-reader-body .email-inline-image-placeholder.is-error {
+  border-color: color-mix(in srgb, var(--red, #ff5555) 45%, var(--border));
+}
+.email-inline-image-placeholder.is-loading .email-inline-image-icon {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-top-color: var(--accent, var(--red));
+  border-radius: 50%;
+  animation: email-inline-image-spin 0.75s linear infinite;
+}
+.email-inline-image-frame.is-loading {
+  animation: email-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+.email-inline-image-frame .email-inline-image-loaded.is-visible {
+  opacity: 1;
+}
+/* Preserve highlights — sender's intent (snark, callouts) gets through, but
+   rendered with a theme-aware accent so it stays legible in any theme. The
+   sanitizer rewrites `<span style="background:yellow">…</span>` to <mark>. */
+.email-reader-body mark {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.email-summary-toggle:hover { opacity: 1; }
+.email-summary-panel.collapsed .email-summary-header { margin-bottom: 0; }
+.email-summary-panel.collapsed .email-summary-content { display: none; }
+.email-summary-panel.collapsed .email-summary-chevron { transform: rotate(-90deg); }
+.email-translation-panel { margin-top: 0; }
+.email-attachments-download-all.is-loading {
+  opacity: 0.82;
+  pointer-events: none;
+}
+.email-reader-atts-wrap.collapsed > .email-reader-atts,
+.email-reader-atts-wrap.collapsed > .email-reader-atts-hidden-note { display: none; }
+.email-reader-atts-wrap.collapsed .email-summary-chevron { transform: rotate(-90deg); }
+.email-thread-turn-body .email-thread-turn .email-fold-summary {
+  padding: 5px 10px;
+}
+.email-thread-turn-body .email-thread-turn .email-thread-turn-body {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+}
+.email-quote-fold .email-fold-summary::-webkit-details-marker,
+.email-quote-fold .email-fold-summary::marker { display: none; content: none; }
+.email-quote-fold .email-fold-summary:hover { opacity: 1; }
+.email-quote-fold[open] .email-summary-chevron { transform: rotate(180deg); }
+/* Suppress the global `summary::before { content: '▶' }` rule from
+   leaking the chevron-emoji onto our header — we use the trailing SVG
+   chevron only. */
+.email-sig-fold .email-fold-summary::before,
+.email-quote-fold .email-fold-summary::before { content: none !important; }
+.email-sig-fold .email-fold-summary::-webkit-details-marker,
+.email-sig-fold .email-fold-summary::marker { display: none; content: none; }
+.email-sig-fold .email-fold-summary:hover { opacity: 1; }
+.email-sig-fold[open] .email-summary-chevron { transform: rotate(180deg); }
+.email-bubble-row.email-bubble-mine {
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+}
+.email-bubble-row.email-bubble-theirs {
+  /* Avatar lives at the END of the row (right side) so the bubble has
+     the full left edge to start from — gives bigger reading width and
+     a cleaner left margin. */
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+.email-bubble-mine .email-bubble-head { justify-content: flex-end; }
+.email-bubble-body *:not(code):not(pre):not(kbd):not(samp) {
+  line-height: inherit !important;
+}
+.email-bubble-body img {
+  max-width: 100%;
+  height: auto;
+}
+.email-bubble-body table {
+  max-width: 100%;
+}
+.email-bubble-body .email-sig-fold .email-fold-summary,
+.email-bubble-body .email-quote-fold .email-fold-summary {
+  padding: 4px 0;
+}
+.email-sender-clickable { cursor: pointer; }
+.email-sender-clickable:hover { text-decoration: underline; }
+.email-filter-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-filter-chip-clear:hover { opacity: 1; }
+@media (max-width: 768px) {
+  .email-search-row {
+    flex-wrap: wrap;
+  }
+}
+.email-tags-collapsed .email-tag-extra { display: none; }
+.email-tags-expanded .email-tag-extra { display: inline-flex; align-items: center; }
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) > .email-tags-more:not(.email-tags-more-single) {
+  display: none;
+}
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) .email-tags-more-single {
+  display: inline-flex;
+}
+.email-card-tags.email-tags-expanded .email-tags-more-single {
+  display: none;
+}
+.email-tags-more:hover { opacity: 0.92; }
+.email-tag-clickable:hover {
+  filter: brightness(1.12);
+}
+@keyframes email-spin { to { transform: rotate(360deg); } }
+/* Compose + button: show on section hover, spin on button hover */
+#email-compose-btn {
+  opacity: 0.4 !important;
+  transition: opacity 0.15s ease;
+}
+/* Satisfying send effect: email slides out to the right and fades */
+.email-send-fx {
+  animation: email-send-slide 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+@keyframes email-send-slide {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+    filter: blur(0);
+  }
+  60% {
+    filter: blur(1px);
+  }
+  100% {
+    transform: translateX(110%);
+    opacity: 0;
+    filter: blur(3px);
+  }
+}
+.email-lib-unread-badge:hover { filter: brightness(1.08); }
+.email-lib-auto-reply-badge:hover {
+  filter: brightness(1.08);
+}
+.email-card-nav-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+  pointer-events: none;
+}
+.email-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.email-draft-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.email-attachment-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-attachment-chip-muted { opacity: 0.65; }
+.email-attachment-chip-muted:hover { opacity: 1; }
+.email-attachment-open.is-loading {
+  pointer-events: none;
+  opacity: 0.82;
+}
+.email-attachment-open.is-loading .spinner-whirlpool,
+.email-attachment-open.is-loading .ai-spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+  margin: 0 !important;
+  position: relative;
+  top: 0;
+}
+.email-compose-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-odysseus-attach-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.email-odysseus-attach-selected:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.email-odysseus-attach-selected.is-loading {
+  opacity: 0.72;
+  pointer-events: none;
+}
+@media (max-width: 768px) {
+  .email-odysseus-attach-menu {
+    left: 8px !important;
+    right: 8px;
+    bottom: 8px;
+    top: auto !important;
+    width: auto;
+    max-height: 58vh;
+  }
+  .email-odysseus-attach-list {
+    max-height: calc(58vh - 88px);
+  }
+}
+.email-ai-reply-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#email-lib-settings-btn { top: -1px; }
+#email-lib-settings-btn svg { position: relative; top: 2px; }
+/* New (Compose) button gets a slightly taller, slightly lower variant
+   on desktop so it reads as the primary action of the row. Scoped to
+   desktop so the mobile touch-friendly variant (further down) stays in
+   charge for ≤768px. */
+@media (min-width: 769px) {
+  #email-lib-compose-btn { height: 28px; top: 0; }
+}
+/* Envelope icon picks up the user's accent so the primary action is
+   easy to spot at any size. The SVG already uses stroke=currentColor,
+   so a color: rule on the svg propagates. */
+#email-lib-compose-btn svg { color: var(--accent, var(--red)); }
+@media (max-width: 768px) {
+  /* On mobile they're 1px higher than desktop. */
+  #email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn { top: -3px; }
+  #email-lib-settings-btn { top: -2px; }
+}
+.email-settings-page-host > .email-settings-body {
+  overflow: visible;
+}
+.email-settings-page-head:empty {
+  display: none;
+}
+.email-settings-section > summary {
+  list-style: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  user-select: none;
+}
+.email-settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+.email-settings-section > summary::before {
+  content: none;
+  display: none;
+}
+.email-settings-section > .email-settings-section-body {
+  padding: 0;
+  font-size: inherit;
+  line-height: normal;
+  animation: none;
+}
+.email-settings-section-toggle:focus-visible {
+  outline: 1px solid var(--accent, var(--red));
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.email-settings-section.is-expanded .email-settings-section-chevron {
+  transform: rotate(180deg);
+}
+.email-settings-section[open] .email-settings-section-chevron {
+  transform: rotate(180deg);
+}
+.email-settings-section-body > .email-settings-enabled-control {
+  align-self: flex-end;
+}
+.email-settings-auto-reply-section > summary,
+.email-settings-cleanup-section > summary {
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.email-settings-auto-reply-title-row {
+  top: 0;
+}
+.email-settings-clean-actions:has(.email-settings-clean-status.is-busy) {
+  flex-direction: row;
+  align-items: center;
+}
+.email-settings-clean-status:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+}
+.email-unsub-card.is-expanded .email-unsub-card-toggle > svg {
+  transform: rotate(180deg);
+}
+.email-unsub-card.is-unsubscribed {
+  opacity: .58;
+}
+.email-settings-grid > label > span:first-child,
+.email-settings-field > span {
+  color: var(--accent, var(--red));
+}
+@media (max-width: 768px) {
+  .email-settings-section[open] > .email-settings-section-body {
+    height: auto;
+    max-height: none;
+  }
+  .email-settings-auto-reply-section[open] > .email-settings-section-body,
+  .email-settings-cleanup-section[open]:has(.email-unsub-card) > .email-settings-section-body {
+    height: 100%;
+    max-height: 100%;
+  }
+}
+/* On mobile, the "New" (compose) button deserves a touch-friendly size
+   so it stands out from the smaller toolbar buttons next to it. Lift
+   it slightly visually with a bigger SVG, padding, and font. */
+@media (max-width: 768px) {
+  #email-lib-compose-btn {
+    padding: 8px 14px !important;
+    font-size: 13px !important;
+    min-height: 36px;
+    border-radius: 8px;
+    font-weight: 600;
+    top: -2px;
+  }
+  #email-lib-compose-btn svg {
+    width: 14px !important;
+    height: 14px !important;
+    margin-right: 5px !important;
+  }
+}
+/* Checklist rows stay tappable on mobile; only destructive hover affordances
+   stay hidden. Select mode below still disables checklist toggling. */
+body.notes-mobile-mode .note-card .note-checkbox-rm {
+  pointer-events: none;
+}
+body.notes-mobile-mode .note-card .note-checkbox {
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+body.notes-mobile-mode .note-card .note-check-dot,
+body.notes-mobile-mode .note-card .note-checkbox-dot,
+body.notes-mobile-mode .note-card .note-cl-dot {
+  opacity: 0.55;
+  cursor: pointer !important;
+}
+body.notes-mobile-mode .note-card:active {
+  transform: scale(0.985);
+}
+body.notes-drag-mode .note-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    color-mix(in srgb, var(--fg) 14%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  animation: notes-drag-shimmer 2.1s linear infinite;
+  border-radius: inherit;
+  z-index: 1;
+  mix-blend-mode: overlay;
+}
+@keyframes notes-drag-shimmer {
+  0%   { background-position: 250% 0; }
+  100% { background-position: -150% 0; }
+}
+/* The grabbed card lifts above its siblings; suppress the shimmer on
+   it so it reads as the "live" element being moved. */
+body.notes-drag-mode .note-card.note-card-dragging {
+  transform: scale(1.06);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  opacity: 1;
+  filter: none;
+  z-index: 10001;
+  cursor: grabbing;
+  transition: box-shadow 0.18s ease;
+}
+body.notes-drag-mode .note-card.note-card-dragging::after { display: none; }
+body.notes-drag-mode .note-card .note-card-pin {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+body.notes-drag-mode .note-card-pinned .note-card-pin,
+body.notes-drag-mode .note-card-pin.active,
+body.notes-drag-mode .note-card-pin svg {
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.notes-drag-mode .note-card::after { animation: none; }
+}
+.note-fullscreen-overlay .note-form-type-pill {
+  padding: 10px 16px;
+  font-size: 14px;
+}
+.note-fullscreen-overlay .note-cl-grip:active { cursor: grabbing; opacity: 0.9; }
+.note-fullscreen-overlay .note-cl-dot::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+.note-fullscreen-overlay .note-cl-text {
+  font-size: 14px;
+  padding: 7px 6px;
+  min-height: 32px;
+}
+.note-fullscreen-overlay .note-cl-rm:active { opacity: 1; }
+/* + Add (new checklist item) was tiny — bump for thumbs */
+.note-fullscreen-overlay .note-cl-add {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  letter-spacing: -0.01em;
+  opacity: 0.85;
+}
+.note-fullscreen-overlay .note-cl-add:active { opacity: 1; }
+.note-fullscreen-overlay .note-cl-add-row .note-cl-add { margin: 0; }
+.note-fullscreen-overlay .note-cl-add-row .note-form-photo-btn::before {
+  content: '+';
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.85;
+}
+.note-fullscreen-overlay .note-cl-add-row .note-form-photo-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.note-form-content-reader a {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.note-form-content-reader a:active { opacity: 0.7; }
+.note-fullscreen-overlay .note-cl-text-reader a {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.note-fullscreen-overlay .note-cl-text-reader a:active { opacity: 0.7; }
+/* Reminder bell + other header icon-buttons. Tightened down 2px so
+   the bell sits more proportionally next to the title field. */
+.note-fullscreen-overlay .note-form-icon-btn {
+  width: 36px;
+  height: 36px;
+}
+/* The plain-note textarea was rows="4" — fine for an in-grid card but
+   cramped in fullscreen. Let it grow to fill the available height so
+   writing feels like a real notepad, not a tweet box. The read-mode
+   reader inherits the same minimum so the layout doesn't jump when
+   the user taps to edit. */
+.note-fullscreen-overlay .note-form-content,
+.note-fullscreen-overlay .note-form-content-reader {
+  min-height: 55vh;
+  font-size: 15px;
+  line-height: 1.55;
+}
+/* Reorganized meta-row layout for fullscreen: color picker pinned to
+   the LEFT, type-toggle (Note/Todo/Draw) shoved to the RIGHT, with
+   the photo button next to the color picker. Tags are moved up into
+   the form header (next to the reminder bell) via JS. */
+.note-fullscreen-overlay .note-form-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+.note-fullscreen-overlay .note-form-photo-btn { order: 2; }
+.note-fullscreen-overlay .note-form-actions-group .note-form-cancel,
+.note-fullscreen-overlay .note-form-actions-group .note-form-save {
+  flex: 0 0 auto;
+}
+@keyframes notes-backdrop-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes notes-pane-enter {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.notes-pane.notes-pane-leaving {
+  animation: notes-pane-leave 160ms cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+@keyframes notes-pane-leave {
+  from { transform: scale(1);    opacity: 1; }
+  to   { transform: scale(0.96); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notes-pane,
+  .notes-pane.notes-pane-leaving { animation: none; }
+}
+/* Hide the "Add a to-do…" quick-add bar in archive view — you can't add
+   new items from the archive. */
+.notes-pane-archive .notes-quick-add { display: none !important; }
+@keyframes note-reminder-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
+      0 0 0 5px color-mix(in srgb, var(--accent, var(--red)) 26%, transparent),
+      0 0 18px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  }
+}
+@keyframes note-reminder-glow {
+  0%, 100% {
+    box-shadow:
+      inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
+      0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 14%, transparent),
+      0 0 14px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
+      0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 22%, transparent),
+      0 0 26px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  }
+}
+.note-card-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.note-card-select { left: -8px; }
+.note-card-pin    { right: -8px; }
+/* Pin button on mobile — only reveal once the user has long-pressed to
+   enter rearrange (drag) mode. Outside drag mode the card stays clean. */
+body.notes-mobile-mode.notes-drag-mode .note-card-pin {
+  display: flex !important;
+  opacity: 0.7;
+}
+body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
+  opacity: 1;
+}
+/* Edit + Done are now side-by-side at top-right by default — title-only
+   fallback no longer needed. */
+.note-card-selectmode .note-card-done { display: none !important; }
+.note-card:hover .note-card-corner-copy { visibility: visible; }
+/* Copy stays on every active card regardless of body shape — Edit + Done
+   live at the top-right pair, so the bottom-right copy slot is always
+   free. Hidden only in select mode. */
+.note-card-selectmode .note-card-corner-copy { display: none !important; }
+.note-card-corner-trash { left: 6px; }
+.note-card-corner-unarchive { right: 6px; }
+.note-card:hover .note-card-corner-trash,
+.note-card:hover .note-card-corner-unarchive { visibility: visible; }
+@keyframes note-ai-shine {
+  0%, 100% { opacity: 0.85; filter: drop-shadow(0 0 0 transparent); }
+  50%      { opacity: 1;    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent)); }
+}
+.note-form-improve-btn:disabled,
+.note-form-improve-btn.busy {
+  opacity: 0.6;
+  cursor: wait;
+}
+/* In select mode the whole card is a checkbox — kill every hover affordance
+   that would otherwise suggest "preview" or "open" so users know exactly
+   what their tap will do (toggle selection). */
+.note-card-selectmode .note-card-pin,
+.note-card-selectmode .note-card-actions { pointer-events: none; opacity: 0.4; }
+.note-card-selectmode .note-card-edit-corner,
+.note-card-selectmode .note-card-pin {
+  display: none !important;
+}
+.note-card-selectmode .note-card-title:hover { opacity: 1 !important; }
+.note-card-selectmode .note-card-edit-corner,
+.note-card-selectmode:hover .note-card-edit-corner { opacity: 0 !important; }
+/* The familiar home-screen edit-mode cue: mobile note cards gently jiggle
+   while Select mode is active, making it clear that the bar is now selecting
+   items rather than opening them. */
+@keyframes notes-select-jiggle {
+  0%, 100% { transform: rotate(-0.3deg) translateY(0); }
+  50% { transform: rotate(0.3deg) translateY(-0.25px); }
+}
+.note-card-action svg { transform: translateY(2px); }
+@keyframes notes-quick-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+  50%      { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+}
+.notes-quick-input::placeholder {
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* Blinking text caret hint before the placeholder so empty + unfocused
+   reads as a live input. Sits on the wrapper because <input> elements
+   can't carry ::before. The pseudo-element is ALWAYS rendered (so its
+   width is reserved and the placeholder doesn't jump left when the
+   hint hides); only the colour/animation toggle, not the layout. */
+.notes-quick-add::before {
+  content: '|';
+  color: var(--accent, var(--red));
+  margin-right: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  animation: notes-quick-caret 1s steps(2, jump-none) infinite;
+  pointer-events: none;
+}
+/* Hide visually (keep space) on hover, focus, or once the input has any
+   text — prevents the layout shift the user reported when the hint
+   collapsed and the placeholder slid left. */
+.notes-quick-add:hover::before,
+.notes-quick-add:focus-within::before,
+.notes-quick-add:not(:has(.notes-quick-input:placeholder-shown))::before {
+  visibility: hidden;
+  animation: none;
+}
+@keyframes notes-quick-caret {
+  0%, 49%  { opacity: 1; }
+  50%, 100%{ opacity: 0; }
+}
+.notes-quick-type-seg.is-todo::before { transform: translateX(100%); }
+.notes-skeleton-card.short { height: 46px; }
+@keyframes notes-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes cal-bell-jingle {
+  0%   { transform: rotate(0deg); }
+  15%  { transform: rotate(-22deg); }
+  30%  { transform: rotate(18deg); }
+  45%  { transform: rotate(-14deg); }
+  60%  { transform: rotate(10deg); }
+  75%  { transform: rotate(-6deg); }
+  88%  { transform: rotate(3deg); }
+  100% { transform: rotate(0deg); }
+}
+.note-form-reminder-tags:empty { display: none; }
+.note-reminder-day-chip.wide { padding: 0 6px; }
+.note-form-type-seg::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* 3 pills now (note / todo / draw) — Goal was removed. Slider takes
+     1/3 of the track and translates by full multiples of itself. */
+  width: 33.3333%;
+  height: 100%;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-radius: 9px;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 0;
+}
+.note-form-type-seg.is-todo::before { transform: translateX(100%); }
+.note-form-type-seg.is-draw::before { transform: translateX(200%); }
+/* Bulk-bar appears under the search bar — inset its sides to match the
+   search bar's own 8px horizontal padding so the two visually align. */
+#notes-bulk-bar.memory-bulk-bar {
+  margin: 0 8px 4px;
+  position: relative;
+  top: 4px;
+}
+#tasks-filter-chips {
+  top: 0 !important;
+}
+.note-card-goal .note-card-header {
+  /* Goal cards reserve space for the pill so the title doesn't collide. */
+  padding-left: 56px;
+}
+/* In select mode the left-side checkbox takes the pill's spot — drop it
+   so the row stays legible. */
+.note-card-selectmode.note-card-goal .note-goal-pill { display: none; }
+.note-card-selectmode.note-card-goal .note-card-header { padding-left: 0; }
+.note-form-goal-ai:disabled,
+.note-form-goal-ai.busy {
+  opacity: 0.6;
+  cursor: wait;
+}
+/* Fresh goal form: hide the title input + tag input + reminder button so the
+   user only sees the single "what do you want to achieve?" textarea. */
+.note-form-goal-fresh ~ .note-form-actions-group { display: none; }
+.note-form:has(.note-form-goal-fresh) .note-form-title,
+.note-form:has(.note-form-goal-fresh) .note-form-label,
+.note-form:has(.note-form-goal-fresh) .note-form-remind-btn,
+.note-form-bespoke:has(.note-form-goal-fresh) .note-form-title,
+.note-form-bespoke:has(.note-form-goal-fresh) .note-form-label,
+.note-form-bespoke:has(.note-form-goal-fresh) .note-form-remind-btn {
+  display: none !important;
+}
+.note-form-goal-fresh .note-form-goal-desc {
+  font-size: 15px;
+  min-height: 90px;
+  padding: 12px 14px;
+}
+.note-form-goal-fresh.building .note-form-goal-desc {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.note-form-goal-fresh.building::after {
+  content: 'AI is planning your goal…';
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 6px;
+  animation: note-goal-pulse 1.4s ease-in-out infinite;
+}
+@keyframes note-goal-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+.notes-today-row.done {
+  opacity: 0.35;
+  transform: scale(0.98);
+}
+.notes-today-title:hover { text-decoration: underline; }
+.notes-bulk-btn {
+  opacity: 0.6;
+}
+.notes-bulk-btn:hover { opacity: 1; }
+.note-form-label.flash-once {
+  animation: noteLabelFlash 0.6s ease-out;
+}
+.note-form-label:not([value=""]) { opacity: 0.9; border-style: solid; }
+.note-card-title:hover { opacity: 0.7; }
+.note-card-title.empty::before {
+  content: 'No title';
+  font-weight: 500;
+  opacity: 0.3;
+  font-style: italic;
+}
+/* Note card drag */
+.note-card { cursor: grab; }
+.note-cl-row:hover .note-cl-grip { opacity: 0.6; }
+.note-archive-btn:hover { opacity: 0.7; }
+.note-checklist-preview > .note-checkbox:last-child .note-check-text {
+  /* Reserve room on the LAST row only for the bottom-right copy button so it
+     doesn't cover the final item's tail. Applied to the text — not to the
+     row — so the X delete button still reaches the same edge it does on
+     every other row. */
+  padding-right: 30px;
+}
+.note-card.doclib-card-expanded .note-checklist-preview {
+  /* When the card is the expanded one in the grid, let the list use the
+     whole available height instead of the compact cap. */
+  max-height: none;
+}
+.note-checklist-preview:empty::before {
+  content: 'No todos';
+  font-size: 10px;
+  opacity: 0.3;
+  font-style: italic;
+}
+.note-card:hover .note-cl-quickadd,
+.note-cl-quickadd:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.note-cl-quickadd-input::placeholder { color: var(--fg); opacity: 0.5; }
+.note-card-selectmode .note-cl-quickadd { display: none !important; }
+.note-checkbox-rm { margin-left: auto; }
+.note-checkbox-edit { margin-left: auto; }
+.note-checkbox:hover .note-checkbox-edit,
+.note-checkbox:hover .note-checkbox-rm { opacity: 0.55; }
+.note-card-selectmode .note-checkbox-edit,
+.note-card-selectmode .note-checkbox-rm { display: none; }
+.note-check-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 7px;
+  height: 3.5px;
+  border-left: 1.75px solid #fff;
+  border-bottom: 1.75px solid #fff;
+  transform: translate(-50%, -50%) rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.notes-select-mode .note-checkbox { cursor: default; pointer-events: none; }
+.note-checkbox:active .note-check-dot {
+  transform: scale(0.9);
+}
+.note-checkbox.done .note-check-dot::after {
+  transform: translate(-50%, -50%) rotate(-45deg) scale(1);
+}
+@keyframes note-check-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+.note-checkbox.done .note-check-text {
+  position: relative;
+  opacity: 0.4;
+}
+.note-checkbox.done .note-check-text::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 1px);
+  height: 1px;
+  background: currentColor;
+  animation: note-strike 0.3s ease-out forwards;
+  transform-origin: left center;
+}
+@keyframes note-strike {
+  0%   { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
+}
+/* 3D top-edge highlight — an inset 2px stripe inside every note card that
+   reads as a lifted "glassy" lip. Each colored note gets a stronger stripe
+   in its own hue so the colour reads even before you focus on the card. */
+.note-card { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent); }
+.note-color-red    { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--red) 55%, transparent); }
+.note-color-orange { box-shadow: inset 0 2px 0 0 color-mix(in srgb, #d19a66 60%, transparent); }
+.note-color-yellow { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--hl-string) 60%, transparent); }
+.note-color-green  { box-shadow: inset 0 2px 0 0 color-mix(in srgb, #98c379 60%, transparent); }
+.note-color-blue   { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--hl-function) 60%, transparent); }
+.note-color-purple { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--hl-keyword) 60%, transparent); }
+.note-card.note-standard-v0 { --note-accent: #db8576; }
+.note-card.note-standard-v1 { --note-accent: #d2a45f; }
+.note-card.note-standard-v2 { --note-accent: #72ad8d; }
+.note-card.note-standard-v3 { --note-accent: #72a5cf; }
+.note-card.note-standard-v4 { --note-accent: #aa86c7; }
+.note-type-btn:hover { opacity: 0.8; }
+.note-form-meta .note-form-label {
+  width: 112px;
+  flex: 0 1 140px;
+}
+/* After attachColorPicker swaps the input to type=text + .cp-swatch-input,
+   re-pin the swatch to a 24px circle (otherwise it inherits text-input
+   sizing and becomes a giant rectangle). */
+.note-form-draw-color.cp-swatch-input {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  max-width: 24px !important;
+  border-radius: 50%;
+  padding: 0;
+  box-sizing: border-box;
+}
+.note-form-draw-color::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
+.note-form-draw-color::-webkit-color-swatch { border: none; border-radius: 50%; }
+.note-form-draw-color::-moz-color-swatch { border: none; border-radius: 50%; }
+.note-form-draw-size:hover,
+.note-form-draw-size:focus,
+.note-form-draw-size:active { height: 10px; }
+.note-form-draw-size::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.note-form-draw-size::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.note-form-draw-size:hover::-webkit-slider-thumb,
+.note-form-draw-size:focus::-webkit-slider-thumb,
+.note-form-draw-size:active::-webkit-slider-thumb { width: 18px; height: 18px; }
+.note-form-draw-size:hover::-moz-range-thumb,
+.note-form-draw-size:focus::-moz-range-thumb,
+.note-form-draw-size:active::-moz-range-thumb { width: 18px; height: 18px; }
+.note-form-draw-be::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 9px;
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 0;
+}
+.note-form-draw-be.is-eraser::before { transform: translateX(100%); }
+.note-form-draw-be-btn:focus { outline: none; }
+.note-form-draw-text-badge:empty { display: none; }
+.note-form-draw-shape-badge:empty { display: none; }
+/* Reflect the chosen size in the icon itself, so the user sees at a glance
+   which size (S/M/L) is active without needing the tiny badge. */
+.note-form-draw-line.size-s svg line,
+.note-form-draw-circle.size-s svg circle { stroke-width: 1.2; }
+.note-form-draw-line.size-m svg line,
+.note-form-draw-circle.size-m svg circle { stroke-width: 3; }
+.note-form-draw-line.size-l svg line,
+.note-form-draw-circle.size-l svg circle { stroke-width: 5; }
+.note-form-draw-text.size-s { font-size: 13px; }
+.note-form-draw-text.size-m { font-size: 18px; }
+.note-form-draw-text.size-l { font-size: 23px; line-height: 1; }
+/* Narrow widths: shrink the tag input to make room for the action group;
+   the hashtag-in-content shortcut still works, so the input can be tiny. */
+@media (max-width: 600px) {
+  .note-form-meta .note-form-label { width: 78px; flex-shrink: 1; min-width: 0; }
+}
+.note-form-due:not([value=""]) { opacity: 0.85; border-style: solid; }
+.note-cl-add:hover { opacity: 0.7; }
+/* Matching ↵ hint at the right of the event title while it's empty; hidden once
+   editing (the ✓ Done button takes over then). */
+/* Title placeholder overlay: the prompt text with a ↵ enter glyph right after
+   it (accent), so it's clear the field submits on Enter. Shown only while the
+   title is empty; the native placeholder is hidden in favour of this. */
+.cal-hero-title::placeholder { color: transparent; }
+.cal-quickadd-input::placeholder { color: transparent; }
+button.cal-nav.cal-toolbar-arrow:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--bg) 76%, var(--fg) 24%);
+}
+.cal-side-nav-prev { left: 8px; }
+.cal-side-nav-next { right: 8px; }
+.cal-navigation-hidden .cal-side-nav {
+  display: none !important;
+}
+#cal-add { margin-left: auto; }
+/* Mobile tap-spin: a gentle quarter-turn nudge before the form opens.
+   `.cal-add-plus` has a `padding-bottom: 2px` (and a translateY on the
+   small variant) that offsets the glyph for optical centering — those
+   shift the rotation pivot off the visual centre. Force the box to
+   match the glyph and pin the transform-origin during the spin. */
+.cal-add-plus.cal-add-spinning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+  transform-origin: 50% 50%;
+  animation: cal-add-spin 0.28s ease-out forwards;
+}
+@keyframes cal-add-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(90deg); }
+}
+button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover {
+  padding: 0 8px 0 5px;
+  gap: 3px;
+}
+.email-reminder-toggle-inline:hover svg {
+  animation: none !important;
+  transform: none !important;
+}
+.email-search-options-menu[hidden],
+.email-search-options-menu button.hidden {
+  display: none !important;
+}
+.email-search-date-panel[hidden] { display: none !important; }
+.email-search-date-panel label {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-size: 10px;
+}
+.email-lib-filter-pill-icon-only .email-lib-filter-pill-label { display: none; }
+.email-lib-filter-pill.email-lib-filter-pill-icon-only { padding-left: 5px !important; }
+.email-search-options-menu .email-search-date-actions button {
+  width: auto;
+  min-width: 48px;
+  justify-content: center;
+  padding: 5px 8px;
+}
+.email-attach-toggle:not(.email-attach-toggle-inline):hover svg {
+  animation: email-undone-jiggle 0.45s ease-in-out;
+  transform-origin: 50% 50%;
+}
+@keyframes email-undone-jiggle {
+  0%   { transform: rotate(0deg); }
+  20%  { transform: rotate(-14deg); }
+  40%  { transform: rotate(10deg); }
+  60%  { transform: rotate(-6deg); }
+  80%  { transform: rotate(3deg); }
+  100% { transform: rotate(0deg); }
+}
+.email-undone-toggle:not(.email-undone-toggle-inline):hover svg,
+.email-compose-jiggle:hover svg {
+  animation: email-undone-jiggle 0.45s ease-in-out;
+  transform-origin: 50% 50%;
+}
+/* Account chips collapse to a single horizontally-scrollable strip
+   at every breakpoint, instead of stacking onto multiple rows when
+   there are several accounts. The compose "New" button stays outside
+   the scroller (it's a sibling of #email-lib-accounts inside
+   .email-accounts-row) so it remains pinned on the right. */
+#email-lib-accounts {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+#email-lib-accounts::-webkit-scrollbar { display: none; height: 0; }
+#email-lib-accounts > * { flex-shrink: 0; scroll-snap-align: start; }
+.email-account-chip.email-account-has-unread:not(.active) {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--fg);
+}
+#email-lib-grid { position: relative; }
+#email-lib-grid .date-section-header.email-date-gap-break {
+  margin-top: 12px;
+  padding-top: 16px;
+}
+#email-lib-modal.email-reading .email-lib-sync-status {
+  display: none;
+}
+button.cal-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 2px 12px 2px 12px;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0.45;
+  line-height: 1;
+  height: 24px;
+  box-sizing: border-box;
+}
+.cal-s-color::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
+.cal-s-color::-webkit-color-swatch { border: none; border-radius: 50%; }
+.cal-s-color::-moz-color-swatch { border: none; border-radius: 50%; }
+.cal-filter-item.cal-filter-off { opacity:0.25; text-decoration:line-through; }
+.cal-filter-item.cal-filter-important.cal-filter-active { background:color-mix(in srgb, #e5a33a 18%, transparent); border-color:#e5a33a; }
+.cal-week-row > .cal-day { padding-top: calc(4px + var(--bars, 0) * 12px); }
+@keyframes cal-slide-from-right {
+  from { opacity:0; transform:translateX(20px); }
+  to { opacity:1; transform:translateX(0); }
+}
+@keyframes cal-slide-from-left {
+  from { opacity:0; transform:translateX(-20px); }
+  to { opacity:1; transform:translateX(0); }
+}
+@keyframes cal-event-enter {
+  from { opacity:0; transform:translateY(3px) scale(0.985); }
+  to { opacity:1; transform:translateY(0) scale(1); }
+}
+.cal-slide-in-right { animation: cal-slide-from-right 0.22s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.cal-slide-in-left { animation: cal-slide-from-left 0.22s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.cal-day.cal-today .cal-day-num { color:var(--bg); font-weight:800; background:var(--accent, var(--red)); border-radius:10px; padding:1px 6px; display:inline-block; opacity:1; line-height:1.3; }
+/* Selected day — same square geometry as `.cal-today` so the two read as
+   peers, but rendered as an outline + softer fill instead of a solid
+   accent block. Today wins when both classes are on the same cell. */
+.cal-day.cal-selected:not(.cal-today) {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent, var(--fg)) 65%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--fg)) 12%, var(--bg));
+  border-radius: 8px;
+}
+.cal-day.cal-weekend:not(.cal-today) { background:color-mix(in srgb, var(--fg) 2.5%, var(--bg)); }
+.cal-day.cal-empty-day::after {
+  content:'';
+  position:absolute;
+  left:8px;
+  right:8px;
+  bottom:8px;
+  height:1px;
+  background:color-mix(in srgb, var(--fg) 7%, transparent);
+  opacity:0.55;
+  pointer-events:none;
+}
+.cal-day.cal-other { opacity:0.34; }
+.cal-event-row::after {
+  content:'';
+  width:3px;
+  height:11px;
+  margin-left:auto;
+  opacity:0;
+  flex:0 0 auto;
+  border-left:1px solid color-mix(in srgb, var(--fg) 34%, transparent);
+  border-right:1px solid color-mix(in srgb, var(--fg) 34%, transparent);
+  transition:opacity 0.15s;
+}
+.cal-event-row:hover::after { opacity:0.75; }
+.cal-dragging { opacity:0.3; }
+#cal-body.cal-events-full > :is(.cal-grid, .cal-wk-wrap) {
+  display: none;
+}
+#cal-body.cal-events-full > .cal-day-detail {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+#cal-body.cal-calendar-full > .cal-day-detail {
+  display: none;
+}
+.cal-event-link-target {
+  animation: cal-event-link-target-flash 2.2s ease-out;
+  box-shadow:
+    inset 0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 88%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 20%, transparent),
+    0 8px 20px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent) !important;
+}
+@keyframes cal-event-link-target-flash {
+  0%, 28% {
+    filter: brightness(1.18) saturate(1.12);
+    transform: translateY(-1px);
+  }
+  100% {
+    filter: none;
+    transform: none;
+  }
+}
+.cal-event-loc a, .cal-event-time a { color:inherit; text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 40%, transparent); }
+.cal-event-loc a:hover, .cal-event-time a:hover { opacity:1; text-decoration-color:currentColor; }
+#cal-settings > svg {
+  top: 3px !important;
+}
+.cal-wk-col.cal-wk-today .cal-wk-col-head { background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg)); }
+.cal-wk-col.cal-wk-today .cal-wk-dn,
+.cal-wk-col.cal-wk-today .cal-wk-dt { color: var(--accent, var(--red)); font-weight: 700; }
+/* Sunday: a softer rest-day tint so the week edge reads visually, even
+   when today is mid-week. Falls back gracefully under the .cal-wk-today
+   rules above (today on a Sunday still gets the accent treatment). */
+.cal-wk-col.cal-wk-sun .cal-wk-col-head { background: color-mix(in srgb, var(--fg) 7%, var(--bg)); }
+.cal-wk-col.cal-wk-sun .cal-wk-grid { background: color-mix(in srgb, var(--fg) 2.5%, var(--bg)); }
+.cal-wk-col.cal-wk-sun .cal-wk-allday { background: color-mix(in srgb, var(--fg) 3%, var(--bg)); }
+.cal-wk-col.cal-wk-sun .cal-wk-dn,
+.cal-wk-col.cal-wk-sun .cal-wk-dt { color: color-mix(in srgb, var(--fg) 60%, transparent); }
+.cal-wk-dt { font-variant-numeric: tabular-nums; opacity: 0.5; }
+.cal-wk-allday::-webkit-scrollbar { display: none; }
+.cal-wk-now::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, var(--red, #f87171));
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+}
+.cal-wk-now::after {
+  content:'now';
+  position:absolute;
+  right:4px;
+  top:-10px;
+  padding:1px 5px;
+  border-radius:7px;
+  font-size:8px;
+  line-height:1.2;
+  font-weight:800;
+  text-transform:uppercase;
+  color:var(--bg);
+  background:var(--accent, var(--red));
+  box-shadow:0 1px 4px color-mix(in srgb, #000 22%, transparent);
+}
+@keyframes cal-wk-hover-label-reveal {
+  0%, 35% { opacity: 0; }
+  100% { opacity: 1; }
+}
+.cal-wk-block:hover .cal-wk-block-resize::after {
+  content: '';
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+.cal-wk-block::after {
+  content:'';
+  position:absolute;
+  top:6px;
+  right:5px;
+  width:3px;
+  height:14px;
+  opacity:0;
+  border-left:1px solid color-mix(in srgb, var(--fg) 35%, transparent);
+  border-right:1px solid color-mix(in srgb, var(--fg) 35%, transparent);
+  transition:opacity 0.15s;
+}
+.cal-wk-block:hover::after { opacity:0.75; }
+.cal-wk-block-resize:hover::after {
+  background: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+/* Body of a block while it's being repositioned: lifted shadow + above
+   siblings so the drop target reads clearly. */
+.cal-wk-block-ghost {
+  z-index: 6 !important;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--fg) 24%, transparent) !important;
+  cursor: grabbing;
+}
+.cal-wk-block { cursor: grab; }
+.cal-wk-block:active { cursor: grabbing; }
+.cal-wk-slot-selected-label {
+  pointer-events: none;
+}
+.cal-wk-slot-resize::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent, var(--fg));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 75%, transparent);
+}
+.cal-wk-col.cal-wk-slot-day-selected .cal-wk-col-head {
+  color: var(--accent, var(--fg));
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent, var(--fg)) 70%, transparent);
+}
+.cal-year-month:hover .cal-year-month-title { opacity:1; color:var(--accent); }
+.cal-year-day { cursor:pointer; opacity:0.5; }
+.cal-search-input.cal-day-search:focus { width:100%; }
+.cal-agenda-day::before {
+  content:'';
+  position:absolute;
+  left:4px;
+  top:22px;
+  bottom:-12px;
+  width:1px;
+  background:color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.cal-agenda-day::after {
+  content:'';
+  position:absolute;
+  left:1px;
+  top:12px;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:color-mix(in srgb, var(--fg) 22%, var(--bg));
+  box-shadow:0 0 0 3px var(--bg);
+}
+.cal-agenda-day.is-today::after { background:var(--accent, var(--red)); }
+.cal-agenda-day.is-today .cal-agenda-date { opacity: 1; color: var(--accent, var(--red)); border-bottom-color: color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border)); }
+.cal-agenda-event:hover .cal-event-more,
+.cal-event-item:hover .cal-event-more { opacity:0.6; }
+button.cal-event-more {
+  background:transparent;
+  border:none;
+  color:var(--fg);
+  width:20px; height:20px;
+  cursor:pointer;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-family:inherit;
+  flex-shrink:0;
+  margin-left:auto;
+  align-self:center;
+  transform:translateY(-4px);
+  transition:opacity 0.15s;
+}
+button.cal-event-more:hover { opacity:1 !important; }
+/* Day-detail "+ New" button nudged down 2px. */
+#cal-add-day { position: relative; top: 2px; }
+/* Accent the native date/time picker glyphs. We recolor the webkit indicator
+   by masking an accent fill through a calendar/clock SVG (same technique as the
+   mono icon picker). accent-color covers the spinner parts where supported. */
+.cal-form-bespoke input[type="date"],
+.cal-form-bespoke input[type="time"],
+.cal-form-bespoke input[type="datetime-local"] { accent-color: var(--accent, var(--red)); }
+.cal-form-bespoke input[type="date"]::-webkit-datetime-edit-month-field,
+.cal-form-bespoke input[type="date"]::-webkit-datetime-edit-day-field {
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.cal-form-bespoke input[type="date"]::-webkit-datetime-edit-year-field {
+  color: var(--fg);
+  font-weight: 400;
+}
+.cal-form-bespoke input[type="date"]::-webkit-calendar-picker-indicator,
+.cal-form-bespoke input[type="time"]::-webkit-calendar-picker-indicator,
+.cal-form-bespoke input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  background-color: var(--accent, var(--red));
+  background-image: none;
+  cursor: pointer;
+  width: 14px; height: 14px;
+}
+.cal-form-bespoke input[type="date"]::-webkit-calendar-picker-indicator,
+.cal-form-bespoke input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+.cal-form-bespoke input[type="time"]::-webkit-calendar-picker-indicator {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolyline points='12 6 12 12 16 14'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolyline points='12 6 12 12 16 14'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+/* Title underline + clock focus ring + primary button track --ev-color
+   when set; default to --accent / --fg otherwise. */
+.cal-form-bespoke .cal-input.cal-hero-title:focus { border-bottom-color: var(--ev-color, var(--accent, color-mix(in srgb, var(--fg) 60%, transparent))); }
+.cal-form-bespoke[style*="--ev-color"] .cal-input.cal-hero-title { border-bottom-color: color-mix(in srgb, var(--ev-color) 35%, var(--border)); }
+.cal-form-bespoke .cal-hero-time:focus-visible,
+.cal-form-bespoke .cal-hero-date:focus-visible { outline-color: var(--ev-color, var(--accent, color-mix(in srgb, var(--fg) 50%, transparent))); }
+/* Custom-BG events paint the form card with the uploaded image. Make sure
+   the action row + buttons stay clearly readable on top of it. */
+.cal-form-bespoke.cal-form-bg-image .cal-form-actions {
+  position: relative;
+  z-index: 2;
+  /* Solid backing strip so the Save/Cancel/Delete buttons don't fade into
+     the photo behind them. */
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  margin: 8px -14px -14px;
+  padding: 10px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0 0 8px 8px;
+}
+.cal-form-today span { letter-spacing: 0.04em; text-transform: none; opacity: 0.85; font-weight: 500; }
+.cal-hero-time .cal-hero-clock,
+.cal-hero-time .cal-hero-ampm { line-height: 1; }
+.cal-hero-time:focus-visible { outline: 2px solid var(--accent, color-mix(in srgb, var(--fg) 50%, transparent)); outline-offset: 2px; }
+.cal-hero-date:focus-visible { outline: 2px solid var(--accent, color-mix(in srgb, var(--fg) 50%, transparent)); outline-offset: 2px; }
+.cal-input.cal-hero-title:focus {
+  border-color: transparent;
+  border-bottom-color: var(--accent, color-mix(in srgb, var(--fg) 60%, transparent));
+}
+.cal-form-bespoke.is-expanded .cal-form-details {
+  max-height: 720px;
+  opacity: 1;
+  margin-top: 4px;
+}
+.cal-form-bespoke .cal-form-actions { margin-top: 8px; justify-content: flex-end; }
+.cal-form-bespoke .cal-form-row { margin-bottom: 8px; }
+.cal-loc-input-wrap > input { height: 100%; }
+.cal-loc-input-wrap > input::placeholder { color: transparent; }
+.cal-loc-hint svg { color: var(--accent, var(--red)); }
+.cal-loc-input-wrap > input:placeholder-shown ~ .cal-loc-hint { display: inline-flex; }
+.cal-loc-map.is-disabled { opacity: 0.3; pointer-events: none; cursor: default; }
+select.cal-input { appearance:auto; }
+textarea.cal-input { resize:vertical; font-family:inherit; }
+button.cal-btn.cal-btn-danger { color:var(--accent, var(--red)); border-color:var(--accent, var(--red)); background:transparent; }
+button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); color:var(--bg); }
+/* Brief outline flash on a note card when it's the target of a
+   #note-<id> link click from chat — same pattern as the cookbook
+   task flash, just scoped to .note-card. */
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}

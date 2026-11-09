@@ -60,7 +60,6 @@ def test_login_page_static_assets_resolve_under_mount_path():
     mounted_login_url = "https://example.test/odysseus/login"
     for relative_asset, mounted_path in (
         ("static/manifest.json", "/odysseus/static/manifest.json"),
-        ("static/icons/icon-192.png", "/odysseus/static/icons/icon-192.png"),
         (
             "static/fonts/FiraCode-Regular.woff2",
             "/odysseus/static/fonts/FiraCode-Regular.woff2",

@@ -4,12 +4,16 @@
 
 ## Target branch
 
-- [ ] This PR targets **`dev`**, not `main`. All PRs land in `dev`; `main` is curated by the maintainer at each release. If your PR is on `main` by accident, click "Edit" on this PR and change the base.
+- [ ] This PR targets the correct integration branch: **`lab`** in the private maintainer-preview repository, or **`dev`** in the public repository. `main` remains release-curated.
 
 ## Linked Issue
 
-<!-- Every PR should be linked to an issue.
-     Use one of:  Fixes #NNN  |  Part of #NNN  |  Closes #NNN  -->
+<!-- Public-repository PRs must link an issue:
+     Fixes #NNN  |  Part of #NNN  |  Closes #NNN
+
+     Private maintainer-preview PRs may instead use:
+     N/A — maintainer integration work
+-->
 
 Fixes #
 
@@ -25,7 +29,7 @@ Fixes #
 ## Checklist
 
 - [ ] I searched [open issues](https://github.com/odysseus-dev/odysseus/issues) and [open PRs](https://github.com/odysseus-dev/odysseus/pulls) — this is not a duplicate.
-- [ ] This PR targets `dev`
+- [ ] This PR targets the correct integration branch (`lab` in maintainer-preview; `dev` in the public repository)
 - [ ] My changes are limited to the scope described above — no unrelated refactors or whitespace changes mixed in.
 - [ ] I actually ran the app (`docker compose up` or `uvicorn app:app`) and verified the change works end-to-end. Type-checks and unit tests are not enough.
 - [ ] I did not run the app/runtime validation and stated that gap in **How to Test**. Leave this unchecked when the app-run box above is checked.

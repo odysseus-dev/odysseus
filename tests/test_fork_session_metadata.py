@@ -40,8 +40,9 @@ class _FakeSessionManager:
         return self.sessions[session_id]
 
     def create_session(self, session_id=None, name=None, endpoint_url=None,
-                       model=None, rag=False, owner=None):
+                       model=None, rag=False, owner=None, endpoint_id=None):
         self.created = _FakeSession(name=name, owner=owner)
+        self.created.endpoint_id = endpoint_id
         return self.created
 
     def save_sessions(self):
@@ -59,6 +60,7 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
     monkeypatch.setattr(mod, "_verify_session_owner", lambda *a, **k: None)
 
     source = _FakeSession(name="Original", owner="alice")
+    source.endpoint_id = "chatgpt-account-b"
     source.history = [
         ChatMessage("user", "hi", {"_db_id": "src-0"}),
         ChatMessage("assistant", "yo", {"_db_id": "src-1"}),
@@ -78,6 +80,7 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
 
     assert result["status"] == "ok"
     assert result["kept"] == 2
+    assert sm.created.endpoint_id == "chatgpt-account-b"
 
     # The forked session got its own metadata dicts...
     new_session = sm.created
@@ -87,3 +90,42 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
     # ...and the source session's _db_id values are untouched.
     assert source.history[0].metadata["_db_id"] == "src-0"
     assert source.history[1].metadata["_db_id"] == "src-1"
+
+
+def _fork_with(monkeypatch, body, db_ids):
+    """Fork a 4-message source whose DB rows have the given ids."""
+    monkeypatch.setattr(mod, "_verify_session_owner", lambda *a, **k: None)
+    source = _FakeSession(name="Long chat")
+    for i, role in enumerate(["user", "assistant", "user", "assistant"]):
+        source.history.append(ChatMessage(role=role, content=f"m{i}", metadata={"_db_id": db_ids[i]}))
+    manager = _FakeSessionManager(source)
+    rows = [SimpleNamespace(id=i) for i in db_ids]
+
+    class _Query:
+        def filter(self, *a): return self
+        def order_by(self, *a): return self
+        def all(self): return rows
+
+    class _DB:
+        def query(self, *a): return _Query()
+        def close(self): pass
+
+    monkeypatch.setattr(mod, "SessionLocal", lambda: _DB())
+    router = mod.setup_history_routes(manager)
+
+    class _Req:
+        async def json(self): return body
+
+    asyncio.run(_fork_handler(router)(_Req(), "src-id"))
+    return [m.content for m in manager.created.history]
+
+
+def test_fork_before_a_message_id_ignores_a_stale_keep_count(monkeypatch):
+    copied = _fork_with(monkeypatch, {"before_msg_id": "c", "keep_count": 0}, ["a", "b", "c", "d"])
+    assert copied == ["m0", "m1"]
+
+
+def test_fork_through_a_message_id_includes_it(monkeypatch):
+    copied = _fork_with(monkeypatch, {"through_msg_id": "b", "keep_count": 0}, ["a", "b", "c", "d"])
+    assert copied == ["m0", "m1"]
+

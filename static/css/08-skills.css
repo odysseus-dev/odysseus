@@ -1,0 +1,1088 @@
+/* 08-skills - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+/* Document cards can be expanded in the normal windowed library, where the
+   grid has no definite height. A zero-basis <pre> then collapses to nothing
+   while the footer remains visible. Keep the document text's intrinsic height
+   in that layout; bounded/fullscreen layouts can still shrink it and scroll. */
+#doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview > pre {
+  flex: 1 1 auto;
+  min-height: 1.5em;
+}
+
+/* Collapsible skills section headers (Your skills / Built-in). */
+.skills-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 4px 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+  font-weight: 600;
+}
+.skills-section-header:hover { opacity: 0.9; }
+.skills-section-chevron { transition: transform 0.15s ease; flex-shrink: 0; }
+.skills-section-header.collapsed .skills-section-chevron { transform: rotate(-90deg); }
+.skills-section-count {
+  margin-left: auto;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  font-weight: normal;
+}
+.skill-card-section-hidden { display: none !important; }
+/* Warning banner shown when previewing/editing a built-in capability. */
+.skill-builtin-warn {
+  font-size: 9.5px;
+  line-height: 1.45;
+  color: var(--color-warning, #f0ad4e);
+  background: color-mix(in srgb, var(--color-warning, #f0ad4e) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 35%, transparent);
+  border-radius: 6px;
+  padding: 6px 9px;
+  margin: 0 0 8px;
+  flex-shrink: 0;
+}
+
+/* #skills-list wears both .memory-list and .doclib-grid. doclib-grid's
+   max-height:400px would cap the list AND clamp an expanded card — keep
+   the memory-list fill-the-modal behaviour instead. */
+#skills-list.doclib-grid {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+}
+#skills-list.doclib-grid:has(.doclib-card-expanded) {
+  overflow: hidden;  /* expanded card owns its own scroll */
+}
+/* When a skill is expanded, hide the sibling Add-Skill form card so the
+   expanded SKILL.md uses the full panel. Otherwise the two admin-cards
+   split the height ~50/50 and the expanded skill is stuck in its half
+   while the Add form idles in the other. */
+.memory-tab-panel[data-memory-panel="skills"]:has(.doclib-card-expanded) > .admin-card:nth-of-type(2) {
+  display: none !important;
+}
+
+/* Skills cards reuse the doclib expand/footer machinery. The SKILL.md
+   preview + the edit textarea need to fill the expanded card and own
+   their own scroll, same as a document preview. */
+/* Collapsed skill rows used a smaller (0.9em code) title, so the click row
+   read slimmer than document/chat/library cards. Give the header a min-height
+   so the tap target matches the other library items. */
+.skill-card > .skill-card-header {
+  min-height: 53px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Skill rows share Tasks' card hover colors. Draft state belongs in the
+   status badge, not in a second opacity layer across the whole row. */
+/* Name + description column. Name wraps to 2 lines (skill slugs are long —
+   use the space rather than truncating to "check-model-downl…"). */
+.skill-card-textcol {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.skill-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.skill-card-name {
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 12px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+  line-height: normal;
+}
+.skill-card-title-row .skill-card-name { min-width: 0; }
+.skill-status-published {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-success, #4ade80);
+  background: color-mix(in srgb, var(--color-success, #4ade80) 15%, transparent);
+  border-color: color-mix(in srgb, var(--color-success, #4ade80) 32%, transparent);
+  border-radius: 50%;
+}
+.skill-stats .skill-status-published {
+  width: 15px;
+  height: 15px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+.skill-stats .skill-status-published svg {
+  width: 9px;
+  height: 9px;
+}
+.skill-card-desc {
+  font-size: 10px;
+  opacity: 0.4;
+  margin-top: -1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.skills-audit-model-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.skills-audit-model-field > span {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+}
+.skills-audit-model-field select {
+  min-width: 0;
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.skill-card-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.skill-tag-pill {
+  padding: 1px 5px;
+  font-size: 9px;
+}
+.skill-usage-pill {
+  margin-left: auto;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+.skill-tag-filter-chip { cursor: pointer; }
+
+@media (max-width: 768px) {
+  .skill-card > .skill-card-header {
+    align-items: flex-start;
+  }
+  .skill-card-textcol {
+    min-width: 0;
+  }
+  .skill-card-tags {
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .skill-card-tags .skill-tag-pill {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+/* Right cluster — pills (right-aligned), stats, then the menu/chevron. */
+.skill-card-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.skill-card-right .memory-cat-badge { flex-shrink: 0; }
+.skill-status-bin {
+  background: color-mix(in srgb, var(--color-danger, #d9534f) 20%, transparent);
+  color: var(--color-danger, #d9534f);
+}
+.skill-model-pill {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-model-student {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.skill-audit-pass {
+  color: var(--color-success, #4ade80);
+  background: color-mix(in srgb, var(--color-success, #4ade80) 16%, transparent);
+}
+.skill-audit-needs_work {
+  color: var(--color-warning, #f0ad4e);
+  background: color-mix(in srgb, var(--color-warning, #f0ad4e) 16%, transparent);
+}
+.skill-audit-fail {
+  color: var(--color-danger, #e06c75);
+  background: color-mix(in srgb, var(--color-danger, #e06c75) 16%, transparent);
+}
+.skill-audit-inconclusive,
+.skill-audit-skipped,
+.skill-audit-unknown {
+  color: color-mix(in srgb, var(--fg) 64%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.skill-model-teacher {
+  background: color-mix(in srgb, var(--color-warning, #f0ad4e) 24%, transparent);
+  color: var(--color-warning, #f0ad4e);
+}
+.skill-necessity-pill {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-necessity-duplicate {
+  background: color-mix(in srgb, var(--color-warning, #f0ad4e) 22%, transparent);
+  color: var(--color-warning, #f0ad4e);
+}
+.skill-necessity-trivial {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.skill-necessity-irrelevant {
+  background: color-mix(in srgb, var(--color-danger, #e06c75) 18%, transparent);
+  color: var(--color-danger, #e06c75);
+}
+.skills-summary-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  margin: -3px 0 8px;
+}
+.skills-summary-strip::-webkit-scrollbar { display: none; }
+.skills-summary-strip:empty {
+  display: none;
+}
+.skills-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 23px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.skills-summary-chip:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.skills-summary-chip.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 13%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
+  color: var(--fg);
+}
+.skills-summary-chip strong {
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: var(--fg);
+}
+
+/* Shared filter/tag strip contract. These rows all sit immediately below
+   their screen's search or primary toolbar and stay one line at every width. */
+:is(
+  .skills-summary-strip,
+  #memory-category-filters,
+  .memory-category-filters:has(> .memory-cat-chip),
+  .doclib-lang-chips,
+  .doclib-chips,
+  .notes-labels-bar,
+  .tasks-activity-filters,
+  .gallery-tag-chips,
+  .gallery-album-chips,
+  .gallery-ai-tags,
+  .cal-filters
+) {
+  align-items: center;
+  flex-wrap: nowrap !important;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: none;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  box-sizing: border-box;
+  padding: 0;
+  margin: -3px 0 8px;
+}
+:is(
+  .skills-summary-strip,
+  #memory-category-filters,
+  .memory-category-filters:has(> .memory-cat-chip),
+  .doclib-lang-chips,
+  .doclib-chips,
+  .notes-labels-bar,
+  .tasks-activity-filters,
+  .gallery-tag-chips,
+  .gallery-album-chips,
+  .gallery-ai-tags,
+  .cal-filters
+)::-webkit-scrollbar { display: none; }
+:is(
+  .skills-summary-strip > .skills-summary-chip,
+  #memory-category-filters > .skills-summary-chip,
+  .memory-category-filters > .memory-cat-chip,
+  .doclib-lang-chips > :is(.memory-cat-chip, .skills-summary-chip),
+  .doclib-chips > .doclib-chip,
+  .notes-labels-bar > .notes-label-chip,
+  .tasks-activity-filters > .memory-cat-chip,
+  .gallery-tag-chips > .gallery-chip,
+  .gallery-album-chips > .gallery-chip,
+  .gallery-ai-tags > .gallery-ai-chip,
+  .cal-filters > .cal-filter-item
+) {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 23px !important;
+  min-height: 23px;
+  padding: 0 8px !important;
+  border-radius: 6px !important;
+  font-size: 10px !important;
+  line-height: 1;
+  white-space: nowrap;
+}
+.doclib-lang-chips {
+  flex: 0 0 auto;
+  min-height: 25px;
+  padding: 1px 0 !important;
+  scroll-padding-inline: 1px;
+}
+.doclib-chip-scroll-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.doclib-chip-scroll-frame > .chip-scroll-strip {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 0;
+  margin-right: 0;
+}
+.doclib-chip-scroll-arrow {
+  display: none;
+  position: absolute;
+  top: calc(50% - 1px) !important;
+  transform: translateY(-50%);
+  margin-top: 0;
+  z-index: 2;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--bg) 86%, var(--fg) 14%);
+  color: var(--accent, var(--red));
+  box-shadow: 0 6px 18px rgba(0,0,0,0.16);
+  font-size: 18px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0.84;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.doclib-chip-scroll-arrow-glyph {
+  display: inline-block;
+  position: relative;
+  top: -1px;
+  line-height: 1;
+}
+.doclib-chip-scroll-arrow:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--bg) 76%, var(--fg) 24%);
+}
+@media (max-width: 768px) {
+  .doclib-chip-scroll-arrow { display: none !important; }
+}
+.doclib-chip-scroll-frame.has-overflow > .doclib-chip-scroll-arrow:not([hidden]) {
+  display: inline-flex;
+}
+.doclib-chip-scroll-arrow.left { left: 0; }
+.doclib-chip-scroll-arrow.right { right: 0; }
+.doclib-chip-scroll-frame.has-overflow > .chip-scroll-strip {
+  padding-left: 0 !important;
+  padding-right: 22px !important;
+}
+.doclib-chip-scroll-frame > .chip-scroll-strip.is-pointer-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+.doclib-chip-scroll-frame > .chip-scroll-strip:not(.is-pointer-dragging) {
+  cursor: grab;
+}
+/* Calendar tags are wrapped by chipScroll.js after render. Keep that wrapper
+   content-sized inside the calendar's column layout; the default flex growth
+   otherwise turns the one-line tag strip into a large empty panel. */
+#cal-body > .doclib-chip-scroll-frame:has(> .cal-filters) {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+/* The completed-task filters are a compact toolbar, not a flexible panel.
+   Without this override the shared chip frame grows into the available
+   height of the card, which is especially visible the first time the mobile
+   view switches to Completed. */
+.tasks-completed-card > .doclib-chip-scroll-frame:has(> #tasks-completed-status-chips) {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+/* The active Tasks filter row is also a compact toolbar.  Keep its wrapper
+   content-sized so changing a filter cannot make the mobile panel grow a
+   large empty gap between the chips and the task cards. */
+.admin-card > .doclib-chip-scroll-frame:has(> #tasks-filter-chips) {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+#memory-category-filters {
+  flex: 0 0 auto;
+  min-height: 25px;
+  padding: 1px 0 !important;
+  scroll-padding-inline: 1px;
+}
+.cookbook-serve-tag-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+#serve-search,
+#hwfit-cache-select,
+#serve-tags {
+  position: relative;
+  top: -2px;
+}
+#hwfit-cache-select {
+  top: -4px;
+}
+/* Calendar previously framed its tags as a separate card. It now follows the
+   same unframed placement as the other filter strips. */
+.cal-filters {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.skill-duplicate-keep {
+  background: color-mix(in srgb, var(--color-success, #4ade80) 22%, transparent);
+  color: var(--color-success, #4ade80);
+}
+.skill-duplicate-group {
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.skill-duplicate-lower {
+  background: color-mix(in srgb, var(--color-danger, #e06c75) 14%, transparent);
+  color: var(--color-danger, #e06c75);
+}
+.skill-stats {
+  font-size: 9px;
+  font-family: monospace;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.skill-turns-saved {
+  font-size: 9px;
+  opacity: 0.82;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.skill-expanded-savings {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  margin: 0 0 5px;
+}
+.skill-turns-positive {
+  color: color-mix(in srgb, var(--color-success, #4ade80) 82%, var(--fg));
+}
+.skill-turns-zero,
+.skill-turns-unknown {
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+}
+.skill-turns-negative {
+  color: color-mix(in srgb, var(--color-danger, #e06c75) 80%, var(--fg));
+}
+.skill-conf {
+  display: inline-block;
+  min-width: 4ch;
+  text-align: right;
+  font-weight: 700;
+  color: var(--accent, var(--red));
+}
+.skill-verified,
+.skill-teachermark,
+.skill-needsmark {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-right: 3px;
+}
+.skill-verified { color: var(--accent, #4ade80); }
+.skill-teachermark { color: var(--color-warning, #f0ad4e); }
+.skill-needsmark { color: var(--color-danger, #e06c75); cursor: help; }
+
+/* The card currently being processed by an "Audit now" run glows + pulses so
+   it's obvious which one the audit is on. */
+@keyframes skill-audit-pulse {
+  0%, 100% { box-shadow: 0 0 6px 0 color-mix(in srgb, var(--accent, #4ade80) 55%, transparent); }
+  50%      { box-shadow: 0 0 16px 3px color-mix(in srgb, var(--accent, #4ade80) 85%, transparent); }
+}
+.skill-card.skill-audit-active {
+  border-color: var(--accent, #4ade80) !important;
+  animation: skill-audit-pulse 1.3s ease-in-out infinite;
+}
+
+/* A test is running for this skill — the app's whirlpool spinner is injected
+   next to the name from JS (see _setCardRunning) so the collapsed/folded card
+   still makes it obvious work is in progress. */
+/* Collapsed bar shows the kebab menu; expanded shows an up-chevron to
+   collapse. (Toggled by the .doclib-card-expanded class.) */
+.skill-kebab-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  margin: 0;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.5;
+  border-radius: 5px;
+  flex-shrink: 0;
+  position: relative;
+  top: -2px;
+}
+.skill-kebab-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.skill-chevron-up { display: none; align-items: center; opacity: 0.5; flex-shrink: 0; }
+/* Kebab dropdown */
+.skill-kebab-menu {
+  position: fixed;
+  /* z-index is set inline via topPortalZ() at open time (#4720); a static
+     value here loses once the modal bring-to-front counter climbs past it. */
+  min-width: auto;
+  width: max-content;
+  padding: 4px;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.skill-kebab-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 11px;
+  text-align: left;
+}
+.skill-kebab-item:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.skill-kebab-item.danger { color: var(--color-error, #e55); }
+.skill-kebab-item.danger:hover { background: color-mix(in srgb, var(--color-error, #e55) 15%, transparent); }
+/* Section labels separating "Your skills" from the read-only "Built-in
+   capabilities" list. */
+.skills-section-label {
+  font-size: 10px;
+  opacity: 0.5;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 10px 2px 4px;
+  flex-shrink: 0;
+}
+.skills-section-label:first-child { margin-top: 0; }
+/* When a learned skill is expanded the grid hides sibling cards; hide the
+   section labels too so they don't orphan above the collapsed list. */
+#skills-list:has(.doclib-card-expanded) .skills-section-label { display: none; }
+/* Built-in cards are read-only — no expand/hover-pointer affordance. */
+.skill-builtin-card { cursor: default; }
+.skill-builtin-card:hover { border-color: var(--border); }
+.skill-card-preview .skill-md-pre {
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.skill-preview-copy {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  opacity: 0;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity .15s, color .15s, border-color .15s;
+}
+.skill-card-preview:hover .skill-preview-copy { opacity: 0.7; }
+.skill-preview-copy:hover,
+.skill-preview-copy:focus-visible { opacity: 1 !important; }
+.skill-preview-copy.copied {
+  opacity: 1;
+  color: var(--color-save-green, #4caf50);
+  border-color: var(--color-save-green, #4caf50);
+}
+/* :has()-free expand layout. skills.js adds .skills-has-expanded to the
+   skills admin-card when a skill opens, so this works on engines that don't
+   support :has() (e.g. older Firefox mobile, where the expand stuck at
+   ~50%). Hide everything but the list so the grid fills the card; the
+   absolutely-positioned expanded card (mobile) then fills the grid. */
+.admin-card.skills-has-expanded > *:not(#skills-list) {
+  display: none !important;
+}
+.admin-card.skills-has-expanded > #skills-list.doclib-grid {
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+/* Expand animation — a clean opacity fade. The mobile card snaps to a
+   full-screen overlay (position:absolute), so any translate/scale on it
+   reads as a jarring "explosion"; a pure fade just appears smoothly. (No
+   transform also keeps skills.js's height measurement accurate.) */
+@keyframes skill-card-expand {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.skill-card.doclib-card-expanded {
+  animation: skill-card-expand 0.18s ease-out;
+}
+/* Switching directly from one expanded card to another: no fade (it would
+   show the previous card collapsing through the semi-transparent new one). */
+.skill-card.doclib-card-expanded.skill-expand-instant {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skill-card.doclib-card-expanded,
+  .skill-card.doclib-card-expanded .doclib-card-preview {
+    animation: none !important;
+  }
+}
+/* The preview WRAPPER inherits flex:1 (grow) from the generic doclib expand
+   rule — that's what stretched the card and left a void / pushed the footer
+   out. Size it to content (shrink + scroll only when long) so the footer
+   sits right under the preview and stays fully visible. */
+.skill-card.doclib-card-expanded .doclib-card-preview {
+  flex: 0 1 auto !important;
+  min-height: 0;
+  /* The footer lives INSIDE this wrapper. Don't let the wrapper scroll, or
+     the footer scrolls off with the content. Keep it clipped; the <pre>
+     inside is the scroller, so the footer stays pinned at the bottom. */
+  overflow: hidden !important;
+}
+.skill-card.doclib-card-expanded .skill-md-pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Skill footer buttons sit 4px high (shared rule sets top:-4px) — drop them
+   back down 4px so they're vertically centered in the skill card footer. */
+.skill-card .doclib-card-expanded-actions > .doclib-card-action-btn,
+.skill-card .doclib-card-expanded-actions .doclib-action-btn-row > .doclib-card-action-btn {
+  top: 0;
+}
+/* Skills select-mode bulk bar — nudge Cancel / Approve / Delete up 2px. */
+#skills-bulk-bar .memory-toolbar-btn {
+  position: relative;
+  top: -2px;
+}
+/* ── Audit-all progress panel ── */
+.skills-audit-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.skills-audit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.skills-audit-title { font-size: 12px; font-weight: 600; }
+.skills-audit-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--fg) 12%, transparent); margin: 6px 0; overflow: hidden; }
+.skills-audit-fill { height: 100%; background: var(--accent, var(--red)); transition: width 0.3s ease; }
+.skills-audit-summary { font-size: 11px; opacity: 0.7; margin-bottom: 4px; }
+.skills-audit-log {
+  max-height: 22vh; overflow-y: auto;
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  font-size: 10.5px; line-height: 1.5; opacity: 0.8;
+}
+/* ── Skill test monitor + AI eval verdict ── */
+.skill-test { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.skill-test-log {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 48vh;
+  overflow-y: auto;
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  font-size: 9.5px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.skill-test-log > div { margin: 1px 0; }
+.skill-test-meta  { opacity: 0.5; }
+.skill-test-task  { color: var(--accent, var(--red)); font-weight: 500; font-size: 9px; opacity: 0.85; }
+.skill-test-round { opacity: 0.6; margin-top: 6px !important; }
+.skill-test-tool  { color: var(--accent, var(--red)); opacity: 0.85; }
+.skill-test-out   { opacity: 0.7; padding-left: 10px; }
+.skill-test-say   { white-space: pre-wrap; }
+.skill-test-err   { color: var(--color-danger, #e06c75); }
+.skill-eval-head  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.skill-eval-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+  padding: 2px 8px; border-radius: 10px; flex-shrink: 0;
+}
+.skill-eval-ok   { background: color-mix(in srgb, var(--color-success, #4ade80) 26%, transparent); color: var(--color-success, #4ade80); }
+.skill-eval-warn { background: color-mix(in srgb, var(--color-warning, #f0ad4e) 26%, transparent); color: var(--color-warning, #f0ad4e); }
+.skill-eval-bad  { background: color-mix(in srgb, var(--color-danger, #e06c75) 26%, transparent); color: var(--color-danger, #e06c75); }
+.skill-eval-unknown { background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.skill-eval-summary { font-size: 11px; opacity: 0.85; }
+.skill-eval-issues { margin: 6px 0 0; padding-left: 18px; font-size: 11px; opacity: 0.8; }
+.skill-eval-issues li { margin: 2px 0; }
+.skill-eval-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+.skill-eval-approve.suggested {
+  border-color: var(--color-success, #4ade80) !important;
+  color: var(--color-success, #4ade80) !important;
+}
+/* Already published — the button confirms the state (click to unpublish). */
+.skill-eval-approve.is-approved {
+  border-color: var(--color-success, #4ade80) !important;
+  color: var(--color-success, #4ade80) !important;
+  background: color-mix(in srgb, var(--color-success, #4ade80) 14%, transparent) !important;
+}
+/* Add-Skill form: a "rich placeholder" overlay so only the FIRST word (Title,
+   When to use, How, Tags) is accent-colored while the rest stays muted — real
+   placeholders can't be partially colored. The native placeholder is a single
+   space so :placeholder-shown still toggles the overlay. */
+.skill-ph-wrap { position: relative; }
+.skill-ph-wrap .skill-hint-input { width: 100%; box-sizing: border-box; }
+.skill-rich-ph {
+  position: absolute;
+  left: 11px; right: 11px; top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.2;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Textarea: align the hint to the first line instead of vertical-centering. */
+.skill-rich-ph-top { top: 7px; transform: none; }
+.skill-rich-ph .k { color: var(--accent, var(--red)); }
+/* Keep the memory-input enter hint pinned to the field's right edge instead
+   of letting it drift after the example text. */
+#new-memory-input ~ .skill-rich-ph > svg {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 0 !important;
+}
+/* Hide the overlay once the field has real content. */
+.skill-hint-input:not(:placeholder-shown) ~ .skill-rich-ph { display: none; }
+.skill-md-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.doclib-empty {
+  text-align: center;
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  padding: 32px 16px;
+  font-size: 12px;
+  font-style: italic;
+}
+/* Unified loading row across every Library tab (Chats / Documents / Research /
+   Archive): one opacity, one size, with the whirlpool spinner next to it. */
+.lib-loading-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 16px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.pdf-loading-state {
+  min-height: 120px;
+  margin: 0;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.pdf-loading-state .ai-spinner-whirlpool {
+  color: var(--accent, var(--red));
+  opacity: 0.95;
+}
+.pdf-loading-state .ai-spinner-whirlpool canvas {
+  display: block;
+}
+.doclib-load-more {
+  display: block;
+  margin: 10px auto 0;
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+  position: relative;
+  top: 10px;
+}
+/* Soft dark gradient above the button — blends the list content into the
+   load-more strip instead of a hard cutoff. Spans the modal width and
+   sits behind/above the button. */
+.doclib-load-more::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 100%;
+  margin-bottom: 4px;
+  width: min(600px, 92vw);
+  height: 34px;
+  pointer-events: none;
+  background: linear-gradient(to top, color-mix(in srgb, #000 24%, transparent), transparent);
+}
+.doclib-load-more:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.doclib-inline-load-more {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  top: 0;
+  font-size: 9px !important;
+  line-height: 1.2 !important;
+}
+
+/* Document library toolbar buttons */
+.doclib-toolbar-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.doclib-toolbar-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.doclib-toolbar-btn.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+.doclib-toolbar-btn.danger {
+  color: var(--color-error, #e55);
+}
+.doclib-toolbar-btn.danger:hover:not(:disabled) {
+  border-color: var(--color-error, #e55);
+}
+.doclib-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Bulk action bar */
+.doclib-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+  font-size: 10px;
+  margin-bottom: 8px;
+}
+.doclib-bulk-bar.hidden {
+  display: none;
+}
+.doclib-bulk-check-all {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size: 10px;
+}
+#doclib-bulk-bar .memory-toolbar-btn {
+  position: relative;
+  top: -3px;
+}
+
+/* Custom checkboxes */
+.doclib-select-cb,
+.doclib-bulk-check-all input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+  position: relative;
+  transition: all 0.15s;
+}
+.doclib-select-cb:hover,
+.doclib-bulk-check-all input:hover {
+  border-color: var(--red);
+}
+.doclib-select-cb:checked,
+.doclib-bulk-check-all input:checked {
+  background: var(--red);
+  border-color: var(--red);
+}
+.doclib-select-cb:checked::after,
+.doclib-bulk-check-all input:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--bg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+
+/* + button outside scroll area (when doc is on right side) */
+
+@media (max-width: 600px) {
+  .doclib-toolbar {
+    flex-direction: column;
+  }
+  .doclib-card-session,
+  .doclib-card-time {
+    display: none;
+  }
+  .doclib-card-preview {
+    max-height: 40vh;
+  }
+}
+
+/* Collapse card tags before they compete with attachment/favorite controls. */
+.email-card-tags .email-tags-more {
+  color: var(--email-tags-more-color, var(--fg));
+  background: color-mix(in srgb, var(--email-tags-more-color, var(--fg)) 18%, transparent);
+}
+.email-tags-more-single,
+[data-email-tags-count-mini] { display: none; }
+.email-tags-more-single svg { display: none; }
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) > .email-tag,
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) > .email-tag-extra {
+  display: none;
+}
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) .email-tags-more-single,
+.email-card-tags.email-tags-expanded .email-tags-more-single {
+  display: inline-flex;
+}
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) [data-email-tags-count-normal] { display: none; }
+.email-card-tags.email-tags-mini:not(.email-tags-expanded) [data-email-tags-count-mini],
+.email-card-tags.email-tags-expanded .email-tags-more-single [data-email-tags-count-mini] { display: inline; }
+
+/* Keep the reader actions in drafting order. */
+.email-reader-actions-inline > [data-act="ai-reply"] { order: 1; }
+.email-reader-actions-inline > [data-act="reply"] { order: 2; }
+.email-reader-actions-inline > [data-act="reply-all"] { order: 3; }
+.email-reader-actions-inline > [data-act="forward"] { order: 4; }

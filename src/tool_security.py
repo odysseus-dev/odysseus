@@ -20,6 +20,7 @@ BUILTIN_EMAIL_TOOLS = frozenset({
     "read_email",
     "search_emails",
     "scan_email_unsubscribes",
+    "scan_spam",
     "unsubscribe_email",
     "send_email",
     "reply_to_email",
@@ -31,6 +32,8 @@ BUILTIN_EMAIL_TOOLS = frozenset({
     "mark_email_read",
     "bulk_email",
     "download_attachment",
+    "block_sender",
+    "manage_email_state",
 })
 
 
@@ -51,6 +54,7 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "glob",
     "ls",
     "get_workspace",
+    "host_shell",
     "search_chats",
     "manage_memory",
     "manage_skills",
@@ -75,6 +79,22 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "stop_served_model",
     "cancel_download",
     "adopt_served_model",
+    # Read-only Cookbook inspection tools. They look harmless, but every one
+    # of them calls a require_admin route over the internal loopback with the
+    # process-wide INTERNAL_TOOL_TOKEN and never checks the session owner, so
+    # a non-admin agent would inherit admin reach through them:
+    # list_cached_models forwards a caller-chosen `host` into
+    # /api/model/cached, which SSHes to that host with the app user's keys and
+    # walks caller-chosen `model_dir`s; list_served_models / tail_serve_output
+    # expose serve/download logs and running process command lines. Model
+    # serving is admin-only in THREAT_MODEL.md, so block the read side too.
+    "list_served_models",
+    "tail_serve_output",
+    "list_downloads",
+    "search_hf_models",
+    "list_cached_models",
+    "list_serve_presets",
+    "list_cookbook_servers",
 }
 
 
@@ -123,6 +143,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "resolve_contact",
     "chat_with_model",
     "ask_teacher",
+    "get_editor_screenshot",
 }
 
 
@@ -148,7 +169,8 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
     "manage_calendar", "api_call", "app_api", "ui_control",
     "send_email", "reply_to_email", "bulk_email", "delete_email",
-    "archive_email", "mark_email_read", "unsubscribe_email",
+    "archive_email", "mark_email_read", "unsubscribe_email", "block_sender",
+    "manage_email_state",
     # The draft tools create documents and download_attachment writes to
     # disk — mutating. They have no native schemas (yet), so without these
     # static entries plan-mode safety for their bare fence tags would depend
@@ -158,6 +180,7 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "download_model", "serve_model",
     "stop_served_model", "cancel_download", "adopt_served_model", "serve_preset",
     "generate_image", "edit_image", "trigger_research", "manage_research",
+    "plan_edit", "run_editor_command", "ai_edit_image",
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
     # mode even if the schema list fails to load.
     "bash", "python",
@@ -268,4 +291,17 @@ def blocked_tools_for_owner(owner: Optional[str]) -> Set[str]:
     """Tools to hide/disable for this owner under public-user policy."""
     if owner_is_admin_or_single_user(owner):
         return set()
+    return set(NON_ADMIN_BLOCKED_TOOLS)
+
+
+def delegated_credential_blocked_tools() -> Set[str]:
+    """Tools an agent run driven by a bearer API token must not reach.
+
+    Deliberately not owner-dependent. ``blocked_tools_for_owner`` asks whether
+    the OWNER is an admin, and for a token that question is always answered
+    yes: minting a token is an admin-only action, so the empty set comes back
+    for every token in existence. A token is a long-lived credential the owner
+    hands to a third party, so it is capped at the non-admin policy no matter
+    who minted it.
+    """
     return set(NON_ADMIN_BLOCKED_TOOLS)

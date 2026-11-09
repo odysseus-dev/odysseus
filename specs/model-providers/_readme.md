@@ -1,6 +1,6 @@
 # Provider Capability Specs
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-14
 
 ## Scope
 
@@ -54,6 +54,7 @@ Current reader dispatch does not infer a provider from payload shape. It uses an
 - [github-copilot.md](github-copilot.md): account model-list observations and required runtime headers.
 - [chatgpt-subscription.md](chatgpt-subscription.md): Codex model identity and Responses event shape.
 - [cohere.md](cohere.md): native endpoint/catalog observations; not currently normalized.
+- [featherless.md](featherless.md): plan-filtered catalog search and explicit picker pins without bulk discovery.
 
 ### Other provider identity and general/identity-only observations
 

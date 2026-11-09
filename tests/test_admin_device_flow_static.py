@@ -58,14 +58,21 @@ def test_device_auth_selection_disables_and_dims_api_test_button():
 
 
 def test_device_auth_keeps_manual_auth_button_without_auto_opening_tab():
+    # The waiting panel (code + manual Authorize link) is shared between the
+    # Add Models flow and per-account ChatGPT Reconnect.
+    panel_block = _between(_ADMIN, "function _renderDeviceAuthWaitPanel", "// ── ChatGPT Subscription per-account usage")
     auth_block = _between(_ADMIN, "async function _startProviderDeviceAuth", "// Local \"Add\" button")
+    reconnect_block = _between(_ADMIN, "async function _reconnectChatgptAccount", "function initEndpointForm()")
 
-    assert "Authorize with OpenAI" in auth_block
-    assert "Authorize on GitHub" in auth_block
-    assert "adm-copilot-panel" in auth_block
-    assert "adm-device-auth-copy" in auth_block
+    assert "Authorize with OpenAI" in panel_block
+    assert "Authorize on GitHub" in panel_block
+    assert "adm-copilot-panel" in panel_block
+    assert "adm-device-auth-copy" in panel_block
+    assert "_renderDeviceAuthWaitPanel(status, providerKey, start, authUrl)" in auth_block
     assert "openWindow: () => {}" in auth_block
     assert "A new tab opened" not in auth_block
+    assert "openWindow: () => {}" in reconnect_block
+    assert "_renderDeviceAuthWaitPanel(status, 'chatgpt-subscription', start, authUrl)" in reconnect_block
 
 
 def test_loud_oauth_copy_and_removed_button_hooks_do_not_return():

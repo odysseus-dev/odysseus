@@ -69,3 +69,34 @@ def test_prompt_cache_busted_after_disconnect_same_tool_count():
         "Cache was not invalidated: got stale description after reconnect"
     )
     assert "tool_alpha" not in desc_b
+
+
+def test_owned_stdio_stack_closes_in_connection_owner_task():
+    """MCP cancel scopes must be exited by the task that entered them."""
+    class Stack:
+        def __init__(self):
+            self.owner = None
+            self.closed_in = None
+
+        async def aclose(self):
+            self.closed_in = asyncio.current_task()
+            assert self.closed_in is self.owner
+
+    async def run():
+        mgr = McpManager()
+        stack = Stack()
+
+        async def owner():
+            stack.owner = asyncio.current_task()
+            mgr._stacks["owned"] = stack
+            await mgr.hold_owned_connection("owned")
+
+        owner_task = asyncio.create_task(owner())
+        await asyncio.sleep(0)
+        await mgr.disconnect_server("owned")
+
+        assert owner_task.done()
+        assert stack.closed_in is owner_task
+        assert "owned" not in mgr._stacks
+
+    asyncio.run(run())

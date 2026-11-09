@@ -13,6 +13,7 @@ from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.rag_singleton import get_rag_manager
 from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
+from src.path_confinement import confine
 from src.upload_handler import secure_filename
 from src.upload_limits import PERSONAL_UPLOAD_MAX_BYTES
 
@@ -23,10 +24,7 @@ logger = logging.getLogger(__name__)
 def _personal_upload_dir_for_owner(owner: str | None, *, create: bool = True) -> str:
     """Return the per-owner upload directory used for direct RAG uploads."""
     owner_segment = secure_filename((owner or "local").strip())[:80] or "local"
-    upload_dir = os.path.abspath(os.path.join(UPLOADS_DIR, owner_segment))
-    base_abs = os.path.abspath(UPLOADS_DIR)
-    if os.path.commonpath([upload_dir, base_abs]) != base_abs:
-        raise ValueError("Unsafe upload owner path")
+    upload_dir = confine(UPLOADS_DIR, owner_segment, allow_root=False)
     if create:
         os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
@@ -41,10 +39,7 @@ def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> 
     stem, ext = os.path.splitext(safe_name)
     stem = (stem or "upload")[:80]
     filename = f"{stem}-{uuid.uuid4().hex[:10]}{ext.lower()}"
-    file_path = os.path.abspath(os.path.join(upload_dir, filename))
-    upload_abs = os.path.abspath(upload_dir)
-    if os.path.commonpath([file_path, upload_abs]) != upload_abs:
-        raise ValueError("Unsafe upload filename")
+    file_path = confine(upload_dir, filename, allow_root=False)
     return file_path, filename, safe_name
 
 
@@ -167,19 +162,10 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         if not directory:
             raise HTTPException(400, "Directory path is required")
 
-        # realpath (not abspath) so a symlink inside PERSONAL_DIR that points
-        # outside it is resolved before the commonpath confinement check below;
-        # abspath only normalises `..` and would let such a symlink escape.
-        base_abs = os.path.realpath(PERSONAL_DIR)
-        candidate = directory if os.path.isabs(directory) else os.path.join(base_abs, directory)
-        resolved = os.path.realpath(candidate)
         try:
-            in_base = os.path.commonpath([resolved, base_abs]) == base_abs
-        except ValueError:
-            in_base = False
-        if not in_base:
+            return confine(PERSONAL_DIR, directory)
+        except (ValueError, OSError):
             raise HTTPException(403, "Directory must be inside personal documents")
-        return resolved
     
     @router.get("")
     def api_personal_list(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
@@ -425,17 +411,17 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
                 # Scope to the per-owner subdir, not the shared uploads root, so one
                 # admin can't delete another user's personal files by path.
                 deleted_from_disk = False
+                # allow_root=False: the per-owner upload directory itself is
+                # never a deletion target, only files under it.
                 try:
-                    abs_target = os.path.realpath(filepath)
-                    base_abs = os.path.realpath(_personal_upload_dir_for_owner(owner, create=False))
-                    in_uploads = (
-                        abs_target == base_abs
-                        or os.path.commonpath([abs_target, base_abs]) == base_abs
+                    abs_target = confine(
+                        _personal_upload_dir_for_owner(owner, create=False),
+                        filepath,
+                        allow_root=False,
                     )
-                except ValueError:
-                    # commonpath raises on mixed drives / non-comparable paths
-                    in_uploads = False
-                if in_uploads and abs_target != base_abs:
+                except (ValueError, OSError):
+                    abs_target = ""
+                if abs_target:
                     try:
                         os.remove(abs_target)
                         deleted_from_disk = True

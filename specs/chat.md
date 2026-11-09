@@ -1,20 +1,19 @@
 # Chat
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
 This spec covers current chat behavior in:
 
 - `routes/chat_routes.py` and `routes/chat_helpers.py`;
-- `routes/session_routes.py` and canonical `routes/history/history_routes.py`,
-  with `routes/history_routes.py` as a compatibility shim;
+- `routes/session_routes.py` and canonical `routes/history/history_routes.py`, with `routes/history_routes.py` as a compatibility shim;
 - `src/chat_helpers.py`;
-- `src/agent_runs.py`;
+- `src/agent_runs.py` and `src/background_tool_jobs.py`;
+- `src/turn_contract.py`, `src/request_models.py`, and `src/agent_runtime/` request authority/runtime selection/context resolution;
 - `src/chat_handler.py` and `src/chat_processor.py`;
 - `core/session_manager.py` and `core/models.py`;
-- `src/attachment_refs.py` and `src/upload_handler.py` for durable attachment
-  references and write reservations;
+- `src/attachment_refs.py` and `src/upload_handler.py` for durable attachment references and write reservations;
 - `src/context_budget.py`, `src/context_compactor.py`, and `src/topic_analyzer.py`;
 - `src/foreground_model_routing.py`, `src/tool_approval_scopes.py`, `src/tool_approvals.py`, and `src/tool_capabilities.py`;
 - `routes/workspace_routes.py` for workspace selection support;
@@ -41,16 +40,10 @@ Runtime behavior:
 - browser chat sends `X-Tz-Offset` and an IANA timezone name; request-local helpers prefer a valid IANA zone for DST-aware current-time reasoning, then fall back to the fixed offset;
 - browser chat can send a selected workspace path; route code only resolves it for admin/single-user flows, validates it as an existing directory, and forwards it so agent file/shell tools are confined by `src.tool_execution`;
 - stream callbacks can outlive a deleted session, so persistence must fail closed instead of recreating orphan messages;
-- message metadata carries timestamps, metrics, tool events, sources, hidden
-  thinking/reasoning text when providers expose it separately, context-trim
-  metrics, structured attachment references, and related UI state;
+- message metadata carries timestamps, metrics, tool events, sources, hidden thinking/reasoning text when providers expose it separately, context-trim metrics, structured attachment references, and related UI state;
 - metadata preserves requested and actual reply models and endpoints, per-round route transitions, and answering-route cost attribution; stable session ids remain available so prompt/sequence-memory and KV-cache paths can address the same conversation consistently;
-- multimodal content can be a list of content blocks for the live provider call,
-  while persistence collapses raw media into readable text and stable
-  attachment-reference lines;
-- agent streams forward explicit round-cap, tool-budget, repeated-tool-loop,
-  and intent-without-action guard events so the frontend can distinguish a
-  controlled stop from a stalled response.
+- multimodal content can be a list of content blocks for the live provider call, while persistence collapses raw media into readable text and stable attachment-reference lines;
+- agent streams forward explicit round-cap, tool-budget, repeated-tool-loop, and intent-without-action guard events so the frontend can distinguish a controlled stop from a stalled response.
 
 `src.agent_runs` owns detached in-memory stream runs, replay buffers, replacement cancellation, resume subscribers, explicit stop, and terminal-buffer eviction. Closing the SSE connection does not necessarily stop generation. `static/js/chat.js` can live-resume a still-running detached stream through `/api/chat/resume/{session_id}`; rich responses reload from DB for canonical rendering. Detached runs are process-local and do not survive server restart.
 
@@ -81,30 +74,15 @@ Current call sites include:
 - deep research orchestration in `src/research_handler.py`;
 - compare entry points in canonical `routes/compare/compare_routes.py` and frontend compare modules.
 
-Agent-mode tool access is gated in layers. Chat route toggles and privileges
-build a disabled-tool set; incognito and compare mode remove persistence-heavy
-or UI-breaking tools; `src.action_intents.message_needs_tools()` provides
-conservative regex auto-escalation hints; `src.agent_loop`,
-`src.tool_security`, `src.tool_execution`, and internal loopback validation
-remain server-side enforcement owners.
+Agent-mode tool access is gated in layers. Chat route toggles and privileges build a disabled-tool set; incognito and compare mode remove persistence-heavy or UI-breaking tools; `src.action_intents.message_needs_tools()` provides conservative regex auto-escalation hints; `src.agent_loop`, `src.tool_security`, `src.tool_execution`, and internal loopback validation remain server-side enforcement owners.
 
 `allow_bash` and `allow_web_search` can be read from the JSON request body for browser chat posts that do not submit traditional form fields.
 
-Web search tools are per-turn explicit opt-in. Either `allow_web_search=true`
-or `use_web=true` can enable `web_search`/`web_fetch`, but an explicit
-`allow_web_search=false` wins over `use_web=true` and keeps those tools
-disabled. Explicit latest-turn web-search intent can still auto-escalate into
-agent mode and narrows the available tool set toward `web_search`/`web_fetch`,
-but it no longer re-enables web tools after an explicit denial or global
-disable.
+Web search tools are per-turn explicit opt-in. Either `allow_web_search=true` or `use_web=true` can enable `web_search`/`web_fetch`, but an explicit `allow_web_search=false` wins over `use_web=true` and keeps those tools disabled. Explicit latest-turn web-search intent can still auto-escalate into agent mode and narrows the available tool set toward `web_search`/`web_fetch`, but it no longer re-enables web tools after an explicit denial or global disable.
 
 Guide-only/no-tools requests build an effective tool policy before preprocessing and agent dispatch. That policy suppresses tool-backed preprocessing/background extraction/research, disables schemas and MCP for the turn, and is still enforced by `src.tool_execution` if a model emits a tool call anyway.
 
-When route context is trimmed without full compaction, chat emits a
-`context_trimmed` SSE event and carries before/after message/token counts into
-metrics. Provider reasoning/thinking deltas are streamed for live UI handling
-but kept out of the visible saved assistant content and stored in metadata when
-available.
+When route context is trimmed without full compaction, chat emits a `context_trimmed` SSE event and carries before/after message/token counts into metrics. Provider reasoning/thinking deltas are streamed for live UI handling but kept out of the visible saved assistant content and stored in metadata when available.
 
 ## Attachments
 
@@ -112,12 +90,11 @@ available.
 
 Attachment-only sends are valid. Missing or unauthorized ids are skipped during preprocessing, while a missing/wrong-owner durable reference aborts a message/history replacement before existing transcript rows are removed. Upload failures keep pending files for retry, unsupported media can degrade to text markers, optional Office/PDF/VL dependencies can emit extraction banners, Office attachments can create markdown documents when extracted server-side, and fillable-PDF auto-document failures fall back to normal PDF extraction. `chat_messages.content` and FTS do not retain provider data URLs; structured references stay in metadata for reloads. Chat does not own upload bytes or durable document storage; it requests document/upload behavior from those subsystems.
 
-Frontend chat distinguishes normal resend from regenerate-from-here: normal resend appends a fresh user copy and carries upload IDs where available, while regeneration truncates from the selected point. AI-message delete prompts before removing the AI response plus preceding user turn. Desktop Enter submits; mobile Enter inserts a newline unless another platform-specific send control is used.
+Frontend resend normally replaces from the selected user turn: it truncates server history before removing that turn and later DOM/thread state, resolves the persisted message id with index fallback, and aborts if truncation fails. Explicit append-only resend appends a fresh copy; attachments are retained through the respective path. AI-message delete prompts before removing the AI response plus preceding user turn. Desktop Enter submits; mobile Enter inserts a newline unless another platform-specific send control is used.
 
-Native document tool outputs can open or refresh the document editor from
-tool-result metadata, so the UI can recover if a later `doc_update` stream event
-is missed. The chat renderer also hides raw/incomplete leaked tool JSON and
-document fences from normal transcript text.
+The Notes panel can attach selected Note/Todo IDs as reference context for a chat send. `static/js/chat.js` keeps selection in memory per chat session, transfers a pending selection when a new session is materialized, restores the indicator on session switches, and lets the user clear it. A send captures the selected IDs for its current session and includes `selected_note_ids` in the streaming form. This is separate from uploaded attachments and is not durable session storage. The server reloads exact-owner notes and wraps their text as untrusted context; validation and formatting are owned by [context-building.md](context-building.md).
+
+Native document tool outputs can open or refresh the document editor from tool-result metadata, so the UI can recover if a later `doc_update` stream event is missed. The chat renderer also hides raw/incomplete leaked tool JSON and document fences from normal transcript text.
 
 When untrusted external/workspace content has entered the agent context, high-impact tool calls pause as exact approval cards instead of executing. The browser can allow the rest of the interrupted task, allow this chat session, or deny; it submits only the opaque id/decision with an empty control-plane message and does not mutate the composer. The server restores the sealed first action plus private selected tools/query, revalidates policy and document freshness, consumes the first action, and resumes without persisting a synthetic user message. Task scope ends with that resumed run. Chat scope persists the resolved card and marks later context only for that exact session; forks do not inherit it. A normal message retires an unresolved card while preserving taint.
 
@@ -127,7 +104,7 @@ When untrusted external/workspace content has entered the agent context, high-im
 
 The scoped API-token chat surface is `/api/v1/chat`. Browser chat routes can receive bearer-auth state from middleware, but route code must not assume `"api"` is a durable owner; API-token support requires explicit scope checks and token-owner attribution.
 
-Incognito disables memory, skill, and chat-history tools and skips assistant DB persistence, but current user-message persistence and later cleanup are not a strict no-write guarantee. Treat incognito changes as security-sensitive until that contract is clarified.
+Incognito skips durable user and assistant message writes, supplies the current user turn ephemerally without duplicate insertion, avoids loading saved transcript history, and disables memory/skill/history context paths. This is a message-history contract, not a guarantee that every route, session header or auxiliary operation performs no write.
 
 ## Search Boundary
 
@@ -144,11 +121,31 @@ Incognito disables memory, skill, and chat-history tools and skips assistant DB 
 - Docker/native endpoint differences are owned by runtime/model setup, but chat sessions depend on the saved endpoint URLs and headers.
 - Copying a response from the UI copies the displayed answer text and omits hidden reasoning/thinking segments.
 
+## Turn Preparation And Durable Background Results
+
+Chat preparation derives request authority separately from tool inventory. `src.turn_contract` selects capability families and required reads for compact/native routes; exact approval continuations, the TUI surface, and full-schema routes opt out of that selection path. Endpoint/model tool modes and the clean-route aliases (`cleanv3`, `preheret`) influence routing; the shared runtime-selection helper determines whether both context preparation and execution use compact v3. Full-schema models retain the complete enabled inventory subject to server permission gates.
+
+Sessions persist independent memory-extraction, memory-injection, and skill-injection toggles, thinking mode, temperature/max-token overrides, workspace `cwd`, endpoint id, accumulated token totals, and cost. Session hydration restores these values. Generated images are preserved when a session is deleted unless image deletion is explicitly requested.
+
+`src.background_tool_jobs.BackgroundToolJobs` stores tool-work origin and once-only chat delivery in `BackgroundToolJob` SQL rows. This is separate from process-local detached SSE buffers and disk-backed shell jobs. Result context is reconstructed from background metadata; a durable completion must remain attributed to its originating owner/session.
+
+## Session Preparation Details
+
+Credential recovery selects the session's bound enabled URL-matching endpoint before resolving its provider-auth id; a deleted/disabled bound endpoint does not trigger selection of another account. Legacy unbound recovery chooses the oldest enabled owner-visible URL-matching `ModelEndpoint` by creation time/id and persists `endpoint_id` before resolving runtime headers. Client/TUI context is bounded untrusted metadata, not admission, workspace grants or permission to execute supplied verifier commands. Context-info exposes bounded tool/skill/AGENTS path inventory rather than instruction bodies; host existence details are admin-only.
+
+Header persistence retries selected SQLite locked failures with bounded backoff and can continue in memory after exhaustion; it does not guarantee durability. Session listing uses owner-filtered unarchived database rows, hides synthetic trace sessions and treats empty sessions according to persisted messages/documents/images or live state. Synthetic `sft_` trace capture is enabled by default unless opted out; prefix selection and trash/tombstones are not data erasure guarantees. Auto-title uses a bounded utility call and a short word-based fallback.
+
+Active document state is owner-checked and chat-bound. An explicitly empty active-document state disables fallback, minimized editors do not resurrect context, and session switches preserve the exact active document rather than selecting the first cached document. A stream run id identifies streamed UI replacement and differs from nested execution-journal identity. Structured turn replacement and terminal error events preserve partial content without claiming a successful completion. Background tool delivery attribution is separate from provider success and disk-backed shell result delivery.
+
+## History Truncation And Cleanup
+
+`routes/history/history_routes.py` verifies session ownership before parsing truncation requests. The body must be a JSON object with an explicit `keep_count` or nonblank string `before_msg_id` (`message_id` alias); null/empty primary IDs fall through to the alias, while other nonstrings fail. Counts accept nonnegative integers or integer strings, rejecting booleans, floats, null and negative values. A missing message boundary returns 404 before history mutation; explicit zero remains a supported clear operation. Invalid JSON/targets return 400 without deleting saved messages or SFT trace pairs. Cleanup uses durable message rows and rechecks the count at deletion; see `persistence.md`.
+
 ## Current Gaps
 
 - Chat, agent, research, and compare orchestration still meet in a large route file.
 - Context preface behavior is spread across `routes/chat_helpers.py`, `src/chat_processor.py`, route injections, and agent/tool paths.
 - Detached stream lifecycle spans `routes/chat_routes.py`, `src/agent_runs.py`, `static/js/chat.js`, `static/js/sessions.js`, and non-chat callers.
 - Some frontend stream state is still global/module-level in `static/js/chat.js` and needs careful session isolation when adding background or resumable flows.
-- Chat lacks route-level SSE regression tests for `/api/chat_stream`, live resume/stop/status, mode handoff, persistence metadata, partial-save behavior, attachment/doc-update events, browser timezone offset/workspace handling, and literal URL context intent.
-- Bearer-token behavior on browser chat routes and incognito persistence need explicit contract decisions and regression coverage.
+- Route scope, stream errors, tool-policy preprocessing, request contracts, and runtime preparation have focused tests; full browser/provider/resume behavior still spans several modules.
+- Scoped bearer admission and incognito message-history handling have focused regressions; they do not establish a universal no-write or live provider guarantee.

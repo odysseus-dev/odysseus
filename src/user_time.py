@@ -44,6 +44,12 @@ def set_user_tz_name(name) -> None:
     _USER_TZ_NAME.set(cleaned or None)
 
 
+def set_user_timezone(iana_name: str | None, offset_min: int | str | None = None) -> None:
+    """Set both timezone context fields for the current request."""
+    set_user_tz_name(iana_name)
+    set_user_tz_offset(offset_min)
+
+
 def get_user_tz_name() -> Optional[str]:
     """Return the current user's browser timezone name, if provided."""
     return _USER_TZ_NAME.get()
