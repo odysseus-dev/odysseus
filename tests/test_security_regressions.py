@@ -45,11 +45,25 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
 # ── secret_storage ─────────────────────────────────────────────
 
+def _reimport_for_test(monkeypatch, name):
+    """Import a fresh copy of module `name` for the current test only.
+
+    monkeypatch puts the original module object back in sys.modules and on
+    its parent package at teardown. Without that, later tests in the same
+    process kept the fresh copy: modules importing `name` at call time got a
+    different object than the one other test files had bound at import.
+    """
+    importlib.import_module(name)  # so there is an original to restore
+    parent_name, _, attr = name.rpartition(".")
+    monkeypatch.delitem(sys.modules, name)
+    monkeypatch.delattr(sys.modules[parent_name], attr)
+    return importlib.import_module(name)
+
+
 def _import_secret_storage(tmp_path, monkeypatch):
     """Import src.secret_storage with the key file redirected to tmp."""
     # Make sure a previous test's cached module doesn't reuse its key.
-    sys.modules.pop("src.secret_storage", None)
-    from src import secret_storage  # noqa: WPS433
+    secret_storage = _reimport_for_test(monkeypatch, "src.secret_storage")
     monkeypatch.setattr(secret_storage, "_KEY_PATH", tmp_path / ".app_key")
     monkeypatch.setattr(secret_storage, "_fernet", None)
     return secret_storage
@@ -153,8 +167,7 @@ def test_ollama_cookbook_runner_does_not_force_public_bind():
 def _import_integrations(tmp_path, monkeypatch):
     """Import src.integrations with data + encryption key redirected to tmp."""
     _import_secret_storage(tmp_path, monkeypatch)
-    sys.modules.pop("src.integrations", None)
-    from src import integrations  # noqa: WPS433
+    integrations = _reimport_for_test(monkeypatch, "src.integrations")
     monkeypatch.setattr(integrations, "DATA_FILE", str(tmp_path / "integrations.json"))
     return integrations
 
