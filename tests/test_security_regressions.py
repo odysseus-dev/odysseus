@@ -45,18 +45,26 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
 # ── secret_storage ─────────────────────────────────────────────
 
-def _reimport_for_test(monkeypatch, name):
-    """Import a fresh copy of module `name` for the current test only.
+def _evict_for_test(monkeypatch, name):
+    """Drop module `name` from sys.modules and its parent package for the
+    current test only, so the test's next import of it runs fresh.
 
     monkeypatch puts the original module object back in sys.modules and on
     its parent package at teardown. Without that, later tests in the same
     process kept the fresh copy: modules importing `name` at call time got a
     different object than the one other test files had bound at import.
+    Call it before installing any stub the fresh import should see, so the
+    original is imported against the real modules.
     """
     importlib.import_module(name)  # so there is an original to restore
     parent_name, _, attr = name.rpartition(".")
     monkeypatch.delitem(sys.modules, name)
     monkeypatch.delattr(sys.modules[parent_name], attr)
+
+
+def _reimport_for_test(monkeypatch, name):
+    """Import a fresh copy of module `name` for the current test only."""
+    _evict_for_test(monkeypatch, name)
     return importlib.import_module(name)
 
 
@@ -222,52 +230,48 @@ def test_integrations_plaintext_keys_migrate_on_load(tmp_path, monkeypatch):
 
 # ── _q IMAP mailbox quoter ─────────────────────────────────────
 
-def _import_q():
-    sys.modules.pop("routes.email_helpers", None)
-    from routes.email_helpers import _q  # noqa: WPS433
-    return _q
+def _import_q(monkeypatch):
+    return _reimport_for_test(monkeypatch, "routes.email_helpers")._q
 
 
-def test_q_plain_name():
-    _q = _import_q()
+def test_q_plain_name(monkeypatch):
+    _q = _import_q(monkeypatch)
     assert _q("INBOX") == '"INBOX"'
 
 
-def test_q_name_with_spaces():
+def test_q_name_with_spaces(monkeypatch):
     """`[Gmail]/Sent Mail` is the kind of folder that breaks unquoted
     `conn.select(folder)`. The helper must always quote."""
-    _q = _import_q()
+    _q = _import_q(monkeypatch)
     assert _q("[Gmail]/Sent Mail") == '"[Gmail]/Sent Mail"'
 
 
-def test_q_escapes_backslash():
-    _q = _import_q()
+def test_q_escapes_backslash(monkeypatch):
+    _q = _import_q(monkeypatch)
     assert _q("weird\\name") == '"weird\\\\name"'
 
 
-def test_q_escapes_double_quote():
+def test_q_escapes_double_quote(monkeypatch):
     """A folder name like `INBOX" (BODY ...` would terminate the IMAP
     string early without quote-escaping."""
-    _q = _import_q()
+    _q = _import_q(monkeypatch)
     assert _q('INBOX" injected') == '"INBOX\\" injected"'
 
 
-def test_q_empty_input():
-    _q = _import_q()
+def test_q_empty_input(monkeypatch):
+    _q = _import_q(monkeypatch)
     assert _q("") == '""'
     assert _q(None) == '""'
 
 
 # ── provider auth error normalization ──────────────────────────
 
-def _import_friendly_email_auth_error():
-    sys.modules.pop("routes.email_helpers", None)
-    from routes.email_helpers import _friendly_email_auth_error  # noqa: WPS433
-    return _friendly_email_auth_error
+def _import_friendly_email_auth_error(monkeypatch):
+    return _reimport_for_test(monkeypatch, "routes.email_helpers")._friendly_email_auth_error
 
 
-def test_outlook_smtp_basic_auth_error_is_actionable():
-    normalize = _import_friendly_email_auth_error()
+def test_outlook_smtp_basic_auth_error_is_actionable(monkeypatch):
+    normalize = _import_friendly_email_auth_error(monkeypatch)
     msg = normalize(
         "SMTP",
         "smtp.office365.com",
@@ -279,16 +283,16 @@ def test_outlook_smtp_basic_auth_error_is_actionable():
     assert "535" not in msg
 
 
-def test_outlook_imap_authenticate_failed_is_actionable():
-    normalize = _import_friendly_email_auth_error()
+def test_outlook_imap_authenticate_failed_is_actionable(monkeypatch):
+    normalize = _import_friendly_email_auth_error(monkeypatch)
     msg = normalize("IMAP", "outlook.office365.com", "b'AUTHENTICATE failed.'")
 
     assert "Microsoft no longer accepts normal mailbox passwords" in msg
     assert "Outlook/Office 365" in msg
 
 
-def test_generic_auth_error_still_passes_through_truncated():
-    normalize = _import_friendly_email_auth_error()
+def test_generic_auth_error_still_passes_through_truncated(monkeypatch):
+    normalize = _import_friendly_email_auth_error(monkeypatch)
     msg = normalize("IMAP", "imap.example.com", "bad credentials " + ("x" * 300))
 
     assert msg.startswith("bad credentials")
@@ -409,7 +413,7 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
     import asyncio
     from types import SimpleNamespace
     for mod_name in ("src.chat_handler", "routes.chat_helpers"):
-        sys.modules.pop(mod_name, None)
+        _evict_for_test(monkeypatch, mod_name)
     _stub_core_database_for_route_imports(monkeypatch)
     from src.chat_handler import ChatHandler
     from src.upload_handler import UploadHandler
@@ -437,14 +441,12 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
 
     assert attachment_meta == []
     assert user_content == "hello"
-    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
-        sys.modules.pop(mod_name, None)
 
 
 def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
     from src.upload_handler import UploadHandler
 
-    sys.modules.pop("routes.document_helpers", None)
+    _evict_for_test(monkeypatch, "routes.document_helpers")
     _stub_core_database_for_route_imports(monkeypatch)
     from routes.document_helpers import _locate_upload
 
@@ -453,7 +455,6 @@ def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch
 
     assert _locate_upload(str(upload_dir), bob_id, owner="alice", upload_handler=handler) is None
     assert _locate_upload(str(upload_dir), bob_id, owner="bob", upload_handler=handler).endswith(bob_id)
-    sys.modules.pop("routes.document_helpers", None)
 
 
 def test_find_source_upload_id_rejects_path_traversal_marker():
@@ -467,7 +468,7 @@ def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
     """Saving a doc whose front-matter points at another user's upload must 400."""
     from src.upload_handler import UploadHandler
 
-    sys.modules.pop("routes.document_helpers", None)
+    _evict_for_test(monkeypatch, "routes.document_helpers")
     _stub_core_database_for_route_imports(monkeypatch)
     from fastapi import HTTPException
     from routes.document_helpers import _assert_pdf_marker_upload_owned
@@ -500,8 +501,6 @@ def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
     own_marker = f'<!-- pdf_source upload_id="{_alice_id}" -->\n\n# Notes\n'
     _assert_pdf_marker_upload_owned(_Req(), own_marker, "alice", handler)
 
-    sys.modules.pop("routes.document_helpers", None)
-
 
 def test_pdf_marker_render_lookup_denies_cross_owner_without_doc_leak(tmp_path):
     """Read path: cross-owner marker resolves to None (404 at route layer)."""
@@ -530,10 +529,9 @@ def test_require_user_rejects_unauthenticated(monkeypatch):
     didn't attach a user AND auth is configured. Mirrors the
     defense-in-depth check on /api/contacts/*, /api/personal/*,
     /api/email/*."""
-    sys.modules.pop("src.auth_helpers", None)
     from fastapi import HTTPException
 
-    from src import auth_helpers  # noqa: WPS433
+    auth_helpers = _reimport_for_test(monkeypatch, "src.auth_helpers")
 
     class _State:
         current_user = None  # middleware didn't set anyone
@@ -564,9 +562,9 @@ def test_inprocess_pollers_gate(monkeypatch):
     the asyncio pollers when cron / systemd is driving the one-shot
     `odysseus-mail poll-*` CLI subcommands instead. Two pollers racing
     on the same SQLite would mark scheduled rows as 'sent' twice."""
-    import sys as _sys
-    _sys.modules.pop("routes.email_pollers", None)
-    from routes.email_pollers import _inprocess_pollers_enabled  # noqa: WPS433
+    _inprocess_pollers_enabled = _reimport_for_test(
+        monkeypatch, "routes.email_pollers"
+    )._inprocess_pollers_enabled
 
     # Defaults to enabled (preserves single-process deployments).
     monkeypatch.delenv("ODYSSEUS_INPROCESS_POLLERS", raising=False)
@@ -587,8 +585,7 @@ def test_require_user_accepts_loopback_when_unconfigured(monkeypatch):
     """First-run mode (no users set up yet) must still let loopback
     callers through — otherwise the install can't bootstrap. Public
     callers in the same mode are rejected."""
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    auth_helpers = _reimport_for_test(monkeypatch, "src.auth_helpers")
 
     class _State:
         current_user = None
@@ -618,8 +615,7 @@ def test_require_user_accepts_anyone_when_auth_disabled(monkeypatch):
     the frontend's global 401 redirect doesn't bounce the user to /login
     despite the operator turning auth off (issue #622)."""
     monkeypatch.setenv("AUTH_ENABLED", "false")
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    auth_helpers = _reimport_for_test(monkeypatch, "src.auth_helpers")
 
     class _State:
         current_user = None
@@ -652,8 +648,7 @@ def test_require_user_localhost_bypass_admits_loopback(monkeypatch):
     through."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("LOCALHOST_BYPASS", "true")
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    auth_helpers = _reimport_for_test(monkeypatch, "src.auth_helpers")
 
     class _State:
         current_user = None
@@ -683,8 +678,7 @@ def test_require_user_localhost_bypass_still_rejects_lan(monkeypatch):
     from fastapi import HTTPException
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("LOCALHOST_BYPASS", "true")
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    auth_helpers = _reimport_for_test(monkeypatch, "src.auth_helpers")
 
     class _State:
         current_user = None
@@ -799,12 +793,9 @@ def test_internal_tool_owner_header_logic_requires_known_user():
     assert resolve_owner("") == "internal-tool"
 
 
-def test_auth_manager_migrates_legacy_admin_role(tmp_path):
+def test_auth_manager_migrates_legacy_admin_role(tmp_path, monkeypatch):
     """Old setup.py wrote role='admin'; startup must turn that into is_admin."""
-    sys.modules.pop("core.auth", None)
-    if "core" in sys.modules and hasattr(sys.modules["core"], "auth"):
-        delattr(sys.modules["core"], "auth")
-    from core.auth import AuthManager
+    AuthManager = _reimport_for_test(monkeypatch, "core.auth").AuthManager
 
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(json.dumps({
@@ -980,10 +971,9 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
 
 # ── audit fixes (2026-06-01): email XSS, attachment traversal, authz ──
 
-def _import_attachment_extract_dir():
-    sys.modules.pop("routes.email_helpers", None)
-    from routes.email_helpers import attachment_extract_dir, ATTACHMENTS_DIR
-    return attachment_extract_dir, ATTACHMENTS_DIR
+def _import_attachment_extract_dir(monkeypatch):
+    email_helpers = _reimport_for_test(monkeypatch, "routes.email_helpers")
+    return email_helpers.attachment_extract_dir, email_helpers.ATTACHMENTS_DIR
 
 
 @pytest.mark.parametrize("folder,uid", [
@@ -993,10 +983,10 @@ def _import_attachment_extract_dir():
     ("..", ".."),
     ("/abs/path", "2"),
 ])
-def test_attachment_extract_dir_stays_contained(folder, uid):
+def test_attachment_extract_dir_stays_contained(folder, uid, monkeypatch):
     """User-controlled folder/uid must never escape ATTACHMENTS_DIR — pins the
     fix for the attachment-extraction path traversal."""
-    aed, base = _import_attachment_extract_dir()
+    aed, base = _import_attachment_extract_dir(monkeypatch)
     target = aed(folder, uid, owner="../../owner", account_id="../acct")
     base_r = base.resolve()
     assert target == base_r or base_r in target.parents
@@ -1005,8 +995,8 @@ def test_attachment_extract_dir_stays_contained(folder, uid):
     assert ".." not in rel.parts
 
 
-def test_attachment_extract_dir_is_stable_single_segment_per_scope():
-    aed, base = _import_attachment_extract_dir()
+def test_attachment_extract_dir_is_stable_single_segment_per_scope(monkeypatch):
+    aed, base = _import_attachment_extract_dir(monkeypatch)
     target = aed("INBOX", "123", owner="alice", account_id="acct-1")
     assert target == aed("INBOX", "123", owner="alice", account_id="acct-1")
     assert target.parent == base.resolve()
@@ -1051,16 +1041,15 @@ def test_mcp_oauth_page_escapes_reflected_values():
     assert "{host}" not in page
 
 
-def _import_mcp_routes():
-    sys.modules.pop("routes.mcp_routes", None)
-    return importlib.import_module("routes.mcp_routes")
+def _import_mcp_routes(monkeypatch):
+    return _reimport_for_test(monkeypatch, "routes.mcp_routes")
 
 
 def test_google_mcp_oauth_uses_configured_redirect_base(monkeypatch):
     monkeypatch.setenv("OAUTH_REDIRECT_BASE_URL", "https://odysseus.example/app/")
     monkeypatch.delenv("APP_PUBLIC_URL", raising=False)
-    sys.modules.pop("src.mcp_oauth", None)
-    mcp_routes = _import_mcp_routes()
+    _evict_for_test(monkeypatch, "src.mcp_oauth")
+    mcp_routes = _import_mcp_routes(monkeypatch)
 
     assert (
         mcp_routes._mcp_oauth_redirect_uri()
@@ -1069,7 +1058,7 @@ def test_google_mcp_oauth_uses_configured_redirect_base(monkeypatch):
 
 
 def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
-    mcp_routes = _import_mcp_routes()
+    mcp_routes = _import_mcp_routes(monkeypatch)
     monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     resolved = Path(mcp_routes._resolve_mcp_oauth_path("gmail/credentials.json", "token_file"))
@@ -1086,7 +1075,7 @@ def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
 def test_mcp_oauth_paths_reject_escapes(tmp_path, monkeypatch, raw_path):
     from fastapi import HTTPException
 
-    mcp_routes = _import_mcp_routes()
+    mcp_routes = _import_mcp_routes(monkeypatch)
     monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     with pytest.raises(HTTPException) as exc:
@@ -1097,7 +1086,7 @@ def test_mcp_oauth_paths_reject_escapes(tmp_path, monkeypatch, raw_path):
 def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
     from fastapi import HTTPException
 
-    mcp_routes = _import_mcp_routes()
+    mcp_routes = _import_mcp_routes(monkeypatch)
     monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     safe_dir = mcp_routes._resolve_mcp_oauth_path("gmail", "dir")
@@ -1106,7 +1095,7 @@ def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
 
 
 def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
-    mcp_routes = _import_mcp_routes()
+    mcp_routes = _import_mcp_routes(monkeypatch)
     monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     cfg = mcp_routes._sanitize_mcp_oauth_config({
@@ -1139,37 +1128,24 @@ def test_gmail_mcp_preset_uses_contained_oauth_paths():
 
 # -- export/gallery filename hardening ----------------------------------------
 
-def _drop_route_module_cache(dotted_name):
-    """Evict a cached route module from both sys.modules and the parent package
-    attribute. The next import then re-binds against the live core.database
-    instead of reusing a stale (possibly stub-polluted) module object — Python
-    can reach a module via either path, so both must be cleared."""
-    sys.modules.pop(dotted_name, None)
-    pkg_name, _, attr = dotted_name.rpartition(".")
-    pkg = sys.modules.get(pkg_name)
-    if pkg is not None and hasattr(pkg, attr):
-        delattr(pkg, attr)
-
-
-def _import_session_routes_for_filename():
+def _import_session_routes_for_filename(monkeypatch):
     # Only the pure _sanitize_export_filename helper is exercised here, so import
     # against the REAL core.database. Importing under a stub Session class would
-    # leak a stub-bound DbSession into the cached module and break later tests
-    # that reuse routes.session_routes (e.g. the archived-sessions filter).
-    _drop_route_module_cache("routes.session_routes")
-    return importlib.import_module("routes.session_routes")
+    # bind a stub DbSession into the fresh module; the original comes back at
+    # teardown either way.
+    return _reimport_for_test(monkeypatch, "routes.session_routes")
 
 
-def _import_gallery_routes_for_filename():
+def _import_gallery_routes_for_filename(monkeypatch):
     # Same rationale as the session route helper: import _sanitize_gallery_filename
-    # against the real core.database and leave a clean, real module cached.
-    _drop_route_module_cache("routes.gallery.gallery_routes")
-    _drop_route_module_cache("routes.gallery.gallery_helpers")
+    # against the real core.database, with fresh copies of both gallery modules.
+    _evict_for_test(monkeypatch, "routes.gallery.gallery_routes")
+    _evict_for_test(monkeypatch, "routes.gallery.gallery_helpers")
     return importlib.import_module("routes.gallery.gallery_routes")
 
 
-def test_export_filename_sanitizer_blocks_header_and_path_chars():
-    mod = _import_session_routes_for_filename()
+def test_export_filename_sanitizer_blocks_header_and_path_chars(monkeypatch):
+    mod = _import_session_routes_for_filename(monkeypatch)
 
     out = mod._sanitize_export_filename('chat.md\r\nX-Test: yes/..\\evil;quote".txt\x00')
 
@@ -1179,15 +1155,15 @@ def test_export_filename_sanitizer_blocks_header_and_path_chars():
         assert ch not in out
 
 
-def test_export_filename_sanitizer_preserves_safe_names():
-    mod = _import_session_routes_for_filename()
+def test_export_filename_sanitizer_preserves_safe_names(monkeypatch):
+    mod = _import_session_routes_for_filename(monkeypatch)
 
     assert mod._sanitize_export_filename("conversation_20260602.md") == "conversation_20260602.md"
     assert mod._sanitize_export_filename("") == ""
 
 
-def test_gallery_replace_filename_sanitizer_uses_basename():
-    mod = _import_gallery_routes_for_filename()
+def test_gallery_replace_filename_sanitizer_uses_basename(monkeypatch):
+    mod = _import_gallery_routes_for_filename(monkeypatch)
 
     out = mod._sanitize_gallery_filename("../../etc/cron.d/evil image.png")
 
@@ -1197,7 +1173,7 @@ def test_gallery_replace_filename_sanitizer_uses_basename():
 
 
 def test_gallery_replace_filename_sanitizer_falls_back_when_empty(monkeypatch):
-    mod = _import_gallery_routes_for_filename()
+    mod = _import_gallery_routes_for_filename(monkeypatch)
     monkeypatch.setattr(mod.uuid, "uuid4", lambda: types.SimpleNamespace(hex="abcdef1234567890"))
 
     assert mod._sanitize_gallery_filename("../") == "abcdef123456"
