@@ -167,13 +167,24 @@ def _run_helper(target, tmp_path, *, puid, pgid, shim_chown):
     return _run_function("chown_path_no_follow", target, tmp_path, puid=puid, pgid=pgid, shim_chown=shim_chown)
 
 
-def _run_function(name, target, tmp_path, *, puid, pgid, shim_chown, app_root=None):
+# The tree repairs run find with this fixed PATH, not the caller's.
+REPAIR_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def _with_shim_on_repair_path(source, shim_dir):
+    """Put a fake chown in front of the fixed PATH the tree repairs use."""
+    return source.replace(f"PATH={REPAIR_PATH} ", f"PATH={shim_dir}:{REPAIR_PATH} ")
+
+
+def _run_function(name, target, tmp_path, *, puid, pgid, shim_chown, app_root=None, caller_path=None):
     source = _function_source(name)
     if app_root is not None:
         # repair_app_tree_ownership hard-codes /app; point it at a sandbox.
         source = source.replace("/app", str(app_root))
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(PUID=str(puid), PGID=str(pgid))
+    if caller_path is not None:
+        env["PATH"] = caller_path
     if shim_chown:
         shim_dir = tmp_path / "shim"
         shim_dir.mkdir(exist_ok=True)
@@ -182,6 +193,7 @@ def _run_function(name, target, tmp_path, *, puid, pgid, shim_chown, app_root=No
         shim.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CHOWN_LOG"\n', encoding="utf-8")
         shim.chmod(0o755)
         env.update(PATH=f"{shim_dir}{os.pathsep}{env.get('PATH', '')}", CHOWN_LOG=str(log))
+        source = _with_shim_on_repair_path(source, shim_dir)
     script = source + f'{name} "$1"\n'
     return subprocess.run(
         ["sh", "-c", script, "sh", str(target)],
@@ -263,7 +275,7 @@ def test_helper_as_root_never_changes_symlink_target_ownership(tmp_path):
 TREE_REPAIRS = ["repair_tree_ownership", "repair_app_tree_ownership"]
 
 
-def _run_tree_repair(name, tmp_path, *, puid, pgid, shim_chown):
+def _run_tree_repair(name, tmp_path, *, puid, pgid, shim_chown, caller_path=None):
     """Run `name` over a sandbox tree holding a file and a symlink to a file
     outside it. Returns (victim, tree root)."""
     victim = tmp_path / "etc" / "shadow"
@@ -281,7 +293,10 @@ def _run_tree_repair(name, tmp_path, *, puid, pgid, shim_chown):
         target, app_root = root, None
     else:
         target, app_root = "", root
-    _run_function(name, target, tmp_path, puid=puid, pgid=pgid, shim_chown=shim_chown, app_root=app_root)
+    _run_function(
+        name, target, tmp_path, puid=puid, pgid=pgid, shim_chown=shim_chown,
+        app_root=app_root, caller_path=caller_path,
+    )
     return victim, root
 
 
@@ -305,6 +320,21 @@ def test_tree_repair_as_root_never_changes_symlink_target_ownership(tmp_path, na
     assert victim.stat().st_uid == 0
     assert (root / "note.txt").stat().st_uid == 65534
     assert (root / "link").lstat().st_uid == 65534
+
+
+# GNU find refuses -execdir when PATH has an empty or relative entry; the
+# entrypoint discards find's stderr and ends with `|| true`, so the repair
+# would silently leave everything root-owned.
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root to chown")
+@pytest.mark.parametrize("name", TREE_REPAIRS)
+def test_tree_repair_as_root_still_chowns_with_empty_path_entry(tmp_path, name):
+    victim, root = _run_tree_repair(
+        name, tmp_path, puid=65534, pgid=65534, shim_chown=False, caller_path="/usr/bin:/bin:",
+    )
+    assert root.stat().st_uid == 65534
+    assert (root / "note.txt").stat().st_uid == 65534
+    assert (root / "link").lstat().st_uid == 65534
+    assert victim.stat().st_uid == 0
 
 
 # Race: find lists <tree>/sub/victim, then a writer on the bind mount renames
@@ -352,6 +382,7 @@ def test_tree_repair_as_root_ignores_parent_swapped_for_symlink(tmp_path, name):
     else:
         target = ""
         source = source.replace("/app", str(root))
+    source = _with_shim_on_repair_path(source, shim_dir)
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(
         PUID=str(puid), PGID=str(puid),

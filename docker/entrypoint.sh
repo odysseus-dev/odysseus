@@ -69,6 +69,9 @@ is_broad_mount_root() {
 # chown runs inside the directory find actually opened and gets ./name with -h.
 # A parent directory renamed and replaced by a symlink after find listed the
 # file therefore cannot redirect the chown outside the tree.
+# GNU find refuses -execdir when PATH holds an empty or relative entry, and
+# with stderr discarded and `|| true` that would skip the repair silently, so
+# each find runs with a fixed absolute PATH.
 chown_path_no_follow() {
     target="$1"
     if [ -L "$target" ] || [ -L "${target%/*}" ]; then
@@ -81,14 +84,14 @@ chown_path_no_follow() {
 repair_tree_ownership() {
     dir="$1"
     if [ -d "$dir" ]; then
-        find "$dir" -xdev -not -uid "$PUID" \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin find "$dir" -xdev -not -uid "$PUID" \
             -execdir chown -h "$PUID:$PGID" {} + 2>/dev/null || true
     fi
 }
 
 repair_app_tree_ownership() {
     if [ -d /app ]; then
-        find /app -xdev \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin find /app -xdev \
             \( -path /app/data -o -path /app/logs -o -path /app/.ssh -o -path /app/.cache -o -path /app/.local \) -prune \
             -o -not -uid "$PUID" -execdir chown -h "$PUID:$PGID" {} + 2>/dev/null || true
     fi
