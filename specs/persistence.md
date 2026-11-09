@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -13,8 +13,7 @@ This spec covers durable state in:
 - `core/models.py`;
 - `core/session_manager.py`;
 - `core/atomic_io.py`;
-- `src/attachment_refs.py`, `src/upload_handler.py`, and
-  `routes/upload_routes.py` for durable upload references and retention;
+- `src/attachment_refs.py`, `src/upload_handler.py`, and `routes/upload_routes.py` for durable upload references and retention;
 - JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, canonical `routes/contacts/contacts_routes.py` and `routes/vault/vault_routes.py` plus their shims, `routes/cookbook_routes.py`, and memory/skills managers;
 - canonical `routes/email/email_helpers.py` scheduled-email storage;
 - `routes/backup_routes.py` and `scripts/odysseus-backup`;
@@ -24,15 +23,9 @@ This spec covers durable state in:
 
 `core/database.py` owns SQLAlchemy models and startup migrations. `src/database.py` is a compatibility re-export for legacy imports. Route and service code commonly owns its own `SessionLocal()` lifecycle instead of using one central unit-of-work wrapper.
 
-The default database is SQLite at `DATA_DIR/app.db`. `src.runtime_paths` and `src.constants` own the data-dir default: source runs use the repository `data/` directory, frozen builds default to `~/.odysseus/data`, and `ODYSSEUS_DATA_DIR` overrides both. SQLAlchemy can point at a non-SQLite `DATABASE_URL`, but current startup migrations/backfills are SQLite-first and often use `sqlite3`, `PRAGMA`, or SQLite catalog queries. External DBs are not fully migration-compatible unless those helpers are made backend-neutral.
+The default database is SQLite at `DATA_DIR/app.db`. `src.runtime_paths` and `src.constants` own the data-dir default: source runs use the repository `data/` directory, frozen builds default to `~/.odysseus/data`, and `ODYSSEUS_DATA_DIR` overrides both. The core requirements include `psycopg2-binary` for PostgreSQL driver availability. SQLAlchemy can point at a non-SQLite `DATABASE_URL`, but current startup migrations/backfills are SQLite-first and often use `sqlite3`, `PRAGMA`, or SQLite catalog queries. External DBs are not fully migration-compatible unless those helpers are made backend-neutral.
 
-After `Base.metadata.create_all()`, `init_db()` resolves file-backed SQLite
-paths from SQLAlchemy's parsed engine URL and attempts to restrict the main
-database plus existing `-journal`, `-wal`, and `-shm` sidecars to `0600` on
-POSIX. Driver-qualified, query-tagged, and local `file:` URI forms are covered;
-non-SQLite, in-memory SQLite, and Windows paths are skipped. A failed POSIX
-chmod is logged because the database and sidecars can contain password/token
-hashes and encrypted provider material.
+After `Base.metadata.create_all()`, `init_db()` resolves file-backed SQLite paths from SQLAlchemy's parsed engine URL and attempts to restrict the main database plus existing `-journal`, `-wal`, and `-shm` sidecars to `0600` on POSIX. Driver-qualified, query-tagged, and local `file:` URI forms are covered; non-SQLite, in-memory SQLite, and Windows paths are skipped. A failed POSIX chmod is logged because the database and sidecars can contain password/token hashes and encrypted provider material.
 
 Timestamp defaults use `utcnow_naive()` so existing naive `DateTime` columns stay UTC without the deprecated `datetime.utcnow()` default.
 
@@ -44,16 +37,14 @@ Current model families include:
 - email accounts, model endpoints, MCP servers, comparisons;
 - provider auth sessions for OAuth/device-flow-backed provider credentials;
 - API tokens, admin-global webhooks, user tools/tool data, integrations;
-- crew members, scheduled tasks, task runs, notes;
-- memory rows, calendar calendars, and calendar events.
+- crew members, scheduled tasks, task runs, notification logs, background tool jobs, notes;
+- memory rows, calendar calendars, calendar events, and email-calendar invitation revision/tombstone state.
 
-Chat persistence stores model-readable text plus compact attachment-reference
-lines in `chat_messages.content`, while structured references remain in message
-metadata. Provider data URLs used by the live turn are not duplicated into the
-durable transcript. The FTS migration recreates insert/update triggers to omit
-inline media and scrubs legacy indexed rows that still contain data URLs.
+Chat persistence stores model-readable text plus compact attachment-reference lines in `chat_messages.content`, while structured references remain in message metadata. Provider data URLs used by the live turn are not duplicated into the durable transcript. The FTS migration recreates insert/update triggers to omit inline media and scrubs legacy indexed rows that still contain data URLs.
 
 Current calendar/task persistence includes CalDAV remote identity columns (`CalendarCal.remote_href`, `CalendarCal.remote_etag`, `CalendarEvent.remote_href`, `CalendarEvent.remote_etag`), `CalendarEvent.caldav_sync_pending` for retryable writeback state, and `ScheduledTask.character_id` for built-in task persona selection.
+
+`Note.gallery_id` links drawing notes to stable gallery images. `CalendarEvent` source-email identifiers preserve invitation provenance; `EmailCalendarInvitation` keeps owner/sender/source/recurrence revision and cancellation state for replay decisions.
 
 `EmailAccount` includes encrypted password fields plus Google OAuth fields (`oauth_provider`, encrypted access/refresh tokens, token expiry) and optional `display_name`. Startup migrations add those OAuth/display columns idempotently for older databases.
 
@@ -127,6 +118,20 @@ Docker bind-mounts `data/`, `logs/`, cache/local state, and optional Chroma stat
 
 ChromaDB/vector stores are optional durable storage outside `data/app.db`; missing Chroma degrades RAG, memory-vector, and tool-index features without blocking core SQLite/JSON persistence. Vector collections can be lane-suffixed for custom HTTP embeddings versus FastEmbed fallback. See `documents-rag-uploads.md`.
 
+## Run Evidence And New Durable State
+
+`Session` adds `cwd`, endpoint id, memory-extraction/injection and skill-injection toggles, thinking mode, temperature/max-token overrides, and cumulative cost. `ModelEndpoint.model_tool_modes` stores per-model tool-schema preferences. `ScheduledTask.request_authority_json` stores the server-only admitted request snapshot. Startup migration helpers add these columns to legacy schemas. `BackgroundToolJob` holds origin owner/session/tool/query, status, payload/summary, and delivered message id; `NotificationLog` persists owner-attributed task completion/error notification text.
+
+`src.agent_runtime.effect_log` stores append-only claims, outcomes, and observations in `DATA_DIR/effects/<root-run-id>.jsonl`, with launch-generation indexes alongside them. Claims are fsynced before backend invocation; persistence failure refuses execution. Reload appends interrupted outcomes for unsettled non-running claims, while eligible owned `RUNNING` process claims survive for background lifecycle settlement; it never manufactures success or fresh state. Appends merge durable history under an advisory lock before allocating positions. Cross-process locking and directory-fsync guarantees are POSIX-specific; other platforms have narrower guarantees. Claim files use restrictive creation, no-follow/regular-file/single-link checks, strict row validation and a tolerated torn final tail. Non-claim persistence can degrade to volatile evidence; durable claim failure still refuses invocation. Advisory-lock append merges durable rows, allocates positions and repairs only a torn tail; reader locking does not silently repair. Launch indexes use fsync/replace ordering, with narrower non-POSIX guarantees. These checks do not imply authenticated tamper-proof logs, constant-cost growth or identical index hardlink checks. This store is evidence, not operation authority.
+
+`data/containment_grants.json` and `data/bg_jobs.json` preserve containment/process identity across restart. Browser producer state resolves through `BROWSER_RESOURCES_DIR` in shared constants. These server control-plane stores are denied to native model filesystem operations; ownership and runtime integrity must remain separate from editable user artifacts.
+
+## Cleanup Counts And Chroma Volumes
+
+`src/cleanup_service.py` derives preview and deletion eligibility from durable message rows, not the session counter. Recent-session protection uses a limited ID query; final DELETE rechecks owner/archive/age/importance/message threshold. DELETE RETURNING identifies cleanup-owned deletions where supported; legacy SQLite uses rowcount plus survivor queries, with estimated space attribution bounded to the deleted count. Session-cache eviction occurs after commit.
+
+The standard, AMD and NVIDIA Compose files mount `chromadb-data` at `/data`; native Chroma uses `data/chroma/`. Pre-fix Docker stores may have live data in the old container writable layer despite an empty volume at `/chroma/chroma`; recreation can destroy that layer. `docs/chromadb-volume-migration.md` documents cold rescue, image preservation, empty-volume seeding and staging/count verification before cutover. This is an operator procedure, not startup migration or proof of data recovery.
+
 ## Current Gaps
 
 - Migration behavior is centralized but long and manual.
@@ -134,4 +139,4 @@ ChromaDB/vector stores are optional durable storage outside `data/app.db`; missi
 - Some JSON store shapes are only documented by manager code and tests.
 - Startup migrations lack a legacy-schema/idempotence test harness for owner backfills, encrypted-secret rewrites, and repeated runs.
 - JSON-store atomicity is inconsistent across stores, though shared atomic writers, upload metadata recovery, prefs, and strict memory mutations now have focused coverage.
-- Agent filesystem tools currently allow broad `data/` access; secret-bearing files under `data/` need explicit deny coverage.
+- New local stores require explicit ownership, backup, and control-plane access decisions; a filesystem root alone does not grant access to server state.

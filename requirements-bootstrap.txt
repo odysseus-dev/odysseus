@@ -1,0 +1,8 @@
+# Integrity-pinned bootstrap for the October 2026 eMudhra CA incident.
+# Install with --require-hashes --only-binary=:all: --no-deps before other pip work.
+# pip vendors its own certifi; updating the application bundle cannot update it.
+# Direct universal wheels avoid index resolution through the old trust store.
+pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl \
+    --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70
+certifi @ https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl \
+    --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1

@@ -75,12 +75,15 @@ export function initSidebarLayout(Storage, opts) {
     _setSidebarModeClasses(mode);
   }
 
+  // Phones in landscape get the desktop layout, but the icon rail is too small to use there
+  const _phoneLandscape = window.matchMedia('(pointer: coarse) and (max-height: 500px)');
+
   function _syncRailSideCore() {
     const sidebar = document.getElementById('sidebar');
     if (!iconRail) return;
     const isRight = sidebar.classList.contains('right-side');
     const sidebarHidden = sidebar.classList.contains('hidden');
-    const railHidden = iconRail.classList.contains('rail-hidden');
+    const railHidden = iconRail.classList.contains('rail-hidden') || _phoneLandscape.matches;
     const isMobileMini = iconRail.classList.contains('mobile-mini');
     iconRail.classList.toggle('right-side', isRight);
     // On mobile mini mode, JS already set inline styles — don't touch
@@ -103,6 +106,9 @@ export function initSidebarLayout(Storage, opts) {
       document.body.classList.toggle('hamburger-only', sidebarHidden && railHidden);
       document.body.classList.toggle('sidebar-collapsed', sidebarHidden);
       _setSidebarModeClasses(!sidebarHidden ? 'full' : (railHidden ? 'off' : 'mini'));
+      hamburgerBtn.setAttribute('aria-expanded', String(!sidebarHidden));
+      const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+      if (sidebarToggleBtn) sidebarToggleBtn.setAttribute('aria-expanded', String(!sidebarHidden));
     }
     // Keep incognito button clear of hamburger
     const incogBtn = document.getElementById('incognito-btn');
@@ -118,6 +124,7 @@ export function initSidebarLayout(Storage, opts) {
   // Set initial reference and expose globally
   _syncRailSideFn = _syncRailSideCore;
   window.syncRailSide = syncRailSide;
+  _phoneLandscape.addEventListener('change', () => syncRailSide());
 
   // Restore sidebar side preference
   if (Storage.get(Storage.KEYS.SIDEBAR_SIDE) === 'right') {
@@ -166,6 +173,15 @@ export function initSidebarLayout(Storage, opts) {
     syncRailSide();
   }
 
+  // Move the closed drawer to the other edge without transitioning its
+  // transform across the screen, so it then slides in from the edge it opens on.
+  function _setSidebarSideInstantly(sidebar, right) {
+    sidebar.style.setProperty('transition', 'none', 'important');
+    sidebar.classList.toggle('right-side', right);
+    void sidebar.offsetWidth;
+    sidebar.style.removeProperty('transition');
+  }
+
   // Deliberate "open the sidebar" used by the mobile swipe gesture (wired at
   // module scope). It MUST set _userToggledSidebar so the auto-collapse
   // MutationObserver doesn't immediately re-hide it (the swipe was opening it,
@@ -185,7 +201,7 @@ export function initSidebarLayout(Storage, opts) {
     if (side === 'left' || side === 'right') {
       const wantRight = side === 'right';
       if (sidebar.classList.contains('right-side') !== wantRight) {
-        sidebar.classList.toggle('right-side', wantRight);
+        _setSidebarSideInstantly(sidebar, wantRight);
         // Swipe-selected sides are temporary on compact/mobile layouts. Do
         // not overwrite the user's desktop sidebar preference.
         if (window.innerWidth >= 768) {
@@ -223,7 +239,7 @@ export function initSidebarLayout(Storage, opts) {
           // Mobile: the hamburger always opens the sidebar from the RIGHT.
           // (Not persisted — keeps the desktop side preference untouched.)
           if (!sidebar.classList.contains('right-side')) {
-            sidebar.classList.add('right-side');
+            _setSidebarSideInstantly(sidebar, true);
             if (documentModule && documentModule.swapSide) { try { documentModule.swapSide(); } catch (_) {} }
           }
           // Opening sidebar — blur keyboard first, then open after layout settles
@@ -308,14 +324,20 @@ export function initSidebarLayout(Storage, opts) {
       _wasAutoCollapsed = true;
       syncRailSide();
     } else if (window.innerWidth >= AUTO_COLLAPSE_WIDTH && isHidden && _wasAutoCollapsed) {
-      // Only restore if chat won't be too narrow
+      // Only restore if chat won't be too narrow. Suppress the width
+      // transition and sync the mode classes (ody-sidebar-mini also forces
+      // width 0) so the reflow measures the sidebar at its full width.
+      sidebar.style.transition = 'none';
       sidebar.classList.remove('hidden');
+      syncRailSide();
       void document.body.offsetWidth; // reflow
       if (chatContainer && chatContainer.offsetWidth < MIN_CHAT_WIDTH) {
         sidebar.classList.add('hidden');
       } else {
         _wasAutoCollapsed = false;
       }
+      void document.body.offsetWidth;
+      sidebar.style.transition = '';
       syncRailSide();
     }
   }

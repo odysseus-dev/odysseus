@@ -2666,11 +2666,13 @@ mark.doc-find-mark.current {
        render it as a narrow side pane ("sidebar") on a phone. */
     position: fixed !important;
     inset: 0 !important;
-    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    top: var(--sheet-top) !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    height: auto !important;
     max-width: 100% !important;
     width: 100% !important;
     flex: none !important;
     z-index: 170;
+    padding-bottom: var(--safe-bottom);
     /* Stroke the top edge so the rounded corners read as a curved sheet edge. */
     border: 1px solid var(--border);
     border-bottom: none;

@@ -108,8 +108,12 @@ def _compact_prompt_for(monkeypatch, history):
     import src.model_context as model_context
 
     monkeypatch.setattr(agent_runs, "is_active", lambda session_id: False)
-    def fake_resolve_endpoint(kind, owner=None):
+    def fake_resolve_endpoint(kind, owner=None, **kwargs):
         captured.setdefault("resolve_calls", []).append((kind, owner))
+        if "fallback_url" in kwargs:
+            captured.setdefault("fallback_calls", []).append(
+                (kind, owner, kwargs)
+            )
         return None, None, {}
 
     monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve_endpoint)
@@ -127,6 +131,13 @@ def _compact_prompt_for(monkeypatch, history):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert manager.saved is True
+    assert any(
+        kind == "utility"
+        and kwargs.get("fallback_url") == session.endpoint_url
+        and kwargs.get("fallback_model") == session.model
+        and kwargs.get("fallback_headers") == session.headers
+        for kind, _owner, kwargs in captured.get("fallback_calls", [])
+    )
     return captured["messages"][1]["content"]
 
 
@@ -151,8 +162,12 @@ def _registered_compact_response(monkeypatch, history, active_run=False):
     import src.llm_core as llm_core
 
     monkeypatch.setattr(agent_runs, "is_active", lambda session_id: active_run)
-    def fake_resolve_endpoint(kind, owner=None):
+    def fake_resolve_endpoint(kind, owner=None, **kwargs):
         captured.setdefault("resolve_calls", []).append((kind, owner))
+        if "fallback_url" in kwargs:
+            captured.setdefault("fallback_calls", []).append(
+                (kind, owner, kwargs)
+            )
         return None, None, {}
 
     monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve_endpoint)
@@ -237,6 +252,14 @@ def test_registered_manual_compact_route_uses_session_owner(monkeypatch):
     assert response.status_code == 200
     assert manager.replaced_messages is not None
     assert ("utility", "session-owner") in captured["resolve_calls"]
+    assert any(
+        kind == "utility"
+        and owner == "session-owner"
+        and kwargs.get("fallback_url") == manager.session.endpoint_url
+        and kwargs.get("fallback_model") == manager.session.model
+        and kwargs.get("fallback_headers") == manager.session.headers
+        for kind, owner, kwargs in captured.get("fallback_calls", [])
+    )
 
 
 def test_registered_manual_compact_route_rejects_active_agent_run(monkeypatch):

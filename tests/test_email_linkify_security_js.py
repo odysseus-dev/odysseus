@@ -1,6 +1,7 @@
 """DOM-XSS regressions for email plain-text linkification helpers."""
 
 import json
+import os
 import shutil
 import subprocess
 import textwrap
@@ -100,3 +101,55 @@ def test_email_html_sanitizer_runs_to_fixpoint():
     assert "for (let i = 0; i < 4; i++)" in source
     assert "const next = _sanitizeHtmlOnce(out);" in source
     assert "if (next === out) break;" in source
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_linkify_preserves_text_and_link_targets_in_a_real_dom():
+    cases = [
+        ("See https://example.test/contact?email=jane@example.test&next=1 and bob@example.test.",
+         ["https://example.test/contact?email=jane@example.test&next=1", "mailto:bob@example.test"]),
+        ("https://alice@example.test/path", ["https://alice@example.test/path"]),
+        ("www.example.test/?email=jane@example.test", ["https://www.example.test/?email=jane@example.test"]),
+        ("<https://example.test/path> and \"jane@example.test\"",
+         ["https://example.test/path", "mailto:jane@example.test"]),
+        ("(https://example.test/path), jane@example.test!",
+         ["https://example.test/path", "mailto:jane@example.test"]),
+        ("https://example.test/?literal=&quot;&next=1", ["https://example.test/?literal=&quot;&next=1"]),
+        ('<img src=x onerror="alert(1)"> jane@example.test', ["mailto:jane@example.test"]),
+        ("No links\njust <plain> & text", []),
+    ]
+    script = r'''
+      import { chromium } from 'playwright';
+      const browser = await chromium.launch({ headless: true });
+      try {
+        const page = await browser.newPage();
+        const origin = process.env.ODYSSEUS_TEST_STATIC_ORIGIN;
+        await page.goto(`${origin}/static/js/documentStats.js`);
+        const results = await page.evaluate(async (cases) => {
+          const { _escLinkify } = await import('/static/js/emailLibrary/utils.js');
+          return cases.map(([raw]) => {
+            const div = document.createElement('div');
+            div.innerHTML = _escLinkify(raw);
+            return {
+              text: div.textContent,
+              hrefs: [...div.querySelectorAll('a')].map(a => a.getAttribute('href')),
+              otherElements: [...div.querySelectorAll('*')].map(e => e.tagName).filter(t => t !== 'A'),
+              unsafeBlankLink: [...div.querySelectorAll('a[target="_blank"]')]
+                .some(a => !a.relList.contains('noopener') || !a.relList.contains('noreferrer')),
+            };
+          });
+        }, JSON.parse(process.env.ODYSSEUS_LINKIFY_CASES));
+        console.log(JSON.stringify(results));
+      } finally {
+        await browser.close();
+      }
+    '''
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script], cwd=_REPO,
+        capture_output=True, text=True, timeout=30,
+        env={**os.environ, "ODYSSEUS_LINKIFY_CASES": json.dumps(cases)},
+    )
+    assert result.returncode == 0, result.stderr
+    results = json.loads(result.stdout)
+    for (raw, hrefs), actual in zip(cases, results, strict=True):
+        assert actual == {"text": raw, "hrefs": hrefs, "otherElements": [], "unsafeBlankLink": False}, raw

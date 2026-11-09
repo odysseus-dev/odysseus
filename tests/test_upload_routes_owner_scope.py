@@ -318,6 +318,7 @@ def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch)
 def test_download_file_survives_corrupted_uploads_json(tmp_path, monkeypatch):
     # A truncated/corrupt uploads.json must not 500 the download endpoint —
     # metadata simply becomes unavailable and the file is still served.
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     handler, alice_id, _bob_id, upload_dir = _make_upload_store(tmp_path, monkeypatch)
     download_file = _upload_endpoints(handler, monkeypatch)["download_file"]
     (upload_dir / "uploads.json").write_text('{"alice:h1": {', encoding="utf-8")
@@ -332,6 +333,7 @@ def test_download_file_survives_corrupted_uploads_json(tmp_path, monkeypatch):
 
 def test_put_vision_text_returns_400_on_malformed_json(tmp_path, monkeypatch):
     # A non-JSON request body must yield 400, not an unhandled JSONDecodeError -> 500.
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     handler, alice_id, _bob_id, _upload_dir = _make_upload_store(tmp_path, monkeypatch)
     put_vision_text = _upload_endpoints(handler, monkeypatch)["put_vision_text"]
 

@@ -75,6 +75,36 @@ export function mergeLayerDownAtIndex(idx, renderLayer = null) {
   return lower;
 }
 
+/** Merge an arbitrary set of selected layers into the lowest one (Layer > Merge Layers). */
+export function mergeLayersByIds(ids, renderLayer = null) {
+  const targets = (state.layers || []).filter(layer => ids.includes(layer.id));
+  if (targets.length < 2) return null;
+  const base = targets[0];
+  const merged = document.createElement('canvas');
+  merged.width = state.imgWidth;
+  merged.height = state.imgHeight;
+  drawLayerStack(merged.getContext('2d'), state, targets, layer => _renderSource(layer, renderLayer));
+  const absorbed = new Set(targets.slice(1).map(layer => layer.id));
+  base.canvas = merged;
+  base.ctx = merged.getContext('2d');
+  base.opacity = 1;
+  base.visible = true;
+  base.blendMode = 'source-over';
+  state.layerOffsets.set(base.id, { x: 0, y: 0 });
+  _markBakedRaster(base);
+  for (const layer of state.layers) {
+    if (!absorbed.has(layer.id)) continue;
+    state.layerOffsets.delete(layer.id);
+    for (const group of state.layerGroups || []) group.layerIds = group.layerIds.filter(id => id !== layer.id);
+  }
+  state.layers = state.layers.filter(layer => !absorbed.has(layer.id));
+  normalizeLayerGroups(state);
+  normalizeLayerClipping(state);
+  state.activeLayerId = base.id;
+  state.selectedLayerIds = [base.id];
+  return base;
+}
+
 export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, composite, renderLayer, flatten, uiModule }) {
   // Flatten Copy.
   document.getElementById('ge-flatten')?.addEventListener('click', () => {

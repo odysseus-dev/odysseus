@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -18,7 +18,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 - scoped Codex wrappers in `routes/codex_routes.py`;
 - database models `CalendarCal`, `CalendarEvent`, `ScheduledTask`, `TaskRun`, `Note`, and `CrewMember`;
 - direct DB CLIs `scripts/odysseus-calendar`, `scripts/odysseus-notes`, and `scripts/odysseus-tasks`;
-- frontend modules `static/js/calendar.js`, `static/js/calendar/*`, `static/js/tasks.js`, `static/js/notes.js`, and `static/js/assistant.js`;
+- frontend modules `static/js/calendar.js`, `static/js/calendar/*`, `static/js/tasks.js`, the `static/js/notes.js` compatibility facade and maintained `frontend/src/features/notes/` graph deployed under `static/js/features/notes/`, and `static/js/assistant.js`;
 - tests covering calendar routes/utilities, CalDAV, recurrence, timezone handling, scheduler behavior, task webhooks, notes CLI/tool behavior, and task CLI behavior.
 
 ## Calendar
@@ -53,6 +53,8 @@ Cookbook serve scheduling crosses this domain. The Cookbook UI creates `cookbook
 
 `routes.task.task_routes` owns task CRUD, status, manual run/stop/cancel, pause/resume, owner-scoped run/activity history, metadata, onboarding defaults, cache clearing, parse endpoints, and webhook-token regeneration. `app.py` imports the canonical package path; `routes/task_routes.py` replaces its module entry with the canonical module for legacy import and monkeypatch compatibility. Chained-task `then_task_id` values are validated as same-owner relationships on create/update, and scheduler execution also rejects cross-owner or cyclic chains.
 
+`src.tools.system.do_manage_tasks()` translates structured schedules: `day_of_month` is an integer 1–31 for monthly tasks, while recurring `weekdays` names plus `scheduled_time` in UTC `HH:MM` become a cron expression. Conflicting day/cron inputs are rejected. One-off `scheduled_date` values are parsed to naive UTC and must be future dates; recurring schedules reject supplied one-off dates, and invalid cron expressions are refused. A time-only edit of an existing five-field cron rewrites its minute/hour fields while preserving calendar fields and recomputes `next_run`; it does not merely update the legacy display clock.
+
 Task webhook paths are auth-exempt at the app middleware layer only for `/api/tasks/{task_id}/webhook/{token}`. The route still validates active task state plus task-specific webhook token before dispatch.
 
 Task runtime behavior:
@@ -65,25 +67,16 @@ Task runtime behavior:
 - event-bus triggers persist counters and `next_run` before scheduler handoff;
 - the in-process scheduler is gated by `ODYSSEUS_INPROCESS_TASKS`, and multiple enabled app processes can double-run work.
 - action tasks with `run_local`, `run_script`, `ssh_command`, or
-  `cookbook_serve` are admin-only. `routes.task_routes` enforces this on
-  create/update/manual run and hides those actions from `/meta/actions` for
-  non-admin owners; webhook and scheduler execution pause the task and clear
-  `next_run` if an admin-only action belongs to a non-admin owner.
+  `cookbook_serve` are admin-only. `routes.task_routes` enforces this on create/update/manual run and hides those actions from `/meta/actions` for non-admin owners; webhook and scheduler execution pause the task and clear `next_run` if an admin-only action belongs to a non-admin owner.
 - background LLM task execution uses the background workload path, and the
-  scheduler can abort/cancel active in-process task runs when foreground browser
-  activity appears.
+  scheduler can abort/cancel active in-process task runs when foreground browser activity appears.
 - `tidy_research` scans all persisted research files because broken JSON has no trustworthy owner stamp, so it runs only for admins or the explicit auth-disabled single-user operator and refuses regular/pre-setup callers before enumeration.
 
 `routes.assistant_routes.py` owns crew/assistant settings and run-status surfaces that use the scheduler. `TaskScheduler.ensure_assistant_defaults()` currently seeds the personal assistant crew member and pinned assistant session, but no longer auto-creates Morning/Midday/Evening check-in tasks. Existing crew-linked check-in tasks are still rendered and managed when present.
 
 ## Notes And Reminders
 
-`routes.note.note_routes` owns notes/todos/reminders, and `app.py` imports that
-canonical path. `routes.note_routes` replaces its module entry with the
-canonical module for legacy import and monkeypatch compatibility. Notes are
-SQLAlchemy `Note` rows and can include due dates, ordering, images, repeat
-state, AI classification, source/session provenance, and agent session
-linkage.
+`routes.note.note_routes` owns notes/todos/reminders, and `app.py` imports that canonical path. `routes.note_routes` replaces its module entry with the canonical module for legacy import and monkeypatch compatibility. Notes are SQLAlchemy `Note` rows and can include due dates, ordering, images, repeat state, AI classification, source/session provenance, and agent session linkage.
 
 Notes CRUD/reorder/reminder routes resolve the acting owner through `require_user()`: auth-enabled anonymous requests fail closed before hitting owner-scoped queries, while documented no-login/single-user modes still resolve to the compatibility owner path.
 
@@ -105,17 +98,15 @@ Reminder dispatch is Note-owned:
 
 Email/ntfy failures degrade into channel result fields rather than blocking every reminder path. ntfy and generic webhook reminder URLs run through outbound URL safety checks, with `REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS` controlling whether private/LAN targets are allowed. ntfy notification titles are converted to ASCII with replacement and capped at 200 characters before entering HTTP headers. Reminder dedupe uses owner-scoped cache files under `data/`.
 
+`src.builtin_actions.action_ping_notes()` counts delivery only when `dispatch_reminder()` reports success for the configured browser/email/ntfy/webhook channel. Typed receipts in `data/note_pings_<owner-slug>.json` record time and channel. A browser fallback or legacy timestamp does not prove external delivery: the next eligible scan retries the configured external channel without queueing the recent browser fallback again. The scanner reloads dispatcher-owned receipts before pruning so it cannot replace a successful channel receipt with a timestamp; total delivery failure is not checkpointed. Retries occur only within 90 seconds of the due time, while recent matching-channel receipts suppress delivery for 25 minutes. Existing retry tests cover webhook/ntfy failures, legacy receipts, browser dedupe, total failure, and receipt-preserving pruning; live channel delivery remains separate validation.
+
 ## Agent, Codex, And CLI Surfaces
 
 `do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `do_manage_calendar` supports batch event creation plus list range aliases (`start`, `start_time`, `start_date`, `range_start`, `from`, `dtstart`, `since`, and matching end aliases), calendar name/short-id lookup, importance/tag aliases, and reminder offsets expressed as numbers, minute/hour words, or common abbreviations such as `min`/`mins`/`hr`/`hrs`. If a model supplies a loose `query`, `date_range`, or `range` without explicit start/end datetimes, `list_events` returns an error asking the caller to resolve the range and call again instead of guessing. Event classification reads `Memory.text` for personal context before LLM classification. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
 
 Agent native tool owner handling is not uniform today. `do_manage_tasks()` filters lists only when `owner` is truthy and creates tasks with the passed owner, so `owner=None` can create legacy/null-owner tasks. For authenticated/non-empty owners, edit/delete/pause/resume/run require an exact stored owner match and reject both cross-owner and null-owner rows; `owner=None` retains single-user compatibility. `do_manage_notes()` list/query behavior distinguishes `None` from `""`, with `None` acting as broader single-user compatibility while `""` filters to empty-owner rows in some paths. `do_manage_calendar()` query helpers filter only when owner is not `None`, while calendar creation routes through the calendar fallback owner for default calendars. These are compatibility behaviors, not a cross-user sharing model.
 
-Note and calendar route/tool writers owner-reserve any canonical internal upload
-references in content, checklist/color/image fields, descriptions, and
-locations before their database writes. Missing or wrong-owner uploads fail the
-write instead of creating a dangling durable reference; reservations serialize
-with upload cleanup.
+Note and calendar route/tool writers owner-reserve any canonical internal upload references in content, checklist/color/image fields, descriptions, and locations before their database writes. Missing or wrong-owner uploads fail the write instead of creating a dangling durable reference; reservations serialize with upload cleanup.
 
 Chat forwards browser timezone offset and IANA timezone name so natural-language note/calendar tools can anchor dates to the user clock. A valid IANA zone wins over the fixed offset for current-time/DST reasoning; invalid or absent names fall back to the offset and then server-local/UTC compatibility behavior. Chat can auto-promote note/calendar/reminder intents to agent mode.
 
@@ -171,9 +162,32 @@ Existing coverage is strongest around CalDAV URL hardening/writeback, client cle
 
 Route-level coverage is thinner for full calendar route behavior, task CRUD/security/run controls, live webhook token dispatch, notes owner CRUD/reminder delivery, assistant defaults/run status, event-bus triggers, Codex todo/calendar scopes, and frontend panel wiring.
 
+## Calendar Reminder And Invitation State
+
+Calendar event responses now include reminder note id, due time, minutes-before, and source-email provenance. Create/update accept `reminder_minutes`; an explicitly supplied null clears the reminder, while omission preserves it. Reminders are owner-scoped `Note` todos with calendar label/source. Passed events skip creation, and a reminder whose intended time passed is clamped to now. Legacy matching uses generated title plus due time rather than an event UID; deleting reminders uses the title/source/owner match, so similarly named events remain a compatibility-sensitive boundary. `GET /api/calendar/events/{uid}` resolves recurring occurrence IDs back to the owner-visible base event.
+
+`src/email_calendar_import.py` owns invitation revision state through `EmailCalendarInvitation`: identity hashes owner, normalized sender, ICS UID, and optional recurrence id instead of letting untrusted ICS UIDs address arbitrary local events. Sequence/DTSTAMP ordering suppresses stale replays, cancellation wins equal-version ties and leaves tombstones, and detached occurrences exclude their original series instance. Fixed striped file locks serialize imports across processes. Unsupported reply methods are ignored, and `THISANDFUTURE` revisions require a replacement series.
+
+Task create/update persist sealed `request_authority_json`; execution binds that authority to LLM/research work rather than deriving permission from task output. Task endpoint resolution uses owner-visible registered endpoint bases or their exact derived chat URL before runtime credentials are attached; scheme, host, effective port and full trimmed path must match, with no userinfo, parameters, query or fragment. Legacy shared endpoint visibility is retained. The scheduler helper catches credential resolution exceptions and can continue with empty headers, so this is not a universal no-network-on-resolution-failure guarantee. Authority/effect contracts are owned by `src/agent_runtime`, not the scheduling layer.
+
+## Scheduler Cache And Native Task Details
+
+Scheduler `_cached` requests share one pending future per key with a TTL. Waiters shield the shared work from their own cancellation; completion/failure removes only the matching pending future, and failures can retry rather than being cached as success. Endpoint discovery separately caches successful empty Tailscale results, while discovery failures do not become successful empty cache entries.
+
+Task/assistant endpoint updates accept registered owner-visible routes, canonicalize empty values to no override and reject invalid routes. Local shell/script/Cookbook scheduled actions require their sealed native backend capability; missing capabilities fail closed and raw external/SSH execution cannot borrow it. Headless task/background continuations close their streams in the originating task, preserve authority, honor replacement final responses and distinguish provider failure from successful completion.
+
+`NotificationLog` GET is owner-scoped and non-consuming, defaults to 200 rows and clamps to 1000. Notification insert title/body limits are 200/2000 characters; notification text does not grant task authority. Calendar reminder matching is legacy title/source/owner-based rather than UID-linked: nearest eligible due time within zero to seven days of the base event start can match, while deletion removes all same-title matches rather than discriminating by exact alarm time. Negative offsets clamp to zero, passed events do not create reminders, passed alarm time clamps to now, explicit null clears and omission preserves.
+
+## Notes Frontend State And Lifetimes
+
+The canonical Notes composition entry owns one `createNotesState()` instance, injected HTTP/storage/notification ports, application workflows and UI factories. Domain modules own note rules and local-time recurrence. Application modules own query/order, optimistic submission/card/checklist/deletion, selection, drafts, agent actions and reminders; UI modules delegate mutations and transport through those operations. The legacy facade preserves default/named open/close/toggle/new/openNote/badge methods and aliases, including named-only reminder-dot dismissal, without exposing mutable state.
+
+Background startup is idempotent: after three seconds it loads active notes, then starts a 30-second reminder interval and immediate check. Close/minimize/force-close dispose panel resources but leave that page-owned interval running. Scans use the current shared note collection, skip archived/date-only/fired notes, fire within the previous minute, and advance or mark older reminders; archived-only/error-cleared lists can still defer active reminders. Server synthesis has a 1.5-second local-notification fallback, with toast/highlight persistence. This browser path remains separate from backend delivery receipts.
+
+Drafts persist synchronously on input/change and serialize existing-note network autosaves after 500 ms; successful saves clear only the matching draft, while failure/new/drawing drafts remain recoverable. Canvas bitmaps are not draft JSON. Explicit drawing save awaits PNG upload before optimistic submission. Selection dispatches `odysseus:notes-context-selected` synchronously and exits only when the consumer sets `accepted`; chat retains context/session authority. Closing releases owned portals/listeners/gestures/observers, and late fetch/masonry work checks panel connectivity/open state. It does not add universal async generation guards: fetch remains last-completion-wins, optimistic creation replaces the first remaining temporary note, and bulk actions can swallow individual failures before refetch/reporting requested counts.
+
 ## Current Gaps
 
-- CardDAV still needs URL hardening parity with CalDAV; CalDAV now resolves hostnames during validation and revalidates writeback URLs.
 - `do_manage_notes()` should match HTTP note-route owner behavior for legacy null-owner notes.
 - Auth-disabled agent tools can produce or read broader owner scopes than route handlers because they receive `owner=None`; tasks, notes, and calendar need aligned policy/tests.
 - Task webhook tests should keep exercising live route token behavior and

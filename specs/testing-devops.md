@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -15,7 +15,7 @@ This spec covers development and validation surfaces in:
 - `scripts/`, `scripts/odysseus`, `scripts/_lib/cli.py`, `scripts/_completion/*`, `scripts/pr_blocker_audit.py`, and `scripts/odysseus-*`;
 - GPU helper scripts `scripts/check-docker-gpu.sh` and `scripts/check-docker-amd-gpu.sh`;
 - `.github/` templates, workflows, and description-check scripts;
-- contributor workflow docs in `CONTRIBUTING.md` and `docs/pr-blocker-audit.md`;
+- contributor workflow docs in `CONTRIBUTING.md` and `website/pr-blocker-audit.md`;
 - platform launchers `launch-windows.ps1`, `launcher.py`, `Odysseus.spec`, `build-windows-portable.ps1`, `start-macos.sh`, `build-macos-app.sh`, and `update_windows.bat`;
 - setup/service files such as `setup.py`, `install-service.sh`, and `odysseus-ui.service`.
 
@@ -37,7 +37,7 @@ Activated-venv `python -m pytest <test path>` is equivalent. System/global `pyte
 
 `tests/conftest.py` inserts the repo root on `sys.path` and conditionally stubs missing heavy/runtime dependencies such as SQLAlchemy, FastAPI, Starlette, Pydantic, httpx, bcrypt, and pyotp. Tests that need real dependencies use explicit imports/skips. Tests that stub `sys.modules`, environment variables, globals, or parent packages must restore them with `monkeypatch` or an equivalent cleanup pattern.
 
-The suite currently contains roughly 728 `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
+The suite currently contains a growing set of `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
 
 Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, OAuth/token custody, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
 
@@ -45,7 +45,7 @@ Focused regression tests are preferred for narrow behavior changes. Broaden test
 
 ## JS And UI Tests
 
-The repo has no frontend build pipeline, npm test script, or type-check script. `package.json` owns Node dependencies for Bombadil and the Anthropic SDK, and `package-lock.json` owns npm integrity/version state.
+`frontend/modules.json` maps canonical `frontend/src/` modules to committed outputs under `static/`. `scripts/build_frontend.py --check` verifies output freshness/publication attributes; `scripts/check_frontend.mjs` checks architecture/import boundaries. Root `package.json` owns Bombadil, Playwright and Acorn plus photo-editor browser-test scripts; the lockfile owns npm integrity/version state. This is an incremental source migration rather than a bundler-wide conversion.
 
 Current frontend/JS validation includes:
 
@@ -57,13 +57,14 @@ Use `node --check static/js/<changed-file>.js` for syntax checks on changed JS f
 
 ## Dependencies
 
-`requirements.txt` owns core runtime and test dependencies, including pytest, pytest-asyncio, MCP, Chroma HTTP client, fastembed, qrcode, and core parsing/search/calendar dependencies.
+`requirements.txt` owns core runtime and test dependencies, including `psycopg2-binary`, pytest, pytest-asyncio, MCP, Chroma HTTP client, fastembed, qrcode, and core parsing/search/calendar dependencies.
 
 `requirements-optional.txt` owns optional feature dependencies:
 
 - `faster-whisper` for local STT;
 - `kokoro==0.9.4` and `soundfile` for local TTS on Python 3.11-3.12 only; Kokoro is deliberately skipped on Python 3.13+ because its package metadata excludes those runtimes, and a CUDA-capable torch/GPU is still required at runtime;
 - `ddgs` for DDG library support, while provider code can fall back to HTML scraping;
+- `rapidocr==3.9.2` and `onnxruntime>=1.20,<2` for local OCR, and `psd-tools` for PSD previews/layer inspection;
 - `PyMuPDF` for PDF forms/rendering with AGPL implications for a network-served app;
 - `markitdown[docx,pptx,xlsx,xls]` for Office/EPUB extraction, pinned to a release older than 30 days.
 
@@ -95,6 +96,8 @@ Compose variants forward `ODYSSEUS_TTS_CACHE_MAX_BYTES`, defaulting in the servi
 `docker/entrypoint.sh` owns writable path ownership repair, PUID/PGID user/group creation and privilege drop, optional host-Docker socket group handling, vLLM/CUDA environment defaults, idempotent `setup.py`, and final uvicorn execution.
 
 Docker does not mount the host Docker socket by default. Mounting it would grant powerful host access and is outside the default trust boundary. `docker/host-docker.yml` is the explicit opt-in overlay and sets `ODYSSEUS_ENABLE_HOST_DOCKER=true`; tests guard that the default and GPU compose files do not enable host Docker accidentally.
+
+Compose selects `ODYSSEUS_IMAGE` (default GHCR `latest`) alongside a local build and publishes container port 7000 on default host port 7011. SearXNG is tag-and-digest pinned. `docker/host-workspace.yml` explicitly mounts a selected host workspace; `docker/host-network.yml` opts into Linux host networking, resets published ports, and starts uvicorn on the configured host bind/port. These overlays expand access beyond default deployment. The image includes Chromium, Noto CJK fonts, network inspection utilities, pinned `agent-browser@0.35.0`, and redistribution notices. Entrypoint ownership repair touches HuggingFace cache roots without traversing existing model files.
 
 ## GPU And Platform
 
@@ -145,7 +148,7 @@ When route/API behavior changes, check whether a matching CLI script depends on 
 
 ## GitHub Metadata
 
-`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and CI. Current CI runs on pushes to `main` and `dev` plus pull requests, compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, emits focused-test guidance for changed code, and runs the configured `python -m pytest -q` scope as an authoritative failing job; pytest still skips documentation-only changes.
+`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and CI. Current CI runs on pushes to `main` and `dev` plus pull requests, compiles Python, checks committed frontend outputs, validates frontend architecture/syntax, emits report-only focused-test guidance, and partitions pytest across four file-based shards through `tests/_shards.py`. Pytest setup requires functional bubblewrap PID/mount containment, FFmpeg and Chromium. Its prose-only bypass excludes `website/` and `assets/branding/`; those published-file contracts remain tested.
 
 `CONTRIBUTING.md` owns the branch model: PRs target `dev`; `main` is the curated user-running branch fast-forwarded from stable `dev` commits. Contributors who accidentally target `main` should retarget the PR base without rebasing.
 
@@ -169,9 +172,9 @@ Issue description checks:
 - update a bot comment and swap status labels;
 - remove the workflow-owned review label when an issue closes so closed issues do not retain stale readiness state.
 
-Security metadata includes container Trivy SARIF upload, Dockerfile lint, dependency review, secret scan, workflow security linting, GitHub default-setup CodeQL, Dependabot metadata, and hardened PR/issue description checks that avoid unsafe head-branch execution. `docs/security-ci.md` documents CodeQL as a dynamic GitHub default-setup workflow; the repo should not add a checked-in CodeQL workflow while that default setup is active.
+Security metadata includes container Trivy SARIF upload, Dockerfile lint, dependency review, secret scan, workflow security linting, GitHub default-setup CodeQL, Dependabot metadata, and hardened PR/issue description checks that avoid unsafe head-branch execution. `website/security-ci.md` documents CodeQL as a dynamic GitHub default-setup workflow; the repo should not add a checked-in CodeQL workflow while that default setup is active.
 
-`scripts/pr_blocker_audit.py` is a read-only maintainer/contributor triage helper documented in `docs/pr-blocker-audit.md`. It can fetch or ingest open PR metadata, estimate hot files and possible duplicate groups, and emit Markdown, JSON, or terminal reports. Its duplicate/blocker output is advisory, not an authority that a PR is blocked.
+`scripts/pr_blocker_audit.py` is a read-only maintainer/contributor triage helper documented in `website/pr-blocker-audit.md`. It can fetch or ingest open PR metadata, estimate hot files and possible duplicate groups, and emit Markdown, JSON, or terminal reports. Its duplicate/blocker output is advisory, not an authority that a PR is blocked.
 
 Before posting PRs or issues, compare drafts against current templates on latest `main` or current `dev` as appropriate for the target. Keep unpublished drafts and raw related-search exports out of tracked implementation specs unless intentionally promoted.
 
@@ -201,18 +204,50 @@ Run the app for user-facing or integration changes. Unit tests and syntax checks
 
 `tests/helpers/` owns reusable test scaffolding. `cli_loader.load_script()` loads CLI files without running their `main()` entrypoint. `db_stubs` owns small DB stand-ins for tests that should not import a real app database. `import_state` owns conservative `sys.modules` and parent-module-attribute restoration for tests that install fake modules or import route files under alternate stubs. `tests/README.md` documents helper conventions and review expectations.
 
+`tests/test_runtime_behavior_regressions.py` drives the agent loop with a fake streaming model to check offered tools, clarification/plan policy, explicit native request scope and mocked browser cleanup. Negative-web cases require a model call, an answer delta and terminal completion while withholding web tools. These deterministic runtime assertions do not establish live-model or browser acceptance.
+
+## Harness And Publication Boundaries
+
+`tests/conftest.py` defaults the static origin to an ephemeral loopback port and publishes/restores `ODYSSEUS_TEST_STATIC_ORIGIN`; an explicit validated port can still collide. Threaded serving avoids idle-connection head-of-line blocking. Per-process random private data/mail/embedding/cache/temp paths and optional xdist basetemp avoid sharing runtime state; explicit basetemp wins. Disposable database helpers use isolated factories/cleanup rather than ORM reloads. A teardown guard removes and fails newly leaked bare `src`/`core` modules, using exact ModuleType/falsey-file detection; preexisting modules and mocks are outside that guard. The Unix socket path length fixture is character-bounded, not a universal byte-length proof.
+
+`tests/_shards.py` partitions collected files deterministically by weights and lexical tie-breaks across four CI shards; deselection occurs after collection/import. Optional parallel smoke and serial-only guards do not make every test xdist-safe. Pytest CI uses Node 20, locked npm dependencies, cached Chromium downloads keyed by OS/lockfile, system browser libraries, FFmpeg and a functional unprivileged bubblewrap probe. It uses setup-uv cache without automatic prune and pytest skip reasons/duration reporting. These workflow provisions are not evidence that every browser, media or containment test passed on another host.
+
+`tests/helpers/document_source.py` provides ordered implementation membership and lexical construct extraction; email JS helper enumeration is immediate rather than recursive. Stylesheet helpers follow shell order and cache identities; keyframe/hygiene/import/procfs guards are bounded textual or AST checks, not full semantic control-flow/browser proofs. The computed-style fixture, browser artifacts and reported historical suite counts remain specific to their recorded environments.
+
+`scripts/odysseus-dev` owns separate development data/database/browser-cache paths, path-hashed port blocks, service/reserved-port refusal, readiness login and fingerprinted stop state. Hash collisions, released fallback-port races and environment-derived defaults prevent a universal isolation guarantee. `scripts/odysseus-smoke` exercises deterministic model/email HTTP scenarios and reports declared gaps; it is not full browser/product acceptance and cleanup/reused-instance state remains scoped. `scripts/ref_parity_audit.py` compares heuristic added-line probes and exact filtered tree-path sets, not behavioral equivalence; mutable refs can be reread during a run. `scripts/generate_env_reference.py` checks generated reference bytes and handwritten notes from bounded AST/helper/regex discovery, not exhaustive runtime environment use; malformed Python can yield no detected rows and source citations are file-based.
+
+`.github/workflows/deploy-pages.yml` builds `website/` into `_site`; preview encoding targets website assets and branding lives under `assets/branding/`. Docker excludes both website and branding source roots. The macOS app script uses moved branding with best-effort `sips` icon generation; no native build or license clearance follows from source inspection. Docker publishing emits version/short-SHA trace tags and inspects those plus latest, without registry-enforced immutability. Trivy jobs use the Docker Buildx driver and free local build cache before vulnerability database work; this is CI lifecycle behavior, not an instruction to prune controller state.
+
+Description checks retain the public numeric Linked Issue requirement; an exact maintainer-preview repository allows a beginning `N/A` value while still requiring the section after comment stripping. This checks syntax, not issue existence or branch rulesets. Dependency-review blocking applies to canonical repository pull requests; fork pip-audit advice is a separate policy. None of these workflows grants publication authority.
+
+Maintained frontend publication requires repository-owned LF text attributes on both mapped paths, checked through isolated Git attribute evaluation. It validates the complete plan before writes, copies bytes without rewriting imports or bundling and never deletes unowned static assets; publication is not a transactional live deployment. Acorn checks manifest-selected dependency direction, canonical URL identity, used legacy exceptions, exact precache arrays and cycles, not all legacy browser behavior.
+
+## Chroma Mount And Focused Safety Regressions
+
+All three Compose variants mount `chromadb-data:/data`, matching the current image configuration rather than pre-1.0 `/chroma/chroma`. Existing writable-layer data needs rescue before container recreation; `docs/chromadb-volume-migration.md` describes writer shutdown/cold backup, preserved backup image, SQLite/HNSW checks, empty-volume seeding, isolated staging and count comparison. `website/backup-restore.md` links that procedure. Static YAML/document tests cover declared paths and safety markers; they do not execute or certify migration against a live Chroma image.
+
+Focused regressions now cover invalid history truncation preserving messages, failed bulk Trash moves/selective expunge, disabled-auth app configuration gates, durable cleanup message counts/delete-boundary races and generated-image ownership/cache/attribution. Test presence and historical counts do not establish a new successful run; runtime validation evidence is separate.
+
+## Notes Extraction Validation Surface
+
+Notes tests include domain/characterization/application/infrastructure/reminder/workflow contracts, recurrence differential cases across timezones, raw-state cloneability, draft timing and selected-context acceptance. Browser fixtures exercise canonical/facade identity, desktop/mobile/tablet interactions, teardown and first-time offline graph loading; source guards now read feature modules through `tests/helpers/notes_source.py`. `scripts/verify_frontend_runtime.py` checks all manifest outputs in a Python-only distribution, while `scripts/verify_notes_browser_runtime.py` probes an authenticated temporary native app. These require their declared dependencies/browser environment; committed receipts and screenshots are historical evidence, not a fresh acceptance run. Runtime serving still requires no frontend build or Node installation.
+
+## Skills Extraction And Upload Contract Tests
+
+`tests/test_skills_audit_characterization.py` freezes 22 route declarations, 28 Python interfaces and canonical OpenAPI (17 paths, 22 operations, five schemas) from committed fixtures; constrained fields, supported default factories, model configuration and aliases are checked structurally. Unsupported factories fail without execution. `tests/test_skills_audit_services.py` exercises real route/service wiring with offline model/agent/manager substitutes, including prompt seams, owner/request authority, one-use approvals and cancellation/stream closure. Fixtures do not prove arbitrary validators, live execution or authorization by themselves. ReDoS guards now scan/import `services/skills/evaluation.py`. The Gitleaks exception is constrained to one exact historical digest, the generic-api-key rule and two named paths; this maintenance does not claim a new full-history scan.
+
+`tests/test_upload_no_login.py` covers disabled-auth access after setup, missing/unconfigured manager failures, token ownership/scopes, legacy ownerless uploads and OCR preservation on rejection. Its loopback-host parametrization does not itself change TestClient transport identity, so source behavior and narrower assertions remain the evidence for absence of a loopback bypass.
+
 ## Current Gaps
 
 - Fresh install smoke coverage across Linux native, Docker, macOS native/app, Windows native, WSL/Git Bash, missing Node/npm, missing Chroma service, and GPU overlays remains a roadmap item.
-- There is no frontend build/type-check/npm test pipeline.
-- CI now covers Python compile, first-party JS syntax, focused-test guidance,
-  and pytest smoke; it does not cover Docker compose validation, launcher smoke
-  tests, browser/module-graph execution, or platform installs.
+- Frontend source/output and architecture gates exist; they do not establish full browser or platform correctness.
+- Real deployment, GPU and cross-platform install verification still require separate runs beyond CI gates.
 - Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper`, Kokoro's Python/GPU degraded matrix, and provider/OAuth combinations not covered by focused tests.
 - GitHub description-check scripts and `scripts/pr_blocker_audit.py` need continued local fixtures for section parsing, placeholder stripping, label swaps, workflow-safe behavior, and duplicate/hot-file heuristics.
 - Spec bootstrap rules lack meta tests for reading `_readme.md`, spec shape, `.env*` handling, draft/report placement, and shared helper conventions.
 - NVIDIA helper install/`.env` mutation paths and real Docker/GPU startup are not covered by local tests.
 - Bash/Zsh completion behavior is not covered.
-- There is no canonical full-suite known-failing/flaky ledger.
+- `tests/KNOWN_FAILURES.md` records observed environment-dependent full-suite failures and prerequisites; its measured basis is historical, so verify applicability rather than treating it as a passing waiver.
 - There is no central CLI redaction/sensitive-output regression matrix across backup, logs, mail, MCP, tasks, and webhook scripts.
 - Dependency/image pinning policy is mixed: Python requirements are mostly unpinned, SearXNG is pinned, Chroma image currently uses `latest`, npm uses a lockfile, and browser MCP uses cache-gated `@playwright/mcp@latest`.

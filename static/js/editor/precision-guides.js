@@ -144,21 +144,24 @@ export function createPrecisionGuides({ canvasArea, composite, saveState, schedu
   function drawDocumentOverlay(ctx) {
     if (!ctx || !state.imgWidth || !state.imgHeight) return;
     ctx.save();
+    // The pixel grid is shown only when the user turns on View > Grid. The
+    // Pixel tool used to force a strong blue grid over the whole document,
+    // which read as an unwanted blue tint over the image.
     if (state.gridVisible) {
       const base = Math.max(2, Number(state.gridSize) || 16);
       const multiplier = Math.max(1, Math.ceil(5 / Math.max(0.0001, base * state.zoom)));
       const spacing = base * multiplier;
+      const strong = 'rgba(110, 180, 220, 0.42)';
+      const weak = 'rgba(110, 180, 220, 0.22)';
       ctx.lineWidth = 1 / state.zoom;
       for (let x = spacing; x < state.imgWidth; x += spacing) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, state.imgHeight);
-        ctx.strokeStyle = Math.round(x / spacing) % 4 === 0
-          ? 'rgba(110, 180, 220, 0.42)' : 'rgba(110, 180, 220, 0.22)';
+        ctx.strokeStyle = Math.round(x / spacing) % 4 === 0 ? strong : weak;
         ctx.stroke();
       }
       for (let y = spacing; y < state.imgHeight; y += spacing) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(state.imgWidth, y);
-        ctx.strokeStyle = Math.round(y / spacing) % 4 === 0
-          ? 'rgba(110, 180, 220, 0.42)' : 'rgba(110, 180, 220, 0.22)';
+        ctx.strokeStyle = Math.round(y / spacing) % 4 === 0 ? strong : weak;
         ctx.stroke();
       }
     }
@@ -239,6 +242,21 @@ export function createPrecisionGuides({ canvasArea, composite, saveState, schedu
   return {
     drawDocumentOverlay,
     redrawRulers,
+    addGuide(orientation, position) {
+      const axis = orientation === 'horizontal' ? 'horizontal' : 'vertical';
+      const limit = axis === 'horizontal' ? state.imgHeight : state.imgWidth;
+      const value = Math.max(0, Math.min(limit, Math.round(Number(position))));
+      if (!Number.isFinite(value)) return null;
+      const guides = normalizedGuides();
+      if (guides[axis].some(existing => Math.abs(existing - value) < 0.5)) return value;
+      saveState?.('Add guide');
+      guides[axis].push(value);
+      guides[axis].sort((a, b) => a - b);
+      schedulePersist?.();
+      composite();
+      redrawRulers();
+      return value;
+    },
     syncVisibility() { redrawRulers(); composite(); },
     clearGuides() {
       const guides = normalizedGuides();

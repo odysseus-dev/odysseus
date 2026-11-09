@@ -38,9 +38,14 @@ export function normalizeConstrainedSelectionRect(start, end, width, height, opt
   if (mode === 'size') {
     const w = Math.max(1, Math.min(width, Math.round(Number(options.fixedWidth) || 1)));
     const h = Math.max(1, Math.min(height, Math.round(Number(options.fixedHeight) || 1)));
+    // Snap the anchor to whole document pixels so a fixed-size marquee
+    // never straddles a pixel column/row (which antialiases into a
+    // 1px-taller selection on the trailing edge).
+    const ax = Math.round(sx);
+    const ay = Math.round(sy);
     return {
-      x: Math.max(0, Math.min(width - w, sx)),
-      y: Math.max(0, Math.min(height - h, sy)),
+      x: Math.max(0, Math.min(width - w, ax)),
+      y: Math.max(0, Math.min(height - h, ay)),
       w,
       h,
     };
@@ -67,11 +72,14 @@ export function normalizeConstrainedSelectionRect(start, end, width, height, opt
   const scale = Math.min(1, availableW / Math.max(w, 0.0001), availableH / Math.max(h, 0.0001));
   w *= scale;
   h *= scale;
+  // Snap the anchor origin to whole document pixels, but keep w/h derived
+  // exactly from the ratio so the aspect stays exact (rounding w and h
+  // independently would drift the ratio).
   return {
-    x: signX < 0 ? sx - w : sx,
-    y: signY < 0 ? sy - h : sy,
-    w,
-    h,
+    x: Math.round(signX < 0 ? sx - w : sx),
+    y: Math.round(signY < 0 ? sy - h : sy),
+    w: Math.max(1, w),
+    h: Math.max(1, h),
   };
 }
 
@@ -277,18 +285,111 @@ export function selectionBoundaryPixels(mask, threshold = 128) {
   return pixels;
 }
 
-export function paintSelectionBoundary(ctx, pixels, width, height, phase = 0) {
+/**
+ * Boundary pixels AND the selected-flag grid for a mask, computed in one
+ * pass. The flags let the ants painter find each outline pixel's exposed
+ * edges without re-reading the mask.
+ */
+export function selectionBoundary(mask, threshold = 128) {
+  const fallback = { width: mask?.width || 0, height: mask?.height || 0, pixels: [], flags: null };
+  if (!mask?.width || !mask?.height) return fallback;
+  let data;
+  try { data = mask.getContext('2d').getImageData(0, 0, mask.width, mask.height).data; }
+  catch { return fallback; }
+  const width = mask.width;
+  const height = mask.height;
+  const flags = new Uint8Array(width * height);
+  // First/last selected pixel of each row, so the outline pass can skip the
+  // empty margins above, below and around the selection instead of testing
+  // every pixel of a large canvas.
+  const firsts = new Int32Array(height).fill(-1);
+  const lasts = new Int32Array(height).fill(-1);
+  for (let y = 0, i = 0, alpha = 3; y < height; y += 1) {
+    let first = -1, last = -1;
+    for (let x = 0; x < width; x += 1, i += 1, alpha += 4) {
+      if (data[alpha] < threshold) continue;
+      flags[i] = 1;
+      if (first < 0) first = x;
+      last = x;
+    }
+    firsts[y] = first;
+    lasts[y] = last;
+  }
+  // Direct index arithmetic instead of a closure call per neighbour: this runs
+  // over every pixel of the image on each new selection, and the five function
+  // calls per pixel were a measurable share of the pen-close cost on big docs.
+  const pixels = [];
+  for (let y = 0; y < height; y += 1) {
+    const first = firsts[y];
+    if (first < 0) continue;
+    const last = lasts[y];
+    const row = y * width;
+    const above = row - width;
+    const below = row + width;
+    const top = y === 0;
+    const bottom = y === height - 1;
+    for (let x = first; x <= last; x += 1) {
+      const index = row + x;
+      if (flags[index] !== 1) continue;
+      if ((x === 0 || flags[index - 1] !== 1)
+        || (x === width - 1 || flags[index + 1] !== 1)
+        || (top || flags[above + x] !== 1)
+        || (bottom || flags[below + x] !== 1)) {
+        pixels.push(index);
+      }
+    }
+  }
+  return { width, height, pixels, flags };
+}
+
+export function paintSelectionBoundary(ctx, pixels, width, height, phase = 0, zoom = 1, flags = null) {
   if (!ctx || !pixels?.length || !width || !height) return;
-  const image = ctx.createImageData(width, height);
+  if (!flags || typeof Path2D === 'undefined') {
+    // Fallback (no mask context / non-browser): per-pixel fill in image space.
+    const image = ctx.createImageData(width, height);
+    for (const index of pixels) {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      const light = ((x + y + phase) % 8) < 4;
+      const offset = index * 4;
+      image.data[offset] = light ? 255 : 0;
+      image.data[offset + 1] = light ? 255 : 0;
+      image.data[offset + 2] = light ? 255 : 0;
+      image.data[offset + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
+    return;
+  }
+  // Screen-constant marching ants. `width`/`height` are the MASK (image)
+  // dimensions; the caller's overlay bitmap is rendered at SCREEN resolution
+  // (image size × zoom), so we multiply the image-space outline into screen
+  // pixels and stroke a flat 1px line — no bitmap resampling, so the outline
+  // stays the same thickness and opacity at every zoom level.
+  const scale = zoom > 0 ? zoom : 1;
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'butt';
+  ctx.setLineDash([]);
+  const white = new Path2D();
+  const black = new Path2D();
+  const selected = (x, y) => x >= 0 && y >= 0 && x < width && y < height && flags[y * width + x] === 1;
   for (const index of pixels) {
     const x = index % width;
     const y = Math.floor(index / width);
-    const light = ((x + y + phase) % 8) < 4;
-    const offset = index * 4;
-    image.data[offset] = light ? 255 : 0;
-    image.data[offset + 1] = light ? 255 : 0;
-    image.data[offset + 2] = light ? 255 : 0;
-    image.data[offset + 3] = 255;
+    const x0 = x * scale;
+    const y0 = y * scale;
+    const x1 = (x + 1) * scale;
+    const y1 = (y + 1) * scale;
+    const sx = Math.floor((x + 0.5) * scale);
+    const sy = Math.floor((y + 0.5) * scale);
+    const path = ((sx + sy + phase) % 8) < 4 ? white : black;
+    if (!selected(x, y - 1)) { path.moveTo(x0, y0); path.lineTo(x1, y0); }
+    if (!selected(x, y + 1)) { path.moveTo(x0, y1); path.lineTo(x1, y1); }
+    if (!selected(x - 1, y)) { path.moveTo(x0, y0); path.lineTo(x0, y1); }
+    if (!selected(x + 1, y)) { path.moveTo(x1, y0); path.lineTo(x1, y1); }
   }
-  ctx.putImageData(image, 0, 0);
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke(white);
+  ctx.strokeStyle = '#000000';
+  ctx.stroke(black);
 }

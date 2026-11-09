@@ -58,6 +58,8 @@ def test_document_codec_preserves_advanced_layer_state():
         "gridSize": 24,
         "snapEnabled": True,
         "snapToGrid": True,
+        "autoSelectLayer": False,
+        "autoSelectTarget": "layer",
         "guides": {"vertical": [12, 70], "horizontal": [9]},
     }
     assert layer["blendMode"] == "multiply"
@@ -134,6 +136,8 @@ def test_document_codec_sanitizes_precision_view_state():
         "gridSize": 1000,
         "snapEnabled": True,
         "snapToGrid": False,
+        "autoSelectLayer": False,
+        "autoSelectTarget": "layer",
         "guides": {"vertical": [10, 20], "horizontal": [7]},
     }
 

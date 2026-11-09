@@ -10,7 +10,7 @@ import os
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
@@ -1957,6 +1957,23 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         return str(e), False
 
 
+def _daily_brief_utc_boundary(local_dt, tz=None):
+    """Convert a local wall-clock boundary using the offset at that boundary."""
+    if local_dt.tzinfo is None and tz is not None:
+        local_dt = local_dt.replace(tzinfo=tz)
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _daily_brief_local_start(event, tz=None):
+    """Keep date-only/floating rows local; convert only stored UTC instants."""
+    start = event.dtstart
+    if event.is_utc and not event.all_day:
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        return start.astimezone(tz).replace(tzinfo=None)
+    return start
+
+
 async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
     """Build a short morning digest: today's calendar events, unread email count
     + top-N senders/subjects, active todos."""
@@ -1966,10 +1983,13 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
 
         from core.database import SessionLocal, CalendarEvent, CalendarCal, Note
         from routes.email_helpers import _imap_connect, _decode_header
+        from sqlalchemy import and_, or_
 
         # ----- Calendar: today's events -----
         today = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today + _td(days=1)
+        utc_today = _daily_brief_utc_boundary(today)
+        utc_tomorrow = _daily_brief_utc_boundary(tomorrow)
         # v2 review HIGH-12: gate the OR-null branch on single-user
         # (unconfigured) deploys only. In a multi-user deploy, one
         # user's daily brief must not include another user's notes or
@@ -1982,13 +2002,25 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         db = SessionLocal()
         try:
             ev_q = db.query(CalendarEvent).join(CalendarCal).filter(
-                CalendarEvent.dtstart < tomorrow,
-                CalendarEvent.dtend > today,
+                or_(
+                    and_(
+                        CalendarEvent.is_utc.is_(True),
+                        CalendarEvent.all_day.is_not(True),
+                        CalendarEvent.dtstart < utc_tomorrow,
+                        CalendarEvent.dtend > utc_today,
+                    ),
+                    and_(
+                        or_(CalendarEvent.is_utc.is_not(True), CalendarEvent.all_day.is_(True)),
+                        CalendarEvent.dtstart < tomorrow,
+                        CalendarEvent.dtend > today,
+                    ),
+                ),
                 CalendarEvent.status != "cancelled",
             )
             if owner:
                 ev_q = owner_filter(ev_q, CalendarCal, owner, include_shared=_allow_null)
-            events = ev_q.order_by(CalendarEvent.dtstart).all()
+            events = ev_q.all()
+            events.sort(key=_daily_brief_local_start)
             # ----- Notes: pinned + non-archived todos with at least one undone item -----
             n_q = db.query(Note).filter(Note.archived == False)  # noqa: E712
             if owner:
@@ -2058,7 +2090,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         if events:
             plain.append("Calendar:")
             for e in events:
-                t = e.dtstart.strftime("%H:%M") if not e.all_day else "all day"
+                t = _daily_brief_local_start(e).strftime("%H:%M") if not e.all_day else "all day"
                 loc = f" @ {e.location}" if e.location else ""
                 plain.append(f"  {t}  {e.summary}{loc}")
             plain.append("")
@@ -2465,6 +2497,100 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def _spec_triage_email_urgency(item: dict, *, triage_version: int) -> dict | None:
+    """Classify one email's urgency with the trained jeff ``triage`` adapter.
+
+    Returns an email-urgency verdict (same shape as the LLM path) or None when
+    the per-job flag is off or the adapter is unavailable, so the caller falls
+    through to the LLM candidate chain. Only the ``urgency`` question is sent:
+    jeff scores each question in its own forward pass, and that is the question
+    this adapter was trained on.
+    """
+    from src.jeff_decision import jeff_job_enabled, jeff_systemone, score_value
+
+    if not jeff_job_enabled("EMAIL_URGENCY"):
+        return None
+    message = f"Subject: {item.get('subject','')}\n\n{item.get('body','')}".strip()
+    if not message:
+        return None
+    answers = await jeff_systemone(
+        "triage",
+        {"channel": "email", "message": message[:8000]},
+        {"urgency": {
+            "type": "score",
+            "instructions": "How urgently does this need a response?",
+            "criteria": [
+                "No action needed",
+                "Can wait a few days",
+                "Handle within a day",
+                "Handle within hours",
+                "Handle immediately",
+            ],
+        }},
+    )
+    if not answers:
+        return None
+    exp = score_value(answers.get("urgency"))
+    if exp is None:
+        return None
+
+    # Adapter's 0-4 urgency scale -> the app's 0-3 score.
+    score = max(0, min(3, int(round(exp))))
+    reason = "triage adapter"
+
+    # Same high-precision correction the prompt path applies: a person waiting
+    # in person is always urgent, whatever the model thinks.
+    blob = f"{item.get('headers','')}\n{item.get('subject','')}\n{item.get('body','')}".lower()
+    if re.search(r"\b(i'?m|i am|im|we'?re|we are)\s+outside\b", blob) or re.search(
+        r"\b(waiting outside|at the door|locked out|can'?t get in|cannot get in)\b", blob
+    ):
+        if score < 3:
+            reason = "person is waiting outside"
+        score = 3
+
+    # Same bulk/marketing guard the prompt path applies: a newsletter or
+    # promotion is not urgent no matter how time-limited it sounds.
+    bulkish = bool(re.search(
+        r"\b(list-unsubscribe|list-id|mailchimp|mailchimpapp|view this email in your browser|unsubscribe|newsletter|digest|precedence:\s*bulk)\b",
+        blob,
+    ))
+    # The adapter was trained on support tickets, so it over-rates promotions.
+    # Require a clear bulk header or several marketing terms before zeroing.
+    marketing_hits = sum(1 for t in (
+        "advertisement", "sponsored", "promo", "promotion", "sale", "discount",
+        "offer", "limited time", "deal", "coupon", "shop now", "buy now",
+        "sold out", "low tickets",
+    ) if t in blob)
+    if bulkish or marketing_hits >= 2:
+        score = 0
+        reason = "bulk mail; no personal reply needed"
+
+    tags = []
+    if score >= 3:
+        tags.append("urgent")
+    elif score >= 2:
+        tags.append("reply-soon")
+
+    _from_raw = item.get("from", "") or ""
+    if "<" in _from_raw:
+        _from_short = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
+    else:
+        _from_short = _from_raw
+
+    return {
+        "score": score,
+        "tags": tags[:4],
+        "spam": False,
+        "reason": reason,
+        "subject": (item.get("subject") or "")[:200],
+        "from": _from_short[:120],
+        "triage_version": triage_version,
+        "message_id": (item.get("message_id") or "").strip(),
+        "unread": bool(item.get("unread")),
+        "ts": time.time(),
+    }
+
+
 async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
     """Scan unread emails across all accounts, LLM-triage new ones, cache
     per-UID verdicts, tag the inbox, and fire a reminder when a previously
@@ -2850,6 +2976,16 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 if verdict.get("tags") or verdict.get("reason") != "categorized by email metadata":
                     cache.setdefault("uids", {})[item["uid"]] = verdict
                     per_uid_scores[key] = verdict
+                    saved_classifications += 1
+                    continue
+                # ── Spec decision adapter (triage): a calibrated urgency score
+                # with no generated-text prompt. Enabled per-job via
+                # ODYSSEUS_JEFF_EMAIL_URGENCY; any failure returns None and the
+                # LLM candidate chain below still runs.
+                _tri = await _spec_triage_email_urgency(item, triage_version=TRIAGE_VERSION)
+                if _tri is not None:
+                    cache.setdefault("uids", {})[item["uid"]] = _tri
+                    per_uid_scores[key] = _tri
                     saved_classifications += 1
                     continue
                 # ── LLM-classify. JSON-only response; bullet-proof parse.

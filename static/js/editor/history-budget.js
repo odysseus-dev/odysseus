@@ -24,17 +24,29 @@ function pixelSlots(snapshot) {
   return slots;
 }
 
+function samePixels(image, other) {
+  if (image === other) return true;
+  if (image.width !== other.width || image.height !== other.height || image.data.length !== other.data.length) return false;
+  const length = image.data.length;
+  // Compare 4 bytes at a time: the byte-by-byte loop dominated selection
+  // commits on large documents (every layer of the previous snapshot was
+  // re-scanned one byte at a time).
+  if (length % 4 === 0) {
+    const a = new Uint32Array(image.data.buffer, image.data.byteOffset, length >> 2);
+    const b = new Uint32Array(other.data.buffer, other.data.byteOffset, length >> 2);
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+    return true;
+  }
+  for (let i = 0; i < length; i += 1) if (image.data[i] !== other.data[i]) return false;
+  return true;
+}
+
 export function shareSnapshotPixels(snapshot, previous) {
   if (!previous) return snapshot;
   const candidates = pixelSlots(previous).map(([object, key]) => object[key]);
   for (const [object, key] of pixelSlots(snapshot)) {
     const image = object[key];
-    const match = candidates.find(other => {
-      if (image === other) return true;
-      if (image.width !== other.width || image.height !== other.height || image.data.length !== other.data.length) return false;
-      for (let i = 0; i < image.data.length; i++) if (image.data[i] !== other.data[i]) return false;
-      return true;
-    });
+    const match = candidates.find(other => samePixels(image, other));
     if (match) object[key] = match;
   }
   return snapshot;

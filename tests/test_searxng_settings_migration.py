@@ -8,6 +8,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+# The migration runs inside the searxng container entrypoint and preserves the
+# settings file's owner/mode with os.fchmod/os.fchown, which do not exist on
+# Windows, so every subprocess run of the script fails there before it starts.
+pytestmark = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX-only: migrate_searxng_settings.py uses os.fchmod/os.fchown"
+)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATION = ROOT / "scripts" / "migrate_searxng_settings.py"

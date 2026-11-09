@@ -72,7 +72,12 @@ function hexToHsv(hex) { const { r, g, b } = hexToRgb(hex); return rgbToHsv(r, g
 
 // ── Storage ───────────────────────────────────────────────────────────
 function getRecents() {
-  try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]'); }
+  try {
+    const values = JSON.parse(localStorage.getItem(LS_RECENT) || '[]');
+    return Array.isArray(values)
+      ? values.filter(value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)).slice(0, MAX_RECENT)
+      : [];
+  }
   catch { return []; }
 }
 
@@ -85,15 +90,26 @@ function addRecent(hex) {
 }
 
 // ── Suggestions based on current color (5 harmony swatches) ──────────
-function computeSuggestions() {
+function suggestionsForHsv(h, s, v) {
   // Complement, analogous ±30°, split-complement (+150), tone shift
   return [
-    { hex: hsvToHex(_h + 180, _s, _v),                                   label: 'Complement' },
-    { hex: hsvToHex(_h + 30, _s, _v),                                    label: 'Analogous +30°' },
-    { hex: hsvToHex(_h - 30, _s, _v),                                    label: 'Analogous -30°' },
-    { hex: hsvToHex(_h + 150, _s, _v),                                   label: 'Split-complement' },
-    { hex: hsvToHex(_h, _s, clamp(_v > 50 ? _v - 30 : _v + 30, 10, 95)), label: 'Tone shift' },
+    { hex: hsvToHex(h + 180, s, v),                                   label: 'Complement' },
+    { hex: hsvToHex(h + 30, s, v),                                    label: 'Analogous +30°' },
+    { hex: hsvToHex(h - 30, s, v),                                    label: 'Analogous -30°' },
+    { hex: hsvToHex(h + 150, s, v),                                   label: 'Split-complement' },
+    { hex: hsvToHex(h, s, clamp(v > 50 ? v - 30 : v + 30, 10, 95)), label: 'Tone shift' },
   ];
+}
+
+// ── Reusable helpers for hosts that surface swatches inline ──────────
+// (e.g. the editor's SWATCHES panel showing suggestions + recents).
+function computeSuggestions() { return suggestionsForHsv(_h, _s, _v); }
+
+export function getRecentColors() { return getRecents(); }
+export function recordRecentColor(hex) { addRecent(hex); }
+export function suggestColorsFor(hex) {
+  const { h, s, v } = hexToHsv(hex || '#000000');
+  return suggestionsForHsv(h, s, v);
 }
 
 // ── Popover build ─────────────────────────────────────────────────────
