@@ -105,7 +105,8 @@ def target():
 
 
 def _seed(path, text=RECIPE):
-    with open(path, "w", encoding="utf-8") as handle:
+    # newline="" keeps the byte count the refusal reports platform independent.
+    with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(text)
     return text
 
@@ -203,6 +204,7 @@ async def test_refusal_names_the_byte_count_and_the_explicit_form(target):
     assert "output" not in res, res
 
 
+@pytest.mark.skipif(os.name == "nt", reason='Windows forbids " in file names, so the quoted path cannot be created')
 @pytest.mark.asyncio
 async def test_refusal_suggestion_is_valid_json_for_paths_with_quotes(target):
     quoted_path = os.path.join(os.path.dirname(target), 'recipe"draft.md')

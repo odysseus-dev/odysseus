@@ -96,8 +96,11 @@ def test_permission_denied_is_not_verified_death(monkeypatch):
     def denied(*args):
         raise PermissionError("EPERM")
     monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+    monkeypatch.setattr(containment, "IS_WINDOWS", False)
+    from src import process_lifecycle
+    monkeypatch.setattr(process_lifecycle, "IS_WINDOWS", False)
     monkeypatch.setattr(os, "kill", denied)
-    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(os, "killpg", denied, raising=False)
     monkeypatch.setattr(containment, "_own_pgid", lambda: 1)
     assert platform_compat.pid_alive(987654) is True
     assert containment._group_present(987654) is True

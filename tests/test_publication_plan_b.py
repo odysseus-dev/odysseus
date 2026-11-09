@@ -16,14 +16,23 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _distributed_bytes(path):
+    # The ledger hashes the committed (LF) blobs. A Windows checkout with
+    # core.autocrlf rewrites text files to CRLF, so undo that for text only.
+    data = (ROOT / path).read_bytes()
+    if os.name == 'nt' and Path(path).suffix != '.woff2':
+        data = data.replace(bytes([13, 10]), bytes([10]))
+    return data
+
+
 def test_retained_artifacts_match_distributed_provenance_and_notices():
     ledger = json.loads((ROOT / 'THIRD_PARTY_PROVENANCE.json').read_text())
     assert len(ledger['retained']) == 6
     for entry in ledger['retained']:
         assert entry['source_records']
-        assert hashlib.sha256((ROOT / entry['notice']).read_bytes()).hexdigest() == entry['notice_sha256']
+        assert hashlib.sha256(_distributed_bytes(entry['notice'])).hexdigest() == entry['notice_sha256']
         for artifact in entry['artifacts']:
-            data = (ROOT / artifact['path']).read_bytes()
+            data = _distributed_bytes(artifact['path'])
             assert len(data) == artifact['size_bytes']
             assert hashlib.sha256(data).hexdigest() == artifact['sha256']
 

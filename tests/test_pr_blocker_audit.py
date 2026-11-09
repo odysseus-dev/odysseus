@@ -727,6 +727,10 @@ def test_color_auto_requires_terminal_and_support(monkeypatch):
     monkeypatch.setattr(audit.sys.stdout, "isatty", lambda: True)
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setitem(audit.os.environ, "TERM", "xterm-256color")
+    if audit.os.name == "nt":
+        # Auto colour on Windows also needs a real console handle for VT mode,
+        # which a captured pytest stdout never has; model a capable console.
+        monkeypatch.setattr(audit, "enable_windows_vt_mode", lambda: True)
     assert audit.should_use_color(args)
 
     monkeypatch.setitem(audit.os.environ, "NO_COLOR", "1")

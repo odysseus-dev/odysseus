@@ -7,7 +7,7 @@ imports must be in the precache lists, shared modules included. The real
 browser upgrade/offline proof lives in
 tests/e2e/photo-editor/offline-upgrade.spec.js.
 """
-import os
+import posixpath
 import re
 from pathlib import Path
 
@@ -48,7 +48,8 @@ def _lazy_editor_graph() -> set[str]:
             if not spec.startswith("."):
                 continue
             path, _, query = spec.partition("?")
-            target = os.path.normpath(os.path.join(os.path.dirname(current.split("?")[0]), path))
+            # URL paths, so posixpath: os.path would emit backslashes on Windows.
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(current.split("?")[0]), path))
             stack.append(f"{target}?{query}" if query else target)
     return seen
 

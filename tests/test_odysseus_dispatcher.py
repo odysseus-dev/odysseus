@@ -1,6 +1,11 @@
+import os
+
+import pytest
+
 from tests.helpers.cli_loader import load_script
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX execute permission bit: os.access(X_OK) is true for every existing file")
 def test_is_runnable_subcommand_requires_executable_file(tmp_path):
     cli = load_script("odysseus")
     sub = tmp_path / "odysseus-demo"
