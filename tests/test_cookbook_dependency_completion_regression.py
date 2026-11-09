@@ -785,7 +785,8 @@ def test_odysseus_create_llama_shim_secure_temp_prevents_symlink_attack(tmp_path
     target_shim = tmp_path / "bin/llama-server"
     assert target_shim.exists()
     assert ODYSSEUS_LLAMA_SHIM_MARKER in target_shim.read_text(encoding="utf-8")
-    assert target_shim.stat().st_mode & 0o111 != 0, "Shim must be executable"
+    if os.name != "nt":  # Windows has no POSIX execute mode bits
+        assert target_shim.stat().st_mode & 0o111 != 0, "Shim must be executable"
 
 
 def test_stale_odysseus_shim_removed_when_python_server_unusable(tmp_path):

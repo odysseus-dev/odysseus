@@ -18,6 +18,7 @@ import os
 import uuid
 import functools
 import threading
+import time
 from typing import Any, Optional
 
 
@@ -58,6 +59,29 @@ def store_transaction(path_factory):
     return decorate
 
 
+def _replace(tmp: str, path: str) -> None:
+    """``os.replace``, tolerating a concurrent reader on Windows.
+
+    Windows refuses to replace a file another handle has open (the stdlib
+    ``open`` does not share delete access), so a reader that happens to hold
+    the target open makes the rename fail with PermissionError. The reader
+    only holds it for the length of a read, so retry briefly. POSIX renames
+    over open files and never takes the retry path.
+    """
+    if os.name != "nt":
+        os.replace(tmp, path)
+        return
+    attempts = 40
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.005 * min(attempt + 1, 10))
+
+
 def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
     """Atomically persist `data` as JSON at `path`.
 
@@ -75,7 +99,7 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
             json.dump(data, f, indent=indent)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        _replace(tmp, path)
     finally:
         # Directly unlink to avoid a check-then-act race condition.
         # Swallows FileNotFoundError (on success path) and other cleanup OSErrors.
@@ -96,7 +120,7 @@ def atomic_write_text(path: str, text: str) -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        _replace(tmp, path)
     finally:
         # Directly unlink to avoid a check-then-act race condition.
         # Swallows FileNotFoundError (on success path) and other cleanup OSErrors.

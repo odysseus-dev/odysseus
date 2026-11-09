@@ -1,3 +1,4 @@
+import os
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
@@ -65,6 +66,7 @@ async def test_container_cli_only_is_rejected(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="needs socket.AF_UNIX, absent on Windows")
 async def test_container_opt_in_with_unix_socket_is_allowed(monkeypatch):
     monkeypatch.setattr(cookbook_routes.shutil, "which", lambda binary: "/usr/bin/docker")
 
@@ -177,6 +179,7 @@ async def test_local_container_serve_returns_host_docker_opt_in_hint(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="expects a tmux-wrapped launch, and tmux is POSIX-only")
 async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
     monkeypatch,
     tmp_path,

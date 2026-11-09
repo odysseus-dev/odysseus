@@ -1017,6 +1017,12 @@ def _tool_path_roots() -> list[str]:
     if tmpdir:
         roots.append(tmpdir)
 
+    # Windows has no /tmp and sets %TEMP% rather than $TMPDIR; the per-user
+    # temp root plays the same role there.
+    if os.name == "nt":
+        import tempfile
+        roots.append(tempfile.gettempdir())
+
     # Opt-in extra roots from settings.
     try:
         from src.settings import get_setting

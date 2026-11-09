@@ -11,6 +11,10 @@ def _clear_hwfit_cache(monkeypatch):
     monkeypatch.setattr(hardware, "_remote_host", None)
     monkeypatch.setattr(hardware, "_remote_platform", None)
     monkeypatch.setattr(hardware, "_is_containerized", lambda: False)
+    # On a real Windows host detect_system() takes the PowerShell path before
+    # the generic probe these tests stub; make that probe "fail" so the
+    # generic (Linux/Termux) path under test runs on every platform.
+    monkeypatch.setattr(hardware, "_detect_windows", lambda: None)
     yield
     hardware._cache_by_host.clear()
 

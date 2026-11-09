@@ -1,5 +1,6 @@
 """Native Bash does not resurrect tmux; legacy cleanup requires identity."""
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -23,11 +24,17 @@ async def test_a_chat_session_always_uses_the_owned_runner(monkeypatch, tmp_path
     assert result["output"] == "ok"
     assert result["teardown"]["dead"] is True
     assert "tmux_session" not in result
-    assert captured["kwargs"].get("start_new_session") is True
+    if os.name == "nt":
+        # Windows has no setsid; containment._spawn_kwargs gives the child its own process group instead.
+        assert captured["kwargs"].get("creationflags")
+    else:
+        assert captured["kwargs"].get("start_new_session") is True
 
 
 @pytest.fixture
 def legacy(monkeypatch, tmp_path):
+    if os.name == "nt":
+        pytest.skip("legacy tmux shells are POSIX-only; reap_legacy_agent_tmux returns early on Windows")
     import shlex
     import subprocess
     import shutil

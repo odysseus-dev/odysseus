@@ -14,6 +14,8 @@ from tests.process_resource_helpers import launch, get, kill
 
 @pytest.fixture
 def jobs(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("the process_group containment mechanism is POSIX-only (os.setsid/killpg)")
     from src.agent_runtime import process_resources
     monkeypatch.setattr(process_resources, "_LAUNCH_DIR", tmp_path / "private" / "launches")
     workspace = tmp_path / "workspace"

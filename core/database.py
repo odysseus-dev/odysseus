@@ -129,7 +129,11 @@ def _sqlite_db_path(url) -> Optional[str]:
     if authority and authority.lower() != "localhost":
         fs_path = f"//{authority}{fs_path}"
 
-    return unquote(fs_path)
+    fs_path = unquote(fs_path)
+    # A file URI carries a drive letter as /C:/dir/db; Windows wants C:\dir\db.
+    if os.name == "nt" and len(fs_path) > 2 and fs_path[0] == "/" and fs_path[2] == ":":
+        fs_path = os.path.normpath(fs_path[1:])
+    return fs_path
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

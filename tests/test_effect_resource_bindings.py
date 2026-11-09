@@ -86,7 +86,7 @@ def test_claim_is_durable_before_the_producer_runs(run, monkeypatch):
     claim = run.journal.effects.history().claims[0]
     assert [ref.role for ref in claim.impact_scope] == ["destination"]
     assert claim.obligations[0].predicate is fx.Predicate.CONTENT_SHA256
-    assert claim.obligations[0].expected == sha("hello\n")
+    assert claim.obligations[0].expected == sha("hello" + os.linesep)  # written in text mode
     receipt = run.journal.actions[0]
     stages = [t["stage"] for t in receipt.transitions]
     assert stages.index("effect_claimed") < stages.index("dispatched")
@@ -125,7 +125,7 @@ def test_execution_success_then_complete_readback_verifies(run):
     assert verdicts(run.journal) == [fx.EffectVerdict.VERIFIED]
     observation = run.journal.effects.history().observations[0]
     assert observation.source_action_id == run.journal.actions[1].action_id
-    assert observation.content_sha256 == sha("hello\n")
+    assert observation.content_sha256 == sha("hello" + os.linesep)
 
 
 def test_partial_read_neither_verifies_nor_validates(run, ws):

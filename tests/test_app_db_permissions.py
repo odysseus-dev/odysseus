@@ -138,10 +138,14 @@ def test_sqlite_db_path_handles_file_uri_forms(tmp_path):
     )
 
     localhost_db = tmp_path / "localhost-uri.db"
+    # The URI path always begins with "/"; a Windows drive path gains one.
+    localhost_uri_path = localhost_db.as_posix()
+    if not localhost_uri_path.startswith("/"):
+        localhost_uri_path = "/" + localhost_uri_path
     assert (
         _sqlite_db_path(
             make_url(
-                f"sqlite+pysqlite:///file://localhost{localhost_db}"
+                f"sqlite+pysqlite:///file://localhost{localhost_uri_path}"
                 "?mode=rwc&uri=true"
             )
         )

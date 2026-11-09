@@ -182,6 +182,7 @@ class DecoderTests(unittest.TestCase):
                 with self.subTest(marker=marker, native=native), self.assertRaisesRegex(ValueError, "valid-stream"):
                     checker.check_decoder(native)
 
+    @unittest.skipIf(os.name == "nt", "parses Debian ldd output and /usr/bin paths, Linux-only")
     def test_node_must_link_the_same_decoder(self):
         native = Path("/usr/lib/example/libbrotlidec.so.1")
         for linked, accepted in [
@@ -208,6 +209,7 @@ class DecoderTests(unittest.TestCase):
 
 class ImageRecipeTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("sh"), "Docker RUN guard requires a POSIX shell")
+    @unittest.skipIf(os.name == "nt", "asserts POSIX /tmp path strings in the recorded Docker recipe")
     def test_base_ca_guard_failure_stops_before_package_network_access(self):
         base = (ROOT / "Dockerfile").read_text(encoding="utf-8").split("# ---- builder:", 1)[0]
         # Execute the actual first RUN with command stubs. A failed CA check must

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import pytest
+
 import ast
 import asyncio
 import base64
@@ -973,6 +976,7 @@ def test_context_info_advertises_workspace_and_tool_policy():
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX path strings (/home, /workspace); Windows paths render with drive letters and backslashes")
 def test_runtime_context_preserves_sanitized_active_skills():
     from routes.chat_routes import (
         _client_runtime_context_system_message,
@@ -1048,6 +1052,7 @@ def test_runtime_context_rejects_non_tui_surface_and_accepts_valid_tui_bridge():
     assert context["active_skills"] == ["tdd"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX path strings (/home, /workspace); Windows paths render with drive letters and backslashes")
 def test_agent_runtime_context_can_omit_directives_when_agent_loop_renders_them():
     from routes.chat_routes import _client_runtime_context_system_message
 
@@ -1178,6 +1183,7 @@ def test_tui_runtime_context_cwd_is_sanitized_and_surface_scoped(monkeypatch):
     assert _client_runtime_context_cwd({"surface": "webui", "session_cwd": "/repo"}) == ""
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX path strings (/home, /workspace); Windows paths render with drive letters and backslashes")
 def test_backend_workspace_path_maps_host_root_to_container_root(monkeypatch):
     from src.workspace_paths import backend_workspace_path
 
@@ -1187,6 +1193,7 @@ def test_backend_workspace_path_maps_host_root_to_container_root(monkeypatch):
     assert backend_workspace_path("/home/alice/project") == "/workspace/project"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX path strings (/home, /workspace); Windows paths render with drive letters and backslashes")
 def test_backend_workspace_path_keeps_unmapped_paths(monkeypatch):
     from src.workspace_paths import backend_workspace_path
 
@@ -1197,6 +1204,7 @@ def test_backend_workspace_path_keeps_unmapped_paths(monkeypatch):
     assert backend_workspace_path("/already/container") == "/already/container"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX path strings (/home, /workspace); Windows paths render with drive letters and backslashes")
 def test_backend_workspace_path_uses_longest_mapping(monkeypatch):
     from src.workspace_paths import backend_workspace_path
 

@@ -3,6 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 import json
 import jsonschema
+import os
 import pytest
 import re
 
@@ -7054,7 +7055,9 @@ def test_semantic_repeat_scope_distinguishes_focused_still_image_inspections():
     second = module.semantic_repeat_scope(
         'inspect_media', {'path': '/workspace/map.png', 'query': 'identify colors'},
     )
-    assert first == ('still_image_inspection', '/workspace/map.png', 'read labels', 0)
+    # The scope key carries the host's normalized spelling of the path.
+    map_png = os.path.normpath('/workspace/map.png')
+    assert first == ('still_image_inspection', map_png, 'read labels', 0)
     assert second != first
     assert module.semantic_repeat_scope(
         'inspect_media', {'path': '/workspace/map.png', 'query': '  READ   labels '},
