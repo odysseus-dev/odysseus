@@ -80,14 +80,22 @@ Three exemptions apply even when the gate is on, all deliberate:
 - `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` everywhere.
 - **CSP:** nonce-based `script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net`. `style-src 'unsafe-inline'` is intentionally kept — `static/index.html` ships inline `<style>` blocks and JS modules set `style=""` attributes at runtime. Inline styles do not execute script so the risk is visual-only. Removing this requires templating the HTML files and auditing all JS-set style attributes.
 
+## Token-Supplied LLM Endpoints
+
+`POST /api/v1/chat` (`routes/webhook/webhook_routes.py:sync_chat`) requires a `chat`-scoped API token. A token that starts a session with a direct `api_key` may also pass its own `base_url`; the server treats that URL as untrusted:
+
+- **Validation:** `src/url_security.py:resolve_public_http_url` accepts only `http`/`https` URLs with a public host. Internal names (`localhost`, `metadata`, `*.local`, `*.internal`, `*.lan`, …) are refused. The host is resolved once and refused if any address is private, loopback, link-local, multicast, reserved, unspecified, or in RFC 6598 shared space (`100.64.0.0/10`, CGNAT). IPv4-mapped (`::ffff:a.b.c.d`) and NAT64 (`64:ff9b::/96`) addresses are judged by the IPv4 address they embed. A refused URL returns 400.
+- **Pinning:** the LLM request connects only to the first address that passed the check (`_pinned_llm_client` over `src/webhook_manager.py:_PinnedAsyncTransport`), so a second DNS lookup cannot rebind it to an internal host. Host and TLS SNI still come from the URL, so the certificate is verified against the hostname. Redirects and environment proxies are off, and the context window comes from the built-in table instead of probing the endpoint.
+- **Resumed sessions:** a session keeps the URL it was created with, and `base_url`/`provider` are ignored on resume. Unless the session's URL is a built-in provider URL (`KNOWN_PROVIDERS`) or matches a `ModelEndpoint` the token owner can see, it is checked and pinned again on every resume, so a host whose DNS now points somewhere private returns 400.
+
+Built-in provider URLs and configured `ModelEndpoint`s are not checked, so configured local/LAN model servers keep working.
+
 ## Known Gaps
 
 These are open, acknowledged, and contributor help is welcome:
 
 1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal. The tool approval gate above is the compensating control and is on by default; turning it off leaves this gap unmitigated beyond the untrusted-context wrapper.
 
-2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
+2. **`src/search/` partial consolidation.** `src.search.core` and `src.search.providers` correctly alias `services.search` via `sys.modules` replacement. `analytics`, `cache`, `content`, `query`, and `ranking` are still independent copies that can drift. The SSRF regression tests in `tests/test_webhook_ssrf_resilience.py` test `src.webhook_manager` directly (separate from search), so the safety net there is intact. See #1058.
 
-3. **`src/search/` partial consolidation.** `src.search.core` and `src.search.providers` correctly alias `services.search` via `sys.modules` replacement. `analytics`, `cache`, `content`, `query`, and `ranking` are still independent copies that can drift. The SSRF regression tests in `tests/test_webhook_ssrf_resilience.py` test `src.webhook_manager` directly (separate from search), so the safety net there is intact. See #1058.
-
-4. **Token scopes are coarse.** There is no way to grant a session a subset of the owning user's privileges. Companion/mobile tokens carry either `chat` or `admin` scope with no per-capability granularity.
+3. **Token scopes are coarse.** There is no way to grant a session a subset of the owning user's privileges. Companion/mobile tokens carry either `chat` or `admin` scope with no per-capability granularity.
