@@ -1956,7 +1956,9 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
     # lookback finds this write). One-shot calls skip it: no reuse would pay
     # back the cache-write premium.
     if tools or len(chat_messages) >= 3:
-        _mark_last_message_cache_breakpoint(chat_messages)
+        reserved = sum("cache_control" in b for b in payload.get("system", []) if isinstance(b, dict))
+        reserved += sum("cache_control" in t for t in payload.get("tools", []))
+        _mark_last_message_cache_breakpoint(chat_messages, reserved)
     return payload
 
 
@@ -1965,18 +1967,41 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
 _ANTHROPIC_CACHEABLE_BLOCK_TYPES = {"text", "image", "document", "tool_use", "tool_result"}
 
 
-def _mark_last_message_cache_breakpoint(chat_messages):
+def _mark_last_message_cache_breakpoint(chat_messages, reserved=0):
     """Put one ephemeral cache breakpoint on the last cacheable block of the
     final message. Copies the message and block it changes, so the caller's
-    history never accumulates breakpoints across rounds (the API allows 4)."""
+    history never accumulates breakpoints across rounds (the API allows 4).
+    `reserved` is the number of system/tool breakpoints already in the payload;
+    if the caller pre-marked message blocks, the oldest are stripped (on copies)
+    so the request total stays within 4."""
     if not chat_messages:
         return
+    caller_marked = False
     for msg in chat_messages:
         content = msg.get("content")
         if isinstance(content, list) and any(
             isinstance(b, dict) and "cache_control" in b for b in content
         ):
-            return  # caller already placed its own message breakpoint
+            caller_marked = True
+    if caller_marked:  # caller placed its own message breakpoints: add none
+        excess = reserved + sum(
+            isinstance(b, dict) and "cache_control" in b
+            for m in chat_messages if isinstance(m.get("content"), list)
+            for b in m["content"]
+        ) - 4
+        for mi, msg in enumerate(chat_messages):
+            if excess <= 0:
+                break
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            blocks = list(content)
+            for bi, b in enumerate(blocks):
+                if excess > 0 and isinstance(b, dict) and "cache_control" in b:
+                    blocks[bi] = {k: v for k, v in b.items() if k != "cache_control"}
+                    excess -= 1
+            chat_messages[mi] = {**msg, "content": blocks}
+        return
     last = chat_messages[-1]
     content = last.get("content")
     if isinstance(content, str):
