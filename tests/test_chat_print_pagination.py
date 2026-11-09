@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 from pypdf import PdfReader
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@requires_playwright
 @pytest.mark.skipif(not shutil.which("node"), reason="node is required for Chromium printing")
 def test_chat_print_preserves_the_complete_transcript(tmp_path):
     script = r'''

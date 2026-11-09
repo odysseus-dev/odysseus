@@ -5,8 +5,10 @@ import subprocess
 import pytest
 
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.playwright_gate import requires_playwright
 
 
+@requires_playwright
 @pytest.mark.parametrize('modal_id', ['settings-modal', 'theme-modal'])
 @pytest.mark.parametrize('width', [1440, 390])
 def test_modal_reopen_after_dock_close_and_pending_animation(modal_id, width):
@@ -96,6 +98,7 @@ def test_modal_reopen_after_dock_close_and_pending_animation(modal_id, width):
     assert all(states.values()), states
 
 
+@requires_playwright
 def test_modal_visibility_is_available_offline_before_first_open():
     script = r"""
       import assert from 'node:assert/strict';

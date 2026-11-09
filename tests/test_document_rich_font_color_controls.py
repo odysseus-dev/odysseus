@@ -8,6 +8,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +89,7 @@ def test_separator_is_a_style_dropdown_after_bullets_and_image_insert():
     assert "-webkit-appearance: none;" in STYLE
 
 
+@requires_playwright
 def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
     script = r"""
       import { chromium } from 'playwright';

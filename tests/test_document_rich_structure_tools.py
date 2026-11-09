@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import declaration, document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -34,6 +35,7 @@ def test_heading_levels_and_page_break_are_exposed_everywhere():
     assert ".doc-email-richbody.richtext-mode hr.richtext-page-break" in STYLE
 
 
+@requires_playwright
 def test_mobile_headings_page_break_history_and_persistence():
     script = r"""
       import { chromium } from 'playwright';

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.playwright_gate import requires_playwright
+
 _REPO = Path(__file__).resolve().parent.parent
 _HELPER = _REPO / "static" / "js" / "emailLibrary" / "utils.js"
 _HAS_NODE = shutil.which("node") is not None
@@ -46,7 +48,7 @@ def test_plain_text_linkify_escapes_href_attribute_without_double_escaping():
             }};
           }}
         }};
-        const {{ _escLinkify }} = await import('{_HELPER.as_posix()}');
+        const {{ _escLinkify }} = await import('{_HELPER.as_uri()}');
         const out = _escLinkify('See https://example.test/path?a=1&b=2 and www.example.test/a`b');
         console.log(JSON.stringify(out));
         """
@@ -104,6 +106,7 @@ def test_email_html_sanitizer_runs_to_fixpoint():
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+@requires_playwright
 def test_linkify_preserves_text_and_link_targets_in_a_real_dom():
     cases = [
         ("See https://example.test/contact?email=jane@example.test&next=1 and bob@example.test.",

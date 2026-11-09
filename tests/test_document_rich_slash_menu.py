@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -37,6 +38,7 @@ def test_slash_menu_reuses_rich_text_actions_and_is_accessible():
     assert ".doc-rich-slash-menu" in STYLE
 
 
+@requires_playwright
 def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
     script = r"""
       import { chromium } from 'playwright';

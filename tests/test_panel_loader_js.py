@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parent.parent
-_PANELS = (_REPO / "static" / "js" / "panels.js").as_posix()
+_PANELS = (_REPO / "static" / "js" / "panels.js").as_uri()
 _HAS_NODE = shutil.which("node") is not None
 
 pytestmark = pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")

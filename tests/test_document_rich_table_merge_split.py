@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,7 @@ def test_merge_split_commands_use_contextual_undoable_table_path():
     assert "unavailableTableAction" in menu
 
 
+@requires_playwright
 def test_mobile_merge_split_round_trip_preserves_headers_formatting_and_history():
     script = r"""
       import { chromium } from 'playwright';

@@ -7,6 +7,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ def test_input_rules_are_scoped_to_plain_blocks():
     assert "padding-inline-start: 0.2em" in STYLE
 
 
+@requires_playwright
 def test_typing_markers_converts_blocks_and_preserves_following_text():
     script = r"""
       import { chromium } from 'playwright';
