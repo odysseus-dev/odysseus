@@ -161,12 +161,11 @@ class NativeMemoryProvider(MemoryProvider):
         # store to [], which would save this single entry over everything
         # already stored (issue #5673). The provider API has no error channel,
         # so MemoryStoreUnreadable propagates to the caller.
-        memories = self.memory_manager.load_all_for_update()
-        memories.append(entry)
-        self.memory_manager.save(memories)
+        with self.memory_manager.transaction() as memories:
+            memories.append(entry)
 
         if self._vector_available():
-            self.memory_vector.add(entry["id"], entry["text"])
+            self.memory_manager.sync_vector(self.memory_vector, [entry["id"]])
 
         return self._to_record(entry)
 
@@ -230,25 +229,17 @@ class NativeMemoryProvider(MemoryProvider):
         # Strict load for the same reason: `remaining` is derived from this
         # list and saved back, so it must never be built from a store we
         # failed to read.
-        memories = self.memory_manager.load_all_for_update()
-        remaining = []
-        deleted_id = None
-
-        for entry in memories:
-            if entry.get("id") != memory_id:
-                remaining.append(entry)
-                continue
-            if owner is not None and entry.get("owner") != owner:
-                remaining.append(entry)
-                continue
-            deleted_id = entry.get("id")
-
-        if deleted_id is None:
-            return False
-
-        self.memory_manager.save(remaining)
+        with self.memory_manager.transaction() as memories:
+            target = next((entry for entry in memories if entry.get("id") == memory_id
+                           and (owner is None or entry.get("owner") == owner)), None)
+            if target is None:
+                return False
+            deleted_id = target["id"]
+            memories[:] = [entry for entry in memories
+                           if entry.get("id") != deleted_id
+                           or (owner is not None and entry.get("owner") != owner)]
         if self._vector_available():
-            self.memory_vector.remove(deleted_id)
+            self.memory_manager.sync_vector(self.memory_vector, [deleted_id])
         return True
 
     def _vector_available(self) -> bool:

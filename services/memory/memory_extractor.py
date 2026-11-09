@@ -62,12 +62,13 @@ def _load_tidy_state(memory_manager) -> dict:
 
 
 def _save_tidy_state(memory_manager, owner: Optional[str], fingerprint: str) -> None:
+    from core.atomic_io import atomic_write_json, store_lock
     path = _tidy_state_path(memory_manager)
-    state = _load_tidy_state(memory_manager)
-    state[owner or ""] = {"fingerprint": fingerprint}
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
+        with store_lock(path):
+            state = _load_tidy_state(memory_manager)
+            state[owner or ""] = {"fingerprint": fingerprint}
+            atomic_write_json(path, state, indent=2)
     except OSError as e:
         logger.warning(f"Could not persist tidy fingerprint: {e}")
 
@@ -602,130 +603,90 @@ async def extract_and_store(
         # Get owner from session
         _owner = getattr(session, 'owner', None)
 
-        # Strict load: this is a read-modify-write. Degrading to [] here would
-        # save only the newly extracted facts and drop the entire store.
-        try:
-            existing = memory_manager.load_all_for_update()
-        except MemoryStoreUnreadable as e:
-            logger.error("Skipping auto memory extraction, store unreadable: %s", e)
-            return
         added = 0
-        auto_pinned_identity_count = sum(
-            1 for entry in existing
-            if _is_owner_memory(entry, _owner) and _is_auto_pinned_identity(entry)
-        )
 
-        for fact in facts:
-            if isinstance(fact, str):
-                fact_text = fact
-                category = "fact"
-            elif isinstance(fact, dict):
-                fact_text = fact.get("text", "").strip()
-                category = str(fact.get("category", "fact") or "fact")
-            else:
-                continue
-
-            if not fact_text or len(fact_text) < 5:
-                continue
-
-            # A fuller owner-specific name must not rewrite a shared legacy
-            # entry, but that less-specific entry must not suppress it either.
+        def apply_fact(existing, fact_text, category, existing_id, vector_snapshot):
+            # This runs only inside a short JSON transaction. Similarity search
+            # and vector writes stay outside the writer lock.
             legacy_refinements = {
                 id(entry) for entry in existing
                 if _owner and entry.get("owner") is None
                 and _name_enrichment_target(fact_text, [entry]) is entry
             }
+            if existing_id:
+                match = next((e for e in existing if e.get("id") == existing_id), None)
+                if (match is not None and match == vector_snapshot.get(existing_id)
+                        and id(match) not in legacy_refinements
+                        and (match.get("owner") == _owner or match.get("owner") is None)):
+                    return None
 
-            # Dedup: check vector similarity first (fast), then exact text match.
-            # A runtime embedding/ChromaDB failure (backend OOM, model evicted,
-            # remote endpoint down) must not abort the whole batch — fall through
-            # to the text/fuzzy dedup below instead of losing every validated
-            # fact extracted this session. (`.healthy` is only set at init, so
-            # it does not catch failures that develop later.)
-            if memory_vector and memory_vector.healthy:
-                try:
-                    existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
-                except Exception as e:
-                    logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
-                    existing_id = None
-                if existing_id:
-                    # The vector store is a single shared collection with no
-                    # owner metadata, so find_similar can return ANOTHER
-                    # tenant's memory. Only treat it as a duplicate when the
-                    # match is this user's own (or a legacy unowned) memory —
-                    # otherwise the user's freshly-extracted fact would be
-                    # silently dropped. Mirror the owner predicate used by the
-                    # text dedup below; cross-tenant/stale matches fall through.
-                    _match = next((e for e in existing if e.get("id") == existing_id), None)
-                    if (_match is not None and id(_match) not in legacy_refinements
-                            and (_match.get("owner") == _owner or _match.get("owner") is None)):
-                        logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
-                        continue
-
-            # Text dedup fallback: exact match + fuzzy similarity
             user_existing = [e for e in existing
                              if (e.get("owner") == _owner or e.get("owner") is None)
                              and id(e) not in legacy_refinements] if _owner else existing
-
-            # Name enrichment: if an existing name fact is a strict prefix of
-            # this more complete one, upgrade it in place instead of adding a
-            # near-duplicate ("name is Felix" -> "name is Felix Arvid Ulf
-            # Kjellberg"). The vector store upserts by id, so re-adding is safe.
-            # Legacy unowned entries may be visible to multiple owners; never
-            # rewrite one with a private fact from the current owner.
-            _enrich = _name_enrichment_target(
+            enrich = _name_enrichment_target(
                 fact_text, [e for e in user_existing if e.get("owner") == _owner]
             )
-            if _enrich is not None:
-                _enrich["text"] = fact_text
-                _enrich["timestamp"] = int(time.time())
+            if enrich is not None:
+                enrich["text"] = fact_text
+                enrich["timestamp"] = int(time.time())
                 if category:
-                    _enrich["category"] = category
-                if memory_vector and memory_vector.healthy:
-                    try:
-                        memory_vector.add(_enrich["id"], fact_text)
-                    except Exception as e:
-                        logger.warning(f"Memory vector update failed for {_enrich['id']}: {e}")
-                added += 1
-                continue
+                    enrich["category"] = category
+                return enrich["id"]
 
             if memory_manager.find_duplicates(fact_text, user_existing):
-                continue
-            # Fuzzy text similarity check (catches rephrased duplicates when vector index is unavailable)
+                return None
             if _is_text_duplicate(fact_text, user_existing):
-                logger.debug(f"Memory dedup (fuzzy): '{fact_text[:50]}' too similar to existing")
-                continue
+                return None
 
             entry = memory_manager.add_entry(fact_text, source="auto", category=category, owner=_owner)
-            # Auto-pin only the first few identity/contact facts. Extra identity
-            # memories are still saved, but they must be recalled by relevance
-            # instead of riding along in every prompt forever.
-            if (
-                category.lower() in {"identity", "contact"}
-                and auto_pinned_identity_count < AUTO_PINNED_IDENTITY_LIMIT
-            ):
+            auto_pinned_identity_count = sum(
+                1 for existing_entry in existing
+                if _is_owner_memory(existing_entry, _owner) and _is_auto_pinned_identity(existing_entry)
+            )
+            if (category.lower() in {"identity", "contact"}
+                    and auto_pinned_identity_count < AUTO_PINNED_IDENTITY_LIMIT):
                 entry["pinned"] = True
-                auto_pinned_identity_count += 1
             if hasattr(session, "session_id"):
                 entry["session_id"] = session.session_id
             elif hasattr(session, "name"):
                 entry["session_id"] = session.name
-
             existing.append(entry)
+            return entry["id"]
 
-            # Add to vector index. The JSON store (saved below) is the source of
-            # truth and the keyword path can still retrieve this entry, so a vector
-            # write failure must not drop the fact or abort the remaining batch.
+        for fact in facts:
+            if isinstance(fact, str):
+                fact_text, category = fact, "fact"
+            elif isinstance(fact, dict):
+                fact_text = fact.get("text", "").strip()
+                category = str(fact.get("category", "fact") or "fact")
+            else:
+                continue
+            if not fact_text or len(fact_text) < 5:
+                continue
+
+            existing_id = None
+            vector_snapshot = {}
             if memory_vector and memory_vector.healthy:
                 try:
-                    memory_vector.add(entry["id"], fact_text)
+                    vector_snapshot = {e["id"]: e for e in memory_manager.load_all_for_update()}
+                except MemoryStoreUnreadable as e:
+                    logger.error("Stopping auto memory extraction, store unreadable: %s", e)
+                    break
+                try:
+                    existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
                 except Exception as e:
-                    logger.warning(f"Memory vector add failed for {entry['id']}: {e}")
-
-            added += 1
+                    logger.warning("Memory dedup (vector) unavailable, using text fallback: %s", e)
+            try:
+                with memory_manager.transaction() as existing:
+                    changed_id = apply_fact(existing, fact_text, category, existing_id, vector_snapshot)
+            except MemoryStoreUnreadable as e:
+                logger.error("Stopping auto memory extraction, store unreadable: %s", e)
+                break
+            if changed_id:
+                added += 1
+                memory_manager.sync_vector(memory_vector, [changed_id])
 
         if added > 0:
-            memory_manager.save(existing)
             try:
                 from src.event_bus import fire_event
                 for _ in range(added):
@@ -850,7 +811,7 @@ async def audit_memories(
     - Merges near-duplicate entries
     - Rewrites vague entries to be concise
     - Removes junk / non-personal entries
-    - Rebuilds the vector index afterwards
+    - Refreshes only the vector IDs actually changed
 
     Safe to call manually or from the automatic trigger in extract_and_store.
     Errors are logged, never raised.
@@ -982,46 +943,28 @@ async def audit_memories(
             )
             return {"before": before_count, "after": before_count, "error": "unsafe_removal"}
 
-        # Merge audited entries back with other users' entries
-        if owner:
-            # Strict load: the merge below reconstructs the whole file. If this
-            # degraded to [] we would save only this owner's audited slice and
-            # destroy every other tenant's memories.
-            try:
-                all_entries = memory_manager.load_all_for_update()
-            except MemoryStoreUnreadable as e:
-                logger.error("Aborting memory audit save, store unreadable: %s", e)
-                return {
-                    "before": before_count,
-                    "after": before_count,
-                    "error": "store_unreadable",
-                }
-            audited_ids = {e["id"] for e in final_entries}
-            other_entries = [e for e in all_entries if e.get("owner") != owner and (e.get("owner") is not None)]
-            # Also keep legacy entries that weren't part of this audit
-            for e in all_entries:
-                if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
-                    other_entries.append(e)
-            saved_entries = final_entries + other_entries
-        else:
-            saved_entries = final_entries
-        memory_manager.save(saved_entries)
-        logger.info(
-            f"Memory audit complete: {before_count} -> {after_count} entries "
-            f"({before_count - after_count} removed/merged)"
-        )
+        # The LLM ran without the writer lock. Apply its proposal only to
+        # records that still match the audited snapshot; concurrent additions,
+        # edits, use counts, deletions and other owners' records win.
+        try:
+            result = memory_manager.apply_snapshot(existing, final_entries)
+        except MemoryStoreUnreadable as e:
+            logger.error("Aborting memory audit save, store unreadable: %s", e)
+            return {"before": before_count, "after": before_count, "error": "store_unreadable"}
+        saved_scope = [e for e in result["entries"] if owner is None or e.get("owner") == owner]
+        after_count = len(saved_scope)
+        logger.info("Memory audit committed: %s removed, %s updated, %s concurrent conflicts",
+                    len(result["removed"]), len(result["updated"]), len(result["conflicts"]))
+        memory_manager.sync_vector(memory_vector,
+                                   [e["id"] for e in result["removed"] + result["updated"]])
 
-        # Rebuild vector index from the full saved set, not just this owner's
-        # slice — otherwise the shared collection is wiped of every other
-        # owner's entries until they happen to run their own audit.
-        if memory_vector and memory_vector.healthy:
-            memory_vector.rebuild(saved_entries)
+        # Do not mark concurrent additions/edits as already audited. A later
+        # tidy must get a chance to inspect them. Use the proposal's fingerprint
+        # only when it exactly matches what was actually committed.
+        if not result["conflicts"] and _fingerprint_entries(saved_scope) == _fingerprint_entries(final_entries):
+            _save_tidy_state(memory_manager, owner, _fingerprint_entries(final_entries))
 
-        # Persist the post-tidy fingerprint so the next call short-circuits
-        # if nothing has changed in the meantime.
-        _save_tidy_state(memory_manager, owner, _fingerprint_entries(final_entries))
-
-        return {"before": before_count, "after": after_count}
+        return {"before": before_count, "after": after_count, "removed": len(result["removed"])}
 
     except Exception as e:
         logger.error(f"Memory audit failed: {e}")

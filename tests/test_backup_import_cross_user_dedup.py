@@ -21,17 +21,13 @@ class _Req:
         return self._body
 
 
-def _setup(monkeypatch, store, user="alice"):
+def _setup(monkeypatch, tmp_path, store, user="alice"):
     monkeypatch.setattr(br, "require_admin", lambda request: None)
     monkeypatch.setattr(br, "get_current_user", lambda request: user)
 
-    mem = MagicMock()
-    mem.load_all.return_value = list(store)
-    # import_data reads through the strict loader so a store it cannot read is
-    # never overwritten (#5673); the double has to offer the same entry point.
-    mem.load_all_for_update.return_value = list(store)
-    saved = {}
-    mem.save.side_effect = lambda entries: saved.__setitem__("entries", entries)
+    from src.memory import MemoryManager
+    mem = MemoryManager(str(tmp_path))
+    mem.save(store)
 
     skills = MagicMock()
     skills.load_all.return_value = []
@@ -41,23 +37,23 @@ def _setup(monkeypatch, store, user="alice"):
         if r.path == "/api/import" and "POST" in getattr(r, "methods", set()):
             endpoint = r.endpoint
     assert endpoint is not None
-    return endpoint, saved
+    return endpoint, mem
 
 
-def test_user_can_import_memory_matching_another_users_text(monkeypatch):
+def test_user_can_import_memory_matching_another_users_text(monkeypatch, tmp_path):
     # bob already has "buy milk"; alice imports her own "Buy Milk".
-    endpoint, saved = _setup(monkeypatch, [{"text": "buy milk", "owner": "bob"}])
+    endpoint, mem = _setup(monkeypatch, tmp_path, [{"text": "buy milk", "owner": "bob"}])
     body = {"memories": [{"text": "Buy Milk"}]}
     asyncio.run(endpoint(_Req(body)))
-    texts_by_owner = {(e.get("owner"), e.get("text")) for e in saved["entries"]}
+    texts_by_owner = {(e.get("owner"), e.get("text")) for e in mem.load_all_for_update()}
     assert ("alice", "Buy Milk") in texts_by_owner  # not dropped as a "duplicate"
     assert ("bob", "buy milk") in texts_by_owner     # other tenant preserved
 
 
-def test_users_own_duplicate_is_still_skipped(monkeypatch):
-    endpoint, saved = _setup(monkeypatch, [{"text": "buy milk", "owner": "alice"}])
+def test_users_own_duplicate_is_still_skipped(monkeypatch, tmp_path):
+    endpoint, mem = _setup(monkeypatch, tmp_path, [{"text": "buy milk", "owner": "alice"}])
     body = {"memories": [{"text": "Buy Milk"}]}
     asyncio.run(endpoint(_Req(body)))
-    alice_milk = [e for e in saved["entries"]
+    alice_milk = [e for e in mem.load_all_for_update()
                   if e.get("owner") == "alice" and e.get("text", "").lower() == "buy milk"]
     assert len(alice_milk) == 1  # the real duplicate is still deduped

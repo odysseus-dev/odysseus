@@ -18,11 +18,65 @@ import os
 import uuid
 import functools
 import threading
+from contextlib import contextmanager
 from typing import Any, Optional
 
 
 _STORE_LOCKS: dict[str, threading.RLock] = {}
 _STORE_LOCKS_GUARD = threading.Lock()
+_STORE_LOCK_DEPTH = threading.local()
+
+
+def _reset_store_locks_after_fork():
+    global _STORE_LOCKS, _STORE_LOCKS_GUARD, _STORE_LOCK_DEPTH
+    _STORE_LOCKS = {}
+    _STORE_LOCKS_GUARD = threading.Lock()
+    _STORE_LOCK_DEPTH = threading.local()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_store_locks_after_fork)
+
+
+@contextmanager
+def store_lock(store_path):
+    """Hold one reentrant read/modify/write lock for this store path."""
+    path = os.path.abspath(str(store_path)) + ".lock"
+    with _STORE_LOCKS_GUARD:
+        lock = _STORE_LOCKS.setdefault(path, threading.RLock())
+    with lock:
+        depths = getattr(_STORE_LOCK_DEPTH, "paths", None)
+        if depths is None:
+            depths = _STORE_LOCK_DEPTH.paths = {}
+        if depths.get(path, 0):
+            depths[path] += 1
+            try:
+                yield
+            finally:
+                depths[path] -= 1
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a+b") as handle:
+            if os.name == "nt":
+                import msvcrt
+                if os.fstat(handle.fileno()).st_size == 0:
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            depths[path] = 1
+            try:
+                yield
+            finally:
+                del depths[path]
+                if os.name == "nt":
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def store_transaction(path_factory):
@@ -30,35 +84,13 @@ def store_transaction(path_factory):
     def decorate(function):
         @functools.wraps(function)
         def locked(*args, **kwargs):
-            path = os.path.abspath(str(path_factory())) + ".lock"
-            with _STORE_LOCKS_GUARD:
-                lock = _STORE_LOCKS.setdefault(path, threading.RLock())
-            with lock:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "a+b") as handle:
-                    if os.name == "nt":
-                        import msvcrt
-                        if os.fstat(handle.fileno()).st_size == 0:
-                            handle.write(b"0")
-                            handle.flush()
-                        handle.seek(0)
-                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                    else:
-                        import fcntl
-                        fcntl.flock(handle, fcntl.LOCK_EX)
-                    try:
-                        return function(*args, **kwargs)
-                    finally:
-                        if os.name == "nt":
-                            handle.seek(0)
-                            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                        else:
-                            fcntl.flock(handle, fcntl.LOCK_UN)
+            with store_lock(path_factory()):
+                return function(*args, **kwargs)
         return locked
     return decorate
 
 
-def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
+def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None, ensure_ascii: bool = True) -> None:
     """Atomically persist `data` as JSON at `path`.
 
     The temp file uses a random suffix so two concurrent writers saving the
@@ -72,7 +104,7 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
 
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=indent)
+            json.dump(data, f, indent=indent, ensure_ascii=ensure_ascii)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)

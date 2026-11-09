@@ -59,36 +59,17 @@ class FakeSession:
         ]
 
 
-class FakeMemoryManager:
-    def __init__(self, rows):
-        self.rows = list(rows)
-        self._n = 0
+from src.memory import MemoryManager
 
-    def load_all(self):
-        return list(self.rows)
 
-    def load_all_for_update(self):
-        # Mirrors the real MemoryManager: extraction is a read-modify-write and
-        # goes through the strict loader (#5673). A healthy store behaves the
-        # same as load_all.
-        return list(self.rows)
+class RealMemoryFixture(MemoryManager):
+    def __init__(self, data_dir, rows):
+        super().__init__(str(data_dir))
+        self.save(rows)
 
-    def load(self, owner=None):
-        return [r for r in self.rows if r.get("owner") == owner]
-
-    def find_duplicates(self, text, subset):
-        t = text.strip().lower()
-        return [r for r in subset if r.get("text", "").strip().lower() == t]
-
-    def add_entry(self, text, source="auto", category="fact", owner=None):
-        self._n += 1
-        entry = {"id": f"new-{self._n}", "text": text, "owner": owner,
-                 "source": source, "category": category}
-        self.rows.append(entry)
-        return entry
-
-    def save(self, rows):
-        self.rows = list(rows)
+    @property
+    def rows(self):
+        return self.load_all_for_update()
 
 
 class FakeVector:
@@ -96,6 +77,12 @@ class FakeVector:
     def __init__(self, match_id):
         self.healthy = True
         self._match_id = match_id
+
+    def remove(self, memory_id):
+        pass
+
+    def add(self, memory_id, text):
+        pass
 
     def find_similar(self, text, threshold=0.92):
         return self._match_id
@@ -107,13 +94,16 @@ class NoMatchVector:
     def find_similar(self, text, threshold=0.72):
         return None
 
+    def remove(self, memory_id):
+        pass
+
     def add(self, memory_id, text):
         pass
 
 
-def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch):
+def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch, tmp_path):
     # User A already owns a semantically-similar memory.
-    mm = FakeMemoryManager([
+    mm = RealMemoryFixture(tmp_path, [
         {"id": "a1", "text": "I live in Lisbon", "owner": "userA"},
     ])
     # The vector store reports user B's new fact as a near-duplicate of a1.
@@ -134,8 +124,8 @@ def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch):
     )
 
 
-def test_identity_auto_pin_stops_after_first_five_for_owner(monkeypatch):
-    mm = FakeMemoryManager([
+def test_identity_auto_pin_stops_after_first_five_for_owner(monkeypatch, tmp_path):
+    mm = RealMemoryFixture(tmp_path, [
         {
             "id": f"seed-{idx}",
             "text": f"Seed identity {idx}",
@@ -165,13 +155,13 @@ def test_identity_auto_pin_stops_after_first_five_for_owner(monkeypatch):
 
 
 @pytest.mark.parametrize('vector_match', [False, True])
-def test_name_refinement_never_rewrites_shared_legacy_memory(monkeypatch, vector_match):
+def test_name_refinement_never_rewrites_shared_legacy_memory(monkeypatch, tmp_path, vector_match):
     class NameSession(FakeSession):
         def get_context_messages(self):
             return [{'role': 'user', 'content': 'My name is Alex Morgan.'},
                     {'role': 'assistant', 'content': 'Noted.'}]
 
-    mm = FakeMemoryManager([
+    mm = RealMemoryFixture(tmp_path, [
         {'id': 'legacy', 'text': 'Name is Alex', 'owner': None},
     ])
     _install_llm_stub(monkeypatch, '[{"text":"Name is Alex Morgan","evidence":"My name is Alex Morgan"}]')

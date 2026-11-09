@@ -1723,18 +1723,19 @@ def _migrate_assign_legacy_owner():
     # Also migrate memory.json
     mem_path = MEMORY_FILE
     try:
-        if os.path.exists(mem_path):
-            with open(mem_path, "r", encoding="utf-8") as f:
-                memories = _json.load(f)
-            changed = False
-            for m in memories:
-                if not m.get("owner"):
-                    m["owner"] = admin_user
-                    changed = True
-            if changed:
-                with open(mem_path, "w", encoding="utf-8") as f:
-                    _json.dump(memories, f, ensure_ascii=False, indent=2)
-                logger.info(f"Assigned {sum(1 for _ in memories)} legacy memories in memory.json to '{admin_user}'")
+        from core.atomic_io import store_lock, atomic_write_json
+        with store_lock(mem_path):
+            if os.path.exists(mem_path):
+                with open(mem_path, "r", encoding="utf-8") as f:
+                    memories = _json.load(f)
+                changed = False
+                for m in memories:
+                    if not m.get("owner"):
+                        m["owner"] = admin_user
+                        changed = True
+                if changed:
+                    atomic_write_json(mem_path, memories, ensure_ascii=False, indent=2)
+                    logger.info(f"Assigned {len(memories)} legacy memories in memory.json to '{admin_user}'")
     except Exception as e:
         logger.warning(f"memory.json legacy migration failed: {e}")
 
