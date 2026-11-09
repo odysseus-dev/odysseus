@@ -49,12 +49,18 @@ def document_chat(tmp_path, monkeypatch):
     monkeypatch.setattr(document_tools, "_active_document_id", None)
     with isolated_session_database(tmp_path) as (manager, database):
         factory = database.SessionLocal
-        for module in (chat_routes, chat_helpers, session_routes):
+        modules = (chat_routes, chat_helpers, session_routes)
+        for module in modules:
             monkeypatch.setattr(module, "SessionLocal", factory)
         # Existing route tests may re-import session_routes after chat imported
         # its owner check. Bind that real function's database too, without
         # replacing the authorization logic or reloading production modules.
-        monkeypatch.setitem(chat_routes._verify_session_owner.__globals__, "SessionLocal", factory)
+        # Patch it only when it is a different namespace: monkeypatch undoes
+        # setattr before setitem, so patching session_routes twice would
+        # re-install this temp factory after teardown.
+        owner_globals = chat_routes._verify_session_owner.__globals__
+        if not any(owner_globals is vars(module) for module in modules):
+            monkeypatch.setitem(owner_globals, "SessionLocal", factory)
         with factory() as db:
             db.add_all([
                 database.Session(id="alice-chat", name="Alice", owner="alice",
