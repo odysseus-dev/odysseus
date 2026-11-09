@@ -75,7 +75,12 @@ DATABASE_URL = _normalize_sqlite_url(os.getenv("DATABASE_URL", _default_database
 # Create engine
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 30} if "sqlite" in DATABASE_URL else {}
+    connect_args={"check_same_thread": False, "timeout": 30} if "sqlite" in DATABASE_URL else {},
+    # SQLAlchemy otherwise renders a failed statement's bound values into the
+    # exception text, and rows hold secrets (session auth headers carry the
+    # endpoint API key). Those exceptions are logged and, in places, returned
+    # to the caller or the model, so the values must never be in them.
+    hide_parameters=True,
 )
 
 
