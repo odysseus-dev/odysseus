@@ -47,3 +47,16 @@ regexTarget = "secret"
 regexes = [
   '''^sk-123456789$''',
 ]
+
+[[allowlists]]
+description = "Synthetic placeholder keys in the session-header log-safety test"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)tests/test_session_headers_not_logged\.py$''',
+]
+regexTarget = "secret"
+regexes = [
+  '''^sk-live-session-header-key-5c1e9a$''',
+  '''^sk-live-rotated-header-key-0b7d42$''',
+]
