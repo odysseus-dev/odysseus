@@ -4,11 +4,13 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@requires_playwright
 def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
     script = r'''
       import { chromium } from 'playwright';
@@ -72,6 +74,7 @@ def test_rich_escape_closes_toolbar_then_selection_badge() -> None:
     assert data['afterTwo'] == {'toolbar': False, 'badge': 'none'}
 
 
+@requires_playwright
 def test_email_escape_closes_inner_states_without_closing_library() -> None:
     script = r'''
       import { chromium } from 'playwright';

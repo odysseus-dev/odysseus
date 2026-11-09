@@ -4,11 +4,13 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@requires_playwright
 def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
     script = r"""
       import { chromium } from 'playwright';

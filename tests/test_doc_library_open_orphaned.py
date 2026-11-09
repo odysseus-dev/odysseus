@@ -19,6 +19,7 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.playwright_gate import requires_playwright
 
 SRC = Path(__file__).resolve().parent.parent / "static/js/documentLibrary.js"
 
@@ -89,6 +90,7 @@ def test_library_open_marks_full_editor_intent_before_session_switch():
     assert "setTimeout(r, 150)" not in text
 
 
+@requires_playwright
 def test_mobile_explicit_load_restores_full_editor_from_bottom_dock():
     """Opening a library document must remove its minimized dock chip and
     remount the editor instead of leaving the document tabbed along the bottom."""

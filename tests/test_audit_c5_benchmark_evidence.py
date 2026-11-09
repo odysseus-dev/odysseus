@@ -80,6 +80,7 @@ def _run_audit(
 class TestValidMatchingHash(unittest.TestCase):
     """VERIFIED: artifact present, observed hash matches expected hash."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_verified_when_observed_matches_expected(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -102,6 +103,7 @@ class TestValidMatchingHash(unittest.TestCase):
 class TestMismatchedHash(unittest.TestCase):
     """MISMATCH: artifact present, but observed hash differs from expected."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_mismatch_when_hash_differs(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -124,6 +126,7 @@ class TestMismatchedHash(unittest.TestCase):
 class TestMissingArtifact(unittest.TestCase):
     """MISSING: expected artifact is absent from the filesystem."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_missing_when_file_absent(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -143,6 +146,7 @@ class TestMissingArtifact(unittest.TestCase):
 class TestObservedOnlyNoExpectedHash(unittest.TestCase):
     """OBSERVED_ONLY: artifact exists but manifest has no expected hash."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_observed_only_when_no_expected_hash(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -159,6 +163,7 @@ class TestObservedOnlyNoExpectedHash(unittest.TestCase):
             self.assertFalse(art["hash_match"])
             self.assertEqual(result["totals"]["OBSERVED_ONLY"], 1)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_observed_only_when_expected_hash_is_null(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -251,6 +256,7 @@ class TestPathTraversal(unittest.TestCase):
 class TestSymlinkEscape(unittest.TestCase):
     """UNVERIFIABLE: symlinks that escape the designated root."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_symlink_escape_is_unverifiable(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -263,6 +269,7 @@ class TestSymlinkEscape(unittest.TestCase):
             art = result["artifacts"][0]
             self.assertIn(art["status"], ("UNVERIFIABLE", "INVALID"))
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_internal_symlink_is_handled(self):
         """A symlink that stays within root is rejected as UNVERIFIABLE under O_NOFOLLOW boundary."""
         with tempfile.TemporaryDirectory() as td:
@@ -283,6 +290,7 @@ class TestSymlinkEscape(unittest.TestCase):
 class TestStableRepeatedOutput(unittest.TestCase):
     """Stable: running the audit twice must produce identical output."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_identical_output_on_repeated_runs(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -306,6 +314,7 @@ class TestStableRepeatedOutput(unittest.TestCase):
                 "Repeated runs produced different output",
             )
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_artifacts_sorted_by_path(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -334,6 +343,7 @@ class TestEmptyManifest(unittest.TestCase):
 class TestMixedOutcomes(unittest.TestCase):
     """Multiple artifacts with mixed verification outcomes."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_mixed_verified_missing_mismatch_observed(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -368,6 +378,7 @@ class TestMixedOutcomes(unittest.TestCase):
 class TestNeverVerifiedFromOwnHash(unittest.TestCase):
     """The utility must not auto-verify by computing and comparing its own hash."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_no_expected_hash_means_not_verified(self):
         """An artifact with no expected_sha256 must never be VERIFIED."""
         with tempfile.TemporaryDirectory() as td:
@@ -414,6 +425,7 @@ class TestReproducibilityPrerequisites(unittest.TestCase):
                 "UNKNOWN",
             )
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_model_artifact_hash_observed_when_type_present(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -465,6 +477,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(mpath.read_bytes(), content, "Manifest was modified by output destination")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_summary_targeting_audited_artifact_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -502,6 +515,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(mpath.read_bytes(), original)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_existing_hardlink_alias_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -517,6 +531,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(art_file.read_bytes(), original_bytes)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_injected_destination_replacement_after_preflight_blocks_overwrite(self):
         """Adversarial TOCTOU test: destination is substituted with symlink after preflight."""
         with tempfile.TemporaryDirectory() as td:
@@ -549,6 +564,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             finally:
                 auditor._validate_output_destinations = orig_validate
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_nested_output_directory_symlink_replacement_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -564,6 +580,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertFalse((outside / "report.json").exists())
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_failed_publication_preserves_existing_protected_input_bytes(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -579,6 +596,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             self.assertEqual(art.read_bytes(), sentinel)
             self.assertEqual(mpath.read_bytes(), m_bytes)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_temporary_files_are_cleaned_up_after_failure(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -597,6 +615,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             leftover_tmps = [p for p in out_dir.iterdir() if p.name.startswith(".tmp_")]
             self.assertEqual(leftover_tmps, [], "Temporary files leaked in output directory")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_valid_distinct_json_output_destination_works(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -610,6 +629,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             parsed = json.loads(out.read_text())
             self.assertTrue(parsed["manifest_valid"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_valid_distinct_markdown_summary_destination_works(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -622,6 +642,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             self.assertTrue(summ.is_file())
             self.assertIn("Benchmark Evidence Audit Summary", summ.read_text())
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_repeated_successful_publication_produces_complete_valid_files(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -646,6 +667,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
 class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
     """Mandatory regressions for Finding 2 (P2): Campaign prerequisite completeness."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_1_one_verified_trajectory_without_completeness_evidence(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -659,6 +681,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertEqual(det["expected_set_status"], "UNKNOWN")
             self.assertFalse(det["prerequisite_complete"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_2_two_verified_trajectories_with_unknown_expected_set_completeness(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -675,6 +698,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertEqual(det["expected_set_status"], "UNKNOWN")
             self.assertFalse(det["prerequisite_complete"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_3_complete_independently_established_expected_set_all_verify(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -704,6 +728,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertTrue(det["prerequisite_complete"])
             self.assertEqual(det["missing_or_unverified"], [])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_4_established_expected_set_with_one_missing_artifact(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -730,6 +755,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertFalse(det["prerequisite_complete"])
             self.assertIn("t2_missing.json", det["missing_or_unverified"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_5_established_expected_set_with_one_mismatch_artifact(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -757,6 +783,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertFalse(det["prerequisite_complete"])
             self.assertIn("t2.json", det["missing_or_unverified"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_6_verified_plus_observed_only(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -768,6 +795,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             ]))
             self.assertEqual(res["reproducibility_prerequisites"]["raw_trajectories"], "PARTIAL")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_7_optional_verified_artifacts_with_missing_mandatory_artifact(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -784,6 +812,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             res = _run_audit(tmp, _manifest([]))
             self.assertEqual(res["reproducibility_prerequisites"]["raw_trajectories"], "UNKNOWN")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_9_incomplete_archive_with_self_declared_completeness_flag(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -806,6 +835,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertEqual(det["expected_set_status"], "UNVERIFIED_CLAIM")
             self.assertFalse(det["prerequisite_complete"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_10_checksum_matched_summary_document_does_not_prove_task_level_oracles(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -825,6 +855,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertFalse(det["prerequisite_complete"])
             self.assertIn("summary document does not prove", det["notes"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_11_checksum_matched_aggregate_report_does_not_prove_complete_latency_records(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -844,6 +875,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
             self.assertFalse(det["prerequisite_complete"])
             self.assertIn("aggregate statistics do not prove", det["notes"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_12_stable_output_regardless_of_manifest_ordering(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -872,6 +904,7 @@ class TestFinding2PrerequisiteCompleteness(unittest.TestCase):
 class TestFinding3SymlinkTOCTOU(unittest.TestCase):
     """Regression tests for Finding 3 (P2): Symlink time-of-check/time-of-use vulnerability."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_ordinary_regular_file_inside_root(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -886,6 +919,7 @@ class TestFinding3SymlinkTOCTOU(unittest.TestCase):
             self.assertEqual(art["status"], "VERIFIED")
             self.assertEqual(art["observed_sha256"], h)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_direct_symlink_escaping_root(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -896,6 +930,7 @@ class TestFinding3SymlinkTOCTOU(unittest.TestCase):
             self.assertEqual(art["status"], "UNVERIFIABLE")
             self.assertIsNone(art["observed_sha256"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_nested_symlink_escaping_root(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -908,6 +943,7 @@ class TestFinding3SymlinkTOCTOU(unittest.TestCase):
             self.assertEqual(art["status"], "UNVERIFIABLE")
             self.assertIsNone(art["observed_sha256"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_symlink_directory_component_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -923,6 +959,7 @@ class TestFinding3SymlinkTOCTOU(unittest.TestCase):
                 import shutil
                 shutil.rmtree(outside)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_safe_handling_of_missing_or_replaced_files(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -930,6 +967,7 @@ class TestFinding3SymlinkTOCTOU(unittest.TestCase):
             art = res["artifacts"][0]
             self.assertEqual(art["status"], "MISSING")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_no_outside_root_file_access(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1056,6 +1094,7 @@ class TestFinding4MalformedManifest(unittest.TestCase):
             self.assertEqual(res["totals"]["INVALID"], 1)
             self.assertEqual(res["artifacts"][0]["status"], "INVALID")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_mixed_valid_and_invalid_entries(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1076,6 +1115,7 @@ class TestFinding4MalformedManifest(unittest.TestCase):
 class TestDeterministicOutputMode(unittest.TestCase):
     """Test deterministic CLI mode generates identical output bytes."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_deterministic_cli_flag_produces_identical_bytes(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1099,6 +1139,7 @@ class TestDeterministicOutputMode(unittest.TestCase):
 class TestFinding1ParentDirectorySubstitution(unittest.TestCase):
     """P1: Output parent directory substitution protection."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_intermediate_directory_symlink_substitution_blocked_and_target_preserved(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1140,6 +1181,7 @@ class TestFinding1ParentDirectorySubstitution(unittest.TestCase):
             # Verify the protected file bytes are completely unchanged
             self.assertEqual(protected_file.read_bytes(), original_bytes)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_cli_intermediate_directory_symlink_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1165,6 +1207,7 @@ class TestFinding1ParentDirectorySubstitution(unittest.TestCase):
 class TestFinding2ArtifactRootSubstitution(unittest.TestCase):
     """P2: Artifact root substitution and outside-root read protection."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_root_directory_symlink_rejected_and_outside_file_not_verified(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1199,6 +1242,7 @@ class TestFinding2ArtifactRootSubstitution(unittest.TestCase):
             self.assertEqual(res["totals"]["VERIFIED"], 0)
             self.assertEqual(res["totals"]["UNVERIFIABLE"], 1)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_root_replaced_with_symlink_during_audit(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1249,6 +1293,7 @@ class TestFinding2ArtifactRootSubstitution(unittest.TestCase):
 class TestFinding3ProvenanceTrust(unittest.TestCase):
     """P2: Self-attested independent provenance and trusted verification source."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_fabricated_provenance_url_cannot_produce_verified(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1276,6 +1321,7 @@ class TestFinding3ProvenanceTrust(unittest.TestCase):
             self.assertFalse(det["prerequisite_complete"])
             self.assertIn("lacks separately trusted verification source", det["notes"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_self_declared_completeness_flag_cannot_produce_verified(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1296,6 +1342,7 @@ class TestFinding3ProvenanceTrust(unittest.TestCase):
             self.assertEqual(det["expected_set_status"], "UNVERIFIED_CLAIM")
             self.assertFalse(det["prerequisite_complete"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_partial_manifest_with_trusted_source_cannot_produce_verified(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1321,6 +1368,7 @@ class TestFinding3ProvenanceTrust(unittest.TestCase):
             self.assertFalse(det["prerequisite_complete"])
             self.assertIn("t2_missing.json", det["missing_or_unverified"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_untrusted_provenance_mismatch_cannot_produce_verified(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1345,6 +1393,7 @@ class TestFinding3ProvenanceTrust(unittest.TestCase):
             self.assertEqual(det["expected_set_status"], "UNVERIFIED")
             self.assertFalse(det["prerequisite_complete"])
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_external_trusted_expected_sets_file_works(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1572,6 +1621,7 @@ class TestFinding1TrustedInputProtection(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(tpath.read_bytes(), tbytes, "Trusted expected sets overwritten via hardlink alias")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_distinct_legitimate_destinations_with_trusted_sets_succeeds(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1601,6 +1651,7 @@ class TestFinding1TrustedInputProtection(unittest.TestCase):
             self.assertTrue(out.is_file())
             self.assertTrue(summ.is_file())
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_adversarial_post_preflight_substitution_targeting_trusted_input_blocked(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1678,6 +1729,7 @@ class TestFinding2DotPathRejection(unittest.TestCase):
             self.assertEqual(len(res["artifacts"]), 1)
             self.assertEqual(res["artifacts"][0]["status"], auditor.INVALID)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_valid_nested_path_accepted(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1695,6 +1747,7 @@ class TestFinding2DotPathRejection(unittest.TestCase):
             self.assertEqual(len(res["artifacts"]), 1)
             self.assertEqual(res["artifacts"][0]["status"], auditor.VERIFIED)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_mixed_manifest_with_dot_path_and_valid_path(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1931,6 +1984,7 @@ class TestFinding3MalformedTrustedExpectedSets(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 2)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_valid_trusted_sets_with_complete_evidence_verified(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1956,6 +2010,7 @@ class TestFinding3MalformedTrustedExpectedSets(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 0)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_valid_trusted_sets_with_incomplete_evidence_yields_code_1_not_2(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -1992,6 +2047,7 @@ class TestFinding3MalformedTrustedExpectedSets(unittest.TestCase):
 class TestP2DuplicateEvidenceProtection(unittest.TestCase):
     """Campaign completeness must never be established by duplicate evidence."""
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_1_physical_file_declared_twice_with_exact_same_path_cannot_satisfy_count(self):
         """Case A: One physical file declared twice cannot satisfy an expected count of two."""
         with tempfile.TemporaryDirectory() as td:
@@ -2021,6 +2077,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 1, "Duplicate evidence should return exit code 1 (incomplete evidence)")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_2_file_declared_as_plain_and_dot_slash_path_cannot_be_counted_separately(self):
         """Case B: 'artifact.bin' and './artifact.bin' cannot be counted separately."""
         with tempfile.TemporaryDirectory() as td:
@@ -2049,6 +2106,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 1)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_3_duplicate_nested_relative_paths_with_redundant_dot_slash(self):
         """Duplicate nested relative paths containing redundant dot components are detected."""
         with tempfile.TemporaryDirectory() as td:
@@ -2074,6 +2132,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             self.assertEqual(det["distinct_verified_count"], 1)
             self.assertEqual(res["reproducibility_prerequisites"]["raw_trajectories"], auditor.INCOMPLETE)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_4_expected_count_of_two_with_only_one_distinct_verified_artifact(self):
         """Expected count of two with only one distinct artifact reports incomplete."""
         with tempfile.TemporaryDirectory() as td:
@@ -2122,6 +2181,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 2, "Normalized duplicate in expected_paths must exit code 2")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_6_two_genuinely_distinct_checksum_verified_artifacts_satisfy_count(self):
         """Case C: Two genuinely distinct verified artifacts satisfy an expected count of two."""
         with tempfile.TemporaryDirectory() as td:
@@ -2157,6 +2217,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             self.assertEqual(det["duplicate_artifacts"], [])
             self.assertEqual(res["reproducibility_prerequisites"]["raw_trajectories"], auditor.VERIFIED)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_7_explicit_expected_paths_where_one_required_artifact_is_absent(self):
         """Explicit expected paths where one required artifact is absent remains incomplete."""
         with tempfile.TemporaryDirectory() as td:
@@ -2187,6 +2248,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 1)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_8_explicit_expected_paths_where_every_required_artifact_verifies(self):
         """Explicit expected paths where every required distinct artifact verifies produces complete."""
         with tempfile.TemporaryDirectory() as td:
@@ -2221,6 +2283,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--trusted-expected-sets", str(tpath)])
             self.assertEqual(code, 0)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_9_manifest_entry_ordering_does_not_change_results(self):
         """Manifest entry ordering produces identical deterministic audit outcomes."""
         with tempfile.TemporaryDirectory() as td:
@@ -2252,6 +2315,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             self.assertEqual(code2, 0)
             self.assertEqual(out1.read_bytes(), out2.read_bytes())
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_10_duplicate_evidence_never_produces_prerequisite_complete_or_verified(self):
         """Duplicate evidence never produces prerequisite_complete: true or VERIFIED status."""
         with tempfile.TemporaryDirectory() as td:
@@ -2276,6 +2340,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
             self.assertNotEqual(res["reproducibility_prerequisites"]["raw_trajectories"], auditor.VERIFIED)
             self.assertEqual(res["reproducibility_prerequisites"]["raw_trajectories"], auditor.INCOMPLETE)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_11_hardlink_alias_detected_and_cannot_satisfy_expected_count(self):
         """Filesystem hardlink alias to the same inode cannot satisfy an expected count of two."""
         with tempfile.TemporaryDirectory() as td:
@@ -2372,6 +2437,7 @@ class TestMalformedFilenameRejection(unittest.TestCase):
             self.assertEqual(res["totals"][auditor.INVALID], 1)
             self.assertEqual(res["artifacts"][0]["status"], auditor.INVALID)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_5_valid_unicode_filename_with_non_ascii_characters(self):
         """Case 5: Valid Unicode filename with non-ASCII characters is accepted and verified."""
         with tempfile.TemporaryDirectory() as td:
@@ -2394,6 +2460,7 @@ class TestMalformedFilenameRejection(unittest.TestCase):
             self.assertTrue(art["hash_match"])
             self.assertEqual(art["observed_sha256"], chash)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_6_mixed_manifest_containing_one_valid_and_one_malformed_artifact(self):
         """Case 6: Mixed manifest continues processing other entries when one is invalid."""
         with tempfile.TemporaryDirectory() as td:
@@ -2489,6 +2556,7 @@ class TestMalformedFilenameRejection(unittest.TestCase):
                 self.assertIsNone(size)
                 self.assertIsNotNone(note)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_9_actual_cli_execution_with_malformed_paths(self):
         """Case 9: CLI execution returns exit code 2 without traceback for malformed paths."""
         with tempfile.TemporaryDirectory() as td:
@@ -2629,6 +2697,7 @@ class TestCliDiagnosticConfidentiality(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestMarkdownReportIntegrity(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_newline_and_pipe_in_missing_path_cannot_forge_verified_row(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -2670,6 +2739,7 @@ class TestMarkdownReportIntegrity(unittest.TestCase):
         self.assertIn("benchmark\\n## Forged status", summary)
         self.assertIn(r"missing\n\| VERIFIED", summary)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_cli_published_summary_does_not_forge_missing_artifact(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -2715,6 +2785,7 @@ class TestMarkdownInlineSafety(unittest.TestCase):
         safe = auditor._markdown_code(malicious)
         self.assertEqual(safe, "` " + malicious.split("`")[0] + " `&#96;` fake_code `&#96;")
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_report_renders_potential_links_as_literal_syntax(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -2842,6 +2913,7 @@ class TestMarkdownNativeSpans(unittest.TestCase):
                           + auditor._markdown_text(value, table_cell=True) + " | **MISSING** | no | - |", summary)
             self.assertEqual(json.dumps(result, sort_keys=True), before)
 
+    @unittest.skipIf(os.name == "nt", "audit script walks paths with os.O_DIRECTORY/O_NOFOLLOW/dir_fd, which Windows lacks")
     def test_cli_json_and_markdown_are_deterministic(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

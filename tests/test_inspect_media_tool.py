@@ -953,6 +953,7 @@ def test_inspect_media_renders_svg_to_png(tmp_path: Path):
     assert (tmp_path / "floorplan.png").read_bytes().startswith(b"\x89PNG")
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")
 def test_inspect_media_can_create_confined_video_clip(tmp_path: Path):
     source = tmp_path / "source.mp4"
     subprocess.run(

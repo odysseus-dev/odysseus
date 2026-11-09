@@ -333,6 +333,7 @@ async def test_setsid_daemon_cannot_survive_namespace_death(namespaces, exit_par
     assert containment.active_grants() == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Exercises the Linux bubblewrap launch path, which relies on os.set_blocking and pass_fds (POSIX only)")
 async def test_failed_namespace_initialization_does_not_claim_containment(workspace, monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(containment, "MECHANISMS", (containment.Mechanism(

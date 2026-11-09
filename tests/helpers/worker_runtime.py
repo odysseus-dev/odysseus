@@ -29,7 +29,11 @@ def configure_runtime(config, runtime):
         # AF_UNIX limit for sockets in tmp_path. Workers inherit a basetemp
         # under the controller's; an explicit --basetemp still wins.
         if config.option.basetemp is None and not hasattr(config, "workerinput"):
-            config.option.basetemp = str(runtime.root / "pytest")
+            # Windows has no /tmp; the file tools treat the per-user temp
+            # directory (the private TEMP below) as the temp root, so keep
+            # the basetemp inside it, as /tmp contains it on POSIX.
+            base = runtime.root / "tmp" if os.name == "nt" else runtime.root
+            config.option.basetemp = str(base / "pytest")
     parallel = bool(getattr(config.option, "numprocesses", None)) or hasattr(config, "workerinput")
     # This consumes the existing test option; its public read and documented
     # source location remain in the static-server fixture.

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ def test_last_cell_tab_uses_the_undoable_table_replacement_path():
     assert "_scheduleDocumentHistoryControls()" in key_handler
 
 
+@requires_playwright
 def test_mobile_table_tab_navigation_row_creation_and_history():
     script = r"""
       import { chromium } from 'playwright';

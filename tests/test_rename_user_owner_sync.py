@@ -25,6 +25,7 @@ loop but don't exercise the file/cache patches added to the route.
 """
 import asyncio
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -483,7 +484,8 @@ def test_rename_updates_upload_metadata_owner(rename_endpoint):
     updated = json.loads((upload_dir / "uploads.json").read_text(encoding="utf-8"))
     assert "alice:hash-alice" not in updated
     assert updated["alice2:hash-alice"]["owner"] == "alice2"
-    assert handler.resolve_upload(upload_id, owner="alice2")["path"] == str(upload_path)
+    # reserve_upload stores os.path.normcase(realpath(...)): lower-case on Windows.
+    assert os.path.normcase(handler.resolve_upload(upload_id, owner="alice2")["path"]) == os.path.normcase(str(upload_path))
     assert handler.resolve_upload(upload_id, owner="alice") is None
 
 

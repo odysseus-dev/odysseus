@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import PurePosixPath
+from pathlib import PurePath
 import hashlib
 import json
 import re
@@ -118,7 +118,8 @@ class ResourceRef:
             return self.location == other.location
         if self.location[:-1] != other.location[:-1]:
             return False
-        left, right = PurePosixPath(self.location[-1]), PurePosixPath(other.location[-1])
+        # Host path flavour: POSIX paths on POSIX, drive-and-backslash paths on Windows.
+        left, right = PurePath(self.location[-1]), PurePath(other.location[-1])
         return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 
     def to_dict(self) -> dict[str, Any]:

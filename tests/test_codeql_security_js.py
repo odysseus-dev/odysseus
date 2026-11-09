@@ -3,7 +3,10 @@ import json
 import subprocess
 from pathlib import Path
 
+from tests.helpers.playwright_gate import requires_playwright
 
+
+@requires_playwright
 def test_codeql_security_browser_contracts():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
@@ -17,6 +20,7 @@ def test_codeql_security_browser_contracts():
     }
 
 
+@requires_playwright
 def test_pr6503_ledger_email_and_gallery_security_contracts():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(

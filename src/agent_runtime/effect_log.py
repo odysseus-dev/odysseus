@@ -15,25 +15,34 @@ lock on the file, merges every durable record other writers appended, allocates
 the next position from that merged tail, checks the record against the merged
 history, then appends and fsyncs before releasing the lock. Positions therefore
 stay unique and a settled outcome is never appended twice. Cross-process
-exclusion relies on POSIX ``flock``; directory fsync relies on POSIX directory
-semantics. Neither is claimed where the platform does not provide it.
+exclusion for writers uses POSIX ``flock``, or on Windows an ``msvcrt``
+byte-range lock past the end of the file; on Windows, readers (``refresh`` and
+``load``) take no shared lock. Directory fsync relies on POSIX directory
+semantics and is not claimed elsewhere.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import json
 import os
 from pathlib import Path
 import re
 import stat
 import threading
+import time
 import weakref
 from typing import Any, Callable
 
-try:  # POSIX only; elsewhere exclusion is per process.
+try:  # POSIX: flock. Windows falls back to an msvcrt byte-range lock.
     import fcntl
 except ImportError:  # pragma: no cover - non-POSIX hosts
     fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 from src.constants import DATA_DIR
 from src.agent_runtime.effects import (
@@ -41,6 +50,37 @@ from src.agent_runtime.effects import (
     replay_interrupted,
 )
 from src.agent_runtime.resources import ResourceIdentityError
+
+# Past any real end of file, so the mandatory Windows lock never blocks the
+# reads and writes of the log's own bytes.
+_WIN_LOCK_OFFSET = 1 << 40
+# msvcrt reports a byte range held by another handle as EACCES or EDEADLOCK.
+_WIN_LOCK_BUSY = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
+
+
+def _lock_exclusive(descriptor: int) -> None:
+    """Block until this descriptor holds the log's exclusive lock."""
+    if fcntl is not None:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    elif msvcrt is not None:
+        os.lseek(descriptor, _WIN_LOCK_OFFSET, os.SEEK_SET)
+        while True:
+            try:
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                return
+            except OSError as exc:
+                if exc.errno not in _WIN_LOCK_BUSY:
+                    raise
+                time.sleep(0.005)
+
+
+def _unlock(descriptor: int) -> None:
+    if msvcrt is not None and fcntl is None:
+        os.lseek(descriptor, _WIN_LOCK_OFFSET, os.SEEK_SET)
+        try:
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass  # closing the descriptor releases it anyway
 
 
 EFFECTS_DIR = os.path.join(DATA_DIR, "effects")
@@ -247,13 +287,13 @@ class EffectLog:
         flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | _O_BINARY
         descriptor = os.open(self.path, flags, 0o600)
         try:
-            if fcntl is not None:
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            _lock_exclusive(descriptor)
             self._read_tail(descriptor, repair=True)
             self._descriptor = descriptor
             yield
         finally:
             self._descriptor = None
+            _unlock(descriptor)
             os.close(descriptor)  # releases the lock
 
     def _write(self, kind: str, record: Any) -> None:

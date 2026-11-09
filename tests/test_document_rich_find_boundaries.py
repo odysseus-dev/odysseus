@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,7 @@ def test_find_index_inserts_boundaries_without_flattening_inline_spans():
     assert "if (startsNewSegment) fullText += '\\n';" in section
 
 
+@requires_playwright
 def test_find_rejects_cross_block_matches_but_supports_inline_matches_and_replacement():
     script = r"""
       import { chromium } from 'playwright';

@@ -21,7 +21,7 @@ _HAS_NODE = shutil.which("node") is not None
 def _folds(html):
     js = f"""
     globalThis.document = {{ createElement: () => {{ let t=''; return {{ set textContent(v){{t=String(v);}}, get innerHTML(){{return t;}} }}; }} }};
-    const mod = await import('{_MOD.as_posix()}');
+    const mod = await import('{_MOD.as_uri()}');
     const html = {json.dumps(html)};
     const out = mod._foldSignature(html, null);
     console.log(JSON.stringify(out.includes('email-sig-fold')));

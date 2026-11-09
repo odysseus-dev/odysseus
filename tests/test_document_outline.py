@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -66,6 +67,7 @@ def test_outline_control_is_mode_aware_live_and_accessible():
     assert "@media (max-width: 768px)" in STYLE
 
 
+@requires_playwright
 def test_outline_jumps_in_markdown_and_rich_text_and_fits_mobile():
     data = _run_node(
         r"""

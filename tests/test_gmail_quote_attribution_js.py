@@ -29,7 +29,7 @@ def _meta(html: str) -> str:
         "globalThis.document = { createElement() { return {"
         " set textContent(v) { this._t = v; },"
         " get innerHTML() { return this._t || ''; } }; } };"
-        f"const {{ _extractQuoteMeta }} = await import('{_HELPER.as_posix()}');"
+        f"const {{ _extractQuoteMeta }} = await import('{_HELPER.as_uri()}');"
         f"console.log(JSON.stringify(_extractQuoteMeta({json.dumps(html)})));"
     )
     proc = subprocess.run(

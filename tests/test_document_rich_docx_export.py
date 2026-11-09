@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,7 @@ def test_rich_docx_converter_maps_editor_structure_instead_of_raw_html():
     assert "_markdownToDocxChildren(text, window.docx)" in exporter
 
 
+@requires_playwright
 def test_browser_word_export_contains_native_rich_docx_ooxml():
     with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as output:
         output_path = Path(output.name)
@@ -150,6 +152,7 @@ def test_browser_word_export_contains_native_rich_docx_ooxml():
         output_path.unlink(missing_ok=True)
 
 
+@requires_playwright
 def test_browser_markdown_word_export_keeps_heading_and_inline_formatting():
     with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as output:
         output_path = Path(output.name)

@@ -283,6 +283,7 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="the python tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
@@ -292,6 +293,7 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="the python tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 async def test_python_virtual_workspace_path_works_for_tmp_workspace(ws, admin):
     """The bwrap /tmp tmpfs must not hide a task workspace bound at /workspace."""
     _, result = await execute_tool_block(

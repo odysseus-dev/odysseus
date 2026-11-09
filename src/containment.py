@@ -52,6 +52,7 @@ import codecs
 import json
 import logging
 import os
+import posixpath
 import shutil
 import signal
 import subprocess
@@ -140,12 +141,21 @@ _PROTECTED_WRITABLE_HIERARCHIES = frozenset({
 })
 
 
+def _bind_dest(path: str) -> str:
+    """Bind destinations are POSIX paths inside the namespace.
+
+    Compare them in that form on every host, or the reserved-path checks below
+    would never match a backslash-normalized path. A no-op where os.sep is "/".
+    """
+    return path.replace(os.sep, "/")
+
+
 def _is_protected_writable_destination(path: str) -> bool:
-    normalized = os.path.abspath(path)
+    normalized = posixpath.normpath(_bind_dest(path))
     if normalized in _RESERVED_BIND_DESTS:
         return True
     for root in _PROTECTED_WRITABLE_HIERARCHIES:
-        if normalized == root or normalized.startswith(root.rstrip(os.sep) + os.sep):
+        if normalized == root or normalized.startswith(root.rstrip("/") + "/"):
             return True
     return False
 
@@ -583,10 +593,10 @@ def _validate_spec(spec: ContainmentSpec) -> ContainmentSpec:
     if not os.path.isdir(workspace):
         raise ValueError(f"containment: workspace is not a directory: {workspace}")
     writable = tuple(
-        _validate_abs_path(path, label="writable_extra") for path in spec.writable_extra
+        _bind_dest(_validate_abs_path(path, label="writable_extra")) for path in spec.writable_extra
     )
     readonly = tuple(
-        _validate_abs_path(path, label="readonly_extra") for path in spec.readonly_extra
+        _bind_dest(_validate_abs_path(path, label="readonly_extra")) for path in spec.readonly_extra
     )
     for path in writable + readonly:
         if path in _RESERVED_BIND_DESTS:

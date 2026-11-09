@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from routes.session_routes import _context_info_agents_md_inventory
 
 
@@ -11,6 +13,10 @@ def test_context_info_agents_md_inventory_discovers_workspace_and_parent_files(t
     child_agents.write_text("package instructions stay on disk", encoding="utf-8")
 
     files = _context_info_agents_md_inventory(str(child))
+    # The inventory walks every ancestor up to the filesystem root, so an
+    # AGENTS.md in the host's home (above the temp root) is ambient, not ours.
+    sandbox = tmp_path.resolve()
+    files = [f for f in files if Path(f["path"]).is_relative_to(sandbox)]
 
     assert files == [
         {"path": str(root_agents), "source": "workspace"},

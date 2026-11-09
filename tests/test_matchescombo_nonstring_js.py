@@ -24,7 +24,7 @@ _EVENT = "{key:'k',ctrlKey:false,altKey:false,shiftKey:false,metaKey:false}"
 
 def _match(combo_js):
     js = f"""
-    import {{ _matchesCombo }} from '{_MOD.as_posix()}';
+    import {{ _matchesCombo }} from '{_MOD.as_uri()}';
     console.log(JSON.stringify(_matchesCombo({_EVENT}, {combo_js})));
     """
     proc = subprocess.run(

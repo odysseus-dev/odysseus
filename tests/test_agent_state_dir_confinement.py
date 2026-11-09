@@ -238,13 +238,13 @@ def test_native_file_tools_hide_control_plane_hardlink_alias(tmp_path, monkeypat
         importlib.import_module("src.tool_execution")._resolve_tool_path(str(alias))
 
     ls_result = asyncio.run(LsTool().execute(
-        f'{{"path": "{workspace}"}}', {}
+        json.dumps({"path": str(workspace)}), {}
     ))
     glob_result = asyncio.run(GlobTool().execute(
-        f'{{"pattern": "**/*", "path": "{workspace}"}}', {}
+        json.dumps({"pattern": "**/*", "path": str(workspace)}), {}
     ))
     grep_result = asyncio.run(GrepTool().execute(
-        f'{{"pattern": "LIVE_ADMIN_SESSION", "path": "{workspace}"}}', {}
+        json.dumps({"pattern": "LIVE_ADMIN_SESSION", "path": str(workspace)}), {}
     ))
     assert "notes.txt" not in ls_result["output"]
     assert "notes.txt" not in glob_result["output"]
@@ -623,10 +623,10 @@ def test_recursive_glob_and_grep_hide_state_from_extra_root(tmp_path, monkeypatc
     monkeypatch.setattr("src.settings.get_setting", lambda *_a, **_k: [str(tmp_path)])
 
     glob_result = asyncio.run(GlobTool().execute(
-        f'{{"pattern": "**/*", "path": "{tmp_path}"}}', {}
+        json.dumps({"pattern": "**/*", "path": str(tmp_path)}), {}
     ))
     grep_result = asyncio.run(GrepTool().execute(
-        f'{{"pattern": "TOKEN", "path": "{tmp_path}"}}', {}
+        json.dumps({"pattern": "TOKEN", "path": str(tmp_path)}), {}
     ))
 
     assert "public.txt" in glob_result["output"]
@@ -754,7 +754,7 @@ def test_ls_hides_protected_entries_when_root_contains_data(
     else:
         monkeypatch.setattr("src.settings.get_setting", lambda *_a, **_k: [str(tmp_path)])
         context = nullcontext()
-        content = f'{{"path": "{tmp_path}"}}'
+        content = json.dumps({"path": str(tmp_path)})
 
     with context:
         result = asyncio.run(LsTool().execute(content, {}))

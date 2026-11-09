@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ def test_heading_enter_uses_single_native_history_commands():
     assert "_handleRichHeadingEnter(rich)" in DOC_JS
 
 
+@requires_playwright
 def test_mobile_heading_enter_exits_cleanly_and_is_one_step_undoable():
     script = r"""
       import { chromium } from 'playwright';
@@ -92,6 +94,7 @@ def test_mobile_heading_enter_exits_cleanly_and_is_one_step_undoable():
     assert data["redone"] == data["entered"]["html"]
 
 
+@requires_playwright
 def test_heading_enter_preserves_shift_middle_and_empty_heading_semantics():
     script = r"""
       import { chromium } from 'playwright';

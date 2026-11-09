@@ -301,6 +301,7 @@ def test_unchanged_upload_index_uses_cache(tmp_path, monkeypatch):
     assert handler._load_upload_index() == original
 
 
+@pytest.mark.skipif(os.name == "nt", reason='Windows cannot os.replace over a file another handle holds open (WinError 5), so the replace-during-read race modelled here cannot occur')
 def test_upload_index_retries_when_replaced_during_read(tmp_path, monkeypatch):
     """Do not cache old JSON under the signature of a newer atomic replace."""
     handler = _make_handler(tmp_path)

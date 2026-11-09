@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -22,6 +23,7 @@ def test_selection_toolbar_uses_shared_formatting_path_and_preserves_range():
     assert ".doc-rich-selection-toolbar" in STYLE
 
 
+@requires_playwright
 def test_selection_toolbar_formats_and_stays_inside_desktop_and_mobile_viewports():
     script = r"""
       import { chromium } from 'playwright';

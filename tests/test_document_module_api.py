@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -134,6 +135,7 @@ def _module_surface():
     return json.loads(result.stdout)
 
 
+@requires_playwright
 def test_default_export_surface_is_complete_and_callable():
     surface = _module_surface()
 
@@ -146,6 +148,7 @@ def test_default_export_surface_is_complete_and_callable():
     )
 
 
+@requires_playwright
 def test_named_exports_survive_and_stay_callable():
     surface = _module_surface()
 
@@ -156,6 +159,7 @@ def test_named_exports_survive_and_stay_callable():
     assert not not_callable, f"named exports that are not functions: {sorted(not_callable)}"
 
 
+@requires_playwright
 def test_window_bridge_is_the_default_export():
     """`window.documentModule` is a compatibility bridge no import graph shows.
 

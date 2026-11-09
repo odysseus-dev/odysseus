@@ -19,6 +19,7 @@ def make_temp_sqlite(metadata):
     bind ``SessionLocal`` onto whatever module the code under test reads.
     """
     tmpfile = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmpfile.close()  # SQLite owns its connections; release the Windows file handle.
     engine = create_engine(
         f"sqlite:///{tmpfile.name}",
         connect_args={"check_same_thread": False},
