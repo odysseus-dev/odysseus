@@ -4,6 +4,10 @@
 settings reads). A non-admin's due note must go to the owner's own mail
 account, or be skipped, through both the fire-reminder route and the
 background note scanner, and no address may reach a response or a log line.
+
+The ntfy topic and webhook integration are install-wide too (there is no
+per-user one), so a non-admin's ntfy/webhook reminder is skipped, and no
+webhook/ntfy result or log line quotes the integration id, URL or topic.
 """
 
 import asyncio
@@ -12,6 +16,7 @@ import logging
 import smtplib
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -195,3 +200,167 @@ def test_smtp_failure_response_and_log_carry_no_address(reminders, owner):
     logs = _logs(reminders.caplog)
     assert "SMTPRecipientsRefused" in logs
     _assert_absent(logs)
+
+
+# --- ntfy / webhook: install-wide channels -------------------------------
+
+NTFY_BASE = "http://93.184.216.34"  # public literal: no DNS lookup
+NTFY_TOPIC = "admin-topic-9c1e"
+NTFY_ID = "intg-ntfy-41"
+WEBHOOK_URL = "http://93.184.216.35/hooks/admin-hook-path"
+WEBHOOK_ID = "intg-hook-7f3a"
+CHANNEL_TARGETS = (
+    "93.184.216.34", NTFY_TOPIC, NTFY_ID,
+    "93.184.216.35", "admin-hook-path", WEBHOOK_ID,
+)
+SKIP_MESSAGE = {
+    "ntfy": "Phone reminders are configured by the admin",
+    "webhook": "Webhook reminders are configured by the admin",
+}
+FAILURE_MESSAGE = {
+    "ntfy": "Reminder ntfy push could not be sent; see the server log",
+    "webhook": "Reminder webhook could not be sent; see the server log",
+}
+_CHANNEL_SETTINGS = {
+    "ntfy": {"reminder_channel": "ntfy", "reminder_ntfy_topic": NTFY_TOPIC},
+    "webhook": {
+        "reminder_channel": "webhook",
+        "reminder_webhook_integration_id": WEBHOOK_ID,
+        "reminder_webhook_payload_template": '{"content": "{{message}}"}',
+    },
+}
+
+
+@pytest.fixture
+def push(reminders, monkeypatch):
+    """`reminders` with the channel switched to ntfy/webhook, the install-wide
+    integrations patched in and an httpx spy (as in test_reminder_ntfy_ssrf)."""
+    import httpx
+    from src import settings
+
+    state = SimpleNamespace(calls=[], fail=False, ntfy_base=NTFY_BASE, webhook_url=WEBHOOK_URL)
+
+    class _SpyAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def post(self, url, **kw):
+            state.calls.append(url)
+            if state.fail:
+                raise httpx.ConnectError(f"All connection attempts failed: {url}")
+            resp = MagicMock()
+            resp.is_success = True
+            resp.status_code = 200
+            return resp
+
+    monkeypatch.setattr("src.integrations.load_integrations", lambda: [
+        {"id": NTFY_ID, "preset": "ntfy", "enabled": True, "name": "ntfy",
+         "base_url": state.ntfy_base, "api_key": "ntfy-secret"},
+        {"id": WEBHOOK_ID, "preset": "generic", "enabled": True, "name": "admin hook",
+         "base_url": state.webhook_url},
+    ])
+    monkeypatch.setattr(httpx, "AsyncClient", _SpyAsyncClient)
+
+    def use(channel, **extra):
+        monkeypatch.setattr(settings, "load_settings", lambda: {
+            "reminder_llm_synthesis": False, **_CHANNEL_SETTINGS[channel], **extra,
+        })
+
+    return SimpleNamespace(
+        use=use, state=state, fire=reminders.fire, scan=reminders.scan,
+        caplog=reminders.caplog,
+    )
+
+
+@pytest.mark.parametrize("channel", ["ntfy", "webhook"])
+def test_route_non_admin_push_channel_is_skipped(push, channel):
+    push.use(channel)
+
+    result = push.fire("bob")
+
+    assert push.state.calls == []
+    assert result[f"{channel}_sent"] is False
+    assert result[f"{channel}_error"] == SKIP_MESSAGE[channel]
+    _assert_absent(json.dumps(result), CHANNEL_TARGETS)
+    _assert_absent(_logs(push.caplog), CHANNEL_TARGETS)
+
+
+@pytest.mark.parametrize("channel", ["ntfy", "webhook"])
+def test_scanner_non_admin_push_channel_sends_nothing(push, channel):
+    from src.builtin_actions import TaskNoop
+
+    push.use(channel)
+
+    with pytest.raises(TaskNoop) as exc:
+        push.scan("bob")
+
+    assert push.state.calls == []
+    _assert_absent(str(exc.value), CHANNEL_TARGETS)
+    _assert_absent(_logs(push.caplog), CHANNEL_TARGETS)
+
+
+@pytest.mark.parametrize("path", ["route", "scanner"])
+@pytest.mark.parametrize("channel", ["ntfy", "webhook"])
+def test_admin_push_channel_still_sends(push, channel, path):
+    push.use(channel)
+
+    if path == "route":
+        result = push.fire("admin")
+        assert result[f"{channel}_sent"] is True
+        assert result[f"{channel}_error"] == ""
+    else:
+        _message, ok = push.scan("admin")
+        assert ok is True
+
+    expected = f"{NTFY_BASE}/{NTFY_TOPIC}" if channel == "ntfy" else WEBHOOK_URL
+    assert push.state.calls == [expected]
+
+
+@pytest.mark.parametrize("channel", ["ntfy", "webhook"])
+def test_push_send_failure_response_and_log_carry_no_target(push, channel):
+    push.use(channel)
+    push.state.fail = True
+
+    result = push.fire("admin")
+
+    assert len(push.state.calls) == 1, "the send must have been attempted"
+    assert result[f"{channel}_sent"] is False
+    assert result[f"{channel}_error"] == FAILURE_MESSAGE[channel]
+    _assert_absent(json.dumps(result), CHANNEL_TARGETS)
+    logs = _logs(push.caplog)
+    assert "ConnectError" in logs
+    _assert_absent(logs, CHANNEL_TARGETS)
+
+
+@pytest.mark.parametrize("channel", ["ntfy", "webhook"])
+def test_rejected_push_url_is_not_quoted(push, channel):
+    metadata = "169.254.169.254"
+    push.use(channel)
+    push.state.ntfy_base = f"http://{metadata}"
+    push.state.webhook_url = f"http://{metadata}/hooks/admin-hook-path"
+
+    result = push.fire("admin")
+
+    assert push.state.calls == []
+    assert result[f"{channel}_sent"] is False
+    assert "rejected" in result[f"{channel}_error"].lower()
+    _assert_absent(json.dumps(result), CHANNEL_TARGETS + (metadata,))
+    _assert_absent(_logs(push.caplog), CHANNEL_TARGETS + (metadata,))
+
+
+def test_missing_webhook_integration_is_not_quoted(push):
+    gone = "intg-hook-gone-55"
+    push.use("webhook", reminder_webhook_integration_id=gone)
+
+    result = push.fire("admin")
+
+    assert push.state.calls == []
+    assert result["webhook_sent"] is False
+    assert result["webhook_error"]
+    _assert_absent(json.dumps(result), CHANNEL_TARGETS + (gone,))

@@ -186,7 +186,8 @@ async def dispatch_reminder(
                single-user mode). None looks it up from `owner`. A non-admin's
                reminder email never goes to the install-wide
                `reminder_email_to`; it goes to the owner's own mail account
-               address, or is skipped when they have none.
+               address, or is skipped when they have none. Their ntfy and
+               webhook reminders are skipped: both channels are install-wide.
 
     Returns: {synthesis, email_sent, ntfy_sent}. Browser channel is wired via
     the in-memory notification queue picked up by the frontend poller, so
@@ -331,6 +332,12 @@ async def dispatch_reminder(
                 logger.warning(f"Reminder synthesis looked like an error, replacing: {_s[:120]!r}")
                 synthesis = _SYNTH_FAILED_TAG
 
+    # Every external channel is scoped by whether the owner is an admin: the
+    # install-wide email recipient, ntfy topic and webhook integration are
+    # the admin's own channels.
+    if owner_is_admin is None and channel in ("email", "ntfy", "webhook"):
+        owner_is_admin = _reminder_owner_is_admin(owner)
+
     email_sent = False
     email_error = ""
     if channel == "email":
@@ -366,8 +373,6 @@ async def dispatch_reminder(
                 except Exception as _fallback_error:
                     logger.debug(f"Reminder SMTP fallback lookup failed: {_fallback_error}")
             from_addr = (cfg.get("from_address") or cfg.get("smtp_user") or "").strip()
-            if owner_is_admin is None:
-                owner_is_admin = _reminder_owner_is_admin(owner)
             # Only an account row resolved for this owner counts as their own
             # address; the legacy settings.json/env fallback is install-wide.
             owns_account = bool(cfg.get("account_id")) and (cfg.get("owner") or "") == (owner or "")
@@ -452,9 +457,20 @@ async def dispatch_reminder(
                 note_id, owner, e.__class__.__name__, getattr(e, "smtp_code", None),
             )
 
+    # Neither the response nor the log of the webhook/ntfy branches carries
+    # the integration id, URL or topic: they describe the admin's channels.
     webhook_sent = False
     webhook_error = ""
-    if channel == "webhook":
+    if channel == "webhook" and not owner_is_admin:
+        # `reminder_webhook_integration_id` is install-wide (there is no
+        # per-user webhook): never post a non-admin's note to it.
+        webhook_error = "Webhook reminders are configured by the admin"
+        logger.info(
+            "Reminder webhook skipped for note_id=%s owner=%r: "
+            "install-wide channel, owner is not an admin",
+            note_id, owner,
+        )
+    elif channel == "webhook":
         try:
             import httpx
             import json as _wjson
@@ -475,7 +491,7 @@ async def dispatch_reminder(
                     None,
                 )
                 if not intg:
-                    webhook_error = f"Integration {intg_id!r} not found or missing base URL"
+                    webhook_error = "Selected webhook integration not found or missing base URL"
                 else:
                     # Fall back to a built-in default for known presets so
                     # users don't have to configure a template for standard
@@ -511,7 +527,13 @@ async def dispatch_reminder(
                         _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
                         _ok, _reason = _chk(url, block_private=_block)
                         if not _ok:
-                            webhook_error = f"Webhook URL rejected: {_reason}"
+                            # The reason quotes the resolved address; log only
+                            # its category.
+                            webhook_error = "Webhook URL rejected by the outbound URL safety check"
+                            logger.warning(
+                                "Reminder webhook URL rejected for note_id=%s: %s",
+                                note_id, _reason.split(":", 1)[0],
+                            )
                         else:
                             async with httpx.AsyncClient(timeout=10.0) as client:
                                 resp = await client.post(url, content=rendered.encode(), headers=hdrs)
@@ -519,12 +541,25 @@ async def dispatch_reminder(
                                 if not webhook_sent:
                                     webhook_error = f"Webhook returned HTTP {resp.status_code}"
         except Exception as e:
-            webhook_error = str(e) or e.__class__.__name__
-            logger.warning(f"Reminder webhook send failed: {e}")
+            # httpx errors can quote the target URL.
+            webhook_error = "Reminder webhook could not be sent; see the server log"
+            logger.warning(
+                "Reminder webhook send failed for note_id=%s owner=%r: %s",
+                note_id, owner, e.__class__.__name__,
+            )
 
     ntfy_sent = False
     ntfy_error = ""
-    if channel == "ntfy":
+    if channel == "ntfy" and not owner_is_admin:
+        # `reminder_ntfy_topic` and the ntfy integration are install-wide
+        # (there is no per-user topic): never push a non-admin's note there.
+        ntfy_error = "Phone reminders are configured by the admin"
+        logger.info(
+            "Reminder ntfy skipped for note_id=%s owner=%r: "
+            "install-wide channel, owner is not an admin",
+            note_id, owner,
+        )
+    elif channel == "ntfy":
         try:
             from src.integrations import load_integrations
             import httpx
@@ -552,7 +587,13 @@ async def dispatch_reminder(
                 _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
                 _ok, _reason = _chk(f"{base}/{topic}", block_private=_block)
                 if not _ok:
-                    ntfy_error = f"ntfy URL rejected: {_reason}"
+                    # The reason quotes the resolved address; log only its
+                    # category.
+                    ntfy_error = "ntfy URL rejected by the outbound URL safety check"
+                    logger.warning(
+                        "Reminder ntfy URL rejected for note_id=%s: %s",
+                        note_id, _reason.split(":", 1)[0],
+                    )
                 else:
                     async with httpx.AsyncClient(timeout=10.0) as client:
                         resp = await client.post(f"{base}/{topic}", content=ntfy_body, headers=hdrs)
@@ -562,8 +603,12 @@ async def dispatch_reminder(
             else:
                 ntfy_error = "No enabled ntfy integration"
         except Exception as e:
-            ntfy_error = str(e) or e.__class__.__name__
-            logger.warning(f"Reminder ntfy send failed: {e}")
+            # httpx errors can quote the target URL (and so the topic).
+            ntfy_error = "Reminder ntfy push could not be sent; see the server log"
+            logger.warning(
+                "Reminder ntfy send failed for note_id=%s owner=%r: %s",
+                note_id, owner, e.__class__.__name__,
+            )
 
     # In-app browser notification ALWAYS fires (regardless of channel). The
     # frontend polls `/api/tasks/notifications` and turns any entry with a
