@@ -180,5 +180,5 @@ Upload routes distinguish disabled-auth operation from unavailable/unconfigured 
 - Token scopes remain coarse for some surfaces.
 - Auth policy, scoped tokens, and request authority have focused regression tests; full middleware composition and live proxy deployments still need separate validation.
 - Codex/Claude scoped route enforcement still needs stronger regression coverage.
-- `THREAT_MODEL.md` still has stale token-scope gap text that should be reconciled with current route validation. (Its `/api/v1/chat` `base_url` SSRF entry has moved from Known Gaps to the mitigation section "Token-Supplied LLM Endpoints".)
+- `THREAT_MODEL.md` Known Gap 3 ("The `chat` token scope is broad") states the current token-scope picture: the fixed scope list, per-capability scopes enforced on the Codex routes and `documents:*` on uploads, and what is still coarse (one `chat` grant for companion tokens, one fixed agent tool policy for every token, no scoping of browser sessions). (Its `/api/v1/chat` `base_url` SSRF entry has moved from Known Gaps to the mitigation section "Token-Supplied LLM Endpoints".)
 - The Default/Local owner contract is canonical but only incrementally adopted; route helper `""`, chat/agent `None`, SQL/JSON null-owner compatibility, and calendar fallback owner behavior still need domain-by-domain migration decisions.
