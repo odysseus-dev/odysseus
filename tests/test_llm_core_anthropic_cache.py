@@ -1,4 +1,6 @@
 """Regression tests for Anthropic prompt-cache breakpoints in _build_anthropic_payload (#791)."""
+import copy
+
 from src import llm_core
 
 
@@ -184,3 +186,33 @@ def test_caller_placed_breakpoint_is_left_alone():
     p = llm_core._build_anthropic_payload("claude", messages, 0.0, 1000, stream=True, tools=_TOOLS)
     assert _count_message_breakpoints(p) == 1
     assert "cache_control" not in p["messages"][-1]["content"][-1]
+
+
+def _marked_msgs(n):
+    return [{"role": "user", "content": [
+        {"type": "text", "text": f"m{i}", "cache_control": {"type": "ephemeral"}} for i in range(n)
+    ]}]
+
+
+def test_caller_markers_capped_at_four_with_tools_and_long_system_drops_oldest():
+    messages = [{"role": "system", "content": "s" * 5000}] + _marked_msgs(3)
+    before = copy.deepcopy(messages)
+    p = llm_core._build_anthropic_payload("claude", messages, 0.0, 1000, stream=True, tools=_TOOLS)
+    assert _all_breakpoints(p) == 4
+    assert "cache_control" in p["system"][0] and "cache_control" in p["tools"][-1]
+    blocks = p["messages"][-1]["content"]
+    assert "cache_control" not in blocks[0]
+    assert "cache_control" in blocks[1] and "cache_control" in blocks[2]
+    assert messages == before
+
+
+def test_five_caller_markers_without_tools_capped_at_four_drops_oldest():
+    messages = [{"role": "system", "content": "short"},
+                {"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}] + _marked_msgs(5)
+    before = copy.deepcopy(messages)
+    p = llm_core._build_anthropic_payload("claude", messages, 0.0, 1000, stream=True, tools=None)
+    assert _all_breakpoints(p) == 4
+    blocks = p["messages"][-1]["content"]
+    assert "cache_control" not in blocks[0]
+    assert all("cache_control" in b for b in blocks[1:])
+    assert messages == before
