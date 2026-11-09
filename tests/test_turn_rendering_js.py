@@ -1,8 +1,10 @@
 """Real Chromium DOM behavior, not source-string wiring assertions."""
 import subprocess
 from pathlib import Path
+from tests.helpers.playwright_gate import requires_playwright
 
 
+@requires_playwright
 def test_turn_rendering_browser_suite():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(

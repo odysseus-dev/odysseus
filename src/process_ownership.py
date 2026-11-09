@@ -192,6 +192,17 @@ def _win32_token(pid: int) -> Optional[str]:
     if not handle:
         return None
     try:
+        # A process object outlives its process for as long as anyone holds a
+        # handle to it (a parent's Popen does), so OpenProcess succeeding and
+        # GetProcessTimes answering says nothing about whether the process is
+        # still running. An exited process is an absent one: without this a
+        # reaped child verifies as OWNED and licenses a signal at nothing.
+        STILL_ACTIVE = 259
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            raise InspectionUnavailable(f"GetExitCodeProcess({pid})")
+        if exit_code.value != STILL_ACTIVE:
+            return None
         creation = wintypes.FILETIME()
         exit_time = wintypes.FILETIME()
         kernel_time = wintypes.FILETIME()

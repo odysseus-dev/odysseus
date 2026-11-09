@@ -6,6 +6,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.helpers.playwright_gate import requires_playwright
 
 
 CHAT_JS = Path("static/js/chat.js").read_text(encoding="utf-8")
@@ -104,16 +105,19 @@ def _run_browser_case(pattern):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+@requires_playwright
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_detached_resume_reconciles_canonical_terminal_failures():
     _run_browser_case("^resume terminal failure")
 
 
+@requires_playwright
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_detached_resume_surfaces_fallback_then_provider_alias_without_reload():
     _run_browser_case("^resume fallback and provider alias")
 
 
+@requires_playwright
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_detached_resume_renders_preoutput_error_without_empty_reload():
     _run_browser_case("^resume preoutput provider error")

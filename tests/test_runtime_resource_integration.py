@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -219,6 +220,7 @@ def test_detached_publication_failure_cannot_release_workload(workspace, monkeyp
     assert containment.active_grants() == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the fixture restricts containment to the POSIX process_group mechanism; Windows launches a mechanism-none receipt, which the detached supervisor rejects as not in that list")
 def test_detached_release_observes_complete_durable_linkage(workspace, monkeypatch):
     real_popen = bg_jobs.subprocess.Popen
     observations = []

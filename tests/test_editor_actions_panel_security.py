@@ -3,10 +3,13 @@ import os
 from pathlib import Path
 import subprocess
 
+from tests.helpers.playwright_gate import requires_playwright
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@requires_playwright
 def test_action_names_and_unknown_steps_are_literal_text():
     script = r'''
       const fs = require('fs');

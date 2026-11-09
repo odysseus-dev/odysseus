@@ -53,15 +53,19 @@ def _make_vectorrag(rows):
 
 
 def test_vectorrag_remove_is_path_bounded():
+    # Sources are stored as os.path.abspath() results, so build them per platform.
+    def src(*parts):
+        return os.path.abspath(os.path.join(os.sep, "a", *parts))
+
     rows = [
-        ("a", {"source": "/a/docs/f1.md"}),
-        ("b", {"source": "/a/docs/sub/f2.md"}),   # nested -> must be removed
-        ("c", {"source": "/a/docs2/f3.md"}),       # sibling prefix -> must survive
-        ("d", {"source": "/a/docs_personal/f4.md"}),  # sibling prefix -> must survive
+        ("a", {"source": src("docs", "f1.md")}),
+        ("b", {"source": src("docs", "sub", "f2.md")}),   # nested -> must be removed
+        ("c", {"source": src("docs2", "f3.md")}),       # sibling prefix -> must survive
+        ("d", {"source": src("docs_personal", "f4.md")}),  # sibling prefix -> must survive
         ("e", {"filename": "no-source.md"}),       # sourceless dict -> must not crash/survive
     ]
     rag = _make_vectorrag(rows)
-    res = rag.remove_directory("/a/docs")
+    res = rag.remove_directory(src("docs"))
     assert res["success"] is True
     assert res["removed_count"] == 2
     remaining = set(rag._collection.get()["ids"])

@@ -24,8 +24,11 @@ def native_boundary(tmp_path, monkeypatch):
             return await authorized_handler(_original.__get__(self), workspace)(content, ctx)
         monkeypatch.setattr(cls, "execute", execute)
     monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
+    # The wall-clock-only mechanism: a POSIX process group, or its Windows
+    # counterpart (taskkill tree teardown). Neither confines filesystem or tree.
+    wall_clock_only = "windows_tree" if os.name == "nt" else "process_group"
     monkeypatch.setattr(containment, "MECHANISMS", tuple(
-        m for m in containment.MECHANISMS if m.name == "process_group"
+        m for m in containment.MECHANISMS if m.name == wall_clock_only
     ))
     return workspace
 
@@ -96,8 +99,11 @@ def test_permission_denied_is_not_verified_death(monkeypatch):
     def denied(*args):
         raise PermissionError("EPERM")
     monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+    monkeypatch.setattr(containment, "IS_WINDOWS", False)
+    from src import process_lifecycle
+    monkeypatch.setattr(process_lifecycle, "IS_WINDOWS", False)
     monkeypatch.setattr(os, "kill", denied)
-    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(os, "killpg", denied, raising=False)
     monkeypatch.setattr(containment, "_own_pgid", lambda: 1)
     assert platform_compat.pid_alive(987654) is True
     assert containment._group_present(987654) is True

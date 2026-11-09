@@ -36,6 +36,7 @@ from core.database import Session as DbSession
 from routes.document_helpers import _verify_doc_owner, _owner_session_filter
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+_TMPDB.close()  # SQLite owns its connections; release the Windows file handle.
 _ENGINE = create_engine(
     f"sqlite:///{_TMPDB.name}",
     connect_args={"check_same_thread": False},

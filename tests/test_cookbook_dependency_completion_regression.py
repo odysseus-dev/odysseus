@@ -785,7 +785,8 @@ def test_odysseus_create_llama_shim_secure_temp_prevents_symlink_attack(tmp_path
     target_shim = tmp_path / "bin/llama-server"
     assert target_shim.exists()
     assert ODYSSEUS_LLAMA_SHIM_MARKER in target_shim.read_text(encoding="utf-8")
-    assert target_shim.stat().st_mode & 0o111 != 0, "Shim must be executable"
+    if os.name != "nt":  # Windows has no POSIX execute mode bits
+        assert target_shim.stat().st_mode & 0o111 != 0, "Shim must be executable"
 
 
 def test_stale_odysseus_shim_removed_when_python_server_unusable(tmp_path):
@@ -996,7 +997,7 @@ def test_fallback_install_success_creates_usable_launcher(tmp_path):
     created_shim = tmp_path / "bin/llama-server"
     assert created_shim.exists()
     assert ODYSSEUS_LLAMA_SHIM_MARKER in created_shim.read_text(encoding="utf-8")
-    assert str(tmp_path / "bin/llama-server") in res.stdout
+    assert git_bash_path(tmp_path / "bin/llama-server") in res.stdout
 
 
 def test_failed_fallback_sets_preflight_exit_127(tmp_path):
@@ -1043,6 +1044,7 @@ def test_darwin_native_build_does_not_force_write_bin_symlink():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="on local Windows the serve runner deliberately omits the llama.cpp shim/native-build preflight (local_windows_llama_cmd in routes/cookbook_routes.py), so there is no shim reconciliation to test")
 async def test_generated_runner_preflight_retires_stale_shim_before_backend_selection(monkeypatch, tmp_path):
     """Integration regression: The actual generated Cookbook runner must execute
     ownership reconciliation BEFORE evaluating the backend selection (`if Termux ... elif ! command -v llama-server`).
@@ -1160,7 +1162,7 @@ def test_broken_first_native_candidate_healthy_second_candidate_executes_healthy
     assert res.returncode == 0
     assert not shim_file.exists(), "Stale Odysseus shim must be retired"
     assert f"RESOLVED={git_bash_path(healthy_dir / 'llama-server')}" in res.stdout
-    assert str(healthy_dir / "llama-server") in res.stdout
+    assert git_bash_path(healthy_dir / "llama-server") in res.stdout
     assert "RUN_NATIVE: -m /dummy/model.gguf --port 8080" in res.stdout
     assert "error: missing libllama.so" not in res.stdout
 
@@ -1221,7 +1223,7 @@ def test_command_hash_invalidation_switches_from_cached_broken_to_healthy(tmp_pa
     assert res.returncode == 0
     assert "RUN_NATIVE: -m /dummy/test.gguf" in res.stdout
     # Verify hash table ended with healthy binary, not broken
-    assert str(healthy_dir / "llama-server") in res.stdout
+    assert git_bash_path(healthy_dir / "llama-server") in res.stdout
 
 
 def test_broken_native_candidate_falls_back_to_healthy_python_compatibility_shim(tmp_path):
@@ -1247,7 +1249,7 @@ def test_broken_native_candidate_falls_back_to_healthy_python_compatibility_shim
     assert res.returncode == 0
     assert shim_file.exists(), "Healthy Python compatibility shim must be preserved"
     assert f"RESOLVED={git_bash_path(shim_file)}" in res.stdout
-    assert str(shim_file) in res.stdout
+    assert git_bash_path(shim_file) in res.stdout
 
 
 def test_broken_native_and_missing_python_backend_sets_preflight_127(tmp_path):
@@ -1275,6 +1277,7 @@ def test_broken_native_and_missing_python_backend_sets_preflight_127(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="on local Windows the serve runner deliberately omits the llama.cpp shim/native-build preflight (local_windows_llama_cmd in routes/cookbook_routes.py), so there is no shim reconciliation to test")
 async def test_generated_runner_broken_first_healthy_second_e2e(monkeypatch, tmp_path):
     """Integration regression: The full generated Cookbook runner script must launch the healthy
     native candidate even when an earlier broken candidate exists on PATH."""

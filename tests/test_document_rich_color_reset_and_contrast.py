@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -21,6 +22,7 @@ def test_color_controls_have_theme_reset_and_split_palettes():
     assert ".rich-color-palette-label" in STYLE
 
 
+@requires_playwright
 def test_rich_colors_follow_theme_and_undo_as_one_edit():
     # Two input conventions in here are platform-sensitive and must stay that
     # way. Palette entries are opened with a plain click: on macOS a

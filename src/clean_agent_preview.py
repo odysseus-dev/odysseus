@@ -2219,7 +2219,14 @@ def execution_targets_required_artifact(tool_name, arguments, required_artifacts
         arguments if isinstance(arguments, str)
         else json.dumps(arguments or {}, ensure_ascii=False)
     )
-    return any(str(path or '').rstrip('/') in serialized for path in required_artifacts)
+    def mentioned(path):
+        path = str(path or '').rstrip('/')
+        if path in serialized:
+            return True
+        # JSON doubles the backslashes of a Windows path.
+        return os.name == 'nt' and json.dumps(path, ensure_ascii=False)[1:-1] in serialized
+
+    return any(mentioned(path) for path in required_artifacts)
 
 
 def required_artifacts_have_content(required_artifacts):

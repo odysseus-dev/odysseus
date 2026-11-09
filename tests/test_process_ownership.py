@@ -17,6 +17,7 @@ because an absent mechanism read as a successful answer.
 import os
 import signal
 import subprocess
+import sys
 
 import pytest
 
@@ -39,7 +40,11 @@ def sleeper():
         # Each child owns a session/process group. Keep the leader unreaped
         # until its group is signalled, so the group id cannot be recycled.
         if proc.returncode is None:
-            os.killpg(proc.pid, signal.SIGKILL)
+            if os.name == "nt":
+                # Windows has no process groups or killpg; kill the child itself.
+                proc.kill()
+            else:
+                os.killpg(proc.pid, signal.SIGKILL)
         proc.wait(timeout=5)
 
 
@@ -232,6 +237,10 @@ def test_the_procfs_token_reads_a_comm_containing_spaces_and_parens(monkeypatch,
 
 
 # ── The process tree ────────────────────────────────────────────────────────
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the Windows backend deliberately has no process table (no full command line without WMI); process_table raises InspectionUnavailable there",
+)
 def test_descendants_walks_a_real_tree(sleeper):
     """The grandchild case: a shell that backgrounds work and the work itself."""
     proc = sleeper(("bash", "-c", "sleep 30 & sleep 30"))
@@ -247,6 +256,10 @@ def test_descendants_walks_a_real_tree(sleeper):
     assert len(found) >= 3, f"expected the shell and its two children, got {found}"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the Windows backend deliberately has no process table (no full command line without WMI); process_table raises InspectionUnavailable there",
+)
 def test_descendants_includes_the_root_even_with_no_children(sleeper):
     proc = sleeper()
 
@@ -327,8 +340,37 @@ def test_a_procfs_row_with_an_unreadable_stat_keeps_its_command_line(
     assert table[12].ppid == 0
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the Windows backend deliberately has no process table (no full command line without WMI); process_table raises InspectionUnavailable there",
+)
 def test_command_lines_sees_this_process():
     table = po.command_lines()
 
     assert os.getpid() in table
     assert table[os.getpid()]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="pins the Windows backend, which is only selected on Windows")
+def test_windows_process_table_is_unavailable_rather_than_empty():
+    """An empty table would read as "no survivors"; the honest answer is that we cannot look."""
+    with pytest.raises(po.InspectionUnavailable):
+        po.process_table()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="pins the Windows backend, which is only selected on Windows")
+def test_a_process_that_exited_but_is_still_held_open_is_gone():
+    """The parent's Popen keeps the process object alive after exit, so OpenProcess
+    and GetProcessTimes still answer; only the exit state says the process is gone."""
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        token = po.start_token(proc.pid)
+        assert po.verify(proc.pid, token) == po.OWNED
+        proc.kill()
+        proc.wait(timeout=5)
+        assert po.start_token(proc.pid) is None
+        assert po.verify(proc.pid, token) == po.GONE
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)

@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -45,6 +46,7 @@ def test_rich_toolbar_menus_expose_keyboard_and_context_state():
     assert ".md-dd-current" in STYLE
 
 
+@requires_playwright
 def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
     toolbar = DOC_JS.split("function initMdToolbar", 1)[1].split(
         "function _applyDocFont", 1
@@ -124,6 +126,7 @@ def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
     assert data["scroll"]["touchAction"] == "pan-x pan-y"
 
 
+@requires_playwright
 def test_mobile_toolbar_menu_preserves_selection_and_restores_focus():
     script = r"""
       import { chromium } from 'playwright';
@@ -240,6 +243,7 @@ def test_mobile_toolbar_menu_preserves_selection_and_restores_focus():
     assert data["overflow"]["scrollWidth"] == data["overflow"]["clientWidth"]
 
 
+@requires_playwright
 def test_rich_toolbar_menus_track_live_formatting_values():
     script = r"""
       import { chromium } from 'playwright';

@@ -35,6 +35,7 @@ from tests.helpers.js_modules import (
     EMAIL_LIBRARY_WRAPPER,
     email_library_paths,
 )
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 _SW = ROOT / "static" / "sw.js"
@@ -216,6 +217,7 @@ def test_every_package_module_is_precached():
         )
 
 
+@requires_playwright
 def test_every_package_module_evaluates_on_its_own_in_a_browser():
     """Import each module first, alone, and require it to evaluate.
 
@@ -269,6 +271,7 @@ def test_every_package_module_evaluates_on_its_own_in_a_browser():
     assert set(data) == set(urls)
 
 
+@requires_playwright
 def test_wrapper_and_entry_module_hand_out_the_same_functions():
     """Importing either path must give one live module instance.
 

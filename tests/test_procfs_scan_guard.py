@@ -218,7 +218,7 @@ def _collect_sites() -> tuple[list[str], list[str]]:
             continue
         guards = _guarded_scan_ids(tree)
         for site in sites:
-            label = f"{path.relative_to(REPO_ROOT)}:{site.lineno}"
+            label = f"{path.relative_to(REPO_ROOT).as_posix()}:{site.lineno}"
             if id(site) in guards:
                 guarded.append(label)
             else:

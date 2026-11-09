@@ -6,6 +6,7 @@ with missing users or assertion errors.
 """
 
 import json
+import os
 import threading
 import time
 import contextlib
@@ -226,6 +227,11 @@ class TestDiskConsistency:
                 except json.JSONDecodeError as e:
                     corruption_found.append(str(e))
                     break
+                except PermissionError:
+                    # Windows denies an open while the writer renames over the
+                    # file. That is a refused read, not a corrupt file.
+                    if os.name != "nt":
+                        raise
                 time.sleep(0.001)
 
         def writer():

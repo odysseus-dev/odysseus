@@ -9,10 +9,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.helpers.playwright_gate import requires_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@requires_playwright
 @pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
 def test_precached_helper_imports_offline_in_a_fresh_page_and_panels_stay_lazy():
     script = r'''

@@ -20,6 +20,7 @@ from core.database import CalendarEvent, CalendarCal
 from src.caldav_sync import _find_existing_event
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+_TMPDB.close()  # SQLite owns its connections; release the Windows file handle.
 _ENGINE = create_engine(f"sqlite:///{_TMPDB.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)

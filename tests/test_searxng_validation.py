@@ -53,7 +53,8 @@ if "up" in args and failure == "up":
     sys.exit(9)
 ''')
     binary.chmod(0o755)
-    result = subprocess.run(["bash", str(ROOT / ".github/scripts/validate-searxng-image.sh"), "localhost/searxng:validated"], env={**os.environ, "PATH": str(tmp_path) + ":" + os.environ["PATH"], "DOCKER_CALLS": str(calls), "DOCKER_FAILURE": failure, "SEARXNG_SECRET": "operator-secret-must-not-propagate"}, capture_output=True, text=True)
+    # Git-for-Windows bash rewrites a bare "/dev/null" argument to "nul" for native exes; keep it literal.
+    result = subprocess.run(["bash", str(ROOT / ".github/scripts/validate-searxng-image.sh"), "localhost/searxng:validated"], env={**os.environ, "MSYS2_ARG_CONV_EXCL": "/dev/null", "PATH": str(tmp_path) + ":" + os.environ["PATH"], "DOCKER_CALLS": str(calls), "DOCKER_FAILURE": failure, "SEARXNG_SECRET": "operator-secret-must-not-propagate"}, capture_output=True, text=True)
     assert result.returncode == expected, result.stderr
     entries = [json.loads(line) for line in calls.read_text().splitlines()]
     assert all(entry["secret"] == "searxng-ci-validation-only" for entry in entries)

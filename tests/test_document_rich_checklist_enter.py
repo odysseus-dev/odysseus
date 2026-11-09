@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,7 @@ def test_checklist_enter_uses_native_edit_commands_and_resets_state():
     assert "document.execCommand('formatBlock', false, 'p')" in section
 
 
+@requires_playwright
 def test_enter_creates_unchecked_task_and_empty_enter_exits_cleanly():
     script = r"""
       import { chromium } from 'playwright';

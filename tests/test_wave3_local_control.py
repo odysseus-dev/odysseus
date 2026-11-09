@@ -1,6 +1,7 @@
 """Local administration and exact Cookbook caller-to-route regressions."""
 import asyncio
 import json
+import os
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -115,6 +116,7 @@ def control_app(tmp_path, monkeypatch):
     ('serve_model', {'repo_id': 'samplepkg', 'cmd': 'python -m pip install samplepkg', 'local': True}),
     ('serve_preset', {'name': 'preset'}),
 ])
+@pytest.mark.skipif(os.name == "nt", reason="the local Windows launch path runs without tmux (cookbook_routes local_windows branch), so no `tmux new-session` shell command is spawned")
 async def test_real_local_tool_dispatch_reaches_real_model_route(control_app, tool, args):
     app, spawned, work = control_app
     authority = RequestAuthority('request', 'alice', 'thread', str(work), (OperationGrant(tool),))
@@ -125,6 +127,7 @@ async def test_real_local_tool_dispatch_reaches_real_model_route(control_app, to
     assert len(spawned) == 1 and 'tmux new-session' in spawned[0]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the local Windows launch path runs without tmux (cookbook_routes local_windows branch), so no `tmux new-session` shell command is spawned")
 async def test_real_scheduled_local_action_uses_restored_exact_authority(control_app):
     app, spawned, work = control_app
     command = json.dumps({'repo_id': 'samplepkg', 'cmd': 'python -m pip install samplepkg', 'set_default': False})
@@ -154,7 +157,7 @@ async def test_header_only_cannot_launch(control_app, host, headers):
     assert not spawned
 
 
-@pytest.mark.parametrize('substitute', ['body', 'route', 'owner', 'remote', 'proxy', 'replay'])
+@pytest.mark.parametrize('substitute', ['body', 'route', 'owner', 'remote', 'proxy', pytest.param('replay', marks=pytest.mark.skipif(os.name == "nt", reason="the local Windows launch path runs without tmux (cookbook_routes local_windows branch), so no `tmux new-session` shell command is spawned"))])
 async def test_capability_exact_transport_binding(control_app, substitute):
     app, spawned, work = control_app
     content = json.dumps({'repo_id': 'org/model', 'local': True})
@@ -198,6 +201,7 @@ async def test_remote_route_semantics_remain_unchanged(control_app):
     assert len(spawned) == 1 and 'ssh ' in spawned[0]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the local Windows launch path runs without tmux (cookbook_routes local_windows branch), so no `tmux new-session` shell command is spawned")
 async def test_auth_disabled_local_route_usage(control_app, monkeypatch):
     app, spawned, _ = control_app
     monkeypatch.setenv('AUTH_ENABLED', 'false')

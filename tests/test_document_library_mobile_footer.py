@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +50,7 @@ def test_open_in_new_chat_forces_a_distinct_target_session():
     assert "newSession ? 'Document opened in new chat' : 'Document opened here'" in body
 
 
+@requires_playwright
 def test_mobile_open_in_new_chat_copies_to_materialized_session():
     script = r"""
       import { chromium } from 'playwright';

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.playwright_gate import requires_playwright
+
 _REPO = Path(__file__).resolve().parent.parent
 _HAS_NODE = shutil.which("node") is not None
 
@@ -160,6 +162,7 @@ def test_ordered_lists_render_as_one_unwrapped_ol(node_available):
     assert "<p><li>" not in html
 
 
+@requires_playwright
 def test_fenced_svg_renders_inline_in_a_locked_sandbox(node_available):
     html = _run_svg_case(
         "```svg\n"
@@ -184,6 +187,7 @@ def test_fenced_svg_renders_inline_in_a_locked_sandbox(node_available):
     assert '&lt;circle cx=&quot;200&quot;' in html
 
 
+@requires_playwright
 def test_multiple_fenced_svgs_remain_interleaved_with_explanations(node_available):
     html = _run_svg_case(
         "```svg\n"
@@ -200,6 +204,7 @@ def test_multiple_fenced_svgs_remain_interleaved_with_explanations(node_availabl
     assert html.index('title="Stage two"') < html.index("The second mechanism explained.")
 
 
+@requires_playwright
 def test_complete_raw_svg_uses_the_same_locked_renderer(node_available):
     html = _run_svg_case(
         "Before the visual.\n\n"

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,7 @@ def test_table_header_controls_use_tag_replacement_and_native_history():
     assert "tableHeaderToggle" in DOC_JS
 
 
+@requires_playwright
 def test_mobile_header_row_and_column_toggle_independently_with_undo():
     script = r"""
       import { chromium } from 'playwright';

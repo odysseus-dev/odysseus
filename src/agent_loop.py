@@ -5269,6 +5269,11 @@ def _calendar_listing_row(line: str) -> tuple[str, str, str, str] | None:
     return None
 
 
+def _clock_12h(dt: datetime) -> str:
+    """Unpadded 12-hour clock label ("9:05 AM"); strftime's "%-I" is glibc-only."""
+    return f"{dt.hour % 12 or 12}:{dt.minute:02d} {dt.strftime('%p')}"
+
+
 def _calendar_list_summary_from_tool_output(
     raw: str,
     max_items: int = 20,
@@ -5311,7 +5316,7 @@ def _calendar_list_summary_from_tool_output(
             return raw_when
 
         def time_label(dt: datetime) -> str:
-            return dt.strftime("%-I:%M %p")
+            return _clock_12h(dt)
 
         start_date = f"{start.strftime('%b')} {start.day}"
         if start.date() == end.date():
@@ -6341,11 +6346,11 @@ def _friendly_email_date(value: str) -> str:
         return ""
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return parsed.strftime("%b %-d, %-I:%M %p")
+        return f"{parsed.strftime('%b')} {parsed.day}, {_clock_12h(parsed)}"
     except Exception:
         try:
             parsed = datetime.fromisoformat(text[:19])
-            return parsed.strftime("%b %-d, %-I:%M %p")
+            return f"{parsed.strftime('%b')} {parsed.day}, {_clock_12h(parsed)}"
         except Exception:
             return text
 

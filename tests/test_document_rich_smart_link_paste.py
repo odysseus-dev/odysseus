@@ -4,11 +4,13 @@ import json
 import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@requires_playwright
 def test_rich_url_paste_links_selections_and_plain_urls_without_unsafe_autolinks():
     script = r"""
       import { chromium } from 'playwright';

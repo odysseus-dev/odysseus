@@ -3,6 +3,7 @@
 Legacy successful page-command/batch/recovery tests have been superseded by
 failed-before-dispatch resource tests in test_browser_resource_identity.py.
 """
+import os
 import asyncio
 import pytest
 import base64
@@ -162,6 +163,7 @@ def _cli_proc(calls, identity=None):
     return _Proc()
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 def test_private_browser_timeout_terminates_the_process_group(monkeypatch) -> None:
     from src import process_lifecycle, process_ownership
 
@@ -180,6 +182,7 @@ def test_private_browser_timeout_terminates_the_process_group(monkeypatch) -> No
     assert calls == [(1234, web_tools.signal.SIGKILL), "fallback-kill"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 @pytest.mark.parametrize("verdict", ["foreign", "unverifiable", "gone"])
 def test_cli_group_is_not_signalled_once_its_identity_is_lost(monkeypatch, verdict) -> None:
     """A reaped CLI's pid may be reissued; its group is then not ours to kill."""
@@ -196,6 +199,7 @@ def test_cli_group_is_not_signalled_once_its_identity_is_lost(monkeypatch, verdi
     assert calls == ["fallback-kill"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 def test_cli_without_a_spawn_identity_is_never_group_signalled(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(web_tools.os, "getpgid", lambda pid: pid)
@@ -206,6 +210,7 @@ def test_cli_without_a_spawn_identity_is_never_group_signalled(monkeypatch) -> N
     assert calls == ["fallback-kill"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 def test_cli_group_that_moved_is_not_signalled(monkeypatch) -> None:
     """The identity verifies but no longer leads the recorded group."""
     from src import process_lifecycle, process_ownership
@@ -505,6 +510,7 @@ def test_terminate_owned_chrome_skips_the_sweep_without_procfs(
     PrivateBrowserTool._terminate_owned_chrome({"TMPDIR": str(tmp_path)})
 
 
+@pytest.mark.skipif(os.name == "nt", reason='models a /proc process table; the Windows backend never reads PROC_ROOT')
 def test_terminate_owned_chrome_kills_only_this_runtimes_profile(
     monkeypatch, tmp_path
 ) -> None:
@@ -599,6 +605,7 @@ def _legacy_pid_file_for(tmp_path, monkeypatch, namespace, session, pid):
     return target
 
 
+@pytest.mark.skipif(os.name == "nt", reason='models a /proc process table; the Windows backend never reads PROC_ROOT')
 def test_legacy_daemon_pid_file_kills_only_the_verified_daemon(monkeypatch, tmp_path) -> None:
     proc = _fake_procfs(monkeypatch, tmp_path)
     _fake_process(proc, 4401, "node agent-browser --serve")
@@ -634,6 +641,7 @@ def test_legacy_daemon_pid_reused_before_the_signal_is_spared(monkeypatch, tmp_p
     assert killed == [] and (proc / "4402").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason='models a /proc process table; the Windows backend never reads PROC_ROOT')
 def test_legacy_daemon_without_identity_keeps_its_pid_file(monkeypatch, tmp_path) -> None:
     proc = _fake_procfs(monkeypatch, tmp_path)
     _fake_process(proc, 4403, "node agent-browser --serve")

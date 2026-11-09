@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source, function_body
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ def test_table_cell_alignment_uses_contextual_undoable_table_path():
     assert "tableCellAlignment" in DOC_JS
 
 
+@requires_playwright
 def test_mobile_table_cell_alignment_tracks_state_and_native_history():
     script = r"""
       import { chromium } from 'playwright';

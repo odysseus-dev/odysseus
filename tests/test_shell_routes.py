@@ -290,6 +290,7 @@ async def test_generate_pty_disconnect_kills_the_whole_session(tmp_path):
         _reap_if_alive(child_pid)
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 async def test_terminate_pty_session_reports_a_session_it_could_not_kill(
     monkeypatch,
 ):
@@ -304,6 +305,7 @@ async def test_terminate_pty_session_reports_a_session_it_could_not_kill(
     assert await shell_routes._terminate_pty_session(proc) is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 async def test_terminate_pty_session_escalates_before_giving_up(monkeypatch):
     """SIGTERM then SIGKILL — the group is never signalled only once."""
     import routes.shell_routes as shell_routes
@@ -413,6 +415,7 @@ async def test_terminate_pty_session_never_signals_a_reused_leader_pid(monkeypat
     assert signalled == [], f"teardown signalled the replacement: {signalled}"
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 def test_session_alive_treats_a_refused_probe_as_alive(monkeypatch):
     """EPERM says the group exists but we may not signal it, not that it died.
 
@@ -435,6 +438,7 @@ def test_session_alive_treats_a_refused_probe_as_alive(monkeypatch):
     assert shell_routes._session_alive(4242, 4242) is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason='POSIX process groups (os.getpgid/os.killpg) do not exist on Windows')
 async def test_terminate_pty_session_reports_a_group_it_may_not_signal(monkeypatch):
     """A session we cannot signal at all is reported as not contained.
 
@@ -543,6 +547,7 @@ class TestRunningInContainer:
 class TestAppleSiliconDetection:
     """APFEL should only surface as available on native Apple Silicon Macs."""
 
+    @pytest.mark.skipif(os.name == "nt", reason="IS_APPLE_SILICON also requires a POSIX os.name, which cannot be mocked on Windows (pathlib then cannot build PosixPath)")
     def test_reports_true_on_macos_arm64(self, monkeypatch):
         import core.platform_compat as platform_compat
 
@@ -659,6 +664,7 @@ class TestHostDockerAccess:
 
         assert _host_docker_access_enabled(str(socket_path)) is False
 
+    @pytest.mark.skipif(os.name == "nt", reason="AF_UNIX sockets are not exposed by Python's socket module on Windows")
     @pytest.mark.parametrize("flag", [None, "false"])
     def test_socket_without_explicit_opt_in_is_disabled(
         self,
@@ -674,6 +680,7 @@ class TestHostDockerAccess:
 
             assert _host_docker_access_enabled(socket_path) is False
 
+    @pytest.mark.skipif(os.name == "nt", reason="AF_UNIX sockets are not exposed by Python's socket module on Windows")
     def test_explicit_opt_in_with_unix_socket_is_enabled(
         self,
         monkeypatch,
@@ -782,13 +789,17 @@ class TestPackageProbeStatus:
         user_base = tmp_path / "user-base"
         monkeypatch.setattr("site.USER_BASE", str(user_base))
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        # Windows expanduser() reads USERPROFILE, not HOME.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
         monkeypatch.setenv("PATH", "/usr/bin")
 
         _prepend_user_install_bins_to_path()
 
-        parts = os.environ["PATH"].split(os.pathsep)
-        assert str(user_base / "bin") in parts
-        assert str(tmp_path / "home" / ".local" / "bin") in parts
+        # expanduser("~/.local/bin") keeps the literal "/" on Windows, so compare
+        # separator-normalised paths.
+        parts = [os.path.normpath(p) for p in os.environ["PATH"].split(os.pathsep)]
+        assert os.path.normpath(str(user_base / "bin")) in parts
+        assert os.path.normpath(str(tmp_path / "home" / ".local" / "bin")) in parts
 
     def test_remote_package_probe_checks_user_install_bin(self):
         script = _package_probe_script(["vllm"])

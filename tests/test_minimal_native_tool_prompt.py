@@ -1434,3 +1434,12 @@ def test_recent_odysseus_anchor_refs_reads_persisted_history() -> None:
         "event_uid": "11111111-2222-3333-4444-555555555555",
         "event_title": "Fixture",
     }
+
+
+def test_friendly_email_date_formats_unpadded_12_hour_clock():
+    # "%-d"/"%-I" are glibc-only strftime flags; this must not fall back to the raw string.
+    from src.agent_loop import _friendly_email_date
+
+    assert _friendly_email_date("2026-03-04T09:05:00") == "Mar 4, 9:05 AM"
+    assert _friendly_email_date("2026-03-14T00:30:00") == "Mar 14, 12:30 AM"
+    assert _friendly_email_date("2026-03-14T15:00:00+00:00") == "Mar 14, 3:00 PM"

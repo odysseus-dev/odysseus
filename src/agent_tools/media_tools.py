@@ -163,13 +163,15 @@ def _resolve_workspace_path(
     else:
         path = Path(raw).expanduser()
         candidate = path if path.is_absolute() else workspace / path
-        if path.is_absolute() and must_exist:
+        # On Windows "/fixtures/a.mp4" is rooted but not absolute (no drive),
+        # so also treat a leading "/" as the virtual-mount form.
+        if (path.is_absolute() or raw.startswith("/")) and must_exist:
             # Native models occasionally preserve the workspace-relative
             # suffix but omit the virtual ``/workspace`` mount prefix. Repair
             # only an input that demonstrably exists inside this request's
             # workspace. Never apply this alias to output destinations, and
             # retain the normal confinement check below for symlinks.
-            confined_alias = (workspace / str(path).lstrip("/")).resolve()
+            confined_alias = (workspace / path.as_posix().lstrip("/")).resolve()
             try:
                 confined_alias.relative_to(workspace)
             except ValueError:
@@ -1000,12 +1002,14 @@ class InspectMediaTool:
                 images = []
                 for index in indices:
                     rendered = document[index].render(scale=2.0).to_pil().convert("RGB")
-                    with tempfile.NamedTemporaryFile(suffix=".jpg") as temp:
-                        rendered.save(temp.name, "JPEG", quality=88)
-                        images.append({
-                            "data": base64.b64encode(Path(temp.name).read_bytes()).decode("ascii"),
-                            "mimeType": "image/jpeg",
-                        })
+                    # In-memory: an open NamedTemporaryFile cannot be reopened by
+                    # name on Windows.
+                    jpeg = io.BytesIO()
+                    rendered.save(jpeg, "JPEG", quality=88)
+                    images.append({
+                        "data": base64.b64encode(jpeg.getvalue()).decode("ascii"),
+                        "mimeType": "image/jpeg",
+                    })
                 pages_text = ", ".join(str(index + 1) for index in indices)
                 extracted_pages = []
                 for index in indices:

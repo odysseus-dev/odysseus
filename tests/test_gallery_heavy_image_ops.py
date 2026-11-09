@@ -6,6 +6,7 @@ graceful 503, proxy to the seneca remote ops service when
 ``ODYSSEUS_IMAGE_OPS_BASE`` is set (translate to the /v1/images/* contract), and
 only run in-process when explicitly enabled via ODYSSEUS_ALLOW_LOCAL_IMAGE_MODELS.
 """
+import os
 
 import asyncio
 
@@ -55,6 +56,7 @@ def test_local_image_models_disabled_env(monkeypatch, value):
     assert gr._local_image_models_enabled() is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="RSS probe reads /proc/self/status, which Windows does not have")
 def test_rss_mb_is_positive():
     assert gr._rss_mb() > 0
 

@@ -18,6 +18,8 @@ from tests.test_runtime_resource_integration import approval_for, dispatch
 
 @pytest.fixture
 def producer(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("browser producer allowlist validates Linux release-binary POSIX mode bits and os.getuid()")
     root = tmp_path / "release"
     root.mkdir()
     binary = root / "agent-browser-linux-x64"

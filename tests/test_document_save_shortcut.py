@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import stylesheet_link_tags
 from tests.helpers.document_source import document_source
+from tests.helpers.playwright_gate import requires_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ def test_save_shortcut_uses_manual_version_path_and_cancels_autosave():
     assert 'class="doc-save-button-label">Saved</span>' in DOC_JS
 
 
+@requires_playwright
 def test_ctrl_s_saves_rich_text_immediately_once_and_updates_status():
     script = r"""
       import { chromium } from 'playwright';
