@@ -266,3 +266,86 @@ def test_resume_of_provider_auth_session_matches_the_runtime_base(chat, monkeypa
     assert calls[1]["headers"].get("Authorization") == "Bearer sub-access-token"
     assert set(resolved) == {("auth-1", "alice")}
     assert _stored_headers(factory, session_id) == {}
+
+
+def test_resume_of_provider_auth_session_on_a_private_runtime_base(chat, monkeypatch):
+    # The credentials resolve to a host.docker.internal proxy, which a native
+    # backend rewrites to 127.0.0.1. The server chose that URL from the
+    # session's own bound endpoint, so the resume is not refused as private.
+    client, calls, factory = chat
+    with factory() as db:
+        db.add(cdb.ModelEndpoint(
+            id="ep-local", name="Local proxy", owner="alice", is_enabled=True,
+            base_url="https://llm.example.test/v1", provider_auth_id="auth-local",
+        ))
+        db.commit()
+    monkeypatch.setattr("src.endpoint_resolver._running_in_container", lambda: False)
+    monkeypatch.setattr(
+        "src.chatgpt_subscription.resolve_runtime_credentials",
+        lambda auth_id, owner=None, **kwargs: {
+            "base_url": "http://host.docker.internal:8317/v1", "api_key": "local-token",
+        },
+    )
+
+    r1 = client.post("/api/v1/chat", json={"message": "turn one", "model": "test-model"})
+    assert r1.status_code == 200, r1.text
+    session_id = r1.json()["session_id"]
+    assert calls[0]["url"] == "http://127.0.0.1:8317/v1/chat/completions"
+
+    r2 = client.post("/api/v1/chat", json={"message": "turn two", "session": session_id})
+    assert r2.status_code == 200, r2.text
+    assert calls[1]["url"] == calls[0]["url"]
+    assert calls[1]["headers"].get("Authorization") == "Bearer local-token"
+
+
+def test_resume_of_direct_key_session_now_pointing_private_is_refused(chat, monkeypatch):
+    # A token-supplied base_url keeps the public-address check on resume, even
+    # when one of the owner's provider-auth endpoints resolves to that same URL:
+    # only the endpoint a session is bound to can vouch for it.
+    client, calls, factory = chat
+    with factory() as db:
+        db.add(cdb.ModelEndpoint(
+            id="ep-decoy", name="Subscription", owner="alice", is_enabled=True,
+            base_url="https://other.example.test/v1", provider_auth_id="auth-decoy",
+        ))
+        db.commit()
+    monkeypatch.setattr(
+        "src.chatgpt_subscription.resolve_runtime_credentials",
+        lambda auth_id, owner=None, **kwargs: {
+            "base_url": "https://llm.example.test/v1", "api_key": "sub-token",
+        },
+    )
+
+    r1 = client.post("/api/v1/chat", json={
+        "message": "turn one", "model": "test-model",
+        "api_key": KEY, "base_url": "https://llm.example.test/v1",
+    })
+    assert r1.status_code == 200, r1.text
+    session_id = r1.json()["session_id"]
+
+    monkeypatch.setitem(DNS, "llm.example.test", "127.0.0.1")
+    r2 = client.post("/api/v1/chat", json={
+        "message": "turn two", "session": session_id, "api_key": KEY,
+    })
+    assert r2.status_code == 400, r2.text
+    assert len(calls) == 1
+
+
+def test_fallback_endpoint_key_is_never_left_on_the_cached_session(chat):
+    # The first turn from a configured endpoint sends its key for that request
+    # only; the cached Session is shared by every request on it.
+    client, calls, factory = chat
+    endpoint_key = "sk-admin-endpoint-key"
+    with factory() as db:
+        db.add(cdb.ModelEndpoint(
+            id="ep-alice", name="Admin LLM", owner="alice", is_enabled=True,
+            base_url="https://llm.example.test/v1", api_key=endpoint_key,
+        ))
+        db.commit()
+
+    r1 = client.post("/api/v1/chat", json={"message": "turn one", "model": "test-model"})
+    assert r1.status_code == 200, r1.text
+    session_id = r1.json()["session_id"]
+    assert calls[0]["headers"].get("Authorization") == f"Bearer {endpoint_key}"
+    assert endpoint_key not in json.dumps(_cached_session(session_id).headers or {})
+    assert _stored_headers(factory, session_id) == {}

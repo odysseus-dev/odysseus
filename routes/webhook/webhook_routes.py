@@ -294,18 +294,25 @@ def setup_webhook_routes(
                     return KNOWN_PROVIDERS[prov]
         return None
 
-    def _resumed_endpoint_is_trusted(endpoint_url: Optional[str], owner: Optional[str]) -> bool:
+    def _resumed_endpoint_is_trusted(endpoint_url: Optional[str], owner: Optional[str],
+                                     endpoint_id: Optional[str] = None) -> bool:
         """True when a resumed session's endpoint is one the server chose rather
         than one a token supplied: a KNOWN_PROVIDERS URL, or a ModelEndpoint the
         owner can see (admin-configured, so local/LAN targets stay allowed).
+        A provider-auth endpoint's first turn went to the base URL its
+        credentials resolve to, which may be private (``host.docker.internal``
+        becomes 127.0.0.1 outside Docker); for the endpoint the session is bound
+        to (``endpoint_id``, set by the server, never by the caller), enabled
+        and owner-scoped, that runtime base resolved now also counts.
         Sessions have no column recording where their URL came from, so any
         other URL is treated as token-supplied and re-checked on every resume."""
-        from src.endpoint_resolver import build_chat_url, normalize_base
+        from src.endpoint_resolver import build_chat_url, normalize_base, resolve_endpoint_runtime
 
         if not endpoint_url:
             return False
         if endpoint_url in {build_chat_url(normalize_base(u)) for u in KNOWN_PROVIDERS.values()}:
             return True
+        bound = None
         db = SessionLocal()
         try:
             query = db.query(ModelEndpoint)
@@ -316,9 +323,18 @@ def setup_webhook_routes(
             for ep in query.all():
                 if ep.base_url and build_chat_url(normalize_base(ep.base_url)) == endpoint_url:
                     return True
+                if (endpoint_id and str(ep.id) == str(endpoint_id) and ep.is_enabled
+                        and getattr(ep, "provider_auth_id", None)):
+                    bound = ep
         finally:
             db.close()
-        return False
+        if bound is None:
+            return False
+        try:
+            runtime_base = resolve_endpoint_runtime(bound, owner=owner)[0]
+        except Exception:
+            return False
+        return bool(runtime_base) and build_chat_url(normalize_base(runtime_base)) == endpoint_url
 
     class SyncChatRequest(BaseModel):
         message: str = Field(..., max_length=MAX_MESSAGE_LEN)
@@ -378,7 +394,8 @@ def setup_webhook_routes(
                 raise HTTPException(404, "Session not found")
             # A session created from a token-supplied base_url keeps that URL;
             # its DNS may now point somewhere private, so check it again.
-            if not _resumed_endpoint_is_trusted(sess.endpoint_url, _tok_user):
+            if not _resumed_endpoint_is_trusted(
+                    sess.endpoint_url, _tok_user, getattr(sess, "endpoint_id", None)):
                 try:
                     _, pinned_ips = resolve_public_http_url(sess.endpoint_url or "")
                 except ValueError:
@@ -490,8 +507,7 @@ def setup_webhook_routes(
                 model=model, owner=token_owner, endpoint_id=ep.id,
             )
             if api_key:
-                sess.headers = build_headers(api_key, base_url)
-                session_manager.save_sessions()
+                call_headers = build_headers(api_key, base_url)
             session_id = sid
 
         # --- Send message and get response ---
