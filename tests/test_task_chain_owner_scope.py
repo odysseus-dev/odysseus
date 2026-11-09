@@ -20,6 +20,7 @@ from core.database import ScheduledTask
 from routes.task.task_routes import TaskCreate
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+_TMPDB.close()  # SQLite owns its connections; release the Windows file handle.
 _ENGINE = create_engine(
     f"sqlite:///{_TMPDB.name}",
     connect_args={"check_same_thread": False},

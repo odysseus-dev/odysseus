@@ -28,6 +28,7 @@ def test_chatmessage_has_timestamp_not_created_at():
 
 def test_rewrite_query_selects_and_updates_latest_assistant_message():
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()  # SQLite owns its connections; release the Windows file handle.
     engine = create_engine(f"sqlite:///{tmp.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
     cdb.Base.metadata.create_all(engine)
     TS = sessionmaker(bind=engine, autoflush=False, autocommit=False)
