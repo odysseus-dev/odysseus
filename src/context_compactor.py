@@ -42,6 +42,15 @@ def _content_as_text(content: Any) -> str:
 _MULTIMODAL_IMAGE_TYPES = {"image_url", "input_image", "image"}
 
 
+def _has_preservable_content(content: Any) -> bool:
+    """Retain nonblank text or nonempty multimodal blocks after tool-call removal."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return bool(content)
+    return False
+
+
 def prune_multimodal_images(
     messages: List[Dict],
     *,
@@ -310,7 +319,7 @@ def _normalize_tool_messages_once(msgs: List[Dict]) -> List[Dict]:
                 # errors; keep the message only if it still carries content.
                 m = {k: v for k, v in m.items() if k != "tool_calls"}
                 in_batch = False
-                if not (m.get("content") or "").strip():
+                if not _has_preservable_content(m.get("content")):
                     continue  # nothing left worth keeping
                 cleaned.append(m)
                 continue
@@ -328,7 +337,7 @@ def _normalize_tool_messages_once(msgs: List[Dict]) -> List[Dict]:
                 # tool_calls so it's a plain assistant turn (preserves any
                 # text content the model produced alongside the calls).
                 m = {k: v for k, v in m.items() if k != "tool_calls"}
-                if not (m.get("content") or "").strip():
+                if not _has_preservable_content(m.get("content")):
                     continue  # nothing left worth keeping
         out.append(m)
     return out

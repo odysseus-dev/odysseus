@@ -722,3 +722,29 @@ class TestSanitizeToolMessagesPredecessor:
         before = copy.deepcopy(msgs)
         cc._sanitize_tool_messages(msgs)
         assert msgs == before
+
+    @pytest.mark.parametrize("content", [
+        [{"type": "text", "text": "Keep observation"}],
+        [{"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}],
+        [],
+    ])
+    @pytest.mark.parametrize("dangling", [False, True])
+    def test_stripped_calls_preserve_multimodal_content(self, content, dangling):
+        if dangling:
+            messages = [
+                {"role": "user", "content": "Inspect image"},
+                {"role": "assistant", "content": content,
+                 "tool_calls": [{"id": "c1", "function": {"name": "inspect"}}]},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": "Instructions"},
+                {"role": "assistant", "content": content,
+                 "tool_calls": [{"id": "c1", "function": {"name": "inspect"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "orphan"},
+            ]
+        output = self._sanitize(messages)
+        expected = [messages[0]]
+        if content:
+            expected.append({"role": "assistant", "content": content})
+        assert output == expected
