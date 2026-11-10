@@ -40,11 +40,12 @@ export function createNotesSubmission({
       app.setEditingId(null);
       const draftId = isEdit ? note.id : '__new__';
       const submittedDraft = JSON.stringify(_loadDraft(draftId));
+      const temporaryId = isEdit ? null : 'tmp_' + uid();
       if (isEdit) {
         const idx = state.notes.findIndex(n => n.id === note.id);
         if (idx >= 0) app.replaceNoteAt(idx, { ...state.notes[idx], ...payload });
       } else {
-        app.prependNote({ ...payload, id: 'tmp_' + uid(), created_at: new Date(clock.now()).toISOString(), updated_at: new Date(clock.now()).toISOString() });
+        app.prependNote({ ...payload, id: temporaryId, created_at: new Date(clock.now()).toISOString(), updated_at: new Date(clock.now()).toISOString() });
       }
       effects.render();
       // Background save
@@ -55,7 +56,7 @@ export function createNotesSubmission({
           // existing card's `data-note-id="tmp_xxx"` is stale after Object.assign
           // bumps the in-memory id, so all subsequent clicks (edit, done, copy,
           // archive, delete) silently fail to find the note in `_notes`.
-          const tmp = state.notes.find(n => n.id.startsWith('tmp_'));
+          const tmp = state.notes.find(n => n.id === temporaryId);
           if (tmp) app.mergeNote(tmp, saved);
           effects.render();
         }
