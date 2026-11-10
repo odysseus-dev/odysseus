@@ -23,7 +23,9 @@ quiet_logs()
 import argparse, json, logging, os, sys
 from pathlib import Path
 
-_DATA_DIR = _REPO_ROOT / "data" / "deep_research"
+from src.constants import DEEP_RESEARCH_DIR
+
+_DATA_DIR = Path(DEEP_RESEARCH_DIR)
 
 # The CLI's --status takes the user-facing label "complete", but the writer
 # in services/research/research_handler.py stores `status="done"` when a run
