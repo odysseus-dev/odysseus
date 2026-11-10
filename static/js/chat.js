@@ -2595,6 +2595,7 @@ import { invalidateSettings } from './appConfig.js';
     currentHolder = null;
     
     let abortCtrl = null;
+    let _isAgent = false;  // read by the catch block's timeout message
     let streamingTTS = false;
     try {
       // Re-enable auto-scroll when user sends a message
@@ -2992,7 +2993,7 @@ import { invalidateSettings } from './appConfig.js';
       currentAbort = abortCtrl;
 
 	      const _tState = Storage.loadToggleState();
-	      const _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
+	      _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
