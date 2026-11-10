@@ -170,7 +170,11 @@ def setup_prefs_routes():
     @router.put("/{key}")
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
-        prefs = _update_for_user(user, {key: body.get("value")})
+        val = body.get("value")
+        if val is None:
+            prefs = _update_for_user(user, remove=(key,))
+        else:
+            prefs = _update_for_user(user, {key: val})
         return {"key": key, "value": prefs.get(key)}
 
     return router

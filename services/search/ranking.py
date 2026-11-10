@@ -67,6 +67,22 @@ _TRUSTED_NEWS_DOMAINS = {
     "www.theguardian.com", "euronews.com", "www.euronews.com",
     "dw.com", "www.dw.com", "government.se", "www.government.se",
 }
+_SOFTWARE_RELEASE_HINTS = {
+    "github", "gitlab", "release", "releases", "version", "versions",
+    "changelog", "package", "pypi", "npm",
+}
+_PRODUCT_SPEC_HINTS = {
+    "product", "hardware", "device", "phone", "laptop", "desktop", "computer",
+    "chip", "cpu", "gpu", "mac", "iphone", "ipad", "android", "camera",
+    "console", "kindle", "tesla", "car", "model", "price", "pricing", "cost",
+    "buy", "shop", "order", "preorder", "pre-order", "spec", "specs",
+    "specifications", "available", "availability", "ship", "shipping",
+    "released", "launch", "launched", "vram", "memory", "ram", "storage",
+}
+_COMMERCE_OR_SPEC_PATH_HINTS = (
+    "/shop", "/buy", "/store", "/product", "/products", "/spec", "/specs",
+    "/support", "/tech-specs", "/technical-specifications",
+)
 
 
 def _domain(url: str) -> str:
@@ -95,6 +111,8 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
     query_lc = query.lower()
     is_news_query = any(term in _NEWS_HINTS for term in query_terms)
     is_sports_query = bool(_SPORTS_HINT_RE.search(query_lc))
+    is_software_release_query = any(term in _SOFTWARE_RELEASE_HINTS for term in query_terms)
+    is_product_spec_query = any(term in _PRODUCT_SPEC_HINTS for term in query_terms)
 
     def title_score(title: str) -> float:
         if not title:
@@ -144,6 +162,41 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             adjustment -= 1.0
         return adjustment
 
+    def software_release_adjustment(title: str, snippet: str, url: str) -> float:
+        if not is_software_release_query:
+            return 0.0
+        netloc = _domain(url)
+        path = urlparse(url).path.lower()
+        text = f"{title} {snippet} {netloc} {path}".lower()
+        adjustment = 0.0
+        if netloc in {"github.com", "www.github.com", "gitlab.com", "www.gitlab.com"}:
+            adjustment += 1.6
+        if "/releases" in path or "/tags" in path:
+            adjustment += 1.2
+        if any(_has_word(text, term) for term in ("release", "releases", "changelog", "version")):
+            adjustment += 0.4
+        if netloc in {"releasealert.dev", "releases.sh", "releasebot.io"}:
+            adjustment -= 0.8
+        return adjustment
+
+    def product_spec_adjustment(title: str, snippet: str, url: str) -> float:
+        if not is_product_spec_query:
+            return 0.0
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+        path = parsed.path.lower()
+        text = f"{title} {snippet} {netloc} {path}".lower()
+        adjustment = 0.0
+        if any(hint in path for hint in _COMMERCE_OR_SPEC_PATH_HINTS):
+            adjustment += 1.1
+        if re.search(r"\b(?:official|specs?|specifications|tech specs|buy|shop|store|price|pricing|available|ships?)\b", text):
+            adjustment += 0.5
+        if netloc.endswith(".com") and any(_has_word(netloc, term) for term in query_terms if len(term) >= 4):
+            adjustment += 0.4
+        if re.search(r"\b(?:rumor|rumour|leak|may|could|expected|reportedly|unannounced)\b", text):
+            adjustment -= 0.8
+        return adjustment
+
     ranked = []
     for result in results:
         title = result.get("title", "")
@@ -157,6 +210,8 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             + 1.5 * domain_score(url)
             + 1.0 * recency_score(age)
             + news_quality_adjustment(title, snippet, url)
+            + software_release_adjustment(title, snippet, url)
+            + product_spec_adjustment(title, snippet, url)
         )
         ranked.append((score, result))
 

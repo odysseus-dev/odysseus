@@ -8,6 +8,7 @@ calling do_manage_calendar with an rrule stores a single event carrying that RRU
 import json
 import sys
 import uuid
+from datetime import datetime
 
 import pytest
 
@@ -17,7 +18,7 @@ from tests.helpers.sqlite_db import make_temp_sqlite
 clear_fake_database_modules()
 
 import core.database as cdb
-from core.database import CalendarEvent
+from core.database import CalendarCal, CalendarEvent, Note
 
 _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 
@@ -56,6 +57,84 @@ async def test_create_event_with_rrule_persists_recurrence():
         assert ev is not None
         assert ev.rrule == rrule  # ONE event carrying the recurrence rule
         assert ev.summary == "Standup"
+    finally:
+        db.close()
+
+
+def test_event_dict_exposes_note_backed_calendar_reminder():
+    from routes.calendar_routes import _event_to_dict
+
+    owner = "tester-" + uuid.uuid4().hex[:6]
+    db = _TS()
+    try:
+        cal = CalendarCal(id="cal-" + uuid.uuid4().hex[:6], owner=owner, name="Personal")
+        ev = CalendarEvent(
+            uid="event-" + uuid.uuid4().hex[:6],
+            calendar_id=cal.id,
+            summary="Take out trash",
+            dtstart=datetime(2026, 8, 31, 8, 0),
+            dtend=datetime(2026, 8, 31, 8, 30),
+            all_day=False,
+        )
+        note = Note(
+            id="note-" + uuid.uuid4().hex[:6],
+            owner=owner,
+            title="Calendar reminder: Take out trash",
+            items=json.dumps([{"text": "Take out trash — Mon Aug 31 08:00", "done": False}]),
+            note_type="todo",
+            label="calendar",
+            due_date="2026-08-31T07:45:00Z",
+            source="calendar",
+            archived=False,
+        )
+        db.add_all([cal, ev, note])
+        db.commit()
+
+        out = _event_to_dict(ev, db=db, owner=owner)
+
+        assert out["has_reminder"] is True
+        assert out["reminder_note_id"] == note.id
+        assert out["reminder_due_date"] == "2026-08-31T07:45:00Z"
+        assert out["reminder_minutes"] == 15
+    finally:
+        db.close()
+
+
+def test_delete_calendar_reminders_removes_duplicate_legacy_rows():
+    from routes.calendar_routes import _delete_calendar_reminders_for_event
+
+    owner = "tester-" + uuid.uuid4().hex[:6]
+    db = _TS()
+    try:
+        cal = CalendarCal(id="cal-" + uuid.uuid4().hex[:6], owner=owner, name="Personal")
+        ev = CalendarEvent(
+            uid="event-" + uuid.uuid4().hex[:6],
+            calendar_id=cal.id,
+            summary="Pickup",
+            dtstart=datetime(2026, 8, 31, 8, 0),
+            dtend=datetime(2026, 8, 31, 8, 30),
+            all_day=False,
+        )
+        db.add(cal)
+        db.add(ev)
+        for title in ("Reminder: Pickup", "Calendar reminder: Pickup"):
+            db.add(Note(
+                id="note-" + uuid.uuid4().hex[:6],
+                owner=owner,
+                title=title,
+                items=json.dumps([{"text": "Pickup", "done": False}]),
+                note_type="todo",
+                label="calendar",
+                due_date="2026-08-31T07:45:00Z",
+                source="calendar",
+                archived=False,
+            ))
+        db.commit()
+
+        assert _delete_calendar_reminders_for_event(db, owner, ev) == 2
+        db.commit()
+        remaining = db.query(Note).filter(Note.owner == owner, Note.source == "calendar").all()
+        assert remaining == []
     finally:
         db.close()
 

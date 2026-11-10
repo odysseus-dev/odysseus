@@ -10,7 +10,12 @@ from typing import Dict
 logger = logging.getLogger(__name__)
 
 
-async def do_search_chats(query: str, limit: int = 20, owner: str | None = None) -> Dict:
+async def do_search_chats(
+    query: str,
+    limit: int = 20,
+    owner: str | None = None,
+    exclude_session_id: str | None = None,
+) -> Dict:
     """Search past session transcripts for the calling user's sessions only.
 
     Without an owner filter this used to leak EVERY user's chat history
@@ -23,6 +28,29 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
         from src.session_search import search_session_messages
 
         results = search_session_messages(query, limit=limit, owner=owner)
+        if exclude_session_id:
+            results = [r for r in results if r.session_id != exclude_session_id]
+        if not results:
+            from src.session_search import search_session_titles
+
+            results = search_session_titles(query, limit=limit, owner=owner)
+            if exclude_session_id:
+                results = [r for r in results if r.session_id != exclude_session_id]
+        # Native callers often append the requested answer detail to a topic
+        # query (for example, "roaster repair scheduling Jules"). Search the
+        # topic prefix once when the exact full-text query misses; this keeps
+        # chat retrieval useful without broadening into unrelated sessions.
+        if not results:
+            words = [word for word in query.split() if word]
+            for width in (4, 3):
+                if len(words) <= width:
+                    continue
+                prefix = " ".join(words[:width])
+                results = search_session_messages(prefix, limit=limit, owner=owner)
+                if exclude_session_id:
+                    results = [r for r in results if r.session_id != exclude_session_id]
+                if results:
+                    break
         if not results:
             return {"results": f"No chats found matching \"{query}\"."}
 

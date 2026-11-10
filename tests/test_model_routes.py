@@ -232,6 +232,13 @@ class TestMatchProviderCurated:
     def test_kimi_code_url(self):
         assert _match_provider_curated("https://api.kimi.com/coding/v1", "openai") == "kimi-code"
 
+    def test_conifer_url(self):
+        assert _match_provider_curated("https://api.conifer.build/v1", "openai") == "openrouter"
+        assert _match_provider_curated("https://conifer.build/v1", "openai") == "openrouter"
+
+    def test_conifer_lookalike_url_not_matched(self):
+        assert _match_provider_curated("https://conifer.build.attacker.example/v1", "openai") == "openai"
+
     def test_no_url_match_returns_provider(self):
         assert _match_provider_curated("https://localhost:1234", "openai") == "openai"
 
@@ -336,6 +343,19 @@ class TestCurateModels:
     def test_unknown_provider_returns_all_as_curated(self):
         models = ["model-a", "model-b"]
         curated, extra = _curate_models(models, "unknown_provider")
+        assert curated == models
+        assert extra == []
+
+    def test_openrouter_sentinel_returns_all_as_curated(self):
+        models = ["model-a", "model-b", "any-custom-model"]
+        curated, extra = _curate_models(models, "openrouter")
+        assert curated == models
+        assert extra == []
+
+    def test_conifer_curate_models_via_match(self):
+        models = ["conifer-model-1", "conifer-model-2"]
+        curated_key = _match_provider_curated("https://api.conifer.build/v1", "openai")
+        curated, extra = _curate_models(models, curated_key)
         assert curated == models
         assert extra == []
 
@@ -1281,6 +1301,7 @@ def _patch_create_deps(monkeypatch, db, settings=None):
     monkeypatch.setattr(model_routes, "_save_settings", lambda s: settings.update(s))
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
     monkeypatch.setattr(auth_helpers, "get_current_user", lambda req: None)
+    monkeypatch.setattr(model_routes, "check_outbound_url", lambda *a, **k: (True, "ok"))
     return settings
 
 
@@ -1912,6 +1933,24 @@ def test_background_refresh_deduplicates_same_base_url(monkeypatch):
     assert json.loads(ep2.cached_models) == ["live-model"]
 
 
+def test_picker_refresh_waits_for_discovered_models(monkeypatch):
+    ep = _route_ep("local", "http://127.0.0.1:8000/v1", endpoint_kind="local")
+    db = _RouteDb([ep])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["new-model"])
+
+    result = _route_endpoint(router, "/api/models")(
+        _route_request(), refresh=True, wait_refresh=True
+    )
+
+    assert result["items"][0]["models"] == ["new-model"]
+
+
 def test_background_refresh_failure_keeps_existing_cached_models(monkeypatch):
     ep = _route_ep(
         "local",
@@ -1982,6 +2021,7 @@ def test_explicit_proxy_test_fetches_models_with_long_timeout(monkeypatch):
 
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
+    monkeypatch.setattr(model_routes, "check_outbound_url", lambda *a, **k: (True, "ok"))
 
     calls = []
     returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
@@ -2020,6 +2060,7 @@ def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypa
     monkeypatch.setattr(model_routes, "_save_settings", lambda settings: None)
     monkeypatch.setattr("src.auth_helpers.get_current_user", lambda request: None)
     monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
+    monkeypatch.setattr(model_routes, "check_outbound_url", lambda *a, **k: (True, "ok"))
 
     calls = []
     returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]

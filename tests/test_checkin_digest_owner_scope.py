@@ -5,23 +5,23 @@ check-in for one user pulled EVERY user's calendar events (summaries,
 locations) into their digest — a cross-tenant leak. Ownership lives on
 CalendarCal.owner; the query must join it, like routes/calendar_routes.
 """
-import tempfile
 import uuid
-from datetime import datetime
+import sys
+from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
+from tests.helpers.database import disposable_database
 
-import core.database as cdb
 from core.database import CalendarEvent, CalendarCal
-from src.task_scheduler import _checkin_calendar_events
+from src.task_scheduler import _checkin_calendar_events, _digest_windows
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(f"sqlite:///{_TMPDB.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
+
+@pytest.fixture(autouse=True)
+def _digest_database(tmp_path):
+    with disposable_database(tmp_path) as factory:
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(sys.modules[__name__], "_TS", factory, raising=False)
+            yield
 
 
 def _seed():
@@ -68,3 +68,44 @@ def test_cancelled_excluded_and_window_respected():
         assert "cancelled" not in [ev.summary for ev in out]
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("days, expected_label", [(2, "this_week"), (7, "next_30_days")])
+def test_boundary_event_appears_in_only_one_digest_window(days, expected_label):
+    now = datetime(2026, 6, 1, 9)
+    boundary = now + timedelta(days=days)
+    with _TS() as db:
+        db.add(CalendarCal(id="boundary-cal", owner="alice", name="Boundary"))
+        db.add(CalendarEvent(
+            uid="boundary-event", calendar_id="boundary-cal", summary="Boundary meeting",
+            dtstart=boundary, dtend=boundary + timedelta(hours=1), status="confirmed",
+        ))
+        db.commit()
+
+        buckets = [
+            label for label, start, end in _digest_windows(now)
+            if _checkin_calendar_events(db, "alice", start, end)
+        ]
+        assert buckets == [expected_label]
+
+
+def test_digest_includes_start_and_excludes_end():
+    start = datetime(2026, 6, 1, 9)
+    end = start + timedelta(days=2)
+    with _TS() as db:
+        db.add(CalendarCal(id="bounds-cal", owner="alice", name="Bounds"))
+        for uid, when in [
+            ("before", start - timedelta(seconds=1)),
+            ("start", start),
+            ("inside", end - timedelta(seconds=1)),
+            ("end", end),
+        ]:
+            db.add(CalendarEvent(
+                uid=uid, calendar_id="bounds-cal", summary=uid, dtstart=when,
+                dtend=when + timedelta(hours=1), status="confirmed",
+            ))
+        db.commit()
+
+        assert [ev.uid for ev in _checkin_calendar_events(db, "alice", start, end)] == [
+            "start", "inside",
+        ]

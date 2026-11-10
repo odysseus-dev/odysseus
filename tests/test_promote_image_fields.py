@@ -8,6 +8,9 @@ the image renders deterministically, without relying on the model echoing the UR
 into prose. These cases cover the absolute-URL, relative-URL, no-URL, and
 non-success-exit paths.
 """
+import asyncio
+
+import src.tool_execution as tool_execution
 from src.tool_execution import _promote_image_fields
 
 
@@ -55,3 +58,21 @@ def test_nonzero_exit_not_promoted():
     r = _result("https://host/api/generated-image/zzz.png", exit_code=1)
     _promote_image_fields(r)
     assert "image_url" not in r
+
+
+def test_mcp_text_error_is_normalized_as_failed_result(monkeypatch):
+    class FakeMcp:
+        async def call_tool(self, qualified, args):
+            return {
+                "stdout": "Error: No image model found. Configure one in Admin.",
+                "stderr": "",
+                "exit_code": 0,
+            }
+
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: FakeMcp())
+
+    result = asyncio.run(tool_execution._call_mcp_tool("generate_image", "red mug"))
+
+    assert result["exit_code"] == 1
+    assert result["error"] == "No image model found. Configure one in Admin."
+    assert "image_url" not in result

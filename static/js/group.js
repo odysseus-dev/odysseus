@@ -1,12 +1,12 @@
 // static/js/group.js
 // Group Chat — multi-model conversations (parallel or round-robin)
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import markdownModule from './markdown.js';
-import chatRenderer from './chatRenderer.js';
+import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { PROMPT_TEMPLATES, getUserTemplates } from './presets.js';
+import { PROMPT_TEMPLATES, getUserTemplates } from './presets.js?v=20260908personaname1';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
 
@@ -801,7 +801,8 @@ async function _sendRoundRobin(msg, box) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages: [{
               role: 'user',
-              content: `[${m._groupName || m.display}]: ${response}`
+              content: `[${m._groupName || m.display}]: ${response}`,
+              metadata: { group_peer: true, group_model: m._groupName || m.display, model: m.mid }
             }]}),
           });
         } catch (e) { console.warn('[group] sync failed:', e); }
@@ -828,7 +829,8 @@ async function _syncAllResponses(holders) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: [{
             role: 'user',
-            content: `[${model._groupName || model.display}]: ${response}`
+            content: `[${model._groupName || model.display}]: ${response}`,
+            metadata: { group_peer: true, group_model: model._groupName || model.display, model: model.mid }
           }]}),
         });
       } catch (e) { /* silent */ }

@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 _task_scheduler = None
 
 
+def _event_automation_enabled_for_owner(owner: Optional[str]) -> bool:
+    """Synthetic fixture activity must not auto-fire durable user tasks."""
+    return not str(owner or "").strip().casefold().startswith("sft_")
+
+
 def set_task_scheduler(scheduler):
     """Wire up the scheduler reference (called from app.py on startup)."""
     global _task_scheduler
@@ -37,7 +42,12 @@ def fire_event(event_name: str, owner: Optional[str] = None):
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_handle_event(event_name, owner))
+        # Let the request that emitted the event finish before automation can
+        # start model work on the same event loop. Otherwise a document create
+        # can appear to hang while an event-triggered task is running.
+        # Keep the handoff outside the response flush window. Event-triggered
+        # tasks may still perform synchronous work before their first await.
+        loop.call_later(1.0, lambda: loop.create_task(_handle_event(event_name, owner)))
     except RuntimeError:
         # No running loop — run in a new one (shouldn't happen in FastAPI)
         asyncio.run(_handle_event(event_name, owner))
@@ -74,6 +84,8 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
     from core.database import SessionLocal, ScheduledTask
 
     resolved_owner = _resolve_event_owner(owner)
+    if not _event_automation_enabled_for_owner(resolved_owner):
+        return
     db = SessionLocal()
     try:
         filters = [

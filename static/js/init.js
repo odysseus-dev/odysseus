@@ -9,7 +9,20 @@ function markComposerUserEdited() {
   msgInput.dataset.startupPreserveBound = '1';
   msgInput.addEventListener('input', () => {
     window.__odysseusComposerUserEdited = !!msgInput.value;
+    syncComposerModelPicker(msgInput);
   });
+  syncComposerModelPicker(msgInput);
+}
+
+// Keep the model picker while the composer is empty or short. Once the user
+// has enough text for the picker to compete with the input area, hide only
+// the picker so the prompt gets the full row width instead of being clipped.
+function syncComposerModelPicker(msgInput) {
+  const wrap = document.getElementById('model-picker-wrap');
+  if (!wrap || !msgInput) return;
+  const lineHeight = parseFloat(getComputedStyle(msgInput).lineHeight) || 21;
+  const typedEnough = msgInput.value.trim().length >= 64 || msgInput.scrollHeight > lineHeight * 2.2;
+  wrap.classList.toggle('picker-auto-hidden', typedEnough);
 }
 
 function clearFreshComposerRestore() {
@@ -78,7 +91,7 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
       // Research — sidebar tool + the in-input deep-research toggle.
       hideOn('#tool-research-btn, #research-toggle-btn', privs.can_use_research);
       // Memory & skills (rail/tool button only — UI/API entry).
-      hideOn('#tool-memory-btn', privs.can_manage_memory);
+      hideOn('#tool-memory-btn, #rail-memory, #tool-skills-btn, #rail-skills', privs.can_manage_memory);
       // Agent mode toggle — force chat mode by hiding the Agent toggle button.
       if (privs.can_use_agent === false) {
         const _agent = document.getElementById('mode-agent-btn');
@@ -356,6 +369,29 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
 /* ---- Mobile viewport fix — keep chat visible when virtual keyboard opens ---- */
 {
   if (window.visualViewport) {
+    const root = document.documentElement;
+    // iOS overlays the keyboard without resizing the layout viewport and scrolls
+    // the page to reveal the field, leaving it shifted after the keyboard closes.
+    const _syncKeyboardViewport = function() {
+      const vv = window.visualViewport;
+      if (vv.scale > 1.01) return;
+      const keyboardOpen = window.innerHeight - vv.height > 120;
+      root.classList.toggle('keyboard-open', keyboardOpen);
+      if (keyboardOpen) root.style.setProperty('--keyboard-viewport-height', vv.height + 'px');
+      else root.style.removeProperty('--keyboard-viewport-height');
+    };
+    // iOS fires visualViewport resize only once, mid-animation, and no focusin when
+    // the tapped field already had focus (e.g. the composer after a new chat)
+    const _syncThroughKeyboardAnimation = () => {
+      _syncKeyboardViewport();
+      for (const delay of [100, 300, 600, 1000]) setTimeout(_syncKeyboardViewport, delay);
+    };
+    _syncKeyboardViewport();
+    window.visualViewport.addEventListener('resize', _syncThroughKeyboardAnimation);
+    window.visualViewport.addEventListener('scroll', _syncKeyboardViewport);
+    document.addEventListener('focusin', _syncThroughKeyboardAnimation);
+    document.addEventListener('focusout', _syncThroughKeyboardAnimation);
+
     let _lastVVHeight = window.visualViewport.height;
     window.visualViewport.addEventListener('resize', function() {
       const vv = window.visualViewport;
@@ -372,29 +408,6 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
     });
   }
 
-  // Fade welcome screen when mobile keyboard opens (input focus/blur)
-  if ('ontouchstart' in window) {
-    document.addEventListener('DOMContentLoaded', function() {
-      var _msgInput = document.getElementById('message');
-      if (!_msgInput) return;
-      _msgInput.addEventListener('focus', function() {
-        var welcome = document.getElementById('welcome-screen');
-        if (welcome && !welcome.classList.contains('hidden')) {
-          welcome.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-          welcome.style.opacity = '0';
-          welcome.style.transform = 'translate(-50%, -50%) scale(0.92)';
-        }
-      });
-      _msgInput.addEventListener('blur', function() {
-        var welcome = document.getElementById('welcome-screen');
-        if (welcome && !welcome.classList.contains('hidden')) {
-          welcome.style.transition = 'opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
-          welcome.style.opacity = '';
-          welcome.style.transform = '';
-        }
-      });
-    });
-  }
 }
 
 /* ── Release welcome-screen entrance animations once the page is settled ──

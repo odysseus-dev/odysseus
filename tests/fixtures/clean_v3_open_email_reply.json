@@ -1,0 +1,69 @@
+[
+  {
+    "id": "clean_v3_open_email_reply",
+    "kind": "draft",
+    "user": "Write reply this email saying 8am works for me",
+    "active_document": {
+      "title": "New Email",
+      "language": "email",
+      "content": "To: test@example.com\nSubject: Re: Meeting\nIn-Reply-To: <fixture@example.com>\nReferences: <fixture@example.com>\nX-Source-UID: 999999\n---\n\n---------- Previous message ----------\nCan you confirm the meeting time?\n"
+    },
+    "expect_first_tool": "update_document",
+    "forbidden_tools": [
+      "create_document",
+      "edit_document",
+      "suggest_document",
+      "manage_documents",
+      "web_search"
+    ],
+    "must_mutate": "document_contains_8am"
+  },
+  {
+    "id": "clean_v3_open_email_short_reply",
+    "kind": "draft",
+    "user": "Write reply saying 8am works for me",
+    "active_document": {
+      "title": "Meeting",
+      "language": "email",
+      "content": "To: test@example.com\nSubject: Re: Meeting\nIn-Reply-To: <fixture-short@example.com>\nReferences: <fixture-short@example.com>\nX-Source-UID: 999998\n---\n\n---------- Previous message ----------\nCan you confirm the meeting time?\n"
+    },
+    "expect_first_tool": "update_document",
+    "forbidden_tools": [
+      "create_document",
+      "edit_document",
+      "suggest_document",
+      "manage_documents",
+      "web_search"
+    ],
+    "must_mutate": "document_contains_8am"
+  },
+  {
+    "id": "clean_v3_open_email_unspecified_reply",
+    "kind": "draft",
+    "user": "Write reply to this email",
+    "active_document": {
+      "title": "Meeting",
+      "language": "email",
+      "content": "To: test@example.com\nSubject: Re: Meeting\nIn-Reply-To: <fixture-unspecified@example.com>\nReferences: <fixture-unspecified@example.com>\nX-Source-UID: 999997\n---\n\n---------- Previous message ----------\nCan you confirm whether tomorrow morning works?\n"
+    },
+    "expect_first_tool": "update_document",
+    "forbidden_tools": [
+      "create_document",
+      "edit_document",
+      "suggest_document",
+      "manage_documents",
+      "ui_control",
+      "web_search"
+    ],
+    "forbidden_repeat_tools": ["update_document"],
+    "expect_document_changed": true,
+    "must_preserve_active_document_all": [
+      "To:",
+      "Subject:",
+      "In-Reply-To:",
+      "References:",
+      "X-Source-UID:",
+      "---"
+    ]
+  }
+]

@@ -193,3 +193,17 @@ def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> 
 # from `src.research_utils` working while delegating to the central impl.
 def strip_thinking(text: str) -> str:
     return strip_think(text or "", prose=False, prompt_echo=True)
+
+
+_CLOSED_THINK_OPEN_RE = re.compile(r"<think(?:ing)?>", re.IGNORECASE)
+_CLOSED_THINK_CLOSE_RE = re.compile(r"</think(?:ing)?>", re.IGNORECASE)
+
+
+def strip_closed_think_blocks(text: str) -> str:
+    """Remove closed ``<think>``/``<thinking>`` blocks, leaving everything else.
+
+    Same result as ``re.sub(r'<think(?:ing)?>[\\s\\S]*?</think(?:ing)?>', '', text,
+    flags=re.I)`` but forward-only (see _sub_delimited), so an unclosed opener
+    flood in model output stays O(n) instead of O(n^2).
+    """
+    return _sub_delimited(text or "", _CLOSED_THINK_OPEN_RE, _CLOSED_THINK_CLOSE_RE, lambda _inner: "")

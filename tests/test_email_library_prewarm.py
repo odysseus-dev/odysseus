@@ -4,76 +4,17 @@ import shutil
 import subprocess
 
 import pytest
+from tests.helpers.js_modules import email_library_source, js_function_source
 
 
 _REPO = Path(__file__).resolve().parents[1]
-_EMAIL_LIBRARY = _REPO / "static" / "js" / "emailLibrary.js"
-
 
 def _source() -> str:
-    return _EMAIL_LIBRARY.read_text(encoding="utf-8")
+    return email_library_source()
 
 
 def _function_source(name: str) -> str:
-    """Return one top-level JS function using balanced braces."""
-    text = _source()
-    markers = (f"function {name}", f"async function {name}", f"export function {name}", f"export async function {name}")
-    starts = [text.find(marker) for marker in markers]
-    starts = [start for start in starts if start >= 0]
-    assert starts, f"missing function {name}"
-    start = min(starts)
-    paren = text.index("(", start)
-    paren_depth = 0
-    quote = None
-    escaped = False
-    for index in range(paren, len(text)):
-        char = text[index]
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in ("'", '"', "`"):
-            quote = char
-        elif char == "(":
-            paren_depth += 1
-        elif char == ")":
-            paren_depth -= 1
-            if paren_depth == 0:
-                brace = text.index("{", index)
-                break
-    else:
-        raise AssertionError(f"unterminated signature {name}")
-    depth = 0
-    quote = None
-    escaped = False
-    template_depth = 0
-    for index in range(brace, len(text)):
-        char = text[index]
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote and template_depth == 0:
-                quote = None
-            elif quote == "`" and char == "$" and index + 1 < len(text) and text[index + 1] == "{":
-                template_depth += 1
-            elif quote == "`" and char == "}" and template_depth:
-                template_depth -= 1
-            continue
-        if char in ("'", '"', "`"):
-            quote = char
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:index + 1]
-    raise AssertionError(f"unterminated function {name}")
+    return js_function_source(name, _source())
 
 
 def _run_scheduler_scenario(scenario: str):
@@ -370,7 +311,8 @@ def test_prewarm_account_chooser_rejects_disabled_or_empty_authoritative_invento
 
     ensure_accounts = _function_source("_ensureEmailAccountsForPrewarm")
     assert "if (!accountId) return null;" in ensure_accounts
-    assert ensure_accounts.index("if (!accountId) return null;") < ensure_accounts.index("_publishActiveAccount();")
+    assert "state._libAccountId = accountId" not in ensure_accounts
+    assert "_publishActiveAccount();" not in ensure_accounts
 
 
 def test_prewarm_is_bounded_to_the_interactive_initial_page_size():

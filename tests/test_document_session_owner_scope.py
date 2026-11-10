@@ -5,36 +5,31 @@ document route tests. This keeps coverage on the real closures without spinning
 up middleware.
 """
 
-import tempfile
 import uuid
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
-
+from tests.helpers.database import disposable_database
 from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
 
-import core.database as cdb
 import routes.document_routes as droutes
 from core.database import Document
 from core.database import Session as DbSession
 from routes.document_helpers import DocumentPatch
 from routes.document_helpers import _owner_session_filter
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(
-    f"sqlite:///{_TMPDB.name}",
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
+
+@pytest.fixture(autouse=True)
+def _document_database(tmp_path):
+    with disposable_database(tmp_path) as factory:
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(sys.modules[__name__], "_TS", factory, raising=False)
+            yield
 
 
 def _req(user="alice"):

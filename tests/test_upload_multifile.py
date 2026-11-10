@@ -191,7 +191,7 @@ async def test_chat_image_upload_is_added_to_gallery(tmp_path, monkeypatch):
     up.setup_upload_routes(h)
     endpoint = _endpoint(up.router)
 
-    result = await endpoint(_request(user="alice"), [_image_upload()])
+    result = await endpoint(_request(user="alice"), [_image_upload()], gallery_id=None)
     uploaded = result["files"][0]
 
     assert uploaded["gallery_id"]

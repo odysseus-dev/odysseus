@@ -13,7 +13,7 @@
  * values).
  *
  * @param {{
- *   controlsHTML:     (ctx: {color, brushSize, wandTolerance}) => string,
+ *   controlsHTML:     (ctx: {color, brushSize, wandTolerance, bucketTolerance, cropAspectPreset}) => string,
  *   layerPanelHTML:   () => string,
  * }} build
  *
@@ -22,13 +22,19 @@
  *   controls:    HTMLDivElement,
  *   layerPanel:  HTMLDivElement,
  *   panelResize: HTMLDivElement,
+ *   dock:        {dock: HTMLDivElement, show: (id: string) => void}|null,
  * }}
  */
 import { state } from '../state.js';
+import { buildDock } from './dock.js';
 
-export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
+export function buildRightPanel({ controlsHTML, layerPanelHTML, extraPanels = [], onCloseGroup = null }) {
   const rightPanel = document.createElement('div');
   rightPanel.className = 'ge-right-panel';
+  // Desktop: present Tool Options + Layers as tabs in a dock. Mobile
+  // (≤ 700 px) keeps the existing bottom-sheet model, where the two
+  // panels are independent sheets, so the dock is bypassed entirely.
+  const useDock = window.innerWidth > 700;
 
   // Controls section.
   const controls = document.createElement('div');
@@ -66,8 +72,11 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
     color: state.color,
     brushSize: state.brushSize,
     wandTolerance: state.wandTolerance,
+    bucketTolerance: state.bucketTolerance,
+    cropAspectPreset: state.cropAspectPreset,
+    eyedropperSampleSize: state.eyedropperSampleSize,
   });
-  rightPanel.appendChild(controls);
+  if (!useDock) rightPanel.appendChild(controls);
   // Mobile only (≤ 700 px — matches the .ge-editor-body column-stack
   // breakpoint): the right panel becomes a transformed bottom-sheet,
   // so any position:fixed descendant gets trapped by the transform
@@ -77,6 +86,10 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   // docked inside the right panel above the layers list.
   if (window.innerWidth <= 700 && state.container) {
     state.container.appendChild(controls);
+    // Start canvas-first on phones. The active tool button brings this
+    // sheet back and minimizes Layers, so the two bottom sheets never
+    // compete for the same pointer events on initial open.
+    controls.classList.add('dismissed');
   }
 
   // Move every slider-row's value chip out of its <label> and place
@@ -95,13 +108,16 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   const layerPanel = document.createElement('div');
   layerPanel.className = 'ge-layers';
   layerPanel.innerHTML = layerPanelHTML();
-  rightPanel.appendChild(layerPanel);
+  if (!useDock) rightPanel.appendChild(layerPanel);
   // Mobile: tap the header grab handle or swipe up/down to toggle
   // the layers sheet between peek and expanded. The peek state
   // always shows the active layer so users never lose access to it.
   {
     const header = layerPanel.querySelector('.ge-layers-header');
     if (header) {
+      const claimLayerSheet = () => {
+        if (window.innerWidth <= 700) controls.classList.add('dismissed');
+      };
       let sy = 0, sx = 0, dragging = false, didSwipe = false;
       header.addEventListener('touchstart', (e) => {
         if (window.innerWidth > 700) return;
@@ -121,6 +137,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
         //   expanded → peek → minimized   (swipe down)
         if (Math.abs(dy) > 20 && Math.abs(dy) > dx) {
           didSwipe = true;
+          claimLayerSheet();
           const isExpanded = rightPanel.classList.contains('expanded');
           const isMinimized = rightPanel.classList.contains('minimized');
           if (dy < 0) {
@@ -143,6 +160,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
         if (window.innerWidth > 700) return;
         if (e.target.closest('button')) return;
         if (didSwipe) { didSwipe = false; return; }
+        claimLayerSheet();
         // Click cycles between peek and expanded; minimized comes
         // back to peek (so a tap on the handle always reveals at
         // least the active layer row).
@@ -154,6 +172,81 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
       });
     }
   }
+
+  // Mobile panel access (≤ 700 px). The desktop dock is bypassed on
+  // phones, which left the whole studio panel set (Swatches, Gradients,
+  // Patterns, Properties, Adjustments, Histogram, Info, Channels, Paths,
+  // Character, Navigator, History, Actions) unreachable — there was no way
+  // to add an adjustment or pick a colour from the sheet. Mount the same
+  // entries in a compact `<select>` overlay reachable from a "Panels"
+  // button in the layers header, without touching the peek/expand model.
+  let mobilePanels = null;
+  if (Array.isArray(extraPanels) && extraPanels.length) {
+    const mDock = buildDock({
+      entries: extraPanels,
+      persistKey: 'ge-dock-active',
+      defaultId: null,
+      compact: true,
+    });
+    const overlay = document.createElement('div');
+    overlay.className = 'ge-mobile-panels';
+    overlay.hidden = true;
+    const head = document.createElement('div');
+    head.className = 'ge-mobile-panels-head';
+    const title = document.createElement('span');
+    title.className = 'ge-mobile-panels-title';
+    title.textContent = 'Panels';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'ge-mobile-panels-close';
+    closeBtn.setAttribute('aria-label', 'Close panels');
+    closeBtn.textContent = '✕';
+    head.append(title, closeBtn);
+    overlay.append(head, mDock.dock);
+    rightPanel.appendChild(overlay);
+    closeBtn.addEventListener('click', () => { overlay.hidden = true; });
+
+    const hdr = layerPanel.querySelector('.ge-layers-header');
+    if (hdr) {
+      const panelsBtn = document.createElement('button');
+      panelsBtn.type = 'button';
+      panelsBtn.className = 'ge-layers-panels-btn';
+      panelsBtn.textContent = 'Panels';
+      panelsBtn.title = 'Show panels';
+      panelsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        overlay.hidden = !overlay.hidden;
+      });
+      hdr.appendChild(panelsBtn);
+      if (useDock) panelsBtn.style.display = 'none';
+    }
+    if (useDock) overlay.style.display = 'none';
+    mobilePanels = overlay;
+  }
+
+  // Desktop dock: Tool Options + Layers as tabs (PhotoCraft-parity).
+  // The panels are only re-parented, so every existing selector and
+  // listener keeps working; switching tabs just toggles `hidden`.
+  let dock = null;
+  if (Array.isArray(extraPanels) && extraPanels.length) {
+    dock = buildDock({
+      entries: [
+        ...(Array.isArray(extraPanels) ? extraPanels : []),
+      ],
+      defaultId: (Array.isArray(extraPanels) && extraPanels[0]?.id) || null,
+      persistKey: 'ge-dock-active',
+      // Narrow desktop columns get the compact selector fallback; the
+      // multi-group stack needs a bit more room to be usable.
+      compact: window.innerWidth <= 820,
+      onCloseGroup,
+    });
+    rightPanel.appendChild(dock.dock);
+    if (!useDock) dock.dock.style.display = 'none';
+  }
+  if (useDock) {
+    rightPanel.classList.add('ge-right-panel--dock');
+  }
+  rightPanel.appendChild(layerPanel);
 
   // Horizontal drag handle on the LEFT edge of the right panel — drag
   // left to widen, right to narrow. Persists chosen width in
@@ -196,5 +289,5 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
     } catch {}
   });
 
-  return { rightPanel, controls, layerPanel, panelResize };
+  return { rightPanel, controls, layerPanel, panelResize, dock, mobilePanels };
 }

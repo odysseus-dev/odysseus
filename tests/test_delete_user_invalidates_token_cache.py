@@ -11,6 +11,8 @@ cache from the DB, where the rows are already gone, and the token is rejected.
 """
 import asyncio
 import types
+import pytest
+from fastapi import HTTPException
 
 from routes.auth_routes import setup_auth_routes, DeleteUserRequest
 
@@ -60,12 +62,9 @@ def test_refused_delete_does_not_invalidate_cache():
     invalidations = []
     router = setup_auth_routes(_auth_manager(delete_result=False))
     handler = _handler(router)
-    try:
+    with pytest.raises(HTTPException) as refused:
         asyncio.run(handler(DeleteUserRequest(username="admin"), _fake_request(invalidations)))
-        raised = False
-    except Exception:
-        raised = True
-    assert raised, "a refused delete should raise (HTTP 400)"
+    assert refused.value.status_code == 400
     assert invalidations == [], "a refused delete must not touch the token cache"
 
 

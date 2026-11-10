@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 from src.memory import MemoryStoreUnreadable
@@ -78,17 +79,42 @@ EXTRACT_SYSTEM_PROMPT = (
     "things the assistant said, one-off tasks, opinions on the current topic.\n\n"
     "Rules:\n"
     "- MAX 2 facts per conversation — only the most important\n"
-    "- Only extract facts the USER stated or clearly implied\n"
+    "- Only extract facts the USER explicitly stated about themselves\n"
+    "- Questions, requests to inspect records, and tool/assistant output are not evidence\n"
     "- Each fact must be a single short sentence (under 15 words)\n"
     "- If a fact is similar to something likely already known, skip it\n"
     "- If nothing durable was revealed, return []\n\n"
-    "Return a JSON array of objects with 'text' and 'category' fields.\n"
+    "Return a JSON array of objects with 'text', 'category', and 'evidence' fields. "
+    "Evidence must be an exact quote from a user's own factual statement.\n"
     "Categories: 'identity', 'preference', 'fact', 'contact', 'project', 'goal'\n\n"
     "Return ONLY valid JSON, no markdown fences."
 )
 
 # How many recent messages to include for extraction
 CONTEXT_WINDOW = 6
+
+PERSONA_MEMORY_SYSTEM_PROMPT = (
+    "You maintain concise continuity notes for one active chat persona. "
+    "Update the existing notes using only durable details established in the transcript. "
+    "Keep details that help the same persona stay consistent in future conversations: "
+    "relationship context, names, preferences, recurring story details, boundaries, and unresolved threads. "
+    "Do not store generic chat events, temporary wording, assistant reasoning, or one-off requests. "
+    "Never invent details. Return only the updated notes as short bullet points, max 12 bullets. "
+    "If there is nothing worth keeping, return the existing notes unchanged or an empty string."
+)
+
+HEALTH_PERSONA_MEMORY_SYSTEM_PROMPT = (
+    "You maintain a cautious health-record brief for a medical reasoning persona. "
+    "Update the existing brief using only medically durable information from the transcript. "
+    "Keep facts that may matter in future health conversations: confirmed diagnoses, chronic conditions, "
+    "surgeries/procedures, allergies, regular medications/supplements, important test results, clinicians/hospitals, "
+    "ongoing symptoms or care plans, and the user's preferences for medical explanations. "
+    "Use uncertainty labels when needed: 'reported', 'possible', 'asked about', 'unclear'. "
+    "Do not turn guesses into diagnoses. Do not store casual one-off symptoms unless they are recurring, severe, "
+    "or tied to an ongoing episode. Never invent facts. Return only the updated brief with these headings when useful: "
+    "Medical profile, Medications/allergies, Episodes/open questions, Preferences. Max 16 concise bullets total. "
+    "If nothing medically durable changed, return the existing brief unchanged or an empty string."
+)
 
 AUDIT_SYSTEM_PROMPT = (
     "You are a memory database curator. Be CONSERVATIVE: remove only TRUE "
@@ -112,6 +138,20 @@ AUDIT_SYSTEM_PROMPT = (
 )
 
 AUDIT_INTERVAL = 5  # audit every N new memories added
+AUTO_PINNED_IDENTITY_LIMIT = 5
+
+
+def _is_owner_memory(entry, owner):
+    if owner:
+        return entry.get("owner") == owner or entry.get("owner") is None
+    return True
+
+
+def _is_auto_pinned_identity(entry):
+    return (
+        bool(entry.get("pinned"))
+        and (entry.get("category") or "").lower() in {"identity", "contact"}
+    )
 _extractions_since_audit = 0
 
 
@@ -176,7 +216,10 @@ def _fallback_memory_candidates(messages) -> list[dict]:
         if not text:
             continue
 
-        m = re.search(r"\bmy name is\s+([A-Za-z][A-Za-z0-9 .'\-]{1,50})\b", text, re.I)
+        m = re.search(
+            r"\bmy name is\s+([A-Za-z][A-Za-z0-9 '\-]{0,49}?)"
+            r"(?=\s+(?:and|but|please)\b|[.!?;,\n]|$)", text, re.I,
+        )
         if m:
             name = _clean_memory_value(m.group(1), 50)
             if name:
@@ -222,20 +265,181 @@ def _fallback_memory_candidates(messages) -> list[dict]:
     return candidates[:2]
 
 
+_USER_FACT_ASSERTION = re.compile(
+    r"\b(?:i(?:'m| am| live| work| use| have| prefer| like| love| hate| own| study| grew up)\b"
+    r"|my\s+[a-z][a-z -]{0,40}\s+(?:is|are|was|works|lives)\b"
+    r"|we\s+(?:are|live|work|have|own)\b"
+    r"|our\s+[a-z][a-z -]{0,40}\s+(?:is|are|was)\b)",
+    re.IGNORECASE,
+)
+
+
+def _has_user_fact_evidence(fact: dict, messages) -> bool:
+    """Require an exact user assertion before persisting an LLM-inferred memory."""
+    evidence = fact.get("evidence")
+    if not isinstance(evidence, str):
+        return False
+    evidence = re.sub(r"\s+", " ", evidence).strip()
+    if len(evidence.split()) < 3 or not _USER_FACT_ASSERTION.match(evidence):
+        return False
+    for message in messages:
+        if _message_role(message) != "user":
+            continue
+        utterance = re.sub(r"\s+", " ", _message_text(message)).strip()
+        position = utterance.casefold().find(evidence.casefold())
+        if position < 0:
+            continue
+        # Judge the clause containing the quote, so a later question does not
+        # erase an earlier factual statement in the same user turn.
+        clause_start = max(
+            utterance.rfind(mark, 0, position) for mark in (".", "?", "!", ";")
+        ) + 1
+        clause_end = min(
+            [end for mark in (".", "?", "!", ";")
+             if (end := utterance.find(mark, position)) >= 0] or [len(utterance)]
+        )
+        clause = utterance[clause_start:clause_end].strip()
+        # A question about one's records is not a statement of the answer.
+        if utterance[clause_end:clause_end + 1] == "?" or re.match(
+            r"^(?:who|what|where|when|why|how|do|does|did|can|could|would|"
+            r"show|list|find|search|tell|summarize|open|read)\b",
+            clause, re.IGNORECASE,
+        ):
+            continue
+        return True
+    return False
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+# Function words carry no distinguishing content. Dropping them before
+# comparing two facts keeps punctuation and harmless rephrasing from defeating
+# the duplicate check.
+_STOPWORDS = frozenset(
+    "a an the and or but if then of to in on at for with by from as is are was "
+    "were be been being do does did has have had it its this that these those "
+    "there here user users someone somebody they them their he she his her him i "
+    "we you your my our me us who whom whose what when where why how also "
+    "currently now still about into over under again more most very can could "
+    "may might must will would should".split()
+)
+
+# Words that frame a name/username statement; excluded when reading the value
+# so the actual name tokens can be compared.
+_NAME_TEMPLATE_WORDS = frozenset(
+    "name names named called call appears appear seems seem the user users his "
+    "her their it is are was were be been being username usernames login "
+    "account handle".split()
+)
+
+_NAME_KEYWORDS = frozenset({"name", "named", "called"})
+_USERNAME_KEYWORDS = frozenset({"username", "login"})
+
+
+def _content_tokens(text: str) -> set:
+    """Lowercased content tokens with punctuation and stopwords removed."""
+    toks = _TOKEN_RE.findall((text or "").lower())
+    return {t for t in toks if t not in _STOPWORDS and len(t) >= 2}
+
+
+def _name_slot(text: str):
+    """Return (slot, value_tokens) when text states a name/username, else None.
+
+    Tokens are scanned so "username" is never mistaken for "name", and the
+    first keyword decides the slot (a sentence about a server *named* X that
+    also mentions a *username* Y is a 'name' fact, not a username fact)."""
+    words = _TOKEN_RE.findall((text or "").lower())
+    slot = None
+    for w in words:
+        if w in _NAME_KEYWORDS:
+            slot = "name"
+            break
+        if w in _USERNAME_KEYWORDS:
+            slot = "username"
+            break
+    if not slot:
+        return None
+    value = {
+        w for w in words
+        if w not in _NAME_TEMPLATE_WORDS and w not in _STOPWORDS and len(w) >= 2
+    }
+    return (slot, value) if value else None
+
+
+def _name_slot_tokens(text: str):
+    slot = _name_slot(text)
+    return slot[1] if slot else None
+
+
+def _name_vals_close(a: set, b: set) -> bool:
+    """True when two name values state the same name: identical, or one is a
+    strict refinement of the other where the larger value is a clean name
+    (<=4 alphabetic tokens). Guards against merging a username into a fact
+    like 'a server named Odysseus ... with username pewds'."""
+    if a == b:
+        return True
+    if not a or not b:
+        return False
+    bigger = a if len(a) >= len(b) else b
+    clean = len(bigger) <= 4 and all(t.isalpha() for t in bigger)
+    return clean and (a <= b or b <= a)
+
+
 def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) -> bool:
-    """Check if new_text is too similar to any existing memory (Jaccard similarity)."""
-    new_tokens = set(new_text.lower().split())
+    """Check if new_text states the same fact as an existing memory.
+
+    Three tests, cheapest first: symmetric Jaccard over content tokens,
+    containment (one fact is a strict refinement of the other), and a
+    name/username-slot match. The naive whole-string comparison this replaces
+    kept punctuation (so "Alex." != "alex") and missed short-vs-full names
+    ("Felix" vs "FELIX ARVID ULF KJELLBERG" scored 0.43).
+    """
+    new_tokens = _content_tokens(new_text)
     if not new_tokens:
         return False
+    new_slot = _name_slot(new_text)
     for entry in _memory_dicts(existing):
-        old_tokens = set(entry.get("text", "").lower().split())
+        old_text = entry.get("text", "")
+        old_tokens = _content_tokens(old_text)
         if not old_tokens:
             continue
         intersection = new_tokens & old_tokens
+        if not intersection:
+            continue
         union = new_tokens | old_tokens
         if len(intersection) / len(union) >= threshold:
             return True
+        # Containment: one fact is a strict refinement of the other. Guard on
+        # the shorter side so two-token facts ("Likes Python") are not merged
+        # into longer sentences that merely start the same way.
+        if len(intersection) >= 3 and len(intersection) / min(len(new_tokens), len(old_tokens)) >= 0.85:
+            return True
+        # Name slot: both state the same kind of name and the values match
+        # (short vs full name, or the same name behind different phrasing).
+        old_slot = _name_slot(old_text)
+        if new_slot and old_slot and new_slot[0] == old_slot[0]:
+            if _name_vals_close(new_slot[1], old_slot[1]):
+                return True
     return False
+
+
+def _name_enrichment_target(new_text: str, existing: list):
+    """Return an existing entry whose name value is a strict subset of the
+    new fact's, so the fuller name replaces it in place; else None."""
+    ns = _name_slot(new_text)
+    if not ns:
+        return None
+    slot, new_val = ns
+    best = None
+    for entry in _memory_dicts(existing):
+        old_slot = _name_slot(entry.get("text", ""))
+        if not old_slot or old_slot[0] != slot:
+            continue
+        old_val = old_slot[1]
+        if old_val < new_val and _name_vals_close(old_val, new_val) and len(new_val) <= 4 and all(t.isalpha() for t in new_val):
+            if best is None or len(entry.get("text", "")) < len(best.get("text", "")):
+                best = entry
+    return best
 
 
 def _parse_extraction_json(raw: str) -> list:
@@ -294,6 +498,7 @@ async def extract_and_store(
 
     try:
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
 
         # Get last N messages from session
         messages = session.get_context_messages()
@@ -367,6 +572,9 @@ async def extract_and_store(
                 # enough once thinking has room.
                 max_tokens=4096,
                 headers=headers,
+                reasoning_effort=effort_for_call(
+                    endpoint_url, model, getattr(session, "owner", None), session
+                ),
             )
 
             # Parse JSON, tolerating reasoning-model noise (<think> blocks, a
@@ -379,8 +587,13 @@ async def extract_and_store(
         if not isinstance(facts, list):
             facts = []
 
+        # The extraction model sees assistant/tool text and can mistake a
+        # failed lookup or a one-off request for a durable personal fact.
+        # Only its claims with a quoted user assertion may enter memory.
+        facts = [fact for fact in facts if isinstance(fact, dict)
+                 and _has_user_fact_evidence(fact, stripped_recent)]
         if fallback_facts:
-            facts = list(facts) + fallback_facts
+            facts.extend(fallback_facts)
 
         if not facts:
             logger.info("Auto memory extraction ran: 0 candidates")
@@ -397,6 +610,10 @@ async def extract_and_store(
             logger.error("Skipping auto memory extraction, store unreadable: %s", e)
             return
         added = 0
+        auto_pinned_identity_count = sum(
+            1 for entry in existing
+            if _is_owner_memory(entry, _owner) and _is_auto_pinned_identity(entry)
+        )
 
         for fact in facts:
             if isinstance(fact, str):
@@ -404,12 +621,20 @@ async def extract_and_store(
                 category = "fact"
             elif isinstance(fact, dict):
                 fact_text = fact.get("text", "").strip()
-                category = fact.get("category", "fact")
+                category = str(fact.get("category", "fact") or "fact")
             else:
                 continue
 
             if not fact_text or len(fact_text) < 5:
                 continue
+
+            # A fuller owner-specific name must not rewrite a shared legacy
+            # entry, but that less-specific entry must not suppress it either.
+            legacy_refinements = {
+                id(entry) for entry in existing
+                if _owner and entry.get("owner") is None
+                and _name_enrichment_target(fact_text, [entry]) is entry
+            }
 
             # Dedup: check vector similarity first (fast), then exact text match.
             # A runtime embedding/ChromaDB failure (backend OOM, model evicted,
@@ -432,12 +657,38 @@ async def extract_and_store(
                     # silently dropped. Mirror the owner predicate used by the
                     # text dedup below; cross-tenant/stale matches fall through.
                     _match = next((e for e in existing if e.get("id") == existing_id), None)
-                    if _match is not None and (_match.get("owner") == _owner or _match.get("owner") is None):
+                    if (_match is not None and id(_match) not in legacy_refinements
+                            and (_match.get("owner") == _owner or _match.get("owner") is None)):
                         logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
                         continue
 
             # Text dedup fallback: exact match + fuzzy similarity
-            user_existing = [e for e in existing if e.get("owner") == _owner or e.get("owner") is None] if _owner else existing
+            user_existing = [e for e in existing
+                             if (e.get("owner") == _owner or e.get("owner") is None)
+                             and id(e) not in legacy_refinements] if _owner else existing
+
+            # Name enrichment: if an existing name fact is a strict prefix of
+            # this more complete one, upgrade it in place instead of adding a
+            # near-duplicate ("name is Felix" -> "name is Felix Arvid Ulf
+            # Kjellberg"). The vector store upserts by id, so re-adding is safe.
+            # Legacy unowned entries may be visible to multiple owners; never
+            # rewrite one with a private fact from the current owner.
+            _enrich = _name_enrichment_target(
+                fact_text, [e for e in user_existing if e.get("owner") == _owner]
+            )
+            if _enrich is not None:
+                _enrich["text"] = fact_text
+                _enrich["timestamp"] = int(time.time())
+                if category:
+                    _enrich["category"] = category
+                if memory_vector and memory_vector.healthy:
+                    try:
+                        memory_vector.add(_enrich["id"], fact_text)
+                    except Exception as e:
+                        logger.warning(f"Memory vector update failed for {_enrich['id']}: {e}")
+                added += 1
+                continue
+
             if memory_manager.find_duplicates(fact_text, user_existing):
                 continue
             # Fuzzy text similarity check (catches rephrased duplicates when vector index is unavailable)
@@ -446,9 +697,15 @@ async def extract_and_store(
                 continue
 
             entry = memory_manager.add_entry(fact_text, source="auto", category=category, owner=_owner)
-            # Auto-pin identity facts (name, job, location) — core context
-            if category == "identity":
+            # Auto-pin only the first few identity/contact facts. Extra identity
+            # memories are still saved, but they must be recalled by relevance
+            # instead of riding along in every prompt forever.
+            if (
+                category.lower() in {"identity", "contact"}
+                and auto_pinned_identity_count < AUTO_PINNED_IDENTITY_LIMIT
+            ):
                 entry["pinned"] = True
+                auto_pinned_identity_count += 1
             if hasattr(session, "session_id"):
                 entry["session_id"] = session.session_id
             elif hasattr(session, "name"):
@@ -492,6 +749,94 @@ async def extract_and_store(
         logger.error(f"Memory extraction failed: {e}")
 
 
+async def update_persona_memory(
+    session,
+    preset_manager,
+    character_name: str,
+    endpoint_url: str,
+    model: str,
+    headers: Optional[dict] = None,
+    schema: str = "general",
+):
+    """Update the active persona's continuity notes from recent conversation.
+
+    Persona memory is stored with the persona/template data, not in the global
+    memory DB, so deleting a saved persona also deletes its notes.
+    """
+    character_name = (character_name or "").strip()
+    if not character_name or not endpoint_url or not model or preset_manager is None:
+        return
+
+    try:
+        from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
+        from src.text_helpers import strip_think
+
+        custom = {}
+        try:
+            custom = preset_manager.presets.get("custom", {}) if isinstance(preset_manager.presets, dict) else {}
+        except Exception:
+            custom = {}
+        existing_memory = ""
+        if isinstance(custom, dict) and custom.get("character_name") == character_name:
+            existing_memory = custom.get("persona_memory", "") or ""
+
+        messages = session.get_context_messages()
+        recent = messages[-CONTEXT_WINDOW:] if len(messages) > CONTEXT_WINDOW else messages
+        if len(recent) < 2:
+            return
+
+        lines = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            content = str(content or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        if not lines:
+            return
+
+        system_prompt = HEALTH_PERSONA_MEMORY_SYSTEM_PROMPT if schema == "health" else PERSONA_MEMORY_SYSTEM_PROMPT
+        raw = await llm_call_async(
+            endpoint_url,
+            model,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": (
+                    f"Persona name: {character_name}\n\n"
+                    f"Existing continuity notes:\n{existing_memory or '(none)'}\n\n"
+                    "Recent transcript:\n"
+                    + "\n\n".join(lines)
+                    + "\n\nReturn only the updated continuity notes."
+                )},
+            ],
+            temperature=0.1,
+            max_tokens=1200,
+            headers=headers,
+            reasoning_effort=effort_for_call(
+                endpoint_url, model, getattr(session, "owner", None), session
+            ),
+        )
+
+        updated = strip_think(str(raw or ""), prose=True, prompt_echo=True).strip()
+        # No leading `\s*` before the closing fence: .strip() drops that
+        # whitespace anyway, and scanning it from every offset was quadratic.
+        updated = re.sub(r"^```(?:text|markdown)?\s*|```$", "", updated, flags=re.I | re.S).strip()
+        if len(updated) > 6000:
+            updated = updated[:6000].rstrip()
+        if updated == existing_memory:
+            return
+        if preset_manager.update_persona_memory(character_name, updated):
+            logger.info("Updated persona memory for %s", character_name)
+    except Exception as e:
+        logger.warning("Persona memory update failed: %s", e)
+
+
 async def audit_memories(
     memory_manager,
     memory_vector,
@@ -512,6 +857,7 @@ async def audit_memories(
     """
     try:
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
 
         existing = memory_manager.load(owner=owner)
         if not existing:
@@ -560,13 +906,15 @@ async def audit_memories(
             # Bound the call so the Tidy whirlpool can't spin indefinitely on a
             # slow/large generation.
             timeout=120,
+            reasoning_effort=effort_for_call(endpoint_url, model, owner),
         )
 
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,
         # markdown fences, leading prose, and trailing commas.
         import re as _re
+        from src.text_helpers import strip_closed_think_blocks
         text = (raw or "").strip()
-        text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=_re.I).strip()
+        text = strip_closed_think_blocks(text).strip()
 
         def _loads_list(s):
             if not s:
@@ -582,7 +930,9 @@ async def audit_memories(
 
         cleaned = _loads_list(text)
         if cleaned is None:
-            _m = _re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', text)
+            # Possessive `\s*+`: handing fence whitespace back to the body on a
+            # missing closing fence only rescanned the same tail (ReDoS).
+            _m = _re.search(r'```(?:json)?\s*+\n?([\s\S]*?)```', text)
             if _m:
                 cleaned = _loads_list(_m.group(1).strip())
         if cleaned is None:

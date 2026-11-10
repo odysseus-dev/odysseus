@@ -31,10 +31,15 @@ export function enable(containerId, itemSelector, options = {}) {
     onReorder: options.onReorder || null,
     handleSelector: options.handleSelector || null,
     excludeSelector: options.excludeSelector || null,
+    ignoreSelector: options.ignoreSelector || null,
+    // When > 0 the pointer must travel this many pixels before the drag
+    // starts, so rows that also handle plain clicks stay clickable.
+    threshold: Math.max(0, Number(options.threshold) || 0),
     storageKey: options.storageKey || null,
   };
 
   let draggedEl = null;
+  let pending = null;
   let placeholder = null;
   let offsetY = 0;
   let items = [];
@@ -130,6 +135,12 @@ export function enable(containerId, itemSelector, options = {}) {
     draggedEl.style.top = snapTop + 'px';
 
     setTimeout(() => {
+      // The list may have been re-rendered mid-drag (e.g. dropping a layer
+      // effect copies it and rebuilds the panel), detaching both nodes.
+      if (!placeholder.parentNode || !draggedEl.isConnected) {
+        placeholder.remove();
+        return;
+      }
       placeholder.parentNode.insertBefore(draggedEl, placeholder);
       placeholder.remove();
       draggedEl.classList.remove('dragging');
@@ -158,9 +169,20 @@ export function enable(containerId, itemSelector, options = {}) {
   function onMouseDown(e) {
     if (e.button !== 0) return;
     if (config.handleSelector && !e.target.closest(config.handleSelector)) return;
+    if (config.ignoreSelector && e.target.closest(config.ignoreSelector)) return;
     const item = e.target.closest(itemSelector);
     if (!item || !container.contains(item)) return;
     if (config.excludeSelector && item.matches(config.excludeSelector)) return;
+
+    if (config.threshold > 0) {
+      // Defer the lift until the pointer actually moves, so a plain click
+      // (select layer, open the rename field) is left untouched.
+      pending = { item, startY: e.clientY };
+      e.preventDefault();
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      return;
+    }
 
     e.preventDefault();
     e.stopPropagation();
@@ -169,11 +191,21 @@ export function enable(containerId, itemSelector, options = {}) {
     document.addEventListener('mouseup', onMouseUp);
   }
 
-  function onMouseMove(e) { moveDrag(e.clientY); }
+  function onMouseMove(e) {
+    if (pending) {
+      if (Math.abs(e.clientY - pending.startY) < config.threshold) return;
+      const { item, startY } = pending;
+      pending = null;
+      e.preventDefault();
+      startDrag(startY, item);
+    }
+    moveDrag(e.clientY);
+  }
 
   function onMouseUp() {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
+    pending = null;
     endDrag();
   }
 
@@ -184,6 +216,7 @@ export function enable(containerId, itemSelector, options = {}) {
   let _touchItem = null;
 
   function onTouchStart(e) {
+    if (_pointerId !== null) return;
     // Don't start on buttons/inputs.
     if (e.target.closest('button, input, select, a')) return;
     // Respect handleSelector on touch too — long-press anywhere was
@@ -240,7 +273,68 @@ export function enable(containerId, itemSelector, options = {}) {
     }
   }
 
+  // Modern mobile browsers expose touch as pointer events. Use pointer
+  // capture for pen input so a reorder continues even when the row becomes
+  // absolutely positioned or the pen leaves its original handle. Finger
+  // gestures stay on the touch path below because browsers may cancel a
+  // synthetic pointer stream while preserving touch events.
+  let _pointerId = null;
+  function onPointerDown(e) {
+    if (e.pointerType !== 'pen') return;
+    if (_touchTimer || draggedEl) return;
+    if (e.target.closest('button, input, select, a')) return;
+    if (config.handleSelector && !e.target.closest(config.handleSelector)) return;
+    const item = e.target.closest(itemSelector);
+    if (!item || !container.contains(item)) return;
+    if (config.excludeSelector && item.matches(config.excludeSelector)) return;
+    _pointerId = e.pointerId;
+    _touchItem = item;
+    _touchStartY = e.clientY;
+    try { container.setPointerCapture(_pointerId); } catch {}
+    _touchTimer = setTimeout(() => {
+      _touchTimer = null;
+      if (!_touchItem) return;
+      if (navigator.vibrate) navigator.vibrate(30);
+      startDrag(_touchStartY, _touchItem);
+      _touchItem.classList.add('touch-dragging');
+    }, 400);
+  }
+
+  function onPointerMove(e) {
+    if (e.pointerId !== _pointerId) return;
+    if (_touchTimer) {
+      if (Math.abs(e.clientY - _touchStartY) > 10) {
+        clearTimeout(_touchTimer);
+        _touchTimer = null;
+        _touchItem = null;
+      }
+      return;
+    }
+    if (draggedEl) {
+      e.preventDefault();
+      moveDrag(e.clientY);
+    }
+  }
+
+  function onPointerEnd(e) {
+    if (e.pointerId !== _pointerId) return;
+    if (_touchTimer) {
+      clearTimeout(_touchTimer);
+      _touchTimer = null;
+      _touchItem = null;
+    } else if (draggedEl) {
+      draggedEl.classList.remove('touch-dragging');
+      endDrag();
+    }
+    try { container.releasePointerCapture(_pointerId); } catch {}
+    _pointerId = null;
+  }
+
   container.addEventListener('mousedown', onMouseDown);
+  container.addEventListener('pointerdown', onPointerDown);
+  container.addEventListener('pointermove', onPointerMove, { passive: false });
+  container.addEventListener('pointerup', onPointerEnd);
+  container.addEventListener('pointercancel', onPointerEnd);
   container.addEventListener('touchstart', onTouchStart, { passive: true });
   container.addEventListener('touchmove', onTouchMove, { passive: false });
   container.addEventListener('touchend', onTouchEnd);
@@ -249,6 +343,10 @@ export function enable(containerId, itemSelector, options = {}) {
   const instance = {
     cleanup: () => {
       container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('pointerdown', onPointerDown);
+      container.removeEventListener('pointermove', onPointerMove);
+      container.removeEventListener('pointerup', onPointerEnd);
+      container.removeEventListener('pointercancel', onPointerEnd);
       container.removeEventListener('touchstart', onTouchStart);
       container.removeEventListener('touchmove', onTouchMove);
       container.removeEventListener('touchend', onTouchEnd);

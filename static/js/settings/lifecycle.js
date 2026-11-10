@@ -6,6 +6,8 @@
 
 import { makeWindowDraggable } from '../windowDrag.js';
 import { clearDockSide } from '../modalSnap.js';
+import { toggle as restoreMinimizedModal } from '../modalManager.js';
+import { showModal, hideModal } from '../modalVisibility.js';
 
 const _dragBound = new WeakSet();
 const _closeBound = new WeakSet();
@@ -74,7 +76,7 @@ export function bindOpenPromptModalLink({ getModal, closeSettings } = {}) {
     }
 
     try {
-      const module = await import('../presets.js');
+      const module = await import('../presets.js?v=20260908personaname1');
       const openPrompt = module.openCustomPresetModal
         || (module.default && module.default.openCustomPresetModal);
       if (typeof openPrompt === 'function') openPrompt();
@@ -147,30 +149,16 @@ export function bindSettingsClose(modalEl, options = {}) {
 
 export function showSettingsModal(modalEl) {
   if (!modalEl) return;
+  if (restoreMinimizedModal(modalEl.id)) {
+    showModal(modalEl);
+    return;
+  }
   if (modalEl.classList.contains('hidden')) {
     resetSettingsWindowPlacement(modalEl);
   }
-  modalEl.classList.remove('hidden');
+  showModal(modalEl);
 }
 
 export function hideSettingsModal(modalEl) {
-  if (!modalEl) return;
-
-  const content = modalEl.querySelector('.modal-content, .settings-modal-content');
-  if (content && !content.classList.contains('modal-closing')) {
-    content.classList.add('modal-closing');
-    content.addEventListener('animationend', () => {
-      modalEl.classList.add('hidden');
-      content.classList.remove('modal-closing');
-    }, { once: true });
-    setTimeout(() => {
-      if (!modalEl.classList.contains('hidden')) {
-        modalEl.classList.add('hidden');
-        content.classList.remove('modal-closing');
-      }
-    }, 250);
-    return;
-  }
-
-  modalEl.classList.add('hidden');
+  hideModal(modalEl);
 }

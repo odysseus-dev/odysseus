@@ -5,7 +5,7 @@
 export const EYE_OPEN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 export const EYE_CLOSED = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
 export const SAVE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
-export const CHAT_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+export const CHAT_ICON = '<svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 export const ICON_COPY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 export const ICON_REROLL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
 export const ICON_EXPAND = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
@@ -29,7 +29,7 @@ export const VOTES_STORAGE_KEY = 'odysseus-compare-votes';
 export const VOTES_MAX = 200;
 export const POOL_STORAGE_KEY = 'odysseus-shuffle-pool-excluded';
 
-// ── Evaluation prompt templates ──
+// ── Comparison prompt templates ──
 //
 // Five high-signal prompts per category — each picked to differentiate models
 // on a distinct capability. The Visual / SVG-render prompt in `chat` ends with
@@ -41,8 +41,11 @@ export const EVAL_PROMPTS = {
     // ── ★ Featured — prompts that have actually broken frontier models ──
     { sub: '★ Featured', label: 'Sum digits 2^100', answer: '115', prompt: 'Compute the sum of the decimal digits of 2^100. Do NOT use code execution — work it out by reasoning about the number. Show every step, then end with the final number on its own line.' },
     { sub: '★ Featured', label: 'Three jugs',       answer: '2 pours: 7→5, 7→3', prompt: 'You have three jugs of capacities 7, 5, and 3 liters. The 7-liter jug starts full; the others empty. Using only pouring (no markings), produce the shortest sequence of pours that leaves exactly 2 liters in the 3-liter jug. Output each step as `pour A → B` on its own line. Then state the total number of pours on a final line.' },
+    { sub: '★ Featured', label: 'Clock angle',       answer: '100°', prompt: 'At exactly 7:20, what is the smaller angle between the hour hand and minute hand of an analog clock? Explain the movement of both hands precisely. End with only the angle, including the degree symbol, on its own line.' },
+    { sub: '★ Featured', label: 'Painted cube',      answer: '24', prompt: 'A 4×4×4 cube is painted on every outside face, then cut into 64 unit cubes. How many unit cubes have exactly two painted faces? Explain how you count them, then end with the final number on its own line.' },
 
     { sub: 'Visual',         label: 'Draw SVG',         prompt: 'Output a complete self-contained HTML file (```html block, no explanation, no other text) that centers a single SVG illustration on a simple background. The SVG must use only inline shapes — no <img>, no external assets, no JavaScript. Make it expressive and detailed. The SVG should depict: a friendly robot' },
+    { sub: 'Visual explain', label: 'TCP handshake',     prompt: 'Output one complete self-contained HTML file in a single ```html block with no prose outside it. Visually explain a TCP connection from client to server using a clear inline SVG sequence: SYN, SYN-ACK, ACK, data transfer, and FIN. Show packet direction, sequence/acknowledgment numbers, and a short plain-language annotation at every step. Use theme-aware CSS variables with a readable dark default, responsive layout, no external assets, and no JavaScript.' },
     { sub: 'Visual explain', label: 'Black hole HTML',  prompt: 'Output a complete HTML file (```html block, no explanation outside the code) that visually explains how a black hole forms. Use four labeled "frames" laid out left-to-right (or stacked on small screens) showing: 1) a glowing massive star, 2) the star going supernova with shockwave rings, 3) collapse into a singularity, 4) the final black hole with a curved accretion disk and bent light around it. Use only vanilla HTML, CSS, and inline SVG — no JavaScript, no images. Each frame should have a one-sentence caption.' },
     { sub: 'Visual explain', label: 'Butterfly ASCII',  prompt: 'Explain the butterfly lifecycle using ASCII art. Produce four separate frames in fenced code blocks, in order: egg, caterpillar, chrysalis, adult butterfly. Each frame must be drawn with monospace ASCII characters only and be visually recognizable as the creature/stage. Below each frame add one playful one-line caption (no longer than 15 words) describing what is happening at that stage.' },
   ],
@@ -57,8 +60,16 @@ export const EVAL_PROMPTS = {
     { sub: 'Web tasks',  label: 'Multi-step',     prompt: 'Search the web for the current population of the 3 largest cities in the world, then calculate what percentage of the world\'s total population lives in those cities.', toggles: ['web'] },
     { sub: 'Web tasks',  label: 'Fact check',     prompt: 'Fact-check these claims: 1) The Great Wall of China is visible from space. 2) Humans only use 10% of their brains. 3) Lightning never strikes the same place twice. Cite sources.', toggles: ['web'] },
     { sub: 'Web tasks',  label: 'Compare prices', prompt: 'Find and compare the pricing, features, and limitations of the top 3 cloud GPU providers for machine learning training. Create a markdown comparison table.', toggles: ['web'] },
+    { sub: 'Web tasks',  label: 'Primary source', prompt: 'Find the latest official release notes for Python and summarize the most important developer-facing changes. Prefer the official Python documentation over blogs. Include source links.', toggles: ['web'] },
+    { sub: 'Web tasks',  label: 'JS-heavy page',   prompt: 'Find a reliable source for the latest stable Chrome version, then verify it against at least one secondary source. Explain any mismatch clearly and cite both sources.', toggles: ['web'] },
+    { sub: 'Research',   label: 'Paper trail',     prompt: 'Find two recent papers about long-context language models, extract each paper\'s claimed contribution, and compare the evidence quality in a short table. Cite the papers.', toggles: ['web'] },
+    { sub: 'Research',   label: 'Source quality',  prompt: 'Research whether AI coding assistants improve developer productivity. Reject shallow listicles, use at least one empirical study, and state the strongest caveat.', toggles: ['web'] },
     { sub: 'Code tasks', label: 'Script + run',   prompt: 'Write a Python script that generates a bar chart of the 5 most common programming languages in 2025 and save it as chart.png. Then run it.' },
+    { sub: 'Code tasks', label: 'Debug + test',    prompt: 'Create a minimal failing test for a function that should parse ISO dates, implement the parser, then run the test and report the result.' },
+    { sub: 'Code tasks', label: 'Inspect files',   prompt: 'Inspect the current project files, identify the main frontend entry point, and summarize the boot order with exact file names.' },
+    { sub: 'Code tasks', label: 'CLI summarize',   prompt: 'Use shell commands to find the 10 largest JavaScript files in this repo and explain which one looks most worth splitting first.' },
     { sub: 'Math',       label: 'Proof + verify', prompt: 'Prove that the square root of 2 is irrational. Then write a Python program that approximates it using Newton\'s method to 50 decimal places and verify.' },
+    { sub: 'Math',       label: 'Monte Carlo',     prompt: 'Estimate pi with a Monte Carlo simulation in Python, run it, then explain how sample size changes the error.' },
   ],
   html: [
     { sub: 'Games',      label: 'Snake',         prompt: 'Output a complete HTML file (```html block) for a Snake game. ONLY use vanilla HTML, CSS, and JavaScript — no libraries, no Python, no imports, no external files. Canvas-based, neon green snake on dark grid, glowing food, score counter, speed increases, game over + restart. Skip any explanation, just output the code.' },

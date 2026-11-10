@@ -7,7 +7,10 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
+
+from src.constants import DATA_DIR
 
 # Image models are discovered from HuggingFace collections/search and local cache.
 # Keep this empty: source-coded repo IDs become hidden recommendations.
@@ -31,6 +34,8 @@ HF_IMAGE_REPO_SEEDS: list[str] = []
 
 _HF_COLLECTION_CACHE = {"ts": 0.0, "models": []}
 _HF_COLLECTION_TTL = 30 * 60
+_IMAGE_COLLECTION_DISK_CACHE = Path(DATA_DIR) / "hwfit" / "image_collection_models.json"
+_IMAGE_COLLECTION_DISK_TTL = 24 * 3600
 _HF_VARIANT_CACHE: dict[str, dict[str, str]] = {}
 _HF_SEARCH_DISABLED_UNTIL = 0.0
 
@@ -161,6 +166,12 @@ def _collection_item_to_model(item: dict[str, Any], collection_title: str = "", 
         "speed": est["speed"],
         "released": "",
     }
+    # Optional catalog metadata may identify a non-default runtime package.
+    # Keep this data-driven: the fitter must not infer private/model-specific
+    # dependencies from repository names.
+    dependency_package = item.get("dependency_package") or item.get("runtime_dependency")
+    if isinstance(dependency_package, str) and dependency_package.strip():
+        out["dependency_package"] = dependency_package.strip()
     if mlx_only:
         out["mlx_only"] = True
         out["description"] = (out["description"] + " Apple Silicon / MLX only.").strip()
@@ -171,6 +182,21 @@ def _fetch_hf_image_collection_models() -> list[dict[str, Any]]:
     now = time.time()
     if now - float(_HF_COLLECTION_CACHE.get("ts") or 0) < _HF_COLLECTION_TTL:
         return list(_HF_COLLECTION_CACHE.get("models") or [])
+    # Reuse the last successful discovery across process restarts. A stale
+    # catalog is preferable to blocking the first image-tab render on several
+    # sequential Hugging Face requests; a later refresh replaces it.
+    if not _HF_COLLECTION_CACHE.get("models"):
+        try:
+            cached = json.loads(_IMAGE_COLLECTION_DISK_CACHE.read_text(encoding="utf-8"))
+            cached_models = cached.get("models") if isinstance(cached, dict) else None
+            cached_ts = float(cached.get("fetched_at") or 0) if isinstance(cached, dict) else 0
+            if isinstance(cached_models, list) and cached_models:
+                _HF_COLLECTION_CACHE["ts"] = cached_ts
+                _HF_COLLECTION_CACHE["models"] = cached_models
+                if now - cached_ts < _IMAGE_COLLECTION_DISK_TTL:
+                    return list(cached_models)
+        except (OSError, ValueError, TypeError):
+            pass
     models: list[dict[str, Any]] = []
     for slug, mlx_only in [(slug, False) for slug in HF_IMAGE_COLLECTIONS] + [(slug, True) for slug in HF_MLX_IMAGE_COLLECTIONS]:
         url = f"https://huggingface.co/api/collections/{slug}"
@@ -186,9 +212,24 @@ def _fetch_hf_image_collection_models() -> list[dict[str, Any]]:
                 model = _collection_item_to_model(item, title, mlx_only=mlx_only)
                 if model:
                     models.append(model)
+    if models:
+        _HF_COLLECTION_CACHE["ts"] = now
+        _HF_COLLECTION_CACHE["models"] = models
+        try:
+            _IMAGE_COLLECTION_DISK_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = _IMAGE_COLLECTION_DISK_CACHE.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"fetched_at": now, "models": models}), encoding="utf-8")
+            tmp.replace(_IMAGE_COLLECTION_DISK_CACHE)
+        except OSError:
+            pass
+        return list(models)
+    # Preserve stale results if the network is unavailable. The in-memory
+    # timestamp prevents every subsequent ranking request from retrying it.
+    if _HF_COLLECTION_CACHE.get("models"):
+        _HF_COLLECTION_CACHE["ts"] = now
+        return list(_HF_COLLECTION_CACHE["models"])
     _HF_COLLECTION_CACHE["ts"] = now
-    _HF_COLLECTION_CACHE["models"] = models
-    return list(models)
+    return []
 
 
 def _hf_model_search(query: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -420,6 +461,7 @@ def rank_image_models(system, search=None, sort="fit"):
             "capabilities": model["capabilities"],
             "description": model["description"],
             "released": model.get("released", ""),
+            "dependency_package": model.get("dependency_package", ""),
         })
 
     # Sort

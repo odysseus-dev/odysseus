@@ -133,6 +133,62 @@ async def list_models(content: str, session_id: Optional[str] = None, owner: Opt
 
     keyword = content.strip().lower() if content.strip() else None
 
+    # ``list_models`` historically treated every filter as a literal model-ID
+    # substring. For recommendation terms that produced an empty catalog even
+    # though Odysseus already has a hardware detector and fit ranker. Preserve
+    # the catalog behavior for real model/provider filters, but give these
+    # semantic filters their expected read-only meaning.
+    if keyword in {
+        "recommended", "recommendation", "recommendations",
+        "compatible", "hardware", "hardware fit", "best fit",
+    }:
+        from src.tools.system import do_app_api
+        fit_result = await do_app_api(json.dumps({
+            "action": "call",
+            "method": "GET",
+            "path": "/api/hwfit/models",
+            "query": {"fit_only": "true", "limit": 5, "sort": "fit"},
+        }), owner=owner)
+        payload = fit_result.get("json") if isinstance(fit_result, dict) else None
+        system = payload.get("system") if isinstance(payload, dict) else None
+        models = payload.get("models") if isinstance(payload, dict) else None
+        if isinstance(system, dict) and isinstance(models, list):
+            gpu = system.get("gpu_name") or "No GPU detected"
+            vram = system.get("gpu_vram_gb")
+            count = system.get("gpu_count")
+            backend = system.get("backend") or "unknown"
+            lines = [
+                "Detected hardware:",
+                f"- GPU: {gpu}; count={count}; total VRAM={vram} GB; backend={backend}",
+                f"- CPU: {system.get('cpu_name') or 'unknown'}; RAM={system.get('total_ram_gb')} GB",
+                "Ranked compatible models:",
+            ]
+            compact_models = []
+            for model_row in models[:5]:
+                if not isinstance(model_row, dict):
+                    continue
+                compact = {
+                    key: model_row.get(key)
+                    for key in (
+                        "name", "parameter_count", "quant", "required_gb",
+                        "fit_level", "run_mode", "speed_tps", "score", "context",
+                    )
+                }
+                compact_models.append(compact)
+                lines.append(
+                    "- {name}: params={parameter_count}, quant={quant}, required={required_gb} GB, "
+                    "fit={fit_level}, mode={run_mode}, speed={speed_tps} tok/s, score={score}, context={context}".format(
+                        **compact
+                    )
+                )
+            return {
+                "output": "\n".join(lines),
+                "system": system,
+                "models": compact_models,
+                "exit_code": 0,
+            }
+        return fit_result
+
     db = SessionLocal()
     try:
         query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)

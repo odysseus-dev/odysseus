@@ -22,12 +22,27 @@ import {
   // Plain specifier (no ?v=) — must match every other cookbook.js importer so the
   // browser loads it once. See cookbook-hwfit.js.
 } from './cookbook.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 
 // Tiny HTML-escape — keeps the file standalone instead of leaning on a
 // shared helper that may not be exported from this module's import surface.
 function _diagEsc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function _diagFetchWithTimeout(input, init = {}, timeoutMs = 75000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = init.signal;
+  const abortFromParent = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) controller.abort();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  });
 }
 
 // Pick an icon for a diagnosis-action button based on the label. The icon
@@ -74,7 +89,7 @@ export function openCookbookDependencies(pkgName = '', opts = {}) {
 function _openCookbookDependencies(pkgName = '', opts = {}) {
   const cookbook = window.cookbookModule;
   if (cookbook && typeof cookbook.open === 'function') {
-    cookbook.open({ tab: 'Dependencies' });
+    cookbook.open({ tab: 'Dependencies', dependencyModel: opts.model || '' });
   } else {
     document.getElementById('tool-cookbook-btn')?.click();
   }
@@ -1056,7 +1071,7 @@ export async function _runQuickCmd(panel, cmd) {
   }
 
   try {
-    const res = await fetch('/api/shell/exec', {
+    const res = await _diagFetchWithTimeout('/api/shell/exec', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

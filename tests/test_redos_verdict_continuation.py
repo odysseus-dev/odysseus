@@ -3,7 +3,7 @@
 Both had two adjacent `\\s`-matching quantifiers that backtrack O(n^2) when the
 rest of the pattern fails on a whitespace flood:
 
-  * `routes/skills_routes.py` `_VERDICT_PROSE_RE` — `["\\'\\s:]*\\s*` (the class
+  * `services/skills/evaluation.py` `_VERDICT_PROSE_RE`: `["\\'\\s:]*\\s*` (the class
     already matches `\\s`) over a teacher/verifier model's prose verdict.
   * `src/agent_loop.py` `_EXPLICIT_CONTINUATION_RE` — `\\s*[.!?]*\\s*$` over a
     user's terse reply.
@@ -18,7 +18,7 @@ import time
 import pytest
 
 import src.agent_tools  # noqa: F401  (break agent_tools<->agent_loop import cycle)
-from routes.skills_routes import _VERDICT_PROSE_RE
+from services.skills.evaluation import _VERDICT_PROSE_RE
 from src.agent_loop import _EXPLICIT_CONTINUATION_RE, _is_explicit_continuation
 
 _BUDGET_S = 4.0
