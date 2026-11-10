@@ -6,7 +6,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
-import { registerMenuDismiss } from './escMenuStack.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -1200,6 +1200,7 @@ function _registerWaveEl(el) { _waveEls.add(el); _startWaveSync(); }
 // running in the background.
 function _disposeTaskCard(el) {
   if (!el) return;
+  if (typeof el._dismissTaskMenu === 'function') el._dismissTaskMenu();
   if (el._abort) {
     try { el._abort.abort(); } catch {}
     el._abort = null;
@@ -2869,31 +2870,20 @@ export function _renderRunningTab() {
           dropdown.style.top = top + 'px';
         }
 
-        const closeHandler = (ev) => {
-          if (!dropdown.contains(ev.target) && ev.target !== menuBtn && !menuBtn.contains(ev.target)) {
-            _cleanup();
-          }
-        };
         // Close on scroll too — once the page scrolls, the dropdown's
         // fixed position no longer matches the originating ⋮ button, so
         // it visually drifts. Matches the email kebab behaviour.
         const scrollClose = () => _cleanup();
-        let _unreg = () => {};
-        const _cleanup = () => {
-          _unreg(); _unreg = () => {};
+        const _cleanup = bindMenuDismiss(dropdown, () => {
           dropdown.remove();
           menuBtn.classList.remove('cookbook-menu-active');
-          document.removeEventListener('click', closeHandler);
           window.removeEventListener('scroll', scrollClose, true);
           window.visualViewport?.removeEventListener('scroll', scrollClose);
-        };
-        dropdown._dismiss = _cleanup;
-        setTimeout(() => {
-          document.addEventListener('click', closeHandler);
-          window.addEventListener('scroll', scrollClose, true);
-          window.visualViewport?.addEventListener('scroll', scrollClose);
-        }, 0);
-        _unreg = registerMenuDismiss(_cleanup);
+          if (el._dismissTaskMenu === _cleanup) el._dismissTaskMenu = null;
+        }, (ev) => !dropdown.contains(ev.target) && ev.target !== menuBtn && !menuBtn.contains(ev.target));
+        el._dismissTaskMenu = _cleanup;
+        window.addEventListener('scroll', scrollClose, true);
+        window.visualViewport?.addEventListener('scroll', scrollClose);
       };
       menuBtn.addEventListener('click', _openTaskMenu);
       menuBtn.addEventListener('touchend', (e) => {
