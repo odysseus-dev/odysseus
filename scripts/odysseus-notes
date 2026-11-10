@@ -87,11 +87,13 @@ def cmd_show(args):
 
 
 def cmd_search(args):
+    from src.session_search import escape_like_pattern
+
     db = SessionLocal()
     try:
-        like = f"%{args.query}%"
+        like = f"%{escape_like_pattern(args.query)}%"
         rows = db.query(Note).filter(
-            (Note.title.ilike(like)) | (Note.content.ilike(like))
+            Note.title.ilike(like, escape="\\") | Note.content.ilike(like, escape="\\")
         ).order_by(Note.updated_at.desc()).limit(args.limit).all()
         emit([_serialize(n) for n in rows], args)
     finally:
