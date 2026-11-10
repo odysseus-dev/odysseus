@@ -43,6 +43,7 @@ FROM brotli-base
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bubblewrap \
     build-essential \
     cmake \
     curl \

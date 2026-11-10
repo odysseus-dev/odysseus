@@ -1716,7 +1716,14 @@ async def execute_tool_block(
     authority = active_request_authority() if request_authority is MISSING_AUTHORITY else request_authority
     parent = active_request_authority()
     if isinstance(authority, RequestAuthority) and parent is not None and authority is not parent:
+        same_request = (
+            parent.request_id == authority.request_id
+            and not parent.inherited
+            and not authority.inherited
+        )
         authority = parent.intersect(authority)
+        if same_request:
+            authority = replace(authority, inherited=False)
     try:
         operation = ExactOperation.normalize(getattr(block, "tool_type", None), getattr(block, "content", None))
         valid = isinstance(authority, RequestAuthority) and authority.bound_to(
