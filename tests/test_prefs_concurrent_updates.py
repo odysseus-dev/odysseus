@@ -263,3 +263,69 @@ def test_tasks_onboarding_route_persists_and_reports_the_flags(tmp_path, monkeyp
     stored = pr._load_for_user("alice")
     assert stored["tasks_opened"] is True
     assert stored["theme"] == "dark", "onboarding dropped an unrelated preference"
+
+
+def test_put_null_value_removes_only_that_key(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch, {"_users": {"alice": {"theme": "dark", "language": "fr"}}})
+
+    response = _client_as("alice").put("/api/prefs/language", json={"value": None})
+
+    assert response.status_code == 200
+    assert response.json() == {"key": "language", "value": None}
+    assert pr._load_for_user("alice") == {"theme": "dark"}
+
+
+def _land_a_write_after_each_read(monkeypatch):
+    """Commit another writer's key right after every snapshot is taken.
+
+    That is the interleaving a background writer such as the CalDAV worker
+    produces. A caller that hands its snapshot back wholesale would erase the
+    key; one that patches only its own keys keeps it.
+
+    Each read lands a distinct key, so a caller that reads more than once
+    still has a write it never saw. Returns the keys that were written.
+    """
+    real_load = pr._load_for_user
+    written = []
+
+    def load_then_compete(user=None):
+        snapshot = real_load(user)
+        key = f"written_elsewhere_{len(written)}"
+        pr._update_for_user(user, {key: True})
+        written.append(key)
+        return snapshot
+
+    monkeypatch.setattr(pr, "_load_for_user", load_then_compete)
+    return written
+
+
+def test_set_theme_does_not_erase_a_concurrent_preference(tmp_path, monkeypatch):
+    from src.ai_interaction import do_ui_control
+
+    _seed(tmp_path, monkeypatch, {"_users": {"alice": {"theme": {"name": "light"}}}})
+    written = _land_a_write_after_each_read(monkeypatch)
+
+    result = asyncio.run(do_ui_control("set_theme dark", owner="alice"))
+
+    assert result.get("ui_event") == "set_theme"
+    stored = pr._load()["_users"]["alice"]
+    assert stored["theme"] == {"name": "dark"}
+    assert written
+    assert all(stored.get(key) is True for key in written), written
+
+
+def test_create_theme_does_not_erase_a_concurrent_preference(tmp_path, monkeypatch):
+    from src.ai_interaction import do_ui_control
+
+    _seed(tmp_path, monkeypatch, {"_users": {"alice": {"theme": {"name": "light"}}}})
+    written = _land_a_write_after_each_read(monkeypatch)
+
+    result = asyncio.run(do_ui_control(
+        "create_theme Ocean #001122 #ffffff #112233 #223344 #334455", owner="alice"))
+
+    assert "error" not in result
+    stored = pr._load()["_users"]["alice"]
+    assert stored["theme"]["name"] == "ocean"
+    assert stored["custom-themes"]["ocean"]["bg"] == "#001122"
+    assert written
+    assert all(stored.get(key) is True for key in written), written

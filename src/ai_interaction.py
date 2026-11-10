@@ -834,7 +834,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             custom_label = f" | Custom: {', '.join(sorted(custom_themes.keys()))}" if custom_themes else ""
             return {"error": f"Unknown theme '{theme_name}'. Available: {', '.join(sorted(known_presets))}{custom_label}"}
         try:
-            from routes.prefs_routes import _load_for_user, _save_for_user
+            from routes.prefs_routes import _load_for_user, _update_for_user
             prefs = _load_for_user(owner)
             previous = prefs.get("theme") if isinstance(prefs.get("theme"), dict) else {}
             stored = {"name": theme_name}
@@ -847,8 +847,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
                 theme_source = previous
             if isinstance(theme_source, dict):
                 stored.update({k: v for k, v in theme_source.items() if k.startswith('bgEffect') or k in ('bgPattern', 'frosted')})
-            prefs["theme"] = stored
-            _save_for_user(owner, prefs)
+            _update_for_user(owner, {"theme": stored})
         except Exception:
             pass
         return {
@@ -926,18 +925,17 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         if advanced:
             colors["advanced"] = advanced
         try:
-            from routes.prefs_routes import _load_for_user, _save_for_user
+            from routes.prefs_routes import _load_for_user, _update_for_user
             prefs = _load_for_user(owner)
             custom_themes = prefs.get("custom-themes")
             custom_themes = dict(custom_themes) if isinstance(custom_themes, dict) else {}
             custom_themes[name] = dict(colors)
-            prefs["custom-themes"] = custom_themes
-            prefs["theme"] = {"name": name, "colors": dict(colors)}
+            theme = {"name": name, "colors": dict(colors)}
             for key, value in bg.items():
                 stored_key = 'frosted' if key == 'frosted' else 'bg' + key[0].upper() + key[1:]
                 custom_themes[name][stored_key] = value
-                prefs['theme'][stored_key] = value
-            _save_for_user(owner, prefs)
+                theme[stored_key] = value
+            _update_for_user(owner, {"custom-themes": custom_themes, "theme": theme})
         except Exception:
             return {"error": "Could not save the theme. No theme change was applied; retry when preferences storage is available."}
         return {

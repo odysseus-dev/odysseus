@@ -19,7 +19,7 @@ from src.tool_schemas import function_call_to_tool_block
 def test_theme_native_adapter_preserves_name_and_colors(monkeypatch, name):
     stores = {}
     monkeypatch.setattr(prefs_routes, '_load_for_user', lambda owner: dict(stores))
-    monkeypatch.setattr(prefs_routes, '_save_for_user', lambda owner, prefs: stores.update(prefs))
+    monkeypatch.setattr(prefs_routes, '_update_for_user', lambda owner, patch=None, *, remove=(): stores.update(patch or {}))
     colors = dict(bg='#1a0505', fg='#f5e6e6', panel='#2b0a0a', border='#4a1515', accent='#d93025')
     block = function_call_to_tool_block('ui_control', json.dumps(dict(
         action='create_theme', name=name, colors=colors)))
@@ -98,7 +98,7 @@ def test_cookbook_panel_accepts_named_subview():
 def test_set_theme_persists_owner_scoped_name_for_later_verification(monkeypatch):
     stores = {"alice": {}}
     monkeypatch.setattr(prefs_routes, "_load_for_user", lambda owner: dict(stores.get(owner, {})))
-    monkeypatch.setattr(prefs_routes, "_save_for_user", lambda owner, prefs: stores.__setitem__(owner, dict(prefs)))
+    monkeypatch.setattr(prefs_routes, "_update_for_user", lambda owner, patch=None, *, remove=(): stores.setdefault(owner, {}).update(patch or {}))
 
     changed = asyncio.run(do_ui_control("set_theme dark", owner="alice"))
     current = asyncio.run(do_ui_control("get_theme", owner="alice"))
@@ -115,7 +115,7 @@ def test_set_theme_persists_owner_scoped_name_for_later_verification(monkeypatch
 def test_minimal_theme_palette_and_background_survive_storage(monkeypatch, pattern):
     stores = {}
     monkeypatch.setattr(prefs_routes, '_load_for_user', lambda owner: dict(stores))
-    monkeypatch.setattr(prefs_routes, '_save_for_user', lambda owner, prefs: stores.update(prefs))
+    monkeypatch.setattr(prefs_routes, '_update_for_user', lambda owner, patch=None, *, remove=(): stores.update(patch or {}))
     block = function_call_to_tool_block('ui_control', json.dumps({
         'action': 'create_theme', 'name': 'Night Sky',
         'colors': {'bg': '#123', 'accent': 'e34b50'},
