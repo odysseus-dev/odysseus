@@ -64,6 +64,52 @@ def test_explicit_request_classes_remain_narrow(user_text, allowed, denied):
     assert not grant.permits(ExactOperation.normalize(denied, '{}'))
 
 
+@pytest.mark.asyncio
+async def test_for_each_file_request_is_not_blocked_at_execution(monkeypatch, tmp_path):
+    """The reported symptom: the model's first ``ls`` came back BLOCKED."""
+    from src import tool_execution as execution
+    from src.turn_contract import bind_turn_contract, resolve_turn_contract
+    implementation = AsyncMock(return_value=("ls", {"exit_code": 0}))
+    monkeypatch.setattr(execution, "_execute_tool_block_impl", implementation)
+    (tmp_path / "in").mkdir()
+    grant = create_request_authority(
+        'For each of the .md files in the "in" folder, create a more condensed '
+        'AI-friendly version in the "out" folder',
+        owner="alice", session_id="s", workspace=str(tmp_path),
+    )
+    contract = resolve_turn_contract(capabilities={"shell_files"}, policy=ToolPolicy(),
+        schemas=[{"function": {"name": "ls"}}])
+    with bind_turn_contract(contract):
+        description, result = await execution.execute_tool_block(
+            ToolBlock("ls", '{"path": "in"}'), owner="alice", session_id="s",
+            security_context=execution.NO_TOOL_SECURITY_CONTEXT,
+            request_authority=grant, workspace=str(tmp_path))
+    assert "BLOCKED" not in description
+    assert result.get("failure_kind") != "request_authority_denied"
+    implementation.assert_awaited_once()
+
+
+def test_for_each_file_request_authorizes_the_file_tools_it_needs(tmp_path):
+    grant = create_request_authority(
+        'For each of the .md files in the "in" folder, create a more condensed '
+        'AI-friendly version in the "out" folder',
+        owner="admin", session_id="s", workspace=str(tmp_path),
+    )
+    assert grant.permits(ExactOperation.normalize("ls", '{"path": "in"}'))
+    assert grant.permits(ExactOperation.normalize("read_file", '{"path": "in/a.md"}'))
+    assert grant.permits(ExactOperation.normalize(
+        "write_file", '{"path": "out/a.md", "content": "x"}'))
+    assert not grant.permits(ExactOperation.normalize("web_fetch", '{"url": "https://example.test"}'))
+
+
+def test_for_each_prohibition_does_not_authorize_the_forbidden_tools(tmp_path):
+    grant = create_request_authority(
+        "For each file in the workspace, do not delete anything",
+        owner="admin", session_id="s", workspace=str(tmp_path),
+    )
+    assert sorted(g.tool for g in grant.grants) == ["ask_user", "update_plan"]
+
+
 def test_safe_task_read_does_not_authorize_same_tool_mutation():
     grant = create_request_authority("List my tasks")
     assert grant.permits(ExactOperation.normalize("manage_tasks", '{"action":"list"}'))
