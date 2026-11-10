@@ -783,7 +783,11 @@ app.include_router(setup_embedding_routes())
 
 # Models
 from routes.model_routes import setup_model_routes
-app.include_router(setup_model_routes(model_discovery))
+model_router = setup_model_routes(model_discovery)
+app.include_router(model_router)
+
+from routes.setup_routes import setup_setup_routes
+app.include_router(setup_setup_routes(model_discovery, model_router.invalidate_models_cache))
 
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
@@ -977,6 +981,10 @@ async def serve_tasks(request: Request):
 @app.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)
+
+@app.get("/setup")
+async def serve_setup(request: Request):
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/setup.html"))
 
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):

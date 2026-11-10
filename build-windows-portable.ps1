@@ -58,6 +58,7 @@ $dataArgs = @(
     "--add-data", "licenses;licenses",
     "--add-data", "THIRD_PARTY_PROVENANCE.json;.",
     "--add-data", "ACKNOWLEDGMENTS.md;.",
+    "--add-data", "HARNESS_VERSION;.",
     "--add-data", "static;static",
     "--add-data", "scripts;scripts",
     "--add-data", "mcp_servers;mcp_servers",
@@ -66,7 +67,12 @@ $dataArgs = @(
     "--add-data", ".env.example;.env.example"
 )
 
-& $pyExe -m PyInstaller --noconfirm --clean --onedir --noconsole --icon=static/icon.ico --name Odysseus @dataArgs launcher.py
+# Modules that child processes start by path and PyInstaller cannot see.
+$hiddenArgs = @(
+    "--hidden-import", "src.containment_worker"
+)
+
+& $pyExe -m PyInstaller --noconfirm --clean --onedir --noconsole --icon=static/icon.ico --name Odysseus @dataArgs @hiddenArgs launcher.py
 if ($LASTEXITCODE -ne 0) { Fail "PyInstaller build failed." }
 
 Write-Host ""

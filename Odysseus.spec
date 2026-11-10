@@ -5,8 +5,8 @@ a = Analysis(
     ['launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[('licenses', 'licenses'), ('THIRD_PARTY_PROVENANCE.json', '.'), ('ACKNOWLEDGMENTS.md', '.'), ('static', 'static'), ('scripts', 'scripts'), ('mcp_servers', 'mcp_servers'), ('services/hwfit/data', 'services/hwfit/data'), ('config', 'config'), ('.env.example', '.env.example')],
-    hiddenimports=[],
+    datas=[('licenses', 'licenses'), ('THIRD_PARTY_PROVENANCE.json', '.'), ('ACKNOWLEDGMENTS.md', '.'), ('HARNESS_VERSION', '.'), ('static', 'static'), ('scripts', 'scripts'), ('mcp_servers', 'mcp_servers'), ('services/hwfit/data', 'services/hwfit/data'), ('config', 'config'), ('.env.example', '.env.example')],
+    hiddenimports=['src.containment_worker'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -32,7 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['static\\icon.ico'],
+    icon=['static/icon.ico'],
 )
 coll = COLLECT(
     exe,

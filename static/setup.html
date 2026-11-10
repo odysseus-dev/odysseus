@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Odysseus — Setup</title>
+<link rel="stylesheet" href="/static/css/setup.css">
+</head>
+<body>
+<main class="setup">
+  <div id="live" class="sr-only" aria-live="polite"></div>
+
+  <section id="view-loading" class="view" hidden>
+    <h1 tabindex="-1">Just a moment</h1>
+    <p>Checking how Odysseus is set up on this computer.</p>
+  </section>
+
+  <section id="view-welcome" class="view" hidden>
+    <h1 tabindex="-1">Welcome to Odysseus</h1>
+    <p>We'll set up everything you need automatically.</p>
+    <p class="actions">
+      <button type="button" class="btn btn-primary" id="btn-start">Install and Set Up</button>
+    </p>
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <p><a href="/" id="link-manual">Set up manually</a></p>
+    </details>
+  </section>
+
+  <section id="view-progress" class="view" hidden>
+    <h1 tabindex="-1">Setting things up</h1>
+    <ol class="steps" id="steps"></ol>
+    <div id="progress-wrap" hidden>
+      <p id="progress-label"></p>
+      <progress id="progress-bar" max="100" value="0" aria-labelledby="progress-label"></progress>
+    </div>
+    <p class="note">You can leave this window open. This can take a while on a slow connection.</p>
+  </section>
+
+  <section id="view-consent" class="view" hidden>
+    <h1 tabindex="-1" aria-describedby="consent-intro">Before we continue</h1>
+    <p id="consent-intro"></p>
+    <dl class="consent">
+      <dt>What</dt>
+      <dd id="consent-name"></dd>
+      <dt>Download size</dt>
+      <dd id="consent-size"></dd>
+      <dt>Cost</dt>
+      <dd id="consent-cost"></dd>
+      <dt>License</dt>
+      <dd id="consent-license"></dd>
+      <dt>From</dt>
+      <dd id="consent-source"></dd>
+    </dl>
+    <p class="actions">
+      <button type="button" class="btn btn-primary" id="btn-consent-yes">Yes, download and install</button>
+      <button type="button" class="btn btn-secondary" id="btn-consent-no">Not now</button>
+    </p>
+  </section>
+
+  <section id="view-ready" class="view" hidden>
+    <h1 tabindex="-1">Odysseus is Ready!</h1>
+    <p id="ready-note" hidden></p>
+    <p class="actions">
+      <a class="btn btn-primary" href="/" id="link-start">Start Odysseus</a>
+      <button type="button" class="btn btn-secondary" id="btn-repair">Repair Installation</button>
+    </p>
+  </section>
+
+  <section id="view-problem" class="view" hidden>
+    <h1 tabindex="-1">Something went wrong</h1>
+    <p id="problem-message"></p>
+    <p id="problem-hint"></p>
+    <p class="actions">
+      <button type="button" class="btn btn-primary" id="btn-retry">Try Again</button>
+      <a class="btn btn-secondary" href="/api/setup/report" target="_blank" rel="noopener">View Diagnostic Report</a>
+    </p>
+  </section>
+</main>
+<script type="module" src="/static/js/setup.js"></script>
+</body>
+</html>

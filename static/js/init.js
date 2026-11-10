@@ -434,3 +434,16 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
   else window.addEventListener('load', release);
   setTimeout(release, 1200);  // hard fallback — never leave the splash hidden
 })();
+
+/* ── First-run redirect ──
+   Send an administrator who has not finished setup to /setup. Any error or
+   non-200 response leaves the main page alone. */
+(async () => {
+  try {
+    if (sessionStorage.getItem('setupSkipped') === '1') return;
+    const res = await fetch('/api/setup/status', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.needed === true) location.replace('/setup');
+  } catch (_) { /* leave the main page as is */ }
+})();

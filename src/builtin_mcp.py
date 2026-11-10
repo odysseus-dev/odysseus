@@ -157,7 +157,10 @@ def builtin_python_env(base_dir: str) -> dict[str, str]:
     for item in existing.split(os.pathsep):
         if item and item not in parts:
             parts.append(item)
-    return {"PYTHONPATH": os.pathsep.join(parts)}
+    env = {"PYTHONPATH": os.pathsep.join(parts)}
+    if os.environ.get("ODYSSEUS_DATA_DIR"):
+        env["ODYSSEUS_DATA_DIR"] = os.environ["ODYSSEUS_DATA_DIR"]
+    return env
 
 
 async def register_builtin_servers(mcp_manager):

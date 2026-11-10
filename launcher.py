@@ -9,10 +9,110 @@ Handles:
 - Launching the FastAPI server (importing and running app.py).
 """
 import os
+import runpy
 import sys
 import threading
 import time
 import webbrowser
+
+_INTERP_FLAGS = {"-I", "-u", "-B", "-E", "-s", "-S", "-O", "-q"}
+_INTERP_FLAGS_WITH_ARG = {"-X", "-W"}
+
+
+def parse_interpreter_args(argv):
+    """Describe an interpreter-style run requested by argv (without argv[0]), or None."""
+    flags = set()
+    i = 0
+    while i < len(argv):
+        if argv[i] in _INTERP_FLAGS:
+            flags.add(argv[i])
+            i += 1
+        elif argv[i] in _INTERP_FLAGS_WITH_ARG and i + 1 < len(argv):
+            i += 2
+        else:
+            break
+    rest = argv[i:]
+    if not rest:
+        return None
+    head, tail = rest[0], rest[1:]
+    if head == "-c" and tail:
+        return {"kind": "code", "target": tail[0], "argv": ["-c"] + tail[1:], "flags": flags}
+    if head == "-":
+        return {"kind": "stdin", "target": None, "argv": ["-"] + tail, "flags": flags}
+    if head == "-m" and tail:
+        return {"kind": "module", "target": tail[0], "argv": tail, "flags": flags}
+    if head.lower().endswith(".py"):
+        return {"kind": "script", "target": head, "argv": rest, "flags": flags}
+    return None
+
+
+def run_interpreter(spec):
+    """Run the described interpreter-style request; return the exit status."""
+    import traceback
+    import types
+
+    flags = spec["flags"]
+    # A windowed build has no stream when the parent passed no handle.
+    for name, mode in (("stdin", "r"), ("stdout", "w"), ("stderr", "w")):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, mode))
+    # Callers decode child output as UTF-8; a frozen interpreter ignores PYTHONIOENCODING.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+    kind, target = spec["kind"], spec["target"]
+    # A script that is not on disk but lives in the bundle runs as its bundled module.
+    bundle = getattr(sys, "_MEIPASS", None)
+    if kind == "script" and bundle and not os.path.isfile(target):
+        try:
+            rel = os.path.relpath(os.path.abspath(target), bundle)
+        except ValueError:  # Windows: the two paths are on different drives
+            rel = ".."
+        if not rel.startswith(".."):
+            kind, target = "module", os.path.splitext(rel)[0].replace(os.sep, ".")
+
+    extra = []
+    if not (flags & {"-I", "-E"}):
+        extra = [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
+    first = []
+    if "-I" not in flags:
+        first = [os.path.dirname(os.path.abspath(target))] if kind == "script" else [os.getcwd()]
+    sys.path[0:0] = first + extra
+    sys.argv = list(spec["argv"])
+
+    status = 0
+    try:
+        if kind == "script":
+            runpy.run_path(target, run_name="__main__")
+        elif kind == "module":
+            runpy.run_module(target, run_name="__main__", alter_sys=True)
+        else:
+            if kind == "code":
+                source, filename = target, "<string>"
+            else:
+                source, filename = sys.stdin.buffer.read(), "<stdin>"
+            main = types.ModuleType("__main__")
+            sys.modules["__main__"] = main
+            exec(compile(source, filename, "exec"), main.__dict__)
+    except SystemExit as exc:
+        if isinstance(exc.code, int):
+            status = exc.code
+        elif exc.code is not None:
+            print(exc.code, file=sys.stderr)
+            status = 1
+    except BaseException:
+        traceback.print_exc()
+        status = 1
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    return status
+
 
 # PyInstaller multiprocessing children re-enter this executable with a private
 # bootstrap argument. Consume it before splash/UI or application imports so a
@@ -20,6 +120,11 @@ import webbrowser
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
+    # The frozen executable doubles as the interpreter for child processes.
+    if getattr(sys, "frozen", False):
+        _interp_spec = parse_interpreter_args(sys.argv[1:])
+        if _interp_spec:
+            sys.exit(run_interpreter(_interp_spec))
 
 # Define a dummy NullWriter to suppress standard stream crashes (isatty etc.) in GUI mode
 class NullWriter:
@@ -133,6 +238,9 @@ def open_browser(url):
 
 if __name__ == "__main__":
     import uvicorn
+    if getattr(sys, 'frozen', False):
+        # The packaged app must not download the browser MCP package without the user's consent.
+        os.environ.setdefault("ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE", "1")
     # Import the FastAPI app from app.py
     from app import app
 

@@ -423,6 +423,29 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
+#### Windows installer
+
+End users: run `Odysseus-Setup-<version>.exe` and follow the prompts. It installs
+per user (no administrator rights) to `%LOCALAPPDATA%\Programs\Odysseus`. Uninstalling
+keeps your data in `%USERPROFILE%\.odysseus`.
+
+Maintainers: install [Inno Setup 6](https://jrsoftware.org/isdl.php), then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-windows-installer.ps1
+```
+
+The output is `dist\installer\Odysseus-Setup-<version>.exe` with a matching `.sha256`
+file. Add `-SkipBuild` to reuse an existing `dist\Odysseus\` bundle.
+
+#### Local models and agent tasks
+
+When setup connects a local Ollama model, it also tests that the model can use tools, which agent mode needs. If the model's memory (its context) is too short for that, setup makes a copy of the model with a longer memory, named like the model plus `-ctx16k` or `-ctx8k`. This needs no download and almost no disk space. The copy lives in Ollama and stays there when Odysseus is removed; delete it with `ollama rm <name>`.
+
+Setup asks before it adds the copy to models you already had. If you answer **Not now**, setup finishes without the copy and chat still works, but agent tasks may stop early. When setup itself installs Ollama or downloads the model, that first question already covers the copy.
+
+When you press **Repair Installation** on the setup page later, setup checks the model that is in use. If its memory is too short, setup asks to make the copy (or uses one that already exists) and makes it the default model. A default model that belongs to another endpoint is never changed.
+
 ## Troubleshooting & Advanced Setup
 
 ### `chromadb-client` conflicts with embedded ChromaDB

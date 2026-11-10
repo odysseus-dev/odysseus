@@ -250,6 +250,41 @@ def _default_endpoint_needs_assignment(
     return bool(visible and current_default_model not in visible)
 
 
+def _assign_default_endpoint_if_needed(db, endpoint_id: str, model_ids) -> bool:
+    """Make a newly added endpoint the global default chat endpoint when none is usable yet.
+
+    Covers both nothing configured and a configured default that is now
+    missing/disabled (#3586). Seeds the first CHAT model (not raw model_ids[0])
+    so the global default is not pinned to an embedding/tts/etc. entry a
+    provider happens to list first. Returns True when the setting changed.
+    """
+    settings = _load_settings()
+    enabled_ids = {
+        e.id
+        for e in db.query(ModelEndpoint).filter(
+            ModelEndpoint.is_enabled == True  # noqa: E712
+        ).all()
+    }
+    current_default_id = settings.get("default_endpoint_id") or ""
+    current_default_ep = None
+    if current_default_id:
+        current_default_ep = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == current_default_id
+        ).first()
+    if not _default_endpoint_needs_assignment(
+        current_default_id,
+        enabled_ids,
+        current_default_endpoint=current_default_ep,
+        current_default_model=settings.get("default_model") or "",
+    ):
+        return False
+    from src.endpoint_resolver import _first_chat_model
+    settings["default_endpoint_id"] = endpoint_id
+    settings["default_model"] = _first_chat_model(model_ids) or ""
+    _save_settings(settings)
+    return True
+
+
 # Loopback hosts a user might type for a local model server (LM Studio,
 # llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
 # host the server actually runs on.
@@ -751,6 +786,19 @@ def _resolve_probe_key(ep) -> Optional[str]:
         return None
 
 
+def _probe_reply_text(resp) -> str:
+    """Reply text from a successful completion response (OpenAI, Ollama or Anthropic shape)."""
+    try:
+        body = resp.json()
+        if body.get("choices"):
+            return (body["choices"][0].get("message", {}).get("content") or "").strip()
+        if isinstance(body.get("message"), dict):
+            return (body["message"].get("content") or "").strip()
+        return "".join(b.get("text", "") for b in body.get("content") or [] if isinstance(b, dict)).strip()
+    except Exception:
+        return ""
+
+
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _safe_detect_provider(base)
@@ -796,7 +844,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout, verify=llm_verify())
         latency = round((_time.time() - t0) * 1000)
         if r.is_success:
-            return {"status": "ok", "latency_ms": latency}
+            return {"status": "ok", "latency_ms": latency, "reply": _probe_reply_text(r)}
         else:
             # Extract error detail from response body
             error_msg = f"HTTP {r.status_code}"
@@ -2333,34 +2381,7 @@ def setup_model_routes(model_discovery):
             )
             db.add(ep)
             db.commit()
-            # Auto-set as default chat endpoint when none is usable yet — either
-            # nothing is configured, or the configured default points at an
-            # endpoint that is now missing/disabled (#3586). Seed the first CHAT
-            # model (not raw model_ids[0]) so we don't pin the global default to
-            # an embedding/tts/etc. entry a provider happens to list first.
-            settings = _load_settings()
-            enabled_ids = {
-                e.id
-                for e in db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True  # noqa: E712
-                ).all()
-            }
-            current_default_id = settings.get("default_endpoint_id") or ""
-            current_default_ep = None
-            if current_default_id:
-                current_default_ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == current_default_id
-                ).first()
-            if _default_endpoint_needs_assignment(
-                current_default_id,
-                enabled_ids,
-                current_default_endpoint=current_default_ep,
-                current_default_model=settings.get("default_model") or "",
-            ):
-                from src.endpoint_resolver import _first_chat_model
-                settings["default_endpoint_id"] = ep.id
-                settings["default_model"] = _first_chat_model(model_ids) or ""
-                _save_settings(settings)
+            _assign_default_endpoint_if_needed(db, ep.id, model_ids)
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
         finally:
@@ -3055,4 +3076,6 @@ def setup_model_routes(model_discovery):
 
     router._should_refresh_endpoint = _should_refresh_endpoint
     router._search_endpoint_catalog = search_endpoint_catalog
+    # Lets the first-run setup flow drop the picker cache after adding an endpoint.
+    router.invalidate_models_cache = _invalidate_models_cache
     return router

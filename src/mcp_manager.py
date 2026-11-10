@@ -9,11 +9,14 @@ import json
 import logging
 import os
 import re
+import sys
 import asyncio 
 from typing import Any, Dict, List, Optional, Set, Tuple
 from src.database import McpServer, SessionLocal
 
 from src.runtime_paths import get_app_root
+
+_errlog_file = None
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +210,25 @@ class McpManager:
             self._generation += 1
             return False
 
+    @staticmethod
+    def _stdio_errlog():
+        """stderr for MCP children; a real file when the windowed build has no usable stderr."""
+        global _errlog_file
+        try:
+            sys.stderr.fileno()
+            return sys.stderr
+        except Exception:
+            pass
+        if _errlog_file is None:
+            try:
+                from src import constants
+                log_dir = os.path.join(constants.DATA_DIR, "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                _errlog_file = open(os.path.join(log_dir, "mcp_stderr.log"), "a", encoding="utf-8")
+            except OSError:
+                _errlog_file = open(os.devnull, "w")
+        return _errlog_file
+
     async def _connect_stdio(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:
         """Connect to an MCP server via stdio transport."""
         try:
@@ -224,7 +246,7 @@ class McpManager:
             registered = False
 
             try:
-                transport = await stack.enter_async_context(stdio_client(server_params))
+                transport = await stack.enter_async_context(stdio_client(server_params, errlog=self._stdio_errlog()))
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
