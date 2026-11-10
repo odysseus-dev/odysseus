@@ -1,5 +1,6 @@
 import contextlib
 import json
+import os
 
 import httpx
 import pytest
@@ -33,7 +34,7 @@ def _chain_handler(seen=None, bad_host=False):
 
 @pytest.fixture
 def win(monkeypatch, tmp_path):
-    monkeypatch.setattr(rt, "_is_windows", lambda: True)
+    monkeypatch.setattr(rt, "_platform", lambda: "win32")
     monkeypatch.setattr(rt, "find_ollama", lambda: None)
     monkeypatch.setattr(rt, "_cache_dir", lambda: tmp_path)
     return tmp_path
@@ -46,13 +47,15 @@ def _fake_net(monkeypatch, handler):
 
 
 def test_offer_none_off_windows(monkeypatch):
-    monkeypatch.setattr(rt, "_is_windows", lambda: False)
+    monkeypatch.setattr(rt, "_platform", lambda: "linux")
     assert rt.ollama_install_offer() is None
 
 
 def test_offer_reports_real_size(win, monkeypatch):
     _fake_net(monkeypatch, _chain_handler())
     offer = rt.ollama_install_offer()
+    assert offer["name"] == rt.RUNTIMES["ollama"]["name"]
+    assert offer["download_page"] == rt.RUNTIMES["ollama"]["download_page"]
     assert offer["size_bytes"] == len(BODY)
     assert offer["license"] == "MIT (Ollama)"
 
@@ -276,3 +279,22 @@ def test_create_context_variant_failure_status_raises(monkeypatch):
 def test_probe_tool_call(monkeypatch, answer, expected):
     _route(monkeypatch, {("POST", "/v1/chat/completions"): answer})
     assert rt.probe_tool_call(ROOT, "m") is expected
+
+
+def test_runtime_name_known_and_unknown():
+    assert rt.runtime_name("ollama") == "Ollama"
+    assert rt.runtime_name("lmstudio") == "LM Studio"
+    assert rt.runtime_name("llamacpp") == "llama.cpp"
+    assert rt.runtime_name("vllm") is None and rt.runtime_name(None) is None
+
+
+def test_only_ollama_installs_by_itself_on_windows():
+    assert [k for k, v in rt.RUNTIMES.items() if v["install_on"]] == ["ollama"]
+    assert rt.RUNTIMES["ollama"]["install_on"] == ("win32",)
+
+
+def test_model_dir_uses_env_then_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "m"))
+    assert rt.model_dir() == str(tmp_path / "m")
+    monkeypatch.delenv("OLLAMA_MODELS")
+    assert rt.model_dir() == os.path.join(os.path.expanduser("~"), ".ollama", "models")

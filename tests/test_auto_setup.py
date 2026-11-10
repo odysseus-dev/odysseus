@@ -30,6 +30,14 @@ class FakeRuntime:
         self.created = []
         self.probed = []
 
+    RUNTIMES = {"ollama": {"name": "Ollama", "download_page": "https://ollama.com/download"}}
+
+    def runtime_name(self, provider):
+        return {"ollama": "Ollama", "lmstudio": "LM Studio"}.get(provider)
+
+    def model_dir(self):
+        return os.path.join(os.path.expanduser("~"), ".ollama", "models")
+
     def ollama_root(self, base_url):
         return self.root
 
@@ -91,7 +99,7 @@ class FakeRuntime:
 def env(tmp_path, monkeypatch):
     stored = {"rows": [], "created": [], "targets": [], "marked": [],
               "default": {"endpoint_id": "", "model": ""}, "switched": []}
-    monkeypatch.setattr(auto_setup, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(auto_setup, "SETUP_LOG_FILE", str(tmp_path / "setup.log"))
     monkeypatch.setattr("services.hwfit.hardware.detect_system", lambda *a, **k: {"total_ram_gb": 16, "gpu_name": None, "gpu_vram_gb": None})
     monkeypatch.setattr(auto_setup, "_enabled_llm_endpoints", lambda: list(stored["rows"]))
     monkeypatch.setattr(auto_setup, "_probe_models", lambda base, key: [])
@@ -234,6 +242,7 @@ def test_no_ollama_decline_installs_nothing(env):
 
     st = run(go())
     assert st["state"] == "failed" and "Nothing was installed" in st["error"]["message"]
+    assert st["error"]["title"] == "Setup is not finished"  # the user's own choice is not shown as a fault
     assert rt.calls == [] and env["created"] == []
 
 
@@ -263,7 +272,7 @@ def test_not_enough_disk_space(env, monkeypatch):
     assert "disk space" in run(go())["error"]["message"]
 
 
-def test_probe_failure_marks_failed_with_repair_hint(env, monkeypatch):
+def test_probe_failure_marks_failed_with_try_again_hint(env, monkeypatch):
     monkeypatch.setattr(auto_setup, "_scan_this_computer", lambda d: [{"host": "127.0.0.1", "port": 1234, "models": ["lm"]}])
     monkeypatch.setattr(auto_setup, "_probe_chat", lambda b, k, m: {"status": "ok", "reply": ""})
 
@@ -273,7 +282,8 @@ def test_probe_failure_marks_failed_with_repair_hint(env, monkeypatch):
         return await settle(s)
 
     st = run(go())
-    assert st["state"] == "failed" and "Repair" in st["error"]["hint"]
+    assert st["state"] == "failed" and "Try Again" in st["error"]["hint"]  # the button the failed page shows
+    assert st["error"]["title"] == ""
     assert st["steps"][-1]["status"] == "failed"
 
 
@@ -561,3 +571,101 @@ def test_mark_tools_supported_sets_only_unset_values(tmp_path, monkeypatch):
     got = {r.id: r.supports_tools for r in db.query(database.ModelEndpoint).all()}
     db.close()
     assert got == {"auto": True, "off": False} and seen == ["auto", "off"]
+
+
+# ---- copy name already taken ---------------------------------------------------
+
+def test_existing_short_copy_is_not_overwritten_and_not_asked_about(env):
+    rt = FakeRuntime(exe="ollama", models=["a", "a-ctx16k"], root=ROOT, ctx=4096,
+                     details={"a-ctx16k": {"tools": True, "num_ctx": 4096}})
+    st = run_ollama(env, rt)
+    assert st["state"] == "done" and st["result"]["model"] == "a"
+    assert env["consents"] == [] and rt.created == []
+    assert st["result"]["note"] == "Chat is ready. " + auto_setup.NOTE_COPY_NAME_TAKEN
+    assert "Repair Installation" in auto_setup.NOTE_COPY_NAME_TAKEN
+
+
+# ---- disk space on the right drive ---------------------------------------------
+
+def _drives(monkeypatch, free_by_path, same):
+    monkeypatch.setattr(auto_setup, "_existing_parent", lambda p: p)
+    monkeypatch.setattr(auto_setup, "_volume", lambda p: 1 if same else (2 if "models" in p else 1))
+    monkeypatch.setattr(auto_setup.shutil, "disk_usage",
+                        lambda p: types.SimpleNamespace(free=free_by_path["models" if "models" in p else "home"]))
+
+
+def test_disk_model_checked_on_its_own_drive(env, monkeypatch):
+    env["use_runtime"](FakeRuntime())
+    _drives(monkeypatch, {"home": 100 * GB, "models": GB}, same=False)
+    with pytest.raises(auto_setup.SetupFailed, match="disk space"):
+        AutoSetup()._check_disk(2 * GB, GB)
+
+
+def test_disk_installer_checked_on_home_drive(env, monkeypatch):
+    env["use_runtime"](FakeRuntime())
+    _drives(monkeypatch, {"home": GB // 2, "models": 100 * GB}, same=False)
+    with pytest.raises(auto_setup.SetupFailed, match="disk space"):
+        AutoSetup()._check_disk(2 * GB, GB)
+
+
+def test_disk_two_drives_each_enough(env, monkeypatch):
+    env["use_runtime"](FakeRuntime())
+    _drives(monkeypatch, {"home": 2 * GB, "models": 3 * GB}, same=False)
+    AutoSetup()._check_disk(2 * GB, GB)
+
+
+def test_disk_same_drive_checks_the_sum(env, monkeypatch):
+    env["use_runtime"](FakeRuntime())
+    _drives(monkeypatch, {"home": 3 * GB, "models": 3 * GB}, same=True)
+    with pytest.raises(auto_setup.SetupFailed, match="About 3.6 GB"):
+        AutoSetup()._check_disk(2 * GB, GB)
+
+
+def test_existing_parent_walks_up_to_a_folder_that_exists(tmp_path):
+    assert auto_setup._existing_parent(str(tmp_path / "a" / "b")) == str(tmp_path)
+
+
+# ---- runtime names ---------------------------------------------------------------
+
+def _found(env, monkeypatch, item, root=None):
+    env["use_runtime"](FakeRuntime(root=root, ctx=8192))
+    monkeypatch.setattr(auto_setup, "_scan_this_computer", lambda d: [item])
+
+    async def go():
+        s = AutoSetup()
+        await s.start()
+        st = await settle(s)
+        return st
+
+    return run(go())
+
+
+def test_discovered_server_is_named_after_its_provider(env, monkeypatch):
+    st = _found(env, monkeypatch, {"host": "127.0.0.1", "port": 1234, "models": ["lm"], "provider": "lmstudio"})
+    assert [s["detail"] for s in st["steps"] if s["id"] == "find_agent"] == ["Found LM Studio on this computer (port 1234)"]
+    assert st["result"]["endpoint_name"] == "LM Studio on this computer (port 1234)"
+
+
+def test_discovered_ollama_without_provider_is_named_ollama(env, monkeypatch):
+    st = _found(env, monkeypatch, {"host": "127.0.0.1", "port": 11434, "models": ["m"], "provider": None}, root=ROOT)
+    assert st["result"]["endpoint_name"] == "Ollama on this computer (port 11434)"
+
+
+def test_discovered_unknown_server_keeps_the_plain_name(env, monkeypatch):
+    st = _found(env, monkeypatch, {"host": "127.0.0.1", "port": 8000, "models": ["m"]})
+    assert [s["detail"] for s in st["steps"] if s["id"] == "find_agent"] == ["Found a model server on this computer (port 8000)"]
+    assert st["result"]["endpoint_name"] == "This computer (port 8000)"
+
+
+def test_cannot_install_gives_a_guided_hint(env):
+    env["use_runtime"](FakeRuntime(offer=False))
+
+    async def go():
+        s = AutoSetup()
+        await s.start()
+        return await settle(s)
+
+    err = run(go())["error"]
+    assert err["message"] == "Automatic setup cannot install the AI runtime on this computer."
+    assert "https://ollama.com/download" in err["hint"] and "Try Again" in err["hint"]
+    assert auto_setup.MANUAL_HINT in err["hint"]

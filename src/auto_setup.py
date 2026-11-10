@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from src.constants import APP_VERSION, DATA_DIR
+from src.constants import APP_VERSION, SETUP_LOG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,8 @@ MANUAL_HINT = "Open Settings > Models to connect a model manually."
 NOTE_SHORT_MEMORY = "Agent tasks may stop early because this model has a short memory. Updating Ollama and pressing Repair Installation can fix this."
 NOTE_NO_TOOLS = "This model did not pass the tools test, so agent tasks may not work. You can pick another model in Settings > Models."
 NOTE_COPY_DECLINED = "Agent tasks may stop early because this model has a short memory. Press Repair Installation if you want Odysseus to add a copy with a longer memory."
-RETRY_HINT = "Press Repair to try again."
+NOTE_COPY_NAME_TAKEN = "Agent tasks may stop early because this model has a short memory. A model with the name Odysseus would use for a longer-memory copy already exists, but its memory is too short. Remove that model, then press Repair Installation."
+RETRY_HINT = "Press Try Again."  # the button on the page that shows a failed setup
 _SUPPORTED_ARCH = {"x86_64", "amd64", "arm64", "aarch64"}
 _DISK_MARGIN = 1.2
 
@@ -41,10 +42,11 @@ _SECRET_PATTERNS = (
 class SetupFailed(Exception):
     """A step failed in a way the user can read; message and hint are shown as-is."""
 
-    def __init__(self, message: str, hint: str = RETRY_HINT):
+    def __init__(self, message: str, hint: str = RETRY_HINT, title: str = ""):
         super().__init__(message)
         self.message = message
         self.hint = hint
+        self.title = title  # page heading for an ending that is not a fault, such as the user's own "Not now"
 
 
 def redact(text: str) -> str:
@@ -59,7 +61,19 @@ def redact(text: str) -> str:
 
 
 def _log_path() -> str:
-    return os.path.join(DATA_DIR, "setup.log")
+    return SETUP_LOG_FILE
+
+
+def _existing_parent(path: str) -> str:
+    """The folder itself, or the nearest parent that exists (the model folder may not be created yet)."""
+    path = os.path.abspath(path)
+    while not os.path.exists(path) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    return path
+
+
+def _volume(path: str) -> int:
+    return os.stat(path).st_dev
 
 
 def _runtime():
@@ -247,7 +261,7 @@ class AutoSetup:
     def _log(self, message: str) -> None:
         line = f"{datetime.now().isoformat(timespec='seconds')} {redact(message)}\n"
         try:
-            os.makedirs(DATA_DIR, exist_ok=True)
+            os.makedirs(os.path.dirname(_log_path()), exist_ok=True)
             with open(_log_path(), "a", encoding="utf-8") as f:
                 f.write(line)
         except OSError:
@@ -271,17 +285,26 @@ class AutoSetup:
         self._log(f"Waiting for consent: {consent['kind']} ({consent['name']})")
         await self._consent_event.wait()
         if not self._approved and not optional:
-            raise SetupFailed("Setup was cancelled. Nothing was installed.", "Press Repair whenever you want to try again.")
+            raise SetupFailed("Setup was cancelled. Nothing was installed.", "Press Try Again whenever you want to continue.",
+                              title="Setup is not finished")
         return self._approved
 
-    def _check_disk(self, size_bytes: int) -> None:
-        free = shutil.disk_usage(os.path.expanduser("~")).free
-        if free < size_bytes * _DISK_MARGIN:
-            need_gb = size_bytes * _DISK_MARGIN / 1e9
-            raise SetupFailed(
-                f"There is not enough free disk space. About {need_gb:.1f} GB is needed and {free / 1e9:.1f} GB is free.",
-                "Free up some space and press Repair.",
-            )
+    def _check_disk(self, model_bytes: int, installer_bytes: int = 0) -> None:
+        """Models go to the model folder's drive, the installer to the home drive; one drive pays for both."""
+        home = os.path.expanduser("~")
+        models = _existing_parent(_runtime().model_dir())
+        if _volume(models) == _volume(home):
+            needs = [(home, model_bytes + installer_bytes)]
+        else:
+            needs = [(models, model_bytes), (home, installer_bytes)]
+        for path, size_bytes in needs:
+            free = shutil.disk_usage(path).free
+            if size_bytes and free < size_bytes * _DISK_MARGIN:
+                need_gb = size_bytes * _DISK_MARGIN / 1e9
+                raise SetupFailed(
+                    f"There is not enough free disk space. About {need_gb:.1f} GB is needed and {free / 1e9:.1f} GB is free.",
+                    "Free up some space and press Try Again.",
+                )
 
     async def _run(self) -> None:
         self._notes = []
@@ -302,7 +325,7 @@ class AutoSetup:
             self._data["state"] = "done"
             self._log("Setup finished")
         except SetupFailed as e:
-            self._fail(e.message, e.hint)
+            self._fail(e.message, e.hint, e.title)
         except Exception as e:
             # The installer's own errors are already written for the user.
             if type(e).__name__ == "RuntimeInstallError":
@@ -312,11 +335,11 @@ class AutoSetup:
             self._log(traceback.format_exc())
             self._fail("Something unexpected went wrong during setup.", RETRY_HINT + " If it keeps happening, copy the report for support.")
 
-    def _fail(self, message: str, hint: str) -> None:
+    def _fail(self, message: str, hint: str, title: str = "") -> None:
         for s in self._data["steps"]:
             if s["status"] == "running":
                 s["status"] = "failed"
-        self._data["error"] = {"message": redact(message), "hint": hint}
+        self._data["error"] = {"message": redact(message), "hint": hint, "title": title}
         self._data["consent"] = None
         self._data["state"] = "failed"
         self._log(f"Failed: {message}")
@@ -343,13 +366,20 @@ class AutoSetup:
                 self._step("find_agent", "done", f"Found {row['name']}")
                 return {**row, "model": model, "models": models}
         items = await asyncio.to_thread(_scan_this_computer, self._discovery)
+        ri = _runtime()
         for item in items:
             model = _first_chat(item["models"])
             if model:
-                self._step("find_agent", "done", f"Found a model server on this computer (port {item['port']})")
+                base_url = f"http://{item['host']}:{item['port']}/v1"
+                provider = item.get("provider")
+                if not ri.runtime_name(provider) and await asyncio.to_thread(ri.ollama_root, base_url):
+                    provider = "ollama"
+                runtime = ri.runtime_name(provider)
+                where = f"on this computer (port {item['port']})"
+                self._step("find_agent", "done", f"Found {runtime or 'a model server'} {where}")
                 return {
-                    "name": f"This computer (port {item['port']})",
-                    "base_url": f"http://{item['host']}:{item['port']}/v1",
+                    "name": f"{runtime} {where}" if runtime else f"This computer (port {item['port']})",
+                    "base_url": base_url,
                     "api_key": None,
                     "model": model,
                     "models": item["models"],
@@ -382,7 +412,11 @@ class AutoSetup:
         else:
             offer = await asyncio.to_thread(ri.ollama_install_offer)
             if offer is None:
-                raise SetupFailed("Automatic setup cannot install the AI runtime on this computer.", MANUAL_HINT)
+                raise SetupFailed(
+                    "Automatic setup cannot install the AI runtime on this computer.",
+                    f"Install {ri.runtime_name('ollama')} from {ri.RUNTIMES['ollama']['download_page']} and start it. "
+                    f"Then press Try Again and setup finds it by itself. {MANUAL_HINT}",
+                )
             total = offer["size_bytes"] + rec["size_bytes"]
             await self._ask_consent({
                 "kind": "install_runtime",
@@ -392,7 +426,7 @@ class AutoSetup:
                 "license": offer["license"],
                 "cost": offer["cost"],
             })
-            self._check_disk(total)
+            self._check_disk(rec["size_bytes"], offer["size_bytes"])
             self._step("install_components", "running", f"Installing {offer['name']}")
             exe = await asyncio.to_thread(ri.install_ollama, lambda m: self._step("install_components", "running", m))
             base = await asyncio.to_thread(ri.ensure_ollama_running, exe)
@@ -486,6 +520,12 @@ class AutoSetup:
                 copy = next((m for m in names if m.startswith(pick + "-ctx") and (details[m]["num_ctx"] or 0) >= minimum), None)
                 if copy is None:
                     size = ri.agent_context_size(self._hw.get("total_ram_gb") or 0, self._hw.get("gpu_vram_gb") or 0)
+                    taken = ri.context_variant_name(pick, size)
+                    if taken in target["models"]:
+                        # Its context is too short (else it was chosen above), and a copy never overwrites a model.
+                        self._log(f"A model named {taken} already exists with too short a memory, so {pick} was left as it is")
+                        self._notes.append(NOTE_COPY_NAME_TAKEN)
+                        return
                     # Any model that setup did not download in this run is the user's: ask before adding a copy of it.
                     if pick != self._pulled_model and not await self._ask_consent({
                         "kind": "add_model_copy",

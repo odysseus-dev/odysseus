@@ -100,6 +100,14 @@ SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 GALLERY_DIR = os.path.join(DATA_DIR, "gallery")
 GALLERY_UPLOADS_DIR = os.path.join(DATA_DIR, "gallery_uploads")
 MEMORY_VECTORS_DIR = os.path.join(DATA_DIR, "memory_vectors")
+SETUP_LOG_FILE = os.path.join(DATA_DIR, "setup.log")
+# Browser cache of the packaged app (set in launcher.py); a source install keeps its cache under the app root.
+BROWSER_MCP_CACHE_DIR = os.path.join(DATA_DIR, "local", "playwright-mcp-cache")
+
+
+def mcp_stderr_log_file() -> str:
+    """Error log of helper processes; a function so DATA_DIR is read when the log is opened."""
+    return os.path.join(DATA_DIR, "logs", "mcp_stderr.log")
 
 # The only part of DATA_DIR the agent's file tools and subprocesses may touch.
 # Everything else under DATA_DIR is application state (session store, auth

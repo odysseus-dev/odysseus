@@ -60,6 +60,14 @@ def test_setup_js_polls_only_while_running_and_leaves_on_401():
     assert "location.assign('/login')" in _JS
 
 
+def test_problem_view_heading_can_be_replaced():
+    assert "title || 'Something went wrong'" in _JS and "err.title" in _JS
+
+
+def test_page_keeps_checking_after_a_request_got_no_answer():
+    assert _JS.count("if (!err.status) schedulePoll();") == 2
+
+
 def test_ready_view_shows_the_setup_note():
     assert 'id="ready-note"' in _section(_HTML, "view-ready")
     assert "ready-note" in _JS and "textContent" in _JS

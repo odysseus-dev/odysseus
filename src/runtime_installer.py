@@ -31,6 +31,19 @@ DEFAULT_PORT = 11434
 INSTALL_TIMEOUT_S = 600
 START_TIMEOUT_S = 30
 
+# Local model runtimes setup knows. Keys match what ModelDiscovery can report, plus "ollama".
+# install_on: sys.platform values on which setup installs the runtime by itself.
+RUNTIMES = {
+    "ollama": {"name": "Ollama", "install_on": ("win32",), "download_page": "https://ollama.com/download"},
+    "lmstudio": {"name": "LM Studio", "install_on": (), "download_page": "https://lmstudio.ai/download"},
+    "llamacpp": {"name": "llama.cpp", "install_on": (), "download_page": "https://github.com/ggml-org/llama.cpp/releases"},
+}
+
+
+def runtime_name(provider: str | None) -> str | None:
+    return RUNTIMES.get(provider or "", {}).get("name")
+
+
 # (min VRAM GB, min RAM GB, tag, fallback size, license). A row matches on VRAM or RAM.
 # All are official library tags with tool-calling support, Apache 2.0 per the model license layer.
 _MODELS = (
@@ -44,12 +57,21 @@ class RuntimeInstallError(Exception):
     """str(e) is a plain-language message safe to show to a non-technical user."""
 
 
+def _platform() -> str:
+    return sys.platform
+
+
 def _is_windows() -> bool:
-    return sys.platform == "win32"
+    return _platform() == "win32"
 
 
 def _client() -> httpx.Client:
     return httpx.Client(follow_redirects=False, timeout=httpx.Timeout(15.0, read=60.0))
+
+
+def model_dir() -> str:
+    """Where Ollama keeps model files: OLLAMA_MODELS when set, else .ollama/models in the home folder."""
+    return os.environ.get("OLLAMA_MODELS", "").strip() or os.path.join(os.path.expanduser("~"), ".ollama", "models")
 
 
 def find_ollama() -> str | None:
@@ -102,12 +124,14 @@ def _resolve(client: httpx.Client) -> tuple[str, int]:
 
 
 def ollama_install_offer() -> dict | None:
-    if not _is_windows():
+    entry = RUNTIMES["ollama"]
+    if _platform() not in entry["install_on"]:
         return None
     with _client() as c:
         _, total = _resolve(c)
     return {
-        "name": "Ollama",
+        "name": entry["name"],
+        "download_page": entry["download_page"],
         "source_url": INSTALLER_URL,
         "size_bytes": total,
         "license": "MIT (Ollama)",

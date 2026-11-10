@@ -222,9 +222,9 @@ class McpManager:
         if _errlog_file is None:
             try:
                 from src import constants
-                log_dir = os.path.join(constants.DATA_DIR, "logs")
-                os.makedirs(log_dir, exist_ok=True)
-                _errlog_file = open(os.path.join(log_dir, "mcp_stderr.log"), "a", encoding="utf-8")
+                log_file = constants.mcp_stderr_log_file()
+                os.makedirs(os.path.dirname(log_file), exist_ok=True)
+                _errlog_file = open(log_file, "a", encoding="utf-8")
             except OSError:
                 _errlog_file = open(os.devnull, "w")
         return _errlog_file

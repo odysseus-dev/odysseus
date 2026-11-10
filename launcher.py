@@ -241,6 +241,9 @@ if __name__ == "__main__":
     if getattr(sys, 'frozen', False):
         # The packaged app must not download the browser MCP package without the user's consent.
         os.environ.setdefault("ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE", "1")
+        # Its browser cache goes to the data folder: the program folder is removed on uninstall and replaced on upgrade.
+        from src.constants import BROWSER_MCP_CACHE_DIR
+        os.environ.setdefault("ODYSSEUS_BROWSER_MCP_CACHE", BROWSER_MCP_CACHE_DIR)
     # Import the FastAPI app from app.py
     from app import app
 

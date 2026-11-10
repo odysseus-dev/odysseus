@@ -151,7 +151,8 @@ function showConsent(s) {
   showView('consent');
 }
 
-function showProblem(message, hint) {
+function showProblem(message, hint, title) {
+  $('view-problem').querySelector('h1').textContent = title || 'Something went wrong';
   $('problem-message').textContent = message || 'Setup could not finish.';
   $('problem-hint').textContent = hint || '';
   $('problem-hint').hidden = !hint;
@@ -170,7 +171,7 @@ function render(s) {
     showConsent(s);
   } else if (s.state === 'failed') {
     const err = s.error || {};
-    showProblem(err.message, err.hint);
+    showProblem(err.message, err.hint, err.title);
   } else if (s.state === 'done' || s.needed === false) {
     const note = (s.result && s.result.note) || '';
     $('ready-note').textContent = note;
@@ -199,6 +200,8 @@ async function act(fn) {
     render(await fn());
   } catch (err) {
     if (err.status !== 401) showProblem('Setup could not be reached.', 'Check that Odysseus is still running, then try again.');
+    // No answer at all: setup may still be running, so show its real state once the server answers again.
+    if (!err.status) schedulePoll();
   } finally {
     busy = false;
     setButtonsDisabled(false);
@@ -240,6 +243,7 @@ async function init() {
     if (err.status === 401) return;
     if (err.status === 403) showProblem('Only the administrator can set up Odysseus.', 'Sign in as the administrator, then open this page again.');
     else showProblem('Setup could not be checked.', 'Refresh this page to try again.');
+    if (!err.status) schedulePoll();
   }
 }
 
