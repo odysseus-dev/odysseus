@@ -52,6 +52,18 @@ function safeRasterDataUrl(raw) {
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
 }
 
+async function _writeContacts(url, options, failureMessage) {
+  let response;
+  try { response = await fetch(url, options); }
+  catch (_) { throw new Error(failureMessage); }
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.success !== true) {
+    const reason = [data?.error, data?.detail].find(value => typeof value === 'string' && value.trim());
+    throw new Error(reason || failureMessage);
+  }
+  return data;
+}
+
 /* ── Settings shell coordination ──
    Panel activation side effects, the admin handoff, admin-only visibility and
    the public open/close API live in ./settings/shell.js. This coordinator only
@@ -3339,16 +3351,21 @@ async function initUnifiedIntegrations() {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'contacts') {
-            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
+            await _writeContacts('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' }, 'Could not clear contacts');
           }
           else if (type === 'carddav') {
-            await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) });
+            await _writeContacts('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) }, 'Could not remove CardDAV configuration');
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
-        } catch (_) {}
+        } catch (err) {
+          if (type === 'contacts' || type === 'carddav') {
+            uiModule.showError(err?.message || 'Could not remove contacts');
+            return;
+          }
+        }
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
@@ -3737,7 +3754,7 @@ async function initUnifiedIntegrations() {
       const body = { carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
       if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
       try {
-        await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await _writeContacts('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Could not save CardDAV configuration');
         el('uf-carddav-msg').textContent = 'Saved';
         el('uf-carddav-msg').style.color = 'var(--green, #50fa7b)';
         // Refresh both the sub-panel (contacts manager) AND the
@@ -3746,8 +3763,8 @@ async function initUnifiedIntegrations() {
         await _renderContactsManager();
         await renderList();
         notifyIntegrationsChanged();
-      } catch (_) {
-        el('uf-carddav-msg').textContent = 'Failed';
+      } catch (err) {
+        el('uf-carddav-msg').textContent = err?.message || 'Failed';
         el('uf-carddav-msg').style.color = 'var(--red)';
       }
     });
@@ -3767,8 +3784,11 @@ async function initUnifiedIntegrations() {
       // name aren't useful as a contact.
       if (!name && !email) { (name ? el('cm-add-email') : el('cm-add-name')).focus(); return; }
       try {
-        await fetch('/api/contacts/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, phone, address }) });
-      } catch (_) {}
+        await _writeContacts('/api/contacts/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, phone, address }) }, 'Could not add contact');
+      } catch (err) {
+        uiModule.showError(err?.message || 'Could not add contact');
+        return;
+      }
       el('cm-add-name').value = '';
       el('cm-add-email').value = '';
       if (el('cm-add-phone')) el('cm-add-phone').value = '';
@@ -3827,6 +3847,7 @@ async function initUnifiedIntegrations() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
+          if (!r.ok) throw new Error('Import failed');
           const d = await r.json();
           if (d.error) throw new Error(d.error);
           imported += Number(d.imported || 0);
@@ -3952,8 +3973,11 @@ async function initUnifiedIntegrations() {
           address: row.querySelector('.contact-edit-address')?.value.trim() || '',
         };
         try {
-          await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        } catch (_) {}
+          await _writeContacts('/api/contacts/' + encodeURIComponent(uid), { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Could not save contact');
+        } catch (err) {
+          uiModule.showError(err?.message || 'Could not save contact');
+          return;
+        }
         await _renderContactsManager();
       });
       row.querySelector('.contact-del')?.addEventListener('click', async () => {
@@ -3962,8 +3986,11 @@ async function initUnifiedIntegrations() {
           : window.confirm('Delete this contact?');
         if (!ok) return;
         try {
-          await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
-        } catch (_) {}
+          await _writeContacts('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' }, 'Could not delete contact');
+        } catch (err) {
+          uiModule.showError(err?.message || 'Could not delete contact');
+          return;
+        }
         await _renderContactsManager();
       });
     });
