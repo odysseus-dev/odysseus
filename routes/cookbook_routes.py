@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
-from src.constants import COOKBOOK_STATE_FILE
+from src.constants import COOKBOOK_STATE_FILE, COOKBOOK_SSH_CONNECT_TIMEOUT, COOKBOOK_SSH_TEST_TIMEOUT
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -58,7 +58,7 @@ from routes.cookbook_helpers import (
     load_stored_hf_token,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    _diagnose_serve_output, run_ssh_command_async,
+    _diagnose_serve_output, run_ssh_command_async, probe_ssh_platform,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _append_pip_install_runner_lines, _pip_install_command_without_break_system_packages,
     _normalize_llama_cpp_python_cache_types,
@@ -849,19 +849,23 @@ def setup_cookbook_routes() -> APIRouter:
                 host,
                 ssh_port,
                 "echo ok",
-                timeout=8,
-                connect_timeout=5,
+                timeout=COOKBOOK_SSH_TEST_TIMEOUT,
+                connect_timeout=COOKBOOK_SSH_CONNECT_TIMEOUT,
                 strict_host_key_checking=False,
             )
         except asyncio.TimeoutError:
             return {"stdout": "", "stderr": "SSH test timed out", "exit_code": 124}
         except Exception as e:
             return {"stdout": "", "stderr": str(e), "exit_code": -1}
-        return {
+        result = {
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
             "exit_code": code,
         }
+
+        if code == 0 and result["stdout"].strip().startswith("ok"):
+            result["platform"] = await probe_ssh_platform(host, ssh_port, run_ssh_command_async)
+        return result
 
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))

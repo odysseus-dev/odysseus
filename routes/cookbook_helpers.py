@@ -1667,3 +1667,41 @@ async def run_ssh_command_async(
         await proc.communicate()
         raise
     return proc.returncode or 0, stdout, stderr
+
+
+async def probe_ssh_platform(host, ssh_port, run_command) -> str:
+    """Best-effort OS metadata within one bounded budget after SSH succeeds."""
+    import base64
+    import time
+    from src.constants import COOKBOOK_SSH_CONNECT_TIMEOUT, COOKBOOK_SSH_TEST_TIMEOUT
+
+    deadline = time.monotonic() + COOKBOOK_SSH_TEST_TIMEOUT
+
+    async def probe(command):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            code, stdout, _ = await run_command(
+                host, ssh_port, command, timeout=remaining,
+                connect_timeout=min(COOKBOOK_SSH_CONNECT_TIMEOUT, max(1, int(remaining))),
+                strict_host_key_checking=False,
+            )
+        except Exception:
+            return None
+        if code != 0:
+            return None
+        return stdout.decode("utf-8", errors="replace").strip().lower()
+
+    system = await probe("uname -s")
+    if system == "darwin":
+        return "darwin"
+    if system == "linux":
+        # Android reports Linux too; prove which supported platform it is.
+        kind = await probe("test -d /data/data/com.termux && echo termux || echo linux")
+        return kind if kind in {"linux", "termux"} else ""
+    # EncodedCommand works through either cmd.exe or PowerShell OpenSSH shells.
+    script = "if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) { Write-Output windows }"
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    windows = await probe("powershell.exe -NoProfile -NonInteractive -EncodedCommand " + encoded)
+    return "windows" if windows == "windows" else ""

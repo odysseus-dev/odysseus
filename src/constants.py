@@ -133,6 +133,8 @@ WEB_FETCH_HARD_MAX_BYTES = 20_000_000   # absolute ceiling, even with override (
 # API Configuration
 MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20
+COOKBOOK_SSH_CONNECT_TIMEOUT = 5
+COOKBOOK_SSH_TEST_TIMEOUT = 8
 OPENAI_COMPAT_PATH = "/v1/chat/completions"
 
 # Outbound UA for web_fetch / web_search scraping; common desktop UA so pages serve normal HTML.
