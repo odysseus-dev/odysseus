@@ -1,3 +1,5 @@
+> **Fork notice.** This branch belongs to a fork of [odysseus-dev/odysseus](https://github.com/odysseus-dev/odysseus). Odysseus is the work of its original authors and contributors and is licensed under AGPL-3.0-or-later (see [LICENSE](LICENSE)). The fork adds a one-click Windows installer and an automatic first-run setup. These changes were made in November 2026 and are described in the [setup guide](website/setup.md#windows-installer). They are not part of the original project.
+
 <p align="center">
   <img src="assets/branding/odysseus-wordmark.png" alt="Odysseus" width="238">
 </p>
