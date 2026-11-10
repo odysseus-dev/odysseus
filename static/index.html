@@ -71,7 +71,7 @@
         // Apply advanced overrides if present
         if (c.advanced) {
           var a = c.advanced;
-          var advMap = {userBubbleBg:'--user-bubble-bg',aiBubbleBg:'--ai-bubble-bg',bubbleBorder:'--bubble-border',sidebarBg:'--sidebar-bg',sectionAccent:'--section-accent',brandColor:'--brand-color',inputBg:'--input-bg',inputBorder:'--input-border',sendBtnBg:'--send-btn-bg',sendBtnHover:'--send-btn-hover',codeBg:'--code-bg',codeFg:'--code-fg',toggleBg:'--toggle-bg',toggleActive:'--toggle-active',accentPrimary:'--accent-primary',accentError:'--accent-error'};
+          var advMap = {userBubbleBg:'--user-bubble-bg',aiBubbleBg:'--ai-bubble-bg',bubbleBorder:'--bubble-border',modelNameColor:'--model-name-color',sidebarBg:'--sidebar-bg',sectionAccent:'--section-accent',brandColor:'--brand-color',inputBg:'--input-bg',inputBorder:'--input-border',sendBtnBg:'--send-btn-bg',sendBtnHover:'--send-btn-hover',codeBg:'--code-bg',codeFg:'--code-fg',toggleBg:'--toggle-bg',toggleActive:'--toggle-active',accentPrimary:'--accent-primary',accentError:'--accent-error'};
           for (var k in advMap) { if (a[k]) s.setProperty(advMap[k], a[k]); }
         }
       }
@@ -579,6 +579,7 @@
             <div class="color-row"><label>User Chat Bubble</label><input type="color" id="adv-userBubbleBg"><button class="color-reset-btn" data-reset-adv="userBubbleBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
             <div class="color-row"><label>AI Chat Bubble</label><input type="color" id="adv-aiBubbleBg"><button class="color-reset-btn" data-reset-adv="aiBubbleBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
             <div class="color-row"><label>Border Chat Bubble</label><input type="color" id="adv-bubbleBorder"><button class="color-reset-btn" data-reset-adv="bubbleBorder" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Model Name</label><input type="color" id="adv-modelNameColor"><button class="color-reset-btn" data-reset-adv="modelNameColor" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
@@ -602,6 +603,29 @@
           <div class="theme-custom">
             <div class="color-row"><label>Code Bg</label><input type="color" id="adv-codeBg"><button class="color-reset-btn" data-reset-adv="codeBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
             <div class="color-row"><label>Code Text</label><input type="color" id="adv-codeFg"><button class="color-reset-btn" data-reset-adv="codeFg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+          </div>
+        </div>
+        <div class="theme-adv-group">
+          <div class="theme-adv-group-label">Markdown</div>
+          <div class="theme-custom">
+            <div class="color-row"><label>Heading 1</label><input type="color" id="adv-markdownHeading1"><button class="color-reset-btn" data-reset-adv="markdownHeading1" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Heading 2</label><input type="color" id="adv-markdownHeading2"><button class="color-reset-btn" data-reset-adv="markdownHeading2" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Heading 3</label><input type="color" id="adv-markdownHeading3"><button class="color-reset-btn" data-reset-adv="markdownHeading3" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Heading 4</label><input type="color" id="adv-markdownHeading4"><button class="color-reset-btn" data-reset-adv="markdownHeading4" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Heading 5</label><input type="color" id="adv-markdownHeading5"><button class="color-reset-btn" data-reset-adv="markdownHeading5" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Heading 6</label><input type="color" id="adv-markdownHeading6"><button class="color-reset-btn" data-reset-adv="markdownHeading6" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Bold</label><input type="color" id="adv-markdownBold"><button class="color-reset-btn" data-reset-adv="markdownBold" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Italic</label><input type="color" id="adv-markdownItalic"><button class="color-reset-btn" data-reset-adv="markdownItalic" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Bold + Italic</label><input type="color" id="adv-markdownBoldItalic"><button class="color-reset-btn" data-reset-adv="markdownBoldItalic" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Strikethrough</label><input type="color" id="adv-markdownStrikethrough"><button class="color-reset-btn" data-reset-adv="markdownStrikethrough" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Inline Code</label><input type="color" id="adv-markdownInlineCode"><button class="color-reset-btn" data-reset-adv="markdownInlineCode" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Blockquote Text</label><input type="color" id="adv-markdownQuoteText"><button class="color-reset-btn" data-reset-adv="markdownQuoteText" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Blockquote Border</label><input type="color" id="adv-markdownQuoteBorder"><button class="color-reset-btn" data-reset-adv="markdownQuoteBorder" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Horizontal Rule</label><input type="color" id="adv-markdownRule"><button class="color-reset-btn" data-reset-adv="markdownRule" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>List Marker</label><input type="color" id="adv-markdownListMarker"><button class="color-reset-btn" data-reset-adv="markdownListMarker" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Link</label><input type="color" id="adv-markdownLink"><button class="color-reset-btn" data-reset-adv="markdownLink" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Link Underline</label><input type="color" id="adv-markdownLinkUnderline"><button class="color-reset-btn" data-reset-adv="markdownLinkUnderline" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Table Header</label><input type="color" id="adv-markdownTableHeader"><button class="color-reset-btn" data-reset-adv="markdownTableHeader" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
