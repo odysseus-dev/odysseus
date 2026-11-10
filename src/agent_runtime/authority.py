@@ -488,6 +488,11 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         tools = {canonical_tool(operation.tool)}
     else:
         operation = None
+    if "send_email" in {canonical_tool(n) for n in tools}:
+        # A non-immediate send is executed as an unsent draft for review (see
+        # resolve_turn_contract). The draft is strictly weaker than the
+        # admitted send; the effective tool policy below still applies.
+        tools.add("draft_email")
     tools.update(_trusted_local_mcp_request_tools(request_text, intent))
     grants = []
     for name in sorted(tools | {"ask_user", "update_plan"}):
