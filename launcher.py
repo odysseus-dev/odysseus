@@ -239,11 +239,12 @@ def open_browser(url):
 if __name__ == "__main__":
     import uvicorn
     if getattr(sys, 'frozen', False):
-        # The packaged app must not download the browser MCP package without the user's consent.
-        os.environ.setdefault("ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE", "1")
-        # Its browser cache goes to the data folder: the program folder is removed on uninstall and replaced on upgrade.
+        # The packaged app must not download the browser MCP package without the user's consent, and its
+        # browser cache goes to the data folder: the program folder is removed on uninstall and replaced on upgrade.
         from src.constants import BROWSER_MCP_CACHE_DIR
-        os.environ.setdefault("ODYSSEUS_BROWSER_MCP_CACHE", BROWSER_MCP_CACHE_DIR)
+        packaged = {"ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE": "1", "ODYSSEUS_BROWSER_MCP_CACHE": BROWSER_MCP_CACHE_DIR}
+        # Written, not read: the configuration reference quotes the defaults of the code that reads these.
+        os.environ.update({name: value for name, value in packaged.items() if name not in os.environ})
     # Import the FastAPI app from app.py
     from app import app
 

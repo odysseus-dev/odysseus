@@ -51,7 +51,7 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
-| `ODYSSEUS_DATA_DIR` | `get_default_data_dir()` | `src/constants.py` (+1 more) | Root directory for every persisted file. Prefer this over the per-path overrides; the rest of `src/constants.py` derives from it. |
+| `ODYSSEUS_DATA_DIR` | `get_default_data_dir()` | `src/constants.py` (+3 more) | Root directory for every persisted file. Prefer this over the per-path overrides; the rest of `src/constants.py` derives from it. |
 | `ODYSSEUS_MAIL_ATTACHMENTS_DIR` | `os.path.join(DATA_DIR, 'mail-attachments')` | `src/constants.py` | Dedicated override for the mail attachment store, which otherwise lives under the data directory. |
 
 ### Model routing and providers
@@ -85,9 +85,9 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 |---|---|---|---|
 | `ODYSSEUS_BROWSER_EXECUTABLE` | `''` | `src/builtin_mcp.py` | Absolute path to the Chrome or Chromium binary. Empty searches the usual names, then lets Playwright MCP pick its own browser. |
 | `ODYSSEUS_BROWSER_ISOLATED` | `'1'` | `src/builtin_mcp.py` | Security-relevant. On by default, adding `--isolated` so each browser session starts clean. Set 0, false or no to keep a persistent profile. |
-| `ODYSSEUS_BROWSER_MCP_CACHE` | `os.path.join(base_dir, 'data', 'local', 'playwright-mcp-cache')` | `src/builtin_mcp.py` | Cache directory handed to the browser MCP server, so its npm download survives a container rebuild. |
+| `ODYSSEUS_BROWSER_MCP_CACHE` | `os.path.join(base_dir, 'data', 'local', 'playwright-mcp-cache')` | `src/builtin_mcp.py` | Cache directory handed to the browser MCP server, so its npm download survives a container rebuild. The packaged Windows app sets it to a folder in the data directory unless it is already set. |
 | `ODYSSEUS_BROWSER_MCP_CALL_TIMEOUT_S` | `'90'` | `src/mcp_manager.py` | Upper bound in seconds for one browser MCP tool call. A call that exceeds it fails without being retried. |
-| `ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE` | `''` | `src/builtin_mcp.py` | Truthy refuses to start the browser MCP server unless its npm package is already in the npx cache, instead of installing it at startup. |
+| `ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE` | `''` | `src/builtin_mcp.py` | Truthy refuses to start the browser MCP server unless its npm package is already in the npx cache, instead of installing it at startup. The packaged Windows app sets it to 1 unless it is already set. |
 | `ODYSSEUS_BROWSER_NAMESPACE` | `'odysseus-ui'` | `src/agent_tools/web_tools.py` | Namespace for the detached agent-browser daemon's pid files, so two runtimes on one machine do not terminate each other's browsers. |
 | `ODYSSEUS_BROWSER_NO_SANDBOX` | `'1'` | `src/builtin_mcp.py` | Security-relevant. On by default, adding `--no-sandbox` because the Docker image cannot use the Chromium sandbox. Set 0, false or no to keep it. |
 | `ODYSSEUS_BROWSER_SCREENSHOT_DIR` | *unset* | `src/agent_tools/web_tools.py` | Where private-browser screenshots are written. Falls back to the container path, then the system temp directory. |

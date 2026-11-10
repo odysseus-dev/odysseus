@@ -571,7 +571,8 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
     "ODYSSEUS_BROWSER_MCP_CACHE": (
         "Browser automation", USER,
         "Cache directory handed to the browser MCP server, so its npm download "
-        "survives a container rebuild.",
+        "survives a container rebuild. The packaged Windows app sets it to a folder "
+        "in the data directory unless it is already set.",
     ),
     "ODYSSEUS_BROWSER_MCP_CALL_TIMEOUT_S": (
         "Browser automation", USER,
@@ -581,7 +582,8 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
     "ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE": (
         "Browser automation", USER,
         "Truthy refuses to start the browser MCP server unless its npm package is "
-        "already in the npx cache, instead of installing it at startup.",
+        "already in the npx cache, instead of installing it at startup. The packaged "
+        "Windows app sets it to 1 unless it is already set.",
     ),
     "ODYSSEUS_BROWSER_NAMESPACE": (
         "Browser automation", USER,
