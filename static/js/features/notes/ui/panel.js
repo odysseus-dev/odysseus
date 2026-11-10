@@ -1,6 +1,8 @@
 /** Panel mounting, keyboard handlers, minimization and note navigation. */
 export function createPanel({
   wireToolbar,
+  syncArchiveView,
+  uiModule,
   wireSelectionActions,
   _wireNotesWindow,
   _restoreNotesSidebarDock,
@@ -30,7 +32,12 @@ export function createPanel({
   state,
   workflows
 }) {
+  let noteNavigation = 0;
+  let resolvingNote = 0;
+
   function _forceCloseNotesPanel() {
+    noteNavigation++;
+    resolvingNote = 0;
     app.setOpen(false);
     app.setEditingId(null);
     try { _commitOpenInPlaceEditor(); } catch {}
@@ -102,6 +109,10 @@ export function createPanel({
   }
 
   function openPanel() {
+    if (resolvingNote) {
+      noteNavigation++;
+      resolvingNote = 0;
+    }
     if (state.open) {
       _bringNotesToFront();
       return;
@@ -319,6 +330,8 @@ export function createPanel({
   }
 
   function closePanel(direction) {
+    noteNavigation++;
+    resolvingNote = 0;
     if (!state.open) return;
     app.setOpen(false);
     app.setEditingId(null);
@@ -385,8 +398,26 @@ export function createPanel({
   function isPanelOpen() { return state.open; }
 
   async function openNote(noteId) {
+    const navigation = ++noteNavigation;
+    resolvingNote = noteId ? navigation : 0;
+    let linkedNote = null;
+    if (noteId) {
+      try {
+        linkedNote = await workflows.resolveLinkedNote(noteId);
+      } catch (_) {
+        if (navigation === noteNavigation) uiModule.showError('Could not open note');
+        return;
+      } finally {
+        if (resolvingNote === navigation) resolvingNote = 0;
+      }
+      if (navigation !== noteNavigation) return;
+      if (!linkedNote) {
+        uiModule.showError('Note not found');
+        return;
+      }
+    }
     const wasOpen = !!(isPanelOpen && isPanelOpen());
-    app.setShowingArchived(false);
+    app.setShowingArchived(!!linkedNote?.archived);
     app.setActiveLabel(null);
     app.setActiveFilter(null);
     app.setSearchQuery('');
@@ -397,19 +428,18 @@ export function createPanel({
       const searchEl = document.getElementById('notes-search');
       if (searchEl) searchEl.value = '';
       const pane = document.getElementById('notes-pane');
-      if (pane) pane.classList.remove('notes-pane-archive');
-      const archiveBtn = document.getElementById('notes-archive-toggle');
-      if (archiveBtn) archiveBtn.classList.remove('active');
+      if (pane) syncArchiveView(pane);
       await _fetchNotes();
+      if (!state.open) return;
       _renderNotes();
     }
     // openPanel() kicks off _fetchNotes() asynchronously, so the cards for
     // newly-created notes may not be in the DOM yet. Poll until the card exists.
-    if (!noteId) return;
+    if (!linkedNote || navigation !== noteNavigation) return;
+    const targetId = linkedNote.id;
     let tries = 0;
     const findAndFlash = () => {
-      const card = document.querySelector(`.note-card[data-note-id="${noteId}"]`)
-        || document.querySelector(`.note-card[data-note-id^="${noteId.slice(0, 8)}"]`);
+      const card = document.querySelector(`.note-card[data-note-id="${CSS.escape(targetId)}"]`);
       if (card) {
         _smoothScrollToNoteCard(card);
         card.classList.add('note-card-flash');
@@ -419,6 +449,7 @@ export function createPanel({
       return false;
     };
     const tryNext = () => {
+      if (navigation !== noteNavigation) return;
       if (findAndFlash()) return;
       if (++tries < 20) setTimeout(tryNext, 200);
     };

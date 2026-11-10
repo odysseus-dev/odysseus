@@ -210,6 +210,8 @@ const toolbar = createToolbar({
 });
 const panel = createPanel({
   wireToolbar: toolbar.wireToolbar,
+  syncArchiveView: toolbar.syncArchiveView,
+  uiModule,
   wireSelectionActions: () => selection.wireSelectionActions(),
   _wireNotesWindow: windowLayout._wireNotesWindow,
   _restoreNotesSidebarDock: windowLayout._restoreNotesSidebarDock,
