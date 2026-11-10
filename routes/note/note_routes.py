@@ -14,6 +14,7 @@ from core.middleware import INTERNAL_TOOL_USER
 from src.auth_helpers import require_user
 from src.constants import DATA_DIR
 from src.upload_handler import reserve_upload_references
+from src.note_rules import note_is_fully_done
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -895,6 +896,12 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                     raise HTTPException(404, "Note not found")
                 if caller is not None and note.owner != caller:
                     raise HTTPException(404, "Note not found")
+                if note_is_fully_done(getattr(note, "note_type", "note"), note.items):
+                    return {
+                        "skipped": True, "reason": "completed", "synthesis": None,
+                        "browser_sent": False, "email_sent": False,
+                        "ntfy_sent": False, "webhook_sent": False,
+                    }
                 title, note_body = _reminder_text_from_note(note)
             finally:
                 db.close()
