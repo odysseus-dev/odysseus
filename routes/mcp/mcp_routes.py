@@ -5,6 +5,7 @@ import os
 import uuid
 import urllib.parse
 import html
+import secrets
 from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -12,7 +13,7 @@ import logging
 import httpx
 
 from core.database import McpServer, SessionLocal
-from core.middleware import require_admin
+from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN, require_admin
 from src.constants import DATA_DIR, MCP_OAUTH_DIR
 from src.mcp_manager import McpManager
 
@@ -424,6 +425,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
         Expects JSON body: {"disabled": ["tool_name_1", "tool_name_2"]}
         """
         require_admin(request)
+        internal_token = request.headers.get(INTERNAL_TOOL_HEADER)
+        if internal_token and secrets.compare_digest(internal_token, INTERNAL_TOOL_TOKEN):
+            # Same boundary as POST /api/tools: an agent turn must not be able
+            # to re-enable MCP tools an admin switched off.
+            raise HTTPException(403, "Change MCP tool policy in Settings > Integrations, not from chat")
         db = SessionLocal()
         try:
             srv = db.query(McpServer).filter(McpServer.id == server_id).first()

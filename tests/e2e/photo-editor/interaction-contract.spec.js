@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { openBlankEditor, editorState, dragOnCanvas } = require('./helpers');
+const { chooseFilterAction, dragOnCanvas, editorState, openBlankEditor, waitForDraft } = require('./helpers.js');
 
 test.beforeEach(async ({ page }) => {
   // The isolated editor server has no logged-in notification owner.
@@ -35,6 +35,96 @@ test('top toolbar stays on one row and its menus remain clickable at narrow widt
   }
 });
 
+test('save button icon follows the draft status through an edit and autosave', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 });
+  // Autosave can settle within a frame, so record the rendered icon at every
+  // status change instead of racing it with polling assertions.
+  await page.evaluate(() => {
+    const status = document.getElementById('ge-draft-status');
+    const visibleIcon = () => [...document.querySelectorAll('#ge-save-menu-btn .ge-save-state-icon')]
+      .filter(icon => icon.getBoundingClientRect().width > 0)
+      .map(icon => (icon.classList.contains('ge-save-state-saved') ? 'saved' : 'dirty'));
+    window.__saveStates = [];
+    new MutationObserver(() => window.__saveStates.push({ text: status.textContent, icons: visibleIcon() }))
+      .observe(status, { childList: true, characterData: true, subtree: true });
+  });
+  await page.keyboard.press('b');
+  await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.7, y: 0.7 });
+  await waitForDraft(page);
+  await expect(page.locator('#ge-draft-status')).toHaveText('Saved');
+  const states = await page.evaluate(() => window.__saveStates);
+  expect(states.some(entry => entry.text === 'Unsaved')).toBe(true);
+  for (const entry of states) {
+    expect(entry.icons).toEqual([entry.text === 'Saved' ? 'saved' : 'dirty']);
+  }
+});
+
+test('save-state representations cover all draft states without error normalization', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 });
+  await waitForDraft(page);
+
+  const cases = [
+    { label: 'Unsaved', state: 'dirty', expectedText: 'Unsaved', expectedState: 'dirty', iconClass: 'ge-save-state-dirty', isError: false },
+    { label: 'Saving soon…', state: 'pending', expectedText: 'Saving soon…', expectedState: 'pending', iconClass: 'ge-save-state-dirty', isError: false },
+    { label: 'Saving…', state: 'saving', expectedText: 'Saving…', expectedState: 'saving', iconClass: 'ge-save-state-dirty', isError: false },
+    { label: 'Saved', state: 'saved', expectedText: 'Saved', expectedState: 'saved', iconClass: 'ge-save-state-saved', isError: false },
+    { label: 'Save failed', state: 'error', expectedText: 'Save failed', expectedState: 'error', iconClass: 'ge-save-state-error', isError: true },
+    { label: 'Save paused', state: 'paused', expectedText: 'Save paused', expectedState: 'paused', iconClass: 'ge-save-state-error', isError: true },
+    { label: 'Save failed: network offline', state: '', expectedText: 'Save failed: network offline', expectedState: 'error', iconClass: 'ge-save-state-error', isError: true },
+  ];
+
+  for (const c of cases) {
+    await page.evaluate(({ label, state }) => {
+      window.__geSetDraftStatus(label, state);
+    }, c);
+
+    const statusEl = page.locator('#ge-draft-status');
+    const saveBtn = page.locator('#ge-save-menu-btn');
+    await expect(statusEl).toHaveText(c.expectedText);
+    await expect(statusEl).toHaveAttribute('data-state', c.expectedState);
+
+    const visibleIcon = await page.evaluate(() => {
+      const icons = [...document.querySelectorAll('#ge-save-menu-btn .ge-save-state-icon')];
+      const visible = icons.filter(i => !i.hasAttribute('hidden'));
+      return visible.map(i => i.className.baseVal || i.className);
+    });
+    expect(visibleIcon.length).toBe(1);
+    expect(visibleIcon[0]).toContain(c.iconClass);
+
+    if (c.isError) {
+      await expect(saveBtn).toHaveAttribute('aria-label', new RegExp(`Draft autosave failed: ${c.expectedText}`));
+    } else {
+      await expect(saveBtn).toHaveAttribute('aria-label', `Draft status: ${c.expectedText}`);
+    }
+  }
+});
+
+test('autosave network failure transitions to error state and shows failure indicator', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 });
+  await page.route(/\/api\/editor-drafts/, route => route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ detail: 'Database error' }),
+  }));
+
+  await page.keyboard.press('b');
+  await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.7, y: 0.7 });
+
+  const statusEl = page.locator('#ge-draft-status');
+  await expect(statusEl).toHaveText('Save failed', { timeout: 10_000 });
+  await expect(statusEl).toHaveAttribute('data-state', 'error');
+
+  const saveBtn = page.locator('#ge-save-menu-btn');
+  await expect(saveBtn).toHaveAttribute('aria-label', /Draft autosave failed/);
+
+  const visibleIcons = await page.evaluate(() => {
+    const icons = [...document.querySelectorAll('#ge-save-menu-btn .ge-save-state-icon')];
+    return icons.filter(i => !i.hasAttribute('hidden')).map(i => i.className.baseVal || i.className);
+  });
+  expect(visibleIcons).toHaveLength(1);
+  expect(visibleIcons[0]).toContain('ge-save-state-error');
+});
+
 test('committed paint refreshes the layer thumbnail and flashes only the edited row', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 });
   const activeId = (await editorState(page)).activeLayerId;
@@ -55,8 +145,7 @@ test('filter Escape restores pixels and preserves redo history', async ({ page }
   await dragOnCanvas(page, { x: 0.7, y: 0.2 }, { x: 0.2, y: 0.7 });
   await page.keyboard.press('Control+z');
   const before = await editorState(page);
-  await page.locator('#ge-filter-menu-btn').click();
-  await page.locator('[data-filter-action="blur-gaussian"]').click();
+  await chooseFilterAction(page, 'blur-gaussian');
   await expect(page.locator('.ge-filter-modal')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('.ge-filter-modal')).toHaveCount(0);
@@ -75,7 +164,10 @@ test('focused fields own undo, selection and clipboard without changing layers',
   await input.fill('Editable text');
   await input.press('Control+Enter');
   // A tool's ordinary text input must also retain native clipboard ownership.
+  // Frame width lives in the text options' collapsed "More" section.
+  await page.locator('#ge-text-more-toggle').click();
   await page.locator('#ge-text-frame-width').focus();
+  await expect(page.locator('#ge-text-frame-width')).toBeFocused();
   const before = await editorState(page);
   await page.keyboard.press('Control+z');
   await page.keyboard.press('Control+j');
@@ -246,4 +338,77 @@ test('switching away from a held brush ends one stroke and desktop reselect keep
   expect((await editorState(page)).undo).toBe(before.undo + 1);
   await page.keyboard.press('Control+z');
   expect((await editorState(page)).layers).toEqual(before.layers);
+});
+
+test('concurrent edits during in-flight save preserve dirty unsaved status and revision sequence', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 });
+  await waitForDraft(page);
+
+  let delayedRouteResolve = null;
+  const delayedRoutePromise = new Promise(resolve => { delayedRouteResolve = resolve; });
+
+  let saveCallCount = 0;
+  await page.route(/\/api\/editor-drafts/, async route => {
+    saveCallCount += 1;
+    if (saveCallCount === 1) {
+      await delayedRoutePromise;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: 'concurrent-draft-1', name: 'Untitled' }),
+    });
+  });
+
+  // Edit 1
+  await page.keyboard.press('b');
+  await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.4, y: 0.4 });
+
+  // Wait until save is in flight
+  await expect(page.locator('#ge-draft-status')).toHaveText('Saving…', { timeout: 10_000 });
+
+  // Edit 2 while save 1 is in flight
+  await dragOnCanvas(page, { x: 0.5, y: 0.5 }, { x: 0.7, y: 0.7 });
+
+  const revsDuringFlight = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    return {
+      docRev: state.documentRevision,
+      persistingRev: state.persistingRevision,
+      dirty: state.persistDirty,
+    };
+  });
+  expect(revsDuringFlight.docRev).toBeGreaterThan(revsDuringFlight.persistingRev);
+  expect(revsDuringFlight.dirty).toBe(true);
+
+  // Now let save 1 complete
+  delayedRouteResolve();
+
+  // Wait for the chained second save to complete
+  await expect.poll(async () => {
+    return page.evaluate(async () => {
+      const { state } = await import('/static/js/editor/state.js');
+      return state.savedRevision >= state.documentRevision && !state.persistDirty;
+    });
+  }, { timeout: 15_000 }).toBe(true);
+
+  await expect(page.locator('#ge-draft-status')).toHaveText('Saved');
+});
+
+test('failed draft save retains unsaved dirty status and failure indicator', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 });
+  await waitForDraft(page);
+
+  await page.route(/\/api\/editor-drafts/, route => route.abort('failed'));
+
+  await page.keyboard.press('b');
+  await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.4, y: 0.4 });
+
+  await expect(page.locator('#ge-draft-status')).toHaveText('Save failed', { timeout: 10_000 });
+
+  const dirtyAfterFailure = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    return state.persistDirty;
+  });
+  expect(dirtyAfterFailure).toBe(true);
 });

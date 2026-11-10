@@ -189,7 +189,7 @@ def bare_module_stubs():
     test modules install them on purpose.
     """
     found = set()
-    for name, mod in list(sys.modules.items()):
+    for name, mod in sys.modules.copy().items():
         if not name.startswith(_GUARDED_PREFIXES):
             continue
         if type(mod) is not types.ModuleType:

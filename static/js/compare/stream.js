@@ -1,5 +1,6 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
+import { consumeCompareEvents } from './sse.js';
 import { addFinishBadge } from './vote.js?v=20260828resendcaldrag1';
 import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260914metricssummary1';
 import markdownModule from '../markdown.js';
@@ -472,25 +473,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      _resetIdleTimeout();  // any chunk = stream is alive
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
-        if (data === '[DONE]') break;
+    await consumeCompareEvents(response,
+      (json) => {
         try {
-          const json = JSON.parse(data);
           if (json.type === 'metrics') {
             metrics = json.data;
 
@@ -672,7 +657,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             if (hist) hist.scrollTop = hist.scrollHeight;
           } else if (json.delta) {
             // Skip text deltas if we already rendered an image
-            if (aiMsgEl._imageData) continue;
+            if (aiMsgEl._imageData) return;
             // Capture TTFT on very first text delta
             if (!accumulated && !_ttft) _ttft = performance.now() - _timerStart;
             // On first delta, destroy spinner and prepare text area
@@ -701,8 +686,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             _scheduleLiveRender(target);
           }
         } catch (e) { console.warn('Compare stream render error:', e); }
-      }
-    }
+      }, _resetIdleTimeout);
 
     streamOk = true;
     // Destroy any remaining spinner
@@ -900,9 +884,15 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
     } else {
       console.error('Compare stream error:', error);
-      aiBody.innerHTML = '<span style="color:var(--color-error);">Error: ' + escapeHtml(error.message) + '</span>';
+      awaitingChoice = false;
+      const message = state._blindMode ? 'Model request failed. Try again.' : error.message;
+      aiBody.innerHTML = '<span style="color:var(--color-error);">Error: ' + escapeHtml(message) + '</span>';
     }
   } finally {
+    if (aiMsgEl._spinner) {
+      aiMsgEl._spinner.destroy();
+      aiMsgEl._spinner = null;
+    }
     clearTimeout(timeoutId);
     _timerDone = true;
     cancelAnimationFrame(_rafId);

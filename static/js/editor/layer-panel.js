@@ -110,6 +110,88 @@ export function createLayerPanelRenderer(deps) {
     return Date.now() < (window.__geSuppressLayerTapUntil || 0);
   }
 
+  // Photoshop lets you drag a layer effect onto another layer to copy it.
+  // Rebuild the effect with a fresh id and its own mask canvas so the two
+  // layers never share mutable pixels.
+  function cloneEffectForCopy(effect) {
+    const copy = normalizeEffect({
+      ...effect,
+      id: `effect-${Math.random().toString(36).slice(2, 9)}`,
+      mask: effect.mask
+        ? { ...effect.mask, id: `effect-mask-${Math.random().toString(36).slice(2, 9)}` }
+        : null,
+    });
+    if (copy.mask && effect.mask?.canvas) {
+      const canvas = document.createElement('canvas');
+      canvas.width = effect.mask.canvas.width;
+      canvas.height = effect.mask.canvas.height;
+      canvas.getContext('2d').drawImage(effect.mask.canvas, 0, 0);
+      copy.mask.canvas = canvas;
+      copy.mask.ctx = canvas.getContext('2d');
+      copy.mask.canvasW = canvas.width;
+      copy.mask.canvasH = canvas.height;
+    }
+    return copy;
+  }
+
+  // Drag an effect sub-row onto any layer or group row to copy that effect.
+  // Pointer events (not HTML5 DnD) keep the existing click-to-edit behaviour.
+  function wireEffectDrag(sub, owner, effect) {
+    sub.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.pointerType === 'touch') return;
+      if (event.target.closest('button, input, .ge-layer-btn, .ge-layer-opacity')) return;
+      if (shouldIgnoreLayerTap()) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let ghost = null;
+      let targetRow = null;
+      const highlight = (row) => {
+        if (targetRow && targetRow !== row) targetRow.classList.remove('is-effect-drop-target');
+        targetRow = row || null;
+        targetRow?.classList.add('is-effect-drop-target');
+      };
+      const move = (ev) => {
+        if (!ghost) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
+          ghost = document.createElement('div');
+          ghost.className = 'ge-effect-drag-ghost';
+          ghost.textContent = effectLabel(effect.type);
+          document.body.appendChild(ghost);
+          sub.classList.add('is-effect-dragging');
+          // A drop is not a click on the effect name.
+          window.__geSuppressLayerTapUntil = Date.now() + 400;
+        }
+        ghost.style.left = `${ev.clientX + 12}px`;
+        ghost.style.top = `${ev.clientY + 12}px`;
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+        highlight(hit?.closest?.('.ge-layer-item[data-layer-id], .ge-layer-group-row[data-group-id]') || null);
+      };
+      const up = () => {
+        document.removeEventListener('pointermove', move, true);
+        document.removeEventListener('pointerup', up, true);
+        document.removeEventListener('pointercancel', up, true);
+        const row = targetRow;
+        highlight(null);
+        ghost?.remove();
+        sub.classList.remove('is-effect-dragging');
+        if (!ghost || !row) return;
+        const layer = row.dataset.layerId
+          ? state.layers.find(item => item.id === row.dataset.layerId)
+          : (state.layerGroups || []).find(item => item.id === row.dataset.groupId);
+        if (!layer || layer === owner) return;
+        saveState(`Copy ${effectLabel(effect.type)}`);
+        if (!Array.isArray(layer.effects)) layer.effects = [];
+        layer.effects.push(cloneEffectForCopy(effect));
+        composite();
+        render();
+        uiModule?.showToast?.(`${effectLabel(effect.type)} copied to ${layer.name}`);
+      };
+      document.addEventListener('pointermove', move, true);
+      document.addEventListener('pointerup', up, true);
+      document.addEventListener('pointercancel', up, true);
+    });
+  }
+
   function rowTargets(layer) {
     const selected = selectedLayers(state);
     return selected.length > 1 && selected.some(item => item.id === layer.id)
@@ -506,7 +588,7 @@ export function createLayerPanelRenderer(deps) {
 
   async function deleteLayers(layers) {
     const targets = layers.filter(layer => state.layers.includes(layer));
-    if (!targets.length || targets.length >= state.layers.length) return false;
+    if (!targets.length) return false;
     if (targets.some(layer => layer.isBase) && uiModule?.styledConfirm) {
       const ok = await uiModule.styledConfirm(
         `Delete ${targets.length === 1 ? 'the original photo layer' : `${targets.length} selected layers, including the original`}? Ctrl+Z brings ${targets.length === 1 ? 'it' : 'them'} back.`,
@@ -521,8 +603,10 @@ export function createLayerPanelRenderer(deps) {
     state.layers = state.layers.filter(layer => !ids.has(layer.id));
     for (const id of ids) state.layerOffsets.delete(id);
     normalizeLayerClipping(state);
+    // Deleting every layer is allowed — the document becomes an empty canvas.
     const fallback = state.layers[state.layers.length - 1];
-    selectOnlyLayer(state, fallback.id);
+    if (fallback) selectOnlyLayer(state, fallback.id);
+    else { state.activeLayerId = null; state.selectedLayerIds = []; state.activeGroupId = null; }
     state.maskCanvas = null;
     state.maskCtx = null;
     composite();
@@ -912,7 +996,7 @@ export function createLayerPanelRenderer(deps) {
       effectName.className = 'ge-layer-name ge-adj-sub-name';
       effectName.innerHTML = '<span class="ge-adj-sub-icon">◌</span><span></span>';
       effectName.lastElementChild.textContent = effectLabel(effect.type);
-      effectName.title = 'Edit group effect';
+      effectName.title = 'Edit group effect (drag onto another layer to copy)';
       effectName.addEventListener('click', event => {
         event.stopPropagation();
         editRetainedEffect?.(group, effect, effectName);
@@ -972,6 +1056,7 @@ export function createLayerPanelRenderer(deps) {
         render();
       });
       effectControls.appendChild(remove);
+      wireEffectDrag(sub, group, effect);
       sub.append(visibility, effectName, effectOpacity, effectControls);
       list.appendChild(sub);
     }
@@ -1089,6 +1174,38 @@ export function createLayerPanelRenderer(deps) {
         });
       }
     }
+    // Header opacity control (Photoshop-style Blend/Opacity row).
+    const headerOpacity = document.getElementById('ge-layer-header-opacity');
+    if (headerOpacity) {
+      headerOpacity.disabled = !selectedLayer && !selectedGroup;
+      headerOpacity.value = String(Math.round((selectedGroup?.opacity ?? selectedLayer?.opacity ?? 1) * 100));
+      if (!headerOpacity.dataset.wired) {
+        headerOpacity.dataset.wired = 'true';
+        let headerOpacitySaved = false;
+        headerOpacity.addEventListener('input', () => {
+          const next = Math.max(0, Math.min(1, (parseInt(headerOpacity.value, 10) || 0) / 100));
+          const activeGroup = normalizeLayerGroups(state).find(group => group.id === state.activeGroupId);
+          if (activeGroup) {
+            if (Math.abs(activeGroup.opacity - next) < 0.0001) return;
+            if (!headerOpacitySaved) { saveState(`Change opacity of group "${activeGroup.name}"`); headerOpacitySaved = true; }
+            activeGroup.opacity = next;
+            composite();
+            return;
+          }
+          const active = state.layers.find(layer => layer.id === state.activeLayerId);
+          if (!active) return;
+          const targets = rowTargets(active);
+          if (targets.every(layer => Math.abs(layer.opacity - next) < 0.0001)) return;
+          if (!headerOpacitySaved) {
+            saveState(targets.length > 1 ? `Change opacity of ${targets.length} layers` : `Change opacity of "${active.name}"`);
+            headerOpacitySaved = true;
+          }
+          for (const layer of targets) layer.opacity = next;
+          composite();
+        });
+        headerOpacity.addEventListener('change', () => { headerOpacitySaved = false; });
+      }
+    }
     // Mobile bottom-sheet peek height — header + N rows, capped so a
     // 20-layer document doesn't get a peek that eats the canvas.
     const panel = document.querySelector('.ge-right-panel');
@@ -1098,10 +1215,20 @@ export function createLayerPanelRenderer(deps) {
         const firstRow = list.querySelector('.ge-layer-item');
         const headerH = header ? header.offsetHeight : 52;
         const rowH = firstRow ? firstRow.offsetHeight : 36;
+        // The Blend/Opacity row sits between the header and the list — it is
+        // not part of the header, so its height must be counted too (control
+        // kit restyling can grow it), or the footer's add/fx/delete row falls
+        // below the peek and off the phone viewport.
+        const blendRow = panel.querySelector('.ge-layer-blend-row');
+        const blendH = blendRow ? blendRow.offsetHeight : 0;
+        // Action tools now live in a footer below the list — include its
+        // height so the mobile peek still exposes the add/fx/delete row.
+        const footer = panel.querySelector('.ge-layers-footer');
+        const footerH = footer ? footer.offsetHeight : 0;
         const allRows = list.querySelectorAll('.ge-layer-item').length;
         const MAX_ROWS = 2;
         const rows = Math.min(allRows, MAX_ROWS);
-        panel.style.setProperty('--peek-height', `${headerH + rows * rowH + 6}px`);
+        panel.style.setProperty('--peek-height', `${headerH + blendH + rows * rowH + footerH + 6}px`);
       });
     }
     list.innerHTML = '';
@@ -1821,8 +1948,9 @@ export function createLayerPanelRenderer(deps) {
           });
           const sName = document.createElement('span');
           sName.className = 'ge-layer-name ge-adj-sub-name';
-          sName.innerHTML = `<span class="ge-adj-sub-icon">◌</span><span>${effectLabel(effect.type)}</span>`;
-          sName.title = 'Edit effect';
+          sName.innerHTML = '<span class="ge-adj-sub-icon">◌</span><span></span>';
+          sName.lastElementChild.textContent = effectLabel(effect.type);
+          sName.title = 'Edit effect (drag onto another layer to copy)';
           sName.addEventListener('click', event => {
             event.stopPropagation();
             editRetainedEffect?.(layer, effect, sName);
@@ -1927,6 +2055,7 @@ export function createLayerPanelRenderer(deps) {
             render();
           });
           sControls.appendChild(remove);
+          wireEffectDrag(sub, layer, effect);
           sub.append(sVis, sName, sOp, sControls);
           list.appendChild(sub);
         }
@@ -2096,14 +2225,17 @@ export function createLayerPanelRenderer(deps) {
       }
     }
 
-    // Wire the shared dragSort module — limit drag-init to the grip
-    // handle so row body clicks still activate. Called every render
-    // because `enable()` cleans up the previous instance keyed on
-    // instanceKey.
+    // Wire the shared dragSort module. The whole row is draggable (grip,
+    // thumbnail, name) with a small movement threshold so a plain click
+    // still activates the layer and a double-click still renames it;
+    // buttons/inputs keep their own behaviour. Called every render because
+    // `enable()` cleans up the previous instance keyed on instanceKey.
     if (dragSortModule) {
       dragSortModule.enable('ge-layers-list', '.ge-layer-item', {
         instanceKey: 'ge-layers',
-        handleSelector: '.ge-layer-drag',
+        excludeSelector: '.ge-adj-sub-item',
+        threshold: 4,
+        ignoreSelector: 'button, input, select, textarea, a, [contenteditable="true"], .ge-adj-sub-item',
         onReorder: (orderedItems) => {
           // DOM is top→bottom = reverse of array order, so the new
           // array is the reverse of the DOM order.
@@ -2127,6 +2259,9 @@ export function createLayerPanelRenderer(deps) {
             state.layers = newLayers;
             normalizeLayerClipping(state);
             composite();
+            // Effects, adjustments and masks are sibling rows, not children
+            // of the dragged row. Rebuild them under their reordered owner.
+            render();
           }
         },
       });

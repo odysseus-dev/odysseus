@@ -51,7 +51,7 @@ export function createEditor({
       <input type="hidden" class="note-form-due" value="${note?.due_date || ''}" />
       <input type="hidden" class="note-form-repeat" value="${note?.repeat || 'none'}" />
     </div>
-    ${currentImageUrl && type !== 'draw' ? `<div class="note-form-image-wrap"><img class="note-form-image" src="${_esc(currentImageUrl)}" draggable="false" /><button class="note-form-image-rm" title="Remove">&times;</button></div>` : ''}
+    ${currentImageUrl && type !== 'draw' ? `<div class="note-form-image-wrap"><img class="note-form-image" src="${_esc(currentImageUrl)}" alt="" draggable="false" /><button class="note-form-image-rm" title="Remove" aria-label="Remove">&times;</button></div>` : ''}
     <div class="note-form-body">
       ${type === 'note'
           ? `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(note?.content || '')}</textarea>`
@@ -297,7 +297,7 @@ export function createEditor({
           form.querySelector('.note-form-image-wrap')?.remove();
           const wrap = document.createElement('div');
           wrap.className = 'note-form-image-wrap';
-          wrap.innerHTML = `<img class="note-form-image" draggable="false" /><button class="note-form-image-rm" title="Remove">&times;</button>`;
+          wrap.innerHTML = `<img class="note-form-image" alt="" draggable="false" /><button class="note-form-image-rm" title="Remove" aria-label="Remove">&times;</button>`;
           // Insert AFTER the whole header (a flex-row), not after the
           // title input itself : otherwise the image lands as a sibling
           // of the title inside the header and flex puts them side-by-side.

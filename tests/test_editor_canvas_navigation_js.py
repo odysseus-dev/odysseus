@@ -97,8 +97,9 @@ def test_hand_navigation_is_wired_to_toolbar_keyboard_and_offline_graph():
     editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     service_worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
-    assert "{ id: 'hand', label: 'Hand'" in toolbar
-    assert "t.key = TOOL_SHORTCUTS[t.id]" in toolbar
+    assert "hand: { label: 'Hand'" in toolbar
+    assert "const key = TOOL_SHORTCUTS[id]" in toolbar
+    assert "toolKeyMap[key.toLowerCase()] = id" in toolbar
     assert "hand: 'H'" in shortcuts
     assert "e.code === 'Space'" in keyboard
     assert "setTemporaryPan?.(true)" in keyboard

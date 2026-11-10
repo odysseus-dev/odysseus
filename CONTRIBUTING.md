@@ -18,7 +18,7 @@ End-users cloning the repo will land on `dev` by default. To run the curated/sta
 - Search existing issues and pull requests before opening a new one.
 - Prefer one bug fix or feature per pull request.
 - Avoid broad rewrites, formatting-only changes, or moving many files unless the issue is specifically about structure.
-- If you want to work on a large feature, open an issue first and describe the approach.
+- If you want to work on a feature, open a Feature Request issue first. Big features, new directions, and changes that are hard to undo need a product decision before implementation — see [feature proposals](docs/maintainers/product-and-features.md#feature-proposal-workflow).
 
 ## Setup
 

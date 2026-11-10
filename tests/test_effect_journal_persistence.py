@@ -41,7 +41,8 @@ def test_claim_is_fsynced_to_disk_before_returning(tmp_path, target, monkeypatch
     on_disk = records(log.path)
     assert [r["type"] for r in on_disk] == ["claim"]
     assert fx.EffectClaim.from_dict(on_disk[0]["record"]) == made
-    assert oct(log.path.stat().st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows has no POSIX permission bits: os.open's 0o600 is not reflected in st_mode
+        assert oct(log.path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_claim_persistence_failure_raises_and_records_nothing(tmp_path, target):
@@ -343,3 +344,13 @@ def test_hardlinked_effect_state_is_control_plane_without_scanning_the_store(tmp
     elsewhere.write_text("y")
     os.link(elsewhere, workspace / "pnpm-style.txt")
     assert resources._control_plane_path(str(workspace / "pnpm-style.txt")) is True
+
+
+def test_consecutive_claims_write_lf_only_records(tmp_path, target):
+    # Raw os.open() is text-mode on Windows unless O_BINARY is set; the \r\n it
+    # wrote made the next append read a stray empty line as a corrupt tail.
+    log = EffectLog(RUN, directory=tmp_path / "fx")
+    claim(log, target, "e1", "act-1")
+    claim(log, target, "e2", "act-2")
+    assert b"\r" not in log.path.read_bytes()
+    assert len(records(log.path)) == 2

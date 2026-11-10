@@ -43,6 +43,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
+from src import shutdown as _shutdown
 from src.path_confinement import confine
 
 from src.llm_core import llm_call_async
@@ -85,6 +86,17 @@ _SERVER_OWNED_OAUTH_FIELDS = {
     "oauth_token_expiry",
 }
 _CACHE_HOOKS: dict = {"invalidate_list": None}
+
+
+def _check_mail_host(host, owner: str, label: str) -> str | None:
+    """Reject unsafe or unresolved mail hosts before saving or testing them."""
+    from src.url_safety import check_outbound_host
+    ok, reason = check_outbound_host(host, block_private=_mail_private_blocked(owner))
+    if ok:
+        return None
+    logger.warning("Rejected %s mail host for owner=%r: %s", label, owner, reason)
+    # Resolver and exception details belong in server logs, never the response.
+    return f"Rejected {label} host: server address is not allowed or does not resolve"
 
 
 def _normalized_mail_host(value) -> str:
@@ -1815,20 +1827,75 @@ def setup_email_routes():
         # a cached message body.
         return (account_id or "", folder, str(uid), owner)
 
+    _LIST_STALE = {}
+    _LIST_LOCK = _threading.RLock()
+    _LIST_CACHE_LOCK = _LIST_LOCK
+    # Invalidation fences reads already in flight, including background refresh.
+    _LIST_EPOCH = [0]
+    _LIST_CACHE_GENERATION = _LIST_EPOCH
+
     def _list_cache_get(key):
-        v = _LIST_CACHE.get(key)
-        if not v: return None
-        if v[0] < _time.monotonic():
-            _LIST_CACHE.pop(key, None)
-            return None
-        return v[1]
+        with _LIST_LOCK:
+            v = _LIST_CACHE.get(key)
+            if not v: return None
+            if v[0] < _time.monotonic():
+                _LIST_CACHE.pop(key, None)
+                return None
+            return v[1]
+
+    def _list_stale_get(key):
+        with _LIST_LOCK:
+            return _LIST_STALE.get(key)
+
+    def _list_stale_put(key, value):
+        _LIST_STALE[key] = value
+        if len(_LIST_STALE) > 96:
+            for k in list(_LIST_STALE.keys())[:-48]:
+                _LIST_STALE.pop(k, None)
+
+    _LIST_REFRESHING = set()
 
     def _list_cache_put(key, value):
-        _LIST_CACHE[key] = (_time.monotonic() + _LIST_TTL, value)
-        # Cap size
-        if len(_LIST_CACHE) > 64:
-            for k in list(_LIST_CACHE.keys())[:-32]:
-                _LIST_CACHE.pop(k, None)
+        with _LIST_LOCK:
+            _LIST_CACHE[key] = (_time.monotonic() + _LIST_TTL, value)
+            # Also snapshot the last-good response for stale-while-revalidate.
+            _list_stale_put(key, value)
+            if len(_LIST_CACHE) > 64:
+                for k in list(_LIST_CACHE.keys())[:-32]:
+                    _LIST_CACHE.pop(k, None)
+
+    def _schedule_list_refresh(sync_args, cache_key, folder, account_id, owner):
+        """Refresh a list snapshot off the event loop, at most once per key.
+
+        Runs the blocking IMAP fetch in a daemon thread, then repopulates both
+        the TTL cache and the stale snapshot so the next list view is warm.
+        """
+        with _LIST_LOCK:
+            if cache_key in _LIST_REFRESHING:
+                return
+            _LIST_REFRESHING.add(cache_key)
+            epoch = _LIST_EPOCH[0]
+
+        def _run():
+            try:
+                refreshed = _list_emails_sync(*sync_args)
+                if refreshed and not refreshed.get("error"):
+                    with _LIST_LOCK:
+                        if epoch != _LIST_EPOCH[0]:
+                            return
+                        _list_cache_put(cache_key, refreshed)
+                    try:
+                        _schedule_recent_email_warm(
+                            refreshed.get("emails") or [], folder, account_id, owner)
+                    except Exception:
+                        pass
+            except Exception as exc:  # pragma: no cover - background best effort
+                logger.debug("email list background refresh failed: %s", exc)
+            finally:
+                with _LIST_LOCK:
+                    _LIST_REFRESHING.discard(cache_key)
+
+        _threading.Thread(target=_run, daemon=True, name="email-list-refresh").start()
 
     def _folder_cache_get(account_id, owner):
         key = (account_id or "", owner or "")
@@ -1863,37 +1930,74 @@ def setup_email_routes():
                 hook(account_id, folder)
             except Exception:
                 pass
-        if account_id is None and folder is None:
-            _LIST_CACHE.clear()
-            return
-        for k in list(_LIST_CACHE.keys()):
-            k_acct = k[0] if len(k) > 0 else ""
-            k_folder = k[1] if len(k) > 1 else ""
-            if (account_id is None or k_acct == (account_id or "")) and \
-               (folder is None or k_folder == folder):
-                _LIST_CACHE.pop(k, None)
+        with _LIST_LOCK:
+            _LIST_EPOCH[0] += 1
+            if account_id is None and folder is None:
+                _LIST_CACHE.clear()
+                _LIST_STALE.clear()
+                return
+            for cache in (_LIST_CACHE, _LIST_STALE):
+                for k in list(cache.keys()):
+                    k_acct = k[0] if len(k) > 0 else ""
+                    k_folder = k[1] if len(k) > 1 else ""
+                    if (account_id is None or k_acct == (account_id or "")) and \
+                       (folder is None or k_folder == folder):
+                        cache.pop(k, None)
+
+    def _index_update_flags(owner, account_id, folder, uid, flag, add):
+        with _LIST_LOCK:
+            _email_index_update_flags(owner, account_id, folder, uid, flag, add)
+            _invalidate_list_cache(account_id, folder)
+
+    def _index_delete(owner, account_id, folder, uid):
+        with _LIST_LOCK:
+            _email_index_delete(owner, account_id, folder, uid)
+            _invalidate_list_cache(account_id, folder)
 
     def _update_list_cache_seen(account_id, folder, uid, seen: bool):
         uid_s = str(uid)
-        for key, (expires_at, value) in list(_LIST_CACHE.items()):
-            if key[0] != (account_id or "") or key[1] != folder:
-                continue
-            emails = list((value or {}).get("emails") or [])
-            changed = False
-            if seen and key[2] == "unread":
-                kept = [e for e in emails if str((e or {}).get("uid") or "") != uid_s]
-                if len(kept) != len(emails):
-                    value = dict(value)
-                    value["emails"] = kept
-                    value["total"] = max(0, int(value.get("total") or 0) - (len(emails) - len(kept)))
-                    changed = True
-            else:
-                for e in emails:
-                    if str((e or {}).get("uid") or "") == uid_s:
-                        e["is_read"] = bool(seen)
+        with _LIST_LOCK:
+            for key, (expires_at, value) in list(_LIST_CACHE.items()):
+                if key[0] != (account_id or "") or key[1] != folder:
+                    continue
+                emails = list((value or {}).get("emails") or [])
+                changed = False
+                if seen and key[2] == "unread":
+                    kept = [e for e in emails if str((e or {}).get("uid") or "") != uid_s]
+                    if len(kept) != len(emails):
+                        value = dict(value)
+                        value["emails"] = kept
+                        value["total"] = max(0, int(value.get("total") or 0) - (len(emails) - len(kept)))
                         changed = True
-            if changed:
-                _LIST_CACHE[key] = (expires_at, value)
+                else:
+                    for e in emails:
+                        if str((e or {}).get("uid") or "") == uid_s:
+                            e["is_read"] = bool(seen)
+                            changed = True
+                if changed:
+                    _LIST_CACHE[key] = (expires_at, value)
+                    if key in _LIST_STALE:
+                        _LIST_STALE[key] = value
+
+            for key, value in list(_LIST_STALE.items()):
+                if key[0] != (account_id or "") or key[1] != folder:
+                    continue
+                emails = list((value or {}).get("emails") or [])
+                changed = False
+                if seen and key[2] == "unread":
+                    kept = [e for e in emails if str((e or {}).get("uid") or "") != uid_s]
+                    if len(kept) != len(emails):
+                        value = dict(value)
+                        value["emails"] = kept
+                        value["total"] = max(0, int(value.get("total") or 0) - (len(emails) - len(kept)))
+                        changed = True
+                else:
+                    for e in emails:
+                        if str((e or {}).get("uid") or "") == uid_s:
+                            e["is_read"] = bool(seen)
+                            changed = True
+                if changed:
+                    _LIST_STALE[key] = value
 
     def _read_cache_get(key):
         v = _READ_CACHE.get(key)
@@ -2273,6 +2377,8 @@ def setup_email_routes():
         SECURITY: `owner` is propagated so when `account_id` is missing,
         the fallback config lookup is scoped to this user's accounts only.
         """
+        with _LIST_CACHE_LOCK:
+            index_generation = _LIST_CACHE_GENERATION[0]
         conn = None
         conn_ok = False
         try:
@@ -2567,7 +2673,9 @@ def setup_email_routes():
                     if parsed:
                         fetched_emails.append(parsed)
                         cached_rows[parsed["uid"]] = parsed
-                _email_index_upsert(owner, account_id, folder, fetched_emails)
+                with _LIST_CACHE_LOCK:
+                    if index_generation == _LIST_CACHE_GENERATION[0]:
+                        _email_index_upsert(owner, account_id, folder, fetched_emails)
                 for uid_num in uid_order:
                     row = cached_rows.get(uid_num)
                     if not row:
@@ -2856,6 +2964,48 @@ def setup_email_routes():
                         owner, account_id or "", folder, filter, limit, offset, elapsed_ms,
                     )
                 return cached
+        # Stale-while-revalidate: never block a plain list view on IMAP while
+        # we already hold a recent snapshot or a durable index. Serve it now
+        # with a `stale` marker and refresh in the background so the next view
+        # is warm. Blocking IMAP only remains for a genuine cold start with no
+        # snapshot and no indexed rows (e.g. a brand-new account/folder).
+        if not manual_refresh and not from_addr and not has_attachments and not (date_from or date_to):
+            snapshot = _list_stale_get(ck)
+            if snapshot is None:
+                try:
+                    indexed_emails, indexed_total, indexed_at = _email_index_list(
+                        owner, account_id, folder, filter, limit, offset, False,
+                    )
+                except Exception:
+                    indexed_emails, indexed_total, indexed_at = [], 0, None
+                if indexed_total:
+                    snapshot = {
+                        "emails": indexed_emails,
+                        "total": indexed_total,
+                        "folder": folder,
+                        "offset": offset,
+                        "sync": {
+                            "source": "index",
+                            "indexed": indexed_total,
+                            "updated_at": indexed_at,
+                        },
+                    }
+            if snapshot is not None:
+                payload = dict(snapshot)
+                payload["emails"] = list(payload.get("emails") or [])
+                _hide_unlinked_calendar_tags(payload["emails"])
+                sync_meta = dict(payload.get("sync") or {})
+                sync_meta["source"] = "cache_stale" if _list_stale_get(ck) is not None else "index"
+                sync_meta["stale"] = True
+                payload["sync"] = sync_meta
+                _schedule_list_refresh(
+                    (folder, limit, offset, filter, account_id, from_addr,
+                     bool(has_attachments), owner, True, date_from or "", date_to or ""),
+                    ck, folder, account_id, owner,
+                )
+                return payload
+        with _LIST_CACHE_LOCK:
+            cache_generation = _LIST_CACHE_GENERATION[0]
         result = await _asyncio.to_thread(
             _list_emails_sync, folder, limit, offset, filter, account_id, from_addr,
             bool(has_attachments), owner, manual_refresh, date_from or "", date_to or "",
@@ -2864,7 +3014,9 @@ def setup_email_routes():
             if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):
                 _record_email_received_events(owner, account_id, folder, result.get("emails") or [])
                 _schedule_recent_email_warm(result.get("emails") or [], folder, account_id, owner)
-            _list_cache_put(ck, result)
+            with _LIST_CACHE_LOCK:
+                if cache_generation == _LIST_CACHE_GENERATION[0]:
+                    _list_cache_put(ck, result)
         elapsed_ms = int((_time.monotonic() - started_at) * 1000)
         if elapsed_ms > 1500:
             logger.warning(
@@ -3212,7 +3364,7 @@ def setup_email_routes():
                         conn.select(_q(folder))
                         moved = _move_email_message(conn, uid, "Junk", role="junk")
                     if moved:
-                        _email_index_delete(owner, account_id, folder, uid)
+                        _index_delete(owner, account_id, folder, uid)
                         _invalidate_list_cache(account_id)
                 except Exception:
                     logger.debug("unsubscribe move-to-spam skipped", exc_info=True)
@@ -3229,7 +3381,7 @@ def setup_email_routes():
                             if deleted:
                                 conn.expunge()
                     if deleted:
-                        _email_index_delete(owner, account_id, folder, uid)
+                        _index_delete(owner, account_id, folder, uid)
                         _invalidate_list_cache(account_id)
                 except Exception as exc:
                     delete_error = "Email was unsubscribed but could not be moved to Trash"
@@ -3311,7 +3463,7 @@ def setup_email_routes():
                         if moved:
                             changed += 1
                             cleaned_uids.append(uid)
-                            _email_index_delete(owner, account_id, folder, uid)
+                            _index_delete(owner, account_id, folder, uid)
                         else:
                             failed += 1
                     except Exception:
@@ -3400,6 +3552,8 @@ def setup_email_routes():
         folder (Gmail does), we transparently swap to All Mail so the
         search surfaces archived / labelled emails too. Plain IMAP
         accounts fall back to whatever folder the caller specified."""
+        with _LIST_CACHE_LOCK:
+            index_generation = _LIST_CACHE_GENERATION[0]
         if not q or len(q) < 2:
             return {"emails": [], "total": 0, "query": q}
         # CRLF in q would terminate the IMAP command early — reject defensively.
@@ -3543,7 +3697,9 @@ def setup_email_routes():
                     except Exception as e:
                         logger.warning(f"Error parsing search result {uid}: {e}")
                         continue
-                _email_index_upsert(owner, account_id, effective_folder, fetched_emails)
+                with _LIST_CACHE_LOCK:
+                    if index_generation == _LIST_CACHE_GENERATION[0]:
+                        _email_index_upsert(owner, account_id, effective_folder, fetched_emails)
 
                 return {
                     "emails": emails,
@@ -3680,8 +3836,7 @@ def setup_email_routes():
             # accepted it, so the index and list cache cannot drift ahead of
             # the mailbox.
             if mark_seen and not mark_seen_failed:
-                _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
-                _update_list_cache_seen(account_id, folder, uid, True)
+                _index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
 
             related_attachments = []
             if full and not _has_visible_attachments(msg):
@@ -3820,8 +3975,7 @@ def setup_email_routes():
                 status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Seen)")
                 if status != "OK":
                     return False
-            _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
-            _update_list_cache_seen(account_id, folder, uid, True)
+            _index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
             return True
         except Exception as e:
             logger.warning(f"mark-seen after cached read failed uid={uid}: {e}")
@@ -5053,7 +5207,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Seen", add=False):
                     return {"success": False, "error": "Email not found"}
-            _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", False)
+            _index_update_flags(owner, account_id, folder, uid, "\\Seen", False)
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -5073,7 +5227,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Flagged", add=bool(on)):
                     return {"success": False, "error": "Email not found"}
-            _email_index_update_flags(owner, account_id, folder, uid, "\\Flagged", bool(on))
+            _index_update_flags(owner, account_id, folder, uid, "\\Flagged", bool(on))
             _invalidate_list_cache(account_id, folder)
             return {"success": True, "flagged": bool(on)}
         except Exception as e:
@@ -5091,7 +5245,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Seen", add=True):
                     return {"success": False, "error": "Email not found"}
-            _email_index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
+            _index_update_flags(owner, account_id, folder, uid, "\\Seen", True)
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -5111,7 +5265,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _move_email_message(conn, uid, "Archive", role="archive"):
                     return {"success": False, "error": "Email not found"}
-            _email_index_delete(owner, account_id, folder, uid)
+            _index_delete(owner, account_id, folder, uid)
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -5142,7 +5296,7 @@ def setup_email_routes():
                     # click or by another mailbox client; it is already gone
                     # from the requested folder, so do not trap the UI on a
                     # permanent “Email not found” error.
-                    _email_index_delete(owner, account_id, folder, str(uid))
+                    _index_delete(owner, account_id, folder, str(uid))
                     _invalidate_list_cache(account_id, folder)
                     return {"success": True, "already_deleted": True}
                 trash_folder = _resolve_mail_folder(conn, "Trash", "trash")
@@ -5160,9 +5314,9 @@ def setup_email_routes():
                 if not _move_email_message(conn, resolved_uid, trash_folder, role="trash"):
                     logger.warning("Email delete Trash move failed uid=%s resolved_uid=%s folder=%s trash=%s", uid, resolved_uid, folder, trash_folder)
                     return {"success": False, "error": "Could not move email to Trash"}
-            _email_index_delete(owner, account_id, folder, resolved_uid)
+            _index_delete(owner, account_id, folder, resolved_uid)
             if resolved_uid != str(uid):
-                _email_index_delete(owner, account_id, folder, str(uid))
+                _index_delete(owner, account_id, folder, str(uid))
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -5178,7 +5332,7 @@ def setup_email_routes():
                 if not _store_email_flag(conn, uid, "\\Deleted", add=True):
                     return {"success": False, "error": "Email not found"}
                 conn.expunge()
-            _email_index_delete(owner, account_id, folder, uid)
+            _index_delete(owner, account_id, folder, uid)
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -5246,7 +5400,7 @@ def setup_email_routes():
                             pending_expunge.append(uid)
                             continue
                         deleted_uids.append(uid)
-                        _email_index_delete(owner, account_id, folder, uid)
+                        _index_delete(owner, account_id, folder, uid)
                     except Exception:
                         failed_uids.append(uid)
                         logger.debug("Bulk email delete failed for uid=%s", uid, exc_info=True)
@@ -5268,7 +5422,7 @@ def setup_email_routes():
                     if expunge_ok:
                         for uid in pending_expunge:
                             deleted_uids.append(uid)
-                            _email_index_delete(owner, account_id, folder, uid)
+                            _index_delete(owner, account_id, folder, uid)
                     else:
                         # Prioritize preservation over cleanup: unflag \Deleted from our
                         # copied messages so future EXPUNGE operations do not destroy them.
@@ -5387,7 +5541,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _move_email_message(conn, uid, dest):
                     return {"success": False, "error": f"Failed to move to {dest}"}
-            _email_index_delete(owner, account_id, folder, uid)
+            _index_delete(owner, account_id, folder, uid)
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -5473,7 +5627,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Answered", add=True):
                     return {"success": False, "error": "Email not found"}
-            _email_index_update_flags(owner, account_id, folder, uid, "\\Answered", True)
+            _index_update_flags(owner, account_id, folder, uid, "\\Answered", True)
             _clear_done_response_tags(owner, account_id, folder, uid)
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
@@ -5489,7 +5643,7 @@ def setup_email_routes():
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Answered", add=False):
                     return {"success": False, "error": "Email not found"}
-            _email_index_update_flags(owner, account_id, folder, uid, "\\Answered", False)
+            _index_update_flags(owner, account_id, folder, uid, "\\Answered", False)
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -6156,7 +6310,7 @@ def setup_email_routes():
                             try:
                                 st, _sel = imap.select(_q(_source_folder), readonly=False)
                                 if st == "OK" and _store_email_flag(imap, _source_uid, "\\Answered", add=True):
-                                    _email_index_update_flags(owner, _account_id, _source_folder, _source_uid, "\\Answered", True)
+                                    _index_update_flags(owner, _account_id, _source_folder, _source_uid, "\\Answered", True)
                                     _clear_done_response_tags(owner, _account_id, _source_folder, _source_uid)
                                     _invalidate_list_cache(_account_id, _source_folder)
                                     logger.info(f"Marked source UID {_source_uid} as \\Answered in {_source_folder}")
@@ -6706,7 +6860,7 @@ def setup_email_routes():
                     await queue.put({'type': 'result', **result})
                 task = asyncio.create_task(run())
                 try:
-                    while True:
+                    while not _shutdown.is_shutting_down():
                         item = await queue.get()
                         yield 'data: ' + json.dumps(item) + '\n\n'
                         if item.get('type') == 'result':
@@ -7139,6 +7293,12 @@ def setup_email_routes():
         if account_id:
             _assert_owns_account(account_id, owner)
 
+        for field, label in (("imap_host", "IMAP"), ("smtp_host", "SMTP")):
+            if data.get(field):
+                host_error = await run_in_threadpool(_check_mail_host, data[field], owner, label)
+                if host_error:
+                    return {"ok": False, "error": host_error}
+
         # Non-reply automation flags stay global. Away/auto-reply settings are
         # account-scoped when an account_id is supplied by the Email Settings UI.
         settings = _load_settings()
@@ -7279,6 +7439,11 @@ def setup_email_routes():
         smtp_port, port_err = _coerce_port(data.get("smtp_port"), 465)
         if port_err:
             return {"ok": False, "error": port_err}
+        for field, label in (("imap_host", "IMAP"), ("smtp_host", "SMTP")):
+            if data.get(field):
+                host_error = await run_in_threadpool(_check_mail_host, data[field], owner, label)
+                if host_error:
+                    return {"ok": False, "error": host_error}
         db = SessionLocal()
         try:
             _lock_email_account_owner_mutation(db, owner)
@@ -7324,6 +7489,11 @@ def setup_email_routes():
         """Update an email account. Passwords only overwrite if non-empty."""
         # Path param account_id — dep validated via Query, re-check the path-param value.
         _assert_owns_account(account_id, owner)
+        for field, label in (("imap_host", "IMAP"), ("smtp_host", "SMTP")):
+            if data.get(field):
+                host_error = await run_in_threadpool(_check_mail_host, data[field], owner, label)
+                if host_error:
+                    return {"ok": False, "error": host_error}
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:

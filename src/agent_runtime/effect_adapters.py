@@ -230,6 +230,18 @@ def classify(capture: DispatchCapture) -> dict[str, Any] | None:
     if capture.backend is not None:
         from src.agent_runtime.resources import ExternalResource
         if isinstance(capture.backend.resource, ExternalResource):
+            # A read through an external backend is still a read. The tool
+            # capability registry is sealed by the dispatcher, and unknown or
+            # mixed-effect calls continue to receive an external effect claim.
+            if all(bound is None for bound in (capture.browser, capture.filesystem,
+                                               capture.process, capture.owned)):
+                from src.tool_capabilities import ToolEffect, capabilities_for_action
+                capabilities = capabilities_for_action(capture.backend.transport_tool,
+                                                       capture.backend.exact_input)
+                reads = frozenset({ToolEffect.READ_PUBLIC, ToolEffect.READ_WORKSPACE,
+                                   ToolEffect.READ_PRIVATE, ToolEffect.BROKERED_NETWORK_READ})
+                if capabilities.known and capabilities.effects and capabilities.effects <= reads:
+                    return None
             external = True
             impact = (*impact, resource_ref(capture.backend.resource, "backend"))
     return {"impact_scope": impact, "dependencies": dependencies, "obligations": obligations, "external": external}

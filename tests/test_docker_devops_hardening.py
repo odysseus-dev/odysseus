@@ -67,6 +67,14 @@ def test_compose_files_forward_companion_base_url():
         assert "COMPANION_BASE_URL" in _compose_env_names(path), path.name
 
 
+def test_compose_files_forward_first_token_timeout():
+    # The local first-event watchdog (src/llm_core.py) reads this from the
+    # process environment, so a Docker install can only reach it when the
+    # compose files forward it from the host .env.
+    for path in COMPOSE_FILES:
+        assert "ODYSSEUS_FIRST_TOKEN_TIMEOUT" in _compose_env_names(path), path.name
+
+
 def test_default_compose_files_do_not_mount_host_docker_socket():
     for path in COMPOSE_FILES:
         text = path.read_text(encoding="utf-8")

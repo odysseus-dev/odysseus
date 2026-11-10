@@ -118,8 +118,12 @@ def setup_prefs_routes():
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
         prefs = _load_for_user(user)
-        prefs[key] = body.get("value")
+        val = body.get("value")
+        if val is None:
+            prefs.pop(key, None)
+        else:
+            prefs[key] = val
         _save_for_user(user, prefs)
-        return {"key": key, "value": prefs[key]}
+        return {"key": key, "value": prefs.get(key)}
 
     return router

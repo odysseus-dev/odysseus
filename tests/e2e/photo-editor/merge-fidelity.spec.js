@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { editorState, flattenedPixelDigest, openBlankEditor } = require('./helpers.js');
+const { chooseFilterAction, editorState, flattenedPixelDigest, openBlankEditor } = require('./helpers.js');
 
 async function seedVisibleLayers(page) {
   await page.evaluate(async () => {
@@ -18,14 +18,13 @@ test('Merge all preserves retained effects and adjustment output', async ({ page
   await openBlankEditor(page, { width: 320, height: 220 }, 'Merge fidelity E2E');
   await seedVisibleLayers(page);
 
-  await page.locator('#ge-filter-menu-btn').click();
-  await page.locator('[data-filter-action="effect-color-overlay"]').click();
+  await chooseFilterAction(page, 'effect-color-overlay');
   await expect(page.locator('.ge-filter-modal')).toBeVisible();
   await page.locator('.ge-filter-row input[type="color"]').fill('#f0c04a');
   await page.locator('.ge-filter-row input[data-key="opacity"]').fill('35');
   await page.locator('.ge-filter-modal [data-action="apply"]').click();
 
-  await page.locator('#ge-add-layer').click();
+  await page.locator('#ge-add-fx').click();
   await page.locator('.ge-add-layer-menu [data-adjustment-type="exposure"]').click();
   await expect(page.locator('.ge-adj-popup')).toBeVisible();
   await page.locator('.ge-adj-row input[data-key="exposure"]').fill('45');

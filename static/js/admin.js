@@ -763,7 +763,7 @@ function renderFeatherlessPanel(panel, ep, row) {
     const sortedIds = Array.from(enabledSet).sort((a, b) => a.localeCompare(b));
     enabledListEl.innerHTML = sortedIds.map(id => {
       const displayName = id.split('/').pop() || id;
-      const mode = ['none', 'compact', 'full'].includes(String(toolModes[id] || '').toLowerCase())
+      const mode = ['none', 'compact', 'full', 'spec'].includes(String(toolModes[id] || '').toLowerCase())
         ? String(toolModes[id]).toLowerCase()
         : '';
       return `<div title="${esc(id)}" data-ep-model-row data-model-id="${esc(id)}" class="adm-model-row">
@@ -777,7 +777,8 @@ function renderFeatherlessPanel(panel, ep, row) {
           <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(id)}" data-original-tool-mode="${esc(toolModes[id] || '')}">
             <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
             <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
-            <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+            <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Ajax Compact</option>
+            <option value="spec" ${mode === 'spec' ? 'selected' : ''}>Ajax Spec (router)</option>
             <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
           </select>
         </div>
@@ -1073,7 +1074,8 @@ async function loadEndpoints() {
                 <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
               </label>` : ''}
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(epTitle)}</span>
+              <span class="admin-user-name adm-ep-name" title="${esc(epTitle)}">${esc(epTitle)}</span>
+              ${_endpointSelectMode || (isChatgptAccount && ep.account_label) ? '' : `<button type="button" class="adm-ep-rename-btn" data-adm-rename-ep="${esc(ep.id)}" data-adm-ep-title="${esc(epTitle)}" title="Rename" aria-label="Rename endpoint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>`}
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -1201,6 +1203,70 @@ async function loadEndpoints() {
         await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' });
         await _refreshAfterEndpointChange();
         loadEndpoints();
+      });
+    });
+    queryAll('[data-adm-rename-ep]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nameEl = btn.previousElementSibling;
+        if (!nameEl || !nameEl.classList.contains('admin-user-name')) return;
+        const original = btn.dataset.admEpTitle || '';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = original;
+        input.placeholder = 'Endpoint name';
+        input.setAttribute('aria-label', 'Endpoint name');
+        input.maxLength = 64;
+        input.autocomplete = 'off';
+        input.setAttribute('data-bwignore', '');
+        input.className = 'admin-user-name adm-ep-rename-input';
+        input.style.minWidth = `min(${nameEl.getBoundingClientRect().width}px, 100%)`;
+        nameEl.replaceWith(input);
+        btn.style.visibility = 'hidden';
+        input.focus();
+        input.select();
+        let done = false;
+        const restore = () => {
+          input.replaceWith(nameEl);
+          btn.style.visibility = '';
+        };
+        const commit = async () => {
+          if (done) return;
+          done = true;
+          const name = input.value.trim();
+          if (!name || name === original) { restore(); return; }
+          const epId = btn.dataset.admRenameEp;
+          if (data.some(ep => String(ep.id) !== epId && (ep.name || '').trim().toLowerCase() === name.toLowerCase())) {
+            uiModule.showError(`An endpoint named "${name}" already exists`);
+            done = false;
+            input.focus();
+            return;
+          }
+          input.disabled = true;
+          try {
+            const res = await fetch(`/api/model-endpoints/${encodeURIComponent(epId)}`, {
+              method: 'PATCH',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data.detail || 'Failed to rename endpoint');
+            }
+          } catch (err) {
+            uiModule.showError(err.message || 'Failed to rename endpoint');
+            restore();
+            return;
+          }
+          await _refreshAfterEndpointChange();
+          loadEndpoints();
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+          if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done = true; restore(); }
+        });
       });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
@@ -1356,7 +1422,7 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
             </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m => {
-              const mode = ['none', 'compact', 'full'].includes(String(m.tool_mode || '').toLowerCase())
+              const mode = ['none', 'compact', 'full', 'spec'].includes(String(m.tool_mode || '').toLowerCase())
                 ? String(m.tool_mode).toLowerCase()
                 : '';
               return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
@@ -1370,7 +1436,8 @@ async function loadEndpoints() {
                   <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Auto uses Odysseus compact for Odysseus/Ajax names and Regular tools for every other model">
                     <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
                     <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
-                    <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+                    <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Ajax Compact</option>
+                    <option value="spec" ${mode === 'spec' ? 'selected' : ''}>Ajax Spec (router)</option>
                     <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
                   </select>
                 </div>
@@ -1440,7 +1507,7 @@ async function _saveEpModelState(epId, panel) {
     const value = String(sel.value || '').toLowerCase();
     const original = String(sel.dataset.originalToolMode || '').toLowerCase();
     if (modelId && (sel.dataset.toolModeTouched === '1' || original)) {
-      modelToolModes[modelId] = ['none', 'compact', 'full'].includes(value) ? value : '';
+      modelToolModes[modelId] = ['none', 'compact', 'full', 'spec'].includes(value) ? value : '';
     }
   });
   const total = panel.querySelectorAll('input.adm-cb-hidden[type=checkbox]').length;

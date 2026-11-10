@@ -267,8 +267,9 @@ export function makeWindowResizable(content, options = {}) {
           content.style.maxWidth = 'none';
           content.style.maxHeight = 'none';
           const left = parseFloat(content.style.left);
-          if (Number.isFinite(left) && left + w > window.innerWidth - padRight) {
-            content.style.left = Math.max(padLeft, window.innerWidth - padRight - w) + 'px';
+          if (Number.isFinite(left)) {
+            const rightmostLeft = Math.max(padLeft, window.innerWidth - padRight - w);
+            content.style.left = Math.max(padLeft, Math.min(left, rightmostLeft)) + 'px';
           }
         }
       } catch (_) {}

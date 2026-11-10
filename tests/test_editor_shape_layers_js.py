@@ -113,7 +113,7 @@ def test_shape_tool_is_retained_across_editor_subsystems():
     transform = (ROOT / "static/js/editor/tools/transform-session.js").read_text(encoding="utf-8")
     service_worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
-    assert "{ id: 'shape', label: 'Shape'" in toolbar
+    assert "shape: { label: 'Shape'" in toolbar
     assert 'id="ge-shape-section"' in controls
     assert "if (state.tool === 'shape') return _beginShape(e);" in editor
     assert "shape: cloneDocumentValue(layer.shape, null)" in codec
