@@ -79,3 +79,42 @@ async def test_preview_adapter_dispatches_through_normal_writer(tmp_path, monkey
         turn_contract=contract,session_id='s',owner='alice',workspace=str(tmp_path),disabled_tools=set(),tool_policy=ToolPolicy(),max_rounds=3)]
     assert (tmp_path/'samantha.pdf').is_file(), chunks
     assert any('[Download PDF]' in c for c in chunks), chunks
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_call_is_retried_and_answered(tool_request):
+    args={'path':'a.pdf','content':'hello','format':'pdf'}
+    tool_request['messages'] += [
+        {'role':'assistant','tool_calls':[{'id':'one','function':{'name':'write_file','arguments':json.dumps(args)}}]},
+        {'role':'tool','tool_call_id':'one','content':'Created file.'},
+    ]
+    class SequenceClient(Client):
+        def __init__(self): self.items=iter([{'name':'write_file','arguments':args},
+                                             {'name':'__answer__','arguments':{'content':'The file is ready.'}}]);self.calls=0
+        async def post(self,url,json): self.calls+=1; return Response(next(self.items))
+    client=SequenceClient(); delta=await generate_proposal(client,tool_request)
+    assert client.calls==2 and delta=={'content':'The file is ready.'}
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_call_is_never_dispatched_again(tool_request):
+    args={'path':'a.pdf','content':'hello','format':'pdf'}
+    tool_request['messages'] += [
+        {'role':'assistant','tool_calls':[{'id':'one','function':{'name':'write_file','arguments':json.dumps(args)}}]},
+        {'role':'tool','tool_call_id':'one','content':'Created file.'},
+    ]
+    result=await generate_proposal(Client({'name':'write_file','arguments':args}),tool_request)
+    assert 'tool_calls' not in result and 'repeating' in result['content']
+
+
+@pytest.mark.asyncio
+async def test_simple_read_returns_actual_tool_result_without_another_call(tool_request):
+    tool_request['messages'] = [
+        {'role':'user','content':'Read example.pdf and tell me its title and sentence.'},
+        {'role':'assistant','tool_calls':[{'id':'one','function':{'name':'read_file','arguments':'{"path":"example.pdf"}'}}]},
+        {'role':'tool','tool_call_id':'one','content':'[Page 1 text]:\nTitle: Ocean\nThis is a sample PDF.'},
+    ]
+    class NoCall:
+        async def post(self,*args,**kwargs): raise AssertionError('Read result should be returned directly')
+    result=await generate_proposal(NoCall(),tool_request)
+    assert 'Ocean' in result['content'] and 'This is a sample PDF.' in result['content']
