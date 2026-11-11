@@ -8,4 +8,6 @@ A broad test run also encountered macOS subprocess crashes in approval tests; ta
 
 A fresh live test showed that an unknown capability classification removed all offered tools. The routing change retains the specifically authorized PDF writer when it is available; the exact request and authorization checks pass targeted tests. It still needs end-to-end verification after restart.
 
-A live test confirmed the PDF was created and registered, but the completion gate removed the sentence containing the download link. The writer now returns a link without an unverified mutation claim; a focused approval-continuation test checks that the link survives. Live download verification remains pending.
+A live test confirmed the PDF was created and registered, but the completion gate removed the sentence containing the download link. The writer now returns a link without an unverified mutation claim; a focused approval-continuation test checks that the link survives. A subsequent live test displayed the download link in Odysseus; clicking it downloaded a PDF matching the workspace file byte for byte.
+
+Additional live checks using Auto-mode Llama 3.2 and local GPT-OSS 20B each produced a valid one-page PDF containing the requested text and displayed a chat download link. These tests do not verify arbitrary shell or Python execution, which remains blocked by missing native macOS containment.
