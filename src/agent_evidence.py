@@ -131,15 +131,18 @@ class CompletionDecision:
 
 
 _ARTIFACT_PATH = r"(?:/|\./|\.\./)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9]{1,12}"
+# Decimal numbers and numeric version strings are not filenames merely
+# because they appear near a creation verb. Preserve explicitly named files.
+_INFERRED_ARTIFACT_PATH = rf"(?<![A-Za-z0-9_.-])(?!\d+(?:\.\d+)+(?![A-Za-z0-9_.-])){_ARTIFACT_PATH}"
 _ARTIFACT_REQUEST_RE = re.compile(
     rf"\b(?:writ(?:e|ten)|creat(?:e|ed)|make|made|sav(?:e|ed)|produc(?:e|ed)|"
     rf"generat(?:e|ed)|export(?:ed)?|edit(?:ed)?|modif(?:y|ied)|updat(?:e|ed)|"
     rf"fix(?:ed)?|put|plac(?:e|ed))\b"
-    rf"[^\n]{{0,80}}?(?P<path>{_ARTIFACT_PATH})",
+    rf"[^\n]{{0,80}}?(?P<path>{_INFERRED_ARTIFACT_PATH})",
     re.IGNORECASE,
 )
 _OUTPUT_PATH_RE = re.compile(
-    rf"\b(?:output|artifact)(?:\s+(?:file|path))?\b[^\n]{{0,40}}?(?P<path>{_ARTIFACT_PATH})",
+    rf"\b(?:output|artifact)(?:\s+(?:file|path))?\b[^\n]{{0,40}}?(?P<path>{_INFERRED_ARTIFACT_PATH})",
     re.IGNORECASE,
 )
 _EXPLICIT_OUTPUT_FILE_RE = re.compile(
@@ -148,6 +151,10 @@ _EXPLICIT_OUTPUT_FILE_RE = re.compile(
 )
 _NAMED_OUTPUT_FILE_RE = re.compile(
     rf"\b(?:in|into)\s+(?:a|the)\s+file\s+(?:called|named)\s+(?P<path>{_ARTIFACT_PATH})",
+    re.IGNORECASE,
+)
+_EXPLICIT_NUMERIC_FILE_RE = re.compile(
+    r"\bfile\s+(?:called|named)\s+[`'\"]?(?P<path>\d+(?:\.\d+)+)(?![A-Za-z0-9_.-])",
     re.IGNORECASE,
 )
 _EXPLICIT_OUTPUT_DIRECTORY_RE = re.compile(
@@ -168,7 +175,7 @@ _LOCALIZED_OUTPUT_DIRECTORY_RE = re.compile(
 _LOCALIZED_ARTIFACT_REQUEST_RE = re.compile(
     rf"(?:保存(?:为|到)?|写入|创建|生成|输出(?:为|到)?|"
     rf"保存|書き込|作成|生成|出力|저장|작성|생성|출력)"
-    rf"[^\n]{{0,80}}?(?P<path>{_ARTIFACT_PATH})",
+    rf"[^\n]{{0,80}}?(?P<path>{_INFERRED_ARTIFACT_PATH})",
     re.IGNORECASE,
 )
 _TEST_COMMAND_RE = re.compile(
@@ -343,6 +350,7 @@ def infer_completion_requirements(
         _OUTPUT_PATH_RE,
         _EXPLICIT_OUTPUT_FILE_RE,
         _NAMED_OUTPUT_FILE_RE,
+        _EXPLICIT_NUMERIC_FILE_RE,
         _LOCALIZED_ARTIFACT_REQUEST_RE,
         _EXPLICIT_OUTPUT_DIRECTORY_RE,
         _LOCALIZED_OUTPUT_DIRECTORY_RE,

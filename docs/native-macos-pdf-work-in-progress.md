@@ -15,6 +15,7 @@ This fork contains work in progress for local-model tool calling and PDF creatio
 | --- | --- |
 | `routes/chat_routes.py` | Includes the authorized PDF writer in the interactive agent's routing contract, including when another classifier reports an unknown capability. |
 | `src/agent_loop.py` | Selects compact tool schemas automatically for supported local Ollama models and ends an approved standalone PDF request after its successful write. |
+| `src/agent_evidence.py` | Prevents numeric versions such as `3.5` from being inferred as output filenames while preserving explicitly named numeric files. |
 | `src/agent_runtime/authority.py` | Grants the explicitly requested PDF operation without granting general file-write authority. |
 | `src/agent_runtime/completion.py` | Avoids an irrelevant executable-test warning when no such verification was requested. |
 | `src/agent_runtime/effect_adapters.py` | Records a PDF existence postcondition instead of comparing the PDF's binary bytes to the source text digest. |
@@ -52,3 +53,5 @@ The Shell Access toggle exposes the tools, but the current native backend refuse
 An isolated, machine-specific Seatbelt prototype was assembled from the [Codex base policy](https://github.com/openai/codex/blob/main/codex-rs/sandboxing/src/seatbelt_base_policy.sbpl) and [platform defaults](https://github.com/openai/codex/blob/main/codex-rs/sandboxing/src/seatbelt_read_only_platform_defaults.sbpl), with a temporary workspace and the local Python runtime allowed. Shell and Python each ran, including a child process; a workspace write succeeded, while an attempted read and write outside the allowed paths were blocked. These limited probes do not establish complete isolation. The prototype is not installed or included as a production backend because it contains machine-specific paths and has not passed the process-lifecycle contract.
 
 Allowing child processes makes ordinary shell commands useful, but a descendant can detach from a process group. [Microsoft MXC's Seatbelt design](https://github.com/microsoft/mxc/blob/main/docs/backends/seatbelt/seatbelt-backend.md#process-cleanup) describes sandbox-policy tagging and cleanup of detached processes, while explicitly stating that scanning and cleanup are best effort. Odysseus currently requires authoritative process-tree teardown, so further design and verification are needed before a backend can claim that guarantee. Bash and Python remain blocked in the app; no sandbox bypass or relaxed mode was installed.
+
+- A focused artifact inference fix skips decimal/version strings such as `3.5`, while preserving explicit numeric filenames and real names such as `report.pdf`. The 49 artifact-evidence tests passed. A live Odysseus PDF retest after restart is still pending.
