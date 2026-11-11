@@ -334,3 +334,56 @@ async def test_specific_fresh_chat_pdf_request_offers_writer(monkeypatch, contex
     await _drive_route(monkeypatch, message='Create a PDF named ocean-sample-26.pdf with the title Ocean and the sentence This is a sample PDF.')
     kwargs = seen['preview_kwargs'][-1]
     assert 'write_file' in kwargs['turn_contract'].offered, (kwargs['turn_contract'].unavailable, kwargs['turn_contract'].capabilities, kwargs['turn_contract'].active_capabilities)
+
+
+def test_mistral_envelope_recovery_requires_offered_well_formed_calls():
+    from src.clean_agent_preview import recover_mistral_tool_calls
+    offered = [{'function': {'name': 'write_file'}}]
+    good = '[TOOL_CALLS] [{"name":"write_file","arguments":{"path":"a.pdf","content":"Hi","format":"pdf"}}]'
+    assert len(recover_mistral_tool_calls(good, 'mistral:7b', offered, 1)) == 1
+    assert len(recover_mistral_tool_calls(good.removeprefix('[TOOL_CALLS] '), 'mistral:7b', offered, 1)) == 1
+    for bad in ('Here is an example: ' + good, good + ' trailing',
+                '[TOOL_CALLS] [{"name":"python","arguments":{"code":"x"}}]',
+                '[TOOL_CALLS] [{"name":"write_file","arguments":{}} , {"name":"bad","arguments":{}}]'):
+        assert not recover_mistral_tool_calls(bad, 'mistral:7b', offered, 1)
+    assert not recover_mistral_tool_calls(good, 'llama3.1:8b', offered, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('marker', ['[TOOL_CALLS] ', ''])
+async def test_mistral_envelope_executes_pdf_writer_through_preview(tmp_path, monkeypatch, marker):
+    import src.clean_agent_preview as preview
+    from src import tool_execution, tool_utils
+    from src.upload_handler import UploadHandler
+    from src.tool_policy import ToolPolicy
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+    from src.turn_contract import resolve_full_inventory_contract
+    monkeypatch.setattr(tool_execution, '_owner_is_admin', lambda owner: True)
+    monkeypatch.setattr(tool_utils, '_upload_handler', UploadHandler(str(tmp_path), str(tmp_path/'uploads')))
+    call={'name':'write_file','arguments':{'path':'mistral-test.pdf','content':'Ocean','format':'pdf'}}
+    text=marker+json.dumps([call, call])
+    class Response:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: '+json.dumps({'choices':[{'delta':{'content':text}}]})
+            yield 'data: [DONE]'
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs): return Response()
+    monkeypatch.setattr(preview.httpx, 'AsyncClient', Client)
+    schemas=[s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name']=='write_file']
+    contract=resolve_full_inventory_contract(schemas=schemas,policy=ToolPolicy())
+    chunks=[c async for c in preview.stream_preview(endpoint_url='http://test',model='mistral:7b',headers={},
+        messages=[{'role':'user','content':'Create a PDF named mistral-test.pdf with the title Ocean'}],
+        turn_contract=contract,session_id='s',owner='alice',workspace=str(tmp_path),disabled_tools=set(),tool_policy=ToolPolicy(),max_rounds=3)]
+    assert (tmp_path/'mistral-test.pdf').is_file(), chunks
+    assert any('[Download PDF]' in c for c in chunks), chunks
+    events = [json.loads(c[6:]) for c in chunks if c.startswith('data: {')]
+    tool_outputs = [e for e in events if e.get('type') == 'tool_output']
+    assert len(tool_outputs) == 1 and not tool_outputs[0].get('error'), tool_outputs
+    assert not any('[TOOL_CALLS]' in e.get('delta', '') for e in events), events
+    assert any(e.get('type') == 'final_response' and e.get('replacement_scope') == 'turn' and '[Download PDF]' in e.get('content', '') and '[TOOL_CALLS]' not in e.get('content', '') for e in events), events

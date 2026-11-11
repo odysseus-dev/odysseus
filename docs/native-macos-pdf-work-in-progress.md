@@ -11,3 +11,11 @@ A fresh live test showed that an unknown capability classification removed all o
 A live test confirmed the PDF was created and registered, but the completion gate removed the sentence containing the download link. The writer now returns a link without an unverified mutation claim; a focused approval-continuation test checks that the link survives. A subsequent live test displayed the download link in Odysseus; clicking it downloaded a PDF matching the workspace file byte for byte.
 
 Additional live checks using Auto-mode Llama 3.2 and local GPT-OSS 20B each produced a valid one-page PDF containing the requested text and displayed a chat download link. These tests do not verify arbitrary shell or Python execution, which remains blocked by missing native macOS containment.
+
+Qwen 3.5 4B produced a PDF with an in-chat link in Odysseus using GPU acceleration. Standard Mistral 7B emitted a [TOOL_CALLS] envelope as text; a narrowly scoped recovery accepts only well-formed calls for tools offered on that request and passes them through normal checks. Focused tests pass; live verification after restart remains pending. Samantha advertises no native tools, and unconstrained textual calls were unreliable; no unsafe fallback has been installed.
+
+A live Mistral test after the recovery created a PDF and displayed a download link; the raw tool envelope also appeared in chat. The follow-up replaces the streamed draft with the final download message. Focused tests pass; the display fix needs live verification after restart.
+
+A later live Mistral response used the same tool-call JSON array without its marker. The recovery now accepts either exact format, with the same offered-tool and authorization checks. Focused dispatch tests cover both; a fresh live check is pending.
+
+A subsequent live test created the PDF but repeated the write in the same batch; the duplicate was rejected and shown as a failure. The latest patch deduplicates identical Mistral calls and buffers its tool-round text until the final answer. Focused tests pass; the change requires live verification.

@@ -279,6 +279,37 @@ SAFE_ACTIONS = {
 }
 
 
+def recover_mistral_tool_calls(content, model, offered, round_number):
+    """Recover a whole Mistral TOOL_CALLS envelope, never illustrative prose."""
+    if not re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I):
+        return []
+    text = str(content or '').strip()
+    marker = '[TOOL_CALLS]'
+    if len(text) > 1_000_000:
+        return []
+    if text.startswith(marker):
+        text = text[len(marker):].strip()
+    if not text.startswith('['):
+        return []
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list) or not 1 <= len(parsed) <= 8:
+        return []
+    available = {(s.get('function') or {}).get('name') for s in offered if isinstance(s, dict)}
+    calls = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict) or set(item) != {'name', 'arguments'}:
+            return []
+        name, args = item['name'], item['arguments']
+        if not isinstance(name, str) or name not in available or not isinstance(args, dict):
+            return []
+        calls.append({'id': f'call_mistral_{round_number}_{index}', 'type':'function',
+                      'function': {'name': name, 'arguments': json.dumps(args, ensure_ascii=False)}})
+    return calls
+
+
 def search_tool_choice_request(request):
     """Enforce a search via one offered tool, not named-tool argument decoding.
 
@@ -6774,6 +6805,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 and not source_lookup_pending
                                 and not tool_call_requested
                                 and not _spec_direct_empty_menu
+                                and not (request.get('tools') and re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I))
                             ):
                                 text_event = {'delta': text}
                                 if replace_streamed_draft_on_finish and not streamed_round_text:
@@ -6824,7 +6856,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     break
                 if progressive_thinking:
                     content = visible_content_after_qwen_thinking(content)
-                    if content and not prior_summary_answer and not source_lookup_pending:
+                    if (content and not prior_summary_answer and not source_lookup_pending
+                            and not (request.get('tools') and re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I))):
                         yield event({'delta': content})
                         streamed_round_text = True
                 if _spec_direct_empty_menu and pending:
@@ -6841,6 +6874,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 if proposed and streamed_round_text:
                     replace_streamed_draft_on_finish = True
                 unexecutable_dsml_completion = False
+                if (not proposed and not _spec_direct_empty_menu
+                        and _driver_round_kind != 'answer_directly'
+                        and request.get('tool_choice') != 'none'):
+                    mistral_calls = recover_mistral_tool_calls(content, model, request.get('tools') or [], round_number)
+                    if mistral_calls:
+                        proposed, content = mistral_calls, ''
+                        replace_streamed_draft_on_finish = True
+                        yield event({'type': 'tool_markup_recovery', 'format': 'mistral_tool_calls',
+                                     'round': round_number, 'calls': len(mistral_calls)})
                 if (not proposed and not _spec_direct_empty_menu
                         and _driver_round_kind != 'answer_directly'
                         and 'DSML' in content):
@@ -6911,6 +6953,22 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     history.append({'role': 'assistant', 'content': answer})
                     yield event({'type': 'final_response', 'content': answer})
                     break
+                # Mistral can emit the same call twice in one batch. Execute
+                # identical arguments once so a successful write is not then
+                # reported as a duplicate failure.
+                if re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I):
+                    unique_calls, seen_calls = [], set()
+                    for call in proposed:
+                        function = call.get('function') or {}
+                        try:
+                            args_key = json.dumps(json.loads(function.get('arguments') or '{}'), sort_keys=True, ensure_ascii=False)
+                        except (ValueError, TypeError):
+                            args_key = str(function.get('arguments') or '')
+                        signature = (function.get('name'), args_key)
+                        if signature not in seen_calls:
+                            seen_calls.add(signature)
+                            unique_calls.append(call)
+                    proposed = unique_calls
                 proposed, recovered_write_calls = expand_concatenated_write_calls(proposed)
                 if recovered_write_calls:
                     yield event({
@@ -9036,7 +9094,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     # trace makes invisible overflow candidates selectable.
                     align_structured_tool_history(history, structured_terminal_response)
                     history.append({'role': 'assistant', 'content': structured_terminal_response})
-                    yield event({'delta': structured_terminal_response})
+                    if replace_streamed_draft_on_finish:
+                        yield event({'type': 'final_response', 'content': structured_terminal_response,
+                                     'render_owner': 'streamed', 'replacement_scope': 'turn'})
+                    else:
+                        yield event({'delta': structured_terminal_response})
                     break
             else:
                 if editor_partial_pending:
