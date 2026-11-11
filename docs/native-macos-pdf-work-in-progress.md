@@ -21,7 +21,7 @@ This fork contains work in progress for local-model tool calling and PDF creatio
 | `src/agent_runtime/effect_adapters.py` | Records a PDF existence postcondition instead of comparing the PDF's binary bytes to the source text digest. |
 | `src/agent_tools/filesystem_tools.py` | Adds the explicit PDF write path and produces an owner-scoped chat download link. |
 | `src/agent_tools/pdf_writer.py` | Recognizes PDF requests, renders bounded text PDFs, prevents overwrites, and registers downloads with the existing upload handler. |
-| `src/clean_agent_preview.py` | Routes the PDF writer in interactive chat, retains approval behavior and download links, and recovers and deduplicates supported Mistral tool-call formats. |
+| `src/clean_agent_preview.py` | Routes the PDF writer in interactive chat, retains approval behavior and download links, and recovers and deduplicates supported Mistral tool-call formats, and gives Qwen 3.6 a larger automatic response budget within the configured limit. |
 | `src/ollama_tool_detection.py` | Reads and caches native tool capability metadata from the local Ollama endpoint only. |
 | `src/ollama_structured_tools.py` | Builds a local grammar-constrained tool proposal and validates it against the offered schemas; execution remains with the normal agent checks. |
 | `src/tool_execution.py` | Allows explicit local PDF rendering through the existing writer while retaining binary-file protections and bridge restrictions. |
@@ -55,3 +55,5 @@ An isolated, machine-specific Seatbelt prototype was assembled from the [Codex b
 Allowing child processes makes ordinary shell commands useful, but a descendant can detach from a process group. [Microsoft MXC's Seatbelt design](https://github.com/microsoft/mxc/blob/main/docs/backends/seatbelt/seatbelt-backend.md#process-cleanup) describes sandbox-policy tagging and cleanup of detached processes, while explicitly stating that scanning and cleanup are best effort. Odysseus currently requires authoritative process-tree teardown, so further design and verification are needed before a backend can claim that guarantee. Bash and Python remain blocked in the app; no sandbox bypass or relaxed mode was installed.
 
 - A focused artifact inference fix skips decimal/version strings such as `3.5`, while preserving explicit numeric filenames and real names such as `report.pdf`. The 49 artifact-evidence tests passed. After restarting, a live Llama 3.1 test containing `3.5` created the requested PDF, showed a chat download link, and downloaded a one-page file containing the requested text.
+
+- A Qwen 3.6 Heretic model exhausted a 768-token response budget on reasoning and returned no answer on a harmless test. A direct local test with a larger budget returned answer content. The preview now allows up to 4096 tokens for this model family, honoring smaller configured limits; focused tests pass. Live app verification after restart is pending.

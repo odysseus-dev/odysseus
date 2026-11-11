@@ -1476,6 +1476,23 @@ def progressive_thinking_for_turn(model, offered_schemas, thinking_mode=None):
     return uses_odysseus_progressive_thinking(model) and not bool(offered_schemas)
 
 
+def preview_response_token_budget(model, max_tokens):
+    """Allow local Qwen 3.6 room to finish reasoning before its answer.
+
+    Some Ollama Qwen 3.6 templates emit reasoning even with thinking disabled.
+    A 768-token total budget can therefore yield no visible answer at all.
+    Respect a smaller configured limit and keep other model budgets unchanged.
+    """
+    if re.search(r'(?:^|[/_.:-])qwen3[.-]6(?:[_.:-]|$)', str(model or ''), re.I):
+        try:
+            configured = int(max_tokens)
+        except (TypeError, ValueError):
+            configured = 0
+        if configured > 0:
+            return min(configured, 4096)
+    return 768
+
+
 def spec_router_thinking_decision(endpoint_url, model, owner, headers, direct_user_text):
     """Env-gated router decision for spec tool-surface turns. Fail open (None)."""
     try:
@@ -6042,7 +6059,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     has_real_usage = False
     first_request_tokens = last_request_tokens = 0
     rounds_used = 0
-    request_max_tokens = 768
+    request_max_tokens = preview_response_token_budget(model, max_tokens)
     if active_editor_target:
         # Editor payloads include exact source and replacement text. The chat
         # default truncated valid edits mid-JSON and caused repeated retries.
