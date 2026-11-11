@@ -5,3 +5,5 @@ Local Ollama models advertising tool support are detected automatically; explici
 A prior live Odysseus test created a valid PDF after approval with Llama 3.1 8B and Auto tool mode. Focused download registration and approved-continuation tests passed. The download link changes require live verification. A subsequent live test of a fresh chat refused an ordinary PDF request, and an explicit tool request triggered web search instead: routing reliability is still unresolved. Do not treat this patch as complete.
 
 A broad test run also encountered macOS subprocess crashes in approval tests; targeted tests excluding those subprocess checks were used instead. No credentials or local settings belong in this commit.
+
+A fresh live test showed that an unknown capability classification removed all offered tools. The routing change retains the specifically authorized PDF writer when it is available; the exact request and authorization checks pass targeted tests. It still needs end-to-end verification after restart.

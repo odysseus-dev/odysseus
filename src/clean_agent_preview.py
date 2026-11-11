@@ -3184,7 +3184,7 @@ def private_browser_dom_batch(args):
 
 
 def scope_preview_contract(preview_contract, routed_contract, active_capabilities,
-                           extra_tools=frozenset()):
+                           extra_tools=frozenset(), recognized_operation_tools=frozenset()):
     """Intersect the trained inventory with the deterministic turn scope.
 
     This is a contract boundary, not embedding/tool RAG: classification has
@@ -3199,6 +3199,9 @@ def scope_preview_contract(preview_contract, routed_contract, active_capabilitie
     routed_canonical = {canonical(name) for name in routed_offered}
     requested_family_tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in active))
     available_requested = routed_canonical & offered_canonical & requested_family_tools
+    # An explicitly authorized operation is available even if the generic
+    # classifier labels the rest of the request as unknown.
+    available_requested |= {canonical(name) for name in recognized_operation_tools} & offered_canonical
     routed_canonical.update(canonical(name) for name in extra_tools)
     if 'image_generation' not in active and 'photo_editor' not in active:
         # A past image request must not keep generation warm on email/doc turns,

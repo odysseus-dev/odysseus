@@ -163,7 +163,7 @@ async def test_webui_pdf_request_offers_writer_in_compact_contract(monkeypatch, 
     _install_model(monkeypatch)
     await _drive_route(monkeypatch, message='Create a PDF in the agent workspace with the text Hello')
     kwargs = seen['preview_kwargs'][-1]
-    assert 'write_file' in kwargs['turn_contract'].offered, (kwargs['disabled_tools'], kwargs['turn_contract'])
+    assert 'write_file' in kwargs['turn_contract'].offered, (kwargs['turn_contract'].unavailable, kwargs['turn_contract'].capabilities, kwargs['turn_contract'].active_capabilities)
 
 @pytest.mark.asyncio
 async def test_pdf_with_untrusted_context_requires_exact_approval(tmp_path, monkeypatch):
@@ -260,7 +260,9 @@ async def test_webui_route_creates_pdf_through_agent_and_completion_gate(monkeyp
 
 
 def test_pdf_continuation_only_shortcuts_standalone_requests():
-    from src.agent_tools.pdf_writer import single_pdf_request
+    from src.agent_tools.pdf_writer import single_pdf_request, pdf_creation_requested
+    assert pdf_creation_requested('Use write_file to create ocean-sample-26.pdf containing Ocean')
+    assert not pdf_creation_requested('Write a summary of report.pdf')
     assert single_pdf_request('Create a PDF with a title and a sentence')
     assert single_pdf_request('Create a PDF named auto-check-2026.pdf with the title "Verification check"')
     assert not single_pdf_request('Create a PDF and then email it')
@@ -318,3 +320,14 @@ async def test_pdf_download_registered_for_owner(tmp_path, monkeypatch):
     assert row['owner'] == 'alice'
     assert (tmp_path / 'download.pdf').read_bytes().startswith(b'%PDF')
     assert '[Download PDF](' in result['output']
+
+@pytest.mark.asyncio
+async def test_specific_fresh_chat_pdf_request_offers_writer(monkeypatch, context_probe_ledger):
+    from tests.test_context_resolution_route import _drive_route, _install_model, _spy
+    import src.tool_security as security
+    monkeypatch.setattr(security, 'blocked_tools_for_owner', lambda owner: set())
+    seen = _spy(monkeypatch)
+    _install_model(monkeypatch)
+    await _drive_route(monkeypatch, message='Create a PDF named ocean-sample-26.pdf with the title Ocean and the sentence This is a sample PDF.')
+    kwargs = seen['preview_kwargs'][-1]
+    assert 'write_file' in kwargs['turn_contract'].offered, (kwargs['turn_contract'].unavailable, kwargs['turn_contract'].capabilities, kwargs['turn_contract'].active_capabilities)

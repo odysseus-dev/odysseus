@@ -21,7 +21,9 @@ def pdf_creation_requested(text: str) -> bool:
     direct = (r"\b(?:create|make|generate|produce|build|render|write|save)\s+"
               r"(?:(?:me|us|a|an|the|new|sample|example|simple|one[- ]page)\s+){0,6}pdf\b")
     conversion = r"\b" + verbs + r"\b[^.!?\n]{0,180}\b(?:as|to|into)\s+(?:a\s+)?pdf\b"
-    return bool(re.search(direct + "|" + conversion, value, re.I))
+    named_pdf = (r"\b" + verbs + r"\s+(?:(?:a|the|new|file|named|called)\s+){0,4}"
+                 r"[\w.-]+\.pdf\b")
+    return bool(re.search(direct + "|" + conversion + "|" + named_pdf, value, re.I))
 
 
 def single_pdf_request(text: str) -> bool:

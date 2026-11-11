@@ -3823,6 +3823,7 @@ def setup_chat_routes(
                     ), selection_mode=MODE),
                     _routed_turn_contract,
                     _active_turn_capabilities,
+                    recognized_operation_tools=({"write_file"} if _interactive_pdf_writer else frozenset()),
                     # A validated native workspace is a persistent capability,
                     # including on referential turns such as "undo that".
                     # scope_preview_contract still intersects the policy-filtered
