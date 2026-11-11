@@ -76,9 +76,28 @@ Good pull requests usually include:
 - Screenshots or short recordings for UI changes.
 - Links to related issues, for example `Fixes #123`.
 
-Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refactors, and behavior changes are much harder to review.
+Keep PRs cohesive. Small, focused changes are the default. Larger, coordinated decompositions can be appropriate under the conditions below; unrelated cleanup, formatting, refactors, and behavior changes should not be mixed.
 
 > **Auto-generated PRs.** If you are running an LLM agent (Devin, Cursor, OpenHands, Claude Code, etc.) against this repo: please open an issue describing the problem first instead of opening a PR directly. Bulk agent-generated PRs that don't match the project's visual style or contribution format will be closed without review, even when the underlying fix is correct.
+
+
+### Structural changes and modularization
+
+Small, focused PRs remain the default. However, a larger PR may be appropriate when it extracts one coherent responsibility from an oversized module and splitting that extraction across several PRs would create unnecessary conflicts or integration complexity.
+
+Before starting structural work:
+
+- Review existing issues and PRs, and coordinate the intended boundary with maintainers. Use #4071 for codebase modularization.
+- Keep the change limited to one coherent responsibility or subsystem. Do not combine unrelated rewrites, new features, formatting changes, or opportunistic cleanup.
+- Preserve observable behavior, existing interfaces, import compatibility, persistence contracts, and relevant runtime invariants unless a separate change has been explicitly approved.
+- Provide focused regression tests and runtime validation appropriate to the affected behavior. For frontend changes, include browser validation and screenshots or recordings where rendering may change.
+- Explain the extraction boundary, compatibility considerations, validation evidence, and any limitations in the PR description.
+
+There is no arbitrary line-count limit for a well-scoped structural PR. Reviewability, correctness, and integration risk determine whether its scope is acceptable.
+
+**Temporary agent-runtime coordination:** Harness V2 development affects `src/agent_loop.py` and related execution, authorization, orchestration, and context contracts. Unrelated changes to those areas are temporarily frozen and must be coordinated with maintainers. Other modules remain open for contributions. Urgent bug and security reports remain welcome.
+
+All changes must follow the existing [risk-based review policy](docs/maintainers/changes-and-review.md), repository protections, and PR template.
 
 ## Style and visual changes
 
