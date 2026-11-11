@@ -21076,7 +21076,8 @@ from src.agent_runtime.authority import MISSING_AUTHORITY, active_request_author
 
 
 
-def _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy):
+def _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy,
+                                     user_text=""):
     from src.turn_contract import _ACTIVE_CONTRACT as _spec_active_contract
     disabled = set(disabled_tools or ())
     from src.spec_router import latest_decision
@@ -21129,6 +21130,31 @@ def _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_too
         logger.info("[spec-harness] router pick %s unavailable under request policy", _unavailable_pick)
         return blocked
     want = set(picks) - disabled
+    # An explicit email search must keep the search reader even when the
+    # router latches onto a neighbouring email family (for example,
+    # drafting a reply from the pasted email body).
+    if (
+        "mcp__email__search_emails" in base_offered
+        and not _denied("mcp__email__search_emails")
+        and re.search(
+            r"\b(?:search|find|look\s+(?:for|through)|check)\b.{0,80}"
+            r"\b(?:emails?|mail|inbox|messages?)\b",
+            user_text or "",
+            re.IGNORECASE | re.DOTALL,
+        )
+    ):
+        want.add("mcp__email__search_emails")
+    if "mcp__email__search_emails" in want:
+        # Search returns headers, not bodies. Keep the read continuation
+        # available after search narrowing so the model can open messages.
+        want |= {
+            name for name in (
+                "mcp__email__read_email",
+                "mcp__email__download_attachment",
+                "mcp__email__list_email_accounts",
+            )
+            if name in base_offered and not _denied(name)
+        }
     # Always-on basics only when the base turn offers them, so the Spec
     # arm never offers a tool the base arm would not.
     if not _spec_direct:
@@ -21201,7 +21227,10 @@ def _spec_router_contract(turn_contract, messages, disabled_tools, endpoint_url,
         from src.spec_router import spec_route_tools as _spec_route_tools_early
         picks, decided = _spec_route_tools_early(
             _extract_last_user_message(messages), FUNCTION_TOOL_SCHEMAS, set(), messages, return_decision=True)
-        return _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy)
+        return _apply_spec_decision_to_contract(
+            turn_contract, picks, decided, disabled_tools, tool_policy,
+            user_text=_extract_last_user_message(messages),
+        )
     except Exception as exc:
         logger.warning("[spec-harness] router failed; retaining original contract: %s", exc)
         return turn_contract
@@ -21228,7 +21257,10 @@ async def _spec_router_contract_async(turn_contract, messages, disabled_tools, e
         from src.spec_router import spec_route_tools_async as _spec_route_tools_early_async
         picks, decided = await _spec_route_tools_early_async(
             _extract_last_user_message(messages), FUNCTION_TOOL_SCHEMAS, set(), messages, return_decision=True)
-        return _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy)
+        return _apply_spec_decision_to_contract(
+            turn_contract, picks, decided, disabled_tools, tool_policy,
+            user_text=_extract_last_user_message(messages),
+        )
     except Exception as exc:
         logger.warning("[spec-harness] router failed; retaining original contract: %s", exc)
         return turn_contract
