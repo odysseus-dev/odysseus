@@ -115,16 +115,19 @@ async def generate_proposal(client, request):
                'format': {'oneOf': variants}, 'stream': False,
                'options': {'temperature': request.get('temperature', 0.7),
                            'num_predict': min(max(int(request.get('max_tokens') or 768), 128), 4096)}}
-    completed_calls = _completed_calls(request['messages'])
-    latest_request = next((str(m.get('content') or '') for m in reversed(request['messages'])
-                           if m.get('role') == 'user' and not m.get('_harness_control')), '')
-    latest_tool = next((m for m in reversed(request['messages']) if m.get('role') == 'tool'), None)
+    messages = request['messages']
+    user_index = next((i for i in range(len(messages)-1, -1, -1)
+                       if messages[i].get('role') == 'user' and not messages[i].get('_harness_control')), -1)
+    current_turn = messages[user_index:] if user_index >= 0 else []
+    completed_calls = _completed_calls(current_turn)
+    latest_request = str(messages[user_index].get('content') or '') if user_index >= 0 else ''
+    latest_tool = next((m for m in reversed(current_turn) if m.get('role') == 'tool'), None)
     # A single explicit read-and-report request is complete once its read has
     # returned. Keep the source visible so a small model cannot omit requested
     # parts or repeat the read. Compound requests still use the full tool set.
     latest_tool_id = latest_tool.get('tool_call_id') if latest_tool else None
     latest_read = any(call.get('id') == latest_tool_id and (call.get('function') or {}).get('name') == 'read_file'
-                      for message in request['messages'] if message.get('role') == 'assistant'
+                      for message in current_turn if message.get('role') == 'assistant'
                       for call in (message.get('tool_calls') or []))
     simple_read = bool(latest_tool and latest_read
         and re.match(r'^\s*(?:please\s+)?read\b', latest_request, re.I)
@@ -132,7 +135,12 @@ async def generate_proposal(client, request):
         and not re.search(r'\b(?:write|save|create|edit|send|email|delete|search|browse|compare|translate|schedule|summari[sz]e)\b', latest_request, re.I))
     if simple_read:
         result_text = str(latest_tool.get('content') or '')
-        if result_text and not re.match(r'^\s*(?:error|failed|denied)\b', result_text, re.I):
+        try:
+            parsed_result = json.loads(result_text)
+        except (TypeError, ValueError):
+            parsed_result = None
+        failed = bool(isinstance(parsed_result, dict) and (parsed_result.get('error') or parsed_result.get('exit_code') not in (None, 0)))
+        if result_text and not failed and not re.match(r'^\s*(?:error|failed|denied)\b', result_text, re.I):
             return {'content': result_text}
     for attempt in range(2):
         response = await client.post('http://127.0.0.1:11434/api/chat', json=payload)
@@ -156,10 +164,7 @@ async def generate_proposal(client, request):
             break
         if attempt:
             return {'content': 'I could not complete the request without repeating a previous tool call. Please try rephrasing.'}
-        latest_request = next((str(m.get('content') or '') for m in reversed(request['messages'])
-                               if m.get('role') == 'user' and not m.get('_harness_control')), '')
-        latest_result = next((str(m.get('content') or '') for m in reversed(request['messages'])
-                              if m.get('role') == 'tool'), '')
+        latest_result = str(latest_tool.get('content') or '') if latest_tool else ''
         payload['messages'].append({'role': 'user', 'content': (
             'The identical tool call already returned a result. Do not repeat it. '
             'Answer the latest request from that result if sufficient, or choose a different necessary tool. '

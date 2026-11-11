@@ -118,3 +118,65 @@ async def test_simple_read_returns_actual_tool_result_without_another_call(tool_
         async def post(self,*args,**kwargs): raise AssertionError('Read result should be returned directly')
     result=await generate_proposal(NoCall(),tool_request)
     assert 'Ocean' in result['content'] and 'This is a sample PDF.' in result['content']
+
+
+@pytest.mark.asyncio
+async def test_old_turn_result_is_not_reused(tool_request):
+    tool_request['messages'] = [
+        {'role':'user','content':'Read old.pdf and tell me its title and sentence.'},
+        {'role':'assistant','tool_calls':[{'id':'old','function':{'name':'read_file','arguments':'{"path":"old.pdf"}'}}]},
+        {'role':'tool','tool_call_id':'old','content':'Old data'},
+        {'role':'user','content':'Read new.pdf and tell me its title and sentence.'},
+    ]
+    client=Client({'name':'write_file','arguments':{'path':'a.pdf','content':'hello','format':'pdf'}})
+    result=await generate_proposal(client,tool_request)
+    assert result.get('tool_calls') and 'Old data' not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_failed_read_is_not_returned_as_success(tool_request):
+    tool_request['messages'] = [
+        {'role':'user','content':'Read example.pdf and tell me its title and sentence.'},
+        {'role':'assistant','tool_calls':[{'id':'one','function':{'name':'read_file','arguments':'{"path":"example.pdf"}'}}]},
+        {'role':'tool','tool_call_id':'one','content':'{"exit_code":1,"error":"not found"}'},
+    ]
+    client=Client({'name':'__answer__','arguments':{'content':'The file was not found.'}})
+    result=await generate_proposal(client,tool_request)
+    assert result['content']=='The file was not found.'
+
+
+@pytest.mark.asyncio
+async def test_preview_reads_current_file_without_reusing_old_turn(tmp_path, monkeypatch):
+    import pymupdf
+    import src.clean_agent_preview as preview
+    from src import ollama_tool_detection, tool_execution
+    from src.tool_policy import ToolPolicy
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+    from src.turn_contract import resolve_full_inventory_contract
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((72,72), 'Title: Ocean\nThis is a sample PDF.')
+        pdf.save(tmp_path/'current.pdf')
+    monkeypatch.setattr(ollama_tool_detection, 'native_tool_capability', lambda *args: False)
+    monkeypatch.setattr(tool_execution, '_owner_is_admin', lambda owner: True)
+    proposal={'name':'read_file','arguments':{'path':'current.pdf'}}
+    class MockClient(Client):
+        def __init__(self, **kwargs): super().__init__(proposal)
+        async def __aenter__(self): return self
+        async def __aexit__(self,*args): pass
+    monkeypatch.setattr(preview.httpx, 'AsyncClient', MockClient)
+    schemas=[s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name']=='read_file']
+    contract=resolve_full_inventory_contract(schemas=schemas,policy=ToolPolicy())
+    messages=[{'role':'user','content':'Read old.pdf and tell me its title and sentence.'},
+              {'role':'assistant','tool_calls':[{'id':'old','function':{'name':'read_file','arguments':'{"path":"old.pdf"}'}}]},
+              {'role':'tool','tool_call_id':'old','content':'{"exit_code":1,"error":"old failure"}'},
+              {'role':'user','content':'Read current.pdf and tell me its title and sentence.'}]
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant, bind_request_authority
+    authority = RequestAuthority('read-test', 'alice', 's', str(tmp_path), (OperationGrant('read_file'),))
+    with bind_request_authority(authority):
+        chunks=[c async for c in preview.stream_preview(endpoint_url='http://127.0.0.1:11434/v1/chat/completions',
+            model='samantha-mistral:latest',headers={},messages=messages,turn_contract=contract,session_id='s',
+            owner='alice',workspace=str(tmp_path),disabled_tools=set(),tool_policy=ToolPolicy(),max_rounds=3)]
+    events=[json.loads(c[6:]) for c in chunks if c.startswith('data: {')]
+    responses=' '.join(str(e.get('content') or e.get('delta') or '') for e in events if e.get('type')!='tool_output')
+    assert 'Ocean' in responses and 'This is a sample PDF.' in responses, [(e.get('type'), e.get('output'), e.get('reason')) for e in events]
+    assert 'old failure' not in responses, events

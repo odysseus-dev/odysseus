@@ -5608,7 +5608,8 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
         if (provider_request.get('tools') and provider_request.get('tool_choice') != 'none'
                 and native_tool_capability(endpoint_url, provider_request.get('model', '')) is False):
             from src.ollama_structured_tools import AdapterResponse, generate_proposal
-            delta = await generate_proposal(client, provider_request)
+            adapter_request = {**provider_request, 'messages': request['messages']}
+            delta = await generate_proposal(client, adapter_request)
             yield AdapterResponse(delta)
             return
         try:
