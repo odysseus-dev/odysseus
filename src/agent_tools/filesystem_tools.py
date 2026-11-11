@@ -453,7 +453,7 @@ class WriteFileTool:
             except Exception as error:
                 return {"output": f"Created PDF at {_display_tool_path(path)}, but the chat download could not be prepared: {error}",
                         "exit_code": 0, "download_error": True}
-            return {"output": f"Created {os.path.basename(path)}: [Download PDF]({download_url})",
+            return {"output": f"PDF ready: [Download PDF]({download_url})",
                     "download_url": download_url, "exit_code": 0}
         body = _unwrap_fenced_source_body(body, path)
         # A frequent multimodal artifact failure is writing SVG markup to a

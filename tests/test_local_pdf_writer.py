@@ -280,6 +280,9 @@ def test_approved_simple_pdf_finishes_without_duplicate_tool_call(tmp_path, monk
     from src.tool_capabilities import capabilities_for_action
     from src.tool_policy import ToolPolicy
     _patch_common(monkeypatch)
+    from src import tool_utils
+    from src.upload_handler import UploadHandler
+    monkeypatch.setattr(tool_utils, '_upload_handler', UploadHandler(str(tmp_path), str(tmp_path / 'uploads')))
     monkeypatch.setattr(tool_execution, '_owner_is_admin', lambda owner: True)
     monkeypatch.setattr(al, 'execute_tool_block', tool_execution.execute_tool_block)
     monkeypatch.setattr(al, 'blocked_tools_for_owner', lambda owner: set())
@@ -302,7 +305,7 @@ def test_approved_simple_pdf_finishes_without_duplicate_tool_call(tmp_path, monk
     outputs = [e for e in events if e.get('type')=='tool_output']
     assert len(outputs)==1 and outputs[0]['exit_code']==0, events
     assert (tmp_path/'result.pdf').is_file()
-    assert any(e.get('type')=='final_response' and 'result.pdf' in e.get('content','') for e in events), events
+    assert any(e.get('type')=='final_response' and '[Download PDF](/api/upload/' in e.get('content','') for e in events), [(e.get('type'), e.get('content'), e.get('output')) for e in events if e.get('type') in ('final_response','tool_output')]
 
 
 @pytest.mark.asyncio

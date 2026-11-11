@@ -7,3 +7,5 @@ A prior live Odysseus test created a valid PDF after approval with Llama 3.1 8B 
 A broad test run also encountered macOS subprocess crashes in approval tests; targeted tests excluding those subprocess checks were used instead. No credentials or local settings belong in this commit.
 
 A fresh live test showed that an unknown capability classification removed all offered tools. The routing change retains the specifically authorized PDF writer when it is available; the exact request and authorization checks pass targeted tests. It still needs end-to-end verification after restart.
+
+A live test confirmed the PDF was created and registered, but the completion gate removed the sentence containing the download link. The writer now returns a link without an unverified mutation claim; a focused approval-continuation test checks that the link survives. Live download verification remains pending.
