@@ -1,21 +1,41 @@
-# Native macOS PDF and tool-calling repair (work in progress)
+# Native macOS agent and PDF changes
 
-Local Ollama models advertising tool support are detected automatically; explicit model settings remain authoritative. The PDF writer uses PyMuPDF to create a bounded text PDF in the agent workspace, uses the existing authorization and approval checks, avoids overwriting files, and registers an owner-scoped download for the chat. General shell and Python execution still require a macOS containment implementation; these changes do not disable isolation or Metal.
+This fork contains work in progress for local-model tool calling and PDF creation in Odysseus. It keeps the native macOS installation, GPU acceleration, existing models, credentials, and configured permissions. No Docker deployment is required.
 
-A prior live Odysseus test created a valid PDF after approval with Llama 3.1 8B and Auto tool mode. Focused download registration and approved-continuation tests passed. The download link changes require live verification. A subsequent live test of a fresh chat refused an ordinary PDF request, and an explicit tool request triggered web search instead: routing reliability is still unresolved. Do not treat this patch as complete.
+## What changed
 
-A broad test run also encountered macOS subprocess crashes in approval tests; targeted tests excluding those subprocess checks were used instead. No credentials or local settings belong in this commit.
+- Automatically detect native tool support advertised by a local Ollama model when the model's tool mode is Auto. Explicit model modes and endpoint restrictions remain authoritative.
+- Add a bounded text-to-PDF option to `write_file`. It uses PyMuPDF, writes within the authorized workspace, refuses to overwrite an existing PDF, and registers an owner-scoped download link for chat.
+- Preserve correct artifact evidence for binary PDF output and stop a completed standalone PDF request from being repeated after approval.
+- Recover Mistral's explicit JSON tool-call envelopes, including an unmarked whole-response array, only for tools offered in that request. Recovered calls pass the existing schema, policy, workspace and approval checks. Identical calls in one batch are executed once; intermediate tool markup is buffered.
 
-A fresh live test showed that an unknown capability classification removed all offered tools. The routing change retains the specifically authorized PDF writer when it is available; the exact request and authorization checks pass targeted tests. It still needs end-to-end verification after restart.
+## Changed files
 
-A live test confirmed the PDF was created and registered, but the completion gate removed the sentence containing the download link. The writer now returns a link without an unverified mutation claim; a focused approval-continuation test checks that the link survives. A subsequent live test displayed the download link in Odysseus; clicking it downloaded a PDF matching the workspace file byte for byte.
+| File | Purpose |
+| --- | --- |
+| `routes/chat_routes.py` | Includes the authorized PDF writer in the interactive agent's routing contract, including when another classifier reports an unknown capability. |
+| `src/agent_loop.py` | Selects compact tool schemas automatically for supported local Ollama models and ends an approved standalone PDF request after its successful write. |
+| `src/agent_runtime/authority.py` | Grants the explicitly requested PDF operation without granting general file-write authority. |
+| `src/agent_runtime/completion.py` | Avoids an irrelevant executable-test warning when no such verification was requested. |
+| `src/agent_runtime/effect_adapters.py` | Records a PDF existence postcondition instead of comparing the PDF's binary bytes to the source text digest. |
+| `src/agent_tools/filesystem_tools.py` | Adds the explicit PDF write path and produces an owner-scoped chat download link. |
+| `src/agent_tools/pdf_writer.py` | Recognizes PDF requests, renders bounded text PDFs, prevents overwrites, and registers downloads with the existing upload handler. |
+| `src/clean_agent_preview.py` | Routes the PDF writer in interactive chat, retains approval behavior and download links, and recovers and deduplicates supported Mistral tool-call formats. |
+| `src/ollama_tool_detection.py` | Reads and caches tool capability metadata from the local Ollama endpoint only. |
+| `src/tool_execution.py` | Allows explicit local PDF rendering through the existing writer while retaining binary-file protections and bridge restrictions. |
+| `src/tool_schemas.py` | Describes the PDF format to models and preserves structured PDF arguments during dispatch. |
+| `tests/test_local_pdf_writer.py` | Tests rendering, authorization, approvals, completion, downloads, routing, and Mistral call recovery. |
+| `tests/test_ollama_tool_detection.py` | Tests local capability detection, caching, conservative failures, and explicit overrides. |
+| `docs/native-macos-pdf-work-in-progress.md` | Documents this fork's changes, verification, and remaining limitations. |
 
-Additional live checks using Auto-mode Llama 3.2 and local GPT-OSS 20B each produced a valid one-page PDF containing the requested text and displayed a chat download link. These tests do not verify arbitrary shell or Python execution, which remains blocked by missing native macOS containment.
+## Verification and limitations
 
-Qwen 3.5 4B produced a PDF with an in-chat link in Odysseus using GPU acceleration. Standard Mistral 7B emitted a [TOOL_CALLS] envelope as text; a narrowly scoped recovery accepts only well-formed calls for tools offered on that request and passes them through normal checks. Focused tests pass; live verification after restart remains pending. Samantha advertises no native tools, and unconstrained textual calls were unreliable; no unsafe fallback has been installed.
+In the native macOS app, Llama 3.1 8B, Llama 3.2, local GPT-OSS 20B, Qwen 3.5 4B, and Mistral 7B each created a PDF with a chat download link. A Llama download was clicked in Safari and matched its workspace file byte for byte. Qwen 3.5 4B was observed using 100% GPU. Mistral needed recovery of tool-call text and duplicate calls; the latest live test showed a successful write and link, although the UI repeated the words “PDF ready.” These are individual checks, not a guarantee for every request or model.
 
-A live Mistral test after the recovery created a PDF and displayed a download link; the raw tool envelope also appeared in chat. The follow-up replaces the streamed draft with the final download message. Focused tests pass; the display fix needs live verification after restart.
+Samantha Mistral advertises completion only through Ollama; Ollama rejects native tool schemas for that installed model. A text-based fallback produced malformed output and has not been installed. A constrained-output experiment is being investigated, not yet integrated or verified in the app.
 
-A later live Mistral response used the same tool-call JSON array without its marker. The recovery now accepts either exact format, with the same offered-tool and authorization checks. Focused dispatch tests cover both; a fresh live check is pending.
+General macOS Bash/Python execution remains blocked because the current process-group fallback does not satisfy the required filesystem and process-tree isolation. No containment check has been disabled. Earlier broad tests encountered macOS subprocess crashes; focused tests excluding that subprocess pattern were used for the changes above.
 
-A subsequent live test created the PDF but repeated the write in the same batch; the duplicate was rejected and shown as a failure. The latest patch deduplicates identical Mistral calls and buffers its tool-round text until the final answer. Focused tests pass; the change requires live verification.
+## Cookbook and Ollama
+
+On the same Mac, Cookbook's **Download → Direct Download** accepts an Ollama model name with a tag, such as `qwen3.5:4b`; the local backend runs `ollama pull`, so the model appears in the Ollama app connected to that same server. Refresh the model picker if needed. Hugging Face, llama.cpp, and MLX downloads can live in different caches and do not automatically appear in Ollama. Only compatible model formats and architectures can be imported; not every Cookbook download is an Ollama model.
