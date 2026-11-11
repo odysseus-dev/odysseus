@@ -287,15 +287,29 @@ def setup_codex_routes(
         return await do_manage_notes(json.dumps(args), owner=owner)
 
     @router.get("/automation-monitoring")
-    async def automation_monitoring(request: Request):
+    async def automation_monitoring(
+        request: Request,
+        limit: int = 50,
+        offset: int = 0,
+    ):
         owner = _scope_owner(request, TODO_READ_SCOPES)
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
 
         db = SessionLocal()
         try:
+            owner_query = db.query(ScheduledTask).filter(
+                ScheduledTask.owner == owner
+            )
+            total = owner_query.count()
             tasks = (
-                db.query(ScheduledTask)
-                .filter(ScheduledTask.owner == owner)
-                .order_by(ScheduledTask.next_run.asc())
+                owner_query
+                .order_by(
+                    ScheduledTask.next_run.asc(),
+                    ScheduledTask.id.asc(),
+                )
+                .offset(offset)
+                .limit(limit)
                 .all()
             )
 
@@ -316,7 +330,10 @@ def setup_codex_routes(
                         "run_count": task.run_count,
                     }
                     for task in tasks
-                ]
+                ],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
             }
         finally:
             db.close()
