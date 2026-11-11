@@ -5601,6 +5601,16 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
             'messages': provider_wire_messages(request['messages']),
         }
         response_started = False
+        # Ollama models without native tool templates can still produce a
+        # grammar-constrained proposal. Dispatch remains the normal validated
+        # agent path; unknown capability and explicit disabled tools never opt in.
+        from src.ollama_tool_detection import native_tool_capability
+        if (provider_request.get('tools') and provider_request.get('tool_choice') != 'none'
+                and native_tool_capability(endpoint_url, provider_request.get('model', '')) is False):
+            from src.ollama_structured_tools import AdapterResponse, generate_proposal
+            delta = await generate_proposal(client, provider_request)
+            yield AdapterResponse(delta)
+            return
         try:
             async with client.stream(
                 'POST', endpoint_url, headers=headers or {}, json=provider_request,

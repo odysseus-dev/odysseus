@@ -1,0 +1,81 @@
+import json
+import pytest
+
+from src.ollama_structured_tools import generate_proposal
+
+
+@pytest.fixture
+def tool_request():
+    return {'model':'test-model', 'messages':[{'role':'user','content':'Create a PDF.'}],
+            'tools':[{'type':'function','function':{'name':'write_file','description':'Create a file',
+                     'parameters':{'type':'object','properties':{'path':{'type':'string'},'content':{'type':'string'},
+                        'format':{'type':'string','enum':['pdf']}},'required':['path','content','format'],
+                        'additionalProperties':False}}}], 'max_tokens':512}
+
+
+class Response:
+    def __init__(self, proposal): self.proposal = proposal
+    def raise_for_status(self): pass
+    def json(self): return {'message':{'content':json.dumps(self.proposal)}}
+
+
+class Client:
+    def __init__(self, proposal): self.proposal=proposal; self.sent=None
+    async def post(self,url,json): self.sent=(url,json); return Response(self.proposal)
+
+
+@pytest.mark.asyncio
+async def test_valid_proposal_becomes_native_delta(tool_request):
+    client=Client({'name':'write_file','arguments':{'path':'a.pdf','content':'hello','format':'pdf'}})
+    delta=await generate_proposal(client,tool_request)
+    assert client.sent[0]=='http://127.0.0.1:11434/api/chat'
+    call=delta['tool_calls'][0]['function']
+    assert call['name']=='write_file' and json.loads(call['arguments'])['format']=='pdf'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('proposal', [
+    {'name':'python','arguments':{'code':'danger'}},
+    {'name':'write_file','arguments':{'path':'a.pdf','content':'hello','format':'text'}},
+    {'name':'write_file','arguments':{'path':'a.pdf','content':'hello','format':'pdf','extra':1}},
+])
+async def test_invalid_or_unoffered_proposal_never_becomes_call(tool_request,proposal):
+    with pytest.raises(ValueError): await generate_proposal(Client(proposal),tool_request)
+
+
+@pytest.mark.asyncio
+async def test_answer_does_not_create_a_tool_call(tool_request):
+    delta=await generate_proposal(Client({'name':'__answer__','arguments':{'content':'Need details.'}}),tool_request)
+    assert delta == {'content':'Need details.'}
+
+
+@pytest.mark.asyncio
+async def test_required_choice_disallows_answer(tool_request):
+    tool_request['tool_choice']='required'
+    with pytest.raises(ValueError): await generate_proposal(Client({'name':'__answer__','arguments':{'content':'No'}}),tool_request)
+
+
+@pytest.mark.asyncio
+async def test_preview_adapter_dispatches_through_normal_writer(tmp_path, monkeypatch):
+    import src.clean_agent_preview as preview
+    from src import ollama_tool_detection, tool_execution, tool_utils
+    from src.tool_policy import ToolPolicy
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+    from src.turn_contract import resolve_full_inventory_contract
+    from src.upload_handler import UploadHandler
+    monkeypatch.setattr(ollama_tool_detection, 'native_tool_capability', lambda *args: False)
+    monkeypatch.setattr(tool_execution, '_owner_is_admin', lambda owner: True)
+    monkeypatch.setattr(tool_utils, '_upload_handler', UploadHandler(str(tmp_path),str(tmp_path/'uploads')))
+    proposal={'name':'write_file','arguments':{'path':'samantha.pdf','content':'Ocean','format':'pdf'}}
+    class MockClient(Client):
+        def __init__(self, **kwargs): super().__init__(proposal)
+        async def __aenter__(self): return self
+        async def __aexit__(self,*args): pass
+    monkeypatch.setattr(preview.httpx, 'AsyncClient', MockClient)
+    schemas=[s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name']=='write_file']
+    contract=resolve_full_inventory_contract(schemas=schemas,policy=ToolPolicy())
+    chunks=[c async for c in preview.stream_preview(endpoint_url='http://127.0.0.1:11434/v1/chat/completions',
+        model='samantha-mistral:latest',headers={},messages=[{'role':'user','content':'Create a PDF named samantha.pdf with Ocean'}],
+        turn_contract=contract,session_id='s',owner='alice',workspace=str(tmp_path),disabled_tools=set(),tool_policy=ToolPolicy(),max_rounds=3)]
+    assert (tmp_path/'samantha.pdf').is_file(), chunks
+    assert any('[Download PDF]' in c for c in chunks), chunks

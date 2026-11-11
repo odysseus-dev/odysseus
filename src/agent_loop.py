@@ -8546,8 +8546,13 @@ def _configured_model_tool_surface_raw(
     if tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE:
         return "compact"
     if not endpoint_tools_disabled:
-        from src.ollama_tool_detection import advertises_tools
-        if advertises_tools(endpoint_url, model):
+        from src.ollama_tool_detection import native_tool_capability
+        capability = native_tool_capability(endpoint_url, model)
+        if capability is True:
+            return "compact"
+        if capability is False:
+            # The compact runtime supplies its constrained local adapter when
+            # this Ollama model cannot accept native tool schemas.
             return "compact"
     return ""
 

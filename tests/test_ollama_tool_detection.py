@@ -36,8 +36,10 @@ def test_no_tools_and_failure_are_conservative(monkeypatch):
         def __exit__(self, *args): pass
         def read(self, n): return b'{"capabilities":["completion"]}'
     monkeypatch.setattr(detection, 'build_opener', lambda *_: SimpleNamespace(open=lambda *a, **k: Response()))
+    assert detection.native_tool_capability('http://127.0.0.1:11434/v1', 'no-tools') is False
     assert not detection.advertises_tools('http://127.0.0.1:11434/v1', 'no-tools')
     monkeypatch.setattr(detection, 'build_opener', lambda *_: SimpleNamespace(open=lambda *a, **k: (_ for _ in ()).throw(OSError('offline'))))
+    assert detection.native_tool_capability('http://127.0.0.1:11434/v1', 'offline') is None
     assert not detection.advertises_tools('http://127.0.0.1:11434/v1', 'offline')
 
 
@@ -53,9 +55,9 @@ def test_auto_selects_compact_only_after_verified_support(monkeypatch):
     class BrokenSession:
         def __init__(self): raise RuntimeError('no endpoint metadata')
     monkeypatch.setattr(core.database, 'SessionLocal', BrokenSession)
-    monkeypatch.setattr(detection, 'advertises_tools', lambda endpoint, model: model == 'tool-model')
+    monkeypatch.setattr(detection, 'native_tool_capability', lambda endpoint, model: model == 'tool-model')
     assert agent_loop._configured_model_tool_surface('http://127.0.0.1:11434/v1', 'tool-model') == 'compact'
-    assert agent_loop._configured_model_tool_surface('http://127.0.0.1:11434/v1', 'no-tools') == ''
+    assert agent_loop._configured_model_tool_surface('http://127.0.0.1:11434/v1', 'no-tools') == 'compact'
 
 @pytest.mark.parametrize(('mode','flag','expected','probe_called'), [
     ('none', None, 'none', False), ('full', None, 'full', False),
@@ -73,6 +75,6 @@ def test_explicit_mode_and_disabled_endpoint_override_auto(monkeypatch, mode, fl
         def query(self, *args): return Query()
         def close(self): pass
     monkeypatch.setattr(core.database, 'SessionLocal', lambda: DB())
-    monkeypatch.setattr(detection, 'advertises_tools', lambda *args: calls.append(args) or True)
+    monkeypatch.setattr(detection, 'native_tool_capability', lambda *args: calls.append(args) or True)
     assert agent_loop._configured_model_tool_surface('http://127.0.0.1:11434/v1','tool-model') == expected
     assert bool(calls) is probe_called
