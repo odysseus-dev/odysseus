@@ -1000,6 +1000,12 @@ a.chat-link[href^="#research-"] {
   font-size: 12px;
   min-width: 70px;
 }
+#set-utilityEffortLabel { flex: 0 0 85px; line-height: 1.2; }
+.settings-label-sub {
+  display: block;
+  font-size: 10px;
+  opacity: 0.6;
+}
 .settings-select {
   flex: 1;
   /* Allow the select to shrink below its longest option's width inside a flex
@@ -1116,6 +1122,11 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   flex: 1 1 0;
   width: 0;
   max-width: 100%;
+}
+.settings-fallback-row .settings-select.settings-fallback-effort {
+  flex: 0 1 130px;
+  width: 130px;
+  max-width: 32%;
 }
 details.hwfit-serve-advanced > .hwfit-serve-row,
 details.hwfit-serve-advanced > .hwfit-serve-checks,

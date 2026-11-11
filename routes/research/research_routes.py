@@ -17,6 +17,7 @@ from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.constants import DEEP_RESEARCH_DIR
+from src import shutdown as _shutdown
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -182,6 +183,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     OAuth tokens in ProviderAuthSession, so ep.api_key is intentionally empty.
     """
     from src.endpoint_resolver import (
+        _endpoint_enabled_models,
         build_chat_url,
         build_headers,
         resolve_endpoint_runtime as resolve_model_endpoint_runtime,
@@ -196,7 +198,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     ep_model = (model or "").strip()
     if not ep_model:
         try:
-            models = json.loads(ep.cached_models) if ep.cached_models else []
+            models = _endpoint_enabled_models(ep)
             if models:
                 ep_model = _first_chat_model(models)
         except Exception:
@@ -285,11 +287,17 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_status(session_id: str, request: Request):
         user = _require_user(request)
         _validate_session_id(session_id)
+        # No in-flight or persisted research for this session is a normal state
+        # (most sessions have none), not an error. Return HTTP 200 with an
+        # explicit empty status so loading a session does not log a spurious
+        # 404; every client treats a non-"running" status as idle anyway.
+        # Research owned by ANOTHER user answers identically, so the response
+        # does not reveal whether that research exists.
         if not _owns_in_memory(session_id, user):
-            raise HTTPException(404, "No research found for this session")
+            return {"status": "none"}
         status = research_handler.get_status(session_id)
         if status is None:
-            raise HTTPException(404, "No research found for this session")
+            return {"status": "none"}
         try:
             source_state = research_handler.get_source_state(session_id)
             if isinstance(source_state, str) and source_state:
@@ -657,7 +665,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(404, "No research found for this session")
         async def _generate():
             last_payload = None
-            while True:
+            while not _shutdown.is_shutting_down():
                 status = research_handler.get_status(session_id)
                 if status is None:
                     yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
@@ -817,23 +825,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not ep_url or not ep_model:
             # Last resort: this user's enabled endpoint, plus legacy shared rows.
             from src.database import SessionLocal
-            from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:
                 ep = _owned_enabled_endpoint(db, user)
                 if ep:
-                    base = normalize_base(ep.base_url)
-                    fallback_url = build_chat_url(base)
-                    fallback_headers = build_headers(ep.api_key, base)
-                    fallback_model = ""
-                    if ep.cached_models:
-                        try:
-                            models = json.loads(ep.cached_models)
-                            if models:
-                                fallback_model = _first_chat_model(models)
-                        except Exception:
-                            pass
-                    _merge(fallback_url, fallback_model, fallback_headers)
+                    resolved = _resolve_endpoint_runtime(ep, owner=user)
+                    if resolved:
+                        _merge(*resolved)
             finally:
                 db.close()
 

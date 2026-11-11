@@ -31,7 +31,7 @@ def test_unrelated_override_receives_no_saved_credentials(monkeypatch, url):
     monkeypatch.setattr(tasks, "resolve_endpoint", lambda *a, **k: (None, None, {}))
     monkeypatch.setattr(tasks, "resolve_utility_fallback_candidates", lambda **k: [])
     candidates = resolve_task_candidates(override_url=url, override_model="test")
-    assert candidates == [(url, "test", {})]
+    assert candidates == []
     runtime.assert_not_called()
 
 
@@ -73,7 +73,11 @@ def test_credential_resolution_is_exact_and_owner_scoped(monkeypatch, tmp_path, 
     monkeypatch.setattr(settings, "get_setting", lambda key, default=None: default)
     try:
         if resolver_kind == "task":
-            headers = tasks.resolve_task_candidates(override_url=url, override_model="test", owner=owner)[0][2]
+            candidates = tasks.resolve_task_candidates(override_url=url, override_model="test", owner=owner)
+            if expected is None:
+                assert candidates == []
+                return
+            headers = candidates[0][2]
         else:
             from routes.skills_routes import _resolve_audit_models
             headers = _resolve_audit_models(owner=owner, endpoint_url=url, model_spec="test")[2]

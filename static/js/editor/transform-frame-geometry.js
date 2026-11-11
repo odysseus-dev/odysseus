@@ -25,23 +25,56 @@ export function transformFrameGeometry(frame, options = {}) {
   const radians = rotation * Math.PI / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
-  const rotateLocal = (localX, localY) => ({
-    x: centerX + localX * cos - localY * sin,
-    y: centerY + localX * sin + localY * cos,
-  });
-  const resizeHandles = HANDLE_LAYOUT.map(([id, xFactor, yFactor]) => ({
+  // Skew (degrees) shears the frame in its LOCAL axes — the same order the
+  // canvas render pipeline uses (scale → skew → rotate). Zero skew leaves
+  // the geometry byte-for-byte identical to the un-skewed frame.
+  const skewX = finite(frame?.skewX);
+  const skewY = finite(frame?.skewY);
+  const shearX = Math.tan(skewX * Math.PI / 180);
+  const shearY = Math.tan(skewY * Math.PI / 180);
+  const localToWorld = (localX, localY) => {
+    const sx = localX + shearX * localY;
+    const sy = localY + shearY * localX;
+    return {
+      x: centerX + sx * cos - sy * sin,
+      y: centerY + sx * sin + sy * cos,
+    };
+  };
+  // Free distort (Ctrl/Cmd+drag): per-corner offsets in frame-normal units.
+  // When present, the corner/edge handles follow the quad so only the dragged
+  // point moves; every other point stays where it was.
+  const distort = frame?.distort || null;
+  const localOf = (() => {
+    if (!distort) {
+      return Object.fromEntries(HANDLE_LAYOUT.map(([id, xFactor, yFactor]) => [id, { x: width * xFactor, y: height * yFactor }]));
+    }
+    const delta = key => distort[key] || { x: 0, y: 0 };
+    const corner = (key, sx, sy) => ({
+      x: (sx + delta(key).x) * width,
+      y: (sy + delta(key).y) * height,
+    });
+    const tl = corner('tl', -0.5, -0.5);
+    const tr = corner('tr', 0.5, -0.5);
+    const br = corner('br', 0.5, 0.5);
+    const bl = corner('bl', -0.5, 0.5);
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    return { tl, t: mid(tl, tr), tr, r: mid(tr, br), br, b: mid(br, bl), bl, l: mid(bl, tl) };
+  })();
+  const resizeHandles = HANDLE_LAYOUT.map(([id]) => ({
     id,
-    ...rotateLocal(width * xFactor, height * yFactor),
+    ...localToWorld(localOf[id].x, localOf[id].y),
   }));
   const byId = Object.fromEntries(resizeHandles.map(handle => [handle.id, handle]));
   const zoom = Math.max(0.0001, finite(options.zoom, 1));
   const rotationOffset = Math.max(0, finite(options.rotationOffsetCss, 24)) / zoom;
+  const topMidX = localOf.t ? localOf.t.x : 0;
+  const topMidY = localOf.t ? localOf.t.y : -height / 2;
   const rotationLocalY = options.rotationInside
-    ? -Math.max(0, height / 2 - rotationOffset)
-    : -(height / 2 + rotationOffset);
+    ? topMidY + Math.max(0, rotationOffset)
+    : topMidY - rotationOffset;
   const rotationHandle = {
     id: 'rot',
-    ...rotateLocal(0, rotationLocalY),
+    ...localToWorld(topMidX, rotationLocalY),
   };
 
   return {
@@ -51,6 +84,9 @@ export function transformFrameGeometry(frame, options = {}) {
     height,
     rotation,
     radians,
+    skewX,
+    skewY,
+    distort,
     resizeHandles,
     handles: [...resizeHandles, rotationHandle],
     rotationHandle,
@@ -148,4 +184,89 @@ export function resizeTransformFrame(frame, handle, startPoint, currentPoint, op
     flipH: !!options.flipH !== (rawWidth < 0),
     flipV: !!options.flipV !== (rawHeight < 0),
   };
+}
+
+/**
+ * Skew a frame from a screen-space pointer delta on its rotated axes,
+ * mirroring Photoshop's Ctrl+drag on a handle.
+ *
+ *   top / bottom handles   → horizontal drag shears vertically-offset
+ *                            rows (skewX)
+ *   left / right handles   → vertical drag shears horizontally-offset
+ *                            columns (skewY)
+ *   corner handles         → both
+ *
+ * Returns { skewX, skewY } in degrees relative to `options.startSkew*`,
+ * clamped to ±85° so the tangent never blows up. Size, centre and
+ * rotation are untouched — skew is a separate slot in the transform
+ * target, exactly like the popup's Skew X / Skew Y fields.
+ */
+export function skewTransformFrame(frame, handle, startPoint, currentPoint, options = {}) {
+  const geometry = transformFrameGeometry(frame);
+  const xSign = handle?.includes('l') ? -1 : handle?.includes('r') ? 1 : 0;
+  const ySign = handle?.includes('t') ? -1 : handle?.includes('b') ? 1 : 0;
+  const worldDx = finite(currentPoint?.x) - finite(startPoint?.x);
+  const worldDy = finite(currentPoint?.y) - finite(startPoint?.y);
+  const cos = Math.cos(geometry.radians);
+  const sin = Math.sin(geometry.radians);
+  const localDx = worldDx * cos + worldDy * sin;
+  const localDy = -worldDx * sin + worldDy * cos;
+  const toDegrees = 180 / Math.PI;
+  const LIMIT = 85;
+  const clamp = value => Math.max(-LIMIT, Math.min(LIMIT, value));
+  const startSkewX = finite(options.startSkewX, 0);
+  const startSkewY = finite(options.startSkewY, 0);
+
+  let skewX = startSkewX;
+  let skewY = startSkewY;
+  // Top/bottom edge: the dragged edge follows the horizontal delta.
+  if (ySign) skewX = clamp(startSkewX + Math.atan2(2 * localDx / ySign, geometry.height) * toDegrees);
+  // Left/right edge: the dragged edge follows the vertical delta.
+  if (xSign) skewY = clamp(startSkewY + Math.atan2(2 * localDy / xSign, geometry.width) * toDegrees);
+
+  return { skewX, skewY };
+}
+
+/**
+ * Free distort from a screen-space pointer delta on a handle, mirroring
+ * Photoshop's Ctrl+drag: ONLY the dragged point moves.
+ *
+ *   corner handle → that corner alone follows the pointer (the frame
+ *                   becomes a quad)
+ *   edge handle   → both corners of that edge move together, so the edge
+ *                   slides/keeps its length but nothing else moves
+ *
+ * Corner offsets are returned in FRAME-NORMAL units (a fraction of the
+ * frame's width/height; ±0.5 is the frame half-size) relative to
+ * `options.startDistort`, so they compose with any existing distort.
+ * Size, centre, rotation and skew are untouched.
+ */
+export function distortTransformFrame(frame, handle, startPoint, currentPoint, options = {}) {
+  const geometry = transformFrameGeometry(frame);
+  const corners = ['tl', 'tr', 'br', 'bl'];
+  const owners = {
+    tl: ['tl'], tr: ['tr'], br: ['br'], bl: ['bl'],
+    t: ['tl', 'tr'], b: ['bl', 'br'], l: ['tl', 'bl'], r: ['tr', 'br'],
+  }[handle];
+  if (!owners) return null;
+
+  const worldDx = finite(currentPoint?.x) - finite(startPoint?.x);
+  const worldDy = finite(currentPoint?.y) - finite(startPoint?.y);
+  const cos = Math.cos(geometry.radians);
+  const sin = Math.sin(geometry.radians);
+  const localDx = worldDx * cos + worldDy * sin;
+  const localDy = -worldDx * sin + worldDy * cos;
+  const ndx = localDx / geometry.width;
+  const ndy = localDy / geometry.height;
+
+  const start = options.startDistort || null;
+  const base = key => (start && start[key] ? { x: finite(start[key].x), y: finite(start[key].y) } : { x: 0, y: 0 });
+  const LIMIT = 4;
+  const clamp = value => Math.max(-LIMIT, Math.min(LIMIT, value));
+  const next = {};
+  for (const key of corners) {
+    if (owners.includes(key)) next[key] = { x: clamp(base(key).x + ndx), y: clamp(base(key).y + ndy) };
+    else next[key] = base(key);
+  }
+  return next;
 }

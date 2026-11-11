@@ -1,3 +1,4 @@
+from tests.helpers.notes_source import notes_source
 from pathlib import Path
 import re
 
@@ -10,23 +11,23 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_mobile_notes_checklist_rows_remain_tappable():
     css = app_css()
-    notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
 
     assert "body.notes-mobile-mode .note-card .note-checkbox {" in css
     assert "pointer-events: auto;" in css
     assert "touch-action: manipulation;" in css
     assert "body.notes-mobile-mode .note-card .note-checkbox,\nbody.notes-mobile-mode .note-card .note-checkbox-rm" not in css
-    assert "if (_selectMode) return; // let card-level handler take over\n      e.preventDefault();" in notes
+    assert re.search(r"if \(state.selectMode\) return; // let card-level handler take over\n\s+e.preventDefault\(\);", notes)
 
 
 def test_mobile_edit_checklist_toggle_marks_form_dirty():
-    notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
 
     assert "container.dispatchEvent(new Event('input', { bubbles: true }));" in notes
 
 
 def test_completed_mobile_todo_uses_finish_action():
-    notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
 
     assert "const _isFinishedTodo = () =>" in notes
     assert "const label = _isFinishedTodo() ? 'Finish' : 'Archive';" in notes
@@ -34,10 +35,10 @@ def test_completed_mobile_todo_uses_finish_action():
 
 
 def test_mobile_long_press_enters_select_mode_for_that_note():
-    notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
 
     assert "function _enterSelectMode(initialId = null)" in notes
-    assert "_suppressNextNoteTapId = card.dataset.noteId;" in notes
+    assert "app.setSuppressNextNoteTapId(card.dataset.noteId);" in notes
     assert "_enterSelectMode(card.dataset.noteId);" in notes
 
 
@@ -60,7 +61,7 @@ def test_notes_mobile_checklist_asset_versions_are_bumped():
 
 
 def test_drawing_edits_mark_notes_dirty_and_keep_one_gallery_image():
-    notes = (ROOT / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
     upload = (ROOT / "routes" / "upload_routes.py").read_text(encoding="utf-8")
     note_routes = (ROOT / "routes" / "note" / "note_routes.py").read_text(encoding="utf-8")
 

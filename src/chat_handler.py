@@ -211,10 +211,15 @@ class ChatHandler:
             from src.settings import get_setting
             vision_enabled = get_setting("vision_enabled", True)
             if vision_enabled:
+                from src.owner_identity import auth_disabled
+                sess_owner = getattr(sess, "owner", None)
+                if not sess_owner and not auth_disabled():
+                    sess_owner = ""
                 main_is_vision = await asyncio.to_thread(
                     model_supports_vision,
                     sess.model or "",
                     getattr(sess, "endpoint_url", "") or "",
+                    sess_owner,
                 )
 
         if effective_att_ids and vision_enabled:
@@ -277,7 +282,13 @@ class ChatHandler:
                                     _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
                                 except Exception:
                                     pass
-                        enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"
+                        enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n"
+                        if vl_desc:
+                            # A separate vision call wrote this, but the chat model sees
+                            # one message and answers the prose as if the user wrote it
+                            # (#5573). Label it below the marker line — the client strips
+                            # the block by matching `[Image: <name>]\n`.
+                            enhanced_message += f"[Image description — context only, not part of the user's message]:\n{vl_desc}"
                         # Surface the description to the client live so it renders as a
                         # collapsible "image description" on the user bubble (not just
                         # after a refresh that re-parses the stored message).

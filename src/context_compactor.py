@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from src.model_context import estimate_text_tokens, get_context_length, estimate_tokens
 from src.llm_core import llm_call_async
 from src.endpoint_resolver import resolve_endpoint
+from src.utility_effort import effort_for_call
 from src.settings import get_setting
 from core.models import ChatMessage
 
@@ -39,6 +40,15 @@ def _content_as_text(content: Any) -> str:
 
 
 _MULTIMODAL_IMAGE_TYPES = {"image_url", "input_image", "image"}
+
+
+def _has_preservable_content(content: Any) -> bool:
+    """Retain nonblank text or nonempty multimodal blocks after tool-call removal."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return bool(content)
+    return False
 
 
 def prune_multimodal_images(
@@ -91,6 +101,84 @@ def prune_multimodal_images(
     return pruned
 
 
+_IMAGE_TURN_LABEL_RE = re.compile(r"\[Image(?:s)?(?:[ \t]{1,64}attached)?:[ \t]{0,64}([^\]]{1,512})\]", re.IGNORECASE)
+
+
+def _image_turn_label(message: Dict) -> str:
+    """Best-effort '[Image: name]' label for a message whose image parts are dropped."""
+    name = ""
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES:
+                image_url = item.get("image_url")
+                candidate = item.get("name") or (image_url.get("name") if isinstance(image_url, dict) else None)
+                if candidate:
+                    name = str(candidate)
+                    break
+        if not name:
+            text = _content_as_text(content)
+            match = _IMAGE_TURN_LABEL_RE.search(text)
+            if match:
+                name = match.group(1).strip()
+    return f"[Image: {name}]" if name else "[Image]"
+
+
+def keep_recent_image_turns(messages: List[Dict], *, keep: int = 2) -> List[Dict]:
+    """Keep image parts only for the last `keep` messages that carry an image.
+
+    Older image blocks are dropped and replaced with a short ``[Image: name]``
+    text label so the model still knows a picture was shared (and its name)
+    without paying the image tokens on every later turn. Non-text, non-image
+    multimodal blocks (e.g. audio) are left untouched.
+    """
+    limit = max(0, int(keep))
+    image_messages = [
+        index for index, message in enumerate(messages)
+        if isinstance(message, dict)
+        and isinstance(message.get("content"), list)
+        and any(
+            isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES
+            for item in message["content"]
+        )
+    ]
+    if len(image_messages) <= limit:
+        return list(messages)
+    selected = set(image_messages[len(image_messages) - limit:]) if limit else set()
+
+    trimmed: List[Dict] = []
+    for message_index, message in enumerate(messages):
+        if message_index in selected or not isinstance(message, dict):
+            trimmed.append(message)
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            trimmed.append(message)
+            continue
+        kept_blocks = [
+            dict(item) if isinstance(item, dict) else item for item in content
+            if not (isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES)
+        ]
+        if len(kept_blocks) == len(content):
+            trimmed.append(message)
+            continue
+        label = _image_turn_label(message)
+        # Attach the label to the trailing text block when possible so we do not
+        # introduce an extra content block; otherwise append a fresh text block.
+        labelled = False
+        for item in reversed(kept_blocks):
+            if isinstance(item, dict) and item.get("type") == "text":
+                item["text"] = (item.get("text") or "").rstrip() + f"\n{label}"
+                labelled = True
+                break
+        if not labelled:
+            kept_blocks.append({"type": "text", "text": label})
+        cloned = dict(message)
+        cloned["content"] = kept_blocks
+        trimmed.append(cloned)
+    return trimmed
+
+
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
@@ -105,7 +193,7 @@ def auto_compact_threshold_percent() -> int:
     return max(50, min(95, value))
 
 # Cursor-style self-summarization prompt — produces structured, dense summaries
-SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation to preserve context after compaction. Produce a structured summary that lets the conversation continue seamlessly.
+SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation with Ajax, the user's AI assistant, to preserve context after compaction. Produce a structured summary that lets Ajax continue seamlessly. Ajax is the assistant's name; Odysseus is the app name.
 
 Use this format:
 
@@ -143,22 +231,81 @@ def normalize_compaction_summary(summary: str) -> str:
 
 
 def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
-    """Drop orphaned `tool` messages and dangling assistant `tool_calls`.
+    """Normalize tool-call message ordering so strict providers accept the transcript.
 
     OpenAI's API requires every `role:"tool"` message to immediately
     follow an assistant message that carries `tool_calls` (or another
-    tool message in the same batch). Front-trimming the history can cut
-    the assistant `tool_calls` parent while keeping its tool responses,
-    which triggers: "messages with role 'tool' must be a response to a
-    preceding message with 'tool_calls'". This pass repairs that:
-      - drops `tool` messages with no valid preceding tool_calls
-      - drops assistant `tool_calls` messages whose tool responses were
-        all trimmed away (some providers reject unanswered tool_calls)
+    tool message in the same batch). Gemini and some other providers
+    additionally require a function call turn to come immediately after
+    a user turn or a function response turn. Trimming the history can
+    break either rule, which triggers errors such as "messages with role
+    'tool' must be a response to a preceding message with 'tool_calls'"
+    and "Please ensure that function call turn comes immediately after
+    a user turn or after a function response turn."
+
+    The transcript is normalized against its own effective output: each
+    pass repairs the violations it can see and the passes repeat until
+    the result is stable, so the returned transcript itself satisfies
+    the ordering contract and sanitizing it again is a no-op. A
+    completed call/result batch whose predecessor is an adjacent
+    assistant text turn keeps its calls by merging that text into the
+    call message instead of dropping executed-tool evidence; a batch
+    that cannot get a user/tool predecessor (e.g. a transcript that
+    starts mid-history) is the only one dropped.
     """
-    # Pass 1: drop orphan tool messages.
+    work = list(msgs)
+    for _ in range(2 * len(work) + 2):
+        normalized = _normalize_tool_messages_once(work)
+        if normalized == work:
+            break
+        work = normalized
+    return work
+
+
+def _normalize_tool_messages_once(msgs: List[Dict]) -> List[Dict]:
+    """One normalization pass over an already-trimmed message list."""
+    # Merge the run of assistant text turns directly before an assistant
+    # tool_calls turn into a single assistant message carrying both, so the
+    # batch inherits the text run's predecessor (a user or tool message)
+    # instead of losing its tool_calls. Only plain-text content is merged;
+    # multimodal content stays untouched and falls through to the strip logic.
+    merged: List[Dict] = []
+    for m in msgs:
+        cur_text = m.get("content")
+        if (
+            m.get("role") == "assistant"
+            and m.get("tool_calls")
+            and (cur_text is None or isinstance(cur_text, str))
+        ):
+            text_run: List[Dict] = []
+            while (
+                merged
+                and merged[-1].get("role") == "assistant"
+                and not merged[-1].get("tool_calls")
+                and isinstance(merged[-1].get("content"), str)
+            ):
+                text_run.append(merged.pop())
+            if text_run:
+                text_parts = [
+                    msg["content"].strip()
+                    for msg in reversed(text_run)
+                    if msg["content"].strip()
+                ]
+                if isinstance(cur_text, str) and cur_text.strip():
+                    text_parts.append(cur_text.strip())
+                merged_msg = dict(m)
+                if text_parts:
+                    merged_msg["content"] = "\n\n".join(text_parts)
+                merged.append(merged_msg)
+                continue
+        merged.append(m)
+
+    # Strip tool_calls from assistant messages whose predecessor is not a
+    # user or tool message, then drop orphan tool messages and dangling
+    # tool_calls whose responses are gone.
     cleaned: List[Dict] = []
     in_batch = False  # are we right after an assistant tool_calls (or mid-batch)?
-    for m in msgs:
+    for m in merged:
         role = m.get("role")
         if role == "tool":
             if in_batch:
@@ -166,13 +313,21 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
             # else: orphan — drop
             continue
         if role == "assistant" and m.get("tool_calls"):
+            prev_role = cleaned[-1].get("role") if cleaned else None
+            if prev_role not in ("user", "tool"):
+                # Invalid predecessor — strip tool_calls to avoid provider
+                # errors; keep the message only if it still carries content.
+                m = {k: v for k, v in m.items() if k != "tool_calls"}
+                in_batch = False
+                if not _has_preservable_content(m.get("content")):
+                    continue  # nothing left worth keeping
+                cleaned.append(m)
+                continue
             in_batch = True
         else:
             in_batch = False
         cleaned.append(m)
 
-    # Pass 2: drop assistant tool_calls messages that have NO following
-    # tool response (dangling) — walk backwards so we know what follows.
     out: List[Dict] = []
     for i, m in enumerate(cleaned):
         if m.get("role") == "assistant" and m.get("tool_calls"):
@@ -182,7 +337,7 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
                 # tool_calls so it's a plain assistant turn (preserves any
                 # text content the model produced alongside the calls).
                 m = {k: v for k, v in m.items() if k != "tool_calls"}
-                if not (m.get("content") or "").strip():
+                if not _has_preservable_content(m.get("content")):
                     continue  # nothing left worth keeping
         out.append(m)
     return out
@@ -556,7 +711,13 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
+    util_url, util_model, util_headers = resolve_endpoint(
+        "utility",
+        fallback_url=endpoint_url,
+        fallback_model=model,
+        fallback_headers=headers,
+        owner=owner,
+    )
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers
@@ -580,6 +741,7 @@ async def maybe_compact(
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
             timeout=30,
+            reasoning_effort=effort_for_call(compact_url, compact_model, owner, session),
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

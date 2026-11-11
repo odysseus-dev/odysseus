@@ -72,6 +72,8 @@ services:
       - ODYSSEUS_CAPTURE_MODEL_REQUESTS=${ODYSSEUS_CAPTURE_MODEL_REQUESTS:-0}
       - ODYSSEUS_MCP_EMAIL_OWNER=${ODYSSEUS_MCP_EMAIL_OWNER:-}
       - ODYSSEUS_SCRIPT_HOST=${ODYSSEUS_SCRIPT_HOST:-localhost}
+      - ODYSSEUS_LOCAL_MCP_READ_TOOLS=${ODYSSEUS_LOCAL_MCP_READ_TOOLS:-}
+      - ODYSSEUS_LOCAL_MCP_WRITE_TOOLS=${ODYSSEUS_LOCAL_MCP_WRITE_TOOLS:-}
       - ODYSSEUS_CHAT_UPLOAD_MAX_BYTES=${ODYSSEUS_CHAT_UPLOAD_MAX_BYTES:-10485760}
       - ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES:-104857600}
       - ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES:-26214400}
@@ -81,13 +83,15 @@ services:
       - ODYSSEUS_EDITOR_DRAFT_MAX_BYTES=${ODYSSEUS_EDITOR_DRAFT_MAX_BYTES:-268435456}
       - ODYSSEUS_STT_MAX_AUDIO_BYTES=${ODYSSEUS_STT_MAX_AUDIO_BYTES:-26214400}
       - ODYSSEUS_ICS_MAX_BYTES=${ODYSSEUS_ICS_MAX_BYTES:-10485760}
-      - ODYSSEUS_TTS_CACHE_MAX_BYTES=${ODYSSEUS_TTS_CACHE_MAX_BYTES}
+      - ODYSSEUS_TTS_CACHE_MAX_BYTES=${ODYSSEUS_TTS_CACHE_MAX_BYTES:-524288000}
       # Host workspace translation is opt-in. Keep the public compose file
       # user-neutral; configure these in a local .env or use the host-workspace
       # overlay with ODYSSEUS_HOST_WORKSPACE_DIR.
       - ODYSSEUS_WORKSPACE_HOST_ROOT=${ODYSSEUS_WORKSPACE_HOST_ROOT:-}
       - ODYSSEUS_WORKSPACE_CONTAINER_ROOT=${ODYSSEUS_WORKSPACE_CONTAINER_ROOT:-/workspace}
       - ODYSSEUS_WORKSPACE_DEFAULT=${ODYSSEUS_WORKSPACE_DEFAULT:-}
+      # Local first-token watchdog in seconds; 0 disables it. Empty keeps the code default (60s).
+      - ODYSSEUS_FIRST_TOKEN_TIMEOUT=${ODYSSEUS_FIRST_TOKEN_TIMEOUT:-}
       - DATA_BRAVE_API_KEY=${DATA_BRAVE_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GOOGLE_PSE_CX=${GOOGLE_PSE_CX:-}
@@ -130,11 +134,15 @@ services:
               capabilities: [gpu]
 
   chromadb:
-    image: docker.io/chromadb/chroma:latest
+    image: docker.io/chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
-      - chromadb-data:/chroma/chroma
+      # The image runs `chroma run /config.yaml`, whose persist_path is "/data".
+      # It declares no VOLUME, so anything written outside a mount lives in the
+      # container's writable layer and dies with it. /chroma/chroma is where
+      # pre-1.0 images kept the store; mounting there now catches nothing.
+      - chromadb-data:/data
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
@@ -144,8 +152,8 @@ services:
     # (depends_on: condition: service_healthy), so a broken upstream `latest`
     # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
     # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
-    # Bump this deliberately after verifying a newer tag boots clean.
-    image: docker.io/searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6
+    # Update all default/GPU pins together after native startup and trust checks.
+    image: docker.io/searxng/searxng:2026.10.24-ef0ec03da@sha256:7c7cbe509429e82755104b2a95f52085a98633c95d53f44e4e905fa3a59f08c8
     entrypoint:
       - /bin/sh
       - -c
@@ -164,7 +172,7 @@ services:
         /usr/local/searxng/.venv/bin/python /tmp/migrate-searxng-settings.py /etc/searxng/settings.yml || true
         exec /usr/local/searxng/entrypoint.sh
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${SEARXNG_HOST_PORT:-8080}:8080"
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro,z
@@ -195,7 +203,7 @@ services:
     restart: unless-stopped
 
   ntfy:
-    image: docker.io/binwiederhier/ntfy
+    image: docker.io/binwiederhier/ntfy:v2.32.0@sha256:59250e1d8be2ee2186c4560322f625faef22ace380331f05b63f8842dbd62602
     command: serve
     ports:
       - "${NTFY_BIND:-127.0.0.1}:8091:80"

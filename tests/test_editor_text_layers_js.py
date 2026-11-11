@@ -127,8 +127,9 @@ def test_text_tool_is_retained_across_editor_subsystems():
     panel = (ROOT / "static/js/editor/layer-panel.js").read_text(encoding="utf-8")
     merge = (ROOT / "static/js/editor/wire-merge-buttons.js").read_text(encoding="utf-8")
 
-    assert "{ id: 'text', label: 'Text'" in toolbar
-    assert "t.key = TOOL_SHORTCUTS[t.id]" in toolbar
+    assert "text: { label: 'Text'" in toolbar
+    assert "const key = TOOL_SHORTCUTS[id]" in toolbar
+    assert "toolKeyMap[key.toLowerCase()] = id" in toolbar
     assert "text: 'T'" in shortcuts
     assert 'id="ge-text-section"' in controls
     assert "if (state.tool === 'text') return _placeText(e);" in editor

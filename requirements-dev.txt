@@ -2,3 +2,4 @@
 -r requirements.txt
 # psutil lets `-n auto` use physical cores instead of logical CPU threads.
 pytest-xdist[psutil]>=3.8,<4
+playwright==1.62.0

@@ -5336,6 +5336,29 @@ function _eggRender(html) {
   uiModule.scrollHistory();
 }
 
+// Delegated handlers for egg commands that used inline onclick (blocked by
+// Firefox CSP script-src-attr). Dice re-roll + color copy.
+if (!window._eggDelegatedBound) {
+  window._eggDelegatedBound = true;
+  document.addEventListener('click', (e) => {
+    const dice = e.target.closest && e.target.closest('.egg-dice');
+    if (dice) {
+      const sides = Math.min(parseInt(dice.dataset.diceSides) || 6, 1000);
+      dice.style.animation = 'none';
+      void dice.offsetHeight;
+      dice.textContent = Math.floor(Math.random() * sides) + 1;
+      dice.style.animation = 'egg-shake 0.3s ease';
+      return;
+    }
+    const swatch = e.target.closest && e.target.closest('.egg-color-copy');
+    if (swatch) {
+      navigator.clipboard.writeText(swatch.dataset.color || '');
+      swatch.style.transform = 'scale(0.9)';
+      setTimeout(() => { swatch.style.transform = ''; }, 150);
+    }
+  });
+}
+
 async function _cmdFlip(args, ctx) {
   const isHeads = Math.random() < 0.5;
   const edge = Math.random() < 0.001;
@@ -5373,7 +5396,7 @@ async function _cmdRoll(args, ctx) {
   const results = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
   const total = results.reduce((a, b) => a + b, 0);
   const dice = results.map((v, i) => {
-    return `<div style="min-width:42px;height:42px;border-radius:6px;border:2px solid var(--border);background:var(--panel);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--red);animation:egg-spin 0.5s ease-out ${i*0.08}s both;cursor:pointer" title="d${sides}" onclick="this.style.animation='none';this.offsetHeight;var r=Math.floor(Math.random()*${sides})+1;this.textContent=r;this.style.animation='egg-shake 0.3s ease'">${v}</div>`;
+    return `<div style="min-width:42px;height:42px;border-radius:6px;border:2px solid var(--border);background:var(--panel);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--red);animation:egg-spin 0.5s ease-out ${i*0.08}s both;cursor:pointer" class="egg-dice" data-dice-sides="${sides}" title="d${sides}">${v}</div>`;
   }).join('');
   const totalHtml = count > 1 ? `<div style="font-size:0.8em;opacity:0.5;margin-top:4px">${count}d${sides} = ${total}</div>` : '';
   _eggRender(`<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">${dice}</div>${totalHtml}</div>`);
@@ -5690,7 +5713,7 @@ async function _cmdColor(args, ctx) {
   const hex = args[0] || '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');
   const c = hex.startsWith('#') ? hex : '#' + hex;
   _eggRender(`<div style="display:flex;align-items:center;gap:12px;animation:egg-fade 0.3s ease-out">
-    <div style="width:48px;height:48px;border-radius:4px;border:1px solid var(--border);background:${ctx.esc(c)};cursor:pointer" title="Click to copy" onclick="navigator.clipboard.writeText('${ctx.esc(c)}');this.style.transform='scale(0.9)';setTimeout(()=>this.style.transform='',150)"></div>
+    <div style="width:48px;height:48px;border-radius:4px;border:1px solid var(--border);background:${ctx.esc(c)};cursor:pointer" class="egg-color-copy" data-color="${ctx.esc(c)}" title="Click to copy"></div>
     <div style="display:flex;flex-direction:column;gap:2px"><code style="font-size:1.1em">${ctx.esc(c)}</code>
       <span style="font-size:0.75em;opacity:0.4">click swatch to copy</span>
     </div>

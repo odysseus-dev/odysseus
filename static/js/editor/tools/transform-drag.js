@@ -24,7 +24,7 @@
  */
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
-import { resizeTransformFrame } from '../transform-frame-geometry.js';
+import { resizeTransformFrame, skewTransformFrame, distortTransformFrame } from '../transform-frame-geometry.js';
 import { createDirectManipulationSession } from '../direct-manipulation-session.js';
 
 export function createTransformDragTool({
@@ -67,6 +67,9 @@ export function createTransformDragTool({
         state.transformStartRotation = state.transformPendingRot;
         state.transformStartFlipH = state.transformPendingFlipH;
         state.transformStartFlipV = state.transformPendingFlipV;
+        state.transformStartSkewX = state.transformPendingSkewX || 0;
+        state.transformStartSkewY = state.transformPendingSkewY || 0;
+        state.transformStartDistort = state.transformPendingDistort || null;
         state.transformStartOffX = center.x - state.transformOrigW / 2;
         state.transformStartOffY = center.y - state.transformOrigH / 2;
         gesture.begin(e, { handle: state.transformHandle }, { captureTarget: e.currentTarget });
@@ -153,6 +156,57 @@ export function createTransformDragTool({
         if (state.transformPopup) {
           const rotIn = state.transformPopup.querySelector('#ge-transform-rot');
           if (rotIn) rotIn.value = String(deg);
+        }
+        return true;
+      }
+      // Ctrl/Cmd + drag a handle = FREE DISTORT (Photoshop). Only the
+      // dragged point moves: a corner handle moves that corner alone
+      // (the frame becomes a quad); an edge handle slides that edge's
+      // two corners together. Size, centre, rotation and skew are left
+      // untouched — distort is a separate slot on the transform target.
+      if (e.ctrlKey || e.metaKey) {
+        const distorted = distortTransformFrame({
+          centerX: state.transformStartCenter.x,
+          centerY: state.transformStartCenter.y,
+          width: state.transformOrigW,
+          height: state.transformOrigH,
+          rotation: state.transformStartRotation,
+        }, state.transformHandle, {
+          x: state.transformStartX,
+          y: state.transformStartY,
+        }, coords, {
+          startDistort: state.transformStartDistort || null,
+        });
+        if (distorted) {
+          state.transformPendingDistort = distorted;
+          reapplyTransform();
+          return true;
+        }
+      }
+      // Ctrl/Cmd with no distortable handle (rotation knob) keeps the old
+      // edge-shear skew so the popup's Skew X / Skew Y fields stay live.
+      if ((e.ctrlKey || e.metaKey) && state.transformHandle === 'rot') {
+        const skewed = skewTransformFrame({
+          centerX: state.transformStartCenter.x,
+          centerY: state.transformStartCenter.y,
+          width: state.transformOrigW,
+          height: state.transformOrigH,
+          rotation: state.transformStartRotation,
+        }, state.transformHandle, {
+          x: state.transformStartX,
+          y: state.transformStartY,
+        }, coords, {
+          startSkewX: state.transformStartSkewX || 0,
+          startSkewY: state.transformStartSkewY || 0,
+        });
+        state.transformPendingSkewX = skewed.skewX;
+        state.transformPendingSkewY = skewed.skewY;
+        reapplyTransform();
+        if (state.transformPopup) {
+          const skewXIn = state.transformPopup.querySelector('#ge-transform-skew-x');
+          const skewYIn = state.transformPopup.querySelector('#ge-transform-skew-y');
+          if (skewXIn) skewXIn.value = String(Math.round(skewed.skewX));
+          if (skewYIn) skewYIn.value = String(Math.round(skewed.skewY));
         }
         return true;
       }

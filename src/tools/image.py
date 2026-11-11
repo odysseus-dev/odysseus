@@ -16,7 +16,7 @@ from typing import Dict, Optional
 from src.tools._common import _parse_tool_args
 
 
-async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
+async def do_edit_image(content: str, owner: Optional[str] = None, *, incognito: bool = False) -> Dict:
     """Create an owner-scoped edited copy of a gallery image."""
     try:
         args = _parse_tool_args(content)
@@ -45,7 +45,7 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
         if not load_settings().get('image_gen_enabled', True):
             return {'error': 'Image generation is disabled by the administrator.', 'exit_code': 1}
         from src.ai_interaction import do_edit_image as edit_with_model
-        return await edit_with_model(str(args.get('prompt') or '').strip(), info['path'], owner=owner, size='auto')
+        return await edit_with_model(str(args.get('prompt') or '').strip(), info['path'], owner=owner, size='auto', incognito=incognito)
 
     from core.database import GalleryImage, SessionLocal
     from src.constants import GENERATED_IMAGES_DIR
@@ -79,7 +79,7 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
             session_id = source.session_id
             db.close()
             from src.ai_interaction import do_edit_image as edit_with_model
-            return await edit_with_model(prompt, str(source_path), session_id=session_id, owner=owner, size='auto')
+            return await edit_with_model(prompt, str(source_path), session_id=session_id, owner=owner, size='auto', incognito=incognito)
 
         from PIL import Image
 
@@ -110,6 +110,16 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
             image.save(output, format="PNG")
             output_bytes = output.getvalue()
             width, height = image.size
+
+        if incognito:
+            import base64
+            return {
+                'output': f'Image edited ({action}). Private result, not saved to gallery.',
+                'exit_code': 0, 'image_id': None,
+                'image_url': 'data:image/png;base64,' + base64.b64encode(output_bytes).decode('ascii'),
+                'image_prompt': source.prompt or action, 'image_model': f'edit_image:{action}',
+                'image_size': f'{width}x{height}', 'image_quality': source.quality or '',
+            }
 
         root.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex[:12]}.png"

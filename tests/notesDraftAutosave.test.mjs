@@ -1,21 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import vm from 'node:vm';
+import { createNotesPersistence } from '../frontend/src/features/notes/infrastructure/storage.js';
+import { createNotesState } from '../frontend/src/features/notes/application/state.js';
+import { createNotesDrafts } from '../frontend/src/features/notes/application/drafts.js';
+import { createDraftEditor } from '../frontend/src/features/notes/ui/draftEditor.js';
 
-const source = fs.readFileSync(new URL('../static/js/notes.js', import.meta.url), 'utf8');
 function harness(patch = async () => ({})) {
   const data = new Map(), timers = new Map(), errors = [];
   let nextTimer = 0;
-  const context = vm.createContext({
+  const context = {
     localStorage: { getItem: k => data.get(k) ?? null, setItem: (k,v) => data.set(k,v), removeItem: k => data.delete(k) },
     setTimeout: f => { timers.set(++nextTimer, f); return nextTimer; },
     clearTimeout: id => timers.delete(id),
     _patchNote: patch, _notes: [{id:'note1'}],
     _collectItems: form => form.items,
     uiModule: {showError: message => errors.push(message)},
-  });
-  vm.runInContext(source.slice(source.indexOf("const _DRAFT_PREFIX"), source.indexOf('// ---- Create / Edit Form ----')), context);
+  };
+  context.persistence = createNotesPersistence({ storage: context.localStorage });
+  context.app = createNotesState();
+  context.app.replaceNotes(context._notes);
+  context.state = context.app.state;
+  Object.assign(context, context.persistence);
+  const drafts = createNotesDrafts({ app: context.app, api: { patchNote: patch }, persistence: context.persistence, scheduler: context, effects: context.uiModule });
+  Object.assign(context, createDraftEditor({ ...context, ...context.persistence, bindDraft: drafts.bindDraft }));
   const fields = {'.note-form-title':{value:'Title'}, '.note-form-content':{value:'Original'}};
   const handlers = {};
   const form = { dataset:{noteType:'note'}, items:[], querySelector: s => fields[s], addEventListener:(n,f) => handlers[n]=f };

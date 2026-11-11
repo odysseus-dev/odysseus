@@ -128,7 +128,7 @@ async function _ensureDefaultPendingChat() {
   if (!_deps || _defaultChatPickInFlight) return;
   if (_deps.getCurrentSessionId && _deps.getCurrentSessionId()) return;
   const pending = _deps.getPendingChat && _deps.getPendingChat();
-  if (pending && pending.modelId) return;
+  if (pending && pending.modelId && pending.source !== 'fallback') return;
   _defaultChatPickInFlight = true;
   const seq = ++_defaultPendingSeq;
   try {
@@ -810,7 +810,10 @@ async function _pick(m) {
         _renderLoading('Loading models…');
       }
       if (window.modelsModule && window.modelsModule.refreshModels) {
-        _refreshPickerModels({ force: true, showLoading: !hasCache }).then(isLatest => {
+        // Open instantly from cache; never force a re-probe on open (a dead
+        // endpoint would otherwise stall every open). The explicit refresh
+        // button still forces a full re-probe.
+        _refreshPickerModels({ force: false, showLoading: !hasCache }).then(isLatest => {
           if (isLatest && !menu.classList.contains('hidden')) _populate(search.value || '');
           updateModelPicker();
         }).catch(() => {});
@@ -951,15 +954,6 @@ export function updateModelPicker() {
     }
   }
   const latestPending = _deps.getPendingChat && _deps.getPendingChat();
-  if (
-    !currentSessionId &&
-    !_autoSelectingDefault &&
-    window.modelsModule &&
-    window.modelsModule.getCachedItems &&
-    (!modelId || (latestPending && latestPending.source === 'fallback'))
-  ) {
-    _ensureDefaultPendingChat();
-  }
 
   let displayName = modelId ? modelId.split('/').pop() : 'Select model';
   const routeItems = window.modelsModule?.getCachedItems?.() || [];
@@ -991,6 +985,16 @@ export function updateModelPicker() {
     label.textContent = displayName;
   }
   _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpoint);
+  // A cached default can resolve synchronously and re-render the picker.
+  if (
+    !currentSessionId &&
+    !_autoSelectingDefault &&
+    window.modelsModule &&
+    window.modelsModule.getCachedItems &&
+    (!modelId || (latestPending && latestPending.source === 'fallback'))
+  ) {
+    _ensureDefaultPendingChat();
+  }
 }
 
 // ── Reasoning effort control for models supporting reasoning levels ──

@@ -1,3 +1,4 @@
+from tests.helpers.notes_source import notes_source
 from pathlib import Path
 from tests.helpers.stylesheets import app_css
 
@@ -17,31 +18,32 @@ def test_notes_sidebar_new_action_matches_library_structure_and_animation():
 
 def test_notes_sidebar_new_action_opens_a_note_without_toggling_panel_closed():
     app = (ROOT / "static/app.js").read_text(encoding="utf-8")
-    notes = (ROOT / "static/js/notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
 
     assert "event.stopPropagation()" in app[app.index("const notesNewNoteBtn"):]
     assert "notesModule?.newNote?.()" in app
-    assert "export function newNote()" in notes
+    assert "function newNote()" in notes
     assert "requestAnimationFrame(() => _createNote('note'))" in notes
-    assert "openNote, newNote, openNotes" in notes
+    assert "newNote: quickAdd.newNote" in notes
+    assert "publicNewNote as newNote" in notes
 
 
 def test_sidebar_new_note_focuses_note_body_instead_of_title():
-    notes = (ROOT / "static/js/notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
 
     assert "form.querySelector('.note-form-content')" in notes
     assert "initialField?.focus()" in notes
 
 
 def test_notes_reminder_dot_stays_before_new_note_action():
-    notes = (ROOT / "static/js/notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
 
     assert "sidebarBtn.querySelector('#notes-new-note-btn')" in notes
     assert "sidebarBtn.insertBefore(dot, newNoteBtn || null)" in notes
 
 
 def test_checklist_preview_starts_at_first_unfinished_item():
-    notes = (ROOT / "static/js/notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
     start = notes.index("function _bindCardEvents(body)")
     end = notes.index("const tapToEditOrSelect", start)
     setup = notes[start:end]
@@ -51,7 +53,7 @@ def test_checklist_preview_starts_at_first_unfinished_item():
 
 
 def test_checklist_preview_releases_scroll_at_its_boundaries():
-    notes = (ROOT / "static/js/notes.js").read_text(encoding="utf-8")
+    notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
     css = app_css()
 
     assert "el.addEventListener('wheel'" in notes

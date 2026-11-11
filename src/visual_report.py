@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
 
 from src.research_utils import strip_thinking
+from src.report_math import ReportMathExtension
 from urllib.parse import urlparse
 
 import markdown
@@ -47,6 +48,7 @@ for _t in ("td", "th"):
     _REPORT_ALLOWED_ATTRS.setdefault(_t, set()).add("align")
 _REPORT_ALLOWED_ATTRS.setdefault("a", set()).update({"href", "title", "target", "rel"})
 _REPORT_ALLOWED_ATTRS.setdefault("img", set()).update({"src", "alt", "title"})
+_REPORT_ALLOWED_ATTRS.setdefault("span", set()).add("data-display")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,7 +81,7 @@ def _md_to_html(md_text: str) -> str:
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
-        extensions=["extra", "codehilite", "toc", "tables", "sane_lists", "md_in_html"],
+        extensions=["extra", "codehilite", "toc", "tables", "sane_lists", "md_in_html", ReportMathExtension()],
         extension_configs={
             "codehilite": {"css_class": "code", "guess_lang": False},
             "toc": {"marker": "", "toc_depth": "2-3"},
@@ -1021,6 +1023,8 @@ body[class^="standard-report-"] .report-section:nth-of-type(even) {{
 .content code {{ font-family: var(--font-mono); font-size: 0.86em; background: var(--bg-surface-alt); padding: 0.15em 0.4em; border-radius: 4px; }}
 .content pre {{ background: var(--bg-surface-alt); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1.25rem 0; font-size: 0.86rem; line-height: 1.6; }}
 .content pre code {{ background: none; padding: 0; }}
+/* Match the chat renderer's handling of wide display equations. */
+.content .katex-display {{ overflow-x: auto; overflow-y: hidden; }}
 .content table {{ width: 100%; border-collapse: collapse; margin: 1.25rem 0; font-size: 0.9rem; border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-sm); }}
 .content th {{ text-align: left; padding: 0.7rem 1rem; background: var(--accent-bg); font-weight: 600; border-bottom: 2px solid var(--border-strong); }}
 .content td {{ padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }}
@@ -1434,6 +1438,12 @@ body[class^="standard-report-"] .report-section:nth-of-type(even) {{
 
 <script>
 (function() {{
+  // Reuse the chat renderer and vendored assets only for reports with math.
+  if (document.querySelector('.ody-math-pending')) {{
+    import('/static/js/markdown.js').then(function(markdown) {{
+      return markdown.renderMath(document);
+    }}).catch(function(err) {{ console.warn('Report math render error:', err); }});
+  }}
   // ESC closes the report tab. window.close() works when the tab was
   // opened via window.open() (which is how the panel launches it). If the
   // browser blocks self-close (rare — e.g. report opened by direct URL),
@@ -2835,11 +2845,23 @@ def generate_visual_report(
     spare_images = section_pool[_consumed:]
 
     # Build TOC
+    math_labels = {}
+    if 'ody-math-pending' in report_html:
+        label_soup = BeautifulSoup(report_html, "html.parser")
+        for heading in label_soup.select('h2[id], h3[id]'):
+            if not heading.select_one('.ody-math-pending'):
+                continue
+            for child in list(heading.find_all(True)):
+                if 'ody-math-pending' in child.get('class', []):
+                    child['data-display'] = 'false'
+                else:
+                    child.unwrap()
+            math_labels[heading['id']] = heading.decode_contents()
     toc_lines = []
     for h in headings:
         depth_class = f"depth-{h['level']}"
         toc_lines.append(
-            f'<a href="#{h["slug"]}" class="{depth_class}">{html.escape(h["text"])}</a>'
+            f'<a href="#{h["slug"]}" class="{depth_class}">{math_labels.get(h["slug"], html.escape(h["text"]))}</a>'
         )
     toc_html = "\n      ".join(toc_lines) if toc_lines else ""
 
@@ -2848,8 +2870,11 @@ def generate_visual_report(
         options = []
         for h in headings:
             prefix = "\u2014 " if h["level"] == 3 else ""
+            text = h["text"]
+            if h["slug"] in math_labels:
+                text = BeautifulSoup(math_labels[h["slug"]], "html.parser").get_text()
             options.append(
-                f'<option value="{h["slug"]}">{prefix}{html.escape(h["text"])}</option>'
+                f'<option value="{h["slug"]}">{prefix}{html.escape(text)}</option>'
             )
         mobile_toc_html = (
             '<div class="mobile-section-nav">'
