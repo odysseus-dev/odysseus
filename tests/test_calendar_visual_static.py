@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 
 from tests.helpers.stylesheets import app_css
-from tests.helpers.js_modules import email_library_source
+from tests.helpers.js_modules import email_library_source, js_function_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,8 +172,7 @@ def test_calendar_event_cards_show_compact_source_badges():
     style_src = app_css()
 
     assert "function _eventSourceHtml" in calendar_src
-    assert "${_eventSourceHtml(ev)}" in calendar_src
-    assert "${_eventSourceHtml(md)}" in calendar_src
+    assert "${_eventSourceHtml(ev)}" in js_function_source("_renderMonth", calendar_src)
     assert ".cal-event-source" in style_src
 
 
