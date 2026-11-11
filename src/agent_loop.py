@@ -8485,6 +8485,7 @@ def _configured_model_tool_surface_raw(
     model = str(model or "").strip()
     if not model:
         return ""
+    endpoint_tools_disabled = False
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
 
@@ -8535,6 +8536,7 @@ def _configured_model_tool_surface_raw(
                 mode = _model_tool_mode_for_model(modes, model)
                 if mode:
                     return mode
+                endpoint_tools_disabled |= getattr(endpoint, "supports_tools", None) is False
         finally:
             db.close()
     except Exception as exc:
@@ -8543,6 +8545,10 @@ def _configured_model_tool_surface_raw(
     # schema profiles. Settings may intentionally override this default.
     if tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE:
         return "compact"
+    if not endpoint_tools_disabled:
+        from src.ollama_tool_detection import advertises_tools
+        if advertises_tools(endpoint_url, model):
+            return "compact"
     return ""
 
 
@@ -26002,6 +26008,20 @@ async def stream_agent_loop(
                 or (approved.tool_name in {"create_document", "edit_document", "update_document"})
             )
         )
+        from src.agent_tools.pdf_writer import single_pdf_request
+        _approved_simple_pdf = bool(
+            approved.tool_name == "write_file"
+            and _approved_payload.get("format") == "pdf"
+            and tool_result_is_successful(approved_result)
+            and single_pdf_request(_approval_request_text)
+        )
+        if _approved_simple_pdf:
+            # The sealed PDF write already completed. Re-prompting a small
+            # model can repeat the same write and report a false collision.
+            full_response = approved_output.strip()
+            yield 'data: ' + json.dumps({"type": "final_response", "content": full_response}) + "\n\n"
+            _approved_effectful_completed = True
+            _approved_result_injected = True
         if _approved_effectful:
             full_response = "Done."
             # The approval question was streamed on the original request and

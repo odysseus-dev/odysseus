@@ -598,13 +598,15 @@ FUNCTION_TOOL_SCHEMAS = [
             "name": "write_file",
             "description": (
                 "Write/save one file to disk; when several independent files are required, "
-                "issue multiple write_file calls in the same response."
+                "issue multiple write_file calls in the same response. To create a PDF "
+                "from text, use a .pdf path and format='pdf'; content is the document text."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path to write to. For SVG content, use a .svg path; render it to .png/.jpg with inspect_media instead of writing SVG XML under a raster extension."},
-                    "content": {"type": "string", "description": "Complete file content to write. Keep generated artifacts within the response budget; prefer loops, reusable functions, CSS, and data arrays over repetitive literal markup."}
+                    "content": {"type": "string", "description": "Complete file content to write. For format='pdf', provide the document text, not code or PDF bytes."},
+                    "format": {"type": "string", "enum": ["text", "pdf"], "description": "Use pdf to render content as a PDF; omit for ordinary text files."}
                 },
                 "required": ["path", "content"]
             }
@@ -2290,7 +2292,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = ""
     elif tool_type == "write_file":
         body = args.get("content")
-        if isinstance(body, str) and body.strip():
+        if args.get("format") is not None:
+            content = json.dumps(args)
+        elif isinstance(body, str) and body.strip():
             content = args.get("path", "") + "\n" + body
         else:
             # Preserve missing/empty intent for WriteFileTool instead of folding

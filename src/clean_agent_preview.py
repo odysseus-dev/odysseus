@@ -3819,13 +3819,19 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
                       and (experiment_skip_action_gate or mutation_action_requested(user_text)))
     capability = capabilities_for_action(name, json.dumps(args))
     effects = tuple(sorted(effect.value for effect in capability.effects))
+    from src.agent_tools.pdf_writer import pdf_creation_requested
+    interactive_pdf = bool(
+        not allow_native_workspace and bare == 'write_file'
+        and pdf_creation_requested(user_text) and args.get('format') == 'pdf'
+        and str(args.get('path') or '').lower().endswith('.pdf')
+    )
 
     def decision(allowed, reason):
         return PreviewPolicyDecision(allowed, reason, bare, family, effects)
 
     runtime_tools = PREVIEW_TOOLS | (
         NATIVE_WORKSPACE_TOOLS if allow_native_workspace else frozenset()
-    ) | ({canonical(tool) for tool in external_runtime_tools} if allow_native_workspace else set())
+    ) | ({canonical(tool) for tool in external_runtime_tools} if allow_native_workspace else set()) | ({'write_file'} if interactive_pdf else set())
     # Spec turns are driven by the router: the Spec contract (its offered set)
     # IS the model runtime, so a Spec pick is runnable. Keyed off the same
     # marker the spec hook sets (`routing_experiment == 'spec-router'`), never
@@ -3901,6 +3907,8 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
         ToolEffect.EXTERNAL_SIDE_EFFECT, ToolEffect.UI_SIDE_EFFECT, ToolEffect.ADMIN_CHANGE,
     }
     allowed_effects = set(ALLOWED_EFFECTS)
+    if interactive_pdf:
+        allowed_effects.add(ToolEffect.WRITE_WORKSPACE)
     if bare == 'ask_user':
         allowed_effects.add(ToolEffect.USER_INTERACTION)
     # web_fetch is an intentionally brokered public reader. Its capability
@@ -4590,6 +4598,13 @@ def workspace_process_denial(executions) -> bool:
 def execution_has_write_effect(tool_name, content, capability, *, native_workspace_enabled):
     """Recognize successful native code that visibly mutates the workspace."""
 
+    if canonical(tool_name) == 'write_file':
+        try:
+            arguments = json.loads(content)
+        except (TypeError, ValueError):
+            arguments = {}
+        if isinstance(arguments, dict) and arguments.get('format') == 'pdf':
+            return True
     successful_effects = {ToolEffect.WRITE_PRIVATE}
     if native_workspace_enabled:
         successful_effects.add(ToolEffect.WRITE_WORKSPACE)
@@ -5704,6 +5719,20 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     native_workspace_enabled = native_workspace_runtime(
         client_runtime_context, workspace,
     )
+    from src.agent_tools.pdf_writer import pdf_creation_requested
+    interactive_pdf = not native_workspace_enabled and pdf_creation_requested(direct_user_text)
+    if interactive_pdf:
+        for schema in offered:
+            function = schema.get('function') or {}
+            if canonical(function.get('name')) != 'write_file':
+                continue
+            function['description'] = ('Create a PDF file in the agent workspace from the supplied document text. '
+                                       'Use format pdf and a path ending in .pdf.')
+            parameters = function.get('parameters') or {}
+            properties = parameters.setdefault('properties', {})
+            properties['format'] = {'type': 'string', 'enum': ['pdf']}
+            properties['path']['description'] = 'New PDF filename within the agent workspace, ending in .pdf.'
+            parameters['required'] = list(dict.fromkeys([*(parameters.get('required') or []), 'format']))
     artifact_research_seconds, artifact_completion_reserve_seconds = (
         native_artifact_completion_timing(client_runtime_context)
         if native_workspace_enabled else (None, None)
@@ -5770,6 +5799,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         'next to supported findings. Avoid a wall of text; do not force headings onto simple answers. '
         'Do not expose internal deliberation.'
     )
+    if interactive_pdf:
+        system += (' To create the requested PDF, call write_file with format="pdf", '
+                   'a .pdf filename, and the complete document text as content. '
+                   'Report success only after the tool succeeds.')
     if whole_draft_target:
         system += (
             ' For an explicit email-reply write, compose a complete sendable reply body grounded '
@@ -7846,6 +7879,44 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             )
                         if block is None:
                             raise ValueError('Tool arguments could not be converted for execution.')
+                        # The compact runtime must offer the same exact-action
+                        # approval path as the full runtime when untrusted
+                        # context has armed the gate. Never execute or broaden
+                        # authority here; resume goes through the normal sealed
+                        # approval continuation in stream_agent_loop.
+                        if interactive_pdf and canonical(block.tool_type) == 'write_file':
+                            from src.agent_runtime.authority import active_request_authority, ExactOperation
+                            decision = security.decision_for(block.tool_type, block.content)
+                            authority = active_request_authority()
+                            operation = ExactOperation.normalize(block.tool_type, block.content)
+                            if (not decision.allowed and not delegated_credential and authority is not None
+                                    and authority.permits(operation) and turn_contract.permits(block.tool_type)):
+                                from src.tool_approvals import tool_approval_store
+                                pending = tool_approval_store.create(
+                                    owner=owner, session_id=session_id, origin_run_id=security.run_id,
+                                    tool_name=block.tool_type, content=block.content, workspace=workspace,
+                                    external_untrusted_context_seen=security.external_untrusted_context_seen,
+                                    selected_tools=[block.tool_type], continuation_query=direct_user_text,
+                                    capabilities=capabilities_for_action(block.tool_type, block.content),
+                                    request_text=direct_user_text, request_authority=authority,
+                                    client_runtime_context=client_runtime_context,
+                                )
+                                ask = pending.public_payload(reason=decision.reason)
+                                approval_event = {
+                                    'tool': block.tool_type, 'command': arguments,
+                                    'output': 'Waiting for approval.', 'exit_code': None,
+                                    'approval_required': True, 'execution_attempted': False,
+                                    'ask_user': ask, 'round': round_number,
+                                }
+                                yield event({'type': 'tool_output', **approval_event})
+                                yield event({'type': 'final_response', 'content': ask.get('question', 'Approval required.')})
+                                yield event({'type': 'ask_user', 'data': ask})
+                                yield event({'type': 'metrics', 'data': {
+                                    'model': model, 'tool_events': [approval_event],
+                                    'tool_calls': calls, 'agent_rounds': round_number,
+                                }})
+                                yield 'data: [DONE]\n\n'
+                                return
                         calls += 1
                         yield event({'type': 'tool_start', 'tool': block.tool_type, 'command': arguments,
                                      'full_command': arguments, 'round': round_number})
@@ -8387,6 +8458,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                   'execution_attempted': execution_attempted,
                                   'blocked': policy_denied or schema is None,
                                   'desc': desc, 'round': round_number}
+                    if (not failed and canonical(actual_tool) == 'write_file'
+                            and result.get('download_url')):
+                        from src.agent_tools.pdf_writer import single_pdf_request
+                        entity_result_links[result['download_url']] = f"[Download PDF]({result['download_url']})"
+                        if single_pdf_request(direct_user_text):
+                            structured_terminal_response = result['output']
                     for error_category in ('tool_execution_error', 'invalid_tool_arguments'):
                         if result.get('error_category') == error_category:
                             tool_event['error_category'] = error_category
