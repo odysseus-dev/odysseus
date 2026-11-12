@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"F:/Odysseus-Backups/desktop-lab/ody-full-venv/Scripts/python.exe\" \"F:/Odysseus/integration-backups/webapp-proxy/integrations/wiki/hooks/wiki_hook.py\" --root \"F:/Projects/Odysseus-Wiki\" --agent claude-code",
+            "command": "\"C:/Users/Protagonist/AppData/Local/Programs/Python/Python312/python.exe\" \"F:/Odysseus/integration-backups/webapp-proxy/integrations/wiki/hooks/wiki_hook.py\" --root \"F:/Projects/Odysseus-Wiki\" --agent claude-code",
             "timeout": 60
           }
         ]

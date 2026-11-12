@@ -100,3 +100,15 @@ Contracts to write first (in the wiki, `contracts/`): (1) the process-ownership 
 3. Whether the managed gateway's `.env` may get `SEARXNG_URL` (after preview validation).
 4. Order inside item 4: write-authorization panel first (recommended), then dashboard.
 5. Whether to install the ask-policy plugin (approval floor for paths) in the managed gateway.
+
+## 9. Added task: Wiki panel in HermesGUI / Projects (later; not started)
+
+Goal: see the shared wiki's state from the Projects side without leaving it. Read-only first; review actions later.
+
+- **Where it lives:** a Webapp plugin (status-bar chip + a pane), like `odysseus-return`, not a patch to the upstream UI. Data comes from a small Odysseus endpoint that calls the Wiki Steward library (`status`, `conflicts`, `inbox`, `reconcile` read-only); the panel keeps no copy of wiki state and never writes to the wiki folder.
+- **Status chip (per project):** verified / stale / contested / needs-review counts, open handoffs, last reconcile result, wiki integrity (green, or red with the reason when `integrity` reports uncommitted edits or foreign commits).
+- **Pane sections:** (1) Handoffs addressed to the current agent, with the automatic "Session interrupted" ones flagged; (2) Conflicts (both claims side by side, grade, evidence, who said it); (3) Stale knowledge (what changed, since which commit); (4) Needs review (sensitive/decision claims); (5) Recent task log.
+- **Review actions (second step, human only):** accept / reject buttons for needs-review and conflict claims call `Wiki.decide` as the reviewer after an explicit confirmation in Odysseus, never from the agent's own chat or MCP session. They show the evidence grade and the exact text that will become authoritative.
+- **Depends on:** the Wiki Steward being live; the Projects write-authorization panel (item 4a) for the shared "effective permissions" chip so the two chips look consistent.
+- **Does not need building:** search, grading, conflict detection, freshness, reconciliation (all exist in `src/wiki_steward.py`).
+- **Risks to design for:** the endpoint runs in the Odysseus process, so a bug there must not be able to write the wiki; keep it to the read-only library calls plus the one reviewer endpoint behind the Odysseus session and the grant gate; show wiki text as untrusted (escape it; never render it as markdown with links or HTML).
