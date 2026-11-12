@@ -5774,6 +5774,7 @@ import {
   }
 
   function switchToDoc(docId) {
+    _closeVersionPanel();
     if (!docs.has(docId)) return;
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
@@ -6054,6 +6055,7 @@ import {
 
   /** Save current editor state back into the docs map */
   function saveCurrentToMap() {
+    if (_historyOwnsView(_versionHistory) && _versionHistory.previewing) return;
     if (!activeDocId || !docs.has(activeDocId)) return;
     const doc = docs.get(activeDocId);
     const textarea = document.getElementById('doc-editor-textarea');
@@ -9981,6 +9983,8 @@ import {
       }
       return;
     }
+    _closeVersionPanel();
+    document.getElementById('doc-version-panel')?.remove();
     isOpen = false;
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
@@ -10489,6 +10493,7 @@ import {
 
   /** Load all documents for a session into tabs */
   export async function loadSessionDocs(sessionId, opts = {}) {
+    _closeVersionPanel();
     _lastSessionId = sessionId;
     const restoreMode = !!opts.restoreMode;
     const shouldRestoreOpen = localStorage.getItem(_docOpenKey(sessionId)) === '1';
@@ -12465,6 +12470,7 @@ import {
 
   /** Open the document panel immediately for a doc being streamed in */
   export function streamDocOpen(title, language) {
+    _closeVersionPanel();
     // Discard any pending AI-edit diff before this stream changes the active
     // document. When the AI streams a NEW document while an unapproved diff is
     // open on the current one, streamDocOpen reassigns activeDocId below; if the
@@ -12735,6 +12741,7 @@ import {
 
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
+    _closeVersionPanel();
     const streamingId = streamDocFinalize();
     // Discard any pending AI-edit diff before this update changes the active
     // document. The diff state (_diffModeActive/_diffOldContent/...) is a
@@ -13003,72 +13010,67 @@ import {
 
   /** Toggle version history panel */
   let _versionClickOutside = null;
-  let _versionSavedContent = null;  // stash current content for preview/revert
+  let _versionHistory = null;
+  let _versionHistoryGeneration = 0;
+
+  function _historyOwnsView(state) {
+    return state && _versionHistory === state
+      && state.generation === _versionHistoryGeneration
+      && state.docId === activeDocId && isOpen
+      && state.pane === document.getElementById('doc-editor-pane');
+  }
+
   async function toggleVersionHistory() {
     const panel = document.getElementById('doc-version-panel');
     if (!panel || !activeDocId) return;
-
-    if (panel.classList.contains('hidden')) {
-      // Stash current content so we can restore on close
-      const ta = document.getElementById('doc-editor-textarea');
-      _versionSavedContent = ta ? ta.value : null;
-
-      // Position next to sidebar on desktop
-      const sidebar = document.getElementById('sidebar');
-      const isMobile = window.innerWidth <= 768;
-      if (!isMobile && sidebar) {
-        const sidebarRight = sidebar.classList.contains('right-side');
-        const collapsed = document.body.classList.contains('sidebar-collapsed');
-        if (sidebarRight || collapsed) {
-          panel.style.left = '0';
-          panel.style.right = 'auto';
-        } else {
-          panel.style.left = sidebar.offsetWidth + 'px';
-          panel.style.right = 'auto';
-        }
-      } else if (isMobile) {
-        // Clear any stale inline positioning from a prior desktop open so the
-        // mobile bottom-sheet (CSS) isn't pushed off-screen.
-        panel.style.left = '';
-        panel.style.right = '';
-        panel.style.top = '';
-      }
-
-      // Move panel to body so it's not clipped by doc pane overflow
-      if (panel.parentElement !== document.body) {
-        document.body.appendChild(panel);
-      }
-
-      panel.classList.remove('hidden');
-      await loadVersionHistory();
-      // Close on click outside
-      setTimeout(() => {
-        _versionClickOutside = (e) => {
-          if (!panel.contains(e.target) && e.target.id !== 'doc-version-badge') {
-            _closeVersionPanel();
-          }
-        };
-        document.addEventListener('click', _versionClickOutside, true);
-      }, 0);
-    } else {
+    if (!panel.classList.contains('hidden')) {
       _closeVersionPanel();
+      return;
     }
+    saveCurrentToMap();
+    const textarea = document.getElementById('doc-editor-textarea');
+    const state = {
+      docId: activeDocId, doc: docs.get(activeDocId),
+      pane: document.getElementById('doc-editor-pane'),
+      generation: ++_versionHistoryGeneration, operation: 0,
+      previewing: false, readOnly: textarea?.readOnly || false,
+    };
+    _versionHistory = state;
+    const sidebar = document.getElementById('sidebar');
+    if (window.innerWidth > 768 && sidebar) {
+      const atLeft = sidebar.classList.contains('right-side') || document.body.classList.contains('sidebar-collapsed');
+      panel.style.left = atLeft ? '0' : sidebar.offsetWidth + 'px';
+      panel.style.right = 'auto';
+    } else {
+      panel.style.left = '';
+      panel.style.right = '';
+      panel.style.top = '';
+    }
+    if (panel.parentElement !== document.body) document.body.appendChild(panel);
+    panel.classList.remove('hidden');
+    _versionClickOutside = event => {
+      if (!panel.contains(event.target) && !event.target.closest('.doc-tab-version')) _closeVersionPanel();
+    };
+    document.addEventListener('click', _versionClickOutside, true);
+    await loadVersionHistory(state);
   }
 
   function _closeVersionPanel() {
-    const panel = document.getElementById('doc-version-panel');
-    if (panel) panel.classList.add('hidden');
-    // Restore to latest (stashed) content
-    if (_versionSavedContent !== null) {
-      const ta = document.getElementById('doc-editor-textarea');
-      if (ta) ta.value = _versionSavedContent;
-      syncHighlighting();
-      _versionSavedContent = null;
+    const state = _versionHistory;
+    const ownsView = _historyOwnsView(state);
+    _versionHistory = null;
+    ++_versionHistoryGeneration;
+    document.getElementById('doc-version-panel')?.classList.add('hidden');
+    if (ownsView) {
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) {
+        if (state.previewing) textarea.value = state.doc.content || '';
+        textarea.readOnly = state.readOnly;
+      }
+      if (state.previewing) syncHighlighting();
     }
-    if (_versionClickOutside) {
-      document.removeEventListener('click', _versionClickOutside, true);
-      _versionClickOutside = null;
-    }
+    if (_versionClickOutside) document.removeEventListener('click', _versionClickOutside, true);
+    _versionClickOutside = null;
   }
 
   /** Build a short diff summary between two strings */
@@ -13099,14 +13101,16 @@ import {
   }
 
   /** Load version history list */
-  async function loadVersionHistory() {
-    if (!activeDocId) return;
+  async function loadVersionHistory(state = _versionHistory) {
+    if (!_historyOwnsView(state)) return;
     const list = document.getElementById('doc-version-list');
     if (!list) return;
 
     try {
-      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/versions`);
+      const res = await fetch(`${API_BASE}/api/document/${state.docId}/versions`);
+      if (!res.ok) throw new Error(`History failed: HTTP ${res.status}`);
       const versions = await res.json();
+      if (!_historyOwnsView(state)) return;
 
       // Build diff summaries between consecutive versions
       const diffs = [];
@@ -13122,9 +13126,9 @@ import {
         <div class="doc-version-item" data-version="${v.version_number}">
           <div class="doc-version-info">
             <span class="doc-version-num">v${v.version_number}</span>
-            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${v.source}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
+            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${_escHtml(v.source)}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
           </div>
-          ${v.summary ? `<div class="doc-version-summary">${v.summary}</div>` : ''}
+          ${v.summary ? `<div class="doc-version-summary">${_escHtml(v.summary)}</div>` : ''}
           ${diffs[i] ? `<div class="doc-version-diff">${diffs[i]}</div>` : ''}
           ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">Restore</button>` : ''}
         </div>
@@ -13149,46 +13153,78 @@ import {
         });
       });
     } catch (e) {
+      if (!_historyOwnsView(state)) return;
       list.innerHTML = '<div style="padding:8px;opacity:0.5;">Failed to load versions</div>';
     }
   }
 
   /** Preview a specific version in the editor (without saving) */
   async function previewVersion(num) {
-    if (!activeDocId) return;
+    const state = _versionHistory;
+    if (!_historyOwnsView(state) || state.restoring) return;
+    const operation = ++state.operation;
+    const revision = state.doc._editRevision || 0;
     try {
-      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/version/${num}`);
+      const res = await fetch(`${API_BASE}/api/document/${state.docId}/version/${num}`);
+      if (!res.ok) throw new Error(`Preview failed: HTTP ${res.status}`);
       const ver = await res.json();
+      if (!_historyOwnsView(state) || state.operation !== operation
+          || (state.doc._editRevision || 0) !== revision) return;
       const textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) textarea.value = ver.content || '';
+      if (textarea) {
+        state.previewing = true;
+        textarea.readOnly = true;
+        textarea.value = ver.content || '';
+      }
       syncHighlighting();
     } catch (e) {
-      console.error('Failed to preview version:', e);
+      if (_historyOwnsView(state) && state.operation === operation) uiModule?.showError('Failed to preview version');
     }
   }
 
-  /** Restore an old version (creates new version) */
+  /** Restore against the originating draft and serialize with its other writes. */
   async function restoreVersion(num) {
-    if (!activeDocId) return;
+    const state = _versionHistory;
+    if (!_historyOwnsView(state) || state.restoring) return;
+    state.restoring = true;
+    const operation = ++state.operation;
+    const doc = state.doc;
+    const revision = doc._editRevision || 0;
+    const content = doc.content;
+    _cancelAutoSave(state.docId);
+    const previousSave = doc._saveQueueTail || Promise.resolve();
+    let release;
+    const turn = new Promise(resolve => { release = resolve; });
+    doc._saveQueueTail = previousSave.catch(() => {}).then(() => turn);
+    await previousSave.catch(() => {});
     try {
-      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/restore/${num}`, {
-        method: 'POST',
-      });
-      const doc = await res.json();
-      populateEditor(doc);
-      // Clear stash — restored content IS the new latest
-      _versionSavedContent = null;
-      // Update map
-      if (docs.has(activeDocId)) {
-        const d = docs.get(activeDocId);
-        d.content = doc.current_content || '';
-        d.version = doc.version_count || 1;
+      if (!_historyOwnsView(state) || state.operation !== operation) return;
+      const res = await fetch(`${API_BASE}/api/document/${state.docId}/restore/${num}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`Restore failed: HTTP ${res.status}`);
+      const restored = await res.json();
+      const unchanged = (doc._editRevision || 0) === revision && doc.content === content;
+      doc.version = Math.max(doc.version || 1, restored.version_count || 1);
+      if (unchanged) {
+        doc.content = restored.current_content ?? restored.content ?? '';
+        _setDocumentSaveState('saved', state.docId);
+      } else {
+        _setDocumentSaveState('dirty', state.docId);
+        _scheduleAutoSave(state.docId, 0);
       }
-      await loadVersionHistory();
-      if (uiModule) uiModule.showToast(`Restored to v${num}`);
+      if (_historyOwnsView(state) && state.operation === operation) {
+        state.previewing = false;
+        const textarea = document.getElementById('doc-editor-textarea');
+        if (textarea) textarea.readOnly = state.readOnly;
+        if (unchanged) populateEditor(restored);
+        await loadVersionHistory(state);
+        uiModule?.showToast(`Restored to v${num}`);
+      }
     } catch (e) {
-      console.error('Failed to restore version:', e);
-      if (uiModule) uiModule.showError('Failed to restore version');
+      if (_historyOwnsView(state)) uiModule?.showError('Failed to restore version');
+    } finally {
+      state.restoring = false;
+      release();
+      if (['dirty', 'error'].includes(doc._saveState)) _scheduleAutoSave(state.docId, 800);
     }
   }
 
@@ -13282,6 +13318,7 @@ import {
 
   /** Clear all tab state (e.g. on session switch) */
   export function clearAll() {
+    _closeVersionPanel();
     docs.clear();
     activeDocId = null;
     _lastSessionId = '';

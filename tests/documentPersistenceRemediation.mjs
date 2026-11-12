@@ -80,7 +80,53 @@ try {
     await page.route('**/api/document/*/version/1', async route => { if (hold) await gate.promise; await route.fulfill({ json: { content: 'a old' } }); });
     await page.route('**/api/document/*/restore/1', async route => { if (hold) await gate.promise; await route.fulfill({ json: { id: 'a', title: 'a', language: 'markdown', current_content: 'a restored', version_count: 3 } }); });
     await openHistory();
-    if (scenario === 'history-metadata') {
+    if (scenario === 'history-lifecycle') {
+      await page.locator('.doc-version-item[data-version="1"]').dispatchEvent('click');
+      await page.waitForFunction(() => document.getElementById('doc-editor-textarea').value === 'a old');
+      const bodies = [];
+      await page.route('**/api/document/a', async route => {
+        bodies.push(route.request().postDataJSON().content);
+        await route.fulfill({ json: { version_count: 2 } });
+      });
+      await page.evaluate(() => editor.saveDocument({ silent: true }));
+      assert.deepEqual(bodies, ['a latest'], 'preview text is never a draft');
+      await page.evaluate(() => editor.closePanel('down'));
+      await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
+      assert.equal(await page.locator('#doc-version-panel').count(), 0);
+      await page.evaluate(() => editor.loadDocument('a'));
+      assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'a latest');
+      assert.equal(await page.locator('#doc-editor-textarea').getAttribute('readonly'), null);
+      await openHistory();
+      await page.locator('#doc-version-close').dispatchEvent('click');
+      await openHistory();
+      assert.equal(await page.locator('#doc-version-panel').count(), 1);
+    } else if (scenario === 'history-failure') {
+      await page.route('**/api/document/*/version/1', route => route.fulfill({ status: 500, json: {} }));
+      await page.route('**/api/document/*/restore/1', route => route.fulfill({ status: 500, json: {} }));
+      const preview = page.waitForResponse('**/api/document/a/version/1');
+      await page.locator('.doc-version-item[data-version="1"]').dispatchEvent('click'); await preview;
+      assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'a latest');
+      const restore = page.waitForResponse('**/api/document/a/restore/1');
+      await page.locator('.doc-version-restore').dispatchEvent('click'); await restore;
+      await page.locator('#doc-version-close').dispatchEvent('click');
+      await page.route('**/api/document/*/versions', route => route.fulfill({ status: 500, json: {} }));
+      await page.locator('.doc-tab.active .doc-tab-version').dispatchEvent('click');
+      await page.locator('#doc-version-list').getByText('Failed to load versions').waitFor();
+      await page.evaluate(() => editor.loadDocument('b'));
+      assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'b latest');
+    } else if (scenario === 'history-rapid') {
+      await page.locator('#doc-version-close').dispatchEvent('click');
+      const listGate = pending();
+      await page.route('**/api/document/*/versions', async route => { await listGate.promise; await route.fulfill({ json: versions }); });
+      await page.locator('.doc-tab.active .doc-tab-version').dispatchEvent('click');
+      await page.locator('#doc-version-close').dispatchEvent('click');
+      await page.evaluate(() => editor.loadDocument('b'));
+      listGate.release();
+      await page.waitForTimeout(50);
+      await page.locator('#doc-editor-textarea').dispatchEvent('click');
+      assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'b latest');
+      assert.equal(await page.locator('#doc-version-panel').getAttribute('class'), 'doc-version-panel hidden');
+    } else if (scenario === 'history-metadata') {
       assert.equal(await page.locator('#hostile-source, #hostile-summary').count(), 0);
       assert.equal(await page.locator('.doc-version-summary').last().textContent(), versions[1].summary);
     } else {

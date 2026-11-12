@@ -9,7 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("scenario", [
-    "minimized-save", "closed-failure",
+    "minimized-save", "closed-failure", "history-switch", "history-ai",
+    "history-preview", "history-restore", "history-metadata",
+    "history-lifecycle", "history-failure", "history-rapid",
 ])
 def test_document_persistence_remediation(scenario):
     result = subprocess.run(
