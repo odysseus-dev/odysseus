@@ -35,7 +35,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   let _autoTitleDebounce = null;
   let _autoSaveDebounce = null;
   let _lastAutoSaveErrorAt = 0;
-  let _animationInProgress = false;
   let _animationCancel = null;      // function to cancel current animation
   let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
   let _emailAccountsCache = null;
@@ -1638,268 +1637,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       doc.content = live;
     } catch (e) {
       console.warn('Pre-export save failed:', e);
-    }
-  }
-
-  async function _openExportPdfModal() {
-    if (!activeDocId) return;
-    await _saveActiveDocBeforeExport();
-
-    const overlay = document.createElement('div');
-    overlay.className = 'modal pdf-export-overlay';
-    overlay.style.cssText = 'pointer-events:auto;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);';
-    overlay.innerHTML = `
-      <div class="modal-content" style="width:min(780px,94vw);">
-        <div class="modal-header">
-          <h4>Export filled PDF</h4>
-          <button id="pdf-export-close" class="modal-close" title="Close">×</button>
-        </div>
-        <div id="pdf-export-summary" style="font-size:0.78rem;opacity:0.7;margin:0 0 6px;">Loading field values…</div>
-        <div id="pdf-export-body" class="modal-body" style="font-size:0.85rem;">
-          <div style="opacity:0.6;">Fetching mapping…</div>
-        </div>
-        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;border-top:1px solid var(--border);margin-top:6px;align-items:center;">
-          <span id="pdf-export-status" style="font-size:0.75rem;opacity:0.7;margin-right:auto;"></span>
-          <button id="pdf-export-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>
-          <button id="pdf-export-download" class="confirm-btn confirm-btn-primary" disabled>Download PDF</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const close = () => overlay.remove();
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    overlay.querySelector('#pdf-export-close').addEventListener('click', close);
-    overlay.querySelector('#pdf-export-cancel').addEventListener('click', close);
-
-    let fields = [];
-    try {
-      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/export-pdf/preview`, { method: 'POST' });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err || res.statusText);
-      }
-      const data = await res.json();
-      fields = data.fields || [];
-
-      const filledNow = data.filled || 0;
-      const total = data.total || fields.length;
-      overlay.querySelector('#pdf-export-summary').textContent =
-        `${filledNow} of ${total} fields filled. Review and adjust below before downloading.`;
-
-      const body = overlay.querySelector('#pdf-export-body');
-      body.innerHTML = '';
-
-      // Group by page
-      const byPage = new Map();
-      for (const f of fields) {
-        const p = f.page || 1;
-        if (!byPage.has(p)) byPage.set(p, []);
-        byPage.get(p).push(f);
-      }
-      const pages = Array.from(byPage.keys()).sort((a, b) => a - b);
-
-      // Jump bar: page links + scroll-to-top/bottom shortcuts
-      const jumpBar = document.createElement('div');
-      jumpBar.style.cssText = 'position:sticky;top:0;background:var(--panel);padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:0.72rem;z-index:1;';
-      jumpBar.innerHTML = '<span style="opacity:0.6;margin-right:4px;">Jump to:</span>';
-      const pageAnchors = {};
-      const _smallBtnClass = 'confirm-btn confirm-btn-secondary';
-      const _smallBtnStyle = 'padding:2px 8px;font-size:0.72rem;';
-      for (const p of pages) {
-        const a = document.createElement('button');
-        a.textContent = String(p);
-        a.title = `Jump to page ${p}`;
-        a.className = _smallBtnClass;
-        a.style.cssText = _smallBtnStyle;
-        a.addEventListener('click', () => pageAnchors[p]?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-        jumpBar.appendChild(a);
-      }
-      const sep = document.createElement('span');
-      sep.style.cssText = 'opacity:0.4;margin:0 4px;';
-      sep.textContent = '|';
-      jumpBar.appendChild(sep);
-      const topBtn = document.createElement('button');
-      topBtn.textContent = '↑ Top';
-      topBtn.className = _smallBtnClass;
-      topBtn.style.cssText = _smallBtnStyle;
-      topBtn.addEventListener('click', () => body.scrollTo({ top: 0, behavior: 'smooth' }));
-      jumpBar.appendChild(topBtn);
-      const botBtn = document.createElement('button');
-      botBtn.textContent = '↓ Bottom';
-      botBtn.title = 'Jump to the last page (signature fields are usually here)';
-      botBtn.className = _smallBtnClass;
-      botBtn.style.cssText = _smallBtnStyle;
-      botBtn.addEventListener('click', () => body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' }));
-      jumpBar.appendChild(botBtn);
-      body.appendChild(jumpBar);
-
-      for (const p of pages) {
-        const sec = document.createElement('div');
-        sec.className = 'pdf-export-section';
-        sec.id = `pdf-export-page-${p}`;
-        pageAnchors[p] = sec;
-        sec.innerHTML = `<div class="pdf-export-section-title">Page ${p}</div>`;
-        for (const f of byPage.get(p)) {
-          const row = document.createElement('div');
-          row.className = 'pdf-export-row';
-          const label = document.createElement('label');
-          label.textContent = f.label || f.name;
-          label.title = `${f.name} (${f.type})`;
-          row.appendChild(label);
-
-          const isSignature = f.type === 'signature' || /sign(?:ed|ature)/i.test((f.name || '') + ' ' + (f.label || ''));
-          const isDate = f.type === 'text' && /\b(date|dated)\b/i.test(`${f.name || ''} ${f.label || ''}`);
-          let input;
-          if (isSignature) {
-            const wrap = document.createElement('div');
-            wrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
-            const btn = document.createElement('button');
-            btn.className = 'confirm-btn confirm-btn-secondary';
-            btn.style.cssText = 'padding:3px 10px;font-size:0.78rem;';
-            const thumb = document.createElement('img');
-            thumb.style.cssText = 'max-height:32px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:3px;background:#fff;display:none;';
-            const clearBtn = document.createElement('button');
-            clearBtn.textContent = '×';
-            clearBtn.title = 'Remove signature from this field';
-            clearBtn.className = 'confirm-btn confirm-btn-secondary';
-            clearBtn.style.cssText = 'padding:0 8px;font-size:0.85rem;line-height:1;display:none;';
-            const apply = (sig) => {
-              wrap.dataset.signatureId = sig.id;
-              thumb.src = sig.dataUrl;
-              thumb.style.display = '';
-              clearBtn.style.display = '';
-              btn.textContent = 'Change';
-            };
-            const clear = () => {
-              delete wrap.dataset.signatureId;
-              thumb.removeAttribute('src');
-              thumb.style.display = 'none';
-              clearBtn.style.display = 'none';
-              btn.textContent = 'Sign here';
-            };
-            btn.textContent = 'Sign here';
-            btn.addEventListener('click', async () => {
-              const sig = await signatureModule.pick();
-              if (sig) apply(sig);
-            });
-            clearBtn.addEventListener('click', clear);
-            wrap.appendChild(btn);
-            wrap.appendChild(thumb);
-            wrap.appendChild(clearBtn);
-            wrap.dataset.fieldName = f.name;
-            wrap.dataset.fieldType = 'signature';
-            const last = signatureModule.getLastUsed && signatureModule.getLastUsed();
-            if (last) apply(last);
-            input = wrap;
-          } else if (isDate) {
-            const wrap = document.createElement('div');
-            wrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
-            const ti = document.createElement('input');
-            ti.type = 'text';
-            ti.value = f.value == null ? '' : String(f.value);
-            ti.className = 'pdf-export-input';
-            ti.style.cssText = 'flex:1;';
-            ti.dataset.fieldName = f.name;
-            ti.dataset.fieldType = f.type;
-            const today = document.createElement('button');
-            today.textContent = 'Today';
-            today.title = "Set to today's date";
-            today.className = 'confirm-btn confirm-btn-secondary';
-            today.style.cssText = 'padding:3px 8px;font-size:0.72rem;';
-            today.addEventListener('click', () => {
-              const d = new Date();
-              const dd = String(d.getDate()).padStart(2, '0');
-              const mm = String(d.getMonth() + 1).padStart(2, '0');
-              const yyyy = d.getFullYear();
-              ti.value = `${dd}/${mm}/${yyyy}`;
-            });
-            wrap.appendChild(ti);
-            wrap.appendChild(today);
-            input = wrap;
-          } else if (f.type === 'checkbox') {
-            input = document.createElement('input');
-            input.type = 'checkbox';
-            input.checked = !!f.value;
-          } else if (f.type === 'choice' && (f.options || []).length) {
-            input = document.createElement('select');
-            input.className = 'pdf-export-input';
-            const blank = document.createElement('option');
-            blank.value = '';
-            blank.textContent = '— (none) —';
-            input.appendChild(blank);
-            for (const o of f.options) {
-              const opt = document.createElement('option');
-              opt.value = o; opt.textContent = o;
-              if (o === f.value) opt.selected = true;
-              input.appendChild(opt);
-            }
-          } else {
-            input = document.createElement('input');
-            input.type = 'text';
-            input.value = f.value == null ? '' : String(f.value);
-            input.className = 'pdf-export-input';
-            input.style.cssText = 'width:100%;';
-          }
-          if (!isSignature && !isDate) {
-            input.dataset.fieldName = f.name;
-            input.dataset.fieldType = f.type;
-          }
-          row.appendChild(input);
-          sec.appendChild(row);
-        }
-        body.appendChild(sec);
-      }
-
-      const downloadBtn = overlay.querySelector('#pdf-export-download');
-      downloadBtn.disabled = false;
-      downloadBtn.addEventListener('click', async () => {
-        const values = {};
-        const signatures = {};
-        for (const el of overlay.querySelectorAll('[data-field-name]')) {
-          const name = el.dataset.fieldName;
-          const ftype = el.dataset.fieldType;
-          if (ftype === 'signature') {
-            if (el.dataset.signatureId) signatures[name] = el.dataset.signatureId;
-          } else if (ftype === 'checkbox') {
-            values[name] = el.checked;
-          } else {
-            values[name] = el.value;
-          }
-        }
-        downloadBtn.disabled = true;
-        overlay.querySelector('#pdf-export-status').textContent = 'Building PDF…';
-        try {
-          const r = await fetch(`${API_BASE}/api/document/${activeDocId}/export-pdf`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values, signatures }),
-          });
-          if (!r.ok) {
-            const t = await r.text();
-            throw new Error(t || r.statusText);
-          }
-          const blob = await r.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          const cd = r.headers.get('Content-Disposition') || '';
-          const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^"';]+)/i);
-          const _slug = (s) => (s || 'form').replace(/\.pdf$/i, '').replace(/\s+/g, '_').replace(/[^A-Za-z0-9._-]/g, '').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'form';
-          a.download = (m && decodeURIComponent(m[1])) || (_slug(docs.get(activeDocId)?.title) + '_annotated.pdf');
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-          close();
-        } catch (e) {
-          overlay.querySelector('#pdf-export-status').textContent = 'Error: ' + e.message;
-          downloadBtn.disabled = false;
-        }
-      });
-    } catch (e) {
-      overlay.querySelector('#pdf-export-body').innerHTML =
-        `<div style="color:#c00;">Failed to load preview: ${(e && e.message) || e}</div>`;
     }
   }
 
@@ -10529,7 +10266,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   /** Wire up the markdown formatting toolbar */
   // Grouped formatting dropdown (headings / code / lists). Menu is appended to
   // <body> so the draggable panel's transform can't clip its fixed position.
-  let _mdDdOpenedAt = 0;
   let _mdDdActivationSerial = 0;
   let _mdDdLastActivation = { kind: '', token: 0, time: 0 };
   const _RICH_FONT_SIZE_PX = Object.freeze({
@@ -10812,7 +10548,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       else existing.remove();
     }
     if (existing && prevKind === kind) return; // same toggle clicked → just close
-    _mdDdOpenedAt = now;
 
     const groups = {
       heading: [
@@ -13977,11 +13712,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   const DIFF_MODE_THRESHOLD = 3; // min changed lines to trigger diff mode
 
-  /** Line-level LCS diff algorithm */
-  function _computeLineDiff(oldText, newText) {
-    const oldLines = oldText.split('\n');
-    const newLines = newText.split('\n');
+  /**
+   * Pure LCS line-diff algorithm.
+   * Compares oldText and newText line by line.
+   * Returns array of { type: 'equal'|'insert'|'delete', text: string } or null when over maxCells.
+   */
+  function diffLines(oldText, newText, { maxCells = 500000 } = {}) {
+    const oldLines = (oldText || '').split('\n');
+    const newLines = (newText || '').split('\n');
     const m = oldLines.length, n = newLines.length;
+
+    // Guard against massive inputs that could freeze the UI thread
+    if (m * n > maxCells) return null;
 
     // Build LCS table
     const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
@@ -13998,18 +13740,33 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     let i = m, j = n;
     while (i > 0 || j > 0) {
       if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-        entries.push({ type: 'equal', line: oldLines[i - 1] });
+        entries.push({ type: 'equal', text: oldLines[i - 1] });
         i--; j--;
       } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-        entries.push({ type: 'insert', line: newLines[j - 1] });
+        entries.push({ type: 'insert', text: newLines[j - 1] });
         j--;
       } else {
-        entries.push({ type: 'delete', line: oldLines[i - 1] });
+        entries.push({ type: 'delete', text: oldLines[i - 1] });
         i--;
       }
     }
     entries.reverse();
     return entries;
+  }
+
+  /** Line-level LCS diff algorithm used by diff review mode */
+  function _computeLineDiff(oldText, newText) {
+    const raw = diffLines(oldText, newText);
+    if (!raw) {
+      // Fallback for very large diffs to avoid freezing the UI: treat old as deleted, new as inserted
+      const oldLines = (oldText || '').split('\n');
+      const newLines = (newText || '').split('\n');
+      const entries = [];
+      for (const line of oldLines) entries.push({ type: 'delete', line });
+      for (const line of newLines) entries.push({ type: 'insert', line });
+      return entries;
+    }
+    return raw.map(e => ({ type: e.type, line: e.text }));
   }
 
   /** Group diff entries into chunks (contiguous change blocks) */
@@ -14466,8 +14223,16 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
   }
 
+  function _escHtml(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function _esc(s) {
-    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return _escHtml(s);
   }
 
   /** Accept a suggestion — apply the edit */
@@ -16610,73 +16375,16 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   // ---- Streaming animation engine ----
 
   /**
-   * Simple diff: find the first and last differing positions between two strings.
-   * Returns { prefixLen, oldMid, newMid } where:
-   *   oldText = prefix + oldMid + suffix
-   *   newText = prefix + newMid + suffix
-   */
-  function simpleDiff(oldText, newText) {
-    let i = 0;
-    const minLen = Math.min(oldText.length, newText.length);
-    while (i < minLen && oldText[i] === newText[i]) i++;
-    const prefixLen = i;
-
-    let oj = oldText.length;
-    let nj = newText.length;
-    while (oj > prefixLen && nj > prefixLen && oldText[oj - 1] === newText[nj - 1]) {
-      oj--; nj--;
-    }
-
-    return {
-      prefixLen,
-      oldMid: oldText.slice(prefixLen, oj),
-      newMid: newText.slice(prefixLen, nj),
-    };
-  }
-
-  /**
-   * Animate the transition from oldText to newText in the editor textarea.
-   * First deletes the old differing section char-by-char, then types the new one.
-   */
-  /**
    * Compute a line-level diff between two texts.
-   * Returns array of { type: 'same'|'del'|'add', text: string }
+   * Returns array of { type: 'same'|'del'|'add', text: string } or null if too large.
    */
   function lineDiff(oldText, newText) {
-    const oldLines = oldText.split('\n');
-    const newLines = newText.split('\n');
-
-    // Simple LCS-based diff (Myers-like, but O(n*m) for clarity)
-    const m = oldLines.length, n = newLines.length;
-    // For very large diffs, skip detailed diff
-    if (m * n > 500000) return null;
-
-    const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
-    for (let i = m - 1; i >= 0; i--) {
-      for (let j = n - 1; j >= 0; j--) {
-        if (oldLines[i] === newLines[j]) {
-          dp[i][j] = dp[i + 1][j + 1] + 1;
-        } else {
-          dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-        }
-      }
-    }
-
-    const result = [];
-    let i = 0, j = 0;
-    while (i < m || j < n) {
-      if (i < m && j < n && oldLines[i] === newLines[j]) {
-        result.push({ type: 'same', text: oldLines[i] });
-        i++; j++;
-      } else if (j < n && (i >= m || dp[i][j + 1] >= dp[i + 1][j])) {
-        result.push({ type: 'add', text: newLines[j] });
-        j++;
-      } else {
-        result.push({ type: 'del', text: oldLines[i] });
-        i++;
-      }
-    }
-    return result;
+    const raw = diffLines(oldText, newText, { maxCells: 500000 });
+    if (!raw) return null;
+    return raw.map(e => ({
+      type: e.type === 'equal' ? 'same' : (e.type === 'insert' ? 'add' : 'del'),
+      text: e.text,
+    }));
   }
 
   async function animateDocChange(oldText, newText) {
@@ -16695,7 +16403,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const addCount = diff.filter(d => d.type === 'add').length;
     if (delCount + addCount === 0) return true;
 
-    _animationInProgress = true;
     let cancelled = false;
     _animationCancel = () => { cancelled = true; };
 
@@ -16716,7 +16423,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const content = document.createElement('div');
       content.className = 'doc-diff-content';
 
-      // Render diff lines — show context around changes
+      // Render diff lines: show context around changes
       let inContext = false;
       let skipped = 0;
       diff.forEach((line, idx) => {
@@ -16784,7 +16491,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       return !cancelled;
     } finally {
       textarea.readOnly = false;
-      _animationInProgress = false;
       _animationCancel = null;
       if (wrap) wrap.classList.remove('animating');
     }
@@ -17455,9 +17161,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const extra = (added.length + removed.length) - 4;
     if (extra > 0) parts.push(`<span>+${extra} more changes</span>`);
     return parts.join('<br>');
-  }
-  function _escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   /** Load version history list */
