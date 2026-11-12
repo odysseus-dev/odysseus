@@ -198,6 +198,63 @@ class Wiki:
             raise Denied('unknown project %s' % project)
         return spec['repo']
 
+    def validate_config(self, cfg=None):
+        """Read-only lint of steward.json, the trust root. Returns (errors, notes). Errors must be fixed before use."""
+        cfg = cfg if cfg is not None else self.config
+        errors, notes = [], []
+        reviewers = cfg.get('reviewers') or []
+        agents, projects, tests = cfg.get('agents') or {}, cfg.get('projects') or {}, cfg.get('tests') or {}
+        if not reviewers:
+            errors.append('no reviewers: nobody could ever accept a sensitive claim')
+        reserved = set(reviewers) | {STEWARD, 'init', 'user'}
+        for name, spec in agents.items():
+            if name in reserved:
+                errors.append('agent %r collides with a reviewer or reserved name; it would inherit reviewer authority in the audit and decisions' % name)
+            if not re.fullmatch(r'[a-z0-9][a-z0-9\-]{1,30}', name):
+                errors.append('agent name %r must be lowercase letters, digits, hyphens' % name)
+            unknown = set(spec.get('can', [])) - set(CAPS)
+            if unknown:
+                errors.append('agent %s has unknown capabilities %s' % (name, sorted(unknown)))
+            for p in spec.get('projects', []):
+                if p != '*' and p not in projects:
+                    errors.append('agent %s lists unknown project %s' % (name, p))
+            if '*' in spec.get('projects', []):
+                notes.append('agent %s has access to every project (including ones added later)' % name)
+            if 'verify' in spec.get('can', []) and name != 'wiki-bot':
+                notes.append('agent %s may re-run verification (mechanical only; cannot promote by assertion)' % name)
+        for name, spec in projects.items():
+            repo = Path(spec.get('repo', ''))
+            if not repo.is_absolute() or not (repo / '.git').exists():
+                errors.append('project %s: repo %r is not an absolute git working tree' % (name, str(repo)))
+            elif git(repo, 'rev-parse', '--verify', '--quiet', 'HEAD', check=False, read_only=True).returncode:
+                errors.append('project %s: repo has no commits' % name)
+            if Path(spec.get('repo', '')).resolve() == self.root:
+                errors.append('project %s points at the wiki itself' % name)
+        for tid, spec in tests.items():
+            argv = spec.get('argv') or []
+            if spec.get('project') not in projects:
+                errors.append('test %s: unknown project' % tid)
+            if not argv or not os.path.isabs(argv[0]) or not os.path.exists(argv[0]):
+                errors.append('test %s: argv[0] must be the absolute path of an existing executable (no PATH lookup)' % tid)
+            if '..' in str(spec.get('cwd', '.')).replace('\\', '/').split('/') or os.path.isabs(str(spec.get('cwd', '.'))):
+                errors.append('test %s: cwd must stay inside the repository copy' % tid)
+            if not spec.get('subjects'):
+                errors.append('test %s: needs at least one subject, otherwise it can verify nothing' % tid)
+            if int(spec.get('timeout', 300)) > 1800:
+                errors.append('test %s: timeout above 30 minutes' % tid)
+            notes.append('test %s runs %s as your user on a scratch copy of the repo HEAD (no sandbox; it can reach the network, your files and credentials)' % (tid, os.path.basename(argv[0]) if argv else '?'))
+        ext = cfg.get('external') or {}
+        for host in ext.get('hosts', []):
+            if not re.fullmatch(r'[a-z0-9\-]+(\.[a-z0-9\-]+)+', host) or re.fullmatch(r'[\d.]+', host) or host.endswith(('.local', '.localhost', '.internal')):
+                errors.append('external host %r must be a public DNS name (no IPs, localhost or local domains)' % host)
+        if ext.get('hosts') and int(ext.get('min_sources', 2)) < 2:
+            errors.append('external.min_sources below 2 makes one site sufficient')
+        if not ext.get('hosts'):
+            notes.append('external verification is disabled (no allow-listed hosts)')
+        if cfg.get('version') != 2:
+            errors.append('unsupported config version %r' % cfg.get('version'))
+        return errors, notes
+
     def _reviewer(self, by):
         if by not in (self.config.get('reviewers') or []):
             raise Denied('%s is not a reviewer' % by)
@@ -471,7 +528,7 @@ class Wiki:
         return [o['id'] for o in self._claims(rec['project'])
                 if o['id'] != rec['id'] and o['status'] in LIVE and o.get('subject') == rec['subject'] and _norm(o['claim']) != _norm(rec['claim'])]
 
-    def _verify(self, rec, pre, extra=(), recheck=False):
+    def _verify(self, rec, pre, extra=(), recheck=False, dry=False):
         repo = self._repo(rec['project'])
         rec['evidence'] = list(rec['evidence']) + [e for e in extra if e not in rec['evidence']]
         checks = [self._check_evidence(repo, e, pre) for e in rec['evidence']]
@@ -507,11 +564,24 @@ class Wiki:
             ttl = float(self.config.get('external', {}).get('ttl_days', 30)) * 86400 if grade == 'externally-verified' else None
             rec['expires_at'] = time.time() + ttl if ttl else None
         for oid in conflicts:
+            if dry:
+                break
             other = self._get(oid)
             if rec['id'] not in other['conflicts_with']:
                 other['conflicts_with'].append(rec['id'])
                 self._save_claim(other)
         return rec
+
+    def _mechanical_only(self, rec):
+        return all(e.get('type') in ('file', 'commit', 'note') for e in rec['evidence'])
+
+    def _would_change(self, rec):
+        """Dry re-evaluation (no writes, no tests, no network): would verifying now change the status or grade?"""
+        if not self._mechanical_only(rec):
+            return False
+        probe = json.loads(json.dumps(rec))
+        self._verify(probe, {}, recheck=rec['status'] == 'stale', dry=True)
+        return (probe['status'], probe['grade']) != (rec['status'], rec['grade'])
 
     # -- claims API ------------------------------------------------------------------------------------------------
     def propose(self, agent, claim, evidence, project, subject=None, kind='fact', watch_paths=None, scope='general'):
@@ -856,10 +926,12 @@ class Wiki:
             late = [t for t in tasks if t['status'] == 'open' and t.get('expires_ts', 0) < time.time()]
             covered = {tid for h in handoffs if h['project'] == proj for tid in h.get('refs', {}).get('tasks', [])}
             incomplete = [t for t in tasks if t['status'] in ('interrupted', 'partial', 'blocked') and t['id'] not in covered]
-            waiting = [c for c in claims if c['status'] == 'provisional' and any(e.get('type') in ('file', 'commit', 'external') for e in c['evidence'])]
-            waiting_tests = [c for c in claims if c['status'] == 'provisional' and any(e.get('type') == 'test' for e in c['evidence'])]
-            stale = [c for c in claims if c['status'] in ('verified', 'stale') and (c['status'] == 'stale' or self._freshness(c, cache)[0] == 'stale')]
-            conflicts = [c for c in claims if c['status'] == 'conflict']
+            def survey(claims):
+                return ([c for c in claims if c['status'] in ('provisional', 'conflict') and self._mechanical_only(c) and self._would_change(c)],
+                        [c for c in claims if c['status'] == 'provisional' and any(e.get('type') == 'test' for e in c['evidence'])],
+                        [c for c in claims if c['status'] in ('verified', 'stale') and (c['status'] == 'stale' or self._freshness(c, cache)[0] == 'stale')],
+                        [c for c in claims if c['status'] == 'conflict'])
+            waiting, waiting_tests, stale, conflicts = survey(claims)
             actions = []
             if repair:
                 if entries:
@@ -883,12 +955,13 @@ class Wiki:
                                                 [], {'tasks': [t['id']]}, 'h-auto-' + t['id'], auto=True)
                         actions.append('handoff for %s%s' % (t['id'], ' (already existed)' if r.get('duplicate') else ''))
                 for c in waiting:
-                    before = c['status']
-                    if self.verify(agent, c['id'])['status'] != before:
-                        actions.append('re-verified %s' % c['id'])
+                    res = self.verify(agent, c['id'])
+                    actions.append('re-verified %s: %s -> %s (%s)' % (c['id'], c['status'], res['status'], res['grade']))
                 if run_tests:
                     for c in waiting_tests:
                         actions.append('test claim %s -> %s' % (c['id'], self.verify(agent, c['id'])['status']))
+                claims = self._claims(proj)
+                waiting, waiting_tests, stale, conflicts = survey(claims)
             report[proj] = {
                 'unrecorded_commits': len(entries), 'late_open_tasks': [t['id'] for t in late],
                 'incomplete_tasks_without_handoff': [t['id'] for t in incomplete],

@@ -10,7 +10,7 @@ import argparse
 import json
 import os
 import sys
-
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 import wiki_steward as ws  # noqa: E402
 
@@ -28,6 +28,8 @@ def main(argv=None):
     call.add_argument('--args', default=None)
     sub.add_parser('init')
     sub.add_parser('integrity')
+    v = sub.add_parser('validate')
+    v.add_argument('--file', default=None, help='lint this config file instead of the wiki\'s own steward.json')
     for name in ('adopt', 'decide', 'revert'):
         p = sub.add_parser(name)
         p.add_argument('items', nargs='*')
@@ -42,6 +44,13 @@ def main(argv=None):
             problems = ws.Wiki(a.root).integrity()
             out = {'ok': not problems, 'problems': problems}
             if problems:
+                print(json.dumps(out, indent=1))
+                return 2
+        elif a.cmd == 'validate':
+            wiki = ws.Wiki(a.root)
+            errors, notes = wiki.validate_config(json.loads(Path(a.file).read_text(encoding='utf-8')) if a.file else None)
+            out = {'ok': not errors, 'errors': errors, 'notes': notes}
+            if errors:
                 print(json.dumps(out, indent=1))
                 return 2
         elif a.cmd == 'call':

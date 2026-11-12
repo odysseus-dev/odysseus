@@ -484,3 +484,94 @@ def test_simultaneous_cli_clients_write_without_corruption(env):
     refused = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'wiki.py'), 'decide', 'c-x', 'accept'], capture_output=True, text=True,
                              env={**base, 'WIKI_AGENT': 'sonnet'}, input='')
     assert refused.returncode == 1 and 'needs a terminal' in refused.stdout
+
+
+# ---- reconciliation must stay mechanical and conservative ---------------------------------------------------------
+def test_reconcile_never_promotes_sensitive_contested_or_authoritative_knowledge(env, monkeypatch):
+    wiki, repo, fix = env
+    auth = wiki.propose('sonnet', CLAIM, [FILE_EV], 'odysseus', scope='source', subject=SUBJ)
+    contested = wiki.propose('longcat', 'Cookbook delete still fails on Windows for read-only files.', [{'type': 'note'}], 'odysseus', subject=SUBJ)
+    sens = wiki.propose('sonnet', 'src/grants.py lets every agent write anywhere, and src/grants.py grants permission.',
+                        [{'type': 'file', 'path': 'src/grants.py', 'contains': 'def grant'}], 'odysseus', scope='source', subject='sec.grants')
+    dec = wiki.propose('sonnet', 'Decision: src/arch.py is the single entry point for every call.', [{'type': 'file', 'path': 'src/arch.py', 'contains': 'def entry'}],
+                       'odysseus', scope='source', kind='decision', subject='arch.entry')
+    tested = wiki.propose('sonnet', 'The nightly pipeline works end to end on Windows right now.', [{'type': 'test', 'id': 'cookbook-delete'}], 'odysseus', subject='other.pipeline')
+    assert [x['status'] for x in (auth, contested, sens, dec, tested)] == ['verified', 'conflict', 'provisional', 'provisional', 'provisional']
+    before = {c['id']: dict(c) for c in wiki._claims('odysseus')}
+    commit(repo, 'src/grants.py', 'def grant(agent):\n    return True\n', 'Add grants')
+    commit(repo, 'src/arch.py', 'def entry():\n    pass\n', 'Add arch')
+    ran = []
+    monkeypatch.setattr(ws.Wiki, '_run_test', lambda self, *a, **k: ran.append(a) or {'type': 'test', 'mechanical': True, 'ok': True, 'subjects': ['other.pipeline'], 'watch': []})
+    head_before = head(wiki)
+    report = wiki.reconcile('sonnet', 'odysseus', repair=True)['odysseus']
+    after = {c['id']: c for c in wiki._claims('odysseus')}
+    assert after[sens['id']]['status'] == 'needs-review' and after[dec['id']]['status'] == 'needs-review', 'sensitive and non-fact claims wait for a human'
+    assert after[auth['id']]['status'] == 'verified' and after[auth['id']]['claim'] == before[auth['id']]['claim'] and after[auth['id']]['verified_at'] == before[auth['id']]['verified_at']
+    assert after[contested['id']]['status'] == 'conflict' and after[contested['id']]['conflicts_with'] == before[contested['id']]['conflicts_with'], 'a contradiction is left for review'
+    assert after[tested['id']]['status'] == 'provisional' and ran == [], 'reconcile does not run reviewer-defined tests unless asked'
+    assert report['waiting_for_test_run'] == [tested['id']] and set(report['needs_review']) == {sens['id'], dec['id']}
+    assert not any(a['action'] == 'decide' for a in map(json.loads, (wiki.root / 'audit' / 'audit.jsonl').read_text(encoding='utf-8').splitlines()))
+    stuck = wiki.propose('longcat', 'src/never.py defines the helper named never_there.', [{'type': 'file', 'path': 'src/never.py', 'contains': 'never_there'}], 'odysseus', scope='source')
+    wiki.reconcile('sonnet', 'odysseus', repair=True)
+    h = head(wiki)
+    for _ in range(3):
+        assert wiki.reconcile('sonnet', 'odysseus', repair=True)['odysseus']['repaired'] == []
+    assert head(wiki) == h and wiki._get(stuck['id'])['status'] == 'provisional', 'a claim whose evidence still fails must not be re-committed at every session start'
+    assert not wiki.integrity()
+
+
+def test_bot_resolve_tool_is_bot_only_and_constrained(env):
+    wiki, repo, fix = env
+    a = wiki.propose('sonnet', CLAIM, [FILE_EV], 'odysseus', scope='source', subject=SUBJ)
+    new = wiki.propose('longcat', 'src/cookbook.py now raises OSError instead of deleting, which regressed.',
+                       [{'type': 'file', 'path': 'src/cookbook.py', 'contains': 'raise OSError'}], 'odysseus', scope='source', subject=SUBJ)
+    assert new['grade'] == 'attested' and new['status'] == 'conflict', 'premise: the evidence does not exist yet'
+    sens = wiki.propose('sonnet', 'src/cookbook.py handles read-only files and the permission model is final.', [FILE_EV], 'odysseus', scope='source', subject='sec.final')
+    assert sens['status'] == 'needs-review'
+    att = wiki.propose('longcat', 'I am certain the cookbook delete is fine on Windows now.', [{'type': 'note', 'text': 'trust me'}], 'odysseus', subject=SUBJ)
+    assert att['grade'] == 'attested' and att['status'] == 'conflict'
+    init = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}}
+    lst = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}
+    assert 'wiki_resolve' not in [t['name'] for t in rpc(wiki.root, 'sonnet', [init, lst])[2]['result']['tools']]
+    bot = rpc(wiki.root, 'wiki-bot', [init, lst, call(3, 'wiki_resolve', {'claim_id': new['id'], 'decision': 'accept'}), call(4, 'wiki_resolve', {'claim_id': sens['id'], 'decision': 'accept'}),
+                                      call(5, 'wiki_resolve', {'claim_id': new['id'], 'decision': 'reject'})])
+    assert 'wiki_resolve' in [t['name'] for t in bot[2]['result']['tools']]
+    assert bot[3]['result']['isError'] and 'still fresh' in json.dumps(bot[3]), 'the rival is still fresh, so the bot may not displace it'
+    commit(repo, 'src/cookbook.py', 'def delete_cookbook(path):\n    raise OSError("regressed")\n', 'Refactor cookbook')
+    fixed = wiki.reconcile('wiki-bot', 'odysseus', repair=True)['odysseus']
+    assert wiki._get(new['id'])['grade'] == 'source-confirmed' and wiki._get(new['id'])['status'] == 'conflict', 'reconcile refreshes the grade but does not decide'
+    assert any(new['id'] in x for x in fixed['repaired']) and wiki._get(a['id'])['status'] == 'verified', 'the old claim is untouched (only flagged stale)'
+    quiet = wiki.reconcile('wiki-bot', 'odysseus', repair=True)['odysseus']['repaired']
+    assert quiet == [], 'a second pass with nothing changed must write nothing'
+    bot2 = rpc(wiki.root, 'wiki-bot', [init, call(6, 'wiki_resolve', {'claim_id': att['id'], 'decision': 'accept'}), call(3, 'wiki_resolve', {'claim_id': new['id'], 'decision': 'accept'}),
+                                       call(4, 'wiki_resolve', {'claim_id': sens['id'], 'decision': 'accept'}), call(5, 'wiki_resolve', {'claim_id': new['id'], 'decision': 'reject'})])
+    assert bot2[6]['result']['isError'] and 'attested' in json.dumps(bot2[6]) and 'review required' in json.dumps(bot2[6]), 'the bot cannot promote an assertion, even against a stale rival'
+    assert not bot2[3]['result']['isError'] and text(bot2[3])['status'] == 'verified' and wiki._get(a['id'])['status'] == 'superseded' and wiki._get(att['id'])['status'] == 'superseded'
+    assert bot2[4]['result']['isError'] and wiki._get(sens['id'])['status'] == 'needs-review', 'sensitive claims are never accepted by the bot'
+    assert bot2[5]['result']['isError']
+    sonnet = rpc(wiki.root, 'sonnet', [init, call(3, 'wiki_resolve', {'claim_id': sens['id'], 'decision': 'accept'})])
+    assert sonnet[3]['result']['isError'] and 'unknown tool' in json.dumps(sonnet[3])
+    assert wiki._get(sens['id'])['status'] == 'needs-review' and not wiki.integrity()
+
+
+def test_config_validation_rejects_dangerous_configs(env):
+    wiki, repo, fix = env
+    assert wiki.validate_config()[0] == []
+    import copy
+    base = wiki.config
+
+    def errs(mutate):
+        c = copy.deepcopy(base)
+        mutate(c)
+        return ' '.join(wiki.validate_config(c)[0])
+    assert 'collides' in errs(lambda c: c['agents'].update({'user': {'projects': ['odysseus'], 'can': ['search']}}))
+    assert 'absolute path' in errs(lambda c: c['tests']['always-fails'].update({'argv': ['python', '-V']}))
+    assert 'cwd' in errs(lambda c: c['tests']['always-fails'].update({'cwd': '../..'}))
+    assert 'subject' in errs(lambda c: c['tests']['always-fails'].update({'subjects': []}))
+    assert 'public DNS' in errs(lambda c: c['external'].update({'hosts': ['127.0.0.1']}))
+    assert 'public DNS' in errs(lambda c: c['external'].update({'hosts': ['printer.local']}))
+    assert 'min_sources' in errs(lambda c: c['external'].update({'hosts': ['docs.python.org'], 'min_sources': 1}))
+    assert 'unknown capabilities' in errs(lambda c: c['agents']['sonnet'].update({'can': ['search', 'decide']}))
+    assert 'unknown project' in errs(lambda c: c['agents']['sonnet'].update({'projects': ['nope']}))
+    assert 'wiki itself' in errs(lambda c: c['projects'].update({'w': {'repo': str(wiki.root)}}))
+    assert 'no reviewers' in errs(lambda c: c.update({'reviewers': []}))
