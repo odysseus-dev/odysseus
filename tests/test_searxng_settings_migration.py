@@ -42,6 +42,50 @@ def _load_migration_module():
     return module
 
 
+@pytest.mark.parametrize("engines", [
+    [{"name": "brave", "disabled": False}],
+    [{"name": "brave", "disabled": True}],
+    [{"name": "owned custom", "engine": "json_engine", "disabled": False}],
+    [{"name": "brave"}, {"name": "owned custom", "engine": "json_engine"}],
+    [],
+    [{"name": "brave"}, {"name": "brave", "disabled": True}],
+    [{"name": 'owned "quoted" \\ Arşiv'}],
+])
+@pytest.mark.parametrize("flow", [False, True])
+def test_retained_engine_selection_filters_inherited_defaults(tmp_path, engines, flow):
+    settings = tmp_path / "settings.yml"
+    retained = yaml.safe_dump({"engines": engines, "server": {"secret_key": "owned-fixture"}},
+                              default_flow_style=flow, allow_unicode=True).encode()
+    settings.write_bytes(retained)
+    before = settings.stat()
+    first = _run(settings)
+    assert first.returncode == 0, first.stderr
+    parsed = yaml.safe_load(settings.read_bytes())
+    names = list(dict.fromkeys(engine["name"] for engine in engines))
+    assert parsed["use_default_settings"] == {"engines": {"keep_only": names}}
+    assert parsed["engines"] == engines
+    assert parsed["server"]["secret_key"] == "owned-fixture"
+    after = settings.stat()
+    assert (stat.S_IMODE(after.st_mode), after.st_uid, after.st_gid) == (
+        stat.S_IMODE(before.st_mode), before.st_uid, before.st_gid)
+    migrated = settings.read_bytes()
+    assert _run(settings).returncode == 0
+    assert settings.read_bytes() == migrated
+
+
+@pytest.mark.parametrize("engines", [None, "brave", {"brave": {}}, [None],
+                                     ["brave"], [{}], [{"name": None}], [{"name": ""}]])
+def test_invalid_retained_engine_list_is_not_promoted_to_broad_defaults(tmp_path, engines):
+    settings = tmp_path / "settings.yml"
+    retained = yaml.safe_dump({"engines": engines}).encode()
+    settings.write_bytes(retained)
+    result = _run(settings)
+    assert result.returncode == 1
+    assert "engines" in result.stderr
+    assert settings.read_bytes() == retained
+    assert list(tmp_path.iterdir()) == [settings]
+
+
 def test_retained_settings_gain_defaults_without_changing_custom_content(tmp_path):
     settings = tmp_path / "settings.yml"
     retained = (
