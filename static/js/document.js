@@ -117,6 +117,18 @@ import {
   const _deletedDocIds = new Set();
   const _inFlightDeletes = new Map();
   const _closingDocs = new Map();
+
+  // Detached drafts retain the same object until persistence succeeds. Reopening
+  // adopts that object rather than replacing a failed draft with a server row.
+  function _saveClosingDraft(docId, doc) {
+    _closingDocs.set(docId, doc);
+    return saveDocument({ silent: true, docId }).then(ok => {
+      if (ok && doc._saveState === 'saved' && _closingDocs.get(docId) === doc) {
+        _closingDocs.delete(docId);
+      }
+      return ok;
+    });
+  }
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
   // Diff mode state is managed in ./document/diffViewer.js
@@ -416,7 +428,7 @@ import {
 
   function _markDocumentDirty(docId = activeDocId) {
     const doc = docId && (docs.get(docId) || _closingDocs.get(docId));
-    if (!doc || doc.language === 'email') return;
+    if (!doc) return;
     doc._editRevision = (doc._editRevision || 0) + 1;
     _setDocumentSaveState('dirty', docId);
   }
@@ -2411,7 +2423,7 @@ import {
   }
   function _scheduleEmailRichbodySave() {
     const doc = activeDocId && docs.get(activeDocId);
-    if (doc && _isRichTextLang(doc.language)) _markDocumentDirty(activeDocId);
+    if (doc) _markDocumentDirty(activeDocId);
     _persistEmailLocalDraftSoon();
     _scheduleAutoSave(activeDocId, 2500, { isEmailRichbody: true });
   }
@@ -5308,10 +5320,7 @@ import {
     if (!deleteDoc) {
       const doc = docs.get(closingId);
       if (doc) {
-        _closingDocs.set(closingId, doc);
-        saveDocument({ silent: true, docId: closingId }).catch(() => {}).finally(() => {
-          _closingDocs.delete(closingId);
-        });
+        _saveClosingDraft(closingId, doc);
       }
     }
     docs.delete(closingId);
@@ -5962,10 +5971,7 @@ import {
     _syncPdfPaneToDoc(docId, { markDirty: false });
     const hasContent = doc && doc.content && doc.content.trim().length > 0;
     if (hasContent) {
-      _closingDocs.set(docId, doc);
-      saveDocument({ silent: true, docId }).catch(() => {}).finally(() => {
-        _closingDocs.delete(docId);
-      });
+      _saveClosingDraft(docId, doc);
       if (toast && uiModule) uiModule.showToast('Document closed');
     } else {
       _deletedDocIds.add(docId);
@@ -7510,6 +7516,7 @@ import {
           return;
         }
         _markDocumentDirty(activeDocId);
+        saveCurrentToMap();
         // Sync text content immediately (prevents visual duplication from scroll desync)
         const codeEl = document.getElementById('doc-editor-code');
         if (codeEl && !codeEl.dataset.hasDiff) {
@@ -10384,6 +10391,10 @@ import {
 
   export async function loadDocument(docId) {
     _minimizeNotesForDocumentOpen();
+    if (_closingDocs.has(docId)) {
+      docs.set(docId, _closingDocs.get(docId));
+      _closingDocs.delete(docId);
+    }
     // If already in tabs, just switch
     if (docs.has(docId)) {
       _ensureDocPaneMounted();
@@ -10494,10 +10505,7 @@ import {
         if (_pendingAutoSaves.has(id) || doc._saveState === 'dirty' || _hasPendingPdfPaneSave(id)) {
           _cancelAutoSave(id);
           _cancelPdfPaneSave(id);
-          _closingDocs.set(id, doc);
-          saveDocument({ silent: true, docId: id }).catch(() => {}).finally(() => {
-            _closingDocs.delete(id);
-          });
+          _saveClosingDraft(id, doc);
         } else {
           _cancelAutoSave(id);
           _cancelPdfPaneSave(id);
@@ -10580,8 +10588,13 @@ import {
 
   /** Add a document to the tabs map */
   function addDocToTabs(doc, sessionId) {
-    const existing = docs.get(doc.id);
-    docs.set(doc.id, {
+    const existing = docs.get(doc.id) || _closingDocs.get(doc.id);
+    if (existing && ['dirty', 'saving', 'error'].includes(existing._saveState)) {
+      docs.set(doc.id, existing);
+      _closingDocs.delete(doc.id);
+      return;
+    }
+    docs.set(doc.id, Object.assign(existing || {}, {
       id: doc.id,
       title: doc.title || '',
       language: doc.language || '',
@@ -10596,7 +10609,7 @@ import {
       sourceEmailFolder:    doc.source_email_folder || null,
       sourceEmailAccountId: doc.source_email_account_id || null,
       sourceEmailMessageId: doc.source_email_message_id || null,
-    });
+    }));
   }
 
   /** Populate the editor with document data (used internally) */
@@ -12154,7 +12167,8 @@ import {
         targetDoc.version = Math.max(previousVersion, doc.version_count || 1);
         versionChanged = targetDoc.version !== previousVersion;
         if (targetDoc._saveRequest === saveRequest) {
-          targetDoc.content = contentToSave;
+          // A response acknowledges a snapshot; it never owns the current draft.
+          // In particular, the editor DOM may already have been torn down.
           _setDocumentSaveState(
             (targetDoc._editRevision || 0) === saveRevision ? 'saved' : 'dirty',
             savingDocId,
