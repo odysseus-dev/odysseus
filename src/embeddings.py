@@ -27,10 +27,12 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import logging
+import math
 import numpy as np
 import httpx
 from typing import List, Optional
 
+from core.log_safety import redact_url
 from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,12 @@ class EmbeddingClient:
         self._batch_size = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "8")))
         self._max_chars = max(200, int(os.getenv("EMBEDDING_MAX_CHARS", "900")))
 
+    def _response_error(self, detail: str) -> ValueError:
+        return ValueError(
+            f"Invalid embedding API response from {redact_url(self.url)} "
+            f"(model={self.model}): {detail}"
+        )
+
     def get_sentence_embedding_dimension(self) -> int:
         """Probe the endpoint for embedding dimension if not yet known."""
         if self._dim is not None:
@@ -80,6 +88,9 @@ class EmbeddingClient:
             batch = texts[i : i + self._batch_size]
             all_vecs.extend(self._embed_batch(batch))
 
+        dimension = self._dim or len(all_vecs[0])
+        if any(len(vector) != dimension for vector in all_vecs):
+            raise self._response_error("embedding dimensions do not match")
         vecs = np.array(all_vecs, dtype="float32")
 
         if normalize_embeddings and vecs.size > 0:
@@ -121,12 +132,39 @@ class EmbeddingClient:
             json={"input": batch, "model": self.model},
         )
         resp.raise_for_status()
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            raise self._response_error("expected JSON") from None
 
         # OpenAI format: {"data": [{"embedding": [...], "index": 0}, ...]}
-        embeddings = data.get("data", [])
-        embeddings.sort(key=lambda e: e.get("index", 0))
-        return [emb["embedding"] for emb in embeddings]
+        if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+            raise self._response_error("expected an object with a data list")
+        embeddings = data["data"]
+        if len(embeddings) != len(batch):
+            raise self._response_error("expected one embedding per input")
+        ordered = {}
+        max_value = float(np.finfo(np.float32).max)
+        for position, item in enumerate(embeddings):
+            if not isinstance(item, dict):
+                raise self._response_error("expected embedding objects")
+            # Preserve positional responses from compatible servers that omit
+            # index, while rejecting ambiguous/missing indexed results.
+            index = item.get("index", position)
+            if type(index) is not int or not 0 <= index < len(batch) or index in ordered:
+                raise self._response_error("invalid or duplicate embedding index")
+            vector = item.get("embedding")
+            if not isinstance(vector, list) or not vector:
+                raise self._response_error("missing or empty embedding vector")
+            if any(
+                type(value) not in (int, float)
+                or abs(value) > max_value
+                or not math.isfinite(value)
+                for value in vector
+            ):
+                raise self._response_error("expected finite float32 embedding values")
+            ordered[index] = vector
+        return [ordered[index] for index in range(len(batch))]
 
 
 class FastEmbedClient:
