@@ -38,6 +38,21 @@ import {
   initFindReplace,
   onFindTextareaScroll,
 } from './document/findReplace.js';
+import {
+  diffLines,
+  _computeLineDiff,
+  _buildDiffChunks,
+  enterDiffMode,
+  exitDiffMode,
+  isDiffModeActive,
+  initDiffViewer,
+  _diffModeActive,
+  _resolveChunk,
+  _resolveAllChunks,
+  _applyResolvedChunksToTextarea,
+  _scrollToDiffChunk,
+  _navigateToDiffChunk,
+} from './document/diffViewer.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -66,12 +81,7 @@ import {
   const _closingDocs = new Map();
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
-  // Diff mode state
-  let _diffModeActive = false;
-  let _diffOldContent = null;
-  let _diffNewContent = null;
-  let _diffChunks = [];          // [{id, oldLines, newLines, startLine, resolved, accepted}]
-  let _diffUnresolvedCount = 0;
+  // Diff mode state is managed in ./document/diffViewer.js
   let _mdPreviewClickTimes = [];
   let _mdPreviewHintLastAt = 0;
 
@@ -1138,6 +1148,19 @@ import {
 
   export function init(apiBase) {
     API_BASE = apiBase;
+    initDiffViewer({
+      saveDocument: (opts) => saveDocument(opts),
+      syncHighlighting: () => syncHighlighting(),
+      updateLineNumbers: (text) => updateLineNumbers(text),
+      lineNumberContentEl: (gutter) => _lineNumberContentEl(gutter),
+      showToast: (msg) => uiModule?.showToast?.(msg),
+      onAcceptChanges: () => {
+        const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+        if (lang === 'markdown') {
+          requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
+        }
+      },
+    });
     initLibrary({
       apiBase,
       esc: _esc,
@@ -8722,6 +8745,27 @@ import {
         scheduleEmailRichbodySave: _scheduleEmailRichbodySave,
         replaceRange: _replaceRange,
       });
+
+      // Diff & Review controller
+      initDiffViewer({
+        getTextarea: () => ta,
+        getWrap: () => wrap,
+        getCodeEl: () => document.getElementById('doc-editor-code'),
+        getGutter: () => document.getElementById('doc-line-numbers'),
+        getHighlight: () => document.getElementById('doc-editor-highlight'),
+        getDiffToggleBtn: () => document.getElementById('doc-diff-toggle-btn'),
+        saveDocument: (opts) => saveDocument(opts),
+        syncHighlighting: () => syncHighlighting(),
+        updateLineNumbers: (text) => updateLineNumbers(text),
+        lineNumberContentEl: (gutter) => _lineNumberContentEl(gutter),
+        showToast: (msg) => uiModule?.showToast?.(msg),
+        onAcceptChanges: () => {
+          const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+          if (lang === 'markdown') {
+            requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
+          }
+        },
+      });
       document.getElementById('doc-outline-toolbar-btn')?.addEventListener('click', _openDocumentOutline);
 
       // Intercept Ctrl+F on the editor pane
@@ -11330,6 +11374,7 @@ import {
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
     _hideRichSlashMenu();
+    if (_diffModeActive) exitDiffMode(true);
     try {
       CSS.highlights?.delete('doc-find-results');
       CSS.highlights?.delete('doc-find-current');
@@ -13268,458 +13313,7 @@ import {
     }
   }
 
-  // ---- Diff mode (line-level review) ----
-
-  const DIFF_MODE_THRESHOLD = 3; // min changed lines to trigger diff mode
-
-  /**
-   * Pure LCS line-diff algorithm.
-   * Compares oldText and newText line by line.
-   * Returns array of { type: 'equal'|'insert'|'delete', text: string } or null when over maxCells.
-   */
-  function diffLines(oldText, newText, { maxCells = 500000 } = {}) {
-    const oldLines = (oldText || '').split('\n');
-    const newLines = (newText || '').split('\n');
-    const m = oldLines.length, n = newLines.length;
-
-    // Guard against massive inputs that could freeze the UI thread
-    if (m * n > maxCells) return null;
-
-    // Build LCS table
-    const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
-    for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) {
-        dp[i][j] = oldLines[i - 1] === newLines[j - 1]
-          ? dp[i - 1][j - 1] + 1
-          : Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
-    }
-
-    // Backtrack to produce diff entries
-    const entries = [];
-    let i = m, j = n;
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-        entries.push({ type: 'equal', text: oldLines[i - 1] });
-        i--; j--;
-      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-        entries.push({ type: 'insert', text: newLines[j - 1] });
-        j--;
-      } else {
-        entries.push({ type: 'delete', text: oldLines[i - 1] });
-        i--;
-      }
-    }
-    entries.reverse();
-    return entries;
-  }
-
-  /** Line-level LCS diff algorithm used by diff review mode */
-  function _computeLineDiff(oldText, newText) {
-    const raw = diffLines(oldText, newText);
-    if (!raw) {
-      // Fallback for very large diffs to avoid freezing the UI: treat old as deleted, new as inserted
-      const oldLines = (oldText || '').split('\n');
-      const newLines = (newText || '').split('\n');
-      const entries = [];
-      for (const line of oldLines) entries.push({ type: 'delete', line });
-      for (const line of newLines) entries.push({ type: 'insert', line });
-      return entries;
-    }
-    return raw.map(e => ({ type: e.type, line: e.text }));
-  }
-
-  /** Group diff entries into chunks (contiguous change blocks) */
-  function _buildDiffChunks(entries) {
-    const chunks = [];
-    let chunkId = 0;
-    let lineIdx = 0;
-    let i = 0;
-    while (i < entries.length) {
-      const e = entries[i];
-      if (e.type === 'equal') {
-        lineIdx++;
-        i++;
-      } else {
-        // Gather contiguous non-equal entries into a chunk
-        const startLine = lineIdx;
-        const oldLines = [], newLines = [];
-        while (i < entries.length && entries[i].type !== 'equal') {
-          if (entries[i].type === 'delete') oldLines.push(entries[i].line);
-          else newLines.push(entries[i].line);
-          i++;
-        }
-        chunks.push({
-          id: chunkId++,
-          oldLines,
-          newLines,
-          startLine,
-          resolved: false,
-          accepted: false,
-        });
-        lineIdx += oldLines.length + newLines.length;
-      }
-    }
-    return chunks;
-  }
-
-  /** Enter diff mode — show line-level diff for review */
-  function enterDiffMode(oldContent, newContent) {
-    if (_diffModeActive) exitDiffMode(true);
-
-    _diffModeActive = true;
-    _diffOldContent = oldContent;
-    _diffNewContent = newContent;
-
-    const entries = _computeLineDiff(oldContent, newContent);
-    _diffChunks = _buildDiffChunks(entries);
-    _diffUnresolvedCount = _diffChunks.length;
-
-    if (_diffChunks.length === 0) {
-      _diffModeActive = false;
-      if (uiModule) uiModule.showToast('No changes');
-      return;
-    }
-
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (textarea) textarea.readOnly = true;
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap) wrap.classList.add('diff-mode');
-
-    _renderDiffOverlay(entries);
-    _renderDiffToolbar();
-    _renderDiffGutter();
-    requestAnimationFrame(() => _scrollToDiffChunk(_diffChunks[0]?.id));
-
-    // Update header button
-    const diffBtn = document.getElementById('doc-diff-toggle-btn');
-    if (diffBtn) diffBtn.classList.add('active');
-  }
-
-  /** Render the line-level diff into the code highlight element */
-  function _renderDiffOverlay(entries) {
-    const codeEl = document.getElementById('doc-editor-code');
-    const gutter = document.getElementById('doc-line-numbers');
-    if (!codeEl) return;
-
-    codeEl.innerHTML = '';
-    let gutterHtml = '';
-    let oldNum = 0, newNum = 0;
-
-    // Pre-assign chunk IDs to entries by walking chunks and entries together
-    let chunkIdx = 0;
-    let entryIdx = 0;
-    const entryChunkMap = new Array(entries.length).fill(-1);
-    while (entryIdx < entries.length) {
-      if (entries[entryIdx].type === 'equal') {
-        entryIdx++;
-      } else {
-        // This is the start of a change block — assign all contiguous non-equal entries to the current chunk
-        const cid = chunkIdx < _diffChunks.length ? _diffChunks[chunkIdx].id : -1;
-        while (entryIdx < entries.length && entries[entryIdx].type !== 'equal') {
-          entryChunkMap[entryIdx] = cid;
-          entryIdx++;
-        }
-        chunkIdx++;
-      }
-    }
-
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      if (e.type === 'equal') {
-        oldNum++; newNum++;
-        const el = document.createElement('span');
-        el.className = 'diff-line-equal';
-        el.textContent = e.line + '\n';
-        codeEl.appendChild(el);
-        gutterHtml += newNum + '\n';
-      } else if (e.type === 'delete') {
-        oldNum++;
-        const el = document.createElement('span');
-        el.className = 'diff-line-del';
-        if (entryChunkMap[i] >= 0) el.dataset.chunkId = entryChunkMap[i];
-        el.textContent = e.line + '\n';
-        codeEl.appendChild(el);
-        gutterHtml += '−\n';
-      } else {
-        newNum++;
-        const el = document.createElement('span');
-        el.className = 'diff-line-add';
-        if (entryChunkMap[i] >= 0) el.dataset.chunkId = entryChunkMap[i];
-        el.textContent = e.line + '\n';
-        codeEl.appendChild(el);
-        gutterHtml += '+\n';
-      }
-    }
-
-    if (gutter) gutter.textContent = gutterHtml;
-    codeEl.dataset.hasDiff = '1';
-
-    // Sync textarea to show the combined view (old + new interleaved) for scroll sizing
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (textarea) {
-      const allLines = entries.map(e => e.line);
-      textarea.value = allLines.join('\n') + '\n';
-    }
-  }
-
-  /** Render the diff toolbar above the editor */
-  function _renderDiffToolbar() {
-    let toolbar = document.getElementById('doc-diff-toolbar');
-    if (toolbar) toolbar.remove();
-
-    toolbar = document.createElement('div');
-    toolbar.id = 'doc-diff-toolbar';
-    toolbar.className = 'diff-toolbar';
-
-    const status = document.createElement('span');
-    status.className = 'diff-toolbar-status';
-    status.id = 'diff-toolbar-status';
-    _updateDiffStatus(status);
-
-    const acceptAll = document.createElement('button');
-    acceptAll.className = 'diff-toolbar-btn diff-toolbar-btn-accept';
-    acceptAll.textContent = 'Accept All';
-    acceptAll.addEventListener('click', () => _resolveAllChunks(true));
-
-    const rejectAll = document.createElement('button');
-    rejectAll.className = 'diff-toolbar-btn diff-toolbar-btn-reject';
-    rejectAll.textContent = 'Reject All';
-    rejectAll.addEventListener('click', () => _resolveAllChunks(false));
-
-    toolbar.appendChild(status);
-    toolbar.appendChild(acceptAll);
-    toolbar.appendChild(rejectAll);
-
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap) wrap.parentNode.insertBefore(toolbar, wrap);
-  }
-
-  /** Render per-chunk accept/reject buttons in a gutter overlay */
-  function _renderDiffGutter() {
-    let gutterEl = document.getElementById('doc-diff-gutter');
-    if (gutterEl) gutterEl.remove();
-
-    gutterEl = document.createElement('div');
-    gutterEl.id = 'doc-diff-gutter';
-    gutterEl.className = 'diff-gutter';
-
-    const codeEl = document.getElementById('doc-editor-code');
-    if (!codeEl) return;
-
-    // Insert chunk action buttons directly next to the first changed line of each chunk
-    // This way they scroll naturally with the content
-    requestAnimationFrame(() => {
-      for (const chunk of _diffChunks) {
-        if (chunk.resolved) continue;
-        const firstEl = codeEl.querySelector(`[data-chunk-id="${chunk.id}"]`);
-        if (!firstEl) continue;
-
-        const actions = document.createElement('span');
-        actions.className = 'diff-chunk-actions';
-        actions.dataset.chunkId = chunk.id;
-
-        const acceptBtn = document.createElement('button');
-        acceptBtn.className = 'diff-chunk-btn diff-chunk-btn-accept';
-        acceptBtn.title = 'Accept change';
-        acceptBtn.innerHTML = '✓';
-        acceptBtn.addEventListener('click', (e) => { e.stopPropagation(); _resolveChunk(chunk.id, true); });
-
-        const rejectBtn = document.createElement('button');
-        rejectBtn.className = 'diff-chunk-btn diff-chunk-btn-reject';
-        rejectBtn.title = 'Reject change';
-        rejectBtn.innerHTML = '✗';
-        rejectBtn.addEventListener('click', (e) => { e.stopPropagation(); _resolveChunk(chunk.id, false); });
-
-        actions.appendChild(acceptBtn);
-        actions.appendChild(rejectBtn);
-
-        // Insert at the start of the first line span
-        firstEl.style.position = 'relative';
-        firstEl.appendChild(actions);
-      }
-    });
-  }
-
-  /** Update the toolbar status text */
-  function _updateDiffStatus(statusEl) {
-    const el = statusEl || document.getElementById('diff-toolbar-status');
-    if (!el) return;
-    const resolved = _diffChunks.length - _diffUnresolvedCount;
-    el.textContent = `${resolved} / ${_diffChunks.length} changes resolved`;
-  }
-
-  function _scrollToDiffChunk(chunkId) {
-    if (chunkId == null) return;
-    const firstEl = document.querySelector(`[data-chunk-id="${chunkId}"]`);
-    const highlight = document.getElementById('doc-editor-highlight');
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!firstEl || !highlight) return;
-    const target = Math.max(0, firstEl.offsetTop - 80);
-    highlight.scrollTop = target;
-    if (textarea) textarea.scrollTop = target;
-    const gutter = document.getElementById('doc-line-numbers');
-    const lineNums = gutter && _lineNumberContentEl(gutter);
-    if (lineNums) lineNums.style.transform = `translateY(${-target}px)`;
-  }
-
-  /** Resolve a single chunk */
-  function _resolveChunk(chunkId, accept) {
-    const chunk = _diffChunks.find(c => c.id === chunkId);
-    if (!chunk || chunk.resolved) return;
-
-    chunk.resolved = true;
-    chunk.accepted = accept;
-    _diffUnresolvedCount--;
-
-    // Fade resolved lines in the overlay
-    const codeEl = document.getElementById('doc-editor-code');
-    if (codeEl) {
-      codeEl.querySelectorAll(`[data-chunk-id="${chunkId}"]`).forEach(el => {
-        el.classList.add('diff-chunk-resolved');
-      });
-    }
-
-    // Remove the gutter buttons for this chunk
-    const gutterActions = document.querySelector(`.diff-chunk-actions[data-chunk-id="${chunkId}"]`);
-    if (gutterActions) gutterActions.remove();
-
-    _updateDiffStatus();
-
-    // Persist partial progress so refresh doesn't lose individually-resolved chunks
-    _applyResolvedChunksToTextarea();
-    saveDocument({ silent: true });
-
-    if (_diffUnresolvedCount === 0) {
-      setTimeout(() => exitDiffMode(false), 300);
-    } else {
-      const nextChunk = _diffChunks.find(c => !c.resolved);
-      requestAnimationFrame(() => _scrollToDiffChunk(nextChunk?.id));
-    }
-  }
-
-  /** Compute current content from old + resolved chunk decisions; unresolved chunks
-   *  default to the original (rejected) until the user decides. Updates textarea. */
-  function _applyResolvedChunksToTextarea() {
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return;
-    const entries = _computeLineDiff(_diffOldContent || '', _diffNewContent || '');
-    const result = [];
-    let chunkIdx = 0;
-    let i = 0;
-    while (i < entries.length) {
-      if (entries[i].type === 'equal') {
-        result.push(entries[i].line);
-        i++;
-      } else {
-        const chunk = _diffChunks[chunkIdx++];
-        const chunkOld = [], chunkNew = [];
-        while (i < entries.length && entries[i].type !== 'equal') {
-          if (entries[i].type === 'delete') chunkOld.push(entries[i].line);
-          else chunkNew.push(entries[i].line);
-          i++;
-        }
-        // Resolved+accepted → use new; resolved+rejected OR unresolved → keep old
-        if (chunk && chunk.resolved && chunk.accepted) {
-          result.push(...chunkNew);
-        } else {
-          result.push(...chunkOld);
-        }
-      }
-    }
-    textarea.value = result.join('\n');
-  }
-
-  /** Resolve all chunks at once */
-  function _resolveAllChunks(accept) {
-    for (const chunk of _diffChunks) {
-      if (!chunk.resolved) {
-        chunk.resolved = true;
-        chunk.accepted = accept;
-      }
-    }
-    _diffUnresolvedCount = 0;
-    exitDiffMode(false);
-  }
-
-  /** Exit diff mode and apply resolved changes */
-  function exitDiffMode(discard, { persist = true } = {}) {
-    if (!_diffModeActive) return;
-    _diffModeActive = false;
-    const acceptedAnyDiffChunk = !discard && _diffChunks.some(chunk => chunk && chunk.resolved && chunk.accepted);
-
-    const textarea = document.getElementById('doc-editor-textarea');
-    const codeEl = document.getElementById('doc-editor-code');
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap) wrap.classList.remove('diff-mode');
-
-    if (discard) {
-      // Reject all — restore original content
-      if (textarea) textarea.value = _diffOldContent || '';
-    } else {
-      // Build final content from resolved chunks
-      const oldLines = (_diffOldContent || '').split('\n');
-      const newLines = (_diffNewContent || '').split('\n');
-      const entries = _computeLineDiff(_diffOldContent || '', _diffNewContent || '');
-
-      const result = [];
-      let chunkIdx = 0;
-      let i = 0;
-      while (i < entries.length) {
-        if (entries[i].type === 'equal') {
-          result.push(entries[i].line);
-          i++;
-        } else {
-          // Find the matching chunk
-          const chunk = _diffChunks[chunkIdx++];
-          // Skip all entries belonging to this chunk
-          const chunkOld = [], chunkNew = [];
-          while (i < entries.length && entries[i].type !== 'equal') {
-            if (entries[i].type === 'delete') chunkOld.push(entries[i].line);
-            else chunkNew.push(entries[i].line);
-            i++;
-          }
-          if (chunk && chunk.accepted) {
-            result.push(...chunkNew);
-          } else {
-            result.push(...chunkOld);
-          }
-        }
-      }
-      if (textarea) textarea.value = result.join('\n');
-    }
-
-    // Restore editor state
-    if (textarea) textarea.readOnly = false;
-    if (codeEl) delete codeEl.dataset.hasDiff;
-
-    // Clean up toolbar and any remaining chunk action buttons
-    const toolbar = document.getElementById('doc-diff-toolbar');
-    if (toolbar) toolbar.remove();
-    document.querySelectorAll('.diff-chunk-actions').forEach(el => el.remove());
-
-    // Reset state
-    _diffOldContent = null;
-    _diffNewContent = null;
-    _diffChunks = [];
-    _diffUnresolvedCount = 0;
-
-    const diffBtn = document.getElementById('doc-diff-toggle-btn');
-    if (diffBtn) diffBtn.classList.remove('active');
-
-    syncHighlighting();
-    updateLineNumbers(textarea ? textarea.value : '');
-    if (persist) saveDocument({ silent: true });
-    if (acceptedAnyDiffChunk) {
-      const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
-      if (lang === 'markdown') {
-        requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
-      }
-    }
-  }
-
-  /** Check if diff mode is active */
-  function isDiffModeActive() { return _diffModeActive; }
+  // Diff mode (line-level review) extracted to ./document/diffViewer.js
 
   let _suggestionTotal = 0;
   let _suggestionIndex = 0;
@@ -17004,6 +16598,7 @@ const documentModule = {
   streamDocDelta,
   streamDocFinalize,
   isPanelOpen,
+  diffLines,
   enterDiffMode,
   exitDiffMode,
   isDiffModeActive,
@@ -17021,6 +16616,13 @@ const documentModule = {
   openLibrary,
   closeLibrary,
   isLibraryOpen,
+};
+
+export {
+  diffLines,
+  enterDiffMode,
+  exitDiffMode,
+  isDiffModeActive,
 };
 
 export default documentModule;
