@@ -22,6 +22,22 @@ import { topPortalZ } from './toolWindowZOrder.js';
 import { getDocumentStats } from './documentStats.js?v=20260831richtexttools91';
 import { parseMarkdownOutline } from './documentOutline.js?v=20260831richtexttools91';
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
+import {
+  _openFindBar,
+  _closeFindBar,
+  _setReplaceVisible,
+  _doFind,
+  _replaceFindCurrent,
+  _replaceFindAll,
+  _replaceAllLiteral,
+  _clearRichFindHighlights,
+  _buildRichFindRanges,
+  _renderRichFindRanges,
+  applyFindMarks,
+  renderFindRects,
+  initFindReplace,
+  onFindTextareaScroll,
+} from './document/findReplace.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -8841,10 +8857,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         syncGutterScroll();
         syncSelectionOverlay();
         // Re-position find rects so they track the textarea on scroll.
-        if (_findMatches && _findMatches.length) {
-          const _q = document.getElementById('doc-find-input')?.value || '';
-          if (_q) renderFindRects(_findMatches.map(s => [s, s + _q.length]), _findIdx);
-        }
+        onFindTextareaScroll();
       });
       ta.addEventListener('cut', () => {
         const start = ta.selectionStart;
@@ -8891,362 +8904,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         }
       });
 
-      // ── In-document find (Ctrl+F) ──
-      let _findMatches = [];
-      let _findIdx = -1;
-      let _richFindRanges = [];
-      let _richFindFallbackSelection = false;
-      const _richFindAllName = 'doc-find-results';
-      const _richFindCurrentName = 'doc-find-current';
-
-      function _clearRichFindHighlights() {
-        try {
-          CSS.highlights?.delete(_richFindAllName);
-          CSS.highlights?.delete(_richFindCurrentName);
-        } catch (_) {}
-        if (_richFindFallbackSelection) {
-          try { window.getSelection()?.removeAllRanges(); } catch (_) {}
-          _richFindFallbackSelection = false;
-        }
-        _richFindRanges = [];
-      }
-
-      function _buildRichFindRanges(rich, query) {
-        const nodes = [];
-        const walker = document.createTreeWalker(rich, NodeFilter.SHOW_TEXT);
-        const blockSelector = 'p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th';
-        let fullText = '';
-        let node;
-        let previousNode = null;
-        let previousBlock = null;
-        while ((node = walker.nextNode())) {
-          const value = node.nodeValue || '';
-          if (!value) continue;
-          const closestBlock = node.parentElement?.closest?.(blockSelector);
-          const block = closestBlock && rich.contains(closestBlock) ? closestBlock : rich;
-          let startsNewSegment = !!nodes.length && block !== previousBlock;
-          if (!startsNewSegment && previousNode) {
-            try {
-              const between = document.createRange();
-              between.setStartAfter(previousNode);
-              between.setEndBefore(node);
-              startsNewSegment = !!between.cloneContents().querySelector?.('br');
-            } catch (_) {}
-          }
-          if (startsNewSegment) fullText += '\n';
-          nodes.push({ node, start: fullText.length, end: fullText.length + value.length });
-          fullText += value;
-          previousNode = node;
-          previousBlock = block;
-        }
-        if (!query || !fullText) return [];
-
-        const lowerText = fullText.toLocaleLowerCase();
-        const lowerQuery = query.toLocaleLowerCase();
-        const ranges = [];
-        let from = 0;
-        while (from <= lowerText.length - lowerQuery.length) {
-          const hit = lowerText.indexOf(lowerQuery, from);
-          if (hit < 0) break;
-          const end = hit + query.length;
-          const startPart = nodes.find(part => hit >= part.start && hit < part.end);
-          const endPart = nodes.find(part => end > part.start && end <= part.end);
-          if (startPart && endPart) {
-            const range = document.createRange();
-            range.setStart(startPart.node, hit - startPart.start);
-            range.setEnd(endPart.node, end - endPart.start);
-            ranges.push(range);
-          }
-          from = hit + Math.max(1, query.length);
-        }
-        return ranges;
-      }
-
-      function _renderRichFindRanges(rich, ranges, currentIdx) {
-        _clearRichFindHighlights();
-        _richFindRanges = ranges;
-        if (!ranges.length) return;
-        let painted = false;
-        try {
-          if (CSS.highlights && typeof Highlight === 'function') {
-            CSS.highlights.set(_richFindAllName, new Highlight(...ranges));
-            if (ranges[currentIdx]) {
-              CSS.highlights.set(_richFindCurrentName, new Highlight(ranges[currentIdx]));
-            }
-            painted = true;
-          }
-        } catch (_) {}
-
-        const current = ranges[currentIdx];
-        if (!current) return;
-        if (!painted) {
-          try {
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(current);
-            _richFindFallbackSelection = true;
-          } catch (_) {}
-        }
-        const rect = current.getBoundingClientRect();
-        const hostRect = rich.getBoundingClientRect();
-        if (rect.top < hostRect.top + 24 || rect.bottom > hostRect.bottom - 24) {
-          rich.scrollTop += rect.top - hostRect.top - (hostRect.height / 2) + (rect.height / 2);
-        }
-      }
-
-      function _setReplaceVisible(visible, focus = false) {
-        const bar = document.getElementById('doc-find-bar');
-        const row = document.getElementById('doc-replace-row');
-        const toggle = document.getElementById('doc-find-replace-toggle');
-        if (!bar || !row || !toggle) return;
-        row.hidden = !visible;
-        bar.classList.toggle('replace-open', visible);
-        toggle.classList.toggle('is-active', visible);
-        toggle.setAttribute('aria-expanded', visible ? 'true' : 'false');
-        toggle.setAttribute('aria-label', visible ? 'Hide replace' : 'Show replace');
-        toggle.title = visible ? 'Hide replace' : 'Show replace';
-        if (visible && focus) {
-          const replacement = document.getElementById('doc-replace-input');
-          replacement?.focus();
-          replacement?.select();
-        }
-      }
-
-      function _openFindBar(showReplace = false) {
-        const bar = document.getElementById('doc-find-bar');
-        if (!bar) return;
-        bar.style.display = 'flex';
-        _setReplaceVisible(showReplace);
-        // The highlight overlay is normally display:none (single-layer
-        // rendering — textarea owns the visible text). Find marks live
-        // inside that overlay, so we have to re-show it while find is
-        // active. The body class lets a CSS rule un-hide it without
-        // touching every per-language stylesheet path.
-        document.body.classList.add('doc-find-active');
-        const inp = document.getElementById('doc-find-input');
-        if (inp) {
-          const rich = _emailRichbodyActive();
-          const selection = window.getSelection();
-          let selectedText = '';
-          if (rich && selection?.rangeCount && rich.contains(selection.getRangeAt(0).commonAncestorContainer)) {
-            selectedText = selection.toString();
-          } else if (document.activeElement === ta) {
-            selectedText = ta.value.slice(ta.selectionStart, ta.selectionEnd);
-          }
-          selectedText = selectedText.replace(/\s+/g, ' ').trim();
-          if (selectedText && selectedText.length <= 120) inp.value = selectedText;
-          inp.focus();
-          inp.select();
-          if (inp.value) _doFind('first', false);
-        }
-      }
-      function _closeFindBar() {
-        const bar = document.getElementById('doc-find-bar');
-        if (bar) bar.style.display = 'none';
-        document.body.classList.remove('doc-find-active');
-        _clearRichFindHighlights();
-        _findMatches = [];
-        _findIdx = -1;
-        const cnt = document.getElementById('doc-find-count');
-        if (cnt) cnt.textContent = '';
-        const codeEl = document.getElementById('doc-editor-code');
-        if (codeEl) {
-          delete codeEl.dataset.findQuery;
-          delete codeEl.dataset.findCurrent;
-          applyFindMarks(codeEl);
-        }
-        renderFindRects([], -1);
-        const rich = _emailRichbodyActive();
-        if (rich) rich.focus();
-        else ta.focus();
-      }
-
-      function _replaceAllLiteral(text, query, replacement) {
-        if (!query) return { text, count: 0 };
-        const lowerText = text.toLocaleLowerCase();
-        const lowerQuery = query.toLocaleLowerCase();
-        const parts = [];
-        let cursor = 0;
-        let count = 0;
-        while (cursor <= text.length - query.length) {
-          const hit = lowerText.indexOf(lowerQuery, cursor);
-          if (hit < 0) break;
-          parts.push(text.slice(cursor, hit), replacement);
-          cursor = hit + query.length;
-          count += 1;
-        }
-        if (!count) return { text, count: 0 };
-        parts.push(text.slice(cursor));
-        return { text: parts.join(''), count };
-      }
-
-      function _replaceFindCurrent() {
-        const query = document.getElementById('doc-find-input')?.value || '';
-        const replacementInput = document.getElementById('doc-replace-input');
-        if (!query || !replacementInput) return;
-        const rich = _emailRichbodyActive();
-        if (rich) {
-          const ranges = _buildRichFindRanges(rich, query);
-          if (!ranges.length) { _doFind('refresh', false); return; }
-          const index = Math.max(0, Math.min(_findIdx, ranges.length - 1));
-          const range = ranges[index];
-          _clearRichFindHighlights();
-          const selection = window.getSelection();
-          selection.removeAllRanges();
-          selection.addRange(range);
-          rich.focus();
-          document.execCommand('insertText', false, replacementInput.value);
-          _syncEmailRichbody(rich);
-          _scheduleEmailRichbodySave();
-        } else {
-          if (!_findMatches.length || _findIdx < 0) _doFind('first', false);
-          const match = _findMatches[_findIdx];
-          if (match == null) return;
-          _replaceRange(ta, match, match + query.length, replacementInput.value);
-        }
-        _doFind('refresh', false);
-        replacementInput.focus();
-      }
-
-      function _replaceFindAll() {
-        const query = document.getElementById('doc-find-input')?.value || '';
-        const replacementInput = document.getElementById('doc-replace-input');
-        if (!query || !replacementInput) return;
-        const replacement = replacementInput.value;
-        const rich = _emailRichbodyActive();
-        let count = 0;
-        if (rich) {
-          const clone = rich.cloneNode(true);
-          const ranges = _buildRichFindRanges(clone, query);
-          count = ranges.length;
-          if (count) {
-            [...ranges].reverse().forEach(range => {
-              range.deleteContents();
-              range.insertNode(document.createTextNode(replacement));
-            });
-            _clearRichFindHighlights();
-            const selection = window.getSelection();
-            const wholeDocument = document.createRange();
-            wholeDocument.selectNodeContents(rich);
-            selection.removeAllRanges();
-            selection.addRange(wholeDocument);
-            rich.focus();
-            document.execCommand('insertHTML', false, clone.innerHTML);
-            _syncEmailRichbody(rich);
-            _scheduleEmailRichbodySave();
-          }
-        } else {
-          const result = _replaceAllLiteral(ta.value, query, replacement);
-          count = result.count;
-          if (count) _replaceRange(ta, 0, ta.value.length, result.text);
-        }
-        _doFind('refresh', false);
-        const cnt = document.getElementById('doc-find-count');
-        if (cnt) cnt.textContent = count ? `${count} replaced` : '0 results';
-        replacementInput.focus();
-      }
-
-      function _doFind(dir, focusTextarea) {
-        const inp = document.getElementById('doc-find-input');
-        const cnt = document.getElementById('doc-find-count');
-        if (!inp) return;
-        const q = inp.value;
-        const codeEl = document.getElementById('doc-editor-code');
-        const rich = _emailRichbodyActive();
-        if (!q) {
-          _findMatches = []; _findIdx = -1;
-          _clearRichFindHighlights();
-          if (cnt) cnt.textContent = '';
-          if (codeEl) { delete codeEl.dataset.findQuery; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
-          return;
-        }
-        if (rich) {
-          const ranges = _buildRichFindRanges(rich, q);
-          _findMatches = ranges.map((_, index) => index);
-          if (!_findMatches.length) {
-            _findIdx = -1;
-            if (cnt) cnt.textContent = '0 results';
-            _renderRichFindRanges(rich, [], -1);
-            return;
-          }
-          if (dir === 'next') {
-            _findIdx = _findIdx < _findMatches.length - 1 ? _findIdx + 1 : 0;
-          } else if (dir === 'prev') {
-            _findIdx = _findIdx > 0 ? _findIdx - 1 : _findMatches.length - 1;
-          } else if (dir === 'refresh') {
-            _findIdx = Math.max(0, Math.min(_findIdx, _findMatches.length - 1));
-          } else {
-            _findIdx = 0;
-          }
-          if (cnt) cnt.textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-          _renderRichFindRanges(rich, ranges, _findIdx);
-          return;
-        }
-        const text = ta.value;
-        const lq = q.toLowerCase();
-        const lt = text.toLowerCase();
-        _findMatches = [];
-        let pos = 0;
-        while (true) {
-          const i = lt.indexOf(lq, pos);
-          if (i < 0) break;
-          _findMatches.push(i);
-          pos = i + Math.max(1, q.length);
-        }
-        if (_findMatches.length === 0) {
-          _findIdx = -1;
-          if (cnt) cnt.textContent = '0 results';
-          if (codeEl) { codeEl.dataset.findQuery = q; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
-          renderFindRects([], -1);
-          return;
-        }
-        if (dir === 'next') {
-          _findIdx = _findIdx < _findMatches.length - 1 ? _findIdx + 1 : 0;
-        } else if (dir === 'prev') {
-          _findIdx = _findIdx > 0 ? _findIdx - 1 : _findMatches.length - 1;
-        } else if (dir === 'refresh') {
-          _findIdx = Math.max(0, Math.min(_findIdx, _findMatches.length - 1));
-        } else {
-          _findIdx = 0;
-        }
-        if (cnt) cnt.textContent = `${_findIdx + 1} / ${_findMatches.length}`;
-        const matchPos = _findMatches[_findIdx];
-        // Highlight the match in the textarea without stealing focus from the input
-        ta.setSelectionRange(matchPos, matchPos + q.length);
-        const linesBefore = text.slice(0, matchPos).split('\n').length;
-        const lineH = parseFloat(getComputedStyle(ta).lineHeight) || 18;
-        ta.scrollTop = Math.max(0, (linesBefore - 3) * lineH);
-        if (codeEl) {
-          codeEl.dataset.findQuery = q;
-          codeEl.dataset.findCurrent = String(_findIdx);
-          applyFindMarks(codeEl);
-        }
-        // Dedicated overlay rects on top of the textarea — bulletproof
-        // visibility across markdown / email / code modes.
-        renderFindRects(_findMatches.map(s => [s, s + q.length]), _findIdx);
-        if (focusTextarea) ta.focus();
-      }
-
-      document.getElementById('doc-find-close')?.addEventListener('click', _closeFindBar);
-      document.getElementById('doc-find-next')?.addEventListener('click', () => _doFind('next', true));
-      document.getElementById('doc-find-prev')?.addEventListener('click', () => _doFind('prev', true));
-      document.getElementById('doc-find-toolbar-btn')?.addEventListener('click', () => _openFindBar(false));
+      // Find & Replace controller
+      initFindReplace({
+        getTextarea: () => ta,
+        getWrap: () => wrap,
+        getCodeEl: () => document.getElementById('doc-editor-code'),
+        getPane: () => pane,
+        isRichActive: _emailRichbodyActive,
+        syncEmailRichbody: _syncEmailRichbody,
+        scheduleEmailRichbodySave: _scheduleEmailRichbodySave,
+        replaceRange: _replaceRange,
+      });
       document.getElementById('doc-outline-toolbar-btn')?.addEventListener('click', _openDocumentOutline);
-      document.getElementById('doc-find-replace-toggle')?.addEventListener('click', () => {
-        const row = document.getElementById('doc-replace-row');
-        _setReplaceVisible(Boolean(row?.hidden), Boolean(row?.hidden));
-      });
-      document.getElementById('doc-replace-current')?.addEventListener('click', _replaceFindCurrent);
-      document.getElementById('doc-replace-all')?.addEventListener('click', _replaceFindAll);
-      document.getElementById('doc-find-input')?.addEventListener('input', () => _doFind('first', false));
-      document.getElementById('doc-find-input')?.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); _closeFindBar(); }
-        else if (e.key === 'Enter') { e.preventDefault(); _doFind(e.shiftKey ? 'prev' : 'next', false); }
-      });
-      document.getElementById('doc-replace-input')?.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); _closeFindBar(); }
-        else if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? _replaceFindAll() : _replaceFindCurrent(); }
-      });
 
       // Intercept Ctrl+F on the editor pane
       pane.addEventListener('keydown', (e) => {
@@ -12510,115 +12179,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         span.prepend(marker);
       }
     });
-  }
-
-  // Find-result rectangles drawn ON TOP of the textarea — bypasses
-  // the syntax-highlight overlay entirely so visibility works in
-  // markdown, email, and any other mode regardless of single-layer-
-  // rendering quirks. Same mirror-measurement approach as pinned
-  // selections so wrap matches the textarea exactly.
-  //
-  // `matches` is an array of [start, end] offsets; `currentIdx` is
-  // the focused one (gets brighter accent). Pass empty matches to
-  // clear all rects.
-  function renderFindRects(matches, currentIdx) {
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (!wrap) return;
-    wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
-    if (!matches || matches.length === 0) return;
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return;
-    const text = textarea.value;
-    const style = getComputedStyle(textarea);
-    const paddingTop = parseFloat(style.paddingTop) || 10;
-    const paddingLeft = parseFloat(style.paddingLeft) || 48;
-    const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
-
-    let mirror = document.getElementById('doc-find-rect-mirror');
-    if (!mirror) {
-      mirror = document.createElement('div');
-      mirror.id = 'doc-find-rect-mirror';
-      mirror.style.cssText = 'position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;' +
-        'white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden;box-sizing:border-box;';
-      wrap.appendChild(mirror);
-    }
-    mirror.style.font = style.font;
-    mirror.style.padding = style.padding;
-    mirror.style.borderWidth = style.borderWidth;
-    mirror.style.borderStyle = 'solid';
-    mirror.style.borderColor = 'transparent';
-    mirror.style.width = textarea.clientWidth + 'px';
-    mirror.style.tabSize = style.tabSize;
-    mirror.style.letterSpacing = style.letterSpacing;
-    mirror.style.wordSpacing = style.wordSpacing;
-    mirror.style.textIndent = style.textIndent;
-
-    const scrollTop = textarea.scrollTop;
-    for (let i = 0; i < matches.length; i++) {
-      const [s, e] = matches[i];
-      // Line-band style: highlight the FULL visual row containing the
-      // match. Cheap, always-visible, doesn't need character-precise
-      // mirror measurement that varies across email/markdown/code modes.
-      mirror.textContent = text.substring(0, s);
-      const startTop = mirror.scrollHeight - paddingTop;
-      // Find the wrap-row's end by measuring with one extra char beyond
-      // the match end and stepping back to the last whitespace boundary.
-      mirror.textContent = text.substring(0, e);
-      const endHeight = mirror.scrollHeight - paddingTop;
-      mirror.textContent = '';
-
-      const top = paddingTop + startTop - scrollTop;
-      const height = Math.max(endHeight - startTop, lineHeight);
-      const rect = document.createElement('div');
-      rect.className = 'doc-find-rect' + (i === currentIdx ? ' current' : '');
-      rect.style.cssText =
-        `position:absolute;left:${paddingLeft}px;right:8px;` +
-        `top:${top}px;height:${height}px;` +
-        `pointer-events:none;z-index:6;border-radius:2px;`;
-      wrap.appendChild(rect);
-    }
-  }
-
-  /** Wrap find-matches in the syntax-highlighted overlay with <mark> spans.
-   * Walks text nodes so existing hljs spans are preserved. Matches that cross
-   * syntax tokens are skipped (rare for user searches). */
-  function applyFindMarks(codeEl) {
-    if (!codeEl) return;
-    // Remove prior find marks (unwrap)
-    codeEl.querySelectorAll('mark.doc-find-mark').forEach(m => {
-      const parent = m.parentNode;
-      while (m.firstChild) parent.insertBefore(m.firstChild, m);
-      parent.removeChild(m);
-      parent.normalize();
-    });
-    const q = codeEl.dataset.findQuery || '';
-    if (!q) return;
-    const currentIdx = parseInt(codeEl.dataset.findCurrent || '-1', 10);
-    const lq = q.toLowerCase();
-    let occurrence = 0;
-    const walker = document.createTreeWalker(codeEl, NodeFilter.SHOW_TEXT, null);
-    const nodes = [];
-    let n;
-    while ((n = walker.nextNode())) nodes.push(n);
-    for (const node of nodes) {
-      const val = node.nodeValue || '';
-      const lv = val.toLowerCase();
-      if (!lv.includes(lq)) continue;
-      const frag = document.createDocumentFragment();
-      let i = 0;
-      while (i < val.length) {
-        const hit = lv.indexOf(lq, i);
-        if (hit < 0) { frag.appendChild(document.createTextNode(val.slice(i))); break; }
-        if (hit > i) frag.appendChild(document.createTextNode(val.slice(i, hit)));
-        const mark = document.createElement('mark');
-        mark.className = 'doc-find-mark' + (occurrence === currentIdx ? ' current' : '');
-        mark.textContent = val.slice(hit, hit + q.length);
-        frag.appendChild(mark);
-        occurrence++;
-        i = hit + q.length;
-      }
-      node.parentNode.replaceChild(frag, node);
-    }
   }
 
   /** Sync highlighted overlay with textarea content */
