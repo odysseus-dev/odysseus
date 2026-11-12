@@ -7,15 +7,15 @@
  },
  "agents": {
   "hermes": {
-   "projects": ["odysseus", "selftest"],
+   "projects": ["odysseus"],
    "can": ["search", "propose", "verify", "record_task", "handoff", "status", "conflicts", "inbox", "ack"]
   },
   "claude-code": {
-   "projects": ["odysseus", "selftest"],
+   "projects": ["odysseus"],
    "can": ["search", "propose", "verify", "record_task", "handoff", "status", "conflicts", "inbox", "ack"]
   },
   "wiki-bot": {
-   "projects": ["odysseus", "selftest"],
+   "projects": ["odysseus"],
    "can": ["search", "propose", "verify", "record_task", "handoff", "status", "conflicts", "inbox", "ack"]
   }
  },

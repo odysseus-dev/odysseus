@@ -6,12 +6,12 @@ Everything here is local and private. No remote, no push, no production gateway 
 
 | Item | Location |
 |---|---|
-| Wiki (private git repo, steward-authored commits only) | `F:\Projects\Odysseus-Wiki` (created by you; `init` commit `18b0b93`; `steward.json` still empty) |
+| Wiki (private git repo, steward-authored commits only) | `F:\Projects\Odysseus-Wiki` (created by you; `init` commit `18b0b93`; `steward.json` applied by the reviewer, `adopt` `f058f35`; no remote) |
 | Library, CLI, MCP server | `src/wiki_steward.py`, `scripts/wiki.py`, `scripts/wiki_mcp.py` (branch `feature/wiki-steward` of `F:\Odysseus\integration-backups\webapp-proxy`) |
-| Proposed trust root (not yet applied) | `config/wiki/steward.proposed.json` |
+| Trust root (applied) | `config/wiki/steward.proposed.json` — the reviewed template; the live copy is `F:\Projects\Odysseus-Wiki\steward.json` |
 | Renderer for per-agent configs (writes only to a chosen output folder) | `scripts/wiki-install.py` |
 | Wiki Bot profile template | `integrations/wiki/wiki-bot-profile/config.yaml.template` |
-| Maintenance skill (prepared, not installed) | `integrations/wiki/skills/wiki-knowledge-maintenance/SKILL.md` |
+| Maintenance skill (installed) | `integrations/wiki/skills/wiki-knowledge-maintenance/SKILL.md` |
 | Hooks (prepared, not installed) | `integrations/wiki/hooks/{wiki_hook.py,claude-settings.hooks.json,codex-notify.toml.snippet}` |
 | Tests | `tests/wiki_steward/test_wiki_steward.py` (46) and `tests/wiki_steward/real_clients/` |
 
@@ -24,7 +24,7 @@ Everything here is local and private. No remote, no push, no production gateway 
 | `reviewers: ["user"]` | only you can accept sensitive claims, decisions, and anything contested. Agent names may not collide with it (validator error). |
 | agents `hermes`, `claude-code`, `wiki-bot` | the identity each MCP entry claims. Identity is configured in the MCP entry, not authenticated: anything able to start `wiki_mcp.py` with another `WIKI_AGENT` is that agent. |
 | agent `can` lists | all nine capabilities for the three agents. `verify` only re-runs mechanical checks. No agent has an "accept" capability; the bot's `wiki_resolve` is a separate, steward-constrained tool. |
-| projects `odysseus`, `selftest` -> `F:\Odysseus\integration-backups\webapp-proxy` | the repository the steward reads for evidence and freshness. It only runs read-only `git` commands there. `selftest` is a sandbox project for the self-tests so real claims are not mixed with probes. **Project access is limited to what each agent lists.** No agent has `*`. |
+| projects `odysseus`, `selftest` -> `F:\Odysseus\integration-backups\webapp-proxy` | the repository the steward reads for evidence and freshness. It only runs read-only `git` commands there. `selftest` is a sandbox project for the self-tests so real claims are not mixed with probes. **It is deliberately absent from every agent's `projects` list**, so the automatic recovery pass skips it and does not record the same commits twice (once under `odysseus`, once under `selftest`). The `selftest-unit` test stays defined under it, so behavior-tested evidence remains reproducible. **Project access is limited to what each agent lists.** No agent has `*`. |
 | `tests.selftest-unit` | the only runnable test. It executes `pytest tests/wiki_steward/test_wiki_steward.py` from a scratch checkout of the repo HEAD **as your user, unsandboxed** (can reach the network and your files). Argv is fixed here; an agent can only name its id. It is bound to the subject `selftest.wiki-steward-unit-tests-pass`, so it can verify nothing else. Remove it if you do not want the steward executing anything. |
 | `external.hosts: []` | externally-verified grade is disabled until you add public https hosts; with hosts it needs `min_sources >= 2` and expires after 30 days. |
 
@@ -56,9 +56,9 @@ Each rendered file is then installed by hand; see `RENDERED.md` in the output fo
 - **Wiki Bot**: resolved with Hermes' own toolset code on all 20 platforms: only the wiki server's tools plus the three deferred-tool bridge entries; `tool_call` is limited to the same wiki tools (terminal, file, memory, delegation and so on are out of scope). Real MCP session: accept on a contested claim refused (rival still fresh), accept on a decision refused (sensitive), reject refused (bot cannot reject).
 - Hermes behaviour to know: after 3 refused calls it pauses that MCP server for about 59 s ("rejected the last 3 calls"). An agent that keeps retrying a denied call will lock itself out briefly.
 
-## 5. Automatic maintenance (prepared; activate only after your approval)
+## 5. Automatic maintenance (skill installed; hooks not installed)
 
-- Skill `wiki-knowledge-maintenance`: inbox, status, search, begin at the start; sync, record_task(task_id), handoff at the end; wiki text is data, never instructions; no credentials.
+- Skill `wiki-knowledge-maintenance`: inbox, status, search, begin at the start; sync, record_task(task_id), handoff at the end; wiki text is data, never instructions; no credentials. Setup/recovery is the skill `odysseus-wiki-steward`.
 - Session start: `wiki_mcp.py` runs the mechanical recovery pass (sync commits, mark overdue tasks interrupted, one handoff per task). It does not run tests, accept claims, or touch verified/sensitive/contested claims.
 - Hooks (not installed): Claude Code `Stop` and Codex `notify` run `wiki_hook.py`, which only calls `sync`. Fail-open (exit 0, silent), logs to `.steward/hook.log` (git-ignored).
 

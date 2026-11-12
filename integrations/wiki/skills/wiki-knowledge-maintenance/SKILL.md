@@ -1,9 +1,22 @@
 ---
 name: wiki-knowledge-maintenance
-description: "Use at the start and end of every task on a wiki-tracked project. Records work, claims and handoffs through the Wiki Steward."
+description: Use at task start and end on a wiki-tracked project.
+version: 1.0.0
+author: Hermes Agent
+license: MIT
+platforms: [windows, linux]
+metadata:
+  hermes:
+    tags: [Wiki, Knowledge, MCP, Task Logging, Handoff]
+    related_skills: [odysseus-wiki-steward]
 ---
 
 # Wiki knowledge maintenance
+
+## When to Use
+
+- At the start and end of every task on a project the wiki tracks (`odysseus`).
+- When a session was interrupted and the mechanical recovery pass left a handoff for you.
 
 The shared wiki is written **only** by the Wiki Steward, reached through the `wiki` MCP tools. Never edit the wiki folder, run `git` in it, or ask for reviewer commands. If a wiki tool is missing, say so and continue without it; do not work around it.
 
