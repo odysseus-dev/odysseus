@@ -70,6 +70,27 @@ import {
   convertOriginalToPdfForSigning,
 } from './document/exportDocx.js';
 import {
+  initPreviewModes,
+  _installMarkdownPreviewEditButton,
+  _setMarkdownPreviewActive,
+  _isMarkdownPreviewVisible,
+  toggleMarkdownPreview,
+  toggleRichTextPreview,
+  _setDocxPreviewActive,
+  toggleDocxPreview,
+  _convertDocxToRichText,
+  parseCSV,
+  csvEscapeField,
+  syncTableToTextarea,
+  toggleCsvPreview,
+  _htmlPreviewActive,
+  isHtmlPreviewActive,
+  setHtmlPreviewActive,
+  _themedRenderSrcdoc,
+  toggleHtmlPreview,
+  exitHtmlPreview,
+} from './document/previewModes.js';
+import {
   _isFormBackedDoc,
   _downloadFilledPdf,
   _saveActiveDocBeforeExport,
@@ -170,7 +191,7 @@ import {
   let _autoSaveDebounce = null;
   let _lastAutoSaveErrorAt = 0;
   let _animationCancel = null;      // function to cancel current animation
-  let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
+  // _htmlPreviewActive is managed in ./document/previewModes.js
   let _emailAccountsCache = null;
   let _emailAccountsCacheAt = 0;
   let _emailHeaderManualExpandUntil = 0;
@@ -291,6 +312,35 @@ import {
     });
   }
   _wireExportDocx();
+
+  function _wirePreviewModes() {
+    initPreviewModes({
+      getApiBase: () => API_BASE,
+      getActiveDocId: () => activeDocId,
+      getActiveDoc: () => (activeDocId ? docs.get(activeDocId) : null),
+      getDocs: () => docs,
+      getTextarea: () => document.getElementById('doc-editor-textarea'),
+      getEditorWrap: () => document.getElementById('doc-editor-wrap'),
+      getMdPreview: () => document.getElementById('doc-md-preview'),
+      getCsvPreview: () => document.getElementById('doc-csv-preview'),
+      getHtmlPreview: () => document.getElementById('doc-html-preview'),
+      getDocxPreview: () => document.getElementById('doc-docx-preview'),
+      getLanguage: () => document.getElementById('doc-language-select')?.value || '',
+      getMarkdownModule: () => markdownModule,
+      getUiModule: () => uiModule,
+      syncHeaderActions: () => _syncHeaderActions(),
+      syncHighlighting: () => syncHighlighting(),
+      syncRichEmptyImport: (el) => _syncRichEmptyImport(el),
+      saveDocument: (opts) => saveDocument(opts),
+      switchToDoc: (id) => switchToDoc(id),
+      renderTabs: () => renderTabs(),
+      escHtml: (s) => _escHtml(s),
+      isRichTextLang: (l) => _isRichTextLang(l),
+      isDocxLang: (l) => _isDocxLang(l),
+      isRenderLang: (l) => _isRenderLang(l),
+    });
+  }
+  _wirePreviewModes();
   let _emailSendInFlight = false;
   let _emailAiReplyGeneration = 0;
   let _docStatsFrame = 0;
@@ -1277,6 +1327,7 @@ import {
 
   export function init(apiBase) {
     API_BASE = apiBase;
+    _wirePreviewModes();
     initSuggestions({
       getTextarea: () => document.getElementById('doc-editor-textarea'),
       getWrap: () => document.getElementById('doc-editor-wrap'),
@@ -1298,7 +1349,7 @@ import {
       showEmailFields: (doc, opts) => _showEmailFields(doc, opts),
       syncHighlighting: () => syncHighlighting(),
       refreshMarkdownPreviewIfVisible: (id, content) => _refreshMarkdownPreviewIfVisible(id, content),
-      isHtmlPreviewActive: () => _htmlPreviewActive,
+      isHtmlPreviewActive: () => isHtmlPreviewActive(),
       isRenderLang: (lang) => _isRenderLang(lang),
       themedRenderSrcdoc: (content, lang) => _themedRenderSrcdoc(content, lang),
       updateLineNumbers: (text) => updateLineNumbers(text),
@@ -5797,7 +5848,7 @@ import {
     }
     const staleCsvPreview = document.getElementById('doc-csv-preview');
     if (staleCsvPreview) staleCsvPreview.style.display = 'none';
-    _htmlPreviewActive = false;
+    setHtmlPreviewActive(false);
 
     // Save current doc state before switching only when this mounted pane was
     // actually populated from that document. A freshly reopened pane has an
@@ -12318,368 +12369,7 @@ import {
     if (mdToolbar?._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
   }
 
-  /** Toggle markdown preview */
-  function _installMarkdownPreviewEditButton(preview) {
-    if (!preview || preview.querySelector('.doc-preview-hover-edit')) return;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'doc-preview-hover-edit';
-    button.title = 'Edit document';
-    button.setAttribute('aria-label', 'Edit document');
-    button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Edit</span>';
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      _setMarkdownPreviewActive(false, { remember: true });
-      requestAnimationFrame(() => document.getElementById('doc-editor-textarea')?.focus());
-    });
-    preview.prepend(button);
-  }
-
-  function _setMarkdownPreviewActive(active, { remember = true } = {}) {
-    const preview = document.getElementById('doc-md-preview');
-    const wrap = document.getElementById('doc-editor-wrap');
-    const textarea = document.getElementById('doc-editor-textarea');
-    const emptyImport = document.getElementById('doc-rich-empty-import');
-    if (!preview || !wrap || !textarea) return;
-
-    if (active) {
-      // The import action belongs to the empty editor, not the preview. Keep
-      // the preview surface to a single Edit action.
-      if (emptyImport) emptyImport.style.display = 'none';
-      const md = textarea.value || '';
-      const richMode = _isRichTextLang(document.getElementById('doc-language-select')?.value || '');
-      if (richMode) {
-        const safe = markdownModule?.sanitizeAllowedHtml
-          ? markdownModule.sanitizeAllowedHtml(md)
-          : md;
-        preview.classList.add('doc-rich-preview');
-        preview.innerHTML = safe || '<p class="doc-rich-preview-empty">No preview yet.</p>';
-      } else if (markdownModule && markdownModule.mdToHtml) {
-        preview.innerHTML = markdownModule.mdToHtml(md, { shortcodes: false }); // doc preview: keep :shortcodes: literal
-      } else {
-        preview.innerHTML = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
-      }
-      if (window.hljs) {
-        preview.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
-      }
-      if (markdownModule && markdownModule.renderMermaid) {
-        markdownModule.renderMermaid(preview);
-      }
-      _installMarkdownPreviewEditButton(preview);
-      preview.style.display = '';
-      wrap.style.display = 'none';
-      const rich = document.getElementById('doc-email-richbody');
-      if (richMode && rich) rich.style.display = 'none';
-    } else {
-      preview.style.display = 'none';
-      preview.innerHTML = '';
-      preview.classList.remove('doc-rich-preview');
-      const isEmailDoc = docs.get(activeDocId)?.language === 'email';
-      const richEmailBody = document.getElementById('doc-email-richbody');
-      const currentLang = document.getElementById('doc-language-select')?.value || '';
-      const richMode = _isRichTextLang(currentLang);
-      if (richMode && richEmailBody) {
-        richEmailBody.style.display = '';
-      }
-      if (richMode) {
-        // Rich Text edits through the contenteditable surface; its mirrored
-        // textarea and line-number wrapper must stay hidden when returning
-        // from preview.
-        wrap.style.display = 'none';
-      } else if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
-        wrap.style.display = '';
-      }
-      _syncRichEmptyImport(richEmailBody);
-    }
-    if (remember && activeDocId && docs.has(activeDocId)) {
-      const currentLang = document.getElementById('doc-language-select')?.value || '';
-      if (_isRichTextLang(currentLang)) docs.get(activeDocId)._richPreviewActive = !!active;
-      else docs.get(activeDocId)._markdownPreviewActive = !!active;
-    }
-    _syncHeaderActions();
-  }
-
-  function toggleMarkdownPreview() {
-    const preview = document.getElementById('doc-md-preview');
-    _setMarkdownPreviewActive(!(preview && preview.style.display !== 'none'));
-  }
-
-  function toggleRichTextPreview() {
-    const preview = document.getElementById('doc-md-preview');
-    _setMarkdownPreviewActive(!(preview && preview.style.display !== 'none'));
-  }
-
-  let _docxPreviewRequest = 0;
-  async function _setDocxPreviewActive(active, { remember = true } = {}) {
-    const requestId = ++_docxPreviewRequest;
-    const docId = activeDocId;
-    const isCurrent = () => requestId === _docxPreviewRequest && activeDocId === docId;
-    const preview = document.getElementById('doc-docx-preview');
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (!preview || !wrap) return;
-    if (!active) {
-      preview.style.display = 'none';
-      preview.replaceChildren();
-      wrap.style.display = '';
-      if (remember && activeDocId && docs.has(activeDocId)) docs.get(activeDocId)._docxPreviewActive = false;
-      _syncHeaderActions();
-      return;
-    }
-    preview.style.display = '';
-    wrap.style.display = 'none';
-    preview.innerHTML = '<div class="doc-docx-preview-loading">Loading Word preview…</div>';
-    try {
-      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/render-docx`, { credentials: 'same-origin' });
-      const payload = await response.json().catch(() => ({}));
-      if (!isCurrent()) return;
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      const raw = String(payload.html || '');
-      const safe = markdownModule.sanitizeAllowedHtml
-        ? markdownModule.sanitizeAllowedHtml(raw)
-        : _escHtml(raw);
-      preview.innerHTML = `<article class="doc-docx-paper">${safe || '<p>No preview content.</p>'}</article>`;
-      if (remember && activeDocId && docs.has(activeDocId)) docs.get(activeDocId)._docxPreviewActive = true;
-    } catch (error) {
-      if (!isCurrent()) return;
-      preview.innerHTML = `<div class="doc-docx-preview-error">Could not render Word preview: ${_escHtml(error.message || error)}</div>`;
-    }
-    _syncHeaderActions();
-  }
-
-  function toggleDocxPreview() {
-    const preview = document.getElementById('doc-docx-preview');
-    _setDocxPreviewActive(!(preview && preview.style.display !== 'none'));
-  }
-
-  async function _convertDocxToRichText() {
-    const docId = activeDocId;
-    const doc = docs.get(docId);
-    if (!doc || !_isDocxLang(doc.language)) return;
-    const originalContent = doc.content;
-    try {
-      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/render-docx`, { credentials: 'same-origin' });
-      const payload = await response.json().catch(() => ({}));
-      // A conversion must not replace another tab, concurrent edits, or a
-      // document that was closed while the server was rendering it.
-      if (activeDocId !== docId || docs.get(docId) !== doc
-          || doc.content !== originalContent || !_isDocxLang(doc.language)) return;
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      const html = String(payload.html || '');
-      if (!html.trim()) throw new Error('The DOCX contained no readable content');
-      doc.content = html;
-      doc.language = 'richtext';
-      doc._docxPreviewActive = false;
-      const textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) textarea.value = html;
-      switchToDoc(activeDocId);
-      await saveDocument({ silent: true, forceVersion: true });
-      if (uiModule?.showToast) uiModule.showToast('Converted DOCX to Rich Text');
-    } catch (error) {
-      if (uiModule?.showError) uiModule.showError(`DOCX conversion failed: ${error.message || error}`);
-    }
-  }
-
-  /** Parse CSV text into a 2D array (handles quoted fields) */
-  function parseCSV(text) {
-    const rows = [];
-    let row = [];
-    let field = '';
-    let inQuotes = false;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (inQuotes) {
-        if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
-        else if (ch === '"') { inQuotes = false; }
-        else { field += ch; }
-      } else {
-        if (ch === '"') { inQuotes = true; }
-        else if (ch === ',') { row.push(field); field = ''; }
-        else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
-          if (ch === '\r') i++;
-          row.push(field); field = '';
-          if (row.some(c => c.trim())) rows.push(row);
-          row = [];
-        } else { field += ch; }
-      }
-    }
-    row.push(field);
-    if (row.some(c => c.trim())) rows.push(row);
-    return rows;
-  }
-
-  /** Escape a CSV field (quote if it contains comma, quote, or newline) */
-  function csvEscapeField(val) {
-    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-      return '"' + val.replace(/"/g, '""') + '"';
-    }
-    return val;
-  }
-
-  /** Rebuild CSV text from the live table DOM */
-  function syncTableToTextarea(preview, textarea) {
-    const table = preview.querySelector('.csv-table');
-    if (!table) return;
-    const lines = [];
-    // Header
-    const ths = table.querySelectorAll('thead th');
-    if (ths.length) lines.push([...ths].map(th => csvEscapeField(th.textContent)).join(','));
-    // Body
-    table.querySelectorAll('tbody tr').forEach(tr => {
-      const cells = [...tr.querySelectorAll('td')].map(td => csvEscapeField(td.textContent));
-      lines.push(cells.join(','));
-    });
-    textarea.value = lines.join('\n') + '\n';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
-  /** Toggle CSV table preview */
-  function toggleCsvPreview() {
-    const preview = document.getElementById('doc-csv-preview');
-    const wrap = document.getElementById('doc-editor-wrap');
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!preview || !wrap || !textarea) return;
-
-    if (preview.style.display === 'none') {
-      const rows = parseCSV(textarea.value || '');
-      if (rows.length === 0) {
-        // Re-route the "no data" message to the shared run-output block so
-        // every doc type surfaces errors/empty-state in the same place
-        // (instead of stamping it inside the table view itself).
-        let outputPanel = document.getElementById('doc-run-output');
-        if (!outputPanel) {
-          outputPanel = document.createElement('div');
-          outputPanel.id = 'doc-run-output';
-          outputPanel.className = 'doc-run-output';
-          const editorWrap = document.getElementById('doc-editor-wrap');
-          if (editorWrap) editorWrap.after(outputPanel);
-        }
-        outputPanel.style.display = 'block';
-        outputPanel.innerHTML = '<pre class="doc-run-error">No data — CSV is empty or unparseable.</pre>';
-        return;
-      } else {
-        const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const colCount = Math.max(...rows.map(r => r.length));
-        let html = '<div class="csv-table-wrap"><table class="csv-table"><thead><tr>';
-        for (let j = 0; j < colCount; j++) {
-          html += `<th contenteditable="true">${esc(rows[0][j] || '')}</th>`;
-        }
-        html += '</tr></thead><tbody>';
-        for (let i = 1; i < rows.length; i++) {
-          html += '<tr>';
-          for (let j = 0; j < colCount; j++) {
-            html += `<td contenteditable="true">${esc(rows[i][j] || '')}</td>`;
-          }
-          html += '</tr>';
-        }
-        html += '</tbody></table>';
-        html += '</div>';
-        preview.innerHTML = html;
-
-        // Sync edits back to textarea
-        const table = preview.querySelector('.csv-table');
-        if (table) {
-          table.addEventListener('input', () => syncTableToTextarea(preview, textarea));
-          // Prevent Enter from creating <br> inside cells
-          table.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              // Move to next row, same column
-              const cell = e.target.closest('td,th');
-              if (!cell) return;
-              const colIdx = [...cell.parentElement.children].indexOf(cell);
-              const nextRow = cell.parentElement.nextElementSibling;
-              if (nextRow && nextRow.children[colIdx]) {
-                nextRow.children[colIdx].focus();
-              }
-            } else if (e.key === 'Tab') {
-              e.preventDefault();
-              const cell = e.target.closest('td,th');
-              if (!cell) return;
-              const next = e.shiftKey ? cell.previousElementSibling : cell.nextElementSibling;
-              if (next) next.focus();
-            }
-          });
-        }
-
-        // Add row button
-        const addBtn = preview.querySelector('.csv-add-row-btn');
-        if (addBtn && table) {
-          addBtn.addEventListener('click', () => {
-            const tbody = table.querySelector('tbody');
-            const tr = document.createElement('tr');
-            for (let j = 0; j < colCount; j++) {
-              const td = document.createElement('td');
-              td.contentEditable = 'true';
-              tr.appendChild(td);
-            }
-            tbody.appendChild(tr);
-            tr.children[0].focus();
-            syncTableToTextarea(preview, textarea);
-          });
-        }
-      }
-      preview.style.display = '';
-      wrap.style.display = 'none';
-    } else {
-      preview.style.display = 'none';
-      wrap.style.display = '';
-    }
-    // Update the segmented Code/Run toggle's active class so the icon
-    // highlights match the new state — without this, opening a CSV that
-    // auto-shows the table view left the Edit (code) side wrongly marked
-    // active and the user had to flip the toggle to resync.
-    _syncHeaderActions();
-  }
-
-  /** Toggle inline HTML preview (iframe) */
-  function _themedRenderSrcdoc(code, lang) {
-    const rootStyle = getComputedStyle(document.documentElement);
-    const bg = rootStyle.getPropertyValue('--bg').trim() || '#111';
-    const fg = rootStyle.getPropertyValue('--fg').trim() || '#f5f5f5';
-    const theme = `html,body{margin:0;min-height:100%;background:${bg};color:${fg}}body{box-sizing:border-box;padding:20px}`;
-    const source = String(code || '');
-    if ((lang || '').toLowerCase() === 'svg' || (lang || '').toLowerCase() === 'xml') {
-      return `<!doctype html><html><head><style>${theme}</style></head><body>${source}</body></html>`;
-    }
-    if (/<head\b[^>]*>/i.test(source)) {
-      return source.replace(/(<head\b[^>]*>)/i, `$1<style>${theme}</style>`);
-    }
-    return `<style>${theme}</style>${source}`;
-  }
-
-  function toggleHtmlPreview() {
-    const iframe = document.getElementById('doc-html-preview');
-    const wrap = document.getElementById('doc-editor-wrap');
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!iframe || !wrap || !textarea) return;
-
-    if (!_htmlPreviewActive) {
-      // Show preview — hide markdown preview if active
-      const mdPreview = document.getElementById('doc-md-preview');
-      if (mdPreview) mdPreview.style.display = 'none';
-      const code = textarea.value || '';
-      const lang = document.getElementById('doc-language-select')?.value || '';
-      iframe.srcdoc = _themedRenderSrcdoc(code, lang);
-      iframe.style.display = '';
-      wrap.style.display = 'none';
-      _htmlPreviewActive = true;
-      renderTabs();
-    } else {
-      exitHtmlPreview();
-    }
-  }
-
-  /** Exit HTML preview back to code view */
-  function exitHtmlPreview() {
-    const iframe = document.getElementById('doc-html-preview');
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (!_htmlPreviewActive) return;
-    _htmlPreviewActive = false;
-    if (iframe) { iframe.style.display = 'none'; iframe.srcdoc = ''; }
-    if (wrap) wrap.style.display = '';
-    renderTabs();
-  }
+  // Preview modes (markdown, CSV table, HTML sandbox, DOCX) extracted to ./document/previewModes.js
 
   // ---- Streaming animation engine ----
 
@@ -13067,11 +12757,6 @@ import {
     syncHighlighting();
     attemptAutoDetect();
     return oldId;
-  }
-
-  function _isMarkdownPreviewVisible() {
-    const preview = document.getElementById('doc-md-preview');
-    return !!(preview && preview.style.display !== 'none');
   }
 
   function _handleMarkdownPreviewClickHint() {
@@ -13778,6 +13463,12 @@ const documentModule = {
   showExportMenu,
   exportAsDocx,
   ensureDocx,
+  toggleMarkdownPreview,
+  toggleRichTextPreview,
+  toggleDocxPreview,
+  toggleCsvPreview,
+  toggleHtmlPreview,
+  exitHtmlPreview,
 };
 
 export {
@@ -13793,6 +13484,12 @@ export {
   acceptSuggestion,
   dismissSuggestion,
   clearAllSuggestions,
+  toggleMarkdownPreview,
+  toggleRichTextPreview,
+  toggleDocxPreview,
+  toggleCsvPreview,
+  toggleHtmlPreview,
+  exitHtmlPreview,
 };
 
 export default documentModule;
