@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 import wiki_steward as ws  # noqa: E402
 
-METHODS = {'search', 'propose', 'verify', 'record_task', 'sync', 'handoff', 'status', 'conflicts', 'inbox', 'ack', 'recheck'}
+METHODS = {'search', 'propose', 'verify', 'begin_task', 'record_task', 'sync', 'handoff', 'status', 'conflicts', 'reconcile', 'inbox', 'ack', 'recheck'}
 
 
 def main(argv=None):
@@ -37,7 +37,7 @@ def main(argv=None):
     try:
         if a.cmd == 'init':
             ws.Wiki.init(a.root)
-            out = {'initialised': a.root, 'next': 'edit steward.json (projects, agents, reviewers), then: wiki.py adopt "configure"'}
+            out = {'initialised': a.root, 'next': 'edit steward.json (projects, agents, reviewers, tests, external), then: wiki.py adopt "configure"'}
         elif a.cmd == 'integrity':
             problems = ws.Wiki(a.root).integrity()
             out = {'ok': not problems, 'problems': problems}
