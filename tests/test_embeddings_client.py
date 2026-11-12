@@ -93,3 +93,90 @@ def test_embedding_retry_path_preserves_api_key_header():
 
     assert vecs.tolist() == [[1.0, 0.0]]
     assert seen_headers == [{"Authorization": "Bearer secret-key"}]
+
+
+@pytest.mark.parametrize('raise_inside', [False, True])
+def test_http_pool_context_closes_on_success_and_exception(raise_inside):
+    from contextlib import nullcontext
+    client = EmbeddingClient(url='http://embeddings.test')
+    pool = client._client
+    try:
+        with pytest.raises(RuntimeError) if raise_inside else nullcontext():
+            with client as entered:
+                assert entered is client
+                assert not pool.is_closed
+                if raise_inside:
+                    raise RuntimeError('owned failure')
+        assert pool.is_closed
+        client.close()
+        assert pool.is_closed
+    finally:
+        pool.close()
+
+
+def test_discarded_embedding_client_releases_http_pool():
+    import gc
+    import weakref
+    client = EmbeddingClient(url='http://embeddings.test')
+    pool = client._client
+    reference = weakref.ref(client)
+    del client
+    gc.collect()
+    try:
+        assert reference() is None
+        assert pool.is_closed
+    finally:
+        pool.close()
+
+
+@pytest.mark.parametrize('failure', ['malformed', 'http', 'connect'])
+def test_failed_embedding_probe_closes_before_local_fallback(monkeypatch, failure):
+    import src.embeddings as embeddings
+    clients = []
+    original = EmbeddingClient
+    def reply(request):
+        if failure == 'connect':
+            raise httpx.ConnectError('owned unavailable endpoint', request=request)
+        return httpx.Response(503 if failure == 'http' else 200, json={'data':[{}]})
+    def make_client():
+        client = original(url='http://embeddings.test')
+        client._client.close()
+        client._client = httpx.Client(transport=httpx.MockTransport(reply))
+        clients.append(client)
+        return client
+    class LocalClient:
+        model = "owned-local-fixture"
+        def get_sentence_embedding_dimension(self):
+            assert clients[0]._client.is_closed
+            return 2
+    local = LocalClient()
+    monkeypatch.setattr(embeddings, 'EmbeddingClient', make_client)
+    monkeypatch.setattr(embeddings, 'FastEmbedClient', lambda: local)
+    monkeypatch.setattr(embeddings, '_load_persisted_endpoint', lambda: {})
+    monkeypatch.setattr(embeddings, '_http_embed_down', False)
+    try:
+        assert embeddings.get_embedding_client() is local
+        assert embeddings._http_embed_down
+        assert clients[0]._client.is_closed
+    finally:
+        for client in clients:
+            client._client.close()
+
+
+def test_successful_embedding_probe_keeps_returned_client_open(monkeypatch):
+    import src.embeddings as embeddings
+    client = EmbeddingClient(url='http://embeddings.test')
+    client._client.close()
+    client._client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200,json={'data':[{'embedding':[3,4]}]})
+    ))
+    monkeypatch.setattr(embeddings, 'EmbeddingClient', lambda: client)
+    monkeypatch.setattr(embeddings, '_load_persisted_endpoint', lambda: {})
+    monkeypatch.setattr(embeddings, '_http_embed_down', False)
+    try:
+        assert embeddings.get_embedding_client() is client
+        assert not client._client.is_closed
+        assert client.encode(['one']).shape == (1,2)
+        assert not embeddings._http_embed_down
+    finally:
+        client._client.close()
