@@ -2242,6 +2242,31 @@ def _indexed_search_emails(query, folders=None, max_results=20, account=None,
     return out
 
 
+class _Utf8SearchError(RuntimeError):
+    """A failed Unicode search cannot establish that the mailbox has no match."""
+
+
+def _imap_utf8_search(conn, query, date_criteria):
+    """Union the existing search fields using imaplib's single-literal port."""
+    uids = set()
+    charset = (None,) if getattr(conn, "utf8_enabled", False) else ("CHARSET", "UTF-8")
+    try:
+        literal = str(query).encode("utf-8")
+        for key in ("FROM", "SUBJECT", "TEXT", "HEADER Content-Disposition", "HEADER Content-Type"):
+            # A literal is the final argument of a command. Separate field
+            # searches preserve the original OR without putting 8-bit text
+            # in quoted strings or changing imaplib's connection encoding.
+            conn.literal = literal
+            status, data = conn.uid("SEARCH", *charset, (date_criteria + " " + key).strip())
+            if status != "OK":
+                raise _Utf8SearchError(f"IMAP server rejected UTF-8 search ({status})")
+            if data and data[0]:
+                uids.update(data[0].split())
+    except (imaplib.IMAP4.error, OSError, UnicodeError) as exc:
+        raise _Utf8SearchError("IMAP UTF-8 search failed") from exc
+    return "OK", [b" ".join(sorted(uids, key=int))]
+
+
 def _search_emails(query, folders=None, max_results=20, account=None,
                    date_from=None, date_to=None):
     """IMAP-search emails by free-text query. Matches FROM, SUBJECT, and
@@ -2287,7 +2312,10 @@ def _search_emails(query, folders=None, max_results=20, account=None,
                 status, _ = conn.select(_q(folder), readonly=True)
                 if status != "OK":
                     continue
-                status, data = conn.uid("SEARCH", None, search_cmd)
+                if str(query).isascii():
+                    status, data = conn.uid("SEARCH", None, search_cmd)
+                else:
+                    status, data = _imap_utf8_search(conn, query, _imap_sent_date_criteria(start, end))
                 if status != "OK" or not data or not data[0]:
                     continue
                 uid_list = list(reversed(data[0].split()))
@@ -2334,6 +2362,8 @@ def _search_emails(query, folders=None, max_results=20, account=None,
                             break
                     except Exception:
                         continue
+            except _Utf8SearchError:
+                raise
             except Exception:
                 continue
     finally:
