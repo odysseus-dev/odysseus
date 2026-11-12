@@ -199,7 +199,7 @@ function documentFunction(name, text = source) {
     const names = ['_unfoldEmailHeaderLines', '_parseEmailHeader', '_looksLikeWrappedEmailContent', '_decodeBase64EmailWrapper',
       '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_aiReply',
       '_loadOdysseusAttachItems', '_odysseusAttachLabel', '_escHtml',
-      '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml', 'exportAsPdf'];
+      '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml'];
     const functions = Object.fromEntries(names.map(name => [name, documentFunction(name)]));
     const email = await page.evaluate(async functions => {
       window.executed = 0;
@@ -451,13 +451,16 @@ function documentFunction(name, text = source) {
     // frame policy and renderMath are the production implementations.
     const print = await page.evaluate(async functions => {
       const mod = await import('/static/js/markdown.js');
-      const activeDocId = 'fixture';
-      const _isRichTextLang = lang => lang === 'richtext';
-      const _isDocxLang = () => false;
-      const _getExportBaseName = () => 'Print <test>';
-      const _richTextExportCss = () => 'b { font-weight: bold; }';
+      const exporter = await import('/static/js/document/exportDocx.js');
       const failures = [];
-      const uiModule = { showError: text => failures.push(text) };
+      const doc = { id: 'fixture', title: 'Print <test>', language: 'richtext' };
+      const docs = new Map([['fixture', doc]]);
+      exporter.initExportDocx({
+        getActiveDocId: () => 'fixture', getActiveDoc: () => doc, getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getLanguage: () => 'richtext', getMarkdownModule: () => markdownModule,
+        getUiModule: () => ({ showError: text => failures.push(text) }),
+      });
       let prints = 0;
       const markdownModule = { ...mod, renderMath(container) {
         container.ownerDocument.defaultView.print = () => { prints++; };
@@ -471,7 +474,7 @@ function documentFunction(name, text = source) {
         + '<iframe sandbox="allow-scripts allow-same-origin" srcdoc="<script>top.executed++</script><img src=x onerror=top.executed++>"></iframe>'
         + '<a href="javascript:parent.executed++">bad link</a>';
       document.getElementById('doc-editor-textarea').value = payload;
-      await eval('(' + functions.exportAsPdf + ')')();
+      await exporter.exportAsPdf();
       const frame = document.getElementById('doc-browser-print-frame');
       frame.contentDocument.querySelector('a').click();
       await new Promise(resolve => setTimeout(resolve, 150));
@@ -493,7 +496,7 @@ function documentFunction(name, text = source) {
     assert.deepEqual(print.failures, []);
     assert.equal(print.sandbox, 'allow-same-origin allow-modals');
     assert.equal(print.text, 'Printable');
-    assert.equal(print.title, 'Print <test>');
+    assert.equal(print.title, 'Print _test_');
     assert.equal(print.executed, 0);
     assert(print.controlExecuted > 0);
 
