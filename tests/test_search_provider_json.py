@@ -36,6 +36,7 @@ def _offline(monkeypatch):
     monkeypatch.setenv("DATA_BRAVE_API_KEY", "k")
     monkeypatch.setenv("TAVILY_API_KEY", "k")
     monkeypatch.setenv("SERPER_API_KEY", "k")
+    monkeypatch.setenv("SOFYA_API_KEY", "k")
     monkeypatch.setenv("GOOGLE_API_KEY", "k")
     monkeypatch.setenv("GOOGLE_PSE_CX", "cx")
     monkeypatch.setattr(providers.httpx, "post", lambda *a, **k: _BadJSONResponse())
@@ -48,6 +49,10 @@ def test_tavily_malformed_json_returns_empty():
 
 def test_serper_malformed_json_returns_empty():
     assert providers.serper_search("hello") == []
+
+
+def test_sofya_malformed_json_returns_empty():
+    assert providers.sofya_search("hello") == []
 
 
 def test_google_pse_malformed_json_returns_empty():
