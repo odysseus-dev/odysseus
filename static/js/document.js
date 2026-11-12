@@ -109,6 +109,30 @@ import {
   _pdfLastFontSize,
   initPdfTools,
 } from './document/pdfTools.js';
+import {
+  initSuggestions,
+  handleDocSuggestions,
+  acceptSuggestion,
+  dismissSuggestion,
+  clearAllSuggestions,
+  _activeSuggestions,
+  _suggestionSelectionRange,
+  _suggestionTotal,
+  _suggestionIndex,
+  _selectSuggestionText,
+  _clearSuggestionTextSelection,
+  _saveSuggestionsToStorage,
+  _restoreSuggestionsFromStorage,
+  _positionCard,
+  _showCurrentSuggestion,
+  _showInlineDiff,
+  _clearInlineDiff,
+  _applySuggestions,
+  _animateNext,
+  _highlightSuggestionText,
+  _clearSuggestionHighlight,
+  _measurePos as _measureSuggestionPos,
+} from './document/suggestions.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -1230,6 +1254,36 @@ import {
 
   export function init(apiBase) {
     API_BASE = apiBase;
+    initSuggestions({
+      getTextarea: () => document.getElementById('doc-editor-textarea'),
+      getWrap: () => document.getElementById('doc-editor-wrap'),
+      getPane: () => document.querySelector('.doc-editor-pane'),
+      getCodeEl: () => document.getElementById('doc-editor-code'),
+      getActiveDocId: () => activeDocId,
+      getDocs: () => docs,
+      saveDocument: (opts) => saveDocument(opts),
+      showToast: (msg) => uiModule?.showToast?.(msg),
+      showError: (msg) => uiModule?.showError?.(msg),
+      uiModule,
+      isOpen: () => isOpen,
+      openPanel: () => openPanel(),
+      loadDocument: (id) => loadDocument(id),
+      switchToDoc: (id) => switchToDoc(id),
+      saveCurrentToMap: () => saveCurrentToMap(),
+      isRichTextLang: (lang) => _isRichTextLang(lang),
+      showRichTextEditor: (doc) => _showRichTextEditor(doc),
+      showEmailFields: (doc, opts) => _showEmailFields(doc, opts),
+      syncHighlighting: () => syncHighlighting(),
+      refreshMarkdownPreviewIfVisible: (id, content) => _refreshMarkdownPreviewIfVisible(id, content),
+      isHtmlPreviewActive: () => _htmlPreviewActive,
+      isRenderLang: (lang) => _isRenderLang(lang),
+      themedRenderSrcdoc: (content, lang) => _themedRenderSrcdoc(content, lang),
+      updateLineNumbers: (text) => updateLineNumbers(text),
+      topPortalZ: () => topPortalZ(),
+      isDiffModeActive: () => _diffModeActive,
+      exitDiffMode: (force) => exitDiffMode(force),
+      measurePos: (mirror, text, pos) => _measurePos(mirror, text, pos),
+    });
     initDiffViewer({
       saveDocument: (opts) => saveDocument(opts),
       syncHighlighting: () => syncHighlighting(),
@@ -7586,6 +7640,38 @@ import {
         getSpinnerModule: () => spinnerModule,
         getSignatureModule: () => signatureModule,
       });
+
+      // Inline suggestions controller
+      initSuggestions({
+        getTextarea: () => ta,
+        getWrap: () => wrap,
+        getPane: () => pane,
+        getCodeEl: () => document.getElementById('doc-editor-code'),
+        getActiveDocId: () => activeDocId,
+        getDocs: () => docs,
+        saveDocument: (opts) => saveDocument(opts),
+        showToast: (msg) => uiModule?.showToast?.(msg),
+        showError: (msg) => uiModule?.showError?.(msg),
+        uiModule,
+        isOpen: () => isOpen,
+        openPanel: () => openPanel(),
+        loadDocument: (id) => loadDocument(id),
+        switchToDoc: (id) => switchToDoc(id),
+        saveCurrentToMap: () => saveCurrentToMap(),
+        isRichTextLang: (lang) => _isRichTextLang(lang),
+        showRichTextEditor: (doc) => _showRichTextEditor(doc),
+        showEmailFields: (doc, opts) => _showEmailFields(doc, opts),
+        syncHighlighting: () => syncHighlighting(),
+        refreshMarkdownPreviewIfVisible: (id, content) => _refreshMarkdownPreviewIfVisible(id, content),
+        isHtmlPreviewActive: () => _htmlPreviewActive,
+        isRenderLang: (lang) => _isRenderLang(lang),
+        themedRenderSrcdoc: (content, lang) => _themedRenderSrcdoc(content, lang),
+        updateLineNumbers: (text) => updateLineNumbers(text),
+        topPortalZ: () => topPortalZ(),
+        isDiffModeActive: () => _diffModeActive,
+        exitDiffMode: (force) => exitDiffMode(force),
+        measurePos: (mirror, text, pos) => _measurePos(mirror, text, pos),
+      });
       document.getElementById('doc-outline-toolbar-btn')?.addEventListener('click', _openDocumentOutline);
 
       // Intercept Ctrl+F on the editor pane
@@ -11787,557 +11873,20 @@ import {
     return true;
   }
 
-  // ── Inline Suggestion Comments (Google Docs style) ──
-
-  let _activeSuggestions = []; // [{ id, find, replace, reason, highlightEl, bubbleEl }]
-  let _suggestionSelectionRange = null;
-
-  function _selectSuggestionText(textarea, start, end) {
-    if (!textarea || start < 0 || end <= start) return;
-    const scrollTop = textarea.scrollTop;
-    textarea.focus({ preventScroll: true });
-    textarea.setSelectionRange(start, end, 'forward');
-    textarea.scrollTop = scrollTop;
-    _suggestionSelectionRange = { start, end };
-  }
-
-  function _clearSuggestionTextSelection() {
-    const textarea = document.getElementById('doc-editor-textarea');
-    const range = _suggestionSelectionRange;
-    if (
-      textarea
-      && range
-      && textarea.selectionStart === range.start
-      && textarea.selectionEnd === range.end
-    ) {
-      textarea.setSelectionRange(range.end, range.end);
-    }
-    _suggestionSelectionRange = null;
-  }
-
-  /** Persist suggestions to localStorage for the active doc */
-  function _saveSuggestionsToStorage() {
-    if (!activeDocId) return;
-    const data = _activeSuggestions.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason }));
-    if (data.length) {
-      localStorage.setItem('odysseus-suggestions-' + activeDocId, JSON.stringify(data));
-    } else {
-      localStorage.removeItem('odysseus-suggestions-' + activeDocId);
-    }
-  }
-
-  /** Restore suggestions from localStorage for a doc */
-  function _restoreSuggestionsFromStorage(docId) {
-    try {
-      const raw = localStorage.getItem('odysseus-suggestions-' + docId);
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data) || !data.length) return;
-      _activeSuggestions = data.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason, cardEl: null }));
-      _suggestionTotal = _activeSuggestions.length;
-      _suggestionIndex = 0;
-      _showCurrentSuggestion();
-    } catch {}
-  }
-
-  /** Handle doc_suggestions SSE event — show one suggestion at a time.
-   *
-   *  If a previous batch is already pending approval, NEW suggestions are
-   *  appended to the live queue rather than replacing it. The agent (or a
-   *  follow-up batch) can keep adding edits while the user reviews; the count
-   *  and "n of m" header update on the fly. */
-  export async function handleDocSuggestions(data) {
-    if (_diffModeActive) exitDiffMode(true);
-    if (!data.suggestions || !data.suggestions.length) return;
-
-    const openedPanel = !isOpen;
-    if (openedPanel) openPanel();
-    if (data.doc_id && data.doc_id !== activeDocId) {
-      if (!docs.has(data.doc_id)) await loadDocument(data.doc_id);
-      else switchToDoc(data.doc_id);
-    } else if (data.doc_id && openedPanel && docs.has(data.doc_id)) {
-      // openPanel creates a fresh editor shell. Rebind it even when the
-      // logical active ID did not change, or the shell remains empty and its
-      // first autosave can overwrite the real document.
-      switchToDoc(data.doc_id);
-    }
-    if (data.doc_id && activeDocId !== data.doc_id) {
-      console.error('Could not activate suggestion document:', data.doc_id);
-      if (uiModule) uiModule.showError('Could not open the document for these suggestions.');
-      return;
-    }
-
-    const hadPending = _activeSuggestions.length > 0;
-    const existingIds = new Set(_activeSuggestions.map(s => s.id));
-    const existingFinds = new Set(_activeSuggestions.map(s => s.find));
-
-    // Append new suggestions, skipping any IDs already in the queue so a
-    // re-sent batch doesn't duplicate.
-    let added = 0;
-    for (const sugg of data.suggestions) {
-      if (existingIds.has(sugg.id) || existingFinds.has(sugg.find)) continue;
-      _activeSuggestions.push({
-        id: sugg.id,
-        find: sugg.find,
-        replace: sugg.replace,
-        reason: sugg.reason,
-        cardEl: null,
-      });
-      existingFinds.add(sugg.find);
-      added++;
-    }
-    _suggestionTotal = (_suggestionTotal || 0) + added;
-
-    _saveSuggestionsToStorage();
-
-    // If nothing was pending before, kick off the visual flow. Otherwise the
-    // currently-shown suggestion stays on screen and the queue size update is
-    // reflected in the next card's header.
-    if (!hadPending) {
-      _suggestionIndex = 0;
-      _showCurrentSuggestion();
-    } else {
-      // Refresh just the counter in the active card so the user sees the
-      // queue grew while they were deliberating.
-      const active = document.getElementById('doc-suggestion-active');
-      if (active) {
-        const counter = active.querySelector('.doc-suggestion-counter');
-        if (counter) {
-          const num = _suggestionTotal - _activeSuggestions.length + 1;
-          counter.textContent = `${num} / ${_suggestionTotal}`;
-        }
-      }
-    }
-  }
-
-  /** Render the current suggestion card (one at a time) + inline diff in document */
-  function _showCurrentSuggestion() {
-    const wrap = document.getElementById('doc-editor-wrap');
-    const pane = document.querySelector('.doc-editor-pane');
-    if (!wrap || !pane) return;
-
-    // Remove previous card and inline diff
-    const old = document.getElementById('doc-suggestion-active');
-    if (old) { if (old._cleanup) old._cleanup(); old.remove(); }
-    _clearSuggestionHighlight();
-    _clearInlineDiff();
-
-    if (_activeSuggestions.length === 0) {
-      _clearSuggestionTextSelection();
-      return;
-    }
-
-    const sugg = _activeSuggestions[0];
-    const remaining = _activeSuggestions.length;
-    const num = _suggestionTotal - remaining + 1;
-
-    const textarea = document.getElementById('doc-editor-textarea');
-
-    // Scroll to the change text
-    if (textarea) {
-      const text = textarea.value;
-      const idx = text.indexOf(sugg.find);
-      if (idx >= 0) {
-        const lineNum = text.substring(0, idx).split('\n').length - 1;
-        const lineH = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
-        const target = Math.max(0, lineNum * lineH - (textarea.clientHeight / 3));
-        textarea.scrollTop = target;
-        _selectSuggestionText(textarea, idx, idx + sugg.find.length);
-      }
-    }
-
-    // Position card next to the highlighted text
-    function _positionCard(card) {
-      card.style.zIndex = String(Math.max(topPortalZ(), (parseInt(getComputedStyle(pane).zIndex, 10) || 0) + 1));
-      if (window.innerWidth <= 768) {
-        const viewport = window.visualViewport;
-        const top = viewport?.offsetTop || 0;
-        const height = viewport?.height || window.innerHeight;
-        card.style.position = 'fixed';
-        card.style.left = ((viewport?.offsetLeft || 0) + 8) + 'px';
-        card.style.right = 'auto';
-        card.style.width = Math.max(0, (viewport?.width || window.innerWidth) - 16) + 'px';
-        card.style.maxHeight = Math.max(0, height - 16) + 'px';
-        card.style.top = Math.max(top + 8, top + height - card.offsetHeight - 8) + 'px';
-        return;
-      }
-      if (!textarea) return;
-      const text = textarea.value;
-      const idx = text.indexOf(sugg.find);
-      if (idx < 0) return;
-
-      const linesBefore = text.substring(0, idx).split('\n').length - 1;
-      const lineH = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
-      const textareaRect = textarea.getBoundingClientRect();
-      const paddingTop = parseFloat(getComputedStyle(textarea).paddingTop) || 10;
-      const rawTop = textareaRect.top + paddingTop + (linesBefore * lineH) - textarea.scrollTop;
-      const clampedTop = Math.max(60, Math.min(rawTop, window.innerHeight - 220));
-      card.style.position = 'fixed';
-      card.style.top = clampedTop + 'px';
-
-      const paneRect = pane.getBoundingClientRect();
-      const isMobile = window.innerWidth <= 768;
-      if (!isMobile) {
-        if (paneRect.right + 270 < window.innerWidth) {
-          card.style.left = (paneRect.right + 16) + 'px';
-          card.style.right = '';
-        } else {
-          card.style.left = '';
-          card.style.right = (window.innerWidth - paneRect.left + 16) + 'px';
-        }
-      }
-
-      // Also position the highlight overlay
-      _clearSuggestionHighlight();
-      _highlightSuggestionText(sugg.find);
-    }
-
-    // Build the card
-    const card = document.createElement('div');
-    card.id = 'doc-suggestion-active';
-    card.className = 'doc-suggestion-card';
-
-    card.innerHTML = `
-      <div class="doc-suggestion-header">
-        <div class="doc-suggestion-nav">
-          <button class="doc-suggestion-nav-btn doc-suggestion-prev" title="Previous">&lsaquo;</button>
-          <span class="doc-suggestion-counter">${num} / ${_suggestionTotal}</span>
-          <button class="doc-suggestion-nav-btn doc-suggestion-next" title="Next">&rsaquo;</button>
-        </div>
-        <button class="doc-suggestion-close close-btn" title="Close all suggestions" aria-label="Close all suggestions"></button>
-      </div>
-      <div class="doc-suggestion-reason">${_esc(sugg.reason)}</div>
-      <div class="doc-suggestion-actions">
-        <button class="doc-suggestion-accept">Accept</button>
-        <button class="doc-suggestion-accept-all" title="Apply all ${remaining} pending suggestions" aria-label="Accept all ${remaining} pending suggestions">Accept All</button>
-        <button class="doc-suggestion-dismiss">Skip</button>
-      </div>
-    `;
-
-    // Wire buttons
-    card.querySelector('.doc-suggestion-close').addEventListener('click', clearAllSuggestions);
-    card.querySelector('.doc-suggestion-prev').addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const current = _activeSuggestions.shift();
-      _activeSuggestions.push(current);
-      const prev = _activeSuggestions.pop();
-      _activeSuggestions.unshift(prev);
-      _suggestionIndex = (_suggestionIndex - 1 + _suggestionTotal) % _suggestionTotal;
-      _showCurrentSuggestion();
-    });
-    card.querySelector('.doc-suggestion-next').addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const current = _activeSuggestions.shift();
-      _activeSuggestions.push(current);
-      _suggestionIndex = (_suggestionIndex + 1) % _suggestionTotal;
-      _showCurrentSuggestion();
-    });
-    card.querySelector('.doc-suggestion-accept').addEventListener('click', () => {
-      if (!_applySuggestions([sugg]).length) return;
-      _activeSuggestions.shift();
-      _animateNext();
-    });
-    card.querySelector('.doc-suggestion-dismiss').addEventListener('click', () => {
-      _activeSuggestions.shift();
-      _animateNext();
-    });
-    const acceptAllBtn = card.querySelector('.doc-suggestion-accept-all');
-    if (acceptAllBtn) {
-      acceptAllBtn.addEventListener('click', () => {
-        const applied = new Set(_applySuggestions(_activeSuggestions));
-        if (!applied.size) return;
-        _activeSuggestions = _activeSuggestions.filter(s => !applied.has(s.id));
-        _animateNext();
-      });
-    }
-
-    sugg.cardEl = card;
-    document.body.appendChild(card);
-
-    // Position after a tick so scroll has taken effect
-    requestAnimationFrame(() => _positionCard(card));
-
-    // Reposition on scroll/resize so the card stays anchored
-    const _reposition = () => { if (card.isConnected) _positionCard(card); };
-    if (textarea) textarea.addEventListener('scroll', _reposition);
-    window.addEventListener('resize', _reposition);
-    window.visualViewport?.addEventListener('resize', _reposition);
-    window.visualViewport?.addEventListener('scroll', _reposition);
-    // Store cleanup refs on the card
-    card._cleanup = () => {
-      if (textarea) textarea.removeEventListener('scroll', _reposition);
-      window.removeEventListener('resize', _reposition);
-      window.visualViewport?.removeEventListener('resize', _reposition);
-      window.visualViewport?.removeEventListener('scroll', _reposition);
-    };
-  }
-
-  /** Show inline diff by modifying the code highlight element directly */
-  function _showInlineDiff(findText, replaceText) {
-    const codeEl = document.getElementById('doc-editor-code');
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!codeEl || !textarea) return;
-
-    const text = textarea.value;
-    const idx = text.indexOf(findText);
-    if (idx === -1) return;
-
-    const before = text.substring(0, idx);
-    const after = text.substring(idx + findText.length);
-
-    // Character-level diff
-    let cPre = 0;
-    while (cPre < findText.length && cPre < replaceText.length && findText[cPre] === replaceText[cPre]) cPre++;
-    let cSuf = 0;
-    while (cSuf < (findText.length - cPre) && cSuf < (replaceText.length - cPre) &&
-           findText[findText.length - 1 - cSuf] === replaceText[replaceText.length - 1 - cSuf]) cSuf++;
-
-    const commonBefore = findText.substring(0, cPre);
-    const commonAfter = findText.substring(findText.length - cSuf);
-    const delPart = findText.substring(cPre, findText.length - cSuf);
-    const addPart = replaceText.substring(cPre, replaceText.length - cSuf);
-
-    // Replace codeEl content with diff-marked version
-    codeEl.innerHTML = '';
-    codeEl.appendChild(document.createTextNode(before));
-    if (commonBefore) codeEl.appendChild(document.createTextNode(commonBefore));
-
-    if (delPart) {
-      const del = document.createElement('span');
-      del.className = 'sugg-inline-del';
-      del.textContent = delPart;
-      codeEl.appendChild(del);
-    }
-    if (addPart) {
-      const add = document.createElement('span');
-      add.className = 'sugg-inline-add';
-      add.textContent = addPart;
-      codeEl.appendChild(add);
-    }
-
-    if (commonAfter) codeEl.appendChild(document.createTextNode(commonAfter));
-    codeEl.appendChild(document.createTextNode(after + '\n'));
-
-    // Mark that we have an active diff so syncHighlighting doesn't overwrite it
-    codeEl.dataset.hasDiff = '1';
-  }
-
-  /** Clear inline diff — restore normal highlighting */
-  function _clearInlineDiff() {
-    const codeEl = document.getElementById('doc-editor-code');
-    if (codeEl && codeEl.dataset.hasDiff) {
-      delete codeEl.dataset.hasDiff;
-      syncHighlighting();
-    }
-  }
-
-  // Diff mode (line-level review) extracted to ./document/diffViewer.js
-
-  let _suggestionTotal = 0;
-  let _suggestionIndex = 0;
-
-  // Override handleDocSuggestions to track total
-  const _origHandleDocSuggestions = handleDocSuggestions;
-  // (total is set inside handleDocSuggestions before _showCurrentSuggestion)
-
-  /** Apply exact suggestion matches to the active editor surface, then save once. */
-  function _applySuggestions(suggestions) {
-    if (!activeDocId || !docs.has(activeDocId)) return [];
-    // The textarea is only a hidden mirror for rich-text and email documents.
-    // Capture the visible editor first, then replace in the document source.
-    saveCurrentToMap();
-    const doc = docs.get(activeDocId);
-    let content = doc.content || '';
-    const applied = [];
-    for (const sugg of suggestions) {
-      if (!sugg.find || content.split(sugg.find).length !== 2) continue;
-      content = content.replace(sugg.find, sugg.replace || '');
-      applied.push(sugg.id);
-    }
-    if (!applied.length) {
-      uiModule?.showError?.('Suggestion no longer matches the document. Refresh suggestions to review it.');
-      return [];
-    }
-    doc.content = content;
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (_isRichTextLang(doc.language)) {
-      _showRichTextEditor(doc);
-    } else if (doc.language === 'email') {
-      _showEmailFields(doc, { applyLocalDraft: false, forceHeaderFields: true });
-    } else if (textarea) {
-      textarea.value = content;
-      syncHighlighting();
-      _refreshMarkdownPreviewIfVisible(doc.id, content);
-      if (_htmlPreviewActive && _isRenderLang(doc.language)) {
-        const iframe = document.getElementById('doc-html-preview');
-        if (iframe) iframe.srcdoc = _themedRenderSrcdoc(content, doc.language);
-      }
-    }
-    saveDocument({ silent: true });
-    return applied;
-  }
-
-  /** Animate transition to next suggestion */
-  function _animateNext() {
-    _saveSuggestionsToStorage();
-    const old = document.getElementById('doc-suggestion-active');
-    if (old) {
-      if (old._cleanup) old._cleanup();
-      old.style.transition = 'opacity 0.15s, transform 0.15s';
-      old.style.opacity = '0';
-      old.style.transform = 'translateY(-10px)';
-      setTimeout(() => {
-        old.remove();
-        _showCurrentSuggestion();
-      }, 150);
-    } else {
-      _showCurrentSuggestion();
-    }
-  }
-
   function _escHtml(s) {
     return (s == null ? '' : String(s))
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function _esc(s) {
     return _escHtml(s);
   }
 
-  /** Accept a suggestion — apply the edit */
-  function acceptSuggestion(id) {
-    const sugg = _activeSuggestions.find(s => s.id === id);
-    if (!sugg) return;
-
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (textarea && sugg.find && textarea.value.includes(sugg.find)) {
-      textarea.value = textarea.value.replace(sugg.find, sugg.replace);
-      syncHighlighting();
-      saveDocument({ silent: true });
-    }
-
-    // Animate card out
-    sugg.cardEl.style.transition = 'opacity 0.2s, transform 0.2s';
-    sugg.cardEl.style.opacity = '0';
-    sugg.cardEl.style.transform = 'translateX(10px)';
-    setTimeout(() => sugg.cardEl.remove(), 200);
-
-    _activeSuggestions = _activeSuggestions.filter(s => s.id !== id);
-    _clearSuggestionHighlight();
-
-    // Remove container if empty
-    if (_activeSuggestions.length === 0) {
-      const container = document.getElementById('doc-suggestions-container');
-      if (container) container.style.display = 'none';
-    }
-  }
-
-  /** Dismiss a suggestion — just remove the card */
-  function dismissSuggestion(id) {
-    const sugg = _activeSuggestions.find(s => s.id === id);
-    if (!sugg) return;
-
-    sugg.cardEl.style.transition = 'opacity 0.15s';
-    sugg.cardEl.style.opacity = '0';
-    setTimeout(() => sugg.cardEl.remove(), 150);
-
-    _activeSuggestions = _activeSuggestions.filter(s => s.id !== id);
-    _clearSuggestionHighlight();
-
-    if (_activeSuggestions.length === 0) {
-      const container = document.getElementById('doc-suggestions-container');
-      if (container) container.style.display = 'none';
-    }
-  }
-
-  /** Clear all suggestion cards */
-  function clearAllSuggestions() {
-    _activeSuggestions = [];
-    _suggestionTotal = 0;
-    _saveSuggestionsToStorage();
-    _clearSuggestionHighlight();
-    _clearSuggestionTextSelection();
-    _clearInlineDiff();
-    const old = document.getElementById('doc-suggestion-active');
-    if (old) { if (old._cleanup) old._cleanup(); old.remove(); }
-    const container = document.getElementById('doc-suggestions-container');
-    if (container) { container.innerHTML = ''; container.style.display = 'none'; }
-    // Restore line numbers
-    const ta = document.getElementById('doc-editor-textarea');
-    if (ta) updateLineNumbers(ta.value);
-  }
-
-  /** Highlight the exact text referenced by the active suggestion. */
-  function _highlightSuggestionText(findText) {
-    _clearSuggestionHighlight();
-    const textarea = document.getElementById('doc-editor-textarea');
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (!textarea || !wrap) return;
-
-    const text = textarea.value;
-    const idx = text.indexOf(findText);
-    if (idx === -1) return;
-
-    const style = getComputedStyle(textarea);
-    const lineHeight = parseFloat(style.lineHeight) || 20;
-
-    let mirror = document.getElementById('doc-selection-mirror');
-    if (!mirror) {
-      mirror = document.createElement('div');
-      mirror.id = 'doc-selection-mirror';
-      mirror.style.cssText = 'position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;' +
-        'white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden;box-sizing:border-box;';
-      wrap.appendChild(mirror);
-    }
-    mirror.style.font = style.font;
-    mirror.style.padding = style.padding;
-    mirror.style.borderWidth = style.borderWidth;
-    mirror.style.borderStyle = 'solid';
-    mirror.style.borderColor = 'transparent';
-    mirror.style.width = textarea.clientWidth + 'px';
-    mirror.style.tabSize = style.tabSize;
-    mirror.style.letterSpacing = style.letterSpacing;
-    mirror.style.wordSpacing = style.wordSpacing;
-    mirror.style.textIndent = style.textIndent;
-
-    const startPos = _measurePos(mirror, text, idx);
-    const endPos = _measurePos(mirror, text, idx + findText.length);
-    mirror.innerHTML = '';
-
-    const addRect = (top, left, width, height) => {
-      const highlight = document.createElement('div');
-      highlight.className = 'doc-suggestion-highlight';
-      highlight.style.top = (top - textarea.scrollTop) + 'px';
-      highlight.style.left = left + 'px';
-      if (width == null) highlight.style.right = '8px';
-      else highlight.style.width = Math.max(width, 2) + 'px';
-      highlight.style.height = height + 'px';
-      wrap.appendChild(highlight);
-    };
-
-    if (Math.abs(endPos.y - startPos.y) < 1) {
-      addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight);
-    } else {
-      addRect(startPos.y, startPos.x, null, lineHeight);
-      const middleTop = startPos.y + lineHeight;
-      const middleHeight = endPos.y - middleTop;
-      if (middleHeight > 0) addRect(middleTop, parseFloat(style.paddingLeft) || 0, null, middleHeight);
-      addRect(endPos.y, parseFloat(style.paddingLeft) || 0, endPos.x - (parseFloat(style.paddingLeft) || 0), lineHeight);
-    }
-
-    // Don't auto-scroll here — caller handles scrolling
-  }
-
-  /** Remove hover highlight */
-  function _clearSuggestionHighlight() {
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap) wrap.querySelectorAll('.doc-suggestion-highlight').forEach(el => el.remove());
-  }
+  // ── Inline Suggestion Comments (Google Docs style) extracted to ./document/suggestions.js ──
 
   /** Run the document's code using the in-browser code runner */
   function runDocument() {
@@ -14428,6 +13977,9 @@ const documentModule = {
   saveDocument,
   handleDocUpdate,
   handleDocSuggestions,
+  acceptSuggestion,
+  dismissSuggestion,
+  clearAllSuggestions,
   streamDocOpen,
   streamDocDelta,
   streamDocFinalize,
@@ -14465,6 +14017,10 @@ export {
   enterDiffMode,
   exitDiffMode,
   isDiffModeActive,
+  handleDocSuggestions,
+  acceptSuggestion,
+  dismissSuggestion,
+  clearAllSuggestions,
 };
 
 export default documentModule;
