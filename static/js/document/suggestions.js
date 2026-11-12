@@ -79,17 +79,15 @@ function _updateLineNumbers(text) {
   }
 }
 
-function _escHtml(s) {
+const _escHtml = (s) => {
   return (s == null ? '' : String(s))
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
+};
 
-function _esc(s) {
-  return _escHtml(s);
-}
+const _esc = (s) => _escHtml(s);
 
 function _selectSuggestionText(textarea, start, end) {
   if (!textarea || start < 0 || end <= start) return;
