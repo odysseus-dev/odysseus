@@ -663,6 +663,11 @@ function _isImageServeTask(task) {
 
 // ── Download queue — runs one at a time per server ──
 
+function _isQueuedDownloadPlaceholder(task) {
+  return task?.type === 'download'
+    && String(task.sessionId || '').startsWith('queue-');
+}
+
 function _processQueue() {
   const tasks = _loadPrunedTasks();
   const running = tasks.filter(t => t.type === 'download' && t.status === 'running');
@@ -3094,7 +3099,9 @@ export function _renderRunningTab() {
 // ── Reconnect task (polling loop) ──
 
 async function _reconnectTask(el, task) {
-  if (!el || !task) return;
+  // Starting a queued download temporarily keeps its queue ID while the
+  // launch POST is in flight. It has no tmux/process session to reconnect yet.
+  if (!el || !task || _isQueuedDownloadPlaceholder(task)) return;
   const wrap = el.querySelector('.cookbook-output-wrap');
   if (!_isRunningTabVisible() || !wrap || wrap.classList.contains('cookbook-task-collapsed')) return;
   if (el._abort && !el._abort.signal?.aborted) return;
@@ -4234,6 +4241,7 @@ async function _pollBackgroundStatus() {
         const sid = live?.session_id;
         if (!sid || localIds.has(sid) || _isTombstoned(sid)) continue;
         const liveType = live.type || 'download';
+        if (_isQueuedDownloadPlaceholder({ sessionId: sid, type: liveType })) continue;
         const liveStatus = live.status === 'completed' ? 'done' : (live.status || 'running');
         const name = live.model || sid;
         const remoteHost = live.remote && live.remote !== 'local' ? live.remote : '';
@@ -4258,6 +4266,9 @@ async function _pollBackgroundStatus() {
         changed = true;
       }
       for (const task of localTasks) {
+        // Queued and in-flight placeholders are client scheduling state, not
+        // dead backend sessions. Start monitoring after the real ID arrives.
+        if (_isQueuedDownloadPlaceholder(task)) continue;
         const live = statusById.get(task.sessionId);
         if (!live) continue;
         const updates = {};
