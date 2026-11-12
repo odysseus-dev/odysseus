@@ -50,9 +50,11 @@ def test_restored_generic_tool_screenshot_uses_module_escape():
 
 def test_restored_tool_screenshot_uses_raster_data_url_whitelist():
     renderer = (_REPO / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+    markdown = (_REPO / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
 
     assert "export function safeToolScreenshotSrc(raw)" in renderer
-    assert "(?:png|jpe?g|gif|webp)" in renderer
+    assert "markdownModule.safeRasterImageDataSrc(raw)" in renderer
+    assert "(?:png|jpe?g|gif|webp)" in markdown
     assert "safeToolScreenshotSrc(ev.screenshot)" in renderer
     assert 'src="${esc(ev.screenshot)}"' not in renderer
 

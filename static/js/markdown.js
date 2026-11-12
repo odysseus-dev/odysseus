@@ -131,6 +131,11 @@ function _scheduleMathFlush() {
   }, 0);
 }
 
+export function safeRasterImageDataSrc(raw) {
+  const src = String(raw || '').trim();
+  return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src) ? src : '';
+}
+
 function safeLinkUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (url.startsWith('#')) {
@@ -303,12 +308,15 @@ function moreListPayloadFromHref(href) {
 // reveals when the load fails.
 function imageHtml(alt, url, title) {
   const rawUrl = String(url || '').trim();
-  let safeUrl = '';
-  try {
-    const parsed = new URL(rawUrl, window.location.origin);
-    if (parsed.protocol === 'https:') safeUrl = parsed.href;
-  } catch (_) {
-    safeUrl = '';
+  const raster = safeRasterImageDataSrc(rawUrl);
+  let safeUrl = raster;
+  if (!safeUrl) {
+    try {
+      const parsed = new URL(rawUrl, window.location.origin);
+      if (parsed.protocol === 'https:') safeUrl = parsed.href;
+    } catch (_) {
+      safeUrl = '';
+    }
   }
   if (!safeUrl) return escapeHtml(alt || rawUrl || '');
   const safeAlt = escapeHtml(alt || '');
@@ -320,11 +328,15 @@ function imageHtml(alt, url, title) {
   // pass and wrapped in a nested <a> — which then truncates this outer <a>
   // when it is extracted as an allowed-HTML block. Encode the `//` so it
   // displays as `https://` yet is invisible to the autolink regex.
-  const fallbackUrl = displayUrl.replace('://', ':&#47;&#47;');
+  const fallbackUrl = raster ? '' : displayUrl.replace('://', ':&#47;&#47;');
+  // Data images are displayed without a data: navigation target or a giant
+  // base64 fallback caption. Remote HTTPS images retain click-to-open.
+  const link = raster ? '' : ` href="${displayUrl}" target="_blank" rel="noopener noreferrer" title="Open image in a new tab"`;
+  const fallback = raster ? fallbackLabel : `${fallbackLabel} — ${fallbackUrl}`;
   return (
-    `<a class="chat-image" href="${displayUrl}" target="_blank" rel="noopener noreferrer" title="Open image in a new tab">` +
+    `<a class="chat-image"${link}>` +
     `<img class="chat-inline-image" src="${displayUrl}" alt="${safeAlt}"${safeTitle} loading="lazy" decoding="async" referrerpolicy="no-referrer">` +
-    `<span class="chat-image-fallback">${fallbackLabel} — ${fallbackUrl}</span>` +
+    `<span class="chat-image-fallback">${fallback}</span>` +
     `</a>`
   );
 }
@@ -429,6 +441,9 @@ function _cleanAllowedHtmlOnce(htmlString) {
       // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
       // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
       if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
+        // Keep the same raster-only sources used for tool screenshots. This
+        // exception is only IMG.src; data links, srcset and SVG stay blocked.
+        if (name === 'src' && el.tagName.toUpperCase() === 'IMG' && safeRasterImageDataSrc(attr.value)) continue;
         if (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value)) {
           el.removeAttribute(attr.name);
         }
@@ -1346,6 +1361,7 @@ export function renderMath(container) {
 
 const markdownModule = {
   escapeHtml,
+  safeRasterImageDataSrc,
   mdToHtml,
   sanitizeAllowedHtml,
   squashOutsideCode,

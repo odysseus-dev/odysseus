@@ -92,19 +92,14 @@ function _safeHref(url) {
 }
 
 export function safeToolScreenshotSrc(raw) {
-  const src = String(raw || '').trim();
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
-    return src;
-  }
-  return '';
+  return markdownModule.safeRasterImageDataSrc(raw);
 }
 
 export function safeDisplayImageSrc(raw) {
   const src = String(raw || '').trim();
   if (!src) return '';
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
-    return src;
-  }
+  const raster = markdownModule.safeRasterImageDataSrc(src);
+  if (raster) return raster;
   try {
     const parsed = new URL(src, window.location.origin);
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
