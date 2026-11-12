@@ -210,6 +210,34 @@
     {
       "source": "shared/ui/confetti.js",
       "deployment": "js/shared/ui/confetti.js"
+    },
+    {
+      "source": "features/documents/ui/findReplace.js",
+      "deployment": "js/document/findReplace.js"
+    },
+    {
+      "source": "features/documents/ui/diffViewer.js",
+      "deployment": "js/document/diffViewer.js"
+    },
+    {
+      "source": "features/documents/ui/exportDocx.js",
+      "deployment": "js/document/exportDocx.js"
+    },
+    {
+      "source": "features/documents/ui/previewModes.js",
+      "deployment": "js/document/previewModes.js"
+    },
+    {
+      "source": "features/documents/ui/pdfTools.js",
+      "deployment": "js/document/pdfTools.js"
+    },
+    {
+      "source": "features/documents/ui/suggestions.js",
+      "deployment": "js/document/suggestions.js"
+    },
+    {
+      "source": "features/documents/ui/richTables.js",
+      "deployment": "js/document/richTables.js"
     }
   ]
 }

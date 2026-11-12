@@ -4,8 +4,6 @@
  * Extracted from document.js for modularity, testability, and clean separation.
  */
 
-import { topPortalZ as _topPortalZ } from '../toolWindowZOrder.js';
-
 let _activeSuggestions = []; // [{ id, find, replace, reason, highlightEl, bubbleEl, cardEl }]
 let _suggestionSelectionRange = null;
 let _suggestionTotal = 0;
@@ -15,7 +13,6 @@ let _deps = {};
 
 function topPortalZ() {
   if (typeof _deps.topPortalZ === 'function') return _deps.topPortalZ();
-  if (typeof _topPortalZ === 'function') return _topPortalZ();
   if (typeof window !== 'undefined' && typeof window.topPortalZ === 'function') return window.topPortalZ();
   return 10031;
 }

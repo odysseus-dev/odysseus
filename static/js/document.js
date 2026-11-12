@@ -24,54 +24,25 @@ import { parseMarkdownOutline } from './documentOutline.js?v=20260831richtexttoo
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 import {
   _openFindBar,
-  _closeFindBar,
-  _setReplaceVisible,
-  _doFind,
-  _replaceFindCurrent,
-  _replaceFindAll,
-  _replaceAllLiteral,
-  _clearRichFindHighlights,
-  _buildRichFindRanges,
-  _renderRichFindRanges,
   applyFindMarks,
-  renderFindRects,
   initFindReplace,
   onFindTextareaScroll,
 } from './document/findReplace.js';
 import {
   diffLines,
-  _computeLineDiff,
-  _buildDiffChunks,
   enterDiffMode,
   exitDiffMode,
   isDiffModeActive,
   initDiffViewer,
   _diffModeActive,
-  _resolveChunk,
-  _resolveAllChunks,
-  _applyResolvedChunksToTextarea,
-  _scrollToDiffChunk,
-  _navigateToDiffChunk,
 } from './document/diffViewer.js';
 import {
   initExportDocx,
   showExportMenu,
-  exportDocument,
-  _getExportBaseName,
   _importFromDevice,
-  exportAsHtml,
-  exportAsVisualReport,
-  previewVisualReport,
-  exportAsPdf,
-  exportAsDocx,
-  _richTextExportCss,
-  ensureDocx,
-  convertOriginalDocument,
-  convertOriginalToPdfForSigning,
 } from './document/exportDocx.js';
 import {
   initPreviewModes,
-  _installMarkdownPreviewEditButton,
   _setMarkdownPreviewActive,
   _isMarkdownPreviewVisible,
   toggleMarkdownPreview,
@@ -79,9 +50,6 @@ import {
   _setDocxPreviewActive,
   toggleDocxPreview,
   _convertDocxToRichText,
-  parseCSV,
-  csvEscapeField,
-  syncTableToTextarea,
   toggleCsvPreview,
   _htmlPreviewActive,
   isHtmlPreviewActive,
@@ -94,86 +62,31 @@ import {
   _isFormBackedDoc,
   _downloadFilledPdf,
   _saveActiveDocBeforeExport,
-  _annotationRegexGlobal,
-  _escapeAnnotationValue,
-  _unescapeAnnotationValue,
-  _parseAnnotations,
-  _annotationLine,
-  _writeAnnotations,
-  _newAnnotationId,
-  _encodeFieldName,
-  _pdfMarkdownFromLive,
-  _pushPdfUndoSnapshot,
   _undoPdfPaneAction,
-  _setPdfAnnotationDragging,
-  _wirePdfAnnotationMenuDismiss,
   _setPdfDropMode,
-  _wirePdfPaneProximity,
-  _pdfResponseErrorMessage,
   _renderPdfPane,
-  _buildAnnotation,
-  _removeAnnotation,
-  _aiFillAnnotations,
   _schedulePdfPaneSave,
-  _setPdfSaveStatus,
-  _savePdfPaneToMarkdown,
+  _cancelPdfPaneSave,
+  _hasPendingPdfPaneSave,
+  _syncPdfPaneToDoc,
+  _cleanupPdfDocState,
   _refreshPdfPreviewIframe,
   _setPdfViewActive,
   _pdfViewState,
-  _pdfPaneFieldsByDoc,
-  _pdfPaneAnnotationsByDoc,
-  _pdfUndoStackByDoc,
-  _pdfPaneSaveTimer,
-  _pdfDropMode,
-  _pdfAnnotationDragging,
-  _pdfLastLineHeight,
-  _pdfLastFontSize,
   initPdfTools,
 } from './document/pdfTools.js';
 import {
   initSuggestions,
   handleDocSuggestions,
-  acceptSuggestion,
-  dismissSuggestion,
-  clearAllSuggestions,
   _activeSuggestions,
-  _suggestionSelectionRange,
-  _suggestionTotal,
-  _suggestionIndex,
-  _selectSuggestionText,
-  _clearSuggestionTextSelection,
-  _saveSuggestionsToStorage,
   _restoreSuggestionsFromStorage,
-  _positionCard,
-  _showCurrentSuggestion,
-  _showInlineDiff,
-  _clearInlineDiff,
-  _applySuggestions,
-  _animateNext,
-  _highlightSuggestionText,
-  _clearSuggestionHighlight,
-  _measurePos as _measureSuggestionPos,
 } from './document/suggestions.js';
 import {
   _richSelectionCell,
   _focusRichTableCell,
-  _replaceRichTableCellTag,
-  _richTableHeaderModes,
-  _applyRichTableHeaderModes,
-  _replaceRichTable,
   _appendRichTableRow,
-  _appendRichTableColumn,
-  _deleteRichTableRow,
-  _deleteRichTableColumn,
-  _insertRichTable,
-  _richTableCellHasContent,
   _richTableCanMergeRight,
-  _richTableCanMergeDown,
   _richTableCanSplitCell,
-  _mergeRichTableCellRight,
-  _mergeRichTableCellDown,
-  _splitRichTableCell,
-  _setRichTableCellAlignment,
   _applyRichTableAction,
   initRichTables,
 } from './document/richTables.js';
@@ -202,6 +115,7 @@ import {
   let _emailRichbodySaveDebounce = null;
   const _pendingAutoSaves = new Map();
   const _deletedDocIds = new Set();
+  const _inFlightDeletes = new Map();
   const _closingDocs = new Map();
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
@@ -293,8 +207,6 @@ import {
       getActiveDocId: () => activeDocId,
       getActiveDoc: () => (activeDocId ? docs.get(activeDocId) : null),
       getDocs: () => docs,
-      getTextarea: () => document.getElementById('doc-editor-textarea'),
-      getLanguage: () => document.getElementById('doc-language-select')?.value || '',
       getUiModule: () => uiModule,
       getSessionModule: () => sessionModule,
       getLastSessionId: () => _lastSessionId,
@@ -319,13 +231,6 @@ import {
       getActiveDocId: () => activeDocId,
       getActiveDoc: () => (activeDocId ? docs.get(activeDocId) : null),
       getDocs: () => docs,
-      getTextarea: () => document.getElementById('doc-editor-textarea'),
-      getEditorWrap: () => document.getElementById('doc-editor-wrap'),
-      getMdPreview: () => document.getElementById('doc-md-preview'),
-      getCsvPreview: () => document.getElementById('doc-csv-preview'),
-      getHtmlPreview: () => document.getElementById('doc-html-preview'),
-      getDocxPreview: () => document.getElementById('doc-docx-preview'),
-      getLanguage: () => document.getElementById('doc-language-select')?.value || '',
       getMarkdownModule: () => markdownModule,
       getUiModule: () => uiModule,
       syncHeaderActions: () => _syncHeaderActions(),
@@ -341,6 +246,75 @@ import {
     });
   }
   _wirePreviewModes();
+
+  function _wireDiffViewer() {
+    initDiffViewer({
+      saveDocument: (opts) => saveDocument(opts),
+      syncHighlighting: () => syncHighlighting(),
+      updateLineNumbers: (text) => updateLineNumbers(text),
+      lineNumberContentEl: (gutter) => _lineNumberContentEl(gutter),
+      showToast: (msg) => uiModule?.showToast?.(msg),
+      onAcceptChanges: () => {
+        const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+        if (lang === 'markdown') {
+          requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
+        }
+      },
+    });
+  }
+
+  function _wireSuggestions() {
+    initSuggestions({
+      getActiveDocId: () => activeDocId,
+      getDocs: () => docs,
+      saveDocument: (opts) => saveDocument(opts),
+      showToast: (msg) => uiModule?.showToast?.(msg),
+      showError: (msg) => uiModule?.showError?.(msg),
+      uiModule,
+      isOpen: () => isOpen,
+      openPanel: () => openPanel(),
+      loadDocument: (id) => loadDocument(id),
+      switchToDoc: (id) => switchToDoc(id),
+      saveCurrentToMap: () => saveCurrentToMap(),
+      isRichTextLang: (lang) => _isRichTextLang(lang),
+      showRichTextEditor: (doc) => _showRichTextEditor(doc),
+      showEmailFields: (doc, opts) => _showEmailFields(doc, opts),
+      syncHighlighting: () => syncHighlighting(),
+      refreshMarkdownPreviewIfVisible: (id, content) => _refreshMarkdownPreviewIfVisible(id, content),
+      isHtmlPreviewActive: () => isHtmlPreviewActive(),
+      isRenderLang: (lang) => _isRenderLang(lang),
+      themedRenderSrcdoc: (content, lang) => _themedRenderSrcdoc(content, lang),
+      updateLineNumbers: (text) => updateLineNumbers(text),
+      topPortalZ: () => topPortalZ(),
+      isDiffModeActive: () => _diffModeActive,
+      exitDiffMode: (force) => exitDiffMode(force),
+      measurePos: (mirror, text, pos) => _measurePos(mirror, text, pos),
+    });
+  }
+
+  function _wirePdfTools() {
+    initPdfTools({
+      getApiBase: () => API_BASE,
+      getActiveDocId: () => activeDocId,
+      getDoc: (id) => docs.get(id) || _closingDocs.get(id),
+      getDocs: () => docs,
+      saveDocument: (opts) => saveDocument(opts),
+      markDocumentDirty: (docId) => _markDocumentDirty(docId),
+      dismissDocKb: _dismissDocKb,
+      getUiModule: () => uiModule,
+      getSpinnerModule: () => spinnerModule,
+      getSignatureModule: () => signatureModule,
+    });
+  }
+
+  function _wireFindReplace() {
+    initFindReplace({
+      isRichActive: _emailRichbodyActive,
+      syncEmailRichbody: _syncEmailRichbody,
+      scheduleEmailRichbodySave: _scheduleEmailRichbodySave,
+      replaceRange: _replaceRange,
+    });
+  }
   let _emailSendInFlight = false;
   let _emailAiReplyGeneration = 0;
   let _docStatsFrame = 0;
@@ -413,7 +387,7 @@ import {
       }
       return Promise.resolve(false);
     }
-    if (targetDoc && targetDoc._saveState === 'dirty' && !_deletedDocIds.has(docId)) {
+    if ((targetDoc && targetDoc._saveState === 'dirty' || _hasPendingPdfPaneSave(docId)) && !_deletedDocIds.has(docId)) {
       return saveDocument({ silent: true, docId });
     }
     return Promise.resolve(false);
@@ -1328,49 +1302,8 @@ import {
   export function init(apiBase) {
     API_BASE = apiBase;
     _wirePreviewModes();
-    initSuggestions({
-      getTextarea: () => document.getElementById('doc-editor-textarea'),
-      getWrap: () => document.getElementById('doc-editor-wrap'),
-      getPane: () => document.querySelector('.doc-editor-pane'),
-      getCodeEl: () => document.getElementById('doc-editor-code'),
-      getActiveDocId: () => activeDocId,
-      getDocs: () => docs,
-      saveDocument: (opts) => saveDocument(opts),
-      showToast: (msg) => uiModule?.showToast?.(msg),
-      showError: (msg) => uiModule?.showError?.(msg),
-      uiModule,
-      isOpen: () => isOpen,
-      openPanel: () => openPanel(),
-      loadDocument: (id) => loadDocument(id),
-      switchToDoc: (id) => switchToDoc(id),
-      saveCurrentToMap: () => saveCurrentToMap(),
-      isRichTextLang: (lang) => _isRichTextLang(lang),
-      showRichTextEditor: (doc) => _showRichTextEditor(doc),
-      showEmailFields: (doc, opts) => _showEmailFields(doc, opts),
-      syncHighlighting: () => syncHighlighting(),
-      refreshMarkdownPreviewIfVisible: (id, content) => _refreshMarkdownPreviewIfVisible(id, content),
-      isHtmlPreviewActive: () => isHtmlPreviewActive(),
-      isRenderLang: (lang) => _isRenderLang(lang),
-      themedRenderSrcdoc: (content, lang) => _themedRenderSrcdoc(content, lang),
-      updateLineNumbers: (text) => updateLineNumbers(text),
-      topPortalZ: () => topPortalZ(),
-      isDiffModeActive: () => _diffModeActive,
-      exitDiffMode: (force) => exitDiffMode(force),
-      measurePos: (mirror, text, pos) => _measurePos(mirror, text, pos),
-    });
-    initDiffViewer({
-      saveDocument: (opts) => saveDocument(opts),
-      syncHighlighting: () => syncHighlighting(),
-      updateLineNumbers: (text) => updateLineNumbers(text),
-      lineNumberContentEl: (gutter) => _lineNumberContentEl(gutter),
-      showToast: (msg) => uiModule?.showToast?.(msg),
-      onAcceptChanges: () => {
-        const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
-        if (lang === 'markdown') {
-          requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
-        }
-      },
-    });
+    _wireSuggestions();
+    _wireDiffViewer();
     initLibrary({
       apiBase,
       esc: _esc,
@@ -1900,17 +1833,20 @@ import {
       }
       if (pdfPane) {
         if (active) {
-          if (pdfPane.style.display === 'none') {
+          if (pdfPane.style.display === 'none' || pdfPane.dataset.renderedDocId !== activeDocId) {
             const wrap = document.getElementById('doc-editor-wrap');
             if (wrap) wrap.style.display = 'none';
             pdfPane.style.display = '';
             _renderPdfPane();
           }
+          _syncDocumentHistoryControlsNow();
         } else if (pdfPane.style.display !== 'none') {
+          delete pdfPane.dataset.renderedDocId;
           pdfPane.style.display = 'none';
           pdfPane.innerHTML = '';
           const wrap = document.getElementById('doc-editor-wrap');
           if (wrap) wrap.style.display = '';
+          _scheduleDocumentHistoryControls();
         }
       }
     }
@@ -5361,8 +5297,10 @@ import {
     if (!activeDocId) return;
     const closingId = activeDocId;
     _cancelAutoSave(closingId);
+    _cancelPdfPaneSave(closingId);
     if (deleteDoc) {
       _deletedDocIds.add(closingId);
+      _cleanupPdfDocState(closingId);
       fetch(`${API_BASE}/api/document/${closingId}`, { method: 'DELETE' }).catch(() => {});
     }
     // Save the current state to the doc first so it persists in the library
@@ -6020,6 +5958,8 @@ import {
   function _detachDocFromSession(docId, { toast = false } = {}) {
     const doc = docs.get(docId);
     _cancelAutoSave(docId);
+    _cancelPdfPaneSave(docId);
+    _syncPdfPaneToDoc(docId, { markDirty: false });
     const hasContent = doc && doc.content && doc.content.trim().length > 0;
     if (hasContent) {
       _closingDocs.set(docId, doc);
@@ -6139,11 +6079,17 @@ import {
       doc.content = _buildEmailContent(to, subject, inReplyTo, references, _emailBody, sourceUid, sourceFolder, cc, bcc);
       _persistEmailLocalDraftSoon();
     } else if (textarea) {
-      // Don't clobber a PDF/form-backed doc's source when the textarea is empty
-      // (it's hidden behind the rendered PDF view, so its value isn't the source
-      // of truth). Overwriting here dropped the pdf_form_source marker, so after
-      // minimize→restore the doc came back blank.
-      if (!(textarea.value === '' && _isFormBackedDoc(doc.content))) {
+      const pdfPane = document.getElementById('doc-pdf-view');
+      const pdfVisibleForActive = Boolean(
+        pdfPane && pdfPane.style.display !== 'none' && pdfPane.dataset.renderedDocId === activeDocId
+      );
+      if (pdfVisibleForActive) {
+        _syncPdfPaneToDoc(activeDocId, { markDirty: false });
+      } else if (!(textarea.value === '' && _isFormBackedDoc(doc.content))) {
+        // Don't clobber a PDF/form-backed doc's source when the textarea is empty
+        // (it's hidden behind the rendered PDF view, so its value isn't the source
+        // of truth). Overwriting here dropped the pdf_form_source marker, so after
+        // minimize->restore the doc came back blank.
         doc.content = textarea.value;
       }
     }
@@ -7670,82 +7616,11 @@ import {
         }
       });
 
-      // Find & Replace controller
-      initFindReplace({
-        getTextarea: () => ta,
-        getWrap: () => wrap,
-        getCodeEl: () => document.getElementById('doc-editor-code'),
-        getPane: () => pane,
-        isRichActive: _emailRichbodyActive,
-        syncEmailRichbody: _syncEmailRichbody,
-        scheduleEmailRichbodySave: _scheduleEmailRichbodySave,
-        replaceRange: _replaceRange,
-      });
-
-      // Diff & Review controller
-      initDiffViewer({
-        getTextarea: () => ta,
-        getWrap: () => wrap,
-        getCodeEl: () => document.getElementById('doc-editor-code'),
-        getGutter: () => document.getElementById('doc-line-numbers'),
-        getHighlight: () => document.getElementById('doc-editor-highlight'),
-        getDiffToggleBtn: () => document.getElementById('doc-diff-toggle-btn'),
-        saveDocument: (opts) => saveDocument(opts),
-        syncHighlighting: () => syncHighlighting(),
-        updateLineNumbers: (text) => updateLineNumbers(text),
-        lineNumberContentEl: (gutter) => _lineNumberContentEl(gutter),
-        showToast: (msg) => uiModule?.showToast?.(msg),
-        onAcceptChanges: () => {
-          const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
-          if (lang === 'markdown') {
-            requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
-          }
-        },
-      });
-
-      // PDF tools controller
-      initPdfTools({
-        getApiBase: () => API_BASE,
-        getActiveDocId: () => activeDocId,
-        getDoc: (id) => docs.get(id),
-        getDocs: () => docs,
-        dismissDocKb: _dismissDocKb,
-        getUiModule: () => uiModule,
-        getSpinnerModule: () => spinnerModule,
-        getSignatureModule: () => signatureModule,
-      });
-
-      // Inline suggestions controller
-      initSuggestions({
-        getTextarea: () => ta,
-        getWrap: () => wrap,
-        getPane: () => pane,
-        getCodeEl: () => document.getElementById('doc-editor-code'),
-        getActiveDocId: () => activeDocId,
-        getDocs: () => docs,
-        saveDocument: (opts) => saveDocument(opts),
-        showToast: (msg) => uiModule?.showToast?.(msg),
-        showError: (msg) => uiModule?.showError?.(msg),
-        uiModule,
-        isOpen: () => isOpen,
-        openPanel: () => openPanel(),
-        loadDocument: (id) => loadDocument(id),
-        switchToDoc: (id) => switchToDoc(id),
-        saveCurrentToMap: () => saveCurrentToMap(),
-        isRichTextLang: (lang) => _isRichTextLang(lang),
-        showRichTextEditor: (doc) => _showRichTextEditor(doc),
-        showEmailFields: (doc, opts) => _showEmailFields(doc, opts),
-        syncHighlighting: () => syncHighlighting(),
-        refreshMarkdownPreviewIfVisible: (id, content) => _refreshMarkdownPreviewIfVisible(id, content),
-        isHtmlPreviewActive: () => _htmlPreviewActive,
-        isRenderLang: (lang) => _isRenderLang(lang),
-        themedRenderSrcdoc: (content, lang) => _themedRenderSrcdoc(content, lang),
-        updateLineNumbers: (text) => updateLineNumbers(text),
-        topPortalZ: () => topPortalZ(),
-        isDiffModeActive: () => _diffModeActive,
-        exitDiffMode: (force) => exitDiffMode(force),
-        measurePos: (mirror, text, pos) => _measurePos(mirror, text, pos),
-      });
+      // Find & Replace, Diff & Review, PDF tools, and Inline suggestions controllers
+      _wireFindReplace();
+      _wireDiffViewer();
+      _wirePdfTools();
+      _wireSuggestions();
 
       // Rich Text Tables controller
       initRichTables({
@@ -10616,14 +10491,16 @@ import {
     // Flush any pending saves or dirty documents belonging to previous sessions
     for (const [id, doc] of docs) {
       if (doc.sessionId && doc.sessionId !== sessionId) {
-        if (_pendingAutoSaves.has(id) || doc._saveState === 'dirty') {
+        if (_pendingAutoSaves.has(id) || doc._saveState === 'dirty' || _hasPendingPdfPaneSave(id)) {
           _cancelAutoSave(id);
+          _cancelPdfPaneSave(id);
           _closingDocs.set(id, doc);
           saveDocument({ silent: true, docId: id }).catch(() => {}).finally(() => {
             _closingDocs.delete(id);
           });
         } else {
           _cancelAutoSave(id);
+          _cancelPdfPaneSave(id);
         }
       }
     }
@@ -12188,15 +12065,22 @@ import {
   }
 
   /** Save manual edits */
-  export async function saveDocument({ silent = false, forceVersion = false, docId = null } = {}) {
+  export async function saveDocument({ silent = false, forceVersion = false, docId = null, keepalive = false, skipPdfSync = false } = {}) {
     const savingDocId = docId || getChatDocumentId();
     if (!savingDocId) return false;
     if (_deletedDocIds.has(savingDocId)) return false;
+    const inFlightDelete = _inFlightDeletes.get(savingDocId);
+    if (inFlightDelete) {
+      await inFlightDelete.catch(() => {});
+    }
+    if (_deletedDocIds.has(savingDocId)) return false;
     _cancelAutoSave(savingDocId);
+    _cancelPdfPaneSave(savingDocId);
+    if (!skipPdfSync) _syncPdfPaneToDoc(savingDocId);
     const textarea = document.getElementById('doc-editor-textarea');
     // Minimizing removes the editor DOM, but closePanel already captured its
     // content in docs. Persist that cache without reading an absent/new pane.
-    if (isOpen && activeDocId === savingDocId) saveCurrentToMap();
+    if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
     const localDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
     if (!localDoc || _deletedDocIds.has(savingDocId)) return false;
     const contentToSave = (isOpen && activeDocId === savingDocId)
@@ -12224,6 +12108,7 @@ import {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
+        keepalive: !!keepalive,
         body: JSON.stringify({
           content: contentToSave,
           force_version: !!forceVersion,
@@ -12303,35 +12188,77 @@ import {
   /** Delete the active document */
   async function deleteActiveDocument() {
     if (!activeDocId) return;
-    const doc = docs.get(activeDocId);
-    const name = doc ? doc.title : 'this document';
-    const ok = uiModule && uiModule.styledConfirm
-      ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })
-      : confirm(`Delete "${name}"?`);
-    if (!ok) return;
-    try {
-      const idToDelete = activeDocId;
-      _deletedDocIds.add(idToDelete);
-      _cancelAutoSave(idToDelete);
-      const res = await fetch(`${API_BASE}/api/document/${idToDelete}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
-      // Remove tab
-      const tab = document.querySelector(`.doc-tab[data-doc-id="${activeDocId}"]`);
-      if (tab) tab.remove();
-      docs.delete(activeDocId);
-      // Switch to another doc or close panel
-      const remaining = Array.from(docs.keys());
-      if (remaining.length > 0) {
-        switchToDoc(remaining[0]);
-      } else {
-        activeDocId = null;
-        closePanel();
+    const idToDelete = activeDocId;
+    if (_inFlightDeletes.has(idToDelete)) return _inFlightDeletes.get(idToDelete);
+
+    const deleteTask = (async () => {
+      let hadPendingAutoSave = false;
+      let pendingAutoSaveEntry = null;
+      let hadPendingPdfSave = false;
+      let wasDirty = false;
+      let confirmed = false;
+      try {
+        const doc = docs.get(idToDelete);
+        const name = doc ? doc.title : 'this document';
+        const ok = uiModule && uiModule.styledConfirm
+          ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })
+          : confirm(`Delete "${name}"?`);
+        if (!ok) return;
+        confirmed = true;
+
+        pendingAutoSaveEntry = _pendingAutoSaves.get(idToDelete) || null;
+        hadPendingAutoSave = Boolean(pendingAutoSaveEntry);
+        hadPendingPdfSave = _hasPendingPdfPaneSave(idToDelete);
+        wasDirty = (docs.get(idToDelete)?._saveState === 'dirty');
+        _cancelAutoSave(idToDelete);
+        _cancelPdfPaneSave(idToDelete);
+
+        const targetDoc = docs.get(idToDelete) || _closingDocs.get(idToDelete);
+        if (targetDoc?._saveQueueTail) {
+          await targetDoc._saveQueueTail.catch(() => {});
+        }
+        const res = await fetch(`${API_BASE}/api/document/${idToDelete}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Delete failed: HTTP ${res.status}`);
+
+        _deletedDocIds.add(idToDelete);
+        _cleanupPdfDocState(idToDelete);
+        // Remove tab
+        const tab = document.querySelector(`.doc-tab[data-doc-id="${idToDelete}"]`);
+        if (tab) tab.remove();
+        _forgetActiveDoc(targetDoc?.sessionId || _lastSessionId, idToDelete);
+        docs.delete(idToDelete);
+        _closingDocs.delete(idToDelete);
+        // Switch to another doc or close panel when deleting the currently viewed doc
+        if (activeDocId === idToDelete) {
+          const remaining = Array.from(docs.keys());
+          if (remaining.length > 0) {
+            switchToDoc(remaining[0]);
+          } else {
+            activeDocId = null;
+            closePanel();
+          }
+        } else {
+          renderTabs();
+          _syncDocIndicator();
+        }
+        if (uiModule) uiModule.showToast('Document deleted');
+      } catch (e) {
+        console.error('Failed to delete document:', e);
+        if (confirmed && docs.has(idToDelete) && !_deletedDocIds.has(idToDelete)) {
+          if (hadPendingPdfSave) {
+            _schedulePdfPaneSave(idToDelete);
+          } else if (hadPendingAutoSave || wasDirty) {
+            _scheduleAutoSave(idToDelete, 800, pendingAutoSaveEntry?.options || {});
+          }
+        }
+        if (uiModule) uiModule.showError('Failed to delete document');
+      } finally {
+        _inFlightDeletes.delete(idToDelete);
       }
-      if (uiModule) uiModule.showToast('Document deleted');
-    } catch (e) {
-      console.error('Failed to delete document:', e);
-      if (uiModule) uiModule.showError('Failed to delete document');
-    }
+    })();
+
+    _inFlightDeletes.set(idToDelete, deleteTask);
+    return deleteTask;
   }
 
   /** Toggle fullscreen on doc editor pane */
@@ -13434,14 +13361,10 @@ const documentModule = {
   saveDocument,
   handleDocUpdate,
   handleDocSuggestions,
-  acceptSuggestion,
-  dismissSuggestion,
-  clearAllSuggestions,
   streamDocOpen,
   streamDocDelta,
   streamDocFinalize,
   isPanelOpen,
-  diffLines,
   enterDiffMode,
   exitDiffMode,
   isDiffModeActive,
@@ -13459,38 +13382,9 @@ const documentModule = {
   openLibrary,
   closeLibrary,
   isLibraryOpen,
-  exportDocument,
-  showExportMenu,
-  exportAsDocx,
-  ensureDocx,
-  toggleMarkdownPreview,
-  toggleRichTextPreview,
-  toggleDocxPreview,
-  toggleCsvPreview,
-  toggleHtmlPreview,
-  exitHtmlPreview,
 };
 
-export {
-  exportDocument,
-  showExportMenu,
-  exportAsDocx,
-  ensureDocx,
-  diffLines,
-  enterDiffMode,
-  exitDiffMode,
-  isDiffModeActive,
-  handleDocSuggestions,
-  acceptSuggestion,
-  dismissSuggestion,
-  clearAllSuggestions,
-  toggleMarkdownPreview,
-  toggleRichTextPreview,
-  toggleDocxPreview,
-  toggleCsvPreview,
-  toggleHtmlPreview,
-  exitHtmlPreview,
-};
+export { handleDocSuggestions };
 
 export default documentModule;
 window.documentModule = documentModule;

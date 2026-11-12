@@ -1,14 +1,54 @@
 // tests/benchmark_document_find_replace.mjs
 /**
- * Reproducible benchmark measuring Find & Replace highlight rendering performance.
- * Compares unbatched forced-reflow measurement (baseline) against batched Range measurement (optimized).
+ * Reproducible benchmark for the deployed Find & Replace overlay renderer.
+ * Exercises the actual deployed /static/js/document/findReplace.js module
+ * with real DOM input, match navigation, and real scroll events.
  */
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { chromium } from 'playwright';
+
+const ROOT = process.cwd();
+
+async function openFindTestPage(browser) {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  const origin = process.env.ODYSSEUS_TEST_STATIC_ORIGIN;
+  if (origin) {
+    await page.goto(`${origin}/static/js/documentOutline.js`);
+    return page;
+  }
+
+  await page.route('https://benchmark.invalid/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/harness.html') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><html><body></body></html>',
+      });
+      return;
+    }
+    if (url.pathname.startsWith('/static/')) {
+      const rel = url.pathname.slice(1);
+      const body = await fs.readFile(path.join(ROOT, rel), 'utf8');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body,
+      });
+      return;
+    }
+    await route.abort();
+  });
+
+  await page.goto('https://benchmark.invalid/harness.html');
+  return page;
+}
 
 export async function runBenchmark() {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  const page = await openFindTestPage(browser);
 
   await page.setContent(`
     <style>
@@ -38,16 +78,34 @@ export async function runBenchmark() {
         z-index: 6;
       }
     </style>
+    <div id="doc-find-bar" style="display:none;">
+      <input id="doc-find-input" />
+      <span id="doc-find-count"></span>
+      <button id="doc-find-next" type="button">Next</button>
+    </div>
     <div id="doc-editor-wrap" class="doc-editor-wrap">
       <textarea id="doc-editor-textarea" class="doc-editor-textarea"></textarea>
     </div>
   `);
 
   const results = await page.evaluate(async () => {
+    const mod = await import('/static/js/document/findReplace.js');
+    const {
+      initFindReplace,
+      renderFindRects,
+      onFindTextareaScroll,
+      getFindMatches,
+    } = mod;
+
     const textarea = document.getElementById('doc-editor-textarea');
     const wrap = document.getElementById('doc-editor-wrap');
+    const findInput = document.getElementById('doc-find-input');
+    const findNext = document.getElementById('doc-find-next');
 
-    // Build realistic document text with 100 matches across paragraphs, including soft-wrapped lines
+    initFindReplace({});
+    textarea.addEventListener('scroll', () => onFindTextareaScroll());
+
+    // Build realistic document text with 100 matches across paragraphs, including soft-wrapped lines.
     const lines = [];
     let matchCount = 0;
     for (let i = 0; i < 400; i++) {
@@ -68,10 +126,10 @@ export async function runBenchmark() {
       pos += 'FINDME'.length;
     }
 
-    // 1. Baseline unbatched measurement loop (from original static/js/document.js:12524-12580)
-    function renderFindRectsBaseline(matches, currentIdx) {
+    // 1. Pre-optimization unbatched mirror.scrollHeight measurement baseline
+    function renderFindRectsBaseline(targetMatches, currentIdx) {
       wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
-      if (!matches || matches.length === 0) return;
+      if (!targetMatches || targetMatches.length === 0) return;
       const style = getComputedStyle(textarea);
       const paddingTop = parseFloat(style.paddingTop) || 10;
       const paddingLeft = parseFloat(style.paddingLeft) || 48;
@@ -97,8 +155,8 @@ export async function runBenchmark() {
       mirror.style.textIndent = style.textIndent;
 
       const scrollTop = textarea.scrollTop;
-      for (let i = 0; i < matches.length; i++) {
-        const [s, e] = matches[i];
+      for (let i = 0; i < targetMatches.length; i++) {
+        const [s, e] = targetMatches[i];
         mirror.textContent = text.substring(0, s);
         const startTop = mirror.scrollHeight - paddingTop;
         mirror.textContent = text.substring(0, e);
@@ -117,163 +175,81 @@ export async function runBenchmark() {
       }
     }
 
-    // 2. Batched Range measurement (optimized static/js/document/findReplace.js)
-    function renderFindRectsOptimized(matches, currentIdx) {
-      if (!matches || matches.length === 0) {
-        wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
-        return;
-      }
-      const style = getComputedStyle(textarea);
-      const paddingTop = parseFloat(style.paddingTop) || 10;
-      const paddingLeft = parseFloat(style.paddingLeft) || 48;
-      const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
-
-      let mirror = document.getElementById('doc-find-rect-mirror');
-      if (!mirror) {
-        mirror = document.createElement('div');
-        mirror.id = 'doc-find-rect-mirror';
-        mirror.style.cssText = 'position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;box-sizing:border-box;';
-        wrap.appendChild(mirror);
-      }
-
-      const clientWidth = textarea.clientWidth;
-      const scrollTop = textarea.scrollTop;
-
-      let rowData = null;
-      const cache = mirror._findCache;
-      if (
-        cache &&
-        cache.text === text &&
-        cache.clientWidth === clientWidth &&
-        cache.matches === matches &&
-        cache.lineHeight === lineHeight &&
-        cache.paddingTop === paddingTop
-      ) {
-        rowData = cache.rows;
-      } else {
-        mirror.style.whiteSpace = textarea.wrap === 'off' ? 'pre' : 'pre-wrap';
-        mirror.style.wordWrap = textarea.wrap === 'off' ? 'normal' : 'break-word';
-        mirror.style.overflowWrap = textarea.wrap === 'off' ? 'normal' : 'break-word';
-        mirror.style.font = style.font;
-        mirror.style.padding = style.padding;
-        mirror.style.borderWidth = style.borderWidth;
-        mirror.style.borderStyle = 'solid';
-        mirror.style.borderColor = 'transparent';
-        mirror.style.width = clientWidth + 'px';
-        mirror.style.tabSize = style.tabSize;
-        mirror.style.letterSpacing = style.letterSpacing;
-        mirror.style.wordSpacing = style.wordSpacing;
-        mirror.style.textIndent = style.textIndent;
-
-        mirror.textContent = text;
-        const textNode = mirror.firstChild;
-        if (!textNode) {
-          wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
-          return;
-        }
-
-        const mirrorRect = mirror.getBoundingClientRect();
-        const mirrorTop = mirrorRect.top + paddingTop;
-        const range = document.createRange();
-        const maxLen = textNode.length;
-        rowData = new Array(matches.length);
-
-        for (let i = 0; i < matches.length; i++) {
-          const [s, e] = matches[i];
-          const sClamped = Math.max(0, Math.min(s, maxLen));
-          let eClamped = Math.max(sClamped, Math.min(e, maxLen));
-          if (sClamped === eClamped && sClamped < maxLen) {
-            eClamped = sClamped + 1;
-          }
-          range.setStart(textNode, sClamped);
-          range.setEnd(textNode, eClamped);
-          const r = range.getBoundingClientRect();
-
-          const visualRowStart = Math.max(0, Math.floor((r.top - mirrorTop + (lineHeight * 0.25)) / lineHeight));
-          const visualRowEnd = Math.max(visualRowStart, Math.floor((r.bottom - mirrorTop - 1) / lineHeight));
-          const rowCount = Math.max(1, visualRowEnd - visualRowStart + 1);
-          rowData[i] = [visualRowStart, rowCount];
-        }
-
-        mirror._findCache = { text, clientWidth, matches, rows: rowData, lineHeight, paddingTop };
-      }
-
-      const existingRects = wrap.querySelectorAll('.doc-find-rect');
-      if (existingRects.length === rowData.length) {
-        for (let i = 0; i < rowData.length; i++) {
-          const [rowStart, count] = rowData[i];
-          const top = paddingTop + rowStart * lineHeight - scrollTop;
-          const height = count * lineHeight;
-          const rect = existingRects[i];
-          rect.style.top = top + 'px';
-          rect.style.height = height + 'px';
-          const isCurrent = i === currentIdx;
-          if (rect.classList.contains('current') !== isCurrent) {
-            rect.classList.toggle('current', isCurrent);
-          }
-        }
-      } else {
-        wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
-        const frag = document.createDocumentFragment();
-        for (let i = 0; i < rowData.length; i++) {
-          const [rowStart, count] = rowData[i];
-          const top = paddingTop + rowStart * lineHeight - scrollTop;
-          const height = count * lineHeight;
-          const rect = document.createElement('div');
-          rect.className = 'doc-find-rect' + (i === currentIdx ? ' current' : '');
-          rect.style.cssText =
-            `position:absolute;left:${paddingLeft}px;right:8px;` +
-            `top:${top}px;height:${height}px;` +
-            `pointer-events:none;z-index:6;border-radius:2px;`;
-          frag.appendChild(rect);
-        }
-        wrap.appendChild(frag);
-      }
-    }
-
-    // Benchmark baseline
     const t0 = performance.now();
     renderFindRectsBaseline(matches, 0);
-    const baselineMs = performance.now() - t0;
+    const baselineInitialMs = performance.now() - t0;
     const baselineCount = wrap.querySelectorAll('.doc-find-rect').length;
 
-    // Reset mirror for fair comparison
+    // Clean baseline artifacts before exercising the deployed implementation
     document.getElementById('doc-find-rect-mirror')?.remove();
+    wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
 
-    // Benchmark optimized initial render
+    // 2. Deployed Find initial render via real input event on #doc-find-input
+    findInput.value = 'FINDME';
     const t1 = performance.now();
-    renderFindRectsOptimized(matches, 0);
-    const optimizedInitialMs = performance.now() - t1;
-    const optimizedCount = wrap.querySelectorAll('.doc-find-rect').length;
+    findInput.dispatchEvent(new Event('input', { bubbles: true }));
+    const deployedInitialMs = performance.now() - t1;
+    const deployedCount = wrap.querySelectorAll('.doc-find-rect').length;
+    const mirror = document.getElementById('doc-find-rect-mirror');
+    const recomputesAfterFind = mirror?._findLayoutRecomputes || 0;
 
-    // Benchmark scroll updates (10 scroll events)
-    const scrollTimes = [];
-    for (let step = 1; step <= 10; step++) {
-      textarea.scrollTop = step * 40;
+    // 3. Measure un-cached scroll recompute (simulating pre-fix scroll invalidation)
+    const uncachedScrollTimes = [];
+    for (let step = 1; step <= 20; step++) {
+      if (mirror) mirror._findCache = null;
+      textarea.scrollTop = step * 35;
       const ts = performance.now();
-      renderFindRectsOptimized(matches, 0);
-      scrollTimes.push(performance.now() - ts);
+      onFindTextareaScroll();
+      uncachedScrollTimes.push(performance.now() - ts);
     }
-    const avgScrollMs = scrollTimes.reduce((a, b) => a + b, 0) / scrollTimes.length;
+    const avgUncachedScrollMs = uncachedScrollTimes.reduce((a, b) => a + b, 0) / uncachedScrollTimes.length;
+    const recomputesBeforeCachedScroll = mirror?._findLayoutRecomputes || 0;
 
-    // Benchmark match index switching (10 steps)
+    // 4. Measure real browser scroll events using deployed cache
+    const firstRectBeforeScroll = parseFloat(wrap.querySelector('.doc-find-rect').style.top);
+    const scrollStartVal = textarea.scrollTop;
+    const cachedScrollTimes = [];
+    for (let step = 1; step <= 20; step++) {
+      textarea.scrollTop = scrollStartVal + step * 35;
+      const ts = performance.now();
+      textarea.dispatchEvent(new Event('scroll'));
+      cachedScrollTimes.push(performance.now() - ts);
+    }
+    const firstRectAfterScroll = parseFloat(wrap.querySelector('.doc-find-rect').style.top);
+    const expectedScrollDelta = textarea.scrollTop - scrollStartVal;
+    const avgCachedScrollMs = cachedScrollTimes.reduce((a, b) => a + b, 0) / cachedScrollTimes.length;
+    const recomputesAfterCachedScroll = mirror?._findLayoutRecomputes || 0;
+
+    // 5. Measure match navigation via real click events
     const navTimes = [];
     for (let c = 1; c <= 10; c++) {
       const tn = performance.now();
-      renderFindRectsOptimized(matches, c);
+      findNext.click();
       navTimes.push(performance.now() - tn);
     }
     const avgNavMs = navTimes.reduce((a, b) => a + b, 0) / navTimes.length;
+    const recomputesAfterNav = mirror?._findLayoutRecomputes || 0;
 
     return {
-      matches: matches.length,
-      baselineMs,
+      matches: getFindMatches().length,
+      baselineInitialMs,
       baselineCount,
-      optimizedInitialMs,
-      optimizedCount,
-      avgScrollMs,
+      deployedInitialMs,
+      deployedCount,
+      avgUncachedScrollMs,
+      avgCachedScrollMs,
       avgNavMs,
-      speedupFactor: (baselineMs / optimizedInitialMs).toFixed(1) + 'x',
+      recomputesAfterFind,
+      recomputesBeforeCachedScroll,
+      recomputesAfterCachedScroll,
+      recomputesAfterNav,
+      cachedScrollDeltaError: Math.abs((firstRectBeforeScroll - firstRectAfterScroll) - expectedScrollDelta),
+      optimizedInitialMs: deployedInitialMs,
+      optimizedCount: deployedCount,
+      baselineMs: baselineInitialMs,
+      avgScrollMs: avgCachedScrollMs,
+      initialRenderRatio: Number((baselineInitialMs / Math.max(0.01, deployedInitialMs)).toFixed(2)),
+      scrollCacheRatio: Number((avgUncachedScrollMs / Math.max(0.001, avgCachedScrollMs)).toFixed(2)),
     };
   });
 
@@ -283,14 +259,14 @@ export async function runBenchmark() {
 
 if (process.argv[1]?.endsWith('benchmark_document_find_replace.mjs')) {
   runBenchmark().then(res => {
-    console.log('\n=== Find & Replace Benchmark Results ===');
-    console.log(`Matches tested:           ${res.matches}`);
-    console.log(`Baseline Initial Render:   ${res.baselineMs.toFixed(2)} ms (${res.baselineCount} rects)`);
-    console.log(`Optimized Initial Render:  ${res.optimizedInitialMs.toFixed(2)} ms (${res.optimizedCount} rects)`);
-    console.log(`Initial Render Speedup:    ${res.speedupFactor}`);
-    console.log(`Avg Scroll Update:         ${res.avgScrollMs.toFixed(3)} ms`);
-    console.log(`Avg Match Navigation:      ${res.avgNavMs.toFixed(3)} ms`);
-    console.log('========================================\n');
+    console.log('\n=== Find & Replace Deployed Benchmark ===');
+    console.log(`Matches tested:             ${res.matches}`);
+    console.log(`Baseline Unbatched Render:  ${res.baselineInitialMs.toFixed(2)} ms (${res.baselineCount} rects)`);
+    console.log(`Deployed Initial Render:    ${res.deployedInitialMs.toFixed(2)} ms (${res.deployedCount} rects, ${res.initialRenderRatio}x)`);
+    console.log(`Uncached Scroll Recompute:  ${res.avgUncachedScrollMs.toFixed(3)} ms`);
+    console.log(`Deployed Cached Scroll:     ${res.avgCachedScrollMs.toFixed(3)} ms (${res.scrollCacheRatio}x, recomputes delta=${res.recomputesAfterCachedScroll - res.recomputesBeforeCachedScroll})`);
+    console.log(`Match Navigation (avg):     ${res.avgNavMs.toFixed(3)} ms (recomputes delta=${res.recomputesAfterNav - res.recomputesAfterCachedScroll})`);
+    console.log('=========================================\n');
   }).catch(err => {
     console.error(err);
     process.exit(1);

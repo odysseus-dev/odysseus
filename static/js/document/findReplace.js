@@ -4,8 +4,10 @@
  * Extracted from document.js for modularity and high performance.
  */
 
-// ── In-document find (Ctrl+F) ──
+// In-document find (Ctrl+F) state
 let _findMatches = [];
+let _findMatchRanges = [];
+let _findMatchQuery = '';
 let _findIdx = -1;
 let _richFindRanges = [];
 let _richFindFallbackSelection = false;
@@ -206,6 +208,8 @@ export function _closeFindBar() {
   document.body.classList.remove('doc-find-active');
   _clearRichFindHighlights();
   _findMatches = [];
+  _findMatchRanges = [];
+  _findMatchQuery = '';
   _findIdx = -1;
   const cnt = document.getElementById('doc-find-count');
   if (cnt) cnt.textContent = '';
@@ -320,7 +324,7 @@ export function _doFind(dir, focusTextarea) {
   const rich = _emailRichbodyActive();
   const ta = _getTextarea();
   if (!q) {
-    _findMatches = []; _findIdx = -1;
+    _findMatches = []; _findMatchRanges = []; _findMatchQuery = ''; _findIdx = -1;
     _clearRichFindHighlights();
     if (cnt) cnt.textContent = '';
     if (codeEl) { delete codeEl.dataset.findQuery; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
@@ -362,6 +366,8 @@ export function _doFind(dir, focusTextarea) {
     pos = i + Math.max(1, q.length);
   }
   if (_findMatches.length === 0) {
+    _findMatchRanges = [];
+    _findMatchQuery = q;
     _findIdx = -1;
     if (cnt) cnt.textContent = '0 results';
     if (codeEl) { codeEl.dataset.findQuery = q; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
@@ -388,7 +394,9 @@ export function _doFind(dir, focusTextarea) {
     codeEl.dataset.findCurrent = String(_findIdx);
     applyFindMarks(codeEl);
   }
-  renderFindRects(_findMatches.map(s => [s, s + q.length]), _findIdx);
+  _findMatchQuery = q;
+  _findMatchRanges = _findMatches.map(s => [s, s + q.length]);
+  renderFindRects(_findMatchRanges, _findIdx);
   if (focusTextarea) ta.focus();
 }
 
@@ -439,24 +447,39 @@ export function applyFindMarks(codeEl) {
  * in one layout pass without thrashing scrollHeight on every match.
  * Updates DOM rects in place on scroll and match changes.
  */
+function _sameMatchRanges(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i][0] !== b[i][0] || a[i][1] !== b[i][1]) return false;
+  }
+  return true;
+}
+
 export function renderFindRects(matches, currentIdx) {
   const wrap = _getWrap();
   if (!wrap) return;
-  if (!matches || matches.length === 0) {
+  const clearExistingRects = () => {
     wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
+    const existingMirror = document.getElementById('doc-find-rect-mirror');
+    if (existingMirror) existingMirror._findCache = null;
+  };
+  if (!matches || matches.length === 0) {
+    clearExistingRects();
     return;
   }
   const textarea = _getTextarea();
   if (!textarea) return;
   const text = textarea.value;
   if (!text) {
-    wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
+    clearExistingRects();
     return;
   }
   const style = getComputedStyle(textarea);
   const paddingTop = parseFloat(style.paddingTop) || 10;
   const paddingLeft = parseFloat(style.paddingLeft) || 48;
   const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
+  const wrapMode = textarea.wrap === 'off' ? 'off' : 'soft';
 
   let mirror = document.getElementById('doc-find-rect-mirror');
   if (!mirror) {
@@ -476,15 +499,28 @@ export function renderFindRects(matches, currentIdx) {
     cache &&
     cache.text === text &&
     cache.clientWidth === clientWidth &&
-    cache.matches === matches &&
+    cache.wrapMode === wrapMode &&
+    cache.whiteSpace === style.whiteSpace &&
+    cache.font === style.font &&
+    cache.fontFamily === style.fontFamily &&
+    cache.fontSize === style.fontSize &&
     cache.lineHeight === lineHeight &&
-    cache.paddingTop === paddingTop
+    cache.rawLineHeight === style.lineHeight &&
+    cache.padding === style.padding &&
+    cache.paddingTop === paddingTop &&
+    cache.paddingLeft === paddingLeft &&
+    cache.borderWidth === style.borderWidth &&
+    cache.tabSize === style.tabSize &&
+    cache.letterSpacing === style.letterSpacing &&
+    cache.wordSpacing === style.wordSpacing &&
+    cache.textIndent === style.textIndent &&
+    _sameMatchRanges(cache.matches, matches)
   ) {
     rowData = cache.rows;
   } else {
-    mirror.style.whiteSpace = textarea.wrap === 'off' ? 'pre' : 'pre-wrap';
-    mirror.style.wordWrap = textarea.wrap === 'off' ? 'normal' : 'break-word';
-    mirror.style.overflowWrap = textarea.wrap === 'off' ? 'normal' : 'break-word';
+    mirror.style.whiteSpace = wrapMode === 'off' ? 'pre' : 'pre-wrap';
+    mirror.style.wordWrap = wrapMode === 'off' ? 'normal' : 'break-word';
+    mirror.style.overflowWrap = wrapMode === 'off' ? 'normal' : 'break-word';
     mirror.style.font = style.font;
     mirror.style.padding = style.padding;
     mirror.style.borderWidth = style.borderWidth;
@@ -499,7 +535,7 @@ export function renderFindRects(matches, currentIdx) {
     mirror.textContent = text;
     const textNode = mirror.firstChild;
     if (!textNode) {
-      wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
+      clearExistingRects();
       return;
     }
 
@@ -526,7 +562,28 @@ export function renderFindRects(matches, currentIdx) {
       rowData[i] = [visualRowStart, rowCount];
     }
 
-    mirror._findCache = { text, clientWidth, matches, rows: rowData, lineHeight, paddingTop };
+    mirror._findLayoutRecomputes = (mirror._findLayoutRecomputes || 0) + 1;
+    mirror._findCache = {
+      text,
+      clientWidth,
+      wrapMode,
+      whiteSpace: style.whiteSpace,
+      font: style.font,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      lineHeight,
+      rawLineHeight: style.lineHeight,
+      padding: style.padding,
+      paddingTop,
+      paddingLeft,
+      borderWidth: style.borderWidth,
+      tabSize: style.tabSize,
+      letterSpacing: style.letterSpacing,
+      wordSpacing: style.wordSpacing,
+      textIndent: style.textIndent,
+      matches,
+      rows: rowData,
+    };
   }
 
   const existingRects = wrap.querySelectorAll('.doc-find-rect');
@@ -536,6 +593,7 @@ export function renderFindRects(matches, currentIdx) {
       const top = paddingTop + rowStart * lineHeight - scrollTop;
       const height = count * lineHeight;
       const rect = existingRects[i];
+      rect.style.left = paddingLeft + 'px';
       rect.style.top = top + 'px';
       rect.style.height = height + 'px';
       const isCurrent = i === currentIdx;
@@ -565,7 +623,12 @@ export function renderFindRects(matches, currentIdx) {
 export function onFindTextareaScroll() {
   if (_findMatches && _findMatches.length) {
     const _q = document.getElementById('doc-find-input')?.value || '';
-    if (_q) renderFindRects(_findMatches.map(s => [s, s + _q.length]), _findIdx);
+    if (!_q) return;
+    if (_findMatchQuery !== _q || _findMatchRanges.length !== _findMatches.length) {
+      _findMatchQuery = _q;
+      _findMatchRanges = _findMatches.map(s => [s, s + _q.length]);
+    }
+    renderFindRects(_findMatchRanges, _findIdx);
   }
 }
 
@@ -589,8 +652,19 @@ export function getFindIndex() {
   return _findIdx;
 }
 
+let _findResizeObserver = null;
+
 export function initFindReplace(options = {}) {
   _deps = { ...options };
+
+  const ta = _getTextarea();
+  if (ta && typeof ResizeObserver !== 'undefined') {
+    if (_findResizeObserver) _findResizeObserver.disconnect();
+    _findResizeObserver = new ResizeObserver(() => {
+      if (_findMatches && _findMatches.length) onFindTextareaScroll();
+    });
+    _findResizeObserver.observe(ta);
+  }
 
   document.getElementById('doc-find-close')?.addEventListener('click', _closeFindBar);
   document.getElementById('doc-find-next')?.addEventListener('click', () => _doFind('next', true));

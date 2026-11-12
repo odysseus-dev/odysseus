@@ -425,7 +425,7 @@ def test_multiple_suggestions_card_navigation_and_batch_queueing():
 
 
 def test_document_module_re_exports_suggestion_api():
-    """Verify documentModule retains public exports handleDocSuggestions, acceptSuggestion, dismissSuggestion, clearAllSuggestions."""
+    """Verify documentModule preserves handleDocSuggestions without leaking suggestion internals."""
     script = r"""
       import { chromium } from 'playwright';
 
@@ -435,6 +435,7 @@ def test_document_module_re_exports_suggestion_api():
 
       const result = await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=suggestions-verify-surface-1');
+        const sugg = await import('/static/js/document/suggestions.js');
         const def = mod.default;
         return {
           hasHandleDocSuggestionsNamed: typeof mod.handleDocSuggestions === 'function',
@@ -445,6 +446,13 @@ def test_document_module_re_exports_suggestion_api():
           hasAcceptSuggestionDefault: typeof def.acceptSuggestion === 'function',
           hasDismissSuggestionDefault: typeof def.dismissSuggestion === 'function',
           hasClearAllSuggestionsDefault: typeof def.clearAllSuggestions === 'function',
+          moduleExports: {
+            initSuggestions: typeof sugg.initSuggestions === 'function',
+            handleDocSuggestions: typeof sugg.handleDocSuggestions === 'function',
+            acceptSuggestion: typeof sugg.acceptSuggestion === 'function',
+            dismissSuggestion: typeof sugg.dismissSuggestion === 'function',
+            clearAllSuggestions: typeof sugg.clearAllSuggestions === 'function',
+          },
         };
       });
 
@@ -454,10 +462,11 @@ def test_document_module_re_exports_suggestion_api():
     data = _run_node_script(script)
 
     assert data["hasHandleDocSuggestionsNamed"] is True
-    assert data["hasAcceptSuggestionNamed"] is True
-    assert data["hasDismissSuggestionNamed"] is True
-    assert data["hasClearAllSuggestionsNamed"] is True
+    assert data["hasAcceptSuggestionNamed"] is False
+    assert data["hasDismissSuggestionNamed"] is False
+    assert data["hasClearAllSuggestionsNamed"] is False
     assert data["hasHandleDocSuggestionsDefault"] is True
-    assert data["hasAcceptSuggestionDefault"] is True
-    assert data["hasDismissSuggestionDefault"] is True
-    assert data["hasClearAllSuggestionsDefault"] is True
+    assert data["hasAcceptSuggestionDefault"] is False
+    assert data["hasDismissSuggestionDefault"] is False
+    assert data["hasClearAllSuggestionsDefault"] is False
+    assert all(data["moduleExports"].values())

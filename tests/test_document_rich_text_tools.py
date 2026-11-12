@@ -379,17 +379,16 @@ def test_header_history_controls_persist_rich_text_changes():
 
 
 def test_find_uses_dom_ranges_for_visible_rich_text():
-    find_section = DOC_JS.split("// ── In-document find (Ctrl+F) ──", 1)[1].split(
-        "// Delete (or Backspace)", 1
-    )[0]
+    rich_build = function_body("_buildRichFindRanges")
+    rich_render = function_body("_renderRichFindRanges")
+    do_find = function_body("_doFind")
 
-    assert "function _buildRichFindRanges" in find_section
-    assert "document.createTreeWalker(rich, NodeFilter.SHOW_TEXT)" in find_section
-    assert "document.createRange()" in find_section
-    assert "CSS.highlights.set(_richFindAllName" in find_section
-    assert "CSS.highlights.set(_richFindCurrentName" in find_section
-    assert "if (rich)" in find_section
-    assert find_section.index("if (rich)") < find_section.index("const text = ta.value")
+    assert "document.createTreeWalker(rich, NodeFilter.SHOW_TEXT)" in rich_build
+    assert "document.createRange()" in rich_build
+    assert "CSS.highlights.set(_richFindAllName" in rich_render
+    assert "CSS.highlights.set(_richFindCurrentName" in rich_render
+    assert "if (rich)" in do_find
+    assert do_find.index("if (rich)") < do_find.index("const text = ta.value")
 
 
 def test_rich_find_highlights_are_non_persistent_and_cleaned_up():

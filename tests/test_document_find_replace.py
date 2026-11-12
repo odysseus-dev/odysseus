@@ -56,7 +56,7 @@ def test_find_replace_functions_are_modularly_defined():
 
 
 def test_render_find_rects_performance_improvement():
-    """Verify that batched renderFindRects achieves significant speedup over baseline."""
+    """Verify deployed renderFindRects performance and real scroll cache reuse."""
     script = r"""
       import { runBenchmark } from './tests/benchmark_document_find_replace.mjs';
       const results = await runBenchmark();
@@ -67,12 +67,14 @@ def test_render_find_rects_performance_improvement():
     assert data["matches"] == 100
     assert data["baselineCount"] == 100
     assert data["optimizedCount"] == 100
-    # The optimized implementation should finish in well under 30ms (usually 2-8ms),
-    # significantly faster than the unbatched baseline loop (typically 100-300ms).
-    assert data["optimizedInitialMs"] < 35.0
-    assert data["avgScrollMs"] < 5.0
+    assert data["deployedInitialMs"] < 50.0
+    assert data["avgCachedScrollMs"] < 5.0
     assert data["avgNavMs"] < 5.0
-    assert data["baselineMs"] > data["optimizedInitialMs"]
+    assert data["baselineMs"] > data["deployedInitialMs"]
+    assert data["recomputesAfterFind"] == 1
+    assert data["recomputesAfterCachedScroll"] == data["recomputesBeforeCachedScroll"]
+    assert data["recomputesAfterNav"] == data["recomputesAfterCachedScroll"]
+    assert data["cachedScrollDeltaError"] < 1.0
 
 
 def test_wrapped_text_highlight_positioning_accuracy():
@@ -330,3 +332,218 @@ def test_find_and_replace_lifecycle_in_editor():
     assert data["barDisplayAfterEsc"] == "none"
     assert data["rectsAfterClose"] == 0
 
+
+def test_find_scroll_cache_reuse_and_layout_invalidation():
+    """Verify real scroll events reuse geometry cache while layout/style/query edits invalidate it."""
+    script = r"""
+      import { chromium } from 'playwright';
+      const browser = await chromium.launch({ headless: true });
+      const page = await browser.newPage({ viewport: { width: 960, height: 720 } });
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
+      await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
+
+      await page.evaluate(async () => {
+        const mod = await import('/static/js/document.js?v=cache-invalidation-test-1');
+        mod.init('/api');
+        const longPara = 'longword '.repeat(28) + 'alpha_tok ' + 'fillerword '.repeat(24) + 'delta_tok ';
+        const rows = [];
+        for (let i = 0; i < 60; i++) {
+          rows.push(`L${i}: ${longPara}`);
+        }
+        mod.injectFreshDoc({
+          id: 'cache-find-doc',
+          title: 'Cache Invalidation',
+          language: 'plain',
+          current_content: rows.join('\n'),
+          version_count: 1,
+        });
+        await new Promise(r => setTimeout(r, 250));
+        const ta = document.getElementById('doc-editor-textarea');
+        ta.style.width = '360px';
+        ta.focus();
+      });
+
+      await page.keyboard.press('Control+f');
+      await page.locator('#doc-find-input').fill('alpha_tok');
+
+      const snap = async () => await page.evaluate(() => {
+        const mirror = document.getElementById('doc-find-rect-mirror');
+        const rects = Array.from(document.querySelectorAll('.doc-find-rect')).map(el => ({
+          top: parseFloat(el.style.top),
+          left: parseFloat(el.style.left),
+          height: parseFloat(el.style.height),
+        }));
+        return {
+          recomputes: mirror?._findLayoutRecomputes || 0,
+          count: rects.length,
+          firstTop: rects[0]?.top ?? null,
+          secondTop: rects[1]?.top ?? null,
+          lastTop: rects[rects.length - 1]?.top ?? null,
+        };
+      });
+
+      const afterInitialFind = await snap();
+
+      // Real scroll events must reuse the cached layout rows (0 extra recomputes)
+      const afterScrolls = await page.evaluate(async () => {
+        const ta = document.getElementById('doc-editor-textarea');
+        const startTop = ta.scrollTop;
+        for (const offset of [40, 120, 260, 400]) {
+          ta.scrollTop = startTop + offset;
+          ta.dispatchEvent(new Event('scroll'));
+        }
+        await new Promise(r => setTimeout(r, 20));
+        const mirror = document.getElementById('doc-find-rect-mirror');
+        const firstRectTop = parseFloat(document.querySelector('.doc-find-rect').style.top);
+        return {
+          recomputes: mirror?._findLayoutRecomputes || 0,
+          delta: ta.scrollTop - startTop,
+          firstRectTop,
+        };
+      });
+
+      // 1. Font change invalidates cache
+      await page.evaluate(() => {
+        const ta = document.getElementById('doc-editor-textarea');
+        ta.style.fontSize = '19px';
+        ta.style.lineHeight = '30px';
+        ta.style.fontFamily = 'Georgia, serif';
+        ta.dispatchEvent(new Event('scroll'));
+      });
+      const afterFontChange = await snap();
+
+      // 2. Wrap mode change invalidates cache (soft -> off)
+      await page.evaluate(() => {
+        const ta = document.getElementById('doc-editor-textarea');
+        ta.wrap = 'off';
+        ta.style.whiteSpace = 'pre';
+        ta.dispatchEvent(new Event('scroll'));
+      });
+      const afterWrapOff = await snap();
+
+      // Restore wrapping & narrow container width (ResizeObserver + scroll)
+      await page.evaluate(async () => {
+        const ta = document.getElementById('doc-editor-textarea');
+        const wrap = document.getElementById('doc-editor-wrap');
+        ta.wrap = 'soft';
+        ta.style.whiteSpace = 'pre-wrap';
+        ta.style.width = '220px';
+        if (wrap) wrap.style.width = '220px';
+        await new Promise(r => setTimeout(r, 120));
+        ta.dispatchEvent(new Event('scroll'));
+      });
+      const afterNarrowResize = await snap();
+
+      // 3. Query change with equal match count ('alpha_tok' -> 'delta_tok') invalidates cache
+      await page.locator('#doc-find-input').fill('delta_tok');
+      const afterQueryChange = await snap();
+
+      // 4. Text edit + refresh find invalidates cache
+      await page.evaluate(() => {
+        const ta = document.getElementById('doc-editor-textarea');
+        ta.value = '\n\n\n' + ta.value;
+      });
+      await page.keyboard.press('Enter');
+      const afterTextShift = await snap();
+
+      console.log(JSON.stringify({
+        afterInitialFind,
+        afterScrolls,
+        afterFontChange,
+        afterWrapOff,
+        afterNarrowResize,
+        afterQueryChange,
+        afterTextShift,
+      }));
+      await browser.close();
+    """
+    script = script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
+    data = _run_node_script(script)
+
+    init_recomputes = data["afterInitialFind"]["recomputes"]
+    assert init_recomputes == 1
+    assert data["afterInitialFind"]["count"] == 60
+    assert data["afterScrolls"]["recomputes"] == init_recomputes
+    assert abs((data["afterInitialFind"]["firstTop"] - data["afterScrolls"]["firstRectTop"]) - data["afterScrolls"]["delta"]) < 1.0
+    assert data["afterFontChange"]["recomputes"] > data["afterScrolls"]["recomputes"]
+    assert data["afterWrapOff"]["recomputes"] > data["afterFontChange"]["recomputes"]
+    assert data["afterWrapOff"]["lastTop"] < data["afterFontChange"]["lastTop"]
+    assert data["afterNarrowResize"]["recomputes"] > data["afterWrapOff"]["recomputes"]
+    assert data["afterNarrowResize"]["lastTop"] > data["afterWrapOff"]["lastTop"]
+    assert data["afterQueryChange"]["recomputes"] > data["afterNarrowResize"]["recomputes"]
+    assert data["afterQueryChange"]["firstTop"] > data["afterNarrowResize"]["firstTop"]
+    assert data["afterTextShift"]["recomputes"] > data["afterQueryChange"]["recomputes"]
+    assert data["afterTextShift"]["firstTop"] > data["afterQueryChange"]["firstTop"]
+
+
+def test_find_many_matches_narrow_layout_and_long_lines():
+    """Verify accuracy with 250 matches across long wrapped lines in narrow layout."""
+    script = r"""
+      import { chromium } from 'playwright';
+      const browser = await chromium.launch({ headless: true });
+      const page = await browser.newPage({ viewport: { width: 640, height: 640 } });
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js`);
+      await page.setContent(`
+        <style>
+          #doc-editor-wrap { position: relative; width: 220px; height: 260px; overflow: hidden; }
+          #doc-editor-textarea {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            box-sizing: border-box; font-family: monospace; font-size: 12px;
+            line-height: 18px; padding: 10px 8px 10px 36px; overflow-y: scroll; border: 0;
+          }
+          .doc-find-rect { position: absolute; left: 36px; right: 8px; }
+        </style>
+        <div id="doc-find-bar" style="display:none;"><input id="doc-find-input" /><span id="doc-find-count"></span></div>
+        <div id="doc-editor-wrap"><textarea id="doc-editor-textarea"></textarea></div>
+      `);
+
+      const data = await page.evaluate(async () => {
+        const { initFindReplace, onFindTextareaScroll } = await import('/static/js/document/findReplace.js');
+        const ta = document.getElementById('doc-editor-textarea');
+        const wrap = document.getElementById('doc-editor-wrap');
+        const inp = document.getElementById('doc-find-input');
+        initFindReplace({});
+        ta.addEventListener('scroll', () => onFindTextareaScroll());
+
+        const chunks = [];
+        for (let i = 0; i < 125; i++) {
+          chunks.push(`Row${i} tokenA ` + 'wrappedword '.repeat(14) + 'tokenA end.');
+        }
+        ta.value = chunks.join('\n');
+        inp.value = 'tokenA';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const initialCount = wrap.querySelectorAll('.doc-find-rect').length;
+        const mirror = document.getElementById('doc-find-rect-mirror');
+        const recomputesInitial = mirror?._findLayoutRecomputes || 0;
+        const firstPairGap =
+          parseFloat(wrap.querySelectorAll('.doc-find-rect')[1].style.top) -
+          parseFloat(wrap.querySelectorAll('.doc-find-rect')[0].style.top);
+
+        // Scroll partway down via real scroll events and ensure cache hit + shifted rects
+        const beforeTop0 = parseFloat(wrap.querySelectorAll('.doc-find-rect')[0].style.top);
+        const startScroll = ta.scrollTop;
+        for (const s of [100, 300, 600]) {
+          ta.scrollTop = s;
+          ta.dispatchEvent(new Event('scroll'));
+        }
+        const afterTop0 = parseFloat(wrap.querySelectorAll('.doc-find-rect')[0].style.top);
+        return {
+          initialCount,
+          recomputesInitial,
+          recomputesAfterScroll: mirror?._findLayoutRecomputes || 0,
+          firstPairGap,
+          scrollShift: beforeTop0 - afterTop0,
+          expectedShift: ta.scrollTop - startScroll,
+        };
+      });
+
+      console.log(JSON.stringify(data));
+      await browser.close();
+    """
+    data = _run_node_script(script)
+    assert data["initialCount"] == 250
+    assert data["recomputesInitial"] == 1
+    assert data["recomputesAfterScroll"] == 1
+    assert data["firstPairGap"] >= 36.0
+    assert abs(data["scrollShift"] - data["expectedShift"]) < 1.0
