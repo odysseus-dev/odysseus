@@ -1,62 +1,48 @@
-# Wiki Steward (built in isolation; nothing installed, nothing deployed)
+# Wiki Steward: integration status and activation (isolated; nothing live)
 
-One private Git-backed wiki (`F:\Projects\Odysseus-Wiki`, to be created with `wiki.py init`), one steward, many agents, one write path.
+Branch `feature/wiki-steward`. Production, live agent configs, and the real wiki folder are untouched.
 
-## Architecture
+## Verification model (code: `src/wiki_steward.py`)
 
-- **`src/wiki_steward.py`**: stdlib + git, no daemon, no LLM. All writes go through one transaction: lock file, refuse if the wiki has out-of-band changes, write, append a hash-chained audit line, one commit authored `wiki-steward` with `Wiki-Steward:` and `Wiki-Actor:` trailers. Any failure resets the tree. Reads take no lock and no commit.
-- **Entry points** (same library): `scripts/wiki_mcp.py` (stdio MCP server, started by the agent's own client for the length of its session) and `scripts/wiki.py call <method>` (shell). Hermes (`mcp_servers`), Claude Code and Codex all support stdio MCP, so no per-agent code. Identity comes from `WIKI_AGENT` in that agent's MCP entry, not from tool arguments (tested).
-- **Reasoning model**: not part of the library. The "Wiki Bot" is a Hermes profile `wiki-bot` that has only the wiki tools. It is started on demand (Webapp session or `delegate_task`) when `wiki_conflicts` lists work that needs judgement. It cannot promote by assertion: it can only call `wiki_verify` with *new evidence* (commit, or file + expected text), which the library re-checks mechanically.
-
-## Data model (files, one record each, so concurrent writers rarely touch the same file)
-
-`claims/<project>/<id>.md`, `tasks/<project>/<id>.md`, `handoffs/<agent>/<id>.md`, `state/cursors/`, `audit/audit.jsonl`, `steward.json` (projects -> source repo, agents -> allowed projects and operations, reviewers). Each record is a JSON header plus the human text. A claim records source agents, project, status, evidence with check results, `verified_commit`, `verified_at`, and the watched files with their Git blob ids.
-
-## Operations
-
-| Wanted | Method | Cost |
+| Grade | What establishes it | Never |
 |---|---|---|
-| `wiki.search` | BM25 over verified claims, project-scoped, freshness computed live | no LLM, about 135 ms for 300 claims (measured) |
-| `wiki.propose` | secret scan, dedupe (exact or near-duplicate with the same subject), conflict check, mechanical verification, then promote / hold | one commit, about 0.4 s |
-| `wiki.verify` | re-run checks, optionally add evidence | no LLM |
-| `wiki.record_task` / `sync` | idempotent task log; `sync` turns new source commits into task logs | no LLM |
-| `wiki.handoff` / `inbox` / `ack` | handoff record carries the stale/conflicting/needs-review claims at that moment | no LLM |
-| `wiki.status` | claim counts, verified facts, stale ids, recent tasks, open handoffs | no LLM |
-| `wiki.conflicts` | contradictions, outdated, needs-review, unverified, and *possible* contradictions (similar text, one negated; a candidate for the reasoning bot) | no LLM |
+| behavior-tested | a test **defined by a reviewer in `steward.json`** (argv, project, subjects, watched paths) runs at the source repo's HEAD in a scratch copy, exits 0, and is bound to the claim's `subject` | the agent cannot supply or alter the command |
+| source-confirmed | `scope: source`; a file at HEAD contains the quoted text (4+ chars) **and the claim names that file**; or a commit that touched a named file and is named in the claim | general claims; bare commits; file existence without quoted text |
+| externally-verified | `scope: external`; the quote is found on N distinct reviewer-allow-listed https hosts (no redirects, public addresses only); expires after `ttl_days` | one source; unlisted hosts; http |
+| attested | everything else, including any claim backed only by a reachable commit | cannot become verified without a reviewer |
+| stale | derived: a watched file changed, or the external check expired | cannot be revived by its old evidence |
 
-## Promotion rules (code, tested)
+Sensitive wording, any non-`fact` kind (decision, security, policy, architecture) -> `needs-review`; only a reviewer accepts. A reviewer-accepted attested claim stays labelled "ACCEPTED BY REVIEWER ... not independently verified".
 
-- **Verified automatically**: kind `fact`, at least one mechanical evidence item passes (a commit that exists and is reachable from HEAD, or a file at HEAD that exists and contains the expected text), none fails, not sensitive, no conflict.
-- **Needs review**: any kind other than `fact` (decision, security, policy, architecture), or sensitive wording or watched path (security, permission, auth, credential, token, approval, sandbox, grant, revoke, policy). Only a reviewer can accept.
-- **Conflict**: another live claim with the same project and subject and different text. It never displaces the existing one, even with mechanical evidence. Resolution: a reviewer, or the wiki bot if the claim is non-sensitive, has mechanical evidence, and every claim it conflicts with is **stale**.
-- **Provisional**: no mechanical evidence (notes, attestations) or failing evidence. Never returned as verified; shown only with `include_provisional` and labelled NOT VERIFIED.
-- Rejected before storage: text that looks like a credential; evidence paths that are absolute, contain `..`, or name `.env`, keys, `auth.json`, vault and similar.
+## Reconciliation (`wiki_reconcile`, and automatically at MCP session start)
 
-## Freshness (the recommended extra)
+Mechanical, no LLM. Reports unrecorded commits, late/incomplete tasks without handoff, stale knowledge, unresolved conflicts, proposals waiting for verification, claims waiting for a test run, and what needs the reasoning bot. With `repair=true` it syncs commits, marks overdue open tasks `interrupted`, writes one idempotent handoff per task (even if two sessions race), and re-verifies waiting mechanical claims. Agents bracket work with `wiki_begin` / `wiki_record_task(task_id)`; a session that dies in between is recovered by the next session's startup pass.
 
-When a claim is verified the steward records the Git blob id of each watched file at HEAD (files named in file-evidence, `watch_paths`, or by default the files the evidence commit changed). Search, status, conflicts and handoffs compare against the current HEAD: a changed or deleted file makes the entry **stale** and every result says so. `recheck` can refresh an entry only when content-bound evidence still holds (the file still contains the expected text). A claim backed only by a commit ("fixed at abc123") cannot be re-proven mechanically, so it becomes `stale` and goes to the reasoning bot or a reviewer. Tested: the cookbook-fix example, including a conflicting newer claim replacing the stale one.
+## Real-client tests (`tests/wiki_steward/real_clients/`)
 
-## How agents invoke it, and automatic end-of-task updates
+Isolated per invocation, no global config touched: Claude Code `--mcp-config <temp> --strict-mcp-config --no-session-persistence`; Codex `-c mcp_servers.wiki.*` overrides + `--ephemeral` + read-only sandbox; Hermes' own MCP client (`tools.mcp_tool_discovery`) in-process with a throwaway `HERMES_HOME`.
 
-- **Hermes / Claude Code / Codex**: add one MCP entry per agent (`command: python scripts/wiki_mcp.py`, env `WIKI_ROOT`, `WIKI_AGENT=<name>`). Tools: `wiki_search`, `wiki_propose`, `wiki_verify`, `wiki_record_task`, `wiki_sync`, `wiki_handoff`, `wiki_status`, `wiki_conflicts`, `wiki_inbox`, `wiki_ack`. Reviewer operations are not exposed.
-- **End of task, no LLM and no daemon**: the instruction file each agent already reads (CLAUDE.md / AGENTS.md / the Hermes skill) says "finish with `wiki_sync`, then `wiki_record_task` if the summary adds something". `sync` is idempotent and derives the log from Git, so it also works from a Claude Code `Stop` hook, a Codex `notify` command, or a post-commit hook in a project repository, but installing any of those changes an agent setting or a project repository and needs your approval. The pinned Hermes has no session-end hook (only `post_tool_call` and the LLM/stream hooks), so for Hermes the instruction plus `wiki_sync` is the mechanism.
-- **Start of task**: `wiki_inbox`, `wiki_status`, `wiki_search`. Handoffs show what is stale or contested so a new agent does not trust it blindly.
+| Client | Result |
+|---|---|
+| Claude Code 2.1.317 (haiku) | PASS: all 8 prompted steps; claim graded source-confirmed; conflicting note held as conflict; wrong-project write refused; `wiki_decide` absent; task begun and completed; audit actor `claude-code` |
+| Hermes (pinned release, stdio) | PASS: 12 tools registered as `mcp__wiki__*`; same steps; `agent` argument override refused; actor `hermes-preview` |
+| Claude Code + Hermes at once | PASS: one wiki, no corruption, integrity clean, contradiction between the two detected |
+| 6 raw MCP processes at once | PASS: all 5 replies each, no stderr |
+| Codex 0.167.0 | NOT TESTED: its stored login fails ("refresh token was already used") before any tool call; it needs `codex login` by the user. Wiring (`-c mcp_servers.*`) is prepared but unproven. |
 
-## Tested (15 tests, `tests/wiki_steward/`; plus mutation checks)
+Defects found by the real clients and fixed: a missing or corrupt `steward.json` crashed the MCP server (Hermes then reports "lost its stdio subprocess"); now every call fails closed with a message and the server stays up. Separately my harness had resolved a rootless path differently per process (test-harness bug, not product).
 
-Two simulated agents submitting conflicting claims (verified claim vs. note-only claim vs. mechanically evidenced claim); freshness after a code change; recheck limits; bot resolving a conflict only when the old claim is stale; sensitive claims needing review and agents unable to promote; unverifiable and bad evidence; secrets refused with nothing written; deduplication; authorization and project scoping; task, sync, handoff, inbox, ack; out-of-band edit blocks writes until a reviewer adopts it; a foreign commit is detected; 8 concurrent writers; a failed write leaves no trace and revert is reversible; CLI and MCP entry points (unknown tool and an `agent` argument are refused). Mutation checks: removing the freshness, conflict, secret-scan or clean-tree rule each makes a specific test fail. Not tested: real Hermes/Claude/Codex clients speaking to the MCP server, Windows paths with Btrfs, very large wikis (hundreds of thousands of claims would need a persisted index).
+## Trust boundary (explicit)
 
-## Limits (stated plainly)
+- Intended write path: only the steward process. Agents reach it through MCP tools that cannot decide, adopt, revert, or set their identity.
+- **Same-user terminal access is outside this boundary.** An agent that can run shell commands as you can edit files in the wiki folder, run `git` there, or run reviewer commands through a pseudo-terminal. Mitigations that exist: the folder must not be in any agent's write roots, `integrity` flags uncommitted edits and commits not authored by the steward, a dirty wiki blocks all further writes, the audit log is hash-chained. A separate Windows account (or a sandbox) is the only real boundary.
+- Wiki content returned to agents is labelled untrusted data.
+- Do not add the wiki folder to the managed gateway's write roots. Under the runtime-grants design the wiki is never a project grant; only the steward writes it.
 
-1. **Same-user limit.** An agent with a terminal runs as you and could edit the wiki folder or run reviewer commands in a pseudo-terminal. The design makes that visible, not impossible: the folder must not be in any agent's write roots (it will not be, under the workspace-grant design), `integrity` flags uncommitted edits and commits not made by the steward, a dirty wiki blocks all further writes, the audit chain is hash-linked, and reviewer commands refuse without a terminal. A separate Windows account would be the real boundary.
-2. Agent identity is attested through the MCP entry, not authenticated.
-3. `test` evidence is not run by the steward in this version: it is accepted as attestation (the claim stays provisional unless commit or file evidence also passes). Running allow-listed test commands is a possible later step.
-4. Claims that need judgement are only queued, so the wiki bot must be started (by you or an agent) to process them.
-5. The wiki and the source repos stay separate: the steward only reads the source repos named in `steward.json`, with `git` read commands, and writes only to its own folder. No remote, no push.
+## Activation (needs your approval for each; none done)
 
-## To use it (needs your approval; none done)
-
-1. Create `F:\Projects\Odysseus-Wiki` (it must be a writable root for the steward process only), `python scripts/wiki.py --root <that> init`, edit `steward.json`, `adopt`.
-2. Add the MCP entries per agent (this changes agent configuration).
-3. Add the end-of-task lines to the instruction files.
-4. Create the `wiki-bot` Hermes profile.
+1. Create the folder yourself (the file tool refuses the path): `New-Item -ItemType Directory F:\Projects\Odysseus-Wiki` in PowerShell, then `python scripts\wiki.py --root F:\Projects\Odysseus-Wiki init`, edit `steward.json` (projects -> repo paths, agents, `tests`, `external.hosts`), then `adopt "configure"` in a terminal.
+2. Add one MCP entry per agent (Hermes `mcp_servers.wiki`, Claude Code `.mcp.json`/`claude mcp add`, Codex `[mcp_servers.wiki]`), each with its own `WIKI_AGENT`.
+3. Add the begin / sync / record_task lines to each agent's instruction file.
+4. Create the `wiki-bot` Hermes profile (only wiki tools).
+5. Re-run Codex after `codex login`.

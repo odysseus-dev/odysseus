@@ -180,7 +180,10 @@ class Wiki:
 
     @property
     def config(self):
-        return json.loads((self.root / 'steward.json').read_text(encoding='utf-8'))
+        try:
+            return json.loads((self.root / 'steward.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            raise WikiError('wiki configuration is unreadable (%s); refusing every operation' % type(exc).__name__)
 
     def _agent(self, agent, cap, project=None):
         spec = (self.config.get('agents') or {}).get(agent)

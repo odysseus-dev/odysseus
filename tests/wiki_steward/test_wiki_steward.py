@@ -440,6 +440,20 @@ def test_mcp_surface_identity_and_untrusted_data(env):
     assert wiki._get(text(replies[8])['id'])['agents'] == ['longcat'], 'identity comes from the server configuration only'
 
 
+def test_mcp_server_survives_an_unreadable_or_broken_wiki(env, tmp_path):
+    wiki, repo, fix = env
+    init = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}}
+    probes = [call(2, 'wiki_status', {'project': 'odysseus'}), call(3, 'wiki_propose', {'claim': 'A claim that is long enough.', 'project': 'odysseus', 'evidence': []}),
+              call(4, 'wiki_search', {'query': 'x'}), {'jsonrpc': '2.0', 'id': 5, 'method': 'ping'}]
+    missing = rpc(tmp_path / 'no-such-wiki', 'sonnet', [init] + probes)
+    assert set(missing) == {1, 2, 3, 4, 5}, 'the server must answer every request instead of dying'
+    assert all(missing[i]['result']['isError'] for i in (2, 3, 4)) and 'unreadable' in json.dumps(missing[2])
+    (wiki.root / 'steward.json').write_text('{ not json', encoding='utf-8')
+    corrupt = rpc(wiki.root, 'sonnet', [init] + probes)
+    assert set(corrupt) == {1, 2, 3, 4, 5} and all(corrupt[i]['result']['isError'] for i in (2, 3, 4)), 'a corrupt config fails closed, not open'
+    assert wiki._claims('odysseus') == []
+
+
 def test_mcp_permission_failures_and_startup_recovery(env):
     wiki, repo, fix = env
     commit(repo, 'x.txt', '1', 'A change nobody recorded')
