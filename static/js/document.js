@@ -109,6 +109,29 @@ import {
   _pdfLastFontSize,
   initPdfTools,
 } from './document/pdfTools.js';
+import {
+  _richSelectionCell,
+  _focusRichTableCell,
+  _replaceRichTableCellTag,
+  _richTableHeaderModes,
+  _applyRichTableHeaderModes,
+  _replaceRichTable,
+  _appendRichTableRow,
+  _appendRichTableColumn,
+  _deleteRichTableRow,
+  _deleteRichTableColumn,
+  _insertRichTable,
+  _richTableCellHasContent,
+  _richTableCanMergeRight,
+  _richTableCanMergeDown,
+  _richTableCanSplitCell,
+  _mergeRichTableCellRight,
+  _mergeRichTableCellDown,
+  _splitRichTableCell,
+  _setRichTableCellAlignment,
+  _applyRichTableAction,
+  initRichTables,
+} from './document/richTables.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -7586,6 +7609,11 @@ import {
         getSpinnerModule: () => spinnerModule,
         getSignatureModule: () => signatureModule,
       });
+
+      // Rich Text Tables controller
+      initRichTables({
+        showToast: (msg) => uiModule?.showToast?.(msg),
+      });
       document.getElementById('doc-outline-toolbar-btn')?.addEventListener('click', _openDocumentOutline);
 
       // Intercept Ctrl+F on the editor pane
@@ -8052,262 +8080,6 @@ import {
     _syncEmailRichbody(rich);
     _scheduleEmailRichbodySave();
     rich._syncActive?.();
-  }
-
-  function _richSelectionCell(rich) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return null;
-    const range = selection.getRangeAt(0);
-    if (!rich.contains(range.commonAncestorContainer)) return null;
-    const node = range.startContainer;
-    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-    const cell = element?.closest?.('td, th');
-    return cell && rich.contains(cell) ? cell : null;
-  }
-
-  function _focusRichTableCell(rich, cell) {
-    if (!cell) return;
-    rich.focus();
-    const range = document.createRange();
-    range.selectNodeContents(cell);
-    range.collapse(true);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }
-
-  function _replaceRichTableCellTag(cell, tagName) {
-    if (!cell || cell.tagName.toLowerCase() === tagName) return cell;
-    const replacement = document.createElement(tagName);
-    for (const attr of Array.from(cell.attributes)) {
-      replacement.setAttribute(attr.name, attr.value);
-    }
-    replacement.innerHTML = cell.innerHTML;
-    cell.replaceWith(replacement);
-    return replacement;
-  }
-
-  function _richTableHeaderModes(table) {
-    const firstRow = table?.rows?.[0];
-    return {
-      headerRow: !!firstRow?.cells?.length && Array.from(firstRow.cells).every(item => item.tagName === 'TH'),
-      headerColumn: !!table?.rows?.length && Array.from(table.rows).every(row => row.cells[0]?.tagName === 'TH'),
-    };
-  }
-
-  function _applyRichTableHeaderModes(table, { headerRow, headerColumn }) {
-    Array.from(table?.rows || []).forEach((row, rowIndex) => {
-      Array.from(row.cells).forEach((cell, columnIndex) => {
-        const shouldBeHeader = (headerRow && rowIndex === 0) || (headerColumn && columnIndex === 0);
-        _replaceRichTableCellTag(cell, shouldBeHeader ? 'th' : 'td');
-      });
-    });
-  }
-
-  function _replaceRichTable(rich, original, replacement, targetRow = 0, targetCell = 0) {
-    const token = `doc-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    if (replacement) replacement.dataset.editorTableToken = token;
-    const range = document.createRange();
-    range.selectNode(original);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    const html = replacement ? replacement.outerHTML : '<p><br></p>';
-    const applied = document.execCommand('insertHTML', false, html);
-    if (!applied) return false;
-    if (!replacement) {
-      rich.focus();
-      return true;
-    }
-    const inserted = rich.querySelector(`[data-editor-table-token="${token}"]`);
-    if (!inserted) return false;
-    inserted.removeAttribute('data-editor-table-token');
-    const row = inserted.rows[Math.max(0, Math.min(targetRow, inserted.rows.length - 1))];
-    const cell = row?.cells[Math.max(0, Math.min(targetCell, row.cells.length - 1))];
-    _focusRichTableCell(rich, cell);
-    return true;
-  }
-
-  function _appendRichTableRow(rich, original) {
-    if (!original?.rows?.length) return false;
-    const clone = original.cloneNode(true);
-    const headerModes = _richTableHeaderModes(clone);
-    const lastRow = clone.rows[clone.rows.length - 1];
-    const columnCount = Math.max(1, lastRow?.cells.length || 1);
-    const row = clone.insertRow(-1);
-    for (let index = 0; index < columnCount; index++) {
-      row.insertCell(-1).innerHTML = '<br>';
-    }
-    _applyRichTableHeaderModes(clone, headerModes);
-    return _replaceRichTable(rich, original, clone, clone.rows.length - 1, 0);
-  }
-
-  function _insertRichTable(rich, rows, columns) {
-    const table = document.createElement('table');
-    const tbody = document.createElement('tbody');
-    table.appendChild(tbody);
-    for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
-      const row = document.createElement('tr');
-      for (let columnIndex = 0; columnIndex < columns; columnIndex++) {
-        const cell = document.createElement(rowIndex === 0 ? 'th' : 'td');
-        cell.innerHTML = '<br>';
-        row.appendChild(cell);
-      }
-      tbody.appendChild(row);
-    }
-    const token = `doc-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    table.dataset.editorTableToken = token;
-    document.execCommand('insertHTML', false, table.outerHTML + '<p><br></p>');
-    const inserted = rich.querySelector(`[data-editor-table-token="${token}"]`);
-    if (!inserted) return;
-    inserted.removeAttribute('data-editor-table-token');
-    _focusRichTableCell(rich, inserted.rows[0]?.cells[0]);
-  }
-
-  function _richTableCellHasContent(cell) {
-    return !!cell?.textContent?.trim() || !!cell?.querySelector?.('img, table, hr');
-  }
-
-  function _richTableCanMergeRight(cell) {
-    const right = cell?.nextElementSibling;
-    return !!right && right.matches('td, th') && cell.rowSpan === right.rowSpan;
-  }
-
-  function _richTableCanSplitCell(cell) {
-    return !!cell && cell.colSpan > 1;
-  }
-
-  function _mergeRichTableCellRight(cell) {
-    if (!_richTableCanMergeRight(cell)) return false;
-    const right = cell.nextElementSibling;
-    const leftHasContent = _richTableCellHasContent(cell);
-    const rightHasContent = _richTableCellHasContent(right);
-    if (!leftHasContent) cell.innerHTML = '';
-    if (leftHasContent && rightHasContent) cell.appendChild(document.createElement('br'));
-    if (rightHasContent) cell.append(...Array.from(right.childNodes));
-    if (!leftHasContent && !rightHasContent) cell.innerHTML = '<br>';
-    cell.colSpan += right.colSpan;
-    right.remove();
-    return true;
-  }
-
-  function _splitRichTableCell(cell) {
-    if (!_richTableCanSplitCell(cell)) return false;
-    const span = cell.colSpan;
-    const segments = Array.from({ length: span }, () => document.createDocumentFragment());
-    let segmentIndex = 0;
-    Array.from(cell.childNodes).forEach(node => {
-      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR' && segmentIndex < span - 1) {
-        segmentIndex += 1;
-        return;
-      }
-      segments[segmentIndex].appendChild(node);
-    });
-    const tagName = cell.tagName.toLowerCase();
-    const rowSpan = cell.rowSpan;
-    cell.colSpan = 1;
-    cell.innerHTML = '';
-    cell.appendChild(segments[0]);
-    if (!_richTableCellHasContent(cell)) cell.innerHTML = '<br>';
-    let previous = cell;
-    for (let index = 1; index < span; index++) {
-      const created = document.createElement(tagName);
-      created.rowSpan = rowSpan;
-      created.appendChild(segments[index]);
-      if (!_richTableCellHasContent(created)) created.innerHTML = '<br>';
-      previous.after(created);
-      previous = created;
-    }
-    return true;
-  }
-
-  function _applyRichTableAction(rich, action) {
-    const insert = action.match(/^table:insert:(\d+):(\d+)$/);
-    if (insert) {
-      _insertRichTable(rich, Number(insert[1]), Number(insert[2]));
-      return true;
-    }
-
-    const cell = _richSelectionCell(rich);
-    if (!cell) {
-      uiModule?.showToast?.('Place the cursor inside a table first');
-      return false;
-    }
-    const original = cell.closest('table');
-    const clone = original.cloneNode(true);
-    const headerModes = _richTableHeaderModes(clone);
-    const rowIndex = cell.parentElement.rowIndex;
-    const cellIndex = cell.cellIndex;
-    let targetRow = rowIndex;
-    let targetCell = cellIndex;
-
-    if (action === 'table:row-above' || action === 'table:row-below') {
-      const insertAt = rowIndex + (action.endsWith('below') ? 1 : 0);
-      const sourceRow = clone.rows[Math.min(rowIndex, clone.rows.length - 1)];
-      const row = clone.insertRow(insertAt);
-      const columnCount = Math.max(1, sourceRow?.cells.length || 1);
-      for (let i = 0; i < columnCount; i++) {
-        const newCell = document.createElement('td');
-        newCell.innerHTML = '<br>';
-        row.appendChild(newCell);
-      }
-      targetRow = insertAt;
-      targetCell = Math.min(cellIndex, columnCount - 1);
-    } else if (action === 'table:toggle-header-row') {
-      headerModes.headerRow = !headerModes.headerRow;
-    } else if (action === 'table:toggle-header-column') {
-      headerModes.headerColumn = !headerModes.headerColumn;
-    } else if (action === 'table:merge-right') {
-      const target = clone.rows[rowIndex]?.cells[cellIndex];
-      if (!_mergeRichTableCellRight(target)) return false;
-    } else if (action === 'table:split-cell') {
-      const target = clone.rows[rowIndex]?.cells[cellIndex];
-      if (!_splitRichTableCell(target)) return false;
-    } else if (action.startsWith('table:cell-align:')) {
-      const alignment = action.slice('table:cell-align:'.length);
-      if (!['top', 'middle', 'bottom'].includes(alignment)) return false;
-      const target = clone.rows[rowIndex]?.cells[cellIndex];
-      if (!target) return false;
-      if (alignment === 'top') target.style.removeProperty('vertical-align');
-      else target.style.verticalAlign = alignment;
-      if (!target.getAttribute('style')) target.removeAttribute('style');
-    } else if (action === 'table:column-left' || action === 'table:column-right') {
-      const insertAt = cellIndex + (action.endsWith('right') ? 1 : 0);
-      Array.from(clone.rows).forEach(row => {
-        const reference = row.cells[insertAt] || null;
-        const newCell = document.createElement('td');
-        newCell.innerHTML = '<br>';
-        row.insertBefore(newCell, reference);
-      });
-      targetCell = insertAt;
-    } else if (action === 'table:delete-row') {
-      if (clone.rows.length <= 1) {
-        _replaceRichTable(rich, original, null);
-        return true;
-      }
-      clone.deleteRow(rowIndex);
-      targetRow = Math.min(rowIndex, clone.rows.length - 1);
-      targetCell = Math.min(cellIndex, clone.rows[targetRow].cells.length - 1);
-    } else if (action === 'table:delete-column') {
-      const rowLengths = Array.from(clone.rows).map(row => row.cells.length);
-      const maxColumns = rowLengths.length ? Math.max(...rowLengths) : 0;
-      if (maxColumns <= 1) {
-        _replaceRichTable(rich, original, null);
-        return true;
-      }
-      Array.from(clone.rows).forEach(row => {
-        if (row.cells[cellIndex]) row.deleteCell(cellIndex);
-      });
-      targetCell = Math.max(0, Math.min(cellIndex, maxColumns - 2));
-    } else if (action === 'table:delete') {
-      _replaceRichTable(rich, original, null);
-      return true;
-    } else {
-      return false;
-    }
-
-    _applyRichTableHeaderModes(clone, headerModes);
-    return _replaceRichTable(rich, original, clone, targetRow, targetCell);
   }
 
   function _insertRichPageBreak(rich) {
