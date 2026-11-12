@@ -8,6 +8,8 @@ let _activeSuggestions = []; // [{ id, find, replace, reason, highlightEl, bubbl
 let _suggestionSelectionRange = null;
 let _suggestionTotal = 0;
 let _suggestionIndex = 0;
+let _suggestionDocId = null;
+let _suggestionGeneration = 0;
 
 let _deps = {};
 
@@ -132,11 +134,30 @@ function _saveSuggestionsToStorage(docId) {
   }
 }
 
+/** Release view resources while retaining the originating document's queue. */
+export function suspendSuggestions() {
+  if (_suggestionDocId) _saveSuggestionsToStorage(_suggestionDocId);
+  for (const suggestion of _activeSuggestions) {
+    suggestion.cardEl?._cleanup?.();
+    suggestion.cardEl?.remove?.();
+  }
+  _clearInlineDiff();
+  _clearSuggestionHighlight();
+  _activeSuggestions = [];
+  _suggestionTotal = 0;
+  _suggestionIndex = 0;
+  _suggestionDocId = null;
+  ++_suggestionGeneration;
+}
+
 /** Restore suggestions from localStorage for a doc */
 function _restoreSuggestionsFromStorage(docId) {
   try {
     const id = docId || _getActiveDocId();
     if (!id) return;
+    if (_suggestionDocId === id && _activeSuggestions.length) return;
+    if (_suggestionDocId !== id) suspendSuggestions();
+    _suggestionDocId = id;
     const storage = _getStorage();
     if (!storage) return;
     const raw = storage.getItem('odysseus-suggestions-' + id);
@@ -176,7 +197,10 @@ export async function handleDocSuggestions(data) {
   const openedPanel = !isOpen;
   if (openedPanel) openPanel();
   if (data.doc_id && data.doc_id !== activeDocId) {
-    if (!docs.has(data.doc_id)) await loadDocument(data.doc_id);
+    if (!docs.has(data.doc_id)) {
+      const activated = await loadDocument(data.doc_id);
+      if (activated === false) return;
+    }
     else switchToDoc(data.doc_id);
   } else if (data.doc_id && openedPanel && docs.has(data.doc_id)) {
     // openPanel creates a fresh editor shell. Rebind it even when the
@@ -184,12 +208,15 @@ export async function handleDocSuggestions(data) {
     // first autosave can overwrite the real document.
     switchToDoc(data.doc_id);
   }
-  if (data.doc_id && activeDocId !== data.doc_id) {
+  if (data.doc_id && _getActiveDocId() !== data.doc_id) {
     console.error('Could not activate suggestion document:', data.doc_id);
     if (uiModule) uiModule.showError('Could not open the document for these suggestions.');
     return;
   }
 
+  const targetDocId = data.doc_id || _getActiveDocId();
+  if (!targetDocId || !docs.has(targetDocId)) return;
+  if (_suggestionDocId !== targetDocId) _restoreSuggestionsFromStorage(targetDocId);
   const hadPending = _activeSuggestions.length > 0;
   const existingIds = new Set(_activeSuggestions.map(s => s.id));
   const existingFinds = new Set(_activeSuggestions.map(s => s.find));
@@ -211,7 +238,7 @@ export async function handleDocSuggestions(data) {
   }
   _suggestionTotal = (_suggestionTotal || 0) + added;
 
-  _saveSuggestionsToStorage(data.doc_id || activeDocId);
+  _saveSuggestionsToStorage(targetDocId);
 
   // If nothing was pending before, kick off the visual flow. Otherwise the
   // currently-shown suggestion stays on screen and the queue size update is
@@ -285,6 +312,7 @@ const _positionCard = (card, sugg = _activeSuggestions[0]) => {
 
   /** Render the current suggestion card (one at a time) + inline diff in document */
   function _showCurrentSuggestion() {
+    if (_suggestionDocId && _suggestionDocId !== _getActiveDocId()) return;
     const wrap = (typeof _getWrap === 'function' ? _getWrap() : null) || (typeof document !== 'undefined' ? document.getElementById('doc-editor-wrap') : null);
     const pane = (typeof _getPane === 'function' ? _getPane() : null) || (typeof document !== 'undefined' ? document.querySelector('.doc-editor-pane') : null);
     if (!wrap || !pane) return;
@@ -508,6 +536,7 @@ const _positionCard = (card, sugg = _activeSuggestions[0]) => {
 
   /** Apply exact suggestion matches to the active editor surface, then save once. */
   function _applySuggestions(suggestions) {
+    if (_suggestionDocId && _suggestionDocId !== _getActiveDocId()) return [];
     const activeDocId = _getActiveDocId();
     const docs = _getDocs();
     if (!activeDocId || !docs.has(activeDocId)) return [];
@@ -569,9 +598,10 @@ const _positionCard = (card, sugg = _activeSuggestions[0]) => {
       old.style.transition = 'opacity 0.15s, transform 0.15s';
       old.style.opacity = '0';
       old.style.transform = 'translateY(-10px)';
+      const generation = _suggestionGeneration;
       setTimeout(() => {
         old.remove();
-        _showCurrentSuggestion();
+        if (generation === _suggestionGeneration) _showCurrentSuggestion();
       }, 150);
     } else {
       _showCurrentSuggestion();

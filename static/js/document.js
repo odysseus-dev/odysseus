@@ -78,7 +78,7 @@ import {
 import {
   initSuggestions,
   handleDocSuggestions,
-  _activeSuggestions,
+  suspendSuggestions,
   _restoreSuggestionsFromStorage,
 } from './document/suggestions.js';
 import {
@@ -209,6 +209,7 @@ import {
   }
 
   // Multi-document state
+  let _documentNavigationGeneration = 0;
   let activeDocId = null;           // currently visible doc
   let _lastSessionId = '';          // session context for "+" button
   const docs = new Map();           // docId -> { id, title, language, content, version, sessionId }
@@ -5774,8 +5775,9 @@ import {
   }
 
   function switchToDoc(docId) {
-    _closeVersionPanel();
     if (!docs.has(docId)) return;
+    ++_documentNavigationGeneration;
+    _closeVersionPanel();
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
     _hideRichSlashMenu();
@@ -5956,9 +5958,7 @@ import {
     _scheduleDocumentStats();
 
     // Restore any persisted suggestions for this doc
-    if (_activeSuggestions.length === 0) {
-      _restoreSuggestionsFromStorage(docId);
-    }
+    _restoreSuggestionsFromStorage(docId);
 
   }
 
@@ -6021,6 +6021,7 @@ import {
   async function _autoCreateFromInput(content) {
     if (_autoCreating) return;
     _autoCreating = true;
+    const generation = ++_documentNavigationGeneration;
     try {
       let sessionId = _lastSessionId
         || (sessionModule && sessionModule.getCurrentSessionId());
@@ -6036,6 +6037,8 @@ import {
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
       if (!doc || !doc.id) throw new Error('Document create failed: missing id');
+      if (generation !== _documentNavigationGeneration) return;
+      content = document.getElementById('doc-editor-textarea')?.value ?? content;
       addDocToTabs(doc, sessionId);
       // Set the content into the map so switchToDoc preserves it
       const d = docs.get(doc.id);
@@ -6043,7 +6046,7 @@ import {
       switchToDoc(doc.id);
       // Trigger auto-detect and auto-title
       setTimeout(attemptAutoDetect, 100);
-      setTimeout(() => autoTitleFromContent(content), 300);
+      setTimeout(() => autoTitleFromContent(content, doc.id), 300);
       // Auto-save
       _scheduleAutoSave(doc.id, 2000);
     } catch (e) {
@@ -9983,6 +9986,7 @@ import {
       }
       return;
     }
+    ++_documentNavigationGeneration;
     _closeVersionPanel();
     document.getElementById('doc-version-panel')?.remove();
     isOpen = false;
@@ -10010,6 +10014,7 @@ import {
     }
     // Save current state
     saveCurrentToMap();
+    suspendSuggestions();
 
     // A "down" close means minimize, not close. Register the chip and flip
     // the dock state to minimized so a chip appears at the bottom. Any
@@ -10158,6 +10163,7 @@ import {
   export async function createDocument(sessionId) {
     if (_creatingDoc) return;
     _creatingDoc = true;
+    const generation = ++_documentNavigationGeneration;
     // If the panel was in empty-state, the user may type into the editor
     // during the create round-trip — preserve that text into the new doc
     // instead of letting switchToDoc blank it.
@@ -10177,6 +10183,7 @@ import {
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
       if (!doc || !doc.id) throw new Error('Document create failed: missing id');
+      if (generation !== _documentNavigationGeneration) return;
       addDocToTabs(doc, sessionId);
       if (!isOpen) openPanel();
       // Re-enable editor if it was in empty state
@@ -10206,6 +10213,7 @@ import {
       const focusTarget = _emailRichbodyActive() || textarea;
       if (focusTarget) focusTarget.focus();
     } catch (e) {
+      if (generation !== _documentNavigationGeneration) return;
       console.error('Failed to create document:', e);
       if (uiModule) uiModule.showError('Failed to create document');
     } finally {
@@ -10221,6 +10229,7 @@ import {
    */
   export function injectFreshDoc(doc) {
     if (!doc || !doc.id) return;
+    const generation = ++_documentNavigationGeneration;
     const sessionId = doc.session_id || _lastSessionId || null;
     if (doc.language === 'email') {
       doc._skipLocalDraftOnce = true;
@@ -10241,7 +10250,7 @@ import {
     // previously active doc and can re-enter the email draft path while a reply
     // document is still being injected.
     return new Promise(resolve => requestAnimationFrame(() => {
-      if (docs.has(doc.id)) switchToDoc(doc.id);
+      if (generation === _documentNavigationGeneration && docs.has(doc.id)) switchToDoc(doc.id);
       resolve();
     }));
   }
@@ -10394,6 +10403,7 @@ import {
   }
 
   export async function loadDocument(docId) {
+    const generation = ++_documentNavigationGeneration;
     _minimizeNotesForDocumentOpen();
     if (_closingDocs.has(docId)) {
       docs.set(docId, _closingDocs.get(docId));
@@ -10403,7 +10413,7 @@ import {
     if (docs.has(docId)) {
       _ensureDocPaneMounted();
       switchToDoc(docId);
-      return;
+      return true;
     }
     // Mount the editor before the network request so mobile gets immediate
     // feedback instead of appearing unchanged while the document loads.
@@ -10413,9 +10423,12 @@ import {
       const res = await fetch(`${API_BASE}/api/document/${docId}`);
       if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
       const doc = await res.json();
+      if (generation !== _documentNavigationGeneration) return false;
       addDocToTabs(doc, doc.session_id);
       switchToDoc(doc.id);
+      return true;
     } catch (e) {
+      if (generation !== _documentNavigationGeneration) return false;
       _hideLoadingOverlay();
       console.error('Failed to load document:', e);
       if (uiModule) {
@@ -10424,6 +10437,7 @@ import {
           : 'Could not open document.';
         uiModule.showError(msg);
       }
+      return false;
     }
   }
 
@@ -10493,6 +10507,8 @@ import {
 
   /** Load all documents for a session into tabs */
   export async function loadSessionDocs(sessionId, opts = {}) {
+    suspendSuggestions();
+    const generation = ++_documentNavigationGeneration;
     _closeVersionPanel();
     _lastSessionId = sessionId;
     const restoreMode = !!opts.restoreMode;
@@ -10533,7 +10549,9 @@ import {
         credentials: 'same-origin',
         cache: 'no-store',
       });
+      if (!res.ok) throw new Error(`Session documents failed: HTTP ${res.status}`);
       const allDocs = await res.json();
+      if (generation !== _documentNavigationGeneration) return;
       _hideLoadingOverlay();
       // Only load active docs
       const activeDocs = allDocs.filter(d => d.is_active);
@@ -10583,6 +10601,7 @@ import {
       if (!isOpen) openPanel({ restore: restoreMode && shouldRestoreOpen });
       switchToDoc(target.id);
     } catch (e) {
+      if (generation !== _documentNavigationGeneration) return;
       _hideLoadingOverlay();
       console.error('Failed to load session documents:', e);
       // Open empty panel on error too
@@ -12470,6 +12489,7 @@ import {
 
   /** Open the document panel immediately for a doc being streamed in */
   export function streamDocOpen(title, language) {
+    ++_documentNavigationGeneration;
     _closeVersionPanel();
     // Discard any pending AI-edit diff before this stream changes the active
     // document. When the AI streams a NEW document while an unapproved diff is
@@ -12741,6 +12761,7 @@ import {
 
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
+    ++_documentNavigationGeneration;
     _closeVersionPanel();
     const streamingId = streamDocFinalize();
     // Discard any pending AI-edit diff before this update changes the active
@@ -13318,6 +13339,8 @@ import {
 
   /** Clear all tab state (e.g. on session switch) */
   export function clearAll() {
+    suspendSuggestions();
+    ++_documentNavigationGeneration;
     _closeVersionPanel();
     docs.clear();
     activeDocId = null;
