@@ -1453,13 +1453,16 @@ import {
     const tabBar = document.getElementById('doc-tab-bar');
     if (!tabBar) return;
 
+    const focused = tabBar.contains(document.activeElement) ? document.activeElement : null;
+    const focusedDocId = focused?.closest('.doc-tab')?.dataset.docId;
+    const focusedControl = ['doc-tab-select', 'doc-tab-version', 'doc-tab-close'].find(name => focused?.classList.contains(name));
     // Build tab HTML with scroll arrows
     // When doc panel is on right (default), + goes on far left; on left, + goes inside scroll area
     const paneEl = document.querySelector('.doc-editor-pane');
     const isDocLeft = paneEl && paneEl.classList.contains('doc-left');
     let html = '';
     html += '<button class="doc-tab-arrow doc-tab-arrow-left" id="doc-tab-left" title="Scroll left">&#x2039;</button>';
-    html += '<div class="doc-tab-scroll" id="doc-tab-scroll">';
+    html += '<div class="doc-tab-scroll" id="doc-tab-scroll" role="tablist" aria-label="Open documents">';
     const curSession = sessionModule?.getCurrentSessionId() || '';
     let _anyTab = false;
     for (const [id, doc] of docs) {
@@ -1471,16 +1474,16 @@ import {
       const shortTitle = title.length > 24 ? title.slice(0, 22) + '...' : title;
       const menuBtn = `<button class="doc-tab-menu-btn" data-doc-id="${id}" title="Document actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg></button>`;
       const ver = doc.version || doc.version_count || 1;
-      const verChip = `<span class="doc-tab-version" data-doc-id="${id}" title="Version history">v${ver}</span>`;
+      const verChip = `<button type="button" class="doc-tab-version" data-doc-id="${_esc(id)}" title="Version history" aria-label="Version history for ${_esc(title)}, version ${ver}" tabindex="${isActive ? 0 : -1}">v${ver}</button>`;
       // Language icon before the title — same family as the meta-line / picker
       // icons. Hidden via :empty CSS when the doc has no useful language.
       const lic = (doc.language && doc.language !== 'text')
         ? langIcon(doc.language, 12, { style: 'opacity:0.65;flex-shrink:0;color:currentColor;margin-right:4px;' })
         : '';
       const langChip = `<span class="doc-tab-lang">${lic}</span>`;
-      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${_esc(title)}">
-        ${verChip}${langChip}<span class="doc-tab-title">${_esc(shortTitle)}</span>
-        <button class="doc-tab-close" data-doc-id="${id}" title="Unlink from chat (kept in the Library)">&times;</button>
+      html += `<div class="doc-tab${isActive ? ' active' : ''}" role="presentation" draggable="true" data-doc-id="${_esc(id)}" title="${_esc(title)}">
+        ${verChip}<button type="button" class="doc-tab-select" role="tab" id="doc-tab-${encodeURIComponent(id)}" data-doc-id="${_esc(id)}" aria-selected="${isActive}" aria-controls="doc-editor-surface" tabindex="${isActive ? 0 : -1}" aria-label="${_esc(title)}">${langChip}<span class="doc-tab-title">${_esc(shortTitle)}</span></button>
+        <button type="button" class="doc-tab-close" data-doc-id="${_esc(id)}" tabindex="${isActive ? 0 : -1}" aria-label="Close ${_esc(title)} (kept in Library)" title="Unlink from chat (kept in the Library)">&times;</button>
       </div>`;
     }
     // Empty state (panel open, no doc yet): show a ghost "Untitled" tab so it's
@@ -1492,6 +1495,37 @@ import {
     html += '</div>';
     html += '<button class="doc-tab-arrow doc-tab-arrow-right" id="doc-tab-right" title="Scroll right">&#x203A;</button>';
     tabBar.innerHTML = html;
+    const surface = document.getElementById('doc-editor-surface');
+    if (surface && activeDocId) surface.setAttribute('aria-labelledby', `doc-tab-${encodeURIComponent(activeDocId)}`);
+    if (focused) {
+      const retained = focusedControl && tabBar.querySelector(`.doc-tab[data-doc-id="${CSS.escape(focusedDocId || '')}"] .${focusedControl}`);
+      const next = retained || tabBar.querySelector('.doc-tab.active .doc-tab-select') || document.getElementById('doc-tab-new-btn');
+      next?.focus({ preventScroll: true });
+    }
+    if (tabBar._keyboardHandler) tabBar.removeEventListener('keydown', tabBar._keyboardHandler);
+    tabBar._keyboardHandler = event => {
+      const selector = event.target.closest('.doc-tab-select');
+      if (!selector) return;
+      const selectors = Array.from(tabBar.querySelectorAll('.doc-tab-select'));
+      const index = selectors.indexOf(selector);
+      let nextIndex;
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % selectors.length;
+      else if (event.key === 'ArrowLeft') nextIndex = (index + selectors.length - 1) % selectors.length;
+      else if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = selectors.length - 1;
+      else if (event.key === 'Delete') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeTab(selector.dataset.docId);
+        return;
+      } else return;
+      event.preventDefault();
+      event.stopPropagation();
+      const id = selectors[nextIndex].dataset.docId;
+      switchToDoc(id);
+      document.getElementById(`doc-tab-${encodeURIComponent(id)}`)?.focus({ preventScroll: true });
+    };
+    tabBar.addEventListener('keydown', tabBar._keyboardHandler);
 
     // Wire scroll arrows
     const scrollArea = document.getElementById('doc-tab-scroll');
@@ -1525,6 +1559,15 @@ import {
         sa.scrollTo({ left: Math.max(0, sa.scrollLeft + tabLeft - visLeft), behavior });
       }
     };
+    tabBar._resizeObserver?.disconnect();
+    if (typeof ResizeObserver !== 'undefined' && scrollArea) {
+      tabBar._resizeObserver = new ResizeObserver(() => {
+        if (!scrollArea.isConnected) return;
+        updateArrowVisibility(scrollArea, leftBtn, rightBtn);
+        _scrollTabIntoView(tabBar.querySelector('.doc-tab.active'), 'auto');
+      });
+      tabBar._resizeObserver.observe(scrollArea);
+    }
     // Wire tab clicks (delayed to allow dblclick on title)
     let _tabClickTimer = null;
     tabBar.querySelectorAll('.doc-tab').forEach(tab => {
@@ -1533,7 +1576,7 @@ import {
         if (e.target.closest('.doc-tab-close') || e.target.closest('.doc-tab-play') || e.target.closest('.doc-tab-menu-btn') || e.target.closest('.doc-tab-version')) return;
         if (_isEditingTabTitle) return;
         // If clicking the title span, delay to allow dblclick
-        if (e.target.classList.contains('doc-tab-title')) {
+        if (e.detail > 0 && e.target.classList.contains('doc-tab-title')) {
           clearTimeout(_tabClickTimer);
           _tabClickTimer = setTimeout(() => { switchToDoc(tab.dataset.docId); _scrollTabIntoView(tab); }, 250);
         } else {
@@ -1561,7 +1604,7 @@ import {
       if (verBtn) {
         e.stopPropagation();
         const docId = verBtn.dataset.docId;
-        if (docId) { if (docId !== activeDocId) switchToDoc(docId); toggleVersionHistory(); }
+        if (docId) { if (docId !== activeDocId) switchToDoc(docId); toggleVersionHistory({ focus: e.detail === 0 }); }
         return;
       }
       const playBtn = e.target.closest('.doc-tab-play');
@@ -1629,7 +1672,11 @@ import {
     input.className = 'doc-tab-title-input';
     input.value = fullTitle;
 
-    titleSpan.replaceWith(input);
+    const selector = titleSpan.closest('.doc-tab-select');
+    if (selector) {
+      selector.hidden = true;
+      selector.after(input);
+    } else titleSpan.replaceWith(input);
     input.focus();
     input.select();
 
@@ -3258,6 +3305,7 @@ import {
         }
       }
     });
+    const editorSignal = rich.closest('#doc-editor-pane')?._lifetime?.signal;
     // selectionchange fires on the document; filter to selections inside rich.
     document.addEventListener('selectionchange', () => {
       const sel = window.getSelection();
@@ -3269,15 +3317,15 @@ import {
         _hideRichSelectionToolbar();
       }
       if (!sel || !sel.rangeCount || !rich.contains(sel.anchorNode)) _hideRichSlashMenu();
-    });
+    }, { signal: editorSignal });
     window.addEventListener('resize', () => {
       _scheduleRichSelectionToolbar(rich);
       _followRichSelectionToolbarLayout(rich);
-    }, { passive: true });
+    }, { passive: true, signal: editorSignal });
     window.visualViewport?.addEventListener('resize', () => {
       _scheduleRichSelectionToolbar(rich);
       _followRichSelectionToolbarLayout(rich);
-    }, { passive: true });
+    }, { passive: true, signal: editorSignal });
     rich._syncActive = syncActive;
   }
   function _emailRichbodyActive() {
@@ -6005,6 +6053,7 @@ import {
     if (!nextId) {
       activeDocId = null;
       closePanel();
+      (document.getElementById('message') || document.getElementById('doc-indicator-btn'))?.focus();
       return;
     }
     if (activeDocId === docId) {
@@ -6136,6 +6185,7 @@ import {
     // Clear any pane/divider still sliding out from a just-fired close so we
     // don't end up with two #doc-editor-pane nodes (and a stale close stripping
     // doc-view). Paired with the isOpen guard in _finishClose above.
+    document.getElementById('doc-editor-pane')?._dispose?.();
     document.getElementById('doc-editor-pane')?.remove();
     document.getElementById('doc-divider')?.remove();
     // If the doc was minimized as a chip and the user opened the panel via
@@ -6187,6 +6237,26 @@ import {
     const pane = document.createElement('div');
     pane.id = 'doc-editor-pane';
     pane.className = 'doc-editor-pane';
+    const paneLifetime = new AbortController();
+    pane._lifetime = paneLifetime;
+    pane._dispose = () => {
+      paneLifetime.abort();
+      divider._disposeResize?.();
+      pane.querySelector('#doc-md-toolbar')?._resizeObserver?.disconnect();
+      pane.querySelector('#doc-tab-bar')?._resizeObserver?.disconnect();
+      if (pane.contains(_lineNumberObservedTextarea)) {
+        _lineNumberResizeObserver?.disconnect();
+        _lineNumberObservedTextarea = null;
+      }
+      _selResizeObserver?.disconnect();
+      _selResizeObserver = null;
+      if (_lineNumberResizeRaf) cancelAnimationFrame(_lineNumberResizeRaf);
+      _lineNumberResizeRaf = null;
+      clearTimeout(_hlDebounce);
+      clearTimeout(_autoDetectDebounce);
+      clearTimeout(_autoTitleDebounce);
+      clearTimeout(_emailLocalDraftDebounce);
+    };
     if (options.restore) pane.classList.add('doc-pane-restoring');
     // ── Mobile: make toolbar/footer buttons work on the FIRST tap with the
     // keyboard up ──
@@ -6381,6 +6451,7 @@ import {
           <button type="button" id="doc-replace-all" class="doc-find-action">Replace all</button>
         </div>
       </div>
+      <div id="doc-editor-surface" role="tabpanel" class="doc-editor-surface">
       <div id="doc-editor-wrap" class="doc-editor-wrap">
         <div id="doc-line-numbers" class="doc-line-numbers">1</div>
         <pre id="doc-editor-highlight" class="doc-editor-highlight"><code id="doc-editor-code"></code></pre>
@@ -6417,6 +6488,7 @@ import {
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
         <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:11px;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
       </div>
+      </div>
       <!-- Action footer sits AFTER all the content/preview panes so it stays
            pinned to the bottom no matter which pane (editor / md-preview /
            csv / html / pdf) is the one growing to fill. -->
@@ -6448,7 +6520,7 @@ import {
       <div id="doc-version-panel" class="doc-version-panel hidden">
         <div class="doc-version-header">
           <span>Version History</span>
-          <button id="doc-version-close" class="doc-action-icon-btn" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          <button id="doc-version-close" class="doc-action-icon-btn" title="Close" aria-label="Close version history"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div id="doc-version-list" class="doc-version-list"></div>
       </div>
@@ -6680,7 +6752,8 @@ import {
         }
       };
       const _onMove = (ev) => _applyMode(ev);
-      document.addEventListener('pointermove', _onMove, { passive: true });
+      document.addEventListener('pointermove', _onMove, { passive: true, signal: paneLifetime.signal });
+      paneLifetime.signal.addEventListener('abort', () => clearTimeout(_handleIdleTimer), { once: true });
       // Reflect the fullscreen state immediately on toggle (no cursor move).
       const _classObs = new MutationObserver(() => _applyMode());
       _classObs.observe(pane, { attributes: true, attributeFilter: ['class'] });
@@ -6753,7 +6826,7 @@ import {
     document.getElementById('doc-mobile-copy')?.addEventListener('click', () => copyDocument());
     // Save, copy, run, export, delete, preview toggles are now in per-tab context menu
     document.getElementById('doc-version-badge').addEventListener('click', toggleVersionHistory);
-    document.getElementById('doc-version-close').addEventListener('click', _closeVersionPanel);
+    document.getElementById('doc-version-close').addEventListener('click', () => _closeVersionPanel({ restoreFocus: true }));
     // Reflect the current language as a small icon left of the type select.
     const _syncLangIcon = () => {
       const iconEl = document.getElementById('doc-language-icon');
@@ -7232,7 +7305,7 @@ import {
         menu.style.display = 'none';
         document.getElementById('doc-email-send-caret')?.setAttribute('aria-expanded', 'false');
       }
-    });
+    }, { signal: paneLifetime.signal });
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       const menu = document.getElementById('doc-email-more-menu');
@@ -7242,7 +7315,7 @@ import {
       e.stopImmediatePropagation?.();
       menu.style.display = 'none';
       document.getElementById('doc-email-send-caret')?.setAttribute('aria-expanded', 'false');
-    }, true);
+    }, { capture: true, signal: paneLifetime.signal });
 
     // Attachments
     document.getElementById('doc-email-attach-btn')?.addEventListener('click', (e) => {
@@ -7655,7 +7728,7 @@ import {
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
         e.preventDefault();
         deleteActiveDocument();
-      });
+      }, { signal: paneLifetime.signal });
 
       // Drag-and-drop file attachment for email compose docs. The whole pane
       // is the drop target; visual highlight while a drag is hovering. Files
@@ -9713,7 +9786,8 @@ import {
     scrollRightBtn?.addEventListener('click', () => itemsWrap.scrollTo({ left: itemsWrap.scrollWidth, behavior: 'smooth' }));
     itemsWrap?.addEventListener('scroll', updateScrollArrows, { passive: true });
     if (window.ResizeObserver && itemsWrap) {
-      new ResizeObserver(updateScrollArrows).observe(itemsWrap);
+      toolbar._resizeObserver = new ResizeObserver(updateScrollArrows);
+      toolbar._resizeObserver.observe(itemsWrap);
     }
 
     function syncMdOverflow() {
@@ -9743,16 +9817,21 @@ import {
         overflowMenu.classList.toggle('open', _mdMenuOpen);
       });
     }
+    const signal = toolbar.closest('#doc-editor-pane')?._lifetime?.signal;
     document.addEventListener('click', () => {
       if (_mdMenuOpen) { closeMdMenu(); overflowWrapper.appendChild(overflowMenu); }
-    });
+    }, { signal });
 
     // Re-check overflow on resize
     let _mdResizeTimer;
     window.addEventListener('resize', () => {
       clearTimeout(_mdResizeTimer);
       _mdResizeTimer = setTimeout(syncMdOverflow, 100);
-    });
+    }, { signal });
+    signal?.addEventListener('abort', () => {
+      clearTimeout(_mdResizeTimer);
+      if (overflowMenu && !toolbar.contains(overflowMenu)) overflowMenu.remove();
+    }, { once: true });
 
     // Show toolbar if language is already markdown
     const lang = document.getElementById('doc-language-select')?.value;
@@ -9901,32 +9980,36 @@ import {
 
   /** Divider drag to resize the editor pane */
   function initDividerDrag(divider, pane, isRight) {
+    divider._disposeResize?.();
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
     let dragging = false;
-    divider.addEventListener('mousedown', (e) => {
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      syncHighlighting();
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) updateLineNumbers(textarea.value);
+    };
+    divider.addEventListener('mousedown', event => {
       dragging = true;
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
+      event.preventDefault();
+    }, options);
+    document.addEventListener('mousemove', event => {
       if (!dragging) return;
-      const width = isRight
-        ? e.clientX
-        : window.innerWidth - e.clientX;
+      const width = isRight ? event.clientX : window.innerWidth - event.clientX;
       pane.style.width = Math.max(250, Math.min(width, window.innerWidth * 0.7)) + 'px';
       pane.style.flex = 'none';
-    });
-    document.addEventListener('mouseup', () => {
-      if (dragging) {
-        dragging = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        // Re-sync highlighting and line numbers after resize
-        syncHighlighting();
-        const ta = document.getElementById('doc-editor-textarea');
-        if (ta) updateLineNumbers(ta.value);
-      }
-    });
+    }, options);
+    document.addEventListener('mouseup', endDrag, options);
+    divider._disposeResize = () => {
+      endDrag();
+      controller.abort();
+    };
   }
 
   /** Close the editor panel */
@@ -9996,8 +10079,10 @@ import {
       requestAnimationFrame(_dropKb);
       setTimeout(_dropKb, 80);
     }
-    // Capture the draft before releasing the PDF pane's DOM references.
+    // Snapshot before disposing the pane. PDF timers need a captured draft,
+    // rather than DOM references that disappear during the close animation.
     saveCurrentToMap();
+    _persistEmailLocalDraftNow();
     if (_hasPendingPdfPaneSave(activeDocId)) _flushAutoSave(activeDocId);
     _disposePdfTools?.();
     _disposePdfTools = null;
@@ -10022,6 +10107,7 @@ import {
 
     const pane = document.getElementById('doc-editor-pane');
     const divider = document.getElementById('doc-divider');
+    pane?._dispose?.();
 
     const _finishClose = () => {
       // If the panel was reopened during the slide-out animation (close →
@@ -11728,7 +11814,7 @@ import {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation?.();
-        _closeVersionPanel();
+        _closeVersionPanel({ restoreFocus: true });
         return;
       }
 
@@ -13034,7 +13120,7 @@ import {
       && state.pane === document.getElementById('doc-editor-pane');
   }
 
-  async function toggleVersionHistory() {
+  async function toggleVersionHistory({ focus = false } = {}) {
     const panel = document.getElementById('doc-version-panel');
     if (!panel || !activeDocId) return;
     if (!panel.classList.contains('hidden')) {
@@ -13068,9 +13154,10 @@ import {
     };
     document.addEventListener('click', _versionClickOutside, true);
     await loadVersionHistory(state);
+    if (focus && _historyOwnsView(state)) (panel.querySelector('.doc-version-preview') || panel.querySelector('#doc-version-close'))?.focus({ preventScroll: true });
   }
 
-  function _closeVersionPanel() {
+  function _closeVersionPanel({ restoreFocus = false } = {}) {
     const state = _versionHistory;
     const ownsView = _historyOwnsView(state);
     _versionHistory = null;
@@ -13086,6 +13173,7 @@ import {
     }
     if (_versionClickOutside) document.removeEventListener('click', _versionClickOutside, true);
     _versionClickOutside = null;
+    if (restoreFocus && state) document.querySelector(`.doc-tab[data-doc-id="${CSS.escape(state.docId)}"] .doc-tab-version`)?.focus({ preventScroll: true });
   }
 
   /** Build a short diff summary between two strings */
@@ -13140,12 +13228,12 @@ import {
       list.innerHTML = versions.map((v, i) => `
         <div class="doc-version-item" data-version="${v.version_number}">
           <div class="doc-version-info">
-            <span class="doc-version-num">v${v.version_number}</span>
+            <button type="button" class="doc-version-preview" aria-label="Preview version ${v.version_number}" aria-pressed="false"><span class="doc-version-num">v${v.version_number}</span></button>
             ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${_escHtml(v.source)}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
           </div>
           ${v.summary ? `<div class="doc-version-summary">${_escHtml(v.summary)}</div>` : ''}
           ${diffs[i] ? `<div class="doc-version-diff">${diffs[i]}</div>` : ''}
-          ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">Restore</button>` : ''}
+          ${i > 0 ? `<button type="button" class="doc-version-restore" data-version="${v.version_number}" aria-label="Restore version ${v.version_number}">Restore</button>` : ''}
         </div>
       `).join('');
 
@@ -13164,6 +13252,7 @@ import {
           // Toggle active state
           list.querySelectorAll('.doc-version-item.active').forEach(el => el.classList.remove('active'));
           item.classList.add('active');
+          list.querySelectorAll('.doc-version-preview').forEach(button => button.setAttribute('aria-pressed', button.closest('.doc-version-item') === item ? 'true' : 'false'));
           previewVersion(parseInt(item.dataset.version));
         });
       });
