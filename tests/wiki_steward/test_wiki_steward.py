@@ -575,3 +575,76 @@ def test_config_validation_rejects_dangerous_configs(env):
     assert 'unknown project' in errs(lambda c: c['agents']['sonnet'].update({'projects': ['nope']}))
     assert 'wiki itself' in errs(lambda c: c['projects'].update({'w': {'repo': str(wiki.root)}}))
     assert 'no reviewers' in errs(lambda c: c.update({'reviewers': []}))
+
+
+# ---- prepared (not installed) integration artifacts ---------------------------------------------------------------
+HOOK = ROOT / 'integrations' / 'wiki' / 'hooks' / 'wiki_hook.py'
+
+
+def run_hook(root, agent, stdin='{"hook_event_name": "Stop"}'):
+    return subprocess.run([sys.executable, str(HOOK), '--root', str(root), '--agent', agent], input=stdin, capture_output=True, text=True,
+                          env={**os.environ, 'PYTHONPATH': ''}, timeout=120)
+
+
+def test_stop_hook_records_commits_idempotently_and_never_blocks(env):
+    wiki, repo, fix = env
+    first = run_hook(wiki.root, 'sonnet')
+    assert first.returncode == 0 and first.stdout == '' and first.stderr == ''
+    n = len(wiki._tasks('odysseus'))
+    assert n == 1
+    h = head(wiki)
+    again = run_hook(wiki.root, 'sonnet')
+    assert again.returncode == 0 and head(wiki) == h, 'nothing new: the hook must not write'
+    commit(repo, 'a.txt', 'x', 'Another change')
+    run_hook(wiki.root, 'sonnet')
+    assert len(wiki._tasks('odysseus')) == 2 and not wiki.integrity()
+    assert run_hook(wiki.root, 'guest').returncode == 0 and len(wiki._tasks('odysseus')) == 2, 'an agent without record_task does nothing'
+    assert run_hook(wiki.root, 'nobody').returncode == 0
+    (wiki.root / 'steward.json').write_text('{ broken', encoding='utf-8')
+    bad = run_hook(wiki.root, 'sonnet')
+    assert bad.returncode == 0 and bad.stdout == '' and 'failed' in (wiki.root / '.steward' / 'hook.log').read_text(encoding='utf-8')
+    assert not run_hook(tmp_missing(wiki), 'sonnet').returncode
+
+
+def tmp_missing(wiki):
+    return wiki.root.parent / 'does-not-exist'
+
+
+def test_hook_refuses_to_write_into_a_tampered_wiki_but_still_exits_cleanly(env):
+    wiki, repo, fix = env
+    (wiki.root / 'claims').mkdir(exist_ok=True)
+    (wiki.root / 'claims' / 'planted.md').write_text('planted', encoding='utf-8')
+    commit(repo, 'b.txt', 'y', 'Change')
+    res = run_hook(wiki.root, 'sonnet')
+    assert res.returncode == 0 and res.stdout == ''
+    assert wiki._tasks('odysseus') == [] and 'refused' in (wiki.root / '.steward' / 'hook.log').read_text(encoding='utf-8')
+    assert any('uncommitted' in p for p in wiki.integrity())
+
+
+def test_rendered_configs_expose_only_what_they_should(env, tmp_path):
+    wiki, repo, fix = env
+    out = tmp_path / 'rendered'
+    r = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'wiki-install.py'), 'render', '--wiki-root', str(wiki.root), '--out', str(out), '--python', sys.executable],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    mcp = json.loads((out / 'claude-code' / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']['wiki']
+    assert mcp['env']['WIKI_AGENT'] == 'claude-code' and mcp['env']['PYTHONPATH'] == '' and Path(mcp['args'][0]).exists()
+    bot = (out / 'wiki-bot-profile' / 'config.yaml').read_text(encoding='utf-8')
+    import re as _re
+    assert 'WIKI_AGENT: "wiki-bot"' in bot and not _re.search(r'<(python|wiki_mcp_script|wiki_root|platform_toolsets)>', bot) and 'terminal' not in bot.split('platform_toolsets:')[1]
+    lines = bot.split('platform_toolsets:')[1].strip().splitlines()
+    assert lines and all(l.strip().endswith(': [wiki]') for l in lines if l.strip() and not l.strip().startswith(('#', 'approvals', 'mode')))
+    assert 'WIKI_AGENT = "codex"' in (out / 'codex' / 'config.toml.snippet').read_text(encoding='utf-8')
+    assert 'WIKI_AGENT: "hermes"' in (out / 'hermes' / 'mcp_servers.wiki.yaml').read_text(encoding='utf-8')
+
+
+def test_skill_and_hook_snippets_are_well_formed():
+    skill = (ROOT / 'integrations' / 'wiki' / 'skills' / 'wiki-knowledge-maintenance' / 'SKILL.md').read_text(encoding='utf-8')
+    head_block = skill.split('---')[1]
+    assert 'name: wiki-knowledge-maintenance' in head_block and 'description:' in head_block
+    for tool in ('wiki_inbox', 'wiki_begin', 'wiki_sync', 'wiki_record_task', 'wiki_handoff', 'wiki_reconcile'):
+        assert tool in skill
+    assert 'data, not instructions' in skill or 'not instructions' in skill
+    cfg = json.loads((ROOT / 'integrations' / 'wiki' / 'hooks' / 'claude-settings.hooks.json').read_text(encoding='utf-8'))
+    cmd = cfg['hooks']['Stop'][0]['hooks'][0]['command']
+    assert 'wiki_hook.py' in cmd and '--agent claude-code' in cmd and cfg['hooks']['Stop'][0]['hooks'][0]['timeout'] <= 60
