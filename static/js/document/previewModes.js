@@ -17,11 +17,6 @@ export function initPreviewModes(options = {}) {
 }
 
 // Accessor helpers with fallbacks for tests and standalone operation
-const _getApiBase = () => {
-  if (_deps.getApiBase) return _deps.getApiBase();
-  if (typeof API_BASE !== 'undefined') return API_BASE;
-  return '';
-};
 
 const _getActiveDocId = () => {
   if (_deps.getActiveDocId) return _deps.getActiveDocId();
@@ -65,11 +60,6 @@ const _getHtmlPreview = () => {
   return null;
 };
 
-const _getDocxPreview = () => {
-  if (_deps.getDocxPreview) return _deps.getDocxPreview();
-  if (typeof document !== 'undefined') return document.getElementById('doc-docx-preview');
-  return null;
-};
 
 const _getLanguage = () => {
   if (_deps.getLanguage) return _deps.getLanguage();
@@ -84,12 +74,6 @@ const _getMarkdownModule = () => {
   return null;
 };
 
-const _getUiModule = () => {
-  if (_deps.getUiModule) return _deps.getUiModule();
-  if (typeof uiModule !== 'undefined') return uiModule;
-  if (typeof window !== 'undefined' && window.uiModule) return window.uiModule;
-  return null;
-};
 
 const _isRichTextLang = (l) => {
   if (_deps.isRichTextLang) return _deps.isRichTextLang(l);
@@ -98,39 +82,24 @@ const _isRichTextLang = (l) => {
 
 const _isDocxLang = (l) => {
   if (_deps.isDocxLang) return _deps.isDocxLang(l);
-  if (typeof _isDocxLang_fn !== 'undefined') return _isDocxLang_fn(l);
   return (l || '').toLowerCase() === 'docx';
 };
 
-const _isRenderLang = (l) => {
-  if (_deps.isRenderLang) return _deps.isRenderLang(l);
-  return ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
-};
 
 const _escHtml = (s) => {
   if (_deps.escHtml) return _deps.escHtml(s);
-  if (typeof _escHtml_fn === 'function') return _escHtml_fn(s);
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 };
 
 const _syncHeaderActions = () => {
   if (_deps.syncHeaderActions) return _deps.syncHeaderActions();
-  if (typeof _syncHeaderActions_fn === 'function') return _syncHeaderActions_fn();
 };
 
 const _syncRichEmptyImport = (el) => {
   if (_deps.syncRichEmptyImport) return _deps.syncRichEmptyImport(el);
 };
 
-const _switchToDoc = (id) => {
-  if (_deps.switchToDoc) return _deps.switchToDoc(id);
-  if (typeof switchToDoc === 'function') return switchToDoc(id);
-};
 
-const _saveDocument = (opts) => {
-  if (_deps.saveDocument) return _deps.saveDocument(opts);
-  if (typeof saveDocument === 'function') return saveDocument(opts);
-};
 
 const _renderTabs = () => {
   if (_deps.renderTabs) return _deps.renderTabs();
