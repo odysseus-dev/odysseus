@@ -70,6 +70,7 @@ import {
   _hasPendingPdfPaneSave,
   _syncPdfPaneToDoc,
   _cleanupPdfDocState,
+  _releasePdfPane,
   _refreshPdfPreviewIframe,
   _setPdfViewActive,
   _pdfViewState,
@@ -103,6 +104,7 @@ import {
   let _autoTitleDebounce = null;
   let _autoSaveDebounce = null;
   let _lastAutoSaveErrorAt = 0;
+  let _disposePdfTools = null;
   let _animationCancel = null;      // function to cancel current animation
   // _htmlPreviewActive is managed in ./document/previewModes.js
   let _emailAccountsCache = null;
@@ -306,7 +308,7 @@ import {
   }
 
   function _wirePdfTools() {
-    initPdfTools({
+    _disposePdfTools = initPdfTools({
       getApiBase: () => API_BASE,
       getActiveDocId: () => activeDocId,
       getDoc: (id) => docs.get(id) || _closingDocs.get(id),
@@ -5774,10 +5776,10 @@ import {
     _discardEmail();
   }
 
-  function switchToDoc(docId) {
+  function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } = {}) {
     if (!docs.has(docId)) return;
     ++_documentNavigationGeneration;
-    _closeVersionPanel();
+    if (!preserveHistory) _closeVersionPanel();
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
     _hideRichSlashMenu();
@@ -5805,7 +5807,7 @@ import {
     // empty textarea while activeDocId still points at the prior tab; saving
     // that shell would erase the cached document before we can render it.
     const mountedPane = document.getElementById('doc-editor-pane');
-    if (mountedPane?.dataset.activeDocumentId === activeDocId) saveCurrentToMap();
+    if (captureCurrent && mountedPane?.dataset.activeDocumentId === activeDocId) saveCurrentToMap();
 
     // Auto-delete the doc we're leaving if it's completely empty, or flush pending saves
     const prevId = activeDocId;
@@ -5822,6 +5824,7 @@ import {
       }
     }
 
+    if (prevId && prevId !== docId) _releasePdfPane(prevId);
     activeDocId = docId;
     if (mountedPane) mountedPane.dataset.activeDocumentId = docId;
     _rememberActiveDoc(docId);
@@ -5951,7 +5954,7 @@ import {
 
     // Hide version panel on switch
     const vp = document.getElementById('doc-version-panel');
-    if (vp) vp.classList.add('hidden');
+    if (vp && !preserveHistory) vp.classList.add('hidden');
 
     renderTabs();
     _syncHeaderActions();
@@ -7483,25 +7486,6 @@ import {
         if (uiModule) uiModule.showError('Failed to load version history');
       }
     });
-
-    // Export PDF (form-backed markdown docs)
-    document.getElementById('doc-export-pdf-btn')?.addEventListener('click', _downloadFilledPdf);
-
-    // Toggle inline PDF view (form-backed markdown docs). Default for a
-    // form-backed doc is "active" — the toggle reads back the visible state.
-    document.getElementById('doc-pdf-view-btn')?.addEventListener('click', () => {
-      const pane = document.getElementById('doc-pdf-view');
-      const visible = pane && pane.style.display !== 'none';
-      _setPdfViewActive(!visible);
-    });
-
-    // Toolbar buttons toggle: clicking the active mode clears it. Otherwise
-    // the mode stays armed across multiple placements until the user turns
-    // it off explicitly.
-    document.getElementById('doc-pdf-add-text-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'text' ? null : 'text'));
-    document.getElementById('doc-pdf-add-check-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'check' ? null : 'check'));
-    document.getElementById('doc-pdf-add-sign-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'signature' ? null : 'signature'));
-    document.getElementById('doc-pdf-refresh-btn')?.addEventListener('click', () => _renderPdfPane());
 
     // Markdown formatting toolbar
     initMdToolbar();
@@ -10012,8 +9996,11 @@ import {
       requestAnimationFrame(_dropKb);
       setTimeout(_dropKb, 80);
     }
-    // Save current state
+    // Capture the draft before releasing the PDF pane's DOM references.
     saveCurrentToMap();
+    if (_hasPendingPdfPaneSave(activeDocId)) _flushAutoSave(activeDocId);
+    _disposePdfTools?.();
+    _disposePdfTools = null;
     suspendSuggestions();
 
     // A "down" close means minimize, not close. Register the chip and flip
@@ -10523,10 +10510,12 @@ import {
     // Flush any pending saves or dirty documents belonging to previous sessions
     for (const [id, doc] of docs) {
       if (doc.sessionId && doc.sessionId !== sessionId) {
-        if (_pendingAutoSaves.has(id) || doc._saveState === 'dirty' || _hasPendingPdfPaneSave(id)) {
+        if (_pendingAutoSaves.has(id) || ['dirty', 'error'].includes(doc._saveState) || _hasPendingPdfPaneSave(id)) {
           _cancelAutoSave(id);
           _cancelPdfPaneSave(id);
           _saveClosingDraft(id, doc);
+        } else if (doc._saveState === 'saving') {
+          _closingDocs.set(id, doc);
         } else {
           _cancelAutoSave(id);
           _cancelPdfPaneSave(id);
@@ -10539,6 +10528,7 @@ import {
     for (const [id, doc] of [...docs]) {
       if (doc.sessionId && doc.sessionId !== sessionId) docs.delete(id);
     }
+    _releasePdfPane(activeDocId);
     activeDocId = null;
 
     // Show loading state while fetching
@@ -12114,16 +12104,11 @@ import {
     _cancelAutoSave(savingDocId);
     _cancelPdfPaneSave(savingDocId);
     if (!skipPdfSync) _syncPdfPaneToDoc(savingDocId);
-    const textarea = document.getElementById('doc-editor-textarea');
     // Minimizing removes the editor DOM, but closePanel already captured its
     // content in docs. Persist that cache without reading an absent/new pane.
     if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
     const localDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
     if (!localDoc || _deletedDocIds.has(savingDocId)) return false;
-    const contentToSave = (isOpen && activeDocId === savingDocId)
-      ? (localDoc.content ?? textarea?.value ?? '')
-      : (localDoc.content ?? '');
-    const saveRevision = localDoc?._editRevision || 0;
     const saveRequest = (localDoc?._saveRequest || 0) + 1;
     if (localDoc) localDoc._saveRequest = saveRequest;
     _setDocumentSaveState('saving', savingDocId);
@@ -12140,6 +12125,13 @@ import {
       return false;
     }
 
+    // Choose the authoritative draft when this write gets its turn. A save
+    // queued behind a restore must not replay the pre-restore document.
+    if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
+    const contentToSave = localDoc.content ?? '';
+    const saveRevision = localDoc._editRevision || 0;
+    if (localDoc._saveRequest === saveRequest) _setDocumentSaveState('saving', savingDocId);
+
     try {
       const res = await fetch(`${API_BASE}/api/document/${savingDocId}`, {
         method: 'PUT',
@@ -12155,23 +12147,12 @@ import {
       if (_deletedDocIds.has(savingDocId)) {
         return false;
       }
-      if (res.status === 404) {
-        if (silent && localDoc?.language === 'email') {
-          return false;
-        }
-        // Streaming/empty email drafts can leave a local tab pointing at a temp
-        // or already-deleted document. Do not keep surfacing autosave errors for
-        // a document the backend no longer knows about.
-        if (docs.has(savingDocId)) docs.delete(savingDocId);
-        _closingDocs.delete(savingDocId);
-        if (activeDocId === savingDocId) {
-          activeDocId = null;
-          renderTabs();
-        }
-        _syncDocIndicator();
-        if (!silent && uiModule) uiModule.showError('Document no longer exists');
+      if (res.status === 404 && silent && localDoc.language === 'email') {
+        _setDocumentSaveState('error', savingDocId);
         return false;
       }
+      // A failed request, including a missing server row, never discards the
+      // local draft. Only a confirmed explicit deletion owns that transition.
       if (!res.ok) throw new Error(`Document save failed: HTTP ${res.status}`);
       const doc = await res.json();
       if (_deletedDocIds.has(savingDocId)) {
@@ -12218,6 +12199,8 @@ import {
       return false;
     } finally {
       releaseSaveTurn();
+      if (!docs.has(savingDocId) && localDoc._saveState === 'saved'
+          && _closingDocs.get(savingDocId) === localDoc) _closingDocs.delete(savingDocId);
     }
   }
 
@@ -12504,6 +12487,7 @@ import {
       const existing = docs.get(_streamDocId);
       if (title) existing.title = title;
       if (language) existing.language = language;
+      if (_streamDocId !== activeDocId) { renderTabs(); return; }
       // Update UI fields
       const titleInput = document.getElementById('doc-title-input');
       const langSelect = document.getElementById('doc-language-select');
@@ -12517,6 +12501,7 @@ import {
       return;
     }
 
+    suspendSuggestions();
     const sessionId = sessionModule?.getCurrentSessionId() || '';
     // Reuse existing doc with same title in this session, or create a temp one
     let docId = null;
@@ -12538,6 +12523,11 @@ import {
         version: 1,
         sessionId,
       });
+    }
+    if (activeDocId && activeDocId !== docId) {
+      saveCurrentToMap();
+      _flushAutoSave(activeDocId);
+      _releasePdfPane(activeDocId);
     }
     _streamDocId = docId;
     activeDocId = docId;
@@ -12585,6 +12575,7 @@ import {
 
     syncHighlighting();
     _syncStreamDocChrome(docs.get(_streamDocId));
+    _restoreSuggestionsFromStorage(_streamDocId);
     renderTabs();
   }
 
@@ -12761,6 +12752,7 @@ import {
 
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
+    suspendSuggestions();
     ++_documentNavigationGeneration;
     _closeVersionPanel();
     const streamingId = streamDocFinalize();
@@ -13014,6 +13006,7 @@ import {
       requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
     }
 
+    _restoreSuggestionsFromStorage(docId);
     renderTabs();
 
     // Refresh the header buttons (Run/Preview ▶, edit toggles) for the active
@@ -13048,6 +13041,7 @@ import {
       _closeVersionPanel();
       return;
     }
+    if (_diffModeActive) exitDiffMode(true);
     saveCurrentToMap();
     const textarea = document.getElementById('doc-editor-textarea');
     const state = {
@@ -13236,7 +13230,11 @@ import {
         state.previewing = false;
         const textarea = document.getElementById('doc-editor-textarea');
         if (textarea) textarea.readOnly = state.readOnly;
-        if (unchanged) populateEditor(restored);
+        if (unchanged) {
+          if (doc.language === 'email') doc._skipLocalDraftOnce = true;
+          _releasePdfPane(state.docId);
+          switchToDoc(state.docId, { captureCurrent: false, preserveHistory: true });
+        }
         await loadVersionHistory(state);
         uiModule?.showToast(`Restored to v${num}`);
       }

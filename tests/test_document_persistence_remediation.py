@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("scenario", [
-    "minimized-save", "closed-failure", "history-switch", "history-ai",
+    "minimized-save", "closed-failure", "closed-missing", "closed-network", "history-switch", "history-ai",
     "history-preview", "history-restore", "history-metadata",
     "history-lifecycle", "history-failure", "history-rapid",
 ])

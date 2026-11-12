@@ -809,7 +809,9 @@ def test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch():
         const inputB = document.querySelector('#doc-pdf-view input[data-field-name="FullName"]');
         const fieldBValue = inputB ? inputB.value : null;
 
-        // 2. Also explicitly schedule a delayed PDF save targeting pdf-a while pdf-b is active
+        // A detached control is no longer authoritative. Late callbacks must
+        // neither revive its refs nor overwrite the captured originating draft.
+        const retainedDetachedRefs = pdfTools._pdfPaneFieldsByDoc.has('pdf-a');
         inputA.value = 'Alice DelayedTimer';
         pdfTools._schedulePdfPaneSave('pdf-a');
         await new Promise(r => setTimeout(r, 850));
@@ -825,6 +827,7 @@ def test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch():
           fieldBValue,
           textareaB,
           inputAAfterReturn,
+          retainedDetachedRefs,
         };
       });
       console.log(JSON.stringify({ ...res, puts }));
@@ -835,11 +838,13 @@ def test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch():
     assert data["fieldBValue"] == "Bob Original"
     assert "Alice" not in data["textareaB"]
     assert "Bob Original" in data["textareaB"]
-    assert data["inputAAfterReturn"] == "Alice DelayedTimer"
+    assert data["retainedDetachedRefs"] is False
+    assert data["inputAAfterReturn"] == "Alice FormValue"
     pdf_a_puts = [p for p in data["puts"] if p["url"].endswith("/api/document/pdf-a")]
     pdf_b_puts = [p for p in data["puts"] if p["url"].endswith("/api/document/pdf-b")]
-    assert len(pdf_a_puts) >= 2
-    assert "Alice DelayedTimer" in pdf_a_puts[-1]["body"]["content"]
+    assert len(pdf_a_puts) == 1
+    assert "Alice FormValue" in pdf_a_puts[-1]["body"]["content"]
+    assert "Alice DelayedTimer" not in pdf_a_puts[-1]["body"]["content"]
     assert len(pdf_b_puts) == 0
 
 

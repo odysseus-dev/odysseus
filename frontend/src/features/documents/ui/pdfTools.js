@@ -11,6 +11,11 @@ const _pdfPaneFieldsByDoc = new Map(); // docId -> [{name, type, inputEl, ...}]
 const _pdfPaneAnnotationsByDoc = new Map(); // docId -> [{id, page, x, y, w, h, el, wrap}]
 const _pdfUndoStackByDoc = new Map(); // docId -> markdown snapshots
 const _pdfPaneSaveTimers = new Map(); // docId -> timeoutId
+const _pdfRenderGenerationByDoc = new Map();
+const _pdfViewTransitionByDoc = new Map();
+let _pdfToolsUnbind = null;
+let _pdfToolsDispose = null;
+let _pdfMountedDocId = null;
 let _pdfPaneSaveTimer = null;
 let _pdfAnnotationMenuDismissWired = false;
 let _pdfPaneProximityWired = false;
@@ -382,30 +387,7 @@ function _encodeFieldName(name) {
 function _pdfMarkdownFromLive(docId = _getActiveDocId()) {
   const doc = _getDoc(docId);
   if (!doc) return null;
-  const annotations = _pdfPaneAnnotationsByDoc.get(docId) || [];
-  return _writeAnnotations(doc.content || '', annotations.map(a => {
-    let value = '';
-    if (a.kind === 'check') {
-      value = '✓';
-    } else if (a.kind === 'signature') {
-      const sid = a.el && a.el.dataset && a.el.dataset.signatureId;
-      value = sid ? `signature:${sid}` : '';
-    } else {
-      value = (a.el && typeof a.el.value === 'string') ? a.el.value : '';
-    }
-    return {
-      id: a.id,
-      page: a.page,
-      x: a.x,
-      y: a.y,
-      w: a.w,
-      h: a.h,
-      kind: a.kind || 'text',
-      lineHeight: a.lineHeight || 1.3,
-      fontSize: a.fontSize || 11,
-      value,
-    };
-  }));
+  return _composePdfPaneMarkdown(docId)?.md ?? doc.content ?? '';
 }
 
 function _pushPdfUndoSnapshot(docId = _getActiveDocId()) {
@@ -427,19 +409,35 @@ async function _undoPdfPaneAction(docId = _getActiveDocId()) {
   _cancelPdfPaneSave(docId);
   const doc = _getDoc(docId);
   if (!doc) return false;
+  const draftBeforeUndo = doc.content;
   _setPdfSaveStatus('saving', undefined, docId);
   try {
-    const ok = await _persistPdfDocument(docId, prev);
+    const write = _persistPdfDocument(docId, prev);
+    const undoRevision = doc._editRevision;
+    const ok = await write;
     if (!ok) {
+      if (doc.content === prev) doc.content = draftBeforeUndo;
+      if (docId === _getActiveDocId() && typeof document !== 'undefined') {
+        const ta = document.getElementById('doc-editor-textarea');
+        if (ta && ta.value === prev) ta.value = draftBeforeUndo;
+      }
       _setPdfSaveStatus('error', 'Undo failed', docId);
+      stack.push(prev);
       return true;
     }
-    _setPdfSaveStatus('saved', undefined, docId);
-    if (docId === _getActiveDocId()) {
+    const ownsDraft = doc._editRevision === undoRevision && doc.content === prev;
+    _setPdfSaveStatus(ownsDraft ? 'saved' : 'dirty', undefined, docId);
+    if (ownsDraft && docId === _getActiveDocId()) {
       _renderPdfPane(docId);
     }
     return true;
   } catch (e) {
+    if (doc.content === prev) doc.content = draftBeforeUndo;
+    if (docId === _getActiveDocId() && typeof document !== 'undefined') {
+      const ta = document.getElementById('doc-editor-textarea');
+      if (ta && ta.value === prev) ta.value = draftBeforeUndo;
+    }
+    stack.push(prev);
     _setPdfSaveStatus('error', e.message || 'Undo failed', docId);
     return true;
   }
@@ -541,8 +539,27 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
   if (typeof document === 'undefined') return;
   const pane = document.getElementById('doc-pdf-view');
   if (!pane || !docId) return;
+  if (_pdfMountedDocId && _pdfMountedDocId !== docId) {
+    _pdfPaneFieldsByDoc.delete(_pdfMountedDocId);
+    _pdfPaneAnnotationsByDoc.delete(_pdfMountedDocId);
+    _pdfRenderGenerationByDoc.set(_pdfMountedDocId, (_pdfRenderGenerationByDoc.get(_pdfMountedDocId) || 0) + 1);
+  }
+  _pdfMountedDocId = docId;
+  const generation = (_pdfRenderGenerationByDoc.get(docId) || 0) + 1;
+  _pdfRenderGenerationByDoc.set(docId, generation);
+  const renderPane = pane;
+  const renderDoc = _getDoc(docId);
+  const renderContent = renderDoc?.content;
+  const renderRevision = renderDoc?._editRevision;
+  const isCurrentView = () => _pdfRenderGenerationByDoc.get(docId) === generation
+    && docId === _getActiveDocId() && _pdfViewState.get(docId) !== false
+    && renderPane.isConnected && document.getElementById('doc-pdf-view') === renderPane
+    && _getDoc(docId) === renderDoc && _getDoc(docId)?.content === renderContent
+    && _getDoc(docId)?._editRevision === renderRevision;
   delete pane.dataset.renderedDocId;
   _wirePdfPaneProximity(pane);
+  _pdfPaneFieldsByDoc.delete(docId);
+  _pdfPaneAnnotationsByDoc.delete(docId);
   const savedPill = document.getElementById('doc-pdf-save-pill');
   pane.innerHTML = '';
   const spinner = _getSpinnerModule();
@@ -556,12 +573,20 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
     const res = await fetch(`${apiBase}/api/document/${docId}/render-pages`);
     if (!res.ok) throw new Error(await _pdfResponseErrorMessage(res));
     data = await res.json();
+    if (!Array.isArray(data?.pages) || data.pages.length === 0) {
+      throw new Error('PDF renderer returned no pages');
+    }
+    const renderedPages = new Set(data.pages.map(page => Number(page.page)));
+    if (_parseAnnotations(renderContent || '').some(annotation => !renderedPages.has(Number(annotation.page)))) {
+      throw new Error('PDF renderer returned an incomplete annotation page set');
+    }
   } catch (e) {
+    if (!isCurrentView()) return;
     pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${_escHtml(e.message || String(e))}</div>`;
     if (savedPill) pane.appendChild(savedPill);
     return;
   }
-  if (docId !== _getActiveDocId()) return;
+  if (!isCurrentView()) return;
 
   pane.dataset.renderedDocId = docId;
   pane.innerHTML = '';
@@ -1306,11 +1331,25 @@ function _hasPendingPdfPaneSave(docId = _getActiveDocId()) {
   return Boolean(docId && _pdfPaneSaveTimers.has(docId));
 }
 
+// Call after capturing pending edits when this shared pane changes owner.
+function _releasePdfPane(docId) {
+  if (!docId) return;
+  _pdfPaneFieldsByDoc.delete(docId);
+  _pdfPaneAnnotationsByDoc.delete(docId);
+  _pdfRenderGenerationByDoc.set(docId, (_pdfRenderGenerationByDoc.get(docId) || 0) + 1);
+  if (_pdfMountedDocId === docId) _pdfMountedDocId = null;
+  if (typeof document !== 'undefined') {
+    const pane = document.getElementById('doc-pdf-view');
+    if (pane?.dataset.renderedDocId === docId) delete pane.dataset.renderedDocId;
+  }
+}
+
 function _cleanupPdfDocState(docId) {
   if (!docId) return;
   _cancelPdfPaneSave(docId);
-  _pdfPaneFieldsByDoc.delete(docId);
-  _pdfPaneAnnotationsByDoc.delete(docId);
+  _releasePdfPane(docId);
+  _pdfRenderGenerationByDoc.delete(docId);
+  _pdfViewTransitionByDoc.delete(docId);
   _pdfUndoStackByDoc.delete(docId);
   _pdfLastLineHeight.delete(docId);
   _pdfLastFontSize.delete(docId);
@@ -1319,8 +1358,12 @@ function _cleanupPdfDocState(docId) {
 
 function _schedulePdfPaneSave(docId = _getActiveDocId()) {
   if (!docId) return;
+  // Removing a focused control can fire change while its old pane is being
+  // replaced. A disposed view cannot revise or schedule the current draft.
+  if (!_pdfPaneFieldsByDoc.has(docId) && !_pdfPaneAnnotationsByDoc.has(docId)) return;
   const doc = _getDoc(docId);
   if (!doc) return;
+  _syncPdfPaneToDoc(docId, { markDirty: false });
   if (typeof _deps.markDocumentDirty === 'function') {
     _deps.markDocumentDirty(docId);
   }
@@ -1329,7 +1372,7 @@ function _schedulePdfPaneSave(docId = _getActiveDocId()) {
   const timer = setTimeout(() => {
     _pdfPaneSaveTimers.delete(docId);
     _syncPdfPaneTimerExport();
-    _savePdfPaneToMarkdown(docId);
+    _savePdfPaneToMarkdown(docId, { persistDraft: true });
   }, 600);
   _pdfPaneSaveTimers.set(docId, timer);
   _syncPdfPaneTimerExport();
@@ -1362,13 +1405,14 @@ function _setPdfSaveStatus(status, msg, docId = _getActiveDocId()) {
 }
 
 function _composePdfPaneMarkdown(docId) {
+  const hasFields = _pdfPaneFieldsByDoc.has(docId);
+  const hasAnnotations = _pdfPaneAnnotationsByDoc.has(docId);
   const fields = _pdfPaneFieldsByDoc.get(docId) || [];
   const annotations = _pdfPaneAnnotationsByDoc.get(docId) || [];
   if (!docId) return null;
   const doc = _getDoc(docId);
   if (!doc) return null;
-  const hadAnnotations = /<!--\s*annotation\s+/.test(doc.content || '');
-  if (!fields.length && !annotations.length && !hadAnnotations) return null;
+  if (!hasFields && !hasAnnotations) return null;
 
   let md = doc.content || '';
   for (const ref of fields) {
@@ -1399,7 +1443,7 @@ function _composePdfPaneMarkdown(docId) {
       md = md.replace(re, `${m[1]}${newBody}${m[3]}`);
     }
   }
-  md = _writeAnnotations(md, annotations.map(a => {
+  if (hasAnnotations) md = _writeAnnotations(md, annotations.map(a => {
     let value = '';
     if (a.kind === 'check') {
       value = '✓';
@@ -1448,7 +1492,7 @@ async function _flushPdfPaneSave(docId = _getActiveDocId(), opts = {}) {
     const composed = _composePdfPaneMarkdown(docId);
     if (!composed || !composed.changed) return false;
   }
-  return await _savePdfPaneToMarkdown(docId, opts);
+  return await _savePdfPaneToMarkdown(docId, { ...opts, persistDraft: hadTimer });
 }
 
 async function _savePdfPaneToMarkdown(targetDocId = _getActiveDocId(), opts = {}) {
@@ -1459,9 +1503,11 @@ async function _savePdfPaneToMarkdown(targetDocId = _getActiveDocId(), opts = {}
   const docId = targetDocId || opts.docId || _getActiveDocId();
   if (!docId) return false;
   _cancelPdfPaneSave(docId);
-  const composed = _composePdfPaneMarkdown(docId);
+  const doc = _getDoc(docId);
+  const composed = _composePdfPaneMarkdown(docId)
+    || (opts.persistDraft && doc ? { doc, md: doc.content, changed: false } : null);
   if (!composed) return false;
-  if (!composed.changed) {
+  if (!composed.changed && !opts.persistDraft && !['dirty', 'error'].includes(doc?._saveState)) {
     _setPdfSaveStatus('idle', undefined, docId);
     return true;
   }
@@ -1503,6 +1549,8 @@ async function _setPdfViewActive(active) {
   const btn = document.getElementById('doc-pdf-view-btn');
   if (!pane || !wrap) return;
   const activeId = _getActiveDocId();
+  const transition = (_pdfViewTransitionByDoc.get(activeId) || 0) + 1;
+  _pdfViewTransitionByDoc.set(activeId, transition);
   if (active) {
     _pdfViewState.set(activeId, true);
     wrap.style.display = 'none';
@@ -1511,6 +1559,7 @@ async function _setPdfViewActive(active) {
     btn?.classList.add('active');
   } else {
     await _flushPdfPaneSave(activeId);
+    if (_pdfViewTransitionByDoc.get(activeId) !== transition || _getActiveDocId() !== activeId) return;
     _pdfViewState.set(activeId, false);
     delete pane.dataset.renderedDocId;
     pane.style.display = 'none';
@@ -1519,6 +1568,7 @@ async function _setPdfViewActive(active) {
     if (savedPill) pane.appendChild(savedPill);
     _pdfPaneFieldsByDoc.delete(activeId);
     _pdfPaneAnnotationsByDoc.delete(activeId);
+    _pdfRenderGenerationByDoc.set(activeId, (_pdfRenderGenerationByDoc.get(activeId) || 0) + 1);
     wrap.style.display = '';
     btn?.classList.remove('active');
   }
@@ -1526,28 +1576,61 @@ async function _setPdfViewActive(active) {
 
 function initPdfTools(options = {}) {
   _deps = { ..._deps, ...options };
-  if (typeof document === 'undefined') return;
-
-  document.getElementById('doc-export-pdf-btn')?.addEventListener('click', _downloadFilledPdf);
-  document.getElementById('doc-pdf-view-btn')?.addEventListener('click', () => {
+  if (typeof document === 'undefined') return () => {};
+  _pdfToolsUnbind?.();
+  const bindings = [];
+  const bind = (id, handler) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', handler);
+    bindings.push(() => el.removeEventListener('click', handler));
+  };
+  bind('doc-export-pdf-btn', _downloadFilledPdf);
+  bind('doc-pdf-view-btn', () => {
     const pane = document.getElementById('doc-pdf-view');
     const visible = pane && pane.style.display !== 'none';
     _setPdfViewActive(!visible);
   });
-  document.getElementById('doc-pdf-add-text-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'text' ? null : 'text'));
-  document.getElementById('doc-pdf-add-check-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'check' ? null : 'check'));
-  document.getElementById('doc-pdf-add-sign-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'signature' ? null : 'signature'));
-  document.getElementById('doc-pdf-refresh-btn')?.addEventListener('click', () => _renderPdfPane());
-  document.getElementById('doc-pdf-ai-fill-btn')?.addEventListener('click', () => _aiFillAnnotations());
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
+  bind('doc-pdf-add-text-btn', () => _setPdfDropMode(_pdfDropMode === 'text' ? null : 'text'));
+  bind('doc-pdf-add-check-btn', () => _setPdfDropMode(_pdfDropMode === 'check' ? null : 'check'));
+  bind('doc-pdf-add-sign-btn', () => _setPdfDropMode(_pdfDropMode === 'signature' ? null : 'signature'));
+  bind('doc-pdf-refresh-btn', async () => {
+    const id = _getActiveDocId();
+    await _flushPdfPaneSave(id);
+    if (id === _getActiveDocId()) _renderPdfPane(id);
+  });
+  bind('doc-pdf-ai-fill-btn', () => _aiFillAnnotations());
+  const beforeUnload = () => {
     for (const docId of Array.from(_pdfPaneSaveTimers.keys())) {
       _cancelPdfPaneSave(docId);
       _savePdfPaneToMarkdown(docId, { keepalive: true });
     }
-  });
+  };
+  window.addEventListener('beforeunload', beforeUnload);
+  bindings.push(() => window.removeEventListener('beforeunload', beforeUnload));
+  const unbind = () => {
+    for (const unbind of bindings.splice(0)) unbind();
+  };
+  _pdfToolsUnbind = unbind;
+  const dispose = () => {
+    unbind();
+    if (_pdfToolsUnbind !== unbind) return;
+    _pdfToolsUnbind = null;
+    _pdfToolsDispose = null;
+    const docId = _pdfMountedDocId;
+    _pdfMountedDocId = null;
+    if (docId) {
+      _pdfPaneFieldsByDoc.delete(docId);
+      _pdfPaneAnnotationsByDoc.delete(docId);
+      _pdfRenderGenerationByDoc.set(docId, (_pdfRenderGenerationByDoc.get(docId) || 0) + 1);
+    }
+  };
+  _pdfToolsDispose = dispose;
+  return dispose;
+}
+
+function disposePdfTools() {
+  _pdfToolsDispose?.();
 }
 
 export {
@@ -1593,6 +1676,7 @@ export {
   _flushPdfPaneSave,
   _syncPdfPaneToDoc,
   _cleanupPdfDocState,
+  _releasePdfPane,
   _setPdfSaveStatus,
   _savePdfPaneToMarkdown,
   _refreshPdfPreviewIframe,
@@ -1606,4 +1690,5 @@ export {
   calculateDragMove,
   calculateResize,
   initPdfTools,
+  disposePdfTools,
 };

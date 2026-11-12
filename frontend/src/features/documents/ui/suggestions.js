@@ -118,7 +118,7 @@ function _clearSuggestionTextSelection() {
 
 /** Persist suggestions to localStorage for the active doc */
 function _saveSuggestionsToStorage(docId) {
-  const activeDocId = docId || _getActiveDocId();
+  const activeDocId = docId || _suggestionDocId || _getActiveDocId();
   if (!activeDocId) return;
   const storage = _getStorage();
   if (!storage) return;

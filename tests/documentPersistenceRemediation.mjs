@@ -54,17 +54,18 @@ try {
     assert.deepEqual(bodies, ['first snapshot', 'newer draft']);
     assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'newer draft');
     assert.equal(await page.locator('#doc-footer-copy-btn').getAttribute('data-save-state'), 'saved');
-  } else if (scenario === 'closed-failure') {
+  } else if (scenario.startsWith('closed-')) {
     await inject('b'); await page.evaluate(() => editor.loadDocument('a'));
     let fail = true; const bodies = [];
     await page.route('**/api/document/a', async route => {
       if (route.request().method() === 'PUT') {
         bodies.push(route.request().postDataJSON().content);
-        await route.fulfill({ status: fail ? 500 : 200, json: { version_count: 3 } });
+        if (fail && scenario === 'closed-network') return route.abort('failed');
+        await route.fulfill({ status: fail ? (scenario === 'closed-missing' ? 404 : 500) : 200, json: { version_count: 3 } });
       } else await route.fulfill({ json: { id: 'a', title: 'a', language: 'markdown', current_content: 'stale server', version_count: 2 } });
     });
     await edit('recover this detached draft');
-    const response = page.waitForResponse(r => r.request().method() === 'PUT');
+    const response = scenario === 'closed-network' ? page.waitForEvent('requestfailed', { predicate: request => request.method() === 'PUT' }) : page.waitForResponse(r => r.request().method() === 'PUT');
     await page.locator('.doc-tab[data-doc-id="a"] .doc-tab-close').dispatchEvent('click'); await response;
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
     await page.evaluate(() => editor.loadDocument('a'));
