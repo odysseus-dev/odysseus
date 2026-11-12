@@ -46,6 +46,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   let _emailStreamTargetBody = '';
   let _emailLocalDraftDebounce = null;
   let _emailRichbodySaveDebounce = null;
+  const _pendingAutoSaves = new Map();
+  const _deletedDocIds = new Set();
+  const _closingDocs = new Map();
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
   // Diff mode state
@@ -156,10 +159,66 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     error: { label: 'Save failed', title: 'Document could not be saved' },
   };
 
+  function _scheduleAutoSave(docId = activeDocId, delay = 800, options = {}) {
+    if (!docId || _deletedDocIds.has(docId)) return;
+    if (_pendingAutoSaves.has(docId)) {
+      clearTimeout(_pendingAutoSaves.get(docId).timer);
+      _pendingAutoSaves.delete(docId);
+    }
+    const timer = setTimeout(async () => {
+      _pendingAutoSaves.delete(docId);
+      if (_deletedDocIds.has(docId)) return;
+      await saveDocument({ silent: true, docId, ...options });
+    }, delay);
+    _pendingAutoSaves.set(docId, { timer, options });
+    _autoSaveDebounce = timer;
+    if (options?.isEmailRichbody) _emailRichbodySaveDebounce = timer;
+  }
+
+  function _cancelAutoSave(docId = activeDocId) {
+    if (!docId) return;
+    if (_pendingAutoSaves.has(docId)) {
+      const entry = _pendingAutoSaves.get(docId);
+      clearTimeout(entry.timer);
+      if (_autoSaveDebounce === entry.timer) _autoSaveDebounce = null;
+      if (_emailRichbodySaveDebounce === entry.timer) _emailRichbodySaveDebounce = null;
+      _pendingAutoSaves.delete(docId);
+    }
+  }
+
+  function _cancelAllAutoSaves() {
+    for (const [id, entry] of _pendingAutoSaves) {
+      clearTimeout(entry.timer);
+    }
+    _pendingAutoSaves.clear();
+    _autoSaveDebounce = null;
+    _emailRichbodySaveDebounce = null;
+  }
+
+  function _flushAutoSave(docId = activeDocId) {
+    if (!docId) return Promise.resolve(false);
+    const targetDoc = docs.get(docId) || _closingDocs.get(docId);
+    if (_pendingAutoSaves.has(docId)) {
+      const entry = _pendingAutoSaves.get(docId);
+      clearTimeout(entry.timer);
+      if (_autoSaveDebounce === entry.timer) _autoSaveDebounce = null;
+      if (_emailRichbodySaveDebounce === entry.timer) _emailRichbodySaveDebounce = null;
+      _pendingAutoSaves.delete(docId);
+      if (!_deletedDocIds.has(docId)) {
+        return saveDocument({ silent: true, docId, ...entry.options });
+      }
+      return Promise.resolve(false);
+    }
+    if (targetDoc && targetDoc._saveState === 'dirty' && !_deletedDocIds.has(docId)) {
+      return saveDocument({ silent: true, docId });
+    }
+    return Promise.resolve(false);
+  }
+
   function _renderDocumentSaveState() {
     const status = document.getElementById('doc-footer-copy-btn');
     if (!status) return;
-    const doc = activeDocId && docs.get(activeDocId);
+    const doc = activeDocId && (docs.get(activeDocId) || _closingDocs.get(activeDocId));
     const state = doc?._saveState || 'saved';
     const meta = _DOC_SAVE_STATE[state] || _DOC_SAVE_STATE.saved;
     status.dataset.saveState = state;
@@ -170,7 +229,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   function _setDocumentSaveState(state, docId = activeDocId) {
-    const doc = docId && docs.get(docId);
+    const doc = docId && (docs.get(docId) || _closingDocs.get(docId));
     if (!doc || !_DOC_SAVE_STATE[state]) return;
     if (doc._saveState === state) return;
     doc._saveState = state;
@@ -178,7 +237,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   function _markDocumentDirty(docId = activeDocId) {
-    const doc = docId && docs.get(docId);
+    const doc = docId && (docs.get(docId) || _closingDocs.get(docId));
     if (!doc || doc.language === 'email') return;
     doc._editRevision = (doc._editRevision || 0) + 1;
     _setDocumentSaveState('dirty', docId);
@@ -3706,8 +3765,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const doc = activeDocId && docs.get(activeDocId);
     if (doc && _isRichTextLang(doc.language)) _markDocumentDirty(activeDocId);
     _persistEmailLocalDraftSoon();
-    clearTimeout(_emailRichbodySaveDebounce);
-    _emailRichbodySaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2500);
+    _scheduleAutoSave(activeDocId, 2500, { isEmailRichbody: true });
   }
 
   function _richSelectionElement(rich) {
@@ -5217,8 +5275,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     if (added) {
       _renderComposeAttachments();
-      clearTimeout(_autoSaveDebounce);
-      _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+      _scheduleAutoSave(activeDocId, 800);
     }
   }
 
@@ -5312,8 +5369,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   function _afterOdysseusAttachmentsAdded(count, label) {
     _renderComposeAttachments();
-    clearTimeout(_autoSaveDebounce);
-    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+    _scheduleAutoSave(activeDocId, 800);
     if (uiModule) uiModule.showToast(count > 1 ? `Attached ${count} items` : `Attached ${label || 'item'}`);
   }
 
@@ -5696,8 +5752,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     _hlDebounce = setTimeout(syncHighlighting, 80);
     clearTimeout(_autoTitleDebounce);
     _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
-    clearTimeout(_autoSaveDebounce);
-    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+    _scheduleAutoSave(activeDocId, 800);
   }
 
   function _insertMarkdownImages(uploadedFiles) {
@@ -6481,6 +6536,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         }
         // Delete the compose document after successful send.
         if (sendDocId) {
+          _deletedDocIds.add(sendDocId);
+          _cancelAutoSave(sendDocId);
           fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
           const wasActiveSentDoc = isOpen && activeDocId === sendDocId;
           docs.delete(sendDocId);
@@ -6590,15 +6647,24 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   function _closeWithoutDeleting(deleteDoc = false) {
     if (!activeDocId) return;
+    const closingId = activeDocId;
+    _cancelAutoSave(closingId);
     if (deleteDoc) {
-      fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' }).catch(() => {});
+      _deletedDocIds.add(closingId);
+      fetch(`${API_BASE}/api/document/${closingId}`, { method: 'DELETE' }).catch(() => {});
     }
     // Save the current state to the doc first so it persists in the library
     saveCurrentToMap();
     if (!deleteDoc) {
-      saveDocument({ silent: true }).catch(() => {});
+      const doc = docs.get(closingId);
+      if (doc) {
+        _closingDocs.set(closingId, doc);
+        saveDocument({ silent: true, docId: closingId }).catch(() => {}).finally(() => {
+          _closingDocs.delete(closingId);
+        });
+      }
     }
-    docs.delete(activeDocId);
+    docs.delete(closingId);
     const remaining = Array.from(docs.keys());
     if (remaining.length > 0) {
       switchToDoc(remaining[0]);
@@ -7079,14 +7145,18 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const mountedPane = document.getElementById('doc-editor-pane');
     if (mountedPane?.dataset.activeDocumentId === activeDocId) saveCurrentToMap();
 
-    // Auto-delete the doc we're leaving if it's completely empty
+    // Auto-delete the doc we're leaving if it's completely empty, or flush pending saves
     const prevId = activeDocId;
     if (prevId && prevId !== docId && docs.has(prevId)) {
       const prev = docs.get(prevId);
       if (prev.language !== 'email' && !(prev.content || '').trim() && !(prev.title || '').trim()) {
+        _deletedDocIds.add(prevId);
+        _cancelAutoSave(prevId);
         fetch(`${API_BASE}/api/document/${prevId}`, { method: 'DELETE' }).catch(() => {});
         docs.delete(prevId);
         _syncDocIndicator();
+      } else {
+        _flushAutoSave(prevId);
       }
     }
 
@@ -7237,11 +7307,16 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   // session makes it look like the document vanished from that chat.
   function _detachDocFromSession(docId, { toast = false } = {}) {
     const doc = docs.get(docId);
+    _cancelAutoSave(docId);
     const hasContent = doc && doc.content && doc.content.trim().length > 0;
     if (hasContent) {
-      saveDocument({ silent: true }).catch(() => {});
+      _closingDocs.set(docId, doc);
+      saveDocument({ silent: true, docId }).catch(() => {}).finally(() => {
+        _closingDocs.delete(docId);
+      });
       if (toast && uiModule) uiModule.showToast('Document closed');
     } else {
+      _deletedDocIds.add(docId);
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
     }
     _forgetActiveDoc(doc?.sessionId || _lastSessionId, docId);
@@ -7311,8 +7386,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       setTimeout(attemptAutoDetect, 100);
       setTimeout(() => autoTitleFromContent(content), 300);
       // Auto-save
-      clearTimeout(_autoSaveDebounce);
-      _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2000);
+      _scheduleAutoSave(doc.id, 2000);
     } catch (e) {
       console.error('Failed to auto-create document from input:', e);
     } finally {
@@ -8266,8 +8340,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         if (doc) {
           doc.language = lang;
           _showRichTextEditor(doc);
-          clearTimeout(_autoSaveDebounce);
-          _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 300);
+          _scheduleAutoSave(activeDocId, 300);
         }
       } else {
         _hideEmailFields();
@@ -8466,8 +8539,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         _syncEmailHeaderSummary();
         saveCurrentToMap();
         _persistEmailLocalDraftSoon();
-        clearTimeout(_autoSaveDebounce);
-        _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+        _scheduleAutoSave(activeDocId, 800);
       });
       document.getElementById(id)?.addEventListener('focus', () => _setEmailHeaderCollapsed(false, { manual: false }));
     });
@@ -8549,8 +8621,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         if (ccToggle) ccToggle.style.display = '';
         _syncEmailHeaderSummary();
         saveCurrentToMap();
-        clearTimeout(_autoSaveDebounce);
-        _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+        _scheduleAutoSave(activeDocId, 800);
       });
     });
 
@@ -8799,8 +8870,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         _autoDetectDebounce = setTimeout(attemptAutoDetect, AUTO_DETECT_DELAY);
         clearTimeout(_autoTitleDebounce);
         _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
-        clearTimeout(_autoSaveDebounce);
-        _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2000);
+        _scheduleAutoSave(activeDocId, 2000);
         const doc = activeDocId && docs.get(activeDocId);
         if (doc && doc.language === 'email') _persistEmailLocalDraftSoon();
         _scheduleDocumentStats();
@@ -9256,9 +9326,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           e.preventDefault();
           e.stopPropagation();
           clearTimeout(_autoSaveDebounce);
+          _cancelAutoSave(activeDocId);
           clearTimeout(_emailRichbodySaveDebounce);
           const doc = activeDocId && docs.get(activeDocId);
-          saveDocument({ silent: false, forceVersion: doc?.language !== 'email' });
+          saveDocument({ silent: false, forceVersion: doc?.language !== 'email', docId: activeDocId });
           return;
         }
         if (mod && (key === 'f' || key === 'h')) {
@@ -12065,8 +12136,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           _syncEmailRichbody(rich);
         }
         syncHighlighting();
-        clearTimeout(_autoSaveDebounce);
-        _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+        _scheduleAutoSave(doc.id, 800);
       }
       textarea = document.getElementById('doc-editor-textarea');
       const focusTarget = _emailRichbodyActive() || textarea;
@@ -12151,8 +12221,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const textarea = document.getElementById('doc-editor-textarea');
       if (textarea) _setEmailBodyText(textarea, body);
     }
-    clearTimeout(_autoSaveDebounce);
-    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+    _scheduleAutoSave(docId, 800);
   }
 
   function _buildEmailContentFromFields(fields, body) {
@@ -12234,8 +12303,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (activeDocId === docId) {
       _showEmailFields(doc, { applyLocalDraft: false });
     }
-    clearTimeout(_autoSaveDebounce);
-    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+    _scheduleAutoSave(docId, 800);
     return true;
   }
 
@@ -12361,8 +12429,29 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const restoreMode = !!opts.restoreMode;
     const shouldRestoreOpen = localStorage.getItem(_docOpenKey(sessionId)) === '1';
     const shouldRestoreMinimized = localStorage.getItem(_docMinimizedKey(sessionId)) === '1';
+
+    // Save current editor content to map before tearing down
+    if (activeDocId && docs.has(activeDocId)) {
+      saveCurrentToMap();
+    }
+
+    // Flush any pending saves or dirty documents belonging to previous sessions
+    for (const [id, doc] of docs) {
+      if (doc.sessionId && doc.sessionId !== sessionId) {
+        if (_pendingAutoSaves.has(id) || doc._saveState === 'dirty') {
+          _cancelAutoSave(id);
+          _closingDocs.set(id, doc);
+          saveDocument({ silent: true, docId: id }).catch(() => {}).finally(() => {
+            _closingDocs.delete(id);
+          });
+        } else {
+          _cancelAutoSave(id);
+        }
+      }
+    }
+
     // Clear docs from other sessions so tabs are per-session,
-    // but keep session-less docs (e.g. email compose) — they're independent
+    // but keep session-less docs (e.g. email compose) - they are independent
     for (const [id, doc] of [...docs]) {
       if (doc.sessionId && doc.sessionId !== sessionId) docs.delete(id);
     }
@@ -14855,7 +14944,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         const action = item.dataset.action;
         _closeDocTabMenu();
         switch (action) {
-          case 'save': saveDocument(); break;
+          case 'save': saveDocument({ docId }); break;
           case 'copy': copyDocument(); break;
           case 'run': runDocument(); break;
           case 'preview':
@@ -14988,16 +15077,20 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   }
 
   /** Save manual edits */
-  export async function saveDocument({ silent = false, forceVersion = false } = {}) {
-    const savingDocId = getChatDocumentId();
+  export async function saveDocument({ silent = false, forceVersion = false, docId = null } = {}) {
+    const savingDocId = docId || getChatDocumentId();
     if (!savingDocId) return false;
+    if (_deletedDocIds.has(savingDocId)) return false;
+    _cancelAutoSave(savingDocId);
     const textarea = document.getElementById('doc-editor-textarea');
     // Minimizing removes the editor DOM, but closePanel already captured its
     // content in docs. Persist that cache without reading an absent/new pane.
     if (isOpen && activeDocId === savingDocId) saveCurrentToMap();
-    const localDoc = docs.get(savingDocId);
-    if (!localDoc) return false;
-    const contentToSave = localDoc.content ?? textarea?.value ?? '';
+    const localDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
+    if (!localDoc || _deletedDocIds.has(savingDocId)) return false;
+    const contentToSave = (isOpen && activeDocId === savingDocId)
+      ? (localDoc.content ?? textarea?.value ?? '')
+      : (localDoc.content ?? '');
     const saveRevision = localDoc?._editRevision || 0;
     const saveRequest = (localDoc?._saveRequest || 0) + 1;
     if (localDoc) localDoc._saveRequest = saveRequest;
@@ -15010,6 +15103,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     await previousSave.catch(() => {});
 
+    if (_deletedDocIds.has(savingDocId)) {
+      releaseSaveTurn();
+      return false;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/document/${savingDocId}`, {
         method: 'PUT',
@@ -15021,6 +15119,9 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           summary: forceVersion ? 'Saved version' : undefined,
         }),
       });
+      if (_deletedDocIds.has(savingDocId)) {
+        return false;
+      }
       if (res.status === 404) {
         if (silent && localDoc?.language === 'email') {
           return false;
@@ -15029,6 +15130,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         // or already-deleted document. Do not keep surfacing autosave errors for
         // a document the backend no longer knows about.
         if (docs.has(savingDocId)) docs.delete(savingDocId);
+        _closingDocs.delete(savingDocId);
         if (activeDocId === savingDocId) {
           activeDocId = null;
           renderTabs();
@@ -15039,19 +15141,26 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       }
       if (!res.ok) throw new Error(`Document save failed: HTTP ${res.status}`);
       const doc = await res.json();
+      if (_deletedDocIds.has(savingDocId)) {
+        return false;
+      }
       const badge = document.getElementById('doc-version-badge');
-      if (badge) { const _v = doc.version_count || 1; badge.textContent = `v${_v}`; badge.style.display = _v > 1 ? '' : 'none'; }
+      if (badge && activeDocId === savingDocId) {
+        const _v = doc.version_count || 1;
+        badge.textContent = `v${_v}`;
+        badge.style.display = _v > 1 ? '' : 'none';
+      }
       // Update map
       let versionChanged = false;
-      if (docs.has(savingDocId)) {
-        const savedDoc = docs.get(savingDocId);
-        const previousVersion = savedDoc.version || 1;
-        savedDoc.version = Math.max(previousVersion, doc.version_count || 1);
-        versionChanged = savedDoc.version !== previousVersion;
-        if (savedDoc._saveRequest === saveRequest) {
-          savedDoc.content = contentToSave;
+      const targetDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
+      if (targetDoc) {
+        const previousVersion = targetDoc.version || 1;
+        targetDoc.version = Math.max(previousVersion, doc.version_count || 1);
+        versionChanged = targetDoc.version !== previousVersion;
+        if (targetDoc._saveRequest === saveRequest) {
+          targetDoc.content = contentToSave;
           _setDocumentSaveState(
-            (savedDoc._editRevision || 0) === saveRevision ? 'saved' : 'dirty',
+            (targetDoc._editRevision || 0) === saveRevision ? 'saved' : 'dirty',
             savingDocId,
           );
         }
@@ -15061,8 +15170,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       if (!silent && uiModule) uiModule.showToast(forceVersion ? 'New version saved' : 'Document saved');
       return true;
     } catch (e) {
+      if (_deletedDocIds.has(savingDocId)) {
+        return false;
+      }
       console.error('Failed to save document:', e);
-      const failedDoc = docs.get(savingDocId);
+      const failedDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
       if (failedDoc?._saveRequest === saveRequest) _setDocumentSaveState('error', savingDocId);
       const now = Date.now();
       if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
@@ -16073,7 +16185,10 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       : confirm(`Delete "${name}"?`);
     if (!ok) return;
     try {
-      const res = await fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' });
+      const idToDelete = activeDocId;
+      _deletedDocIds.add(idToDelete);
+      _cancelAutoSave(idToDelete);
+      const res = await fetch(`${API_BASE}/api/document/${idToDelete}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
       // Remove tab
       const tab = document.querySelector(`.doc-tab[data-doc-id="${activeDocId}"]`);
