@@ -7586,7 +7586,6 @@ import {
         getSpinnerModule: () => spinnerModule,
         getSignatureModule: () => signatureModule,
       });
-      });
       document.getElementById('doc-outline-toolbar-btn')?.addEventListener('click', _openDocumentOutline);
 
       // Intercept Ctrl+F on the editor pane
