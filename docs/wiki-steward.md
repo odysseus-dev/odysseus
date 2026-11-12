@@ -48,6 +48,13 @@ Copy-Item config\wiki\steward.proposed.json F:\Projects\Odysseus-Wiki\steward.js
 ```
 Each rendered file is then installed by hand; see `RENDERED.md` in the output folder.
 
+### Activation state (this machine)
+
+- **Hermes: active.** The `wiki` entry was merged into the live managed gateway config `%LOCALAPPDATA%\Odysseus\hermes\state\hermes-gateway\config.yaml` (backup `config.yaml.pre-wiki-<timestamp>` beside it). The gateway's housekeeping chore reconciled it (`MCP servers reconciled with config (default): removed=[] added=['wiki']`) and the server connected with **no restart**; a new session gets the tools. The first recovery pass ran as `hermes` and synced only `odysseus`.
+- **Claude Code: active** through the project-scoped `F:\Odysseus\integration-backups\webapp-proxy\.mcp.json` (untracked).
+- **Codex: not configured** (awaiting `codex login`).
+- **Hooks: not installed.**
+
 ## 4. Tests (what was run, against what)
 
 - Unit and integration: `& "F:\Odysseus-Backups\desktop-lab\ody-full-venv\Scripts\python.exe" -m pytest tests/wiki_steward -q` : **46 passed**. Mutation checks: 13 deliberately broken rules, each caught by a named test (a bot-accepts-attested mutant initially survived; its test was added).

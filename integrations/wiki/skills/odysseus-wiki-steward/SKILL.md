@@ -100,4 +100,4 @@ Same-user terminal access is outside the protection boundary. An agent that can 
 - Unit/integration: 46 passed; 13 mutation checks each caught by a named test.
 - Real clients: Claude Code and Hermes both ran against a scratch clone of the real wiki (search, propose, task, handoff, reconcile after an interrupted session); 0 decisions made, 0 sensitive claims verified, integrity clean.
 - Wiki Bot: resolved with Hermes' own toolset code on all 20 platforms (only wiki tools + the deferred-tool bridge); accept on contested/decision claims refused.
-- Claude Code is live on the real wiki via the project-scoped `.mcp.json`; Hermes is activated through the managed gateway config.
+- Claude Code is live on the real wiki via the project-scoped `.mcp.json`; Hermes is active through the managed gateway config (`mcp_servers.wiki`, merged by hand, picked up by the housekeeping chore with no restart).
