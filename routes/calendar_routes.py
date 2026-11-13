@@ -502,6 +502,14 @@ def _parse_dt_pair(s: str):
         return _parse_dt(s), False
 
 
+def _parse_event_dt(s: str, field: str):
+    """Translate malformed event date input into a client error."""
+    try:
+        return _parse_dt_pair(s)
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(400, f"Invalid {field}") from exc
+
+
 def _parse_dt(s: str) -> datetime:
     """Parse a date/datetime string.
 
@@ -1362,9 +1370,9 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             # Use the tz-detecting parser so events posted with an offset
             # (e.g. "2026-05-13T10:00:00+09:00" or "...Z") get stored as UTC
             # and flagged for proper Z-suffix on read-back.
-            dtstart, _is_utc = _parse_dt_pair(data.dtstart)
+            dtstart, _is_utc = _parse_event_dt(data.dtstart, "dtstart")
             if data.dtend:
-                dtend, _end_utc = _parse_dt_pair(data.dtend)
+                dtend, _end_utc = _parse_event_dt(data.dtend, "dtend")
                 # If start was tz-aware but end was naive (or vice-versa),
                 # trust whichever flag is True — they should match.
                 _is_utc = _is_utc or _end_utc
@@ -1439,14 +1447,14 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             if data.location is not None:
                 ev.location = data.location
             if data.dtstart is not None:
-                ev.dtstart, _s_utc = _parse_dt_pair(data.dtstart)
+                ev.dtstart, _s_utc = _parse_event_dt(data.dtstart, "dtstart")
                 # When the incoming payload carries tz info, mark the row as
                 # UTC-stored so the serializer adds Z. Don't flip the flag
                 # off if start arrives naive but end was UTC — only escalate.
                 if _s_utc:
                     ev.is_utc = True
             if data.dtend is not None:
-                ev.dtend, _e_utc = _parse_dt_pair(data.dtend)
+                ev.dtend, _e_utc = _parse_event_dt(data.dtend, "dtend")
                 if _e_utc:
                     ev.is_utc = True
             if data.all_day is not None:
