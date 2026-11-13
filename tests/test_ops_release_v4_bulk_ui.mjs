@@ -51,6 +51,8 @@ const sandbox = {
   String,
   Array,
   JSON,
+  URLSearchParams,
+  encodeURIComponent,
   encodeURIComponent,
   setInterval: () => 1,
   clearInterval: () => {},
