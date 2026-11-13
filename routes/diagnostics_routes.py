@@ -1,5 +1,6 @@
 """Diagnostics routes — /api/db/stats, /api/rag/stats, /api/test/youtube, /api/test-research."""
 
+import json
 import logging
 import os
 from typing import Dict, Any
@@ -37,11 +38,11 @@ def setup_diagnostics_routes(
         return await collect_ops_runtime_summary(rag_manager, memory_vector)
 
     @router.get("/api/diagnostics/effects")
-    async def get_diagnostics_effects(request: Request, limit: int = 50) -> Dict[str, Any]:
+    async def get_diagnostics_effects(request: Request, limit: int = 50, unsettled_only: bool = False) -> Dict[str, Any]:
         """Read-only audit summary of recent durable Wave 4 effect logs."""
         require_admin(request)
         from src.agent_runtime.effect_log import list_recent_effect_runs
-        runs = list_recent_effect_runs(limit=limit)
+        runs = list_recent_effect_runs(limit=limit, unsettled_only=unsettled_only)
         return {"status": "success", "runs": runs, "count": len(runs)}
 
     @router.get("/api/diagnostics/effects/{run_id}")
@@ -57,6 +58,34 @@ def setup_diagnostics_routes(
         if detail is None:
             raise HTTPException(status_code=404, detail="Effect run not found")
         return {"status": "success", **detail}
+
+    @router.post("/api/diagnostics/effects/{run_id}/reconcile")
+    async def post_diagnostics_effect_run_reconcile(request: Request, run_id: str) -> Dict[str, Any]:
+        """Admin-only reconciliation of unsettled Wave 4 effect claims."""
+        require_admin(request)
+        from src.agent_runtime.effect_log import reconcile_effect_run
+
+        payload: Dict[str, Any] = {}
+        try:
+            raw_body = await request.body()
+            if raw_body:
+                parsed = json.loads(raw_body)
+                if isinstance(parsed, dict):
+                    payload = parsed
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+        action = str(payload.get("action") or "interrupted").strip().lower()
+        note = str(payload.get("note") or "").strip()
+        actor = str(getattr(getattr(request, "state", None), "user", "") or "admin")
+
+        try:
+            result = reconcile_effect_run(run_id, action=action, note=note, actor=actor)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Effect run not found")
+        return {"status": "success", **result}
 
     @router.get("/api/diagnostics/logs")
     async def get_diagnostics_logs(request: Request, limit: int = 200) -> Dict[str, Any]:
