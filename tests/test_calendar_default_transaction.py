@@ -107,7 +107,7 @@ async def test_route_event_validation_failure_rolls_back_new_default_calendar(
             EventCreate(summary="Planning", dtstart="not-a-datetime"),
         )
 
-    assert caught.value.status_code == 500
+    assert caught.value.status_code == 400
     assert _counts(session_factory) == (0, 0)
 
 
