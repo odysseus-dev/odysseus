@@ -275,7 +275,8 @@ async function _createEvent(data) {
     }
   } catch (e) {
     delete _allEvents[tempUid];
-    if (_open) _render();
+    // Keep the editor's unsaved fields available for correction and retry.
+    if (_open && !document.querySelector('#cal-body .cal-form')) _render();
     if (window.uiModule) window.uiModule.showError('Failed to create event: ' + (e?.message || 'unknown'));
     throw e;
   }
@@ -309,7 +310,7 @@ async function _updateEvent(uid, data) {
   } catch (e) {
     if (_preMergeBackup) _allEvents[uid] = _preMergeBackup;
     else delete _allEvents[uid];
-    if (_open) _render();
+    if (_open && !document.querySelector('#cal-body .cal-form')) _render();
     if (window.uiModule) window.uiModule.showError('Failed to update event: ' + (e?.message || 'unknown'));
     throw e;
   }
