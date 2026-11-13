@@ -244,6 +244,11 @@ test('_ATTACH_RE matches multilingual attachment keywords', () => {
   assert.match('Document is enclosed for review', _ATTACH_RE);
   assert.match('I am enclosing the receipt', _ATTACH_RE);
   assert.match('See attachment below', _ATTACH_RE);
+  assert.ok(_ATTACH_RE.test('Please see attached report.'));
+  assert.ok(_ATTACH_RE.test('Find the attachment below.'));
+  assert.ok(_ATTACH_RE.test('PFA the requested document'));
+  assert.ok(_ATTACH_RE.test('Enclosed you will find the signed agreement.'));
+  assert.ok(_ATTACH_RE.test('Attaching the updated spreadsheet now.'));
 
   // French
   assert.match('Veuillez trouver ci-joint le document', _ATTACH_RE);
@@ -251,16 +256,28 @@ test('_ATTACH_RE matches multilingual attachment keywords', () => {
   assert.match('Le fichier en piece jointe', _ATTACH_RE);
   assert.match('Document ajoute au message', _ATTACH_RE);
   assert.match('Voir le fichier joint', _ATTACH_RE);
+  assert.ok(_ATTACH_RE.test('Veuillez trouver le fichier joint.'));
+  assert.ok(_ATTACH_RE.test('Document ci-joint pour information.'));
+  assert.ok(_ATTACH_RE.test('En pièce jointe le devis.'));
 
   // German
   assert.match('Anbei übersende ich den Bericht', _ATTACH_RE);
   assert.match('Die Rechnung finden Sie im Anhang', _ATTACH_RE);
   assert.match('Das Formular ist beigefügt', _ATTACH_RE);
   assert.match('Das Formular ist beigefugt', _ATTACH_RE);
+  assert.ok(_ATTACH_RE.test('Anbei erhalten Sie die Rechnung.'));
+  assert.ok(_ATTACH_RE.test('Im Anhang finden Sie die Unterlagen.'));
 
-  // Non-matches
+  // Multilingual boundary semantics
+  assert.ok(_ATTACH_RE.test('file添付data'));
+
+  // Non-matches and word boundaries
   assert.doesNotMatch('This is a normal message without keywords', _ATTACH_RE);
   assert.doesNotMatch('Just discussing attachments_fake in code', _ATTACH_RE);
+  assert.ok(!_ATTACH_RE.test('unattached unrelated string'));
+  assert.ok(!_ATTACH_RE.test('catastrophe or jointure unrelated'));
+  assert.ok(!_ATTACH_RE.test(''));
+  assert.ok(!_ATTACH_RE.test('General greeting with no mentions'));
 });
 
 test('_accountCanSend checks SMTP credentials and OAuth providers', () => {
@@ -271,6 +288,10 @@ test('_accountCanSend checks SMTP credentials and OAuth providers', () => {
   // Missing host or user
   assert.equal(_accountCanSend({ smtp_host: 'smtp.example.com' }), false);
   assert.equal(_accountCanSend({ smtp_user: 'user@example.com' }), false);
+  assert.equal(_accountCanSend({ smtp_host: 'smtp.example.com', has_smtp_password: true }), false);
+  assert.equal(_accountCanSend({ smtp_user: 'user@example.com', has_smtp_password: true }), false);
+  assert.equal(_accountCanSend({ smtp_host: 'smtp.example.com', smtp_user: 'user@example.com' }), false);
+  assert.equal(_accountCanSend({ smtp_host: 'smtp.example.com', smtp_user: 'user@example.com', has_smtp_password: false }), false);
   assert.equal(_accountCanSend({ smtp_host: '', smtp_user: 'user@example.com', has_smtp_password: true }), false);
 
   // Valid SMTP with password
@@ -299,13 +320,20 @@ test('_accountCanSend checks SMTP credentials and OAuth providers', () => {
 test('_looksLikeWrappedEmailContent checks header separator and RFC822-style headers', () => {
   assert.equal(_looksLikeWrappedEmailContent(''), false);
   assert.equal(_looksLikeWrappedEmailContent(null), false);
+  assert.equal(_looksLikeWrappedEmailContent(undefined), false);
   assert.equal(_looksLikeWrappedEmailContent('Just some plain text'), false);
+  assert.equal(_looksLikeWrappedEmailContent('Just body text without separator'), false);
+  assert.equal(_looksLikeWrappedEmailContent('Header: value\nNo separator here'), false);
+  assert.equal(_looksLikeWrappedEmailContent('No recognized headers\n---\nBody here'), false);
 
   const validWrapped = 'To: user@example.com\nSubject: Hello\n---\nBody of the email';
   assert.equal(_looksLikeWrappedEmailContent(validWrapped), true);
 
   const crlfWrapped = 'To: user@example.com\r\nSubject: Hello\r\n---\r\nBody of the email';
   assert.equal(_looksLikeWrappedEmailContent(crlfWrapped), true);
+
+  const inReplyTo = 'In-Reply-To: <123@example.com>\n---\nReply body';
+  assert.equal(_looksLikeWrappedEmailContent(inReplyTo), true);
 
   const missingSeparator = 'To: user@example.com\nSubject: Hello\nBody without separator';
   assert.equal(_looksLikeWrappedEmailContent(missingSeparator), false);
@@ -317,8 +345,11 @@ test('_looksLikeWrappedEmailContent checks header separator and RFC822-style hea
 test('_decodeBase64EmailWrapper decodes base64-wrapped email content', () => {
   assert.equal(_decodeBase64EmailWrapper(''), null);
   assert.equal(_decodeBase64EmailWrapper(null), null);
+  assert.equal(_decodeBase64EmailWrapper(undefined), null);
   assert.equal(_decodeBase64EmailWrapper('short'), null);
+  assert.equal(_decodeBase64EmailWrapper('badlengthwith25characters!'), null);
   assert.equal(_decodeBase64EmailWrapper('invalid!chars!not!base64!'), null);
+  assert.equal(_decodeBase64EmailWrapper('AAAAAAAAAAAAAAAAAAAAAAAA!@#$'), null);
 
   // Encode a valid wrapped email to base64
   const plainEmail = 'To: alice@example.com\nSubject: Test Email\n---\nHello Alice,\nHow are you?';
@@ -487,7 +518,9 @@ test('_emailQuoteMarkerMatch recognizes previous message quote dividers', () => 
 
   // Non-matching
   assert.equal(_emailQuoteMarkerMatch('Normal conversation without divider'), null);
+  assert.equal(_emailQuoteMarkerMatch('Regular paragraph text'), null);
   assert.equal(_emailQuoteMarkerMatch(null), null);
+  assert.equal(_emailQuoteMarkerMatch(undefined), null);
   assert.equal(_emailQuoteMarkerMatch(''), null);
 });
 
@@ -500,6 +533,11 @@ test('_RICH_SLASH_COMMANDS contains valid command specifications', () => {
   assert.equal(_RICH_SLASH_COMMANDS.length, 16);
 
   const actions = _RICH_SLASH_COMMANDS.map(c => c.action);
+  assert.deepEqual(actions, [
+    'paragraph', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'ul', 'ol', 'check', 'quote', 'codeblock', 'hr',
+    'pagebreak', 'table:insert:3:3', 'image'
+  ]);
   assert.ok(actions.includes('paragraph'));
   assert.ok(actions.includes('h1'));
   assert.ok(actions.includes('h2'));
@@ -515,6 +553,10 @@ test('_RICH_SLASH_COMMANDS contains valid command specifications', () => {
   assert.ok(actions.includes('image'));
 
   for (const cmd of _RICH_SLASH_COMMANDS) {
+    assert.ok(cmd.action, 'Command missing action');
+    assert.ok(cmd.label, 'Command missing label');
+    assert.ok(cmd.icon, 'Command missing icon');
+    assert.ok(cmd.keywords, 'Command missing keywords');
     assert.equal(typeof cmd.action, 'string');
     assert.equal(typeof cmd.label, 'string');
     assert.equal(typeof cmd.icon, 'string');
@@ -524,20 +566,21 @@ test('_RICH_SLASH_COMMANDS contains valid command specifications', () => {
 
 test('_RICH_BLOCK_INPUT_RULES maps markdown prefixes to editor actions', () => {
   assert.ok(_RICH_BLOCK_INPUT_RULES instanceof Map);
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('#')?.action, 'h1');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('##')?.action, 'h2');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('###')?.action, 'h3');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('####')?.action, 'h4');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('#####')?.action, 'h5');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('######')?.action, 'h6');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('-')?.action, 'ul');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('*')?.action, 'ul');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('1.')?.action, 'ol');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('>')?.action, 'quote');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('```')?.action, 'codeblock');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('[]')?.action, 'check');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('- []')?.action, 'check');
-  assert.equal(_RICH_BLOCK_INPUT_RULES.get('- [ ]')?.action, 'check');
+  assert.equal(_RICH_BLOCK_INPUT_RULES.size, 16);
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('#'), { action: 'h1' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('##'), { action: 'h2' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('###'), { action: 'h3' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('####'), { action: 'h4' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('#####'), { action: 'h5' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('######'), { action: 'h6' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('-'), { action: 'ul' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('*'), { action: 'ul' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('1.'), { action: 'ol' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('>'), { action: 'quote' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('```'), { action: 'codeblock' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('[]'), { action: 'check' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('- []'), { action: 'check' });
+  assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('- [ ]'), { action: 'check' });
   assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('- [x]'), { action: 'check', checked: true });
   assert.deepEqual(_RICH_BLOCK_INPUT_RULES.get('- [X]'), { action: 'check', checked: true });
 });
@@ -547,6 +590,7 @@ test('_isRichInlineCodeMarker detects inline code marker span elements', () => {
   assert.equal(_isRichInlineCodeMarker(undefined), false);
   assert.equal(_isRichInlineCodeMarker({}), false);
   assert.equal(_isRichInlineCodeMarker({ tagName: 'DIV' }), false);
+  assert.equal(_isRichInlineCodeMarker({ tagName: 'SPAN' }), false);
 
   // SPAN with correct OdysseusInlineCode font family
   assert.equal(_isRichInlineCodeMarker({
@@ -568,15 +612,21 @@ test('_isRichInlineCodeMarker detects inline code marker span elements', () => {
 
 test('_normalizeRichLinkUrl normalizes links and rejects unsafe schemes', () => {
   assert.equal(_normalizeRichLinkUrl(''), '');
+  assert.equal(_normalizeRichLinkUrl('   '), '');
   assert.equal(_normalizeRichLinkUrl(null), '');
   assert.equal(_normalizeRichLinkUrl(undefined), '');
 
   // In-page anchor and relative paths (including leading slash)
   assert.equal(_normalizeRichLinkUrl('#section'), '#section');
+  assert.equal(_normalizeRichLinkUrl('#heading'), '#heading');
   assert.equal(_normalizeRichLinkUrl('/path/to/page'), '/path/to/page');
+  assert.equal(_normalizeRichLinkUrl('/path/to/resource'), '/path/to/resource');
   assert.equal(_normalizeRichLinkUrl('./local/file'), './local/file');
+  assert.equal(_normalizeRichLinkUrl('./sibling.html'), './sibling.html');
   assert.equal(_normalizeRichLinkUrl('../parent/file'), '../parent/file');
+  assert.equal(_normalizeRichLinkUrl('../parent/page'), '../parent/page');
   assert.equal(_normalizeRichLinkUrl('//example.com/asset.js'), '//example.com/asset.js');
+  assert.equal(_normalizeRichLinkUrl('//cdn.example.com/lib.js'), '//cdn.example.com/lib.js');
 
   // Bare domain prepended with https://
   assert.equal(_normalizeRichLinkUrl('example.com'), 'https://example.com');
@@ -584,15 +634,20 @@ test('_normalizeRichLinkUrl normalizes links and rejects unsafe schemes', () => 
 
   // Standard safe protocols
   assert.equal(_normalizeRichLinkUrl('https://example.com'), 'https://example.com');
+  assert.equal(_normalizeRichLinkUrl('https://secure.example.com'), 'https://secure.example.com');
   assert.equal(_normalizeRichLinkUrl('http://insecure.example.com'), 'http://insecure.example.com');
   assert.equal(_normalizeRichLinkUrl('mailto:user@example.com'), 'mailto:user@example.com');
+  assert.equal(_normalizeRichLinkUrl('mailto:support@example.com'), 'mailto:support@example.com');
   assert.equal(_normalizeRichLinkUrl('tel:+1234567890'), 'tel:+1234567890');
+  assert.equal(_normalizeRichLinkUrl('tel:+15551234567'), 'tel:+15551234567');
 
   // Unsafe / forbidden protocols rejected
   assert.equal(_normalizeRichLinkUrl('javascript:alert(1)'), '');
+  assert.equal(_normalizeRichLinkUrl('javascript:alert(document.cookie)'), '');
   assert.equal(_normalizeRichLinkUrl('data:text/html,<script>alert(1)</script>'), '');
   assert.equal(_normalizeRichLinkUrl('file:///etc/passwd'), '');
   assert.equal(_normalizeRichLinkUrl('ftp://ftp.example.com'), '');
+  assert.equal(_normalizeRichLinkUrl('vbscript:msgbox("hello")'), '');
 });
 
 test('_RICH_FONT_SIZE_PX is frozen and defines levels 1 through 7', () => {
@@ -614,11 +669,21 @@ test('_RICH_COLOR_PALETTE is frozen and contains dark and light palettes', () =>
   assert.equal(_RICH_COLOR_PALETTE.dark.length, 7);
   assert.equal(_RICH_COLOR_PALETTE.light.length, 7);
 
-  // Check first and last entries in dark palette
+  // Check all entries in dark palette
   assert.deepEqual(_RICH_COLOR_PALETTE.dark[0], ['#111827', 'Ink']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.dark[1], ['#7f1d1d', 'Crimson']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.dark[2], ['#7c2d12', 'Copper']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.dark[3], ['#713f12', 'Gold']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.dark[4], ['#14532d', 'Forest']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.dark[5], ['#0c4a6e', 'Ocean']);
   assert.deepEqual(_RICH_COLOR_PALETTE.dark[6], ['#4c1d95', 'Plum']);
 
-  // Check first and last entries in light palette
+  // Check all entries in light palette
   assert.deepEqual(_RICH_COLOR_PALETTE.light[0], ['#ffffff', 'White']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.light[1], ['#fecdd3', 'Rose']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.light[2], ['#fed7aa', 'Peach']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.light[3], ['#fef3c7', 'Lemon']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.light[4], ['#bbf7d0', 'Mint']);
+  assert.deepEqual(_RICH_COLOR_PALETTE.light[5], ['#bae6fd', 'Sky']);
   assert.deepEqual(_RICH_COLOR_PALETTE.light[6], ['#ddd6fe', 'Lavender']);
 });
