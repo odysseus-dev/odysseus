@@ -57,6 +57,27 @@ function _syncSelectedApprovalIds() {
   }
 }
 
+function _selectAllPendingApprovals(checked) {
+  if (checked) {
+    for (const item of _pendingApprovals) {
+      if (item && item.approval_id) _selectedApprovalIds.add(item.approval_id);
+    }
+  } else {
+    _selectedApprovalIds.clear();
+  }
+  _renderPendingApprovals();
+}
+
+function _selectSafePendingApprovals() {
+  _selectedApprovalIds.clear();
+  for (const item of _pendingApprovals) {
+    if (item && item.approval_id && !item.external_untrusted_context_seen) {
+      _selectedApprovalIds.add(item.approval_id);
+    }
+  }
+  _renderPendingApprovals();
+}
+
 function _formatDecisionAge(resolvedAt) {
   const ts = Number(resolvedAt || 0);
   if (!ts) return '';
@@ -360,16 +381,22 @@ function _renderPendingApprovals() {
   host.style.display = 'flex';
   const showBulkActions = _pendingApprovals.length >= 2;
   const selectedCount = _selectedApprovalIds.size;
-  const isPartialSelection = selectedCount > 0 && selectedCount < _pendingApprovals.length;
+  const allSelected = selectedCount === _pendingApprovals.length;
+  const isPartialSelection = selectedCount > 0 && !allSelected;
+  const hasExternalUntrusted = _pendingApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
   const approveBulkLabel = isPartialSelection ? `Approve Selected (${selectedCount})` : 'Approve All';
   const denyBulkLabel = isPartialSelection ? `Deny Selected (${selectedCount})` : 'Deny All';
   host.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:6px;">
+        ${showBulkActions ? `<input type="checkbox" id="tasks-approvals-select-all" aria-label="Select all pending approvals"${allSelected ? ' checked' : ''} />` : ''}
         <span>Pending Approvals (${_pendingApprovals.length})</span>
         <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
       </div>
-      <div style="display:flex;align-items:center;gap:4px;">
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        ${showBulkActions && hasExternalUntrusted ? `
+          <button type="button" id="tasks-approvals-select-safe" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Select Safe Only</button>
+        ` : ''}
         ${showBulkActions ? `
           <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${approveBulkLabel}</button>
           <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${denyBulkLabel}</button>
@@ -399,6 +426,15 @@ function _renderPendingApprovals() {
     `;
     }).join('')}
   `;
+  const selectAllCb = host.querySelector('#tasks-approvals-select-all');
+  if (selectAllCb) {
+    selectAllCb.indeterminate = isPartialSelection;
+    selectAllCb.addEventListener('change', () => _selectAllPendingApprovals(Boolean(selectAllCb.checked)));
+  }
+  const selectSafeBtn = host.querySelector('#tasks-approvals-select-safe');
+  if (selectSafeBtn) {
+    selectSafeBtn.addEventListener('click', () => _selectSafePendingApprovals());
+  }
   const refreshBtn = host.querySelector('#tasks-approvals-refresh');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => _fetchPendingApprovals());
