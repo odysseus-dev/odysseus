@@ -63,11 +63,19 @@ let _approvalsPollingPaused = false;
 let _approvalHistorySearch = '';
 let _approvalHistoryEscapeBound = false;
 
+let _pendingApprovalsSearch = '';
+let _pendingApprovalsShortcutsBound = false;
+
 function _hasActivePendingFilter() {
-  return Boolean(_pendingApprovalsToolFilter || _pendingApprovalsRiskFilter);
+  return Boolean(
+    _pendingApprovalsToolFilter ||
+    _pendingApprovalsRiskFilter ||
+    String(_pendingApprovalsSearch || '').trim()
+  );
 }
 
 function _getFilteredPendingApprovals() {
+  const needle = String(_pendingApprovalsSearch || '').trim().toLowerCase();
   return _pendingApprovals.filter(item => {
     if (!item) return false;
     if (_pendingApprovalsToolFilter && String(item.tool_name || '') !== _pendingApprovalsToolFilter) {
@@ -79,7 +87,38 @@ function _getFilteredPendingApprovals() {
     if (_pendingApprovalsRiskFilter === 'external' && !item.external_untrusted_context_seen) {
       return false;
     }
+    if (needle) {
+      const previewStr = String(item.content_preview || '').toLowerCase();
+      const digestStr = String(item.digest || '').toLowerCase();
+      if (!previewStr.includes(needle) && !digestStr.includes(needle)) {
+        return false;
+      }
+    }
     return true;
+  });
+}
+
+function _ensurePendingApprovalsShortcuts() {
+  if (_pendingApprovalsShortcutsBound || typeof document === 'undefined') return;
+  _pendingApprovalsShortcutsBound = true;
+  document.addEventListener('keydown', ev => {
+    if (!ev || !ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    const host = document.getElementById('tasks-pending-approvals');
+    if (!host || host.style.display === 'none' || !_pendingApprovals.length) return;
+    const target = ev.target || {};
+    const tag = String(target.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+    const key = String(ev.key || '').toLowerCase();
+    if (key === 'a') {
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      const visible = _getFilteredPendingApprovals();
+      const visibleSelectedCount = visible.filter(item => item && _selectedApprovalIds.has(item.approval_id)).length;
+      const allSelected = visible.length > 0 && visibleSelectedCount === visible.length;
+      _selectAllPendingApprovals(!allSelected);
+    } else if (key === 's') {
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      _selectSafePendingApprovals();
+    }
   });
 }
 
@@ -540,11 +579,13 @@ function _renderPendingApprovals() {
     return;
   }
   _startApprovalsPolling();
+  _ensurePendingApprovalsShortcuts();
   _pruneExpiredApprovals();
   _syncSelectedApprovalIds();
   if (!_pendingApprovals.length) {
     _pendingApprovalsToolFilter = '';
     _pendingApprovalsRiskFilter = '';
+    _pendingApprovalsSearch = '';
     host.style.display = 'none';
     host.innerHTML = '';
     return;
@@ -577,6 +618,9 @@ function _renderPendingApprovals() {
         <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        ${(_pendingApprovals.length >= 2 || String(_pendingApprovalsSearch || '').trim()) ? `
+          <input type="search" id="tasks-approvals-search" aria-label="Search pending approvals by preview or digest" placeholder="Preview or digest…" value="${_esc(_pendingApprovalsSearch)}" style="padding:1px 5px;font-size:10px;width:108px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
+        ` : ''}
         ${pendingTools.length >= 2 ? `
           <select id="tasks-approvals-tool-filter" aria-label="Filter pending approvals by tool" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
             <option value="">All tools</option>
@@ -589,6 +633,9 @@ function _renderPendingApprovals() {
             <option value="safe"${_pendingApprovalsRiskFilter === 'safe' ? ' selected' : ''}>Safe only</option>
             <option value="external"${_pendingApprovalsRiskFilter === 'external' ? ' selected' : ''}>External untrusted</option>
           </select>
+        ` : ''}
+        ${hasPendingFilter ? `
+          <button type="button" id="tasks-approvals-clear-filters" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Clear Filters</button>
         ` : ''}
         ${showBulkActions && hasExternalUntrusted ? `
           <button type="button" id="tasks-approvals-select-safe" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Select Safe Only</button>
@@ -635,10 +682,30 @@ function _renderPendingApprovals() {
       _renderPendingApprovals();
     });
   }
+  const pendingSearchInput = host.querySelector('#tasks-approvals-search');
+  if (pendingSearchInput) {
+    pendingSearchInput.addEventListener('input', () => {
+      _pendingApprovalsSearch = pendingSearchInput.value || '';
+      _renderPendingApprovals();
+      const restored = host.querySelector('#tasks-approvals-search');
+      if (restored && typeof restored.focus === 'function') {
+        restored.focus();
+      }
+    });
+  }
   const pendingRiskSelect = host.querySelector('#tasks-approvals-risk-filter');
   if (pendingRiskSelect) {
     pendingRiskSelect.addEventListener('change', () => {
       _pendingApprovalsRiskFilter = pendingRiskSelect.value || '';
+      _renderPendingApprovals();
+    });
+  }
+  const clearFiltersBtn = host.querySelector('#tasks-approvals-clear-filters');
+  if (clearFiltersBtn) {
+    clearFiltersBtn.addEventListener('click', () => {
+      _pendingApprovalsToolFilter = '';
+      _pendingApprovalsRiskFilter = '';
+      _pendingApprovalsSearch = '';
       _renderPendingApprovals();
     });
   }
