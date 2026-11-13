@@ -120,7 +120,7 @@ assert.ok(toasts.some(t => t.includes('Approved 1 pending action (1 external ski
 assert.ok(historyHost.innerHTML.includes('id="tasks-approval-history-export"'));
 assert.ok(historyHost.innerHTML.includes('data-history-filter="deny"'));
 
-sandbox._approvalHistoryFilter = 'deny';
+vm.runInContext("_approvalHistoryFilter = 'deny'", sandbox);
 const exportUrl = sandbox._exportApprovalHistoryCsv();
 assert.equal(exportUrl, '/api/tasks/approvals/history/export?format=csv&limit=200&decision=deny');
 assert.equal(openedUrls[0], exportUrl);

@@ -55,6 +55,7 @@ const sandbox = {
   setInterval: () => 1,
   clearInterval: () => {},
   document: {
+    createElement() { let _t = ''; return { set textContent(v) { _t = String(v ?? ''); }, get innerHTML() { return _t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); } }; },
     hidden: false,
     addEventListener() {},
     getElementById(id) {
