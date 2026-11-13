@@ -608,6 +608,37 @@ class ToolApprovalStore:
             self._purge_expired_locked(now)
             return self._pending.get(str(approval_id or ""))
 
+    def list_pending(self, *, owner: Any) -> list[dict[str, Any]]:
+        """Return non-authoritative display summaries for an owner's pending approvals."""
+        normalized_owner = _normalized_owner(owner)
+        now = time.time()
+        with self._lock:
+            self._purge_expired_locked(now)
+            items = [
+                pending
+                for pending in self._pending.values()
+                if pending.owner == normalized_owner
+            ]
+        items.sort(key=lambda item: item.created_at, reverse=True)
+        return [
+            {
+                "approval_id": item.approval_id,
+                "session_id": item.session_id,
+                "origin_run_id": item.origin_run_id,
+                "tool_name": item.tool_name,
+                "content_preview": item.content[:400],
+                "digest": item.digest[:16],
+                "effects": list(item.effects),
+                "workspace": item.workspace or None,
+                "document_id": item.document_id or None,
+                "document_version": item.document_version,
+                "external_untrusted_context_seen": item.external_untrusted_context_seen,
+                "created_at": item.created_at,
+                "expires_at": item.expires_at,
+            }
+            for item in items
+        ]
+
     def retire_for_session(self, *, owner: Any, session_id: Any) -> bool:
         """Discard pending actions superseded by an ordinary user turn.
 

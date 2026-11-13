@@ -715,6 +715,48 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         return {"ok": True, "action": action, "cleared": cleared, "files": removed_files}
 
+    @router.get("/approvals/pending")
+    async def list_pending_approvals(request: Request):
+        """List owner-scoped pending tool approvals awaiting human sign-off."""
+        user = _owner(request)
+        from src.tool_approvals import tool_approval_store
+        approvals = tool_approval_store.list_pending(owner=user)
+        return {"approvals": approvals, "count": len(approvals)}
+
+    @router.post("/approvals/{approval_id}/resolve")
+    async def resolve_pending_approval(request: Request, approval_id: str):
+        """Resolve a pending tool approval (single-action or deny) with owner verification."""
+        from src.agent_runtime.authority import require_user_approval_request
+        from src.tool_approvals import tool_approval_store
+        from src.tool_approval_scopes import DENY_APPROVAL_DECISION, TASK_APPROVAL_DECISION
+
+        require_user_approval_request(request)
+        user = _owner(request)
+        body = await request.json()
+        decision = str((body or {}).get("decision") or "").strip().lower()
+        if decision not in {TASK_APPROVAL_DECISION, DENY_APPROVAL_DECISION, "approve"}:
+            raise HTTPException(400, "Invalid approval decision")
+        pending = tool_approval_store.peek(approval_id)
+        normalized_owner = str(user or "").strip().casefold()
+        if pending is None or pending.owner != normalized_owner:
+            raise HTTPException(404, "Pending approval not found or expired")
+        resolved = tool_approval_store.consume(
+            approval_id,
+            decision=decision,
+            owner=user,
+            session_id=pending.session_id,
+            allow_continuation=False,
+        )
+        if resolved is None:
+            raise HTTPException(409, "Pending approval could not be resolved")
+        return {
+            "ok": True,
+            "approval_id": approval_id,
+            "decision": decision,
+            "tool_name": pending.tool_name,
+            "session_id": pending.session_id,
+        }
+
     @router.get("/{task_id}")
     async def get_task(request: Request, task_id: str):
         user = _owner(request)

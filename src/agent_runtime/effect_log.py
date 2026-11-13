@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover - non-POSIX hosts
 
 from src.constants import DATA_DIR
 from src.agent_runtime.effects import (
-    EffectAssessment, EffectClaim, EffectHistory, EffectOutcome, ExecutionOutcome, Observation, assess_all,
+    EffectAssessment, EffectClaim, EffectHistory, EffectOutcome, ExecutionOutcome, Impact, Observation, assess_all,
     replay_interrupted,
 )
 from src.agent_runtime.resources import ResourceIdentityError
@@ -510,3 +510,66 @@ class EffectLog:
                 if record is not None:
                     appended.append(record)
             return tuple(appended)
+
+
+def list_recent_effect_runs(
+    *,
+    limit: int = 50,
+    directory: str | os.PathLike | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only summary of recent durable effect logs for audit inspection."""
+    bounded_limit = max(1, min(int(limit), 200))
+    base_dir = Path(directory) if directory is not None else effects_dir()
+    if not base_dir.is_dir():
+        return []
+    candidates: list[tuple[float, Path]] = []
+    for entry in base_dir.iterdir():
+        if entry.suffix == ".jsonl" and _RUN_ID.fullmatch(entry.stem) and entry.is_file():
+            try:
+                candidates.append((entry.stat().st_mtime, entry))
+            except OSError:
+                continue
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    runs: list[dict[str, Any]] = []
+    for mtime, path in candidates[:bounded_limit]:
+        claims = 0
+        outcomes = 0
+        observations = 0
+        tools: list[str] = []
+        external_count = 0
+        mutation_attempted = False
+        corrupt = False
+        try:
+            raw = path.read_bytes()
+            complete = raw[: raw.rfind(b"\n") + 1]
+            for line in complete.splitlines():
+                kind, record = _parse(line)
+                if kind == "claim":
+                    claims += 1
+                    tool_name = getattr(getattr(record, "operation", None), "tool", "")
+                    if tool_name and tool_name not in tools:
+                        tools.append(tool_name)
+                    if getattr(record, "external", False):
+                        external_count += 1
+                elif kind == "outcome":
+                    outcomes += 1
+                    if getattr(getattr(record, "facts", None), "mutation_attempted", False):
+                        mutation_attempted = True
+                elif kind == "observation":
+                    observations += 1
+        except Exception:
+            corrupt = True
+        runs.append(
+            {
+                "run_id": path.stem,
+                "updated_at": mtime,
+                "claims": claims,
+                "outcomes": outcomes,
+                "observations": observations,
+                "tools": tools,
+                "external_claims": external_count,
+                "mutation_attempted": mutation_attempted,
+                "corrupt": corrupt,
+            }
+        )
+    return runs

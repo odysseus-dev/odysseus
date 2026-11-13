@@ -30,6 +30,82 @@ let _taskFailurePending = false;
 let _taskCompletionPending = false;
 let _taskBulkDeleting = false;
 let _pendingFocusAction = null;
+let _pendingApprovals = [];
+
+async function _fetchPendingApprovals() {
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/pending`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    _pendingApprovals = Array.isArray(data.approvals) ? data.approvals : [];
+  } catch (_) {
+    // Non-fatal: keep last known list
+  }
+  _renderPendingApprovals();
+}
+
+async function _resolvePendingApproval(approvalId, decision) {
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    });
+    if (!res.ok) {
+      let msg = `Failed to resolve approval (${res.status})`;
+      try {
+        const err = await res.json();
+        if (err && err.detail) msg = err.detail;
+      } catch (_) {}
+      if (uiModule) uiModule.showError(msg);
+    } else if (uiModule) {
+      uiModule.showToast(decision === 'deny' ? 'Action denied' : 'Action approved once', { duration: 3500 });
+    }
+  } catch (e) {
+    if (uiModule) uiModule.showError('Network error resolving approval');
+  }
+  await _fetchPendingApprovals();
+}
+
+function _renderPendingApprovals() {
+  const host = document.getElementById('tasks-pending-approvals');
+  if (!host) return;
+  if (!_pendingApprovals.length) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  host.style.display = 'flex';
+  host.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));">
+      <span>Pending Approvals (${_pendingApprovals.length})</span>
+      <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
+    </div>
+    ${_pendingApprovals.map(item => `
+      <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:11px;">
+        <div style="min-width:0;flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;font-weight:600;">
+            <span>${_esc(item.tool_name || 'tool')}</span>
+            <span style="opacity:0.55;font-family:monospace;font-size:10px;">#${_esc(item.digest || '')}</span>
+            ${item.external_untrusted_context_seen ? '<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.16);color:#fbbf24;">External context</span>' : ''}
+          </div>
+          <div style="opacity:0.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${_esc(item.content_preview || '')}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button type="button" class="memory-toolbar-btn" data-approval-action="approve_task" data-approval-id="${_esc(item.approval_id)}">Approve</button>
+          <button type="button" class="memory-toolbar-btn danger" data-approval-action="deny" data-approval-id="${_esc(item.approval_id)}">Deny</button>
+        </div>
+      </div>
+    `).join('')}
+  `;
+  host.querySelectorAll('button[data-approval-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      await _resolvePendingApproval(btn.dataset.approvalId, btn.dataset.approvalAction);
+    });
+  });
+}
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -3103,6 +3179,7 @@ function _renderMainView() {
         <button id="tasks-bulk-delete" class="memory-toolbar-btn danger" style="position:relative;top:-2px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
         <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
+      <div id="tasks-pending-approvals" style="display:none;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
       <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:0;"></div>
       <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:4px;"></div>
     </div>

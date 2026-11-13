@@ -29,6 +29,14 @@ def setup_diagnostics_routes(
         from src.service_health import collect_service_health
         return await collect_service_health(rag_manager, memory_vector)
 
+    @router.get("/api/diagnostics/effects")
+    async def get_diagnostics_effects(request: Request, limit: int = 50) -> Dict[str, Any]:
+        """Read-only audit summary of recent durable Wave 4 effect logs."""
+        require_admin(request)
+        from src.agent_runtime.effect_log import list_recent_effect_runs
+        runs = list_recent_effect_runs(limit=limit)
+        return {"status": "success", "runs": runs, "count": len(runs)}
+
     @router.get("/api/diagnostics/logs")
     async def get_diagnostics_logs(request: Request, limit: int = 200) -> Dict[str, Any]:
         require_admin(request)
