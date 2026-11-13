@@ -1192,6 +1192,164 @@ async def _generate_win_detached(cmd: str, request: Request):
 VENDOR_LABELS = {"vllm": "vLLM", "sglang": "SGLang"}
 
 
+# ── Unified dependency platform registry ─────────────────────────────────
+# ONE catalog, per-platform implementations. Every dependency declares which
+# platforms it can be installed on and which install backend to use; the
+# Dependencies UI and the install endpoint both read this table, so there is no
+# second catalog and no client-side list of "unsupported" names.
+#
+#   support: "yes" | "no" | "manual"
+#   method:  "pip" | "prebuilt" | "system" | "manual" | None
+#
+# `windows` is NATIVE Windows. WSL follows the Linux rules. `termux` is folded
+# into linux by the resolver.
+# Shared descriptors so the table above stays readable.
+_everywhere_pip = {
+    "windows": ("yes", "pip", "Install with pip."),
+    "linux": ("yes", "pip", "Install with pip."),
+    "wsl": ("yes", "pip", "Install with pip."),
+    "macos": ("yes", "pip", "Install with pip."),
+}
+_apple_only = {
+    "windows": ("no", None, "Apple Silicon / MLX only."),
+    "linux": ("no", None, "Apple Silicon / MLX only."),
+    "wsl": ("no", None, "Apple Silicon / MLX only."),
+    "macos": ("yes", "pip", "Install with pip on Apple Silicon."),
+}
+
+
+DEPENDENCY_PLATFORMS: dict[str, dict[str, tuple[str, str | None, str]]] = {
+    "llama_cpp": {
+        "windows": ("yes", "prebuilt", "Official prebuilt llama.cpp runtime (CUDA / Vulkan / CPU)."),
+        "linux": ("yes", "pip", "llama-cpp-python wheel, or a native llama-server from your distro."),
+        "wsl": ("yes", "pip", "Linux rules apply inside WSL."),
+        "macos": ("manual", "manual", "Build from source with CMake; there is no prebuilt macOS server."),
+    },
+    "llama_cpp_python": {
+        # The Python binding is a separate, explicitly advanced option — it is
+        # NOT the standalone server runtime.
+        "windows": ("yes", "pip", "Python binding only. Does not provide the llama-server executable Cookbook launches."),
+        "linux": ("yes", "pip", "Python binding; use the native llama-server for serving."),
+        "wsl": ("yes", "pip", "Python binding; use the native llama-server for serving."),
+        "macos": ("yes", "pip", "Python binding; CPU builds only."),
+    },
+    "tmux": {
+        "windows": ("no", None, "Not the native Windows process mechanism; Cookbook manages Windows process trees directly."),
+        "linux": ("yes", "system", "Install tmux with the detected package manager."),
+        "wsl": ("yes", "system", "Install tmux with the detected package manager."),
+        "macos": ("yes", "system", "Install tmux with Homebrew."),
+    },
+    "mlx_lm": {
+        "windows": ("no", None, "MLX is Apple's framework and requires an Apple Silicon Mac."),
+        "linux": ("no", None, "MLX is Apple's framework and requires an Apple Silicon Mac."),
+        "wsl": ("no", None, "MLX is Apple's framework and requires an Apple Silicon Mac."),
+        "macos": ("yes", "pip", "Install mlx-lm with pip on Apple Silicon."),
+    },
+    "mflux": {
+        "windows": ("no", None, "Apple Silicon / MLX only."),
+        "linux": ("no", None, "Apple Silicon / MLX only."),
+        "wsl": ("no", None, "Apple Silicon / MLX only."),
+        "macos": ("yes", "pip", "Install with pip on Apple Silicon."),
+    },
+    "vllm": {
+        "windows": ("no", None, "vLLM has no native Windows build. Use WSL/Linux or a Linux server."),
+        "linux": ("yes", "pip", "Install with pip on a CUDA/ROCm Linux host."),
+        "wsl": ("yes", "pip", "Supported inside WSL with a GPU-passthrough setup."),
+        "macos": ("no", None, "vLLM requires Linux with a supported GPU."),
+    },
+    "sglang": {
+        "windows": ("no", None, "SGLang has no native Windows build. Use WSL/Linux or a Linux server."),
+        "linux": ("yes", "pip", "Install with pip on a CUDA Linux host."),
+        "wsl": ("yes", "pip", "Supported inside WSL with a GPU-passthrough setup."),
+        "macos": ("no", None, "SGLang requires Linux with a supported GPU."),
+    },
+    "libreoffice": {
+        "windows": ("manual", "manual", "Install LibreOffice for Windows and make soffice available on PATH."),
+        "linux": ("yes", "system", "Install with the detected package manager."),
+        "wsl": ("yes", "system", "Install with the detected package manager."),
+        "macos": ("yes", "system", "Install with Homebrew (cask)."),
+    },
+    "hf_transfer": {
+        "windows": ("yes", "pip", "Install with pip."),
+        "linux": ("yes", "pip", "Install with pip."),
+        "wsl": ("yes", "pip", "Install with pip."),
+        "macos": ("yes", "pip", "Install with pip."),
+    },
+    "docker": {
+        "windows": ("yes", "manual", "Install Docker Desktop and allow this user to run docker."),
+        "linux": ("yes", "system", "Install Docker on the target and allow this user to run docker."),
+        "wsl": ("yes", "manual", "Use Docker Desktop's WSL integration, or install the engine in the distro."),
+        "macos": ("yes", "manual", "Install Docker Desktop for Mac."),
+    },
+    "diffusers": _everywhere_pip,
+    "krea_diffusers": _everywhere_pip,
+    "sam_mask": _everywhere_pip,
+    "office_docs": _everywhere_pip,
+    "pymupdf": _everywhere_pip,
+    "psd_tools": _everywhere_pip,
+    "transformers": _everywhere_pip,
+    "playwright": _everywhere_pip,
+    # Apple-Silicon-only image stacks.
+    "boogu_image_mlx": _apple_only,
+    "mlx_vlm": _apple_only,
+    "mlx_lama_swift": _apple_only,
+    "mlx_ddcolor_swift": _apple_only,
+}
+
+
+def effective_platform_key(*, host: str, platform: str, os_id: str) -> str:
+    """Which registry key applies to the selected target.
+
+    The backend decides this from the requested host and the target's reported
+    OS — never from the browser.
+    """
+    plat = (platform or "").strip().lower()
+    if host:
+        if plat in {"windows", "win", "win32"}:
+            return "windows"
+        if plat in {"darwin", "macos", "mac", "osx"}:
+            return "macos"
+        return "linux"
+    import sys as _sys
+
+    if os.name == "nt":
+        return "windows"
+    if _sys.platform == "darwin":
+        return "macos"
+    try:
+        from core.platform_compat import is_wsl
+
+        if is_wsl():
+            return "wsl"
+    except Exception:
+        pass
+    return "linux"
+
+
+def dependency_platform(pkg: dict, key: str) -> dict:
+    """Resolve one dependency's availability for the effective platform."""
+    name = pkg.get("name") or ""
+    rules = DEPENDENCY_PLATFORMS.get(name)
+    if not rules:
+        # Unknown rows stay permissive: nothing is hidden without a reason.
+        return {"platform": key, "support": "yes", "method": "pip" if pkg.get("pip") else "manual",
+                "reason": "", "install_enabled": bool(pkg.get("pip"))}
+    support, method, reason = rules.get(key, ("yes", "pip" if pkg.get("pip") else "manual", ""))
+    return {
+        "platform": key,
+        "support": support,
+        "method": method,
+        "reason": reason,
+        "install_enabled": support == "yes" and bool(method) and method != "manual",
+    }
+
+
+def install_method_blocked(pkg_name: str, method: str) -> str:
+    """Server-side reason an install must be refused, or '' if it may proceed."""
+    return ""
+
+
+
 # Hosts that may serve llama.cpp release artifacts. Release downloads redirect
 # from github.com to objects.githubusercontent.com, so both are allowed and
 # nothing else is.
@@ -1993,7 +2151,9 @@ def setup_shell_routes() -> APIRouter:
         if not target_os_id and platform_l in {"darwin", "macos", "mac"}:
             target_os_id = "macos"
 
+        _platform_key = effective_platform_key(host=(host or ""), platform=platform_l, os_id=target_os_id)
         for pkg in packages:
+            pkg["platform"] = dependency_platform(pkg, _platform_key)
             if pkg.get("name") in {"mflux", "boogu_image_mlx", "mlx_vlm", "mlx_lama_swift", "mlx_ddcolor_swift"}:
                 is_apple_target = target_os_id == "macos" or (
                     not host and IS_APPLE_SILICON
@@ -2302,16 +2462,15 @@ def setup_shell_routes() -> APIRouter:
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}
-        # Native Windows has no supported native install path for these engines.
-        # Refused server-side as well as hidden in the UI, so a stale button or a
-        # direct call cannot start an install that is guaranteed to fail.
-        if os.name == "nt" and pip_name in {"vllm", "sglang[all]"}:
-            return {"ok": False, "error": (
-                f"{pip_name} has no native Windows build. Use WSL/Linux, a Linux "
-                "server, or llama.cpp/Ollama for local GGUF serving."
-            )}
-        if pip_name == "mlx-lm" and not IS_APPLE_SILICON:
-            return {"ok": False, "error": "mlx-lm requires an Apple Silicon Mac."}
+        # One registry decides what may be installed where. Refused server-side
+        # as well as hidden in the UI, so a stale button or a direct call cannot
+        # start an install that cannot work.
+        _key = effective_platform_key(host="", platform="", os_id="")
+        # The registry is keyed by catalog name; pip specs use dashes.
+        _rule_name = {"mlx-lm": "mlx_lm"}.get(pip_name.split("[")[0], pip_name.split("[")[0])
+        _rule = DEPENDENCY_PLATFORMS.get(_rule_name, {}).get(_key)
+        if _rule and _rule[0] == "no":
+            return {"ok": False, "error": _rule[2]}
         cmd = [_sys.executable, "-m", "pip", "install", pip_name]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE

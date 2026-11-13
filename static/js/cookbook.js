@@ -1436,11 +1436,16 @@ async function _fetchDependencies() {
     list.dataset.cookbookDepsScanSig = scanSig;
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
-    const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    // Platform availability comes from the backend registry (pkg.platform), never
+    // from the browser's OS. A row is hidden or disabled only with a reason.
     const _systemInstallable = new Set(['tmux', 'libreoffice']);
 
-    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
-      if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
+    const _statusTag = (pkg, isLocal, isSystemDep, unsupported) => {
+      const plat = pkg.platform || {};
+      const reason = esc(plat.reason || '');
+      if (unsupported) {
+        return `<span class="cookbook-dep-tag cookbook-dep-na" title="${reason}">Unsupported</span>`;
+      }
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
       if (pkg.installed && pkg.pip_update_available === false && !['llama_cpp', 'vllm', 'sglang'].includes(pkg.name)) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
@@ -1456,7 +1461,17 @@ async function _fetchDependencies() {
         const depStyle = pkg.name === 'docker' ? ' style="width:87.7px;justify-content:center;"' : '';
         return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}"${depStyle}>${depLabel}</span>`;
       }
-      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
+      // A dependency whose only route is manual (e.g. Docker Desktop, LibreOffice
+      // on Windows) explains itself instead of offering a button that cannot work.
+      if (plat.support === 'manual' || !plat.install_enabled) {
+        return `<span class="cookbook-dep-tag cookbook-dep-na" title="${reason}">Manual</span>`;
+      }
+      // llama.cpp on native Windows uses the shared prebuilt runtime installer —
+      // the same engine as Settings → llama.cpp Runtime.
+      if (plat.method === 'prebuilt') {
+        return `<button type="button" class="cookbook-dep-tag cookbook-dep-install" data-dep-prebuilt="${esc(pkg.name)}" data-dep-target="${isLocal ? 'local' : 'remote'}" title="${reason || 'Install a prebuilt llama.cpp runtime'}">Install</button>`;
+      }
+      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}" title="${reason}">Install</button>`;
     };
 
     // Per-package inline glyphs — same accent-coloured marks used in the
@@ -1483,7 +1498,7 @@ async function _fetchDependencies() {
     const _depRow = (pkg) => {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
-      const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const unsupported = (pkg.platform && pkg.platform.support === 'no');
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       // Reinstall actions live in the Installed dropdown, alongside Update.
@@ -1522,7 +1537,7 @@ async function _fetchDependencies() {
           + `<button type="button" class="cookbook-dep-tag cookbook-dep-cmd-copy" data-dep-cmd-copy="${esc(_gpuWheelCmd)}" title="Copy command to clipboard">Copy command</button>`
           + `</div>`
         : '';
-      return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
+      return `<div class="cookbook-dep-row${unsupported ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${_depGlyphHtml(pkg.name)}${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
@@ -1532,7 +1547,7 @@ async function _fetchDependencies() {
         + _rebuildBtn
         + _buildDepsBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
-        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
+        + _statusTag(pkg, isLocal, isSystemDep, unsupported)
         + recipeCaret
         + `</div>`
         + recipePanel;
@@ -1820,6 +1835,12 @@ async function _fetchDependencies() {
     list.querySelectorAll('.cookbook-dep-install:not(.cookbook-dep-recipe-run):not(.cookbook-dep-install-sysdeps)').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        // llama.cpp on native Windows: the same prebuilt installer as
+        // Settings → llama.cpp Runtime. One engine, two entry points.
+        if (btn.dataset.depPrebuilt) {
+          await _llamaRuntimeInstallDialog();
+          return;
+        }
         const pipName = btn.dataset.depPip;
         const pkgName = btn.closest('.cookbook-dep-row')?.querySelector('.memory-item-title')?.textContent || pipName;
         await _installDep(pipName, pkgName, btn.dataset.depTarget === 'local', !!btn.dataset.upgrade, btn);
