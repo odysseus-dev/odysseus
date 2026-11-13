@@ -1,6 +1,6 @@
 """Unit and behavioral verification for the Inline Suggestions Engine.
 
-Validates static/js/document/suggestions.js and its integration into document.js:
+Validates static/js/document/ui/suggestions.js and its integration into document.js:
 1. Suggestion storage persistence round-trip.
 2. Accept, dismiss, and clearAll action lifecycle.
 3. Single and multiple suggestion card rendering, queue cycling, and batch deduplication.
@@ -39,7 +39,7 @@ def test_suggestion_storage_persistence_round_trip():
         getActiveSuggestions,
         setActiveSuggestions,
         getSuggestionTotal,
-      } from './static/js/document/suggestions.js';
+      } from './static/js/document/ui/suggestions.js';
 
       const memoryStore = new Map();
       const mockStorage = {
@@ -123,7 +123,7 @@ def test_suggestion_action_resolution_lifecycle():
         setActiveSuggestions,
         setSuggestionTotal,
         _saveSuggestionsToStorage,
-      } from './static/js/document/suggestions.js';
+      } from './static/js/document/ui/suggestions.js';
 
       const memoryStore = new Map();
       const mockStorage = {
@@ -235,7 +235,7 @@ def test_single_suggestion_card_rendering_and_interaction():
       `);
 
       const result = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/suggestions.js');
+        const mod = await import('/static/js/document/ui/suggestions.js');
         const ta = document.getElementById('doc-editor-textarea');
         const wrap = document.getElementById('doc-editor-wrap');
         const pane = document.querySelector('.doc-editor-pane');
@@ -330,7 +330,7 @@ def test_multiple_suggestions_card_navigation_and_batch_queueing():
       `);
 
       const result = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/suggestions.js');
+        const mod = await import('/static/js/document/ui/suggestions.js');
         const ta = document.getElementById('doc-editor-textarea');
         const wrap = document.getElementById('doc-editor-wrap');
         const pane = document.querySelector('.doc-editor-pane');
@@ -435,7 +435,7 @@ def test_document_module_re_exports_suggestion_api():
 
       const result = await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=suggestions-verify-surface-1');
-        const sugg = await import('/static/js/document/suggestions.js');
+        const sugg = await import('/static/js/document/ui/suggestions.js');
         const def = mod.default;
         return {
           hasHandleDocSuggestionsNamed: typeof mod.handleDocSuggestions === 'function',

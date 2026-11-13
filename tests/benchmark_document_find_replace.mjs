@@ -1,7 +1,7 @@
 // tests/benchmark_document_find_replace.mjs
 /**
  * Reproducible benchmark for the deployed Find & Replace overlay renderer.
- * Exercises the actual deployed /static/js/document/findReplace.js module
+ * Exercises the actual deployed /static/js/document/ui/findReplace.js module
  * with real DOM input, match navigation, and real scroll events.
  */
 
@@ -89,7 +89,7 @@ export async function runBenchmark() {
   `);
 
   const results = await page.evaluate(async () => {
-    const mod = await import('/static/js/document/findReplace.js');
+    const mod = await import('/static/js/document/ui/findReplace.js');
     const {
       initFindReplace,
       renderFindRects,

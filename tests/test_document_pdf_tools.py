@@ -80,7 +80,7 @@ def test_pdf_tools_functions_are_modularly_defined():
 def test_form_backed_document_detection_heuristics():
     """Verify heuristics for identifying form-backed and PDF-backed documents."""
     script = r"""
-      import { _isFormBackedDoc } from './static/js/document/pdfTools.js';
+      import { _isFormBackedDoc } from './static/js/document/ui/pdfTools.js';
 
       const results = {
         pdfFormString: _isFormBackedDoc('<!-- pdf_form_source upload_id="upl-123.pdf" fields="3" -->\n# Form'),
@@ -116,7 +116,7 @@ def test_annotation_escaping_and_unescaping_roundtrip():
       import {
         _escapeAnnotationValue,
         _unescapeAnnotationValue,
-      } from './static/js/document/pdfTools.js';
+      } from './static/js/document/ui/pdfTools.js';
 
       const cases = [
         'Simple text',
@@ -155,7 +155,7 @@ def test_annotation_markdown_parsing_and_serialization():
         _parseAnnotations,
         _writeAnnotations,
         _newAnnotationId,
-      } from './static/js/document/pdfTools.js';
+      } from './static/js/document/ui/pdfTools.js';
 
       const annotations = [
         { id: 'ann-1', page: 1, x: 10.5, y: 20.25, w: 15.0, h: 3.5, kind: 'text', lineHeight: 1.4, fontSize: 12, value: 'First line\nSecond line' },
@@ -223,7 +223,7 @@ def test_pdf_undo_snapshot_stack_behavior():
         _pushPdfUndoSnapshot,
         _undoPdfPaneAction,
         initPdfTools,
-      } from './static/js/document/pdfTools.js';
+      } from './static/js/document/ui/pdfTools.js';
 
       const mockDocs = new Map([
         ['doc-a', { id: 'doc-a', content: '# Initial Content A' }],
@@ -291,7 +291,7 @@ def test_coordinate_conversion_and_scale_helpers():
         calculateAnnotationPlacement,
         calculateDragMove,
         calculateResize,
-      } from './static/js/document/pdfTools.js';
+      } from './static/js/document/ui/pdfTools.js';
 
       const results = {};
 

@@ -1,6 +1,6 @@
 """Unit and regression coverage for document diff viewer and review engine.
 
-Validates static/js/document/diffViewer.js:
+Validates static/js/document/ui/diffViewer.js:
 1. diffLines boundary conditions, whitespace, and chunk grouping.
 2. Diff mode entry and DOM element mounting/unmounting.
 3. Acceptance and rejection of individual chunks into textarea content.
@@ -32,7 +32,7 @@ def _run_node_script(script: str) -> dict:
 def test_diff_lines_boundary_conditions_and_whitespace():
     """Verify diffLines boundary conditions: empty, identical, distinct, whitespace."""
     script = r"""
-      import { diffLines, _computeLineDiff, _buildDiffChunks } from './static/js/document/diffViewer.js';
+      import { diffLines, _computeLineDiff, _buildDiffChunks } from './static/js/document/ui/diffViewer.js';
 
       const results = {};
 
@@ -100,7 +100,7 @@ def test_diff_lines_boundary_conditions_and_whitespace():
 def test_chunk_grouping_structure():
     """Verify _buildDiffChunks groups contiguous change blocks correctly."""
     script = r"""
-      import { _computeLineDiff, _buildDiffChunks } from './static/js/document/diffViewer.js';
+      import { _computeLineDiff, _buildDiffChunks } from './static/js/document/ui/diffViewer.js';
 
       const oldText = 'line1\noldA\nline3\noldB1\noldB2\nline6';
       const newText = 'line1\nnewA\nline3\nnewB1\nnewB2\nline6';
@@ -153,7 +153,7 @@ def test_diff_mode_dom_mounting_and_unmounting():
       `);
 
       const result = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/diffViewer.js');
+        const mod = await import('/static/js/document/ui/diffViewer.js');
 
         const oldContent = 'line 1\nold A\nline 3';
         const newContent = 'line 1\nnew A\nline 3';
@@ -255,7 +255,7 @@ def test_chunk_acceptance_and_rejection_textarea_content():
       `);
 
       const result = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/diffViewer.js');
+        const mod = await import('/static/js/document/ui/diffViewer.js');
         const textarea = document.getElementById('doc-editor-textarea');
 
         let saved = [];
@@ -320,7 +320,7 @@ def test_chunk_navigation_and_status_updates():
       `);
 
       const result = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/diffViewer.js');
+        const mod = await import('/static/js/document/ui/diffViewer.js');
 
         const oldContent = 'first\nold A\nsecond\nold B\nthird\nold C\nend';
         const newContent = 'first\nnew A\nsecond\nnew B\nthird\nnew C\nend';

@@ -14,7 +14,7 @@ const row = id => ({ id, title: id, language: 'markdown', current_content: `Cont
 try {
   await page.route('**/api/**', route => route.fulfill({ json: {} }));
   if (process.env.ODYSSEUS_DOCUMENT_CONTROL_REVISION) {
-    for (const asset of ['document.js', 'document/suggestions.js']) {
+    for (const asset of ['document.js', 'document/ui/suggestions.js']) {
       const source = execFileSync('git', ['show', `${process.env.ODYSSEUS_DOCUMENT_CONTROL_REVISION}:static/js/${asset}`], { encoding: 'utf8' });
       await page.route(`**/static/js/${asset}*`, route => route.fulfill({ contentType: 'application/javascript', body: source }));
     }
@@ -23,7 +23,7 @@ try {
   await page.setContent(`${styles}<div id="toast"></div><aside id="sidebar" class="sidebar"></aside><main id="chat-container" class="chat-container"></main>`);
   await page.evaluate(async () => {
     window.editor = await import('/static/js/document.js?v=20260916docctx2');
-    window.suggestions = await import('/static/js/document/suggestions.js');
+    window.suggestions = await import('/static/js/document/ui/suggestions.js');
     editor.init('');
   });
   const inject = async id => page.evaluate(row => editor.injectFreshDoc(row), row(id));

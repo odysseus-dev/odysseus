@@ -67,7 +67,7 @@ def test_export_engine_functions_are_modularly_defined():
 def test_base_export_naming_sanitization():
     """Validate filename sanitization for slashes, non-ASCII, and empty titles."""
     script = r"""
-      import { _getExportBaseName } from './static/js/document/exportDocx.js';
+      import { _getExportBaseName } from './static/js/document/ui/exportDocx.js';
 
       const results = {
         slashes: _getExportBaseName({ title: 'projects/2026/roadmap' }),
@@ -109,7 +109,7 @@ def test_base_export_naming_sanitization():
 def test_html_export_markup_generation_and_theme_variables():
     """Validate HTML export markup structure, clean CSS, and theme variables."""
     script = r"""
-      import { buildHtmlExportMarkup, _richTextExportCss } from './static/js/document/exportDocx.js';
+      import { buildHtmlExportMarkup, _richTextExportCss } from './static/js/document/ui/exportDocx.js';
 
       const richDoc = {
         title: 'Project & Status <2026>',
@@ -164,7 +164,7 @@ def test_html_export_markup_generation_and_theme_variables():
 def test_visual_report_generation_structure():
     """Validate visual report export endpoints, pre-save flush, and download trigger."""
     script = r"""
-      import { initExportDocx, exportAsVisualReport, previewVisualReport } from './static/js/document/exportDocx.js';
+      import { initExportDocx, exportAsVisualReport, previewVisualReport } from './static/js/document/ui/exportDocx.js';
 
       let saveCalled = false;
       let fetchUrl = '';
@@ -276,7 +276,7 @@ def test_visual_report_generation_structure():
 def test_docx_dynamic_import_and_error_recovery():
     """Validate dynamic docx loading and resilient error recovery after network failures."""
     script = r"""
-      import { ensureDocx } from './static/js/document/exportDocx.js';
+      import { ensureDocx } from './static/js/document/ui/exportDocx.js';
 
       let scriptElements = [];
       let nextScriptOutcome = 'error'; // 'error' or 'success'

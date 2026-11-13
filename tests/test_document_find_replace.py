@@ -112,7 +112,7 @@ def test_wrapped_text_highlight_positioning_accuracy():
       `);
 
       const res = await page.evaluate(async () => {
-        const { renderFindRects } = await import('/static/js/document/findReplace.js');
+        const { renderFindRects } = await import('/static/js/document/ui/findReplace.js');
         const ta = document.getElementById('doc-editor-textarea');
         const wrap = document.getElementById('doc-editor-wrap');
 
@@ -168,7 +168,7 @@ def test_wrapped_text_highlight_positioning_accuracy():
 def test_literal_replacement_accuracy_and_special_characters():
     """Verify _replaceAllLiteral handles regex tokens without collision."""
     script = r"""
-      import { _replaceAllLiteral } from './static/js/document/findReplace.js';
+      import { _replaceAllLiteral } from './static/js/document/ui/findReplace.js';
       const text = 'Hello [world] $1 .* and hello [world] again!';
       const res1 = _replaceAllLiteral(text, '[world]', 'universe');
       const res2 = _replaceAllLiteral(text, '$1', 'USD');
@@ -210,7 +210,7 @@ Line 3: hit
       `);
 
       const res = await page.evaluate(async () => {
-        const { renderFindRects } = await import('/static/js/document/findReplace.js');
+        const { renderFindRects } = await import('/static/js/document/ui/findReplace.js');
         const ta = document.getElementById('doc-editor-textarea');
         const wrap = document.getElementById('doc-editor-wrap');
         const text = ta.value;
@@ -498,7 +498,7 @@ def test_find_many_matches_narrow_layout_and_long_lines():
       `);
 
       const data = await page.evaluate(async () => {
-        const { initFindReplace, onFindTextareaScroll } = await import('/static/js/document/findReplace.js');
+        const { initFindReplace, onFindTextareaScroll } = await import('/static/js/document/ui/findReplace.js');
         const ta = document.getElementById('doc-editor-textarea');
         const wrap = document.getElementById('doc-editor-wrap');
         const inp = document.getElementById('doc-find-input');

@@ -1,6 +1,6 @@
 """Behavioral tests for document preview modes and live renderers.
 
-Validates static/js/document/previewModes.js:
+Validates static/js/document/ui/previewModes.js:
 1. CSV parsing, escaping, and bidirectional table sync.
 2. HTML preview sandboxed iframe srcdoc generation with theme CSS.
 3. Markdown preview toggle states and edit button placement.
@@ -31,7 +31,7 @@ def _run_node_script(script: str) -> dict:
 def test_csv_parse_and_escape():
     """Verify parseCSV and csvEscapeField handle edge cases, quotes, newlines, and escaping."""
     script = r"""
-      import { parseCSV, csvEscapeField } from './static/js/document/previewModes.js';
+      import { parseCSV, csvEscapeField } from './static/js/document/ui/previewModes.js';
 
       const results = {};
 
@@ -108,7 +108,7 @@ def test_csv_table_preview_and_bidirectional_sync():
       `);
 
       const outcome = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/previewModes.js');
+        const mod = await import('/static/js/document/ui/previewModes.js');
         const textarea = document.getElementById('doc-editor-textarea');
         const preview = document.getElementById('doc-csv-preview');
         const wrap = document.getElementById('doc-editor-wrap');
@@ -193,7 +193,7 @@ def test_csv_table_preview_and_bidirectional_sync():
 def test_themed_render_srcdoc_generation():
     """Verify _themedRenderSrcdoc produces sandboxed HTML with injected theme variables."""
     script = r"""
-      import { _themedRenderSrcdoc } from './static/js/document/previewModes.js';
+      import { _themedRenderSrcdoc } from './static/js/document/ui/previewModes.js';
 
       const results = {};
 
@@ -257,7 +257,7 @@ def test_html_preview_toggle_and_exit_lifecycle():
       `);
 
       const outcome = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/previewModes.js');
+        const mod = await import('/static/js/document/ui/previewModes.js');
         const textarea = document.getElementById('doc-editor-textarea');
         const iframe = document.getElementById('doc-html-preview');
         const wrap = document.getElementById('doc-editor-wrap');
@@ -347,7 +347,7 @@ def test_markdown_preview_toggle_states_and_hover_edit_button():
       `);
 
       const outcome = await page.evaluate(async () => {
-        const mod = await import('/static/js/document/previewModes.js');
+        const mod = await import('/static/js/document/ui/previewModes.js');
         const textarea = document.getElementById('doc-editor-textarea');
         const preview = document.getElementById('doc-md-preview');
         const wrap = document.getElementById('doc-editor-wrap');

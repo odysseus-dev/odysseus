@@ -74,7 +74,7 @@ const { extractThemeBootstrap } = require('./helpers/theme_bootstrap.cjs');
     const result = await page.evaluate(async origin => {
       const module = await import(origin + '/static/js/markdown.js');
       const markdownModule = module.default || module;
-      const exporter = await import(origin + '/static/js/document/exportDocx.js');
+      const exporter = await import(origin + '/static/js/document/ui/exportDocx.js');
       const errors = [];
       const docs = new Map([['test', { id: 'test', title: 'Print test', language: 'markdown' }]]);
       exporter.initExportDocx({

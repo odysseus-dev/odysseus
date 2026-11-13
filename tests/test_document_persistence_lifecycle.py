@@ -786,7 +786,7 @@ def test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch():
       await page.setContent('__ODY_STYLESHEETS__<div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>');
       const res = await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=pdf-tab-' + Date.now());
-        const pdfTools = await import('/static/js/document/pdfTools.js');
+        const pdfTools = await import('/static/js/document/ui/pdfTools.js');
         mod.init('/api');
         const pdfContentA = '<!-- pdf_form_source upload_id="up-a" -->\n- **FullName:** _(empty)_ <!-- field=FullName type=text -->\n';
         const pdfContentB = '<!-- pdf_form_source upload_id="up-b" -->\n- **FullName:** Bob Original <!-- field=FullName type=text -->\n';

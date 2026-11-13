@@ -8,7 +8,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
   if (process.env.ODYSSEUS_DOCUMENT_CONTROL_REVISION) {
-    for (const asset of ['document.js', 'document/pdfTools.js']) {
+    for (const asset of ['document.js', 'document/ui/pdfTools.js']) {
       const body = execFileSync('git', ['show', `${process.env.ODYSSEUS_DOCUMENT_CONTROL_REVISION}:static/js/${asset}`], { encoding: 'utf8' });
       await page.route(`**/static/js/${asset}*`, route => route.fulfill({ contentType: 'application/javascript', body }));
     }
@@ -45,7 +45,7 @@ try {
     mod.init('/api');
     mod.injectFreshDoc({id:'pdf-remediation',title:'PDF remediation',language:'markdown',current_content:'<!-- pdf_source upload_id="source" -->\n\n- Name:** Ada <!-- field=Name type=text -->\n\n## Annotations\n\n- Keep me <!-- annotation id=a page=1 x=10 y=10 w=20 h=5 kind=text -->\n',version_count:1});
     window.editor=mod;
-    window.pdf=await import('/static/js/document/pdfTools.js');
+    window.pdf=await import('/static/js/document/ui/pdfTools.js');
   });
   const setPdfView=active=>page.evaluate(active=>window.pdf._setPdfViewActive(active),active);
   await setPdfView(true);

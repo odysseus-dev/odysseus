@@ -43,7 +43,7 @@ def test_table_insertion_and_selection_boundaries():
           _insertRichTable,
           _richSelectionCell,
           _focusRichTableCell,
-        } = await import('/static/js/document/richTables.js');
+        } = await import('/static/js/document/ui/richTables.js');
 
         const rich = document.getElementById('rich');
         const outside = document.getElementById('outside');
@@ -143,7 +143,7 @@ def test_row_and_column_additions_and_deletions():
           _appendRichTableColumn,
           _deleteRichTableRow,
           _deleteRichTableColumn,
-        } = await import('/static/js/document/richTables.js');
+        } = await import('/static/js/document/ui/richTables.js');
 
         const rich = document.getElementById('rich');
         const table = rich.querySelector('table');
@@ -252,7 +252,7 @@ def test_colspan_and_rowspan_cell_merge_and_split():
           _richTableCanMergeDown,
           _mergeRichTableCellDown,
           _setRichTableCellAlignment,
-        } = await import('/static/js/document/richTables.js');
+        } = await import('/static/js/document/ui/richTables.js');
 
         const rich = document.getElementById('rich');
         let table = rich.querySelector('table');
@@ -371,7 +371,7 @@ def test_header_row_and_column_toggles():
           _applyRichTableHeaderModes,
           _focusRichTableCell,
           _applyRichTableAction,
-        } = await import('/static/js/document/richTables.js');
+        } = await import('/static/js/document/ui/richTables.js');
 
         const rich = document.getElementById('rich');
         let table = rich.querySelector('table');

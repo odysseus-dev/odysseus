@@ -27,7 +27,7 @@ import {
   applyFindMarks,
   initFindReplace,
   onFindTextareaScroll,
-} from './document/findReplace.js';
+} from './document/ui/findReplace.js';
 import {
   diffLines,
   enterDiffMode,
@@ -35,12 +35,12 @@ import {
   isDiffModeActive,
   initDiffViewer,
   _diffModeActive,
-} from './document/diffViewer.js';
+} from './document/ui/diffViewer.js';
 import {
   initExportDocx,
   showExportMenu,
   _importFromDevice,
-} from './document/exportDocx.js';
+} from './document/ui/exportDocx.js';
 import {
   initPreviewModes,
   _setMarkdownPreviewActive,
@@ -57,7 +57,7 @@ import {
   _themedRenderSrcdoc,
   toggleHtmlPreview,
   exitHtmlPreview,
-} from './document/previewModes.js';
+} from './document/ui/previewModes.js';
 import {
   _isFormBackedDoc,
   _downloadFilledPdf,
@@ -75,13 +75,13 @@ import {
   _setPdfViewActive,
   _pdfViewState,
   initPdfTools,
-} from './document/pdfTools.js';
+} from './document/ui/pdfTools.js';
 import {
   initSuggestions,
   handleDocSuggestions,
   suspendSuggestions,
   _restoreSuggestionsFromStorage,
-} from './document/suggestions.js';
+} from './document/ui/suggestions.js';
 import {
   _richSelectionCell,
   _focusRichTableCell,
@@ -90,7 +90,7 @@ import {
   _richTableCanSplitCell,
   _applyRichTableAction,
   initRichTables,
-} from './document/richTables.js';
+} from './document/ui/richTables.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -106,7 +106,7 @@ import {
   let _lastAutoSaveErrorAt = 0;
   let _disposePdfTools = null;
   let _animationCancel = null;      // function to cancel current animation
-  // _htmlPreviewActive is managed in ./document/previewModes.js
+  // _htmlPreviewActive is managed in ./document/ui/previewModes.js
   let _emailAccountsCache = null;
   let _emailAccountsCacheAt = 0;
   let _emailHeaderManualExpandUntil = 0;
@@ -133,7 +133,7 @@ import {
   }
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
-  // Diff mode state is managed in ./document/diffViewer.js
+  // Diff mode state is managed in ./document/ui/diffViewer.js
   let _mdPreviewClickTimes = [];
   let _mdPreviewHintLastAt = 0;
 
@@ -11694,7 +11694,7 @@ import {
     return _escHtml(s);
   }
 
-  // ── Inline Suggestion Comments (Google Docs style) extracted to ./document/suggestions.js ──
+  // ── Inline Suggestion Comments (Google Docs style) extracted to ./document/ui/suggestions.js ──
 
   /** Run the document's code using the in-browser code runner */
   function runDocument() {
@@ -12285,7 +12285,7 @@ import {
     }
   }
 
-  // Document export, print, and DOCX engine extracted to ./document/exportDocx.js
+  // Document export, print, and DOCX engine extracted to ./document/ui/exportDocx.js
 
   /** Delete the active document */
   async function deleteActiveDocument() {
@@ -12398,7 +12398,7 @@ import {
     if (mdToolbar?._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
   }
 
-  // Preview modes (markdown, CSV table, HTML sandbox, DOCX) extracted to ./document/previewModes.js
+  // Preview modes (markdown, CSV table, HTML sandbox, DOCX) extracted to ./document/ui/previewModes.js
 
   // ---- Streaming animation engine ----
 

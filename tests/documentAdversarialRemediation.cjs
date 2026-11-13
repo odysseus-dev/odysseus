@@ -22,7 +22,7 @@ await page.route('**/api/document/a/render-pages',r=>r.fulfill({json:{pages:[{pa
 await page.goto('http://127.0.0.1:'+server.address().port+'/static/js/documentStats.js');
 const styles=(await fs.readFile('static/index.html','utf8')).match(/<link[^>]+rel="stylesheet"[^>]*>/g).join('');
 await page.setContent(styles+'<div id="toast"></div><aside id="sidebar" class="sidebar"></aside><main id="chat-container" class="chat-container"></main>');
-await page.evaluate(async()=>{window.editor=await import('/static/js/document.js');editor.init('');window.pdf=await import('/static/js/document/pdfTools.js');});
+await page.evaluate(async()=>{window.editor=await import('/static/js/document.js');editor.init('');window.pdf=await import('/static/js/document/ui/pdfTools.js');});
 if(process.argv[2]==='stream-suggestions'){
 await page.evaluate(async()=>{const sessions=await import('/static/js/sessions.js');sessions.setCurrentSessionId('s1');
 await editor.injectFreshDoc({id:'a',title:'a',language:'markdown',session_id:'s1',current_content:'Common one Common two',version_count:2});

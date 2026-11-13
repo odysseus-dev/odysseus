@@ -451,7 +451,7 @@ function documentFunction(name, text = source) {
     // frame policy and renderMath are the production implementations.
     const print = await page.evaluate(async functions => {
       const mod = await import('/static/js/markdown.js');
-      const exporter = await import('/static/js/document/exportDocx.js');
+      const exporter = await import('/static/js/document/ui/exportDocx.js');
       const failures = [];
       const doc = { id: 'fixture', title: 'Print <test>', language: 'richtext' };
       const docs = new Map([['fixture', doc]]);
