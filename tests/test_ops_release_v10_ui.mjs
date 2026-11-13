@@ -141,11 +141,11 @@ const swJs = fs.readFileSync('static/sw.js', 'utf8');
 const runbook = fs.readFileSync('docs/OPS_RELEASE_V10.md', 'utf8');
 assert.ok(adminJs.includes('admin-ops-jump-unsettled'));
 assert.ok(adminJs.includes('effects.unsettled_runs'));
-assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('odysseus-v1142-ops-release-v10'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('odysseus-v1143-ops-release-v11'));
 assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev10'));
 
 console.log('PASS: ops-release-v10 risk-context filter, polling pause/resume, audit search, Admin Ops jump & cache sync tests');

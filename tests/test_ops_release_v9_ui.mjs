@@ -119,11 +119,11 @@ const swJs = fs.readFileSync('static/sw.js', 'utf8');
 const runbook = fs.readFileSync('docs/OPS_RELEASE_V9.md', 'utf8');
 assert.ok(adminJs.includes('admin-ops-open-approvals'));
 assert.ok(adminJs.includes('external_untrusted_count'));
-assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('odysseus-v1142-ops-release-v10'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('odysseus-v1143-ops-release-v11'));
 assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev9'));
 
 console.log('PASS: ops-release-v9 pending queue tool filter, keyboard drawer, Admin Ops cross-link & cache sync tests');

@@ -122,4 +122,17 @@ assert.deepEqual(Array.from(vm.runInContext('[..._selectedApprovalIds]', sandbox
 keydownHandlers.forEach(fn => fn({ altKey: true, key: 'a', target: { tagName: 'INPUT' }, preventDefault() {} }));
 assert.deepEqual(Array.from(vm.runInContext('[..._selectedApprovalIds]', sandbox)), ['s-1', 's-2', 's-4']);
 
-console.log('PASS: ops-release-v11 pending queue preview search, Clear Filters & Alt+A/Alt+S shortcut UI tests');
+const adminJs = fs.readFileSync('static/js/admin.js', 'utf8');
+const appJs = fs.readFileSync('static/app.js', 'utf8');
+const swJs = fs.readFileSync('static/sw.js', 'utf8');
+const runbook = fs.readFileSync('docs/OPS_RELEASE_V11.md', 'utf8');
+assert.ok(adminJs.includes('admin-ops-run-status-filter'));
+assert.ok(adminJs.includes('function _filterOpsEffectRuns'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('odysseus-v1143-ops-release-v11'));
+assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev11'));
+
+console.log('PASS: ops-release-v11 pending queue preview search, Clear Filters, Alt+A/Alt+S shortcuts, Admin Ops run filter & cache sync tests');

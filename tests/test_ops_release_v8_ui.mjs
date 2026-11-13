@@ -113,9 +113,9 @@ assert.ok(!historyHost.innerHTML.includes('id="tasks-approval-history-detail"'))
 const appJs = fs.readFileSync('static/app.js', 'utf8');
 const swJs = fs.readFileSync('static/sw.js', 'utf8');
 const runbook = fs.readFileSync('docs/OPS_RELEASE_V8.md', 'utf8');
-assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('odysseus-v1142-ops-release-v10'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('odysseus-v1143-ops-release-v11'));
 assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev8'));
 
 console.log('PASS: ops-release-v8 expandable audit detail drawer, Copy ID, JSON export & cache sync tests');

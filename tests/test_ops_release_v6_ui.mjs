@@ -144,9 +144,9 @@ assert.equal(openedUrls[0], exportUrl);
 const appJs = fs.readFileSync('static/app.js', 'utf8');
 const swJs = fs.readFileSync('static/sw.js', 'utf8');
 const runbook = fs.readFileSync('docs/OPS_RELEASE_V6.md', 'utf8');
-assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev10'));
-assert.ok(swJs.includes('odysseus-v1142-ops-release-v10'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev11'));
+assert.ok(swJs.includes('odysseus-v1143-ops-release-v11'));
 assert.ok(runbook.includes('/api/tasks/approvals/history/export'));
 
 console.log('PASS: ops-release-v6 selective batch checkboxes, tool-name filter & asset cache sync tests');

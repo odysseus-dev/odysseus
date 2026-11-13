@@ -3898,6 +3898,18 @@ function renderLogs(isAutoPoll = false) {
 }
 
 let _opsUnsettledOnly = false;
+let _opsRunStatusFilter = '';
+
+function _filterOpsEffectRuns(runs) {
+  const list = Array.isArray(runs) ? runs : [];
+  if (_opsRunStatusFilter === 'attention') {
+    return list.filter(r => r && (Number(r.unsettled_claims || 0) > 0 || Boolean(r.corrupt)));
+  }
+  if (_opsRunStatusFilter === 'settled') {
+    return list.filter(r => r && Number(r.unsettled_claims || 0) === 0 && !r.corrupt);
+  }
+  return list;
+}
 
 function _escOps(value) {
   return String(value ?? '')
@@ -4073,15 +4085,22 @@ async function loadAdminOpsPanel() {
         }).join('')}
       </div>
       <div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
           <span style="font-weight:600;opacity:0.75;font-size:10px;text-transform:uppercase;">Recent Effect Runs (Click to inspect)</span>
-          <label style="display:inline-flex;align-items:center;gap:4px;font-size:10px;opacity:0.85;cursor:pointer;">
-            <input type="checkbox" id="admin-ops-unsettled-only" ${_opsUnsettledOnly ? 'checked' : ''} />
-            <span>Unsettled only</span>
-          </label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <select id="admin-ops-run-status-filter" aria-label="Filter effect runs by status" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+              <option value="">All runs</option>
+              <option value="attention"${_opsRunStatusFilter === 'attention' ? ' selected' : ''}>Needs attention</option>
+              <option value="settled"${_opsRunStatusFilter === 'settled' ? ' selected' : ''}>Settled only</option>
+            </select>
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:10px;opacity:0.85;cursor:pointer;">
+              <input type="checkbox" id="admin-ops-unsettled-only" ${_opsUnsettledOnly ? 'checked' : ''} />
+              <span>Unsettled only</span>
+            </label>
+          </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${runs.length ? runs.map(r => {
+          ${_filterOpsEffectRuns(runs).length ? _filterOpsEffectRuns(runs).map(r => {
             const unsettledCount = Number(r.unsettled_claims || 0);
             return `
               <button type="button" class="memory-toolbar-btn" data-inspect-run-id="${_escOps(r.run_id)}" style="font-family:monospace;font-size:10px;padding:2px 6px;${unsettledCount > 0 ? 'border-color:rgba(251,191,36,0.55);color:#fbbf24;' : ''}">
@@ -4097,6 +4116,13 @@ async function loadAdminOpsPanel() {
     const refreshBtn = el('admin-ops-refresh-btn');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', () => loadAdminOpsPanel());
+    }
+    const runStatusSelect = el('admin-ops-run-status-filter');
+    if (runStatusSelect) {
+      runStatusSelect.addEventListener('change', () => {
+        _opsRunStatusFilter = runStatusSelect.value || '';
+        loadAdminOpsPanel();
+      });
     }
     const unsettledToggle = el('admin-ops-unsettled-only');
     if (unsettledToggle) {
