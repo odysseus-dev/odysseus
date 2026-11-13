@@ -31,11 +31,31 @@ let _taskCompletionPending = false;
 let _taskBulkDeleting = false;
 let _pendingFocusAction = null;
 let _pendingApprovals = [];
+let _selectedApprovalIds = new Set();
+let _knownPendingApprovalIds = new Set();
 let _approvalDecisionHistory = [];
 let _approvalHistoryFilter = 'all';
+let _approvalHistoryToolFilter = '';
+let _knownApprovalHistoryTools = new Set();
 let _approvalsPollTimer = null;
 let _approvalsTickTimer = null;
 let _approvalsVisibilityBound = false;
+
+function _syncSelectedApprovalIds() {
+  const activeIds = new Set(_pendingApprovals.map(item => item.approval_id).filter(Boolean));
+  for (const id of [..._selectedApprovalIds]) {
+    if (!activeIds.has(id)) _selectedApprovalIds.delete(id);
+  }
+  for (const id of [..._knownPendingApprovalIds]) {
+    if (!activeIds.has(id)) _knownPendingApprovalIds.delete(id);
+  }
+  for (const id of activeIds) {
+    if (!_knownPendingApprovalIds.has(id)) {
+      _knownPendingApprovalIds.add(id);
+      _selectedApprovalIds.add(id);
+    }
+  }
+}
 
 function _formatDecisionAge(resolvedAt) {
   const ts = Number(resolvedAt || 0);
@@ -125,6 +145,9 @@ function _approvalHistoryQueryParams(limit) {
   if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
     params.set('decision', _approvalHistoryFilter);
   }
+  if (_approvalHistoryToolFilter) {
+    params.set('tool_name', _approvalHistoryToolFilter);
+  }
   return params.toString();
 }
 
@@ -132,6 +155,9 @@ function _exportApprovalHistoryCsv() {
   const params = new URLSearchParams({ format: 'csv', limit: '200' });
   if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
     params.set('decision', _approvalHistoryFilter);
+  }
+  if (_approvalHistoryToolFilter) {
+    params.set('tool_name', _approvalHistoryToolFilter);
   }
   const url = `${API_BASE}/api/tasks/approvals/history/export?${params.toString()}`;
   if (typeof window !== 'undefined' && typeof window.open === 'function') {
@@ -147,6 +173,9 @@ async function _fetchApprovalHistory() {
     if (!res.ok) return;
     const data = await res.json();
     _approvalDecisionHistory = Array.isArray(data.decisions) ? data.decisions : [];
+    for (const entry of _approvalDecisionHistory) {
+      if (entry && entry.tool_name) _knownApprovalHistoryTools.add(String(entry.tool_name));
+    }
   } catch (_) {
     // Non-fatal: keep last known history
   }
@@ -192,14 +221,21 @@ async function _resolvePendingApproval(approvalId, decision) {
 }
 
 async function _resolveAllPendingApprovals(decision) {
-  const approvalIds = _pendingApprovals.map(item => item.approval_id).filter(Boolean);
-  if (!approvalIds.length) return;
+  _syncSelectedApprovalIds();
+  const targetItems = _pendingApprovals.filter(
+    item => item && item.approval_id && _selectedApprovalIds.has(item.approval_id)
+  );
+  const approvalIds = targetItems.map(item => item.approval_id);
+  if (!approvalIds.length) {
+    if (uiModule) uiModule.showError('Select at least one pending approval');
+    return;
+  }
   let skipExternalUntrusted = false;
   if (decision !== 'deny') {
-    const externalCount = _pendingApprovals.filter(item => Boolean(item.external_untrusted_context_seen)).length;
+    const externalCount = targetItems.filter(item => Boolean(item.external_untrusted_context_seen)).length;
     if (externalCount > 0 && typeof confirm === 'function') {
       const includeExternal = confirm(
-        `${externalCount} pending action(s) involve external untrusted context. Click OK to approve all, or Cancel to skip external-context actions.`
+        `${externalCount} selected action(s) involve external untrusted context. Click OK to approve all, or Cancel to skip external-context actions.`
       );
       if (!includeExternal) {
         skipExternalUntrusted = true;
@@ -243,7 +279,7 @@ async function _resolveAllPendingApprovals(decision) {
 function _renderApprovalHistory() {
   const host = document.getElementById('tasks-approval-history');
   if (!host) return;
-  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all') {
+  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all' && !_approvalHistoryToolFilter) {
     host.style.display = 'none';
     host.innerHTML = '';
     return;
@@ -254,10 +290,17 @@ function _renderApprovalHistory() {
     { key: 'approve', label: 'Approved' },
     { key: 'deny', label: 'Denied' },
   ];
+  const toolOptions = [..._knownApprovalHistoryTools].sort();
   host.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;flex-wrap:wrap;">
       <span style="font-weight:600;">Recent Decisions (${_approvalDecisionHistory.length})</span>
-      <div style="display:flex;align-items:center;gap:4px;">
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        ${toolOptions.length ? `
+          <select id="tasks-approval-history-tool" aria-label="Filter decisions by tool" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">All tools</option>
+            ${toolOptions.map(t => `<option value="${_esc(t)}"${_approvalHistoryToolFilter === t ? ' selected' : ''}>${_esc(t)}</option>`).join('')}
+          </select>
+        ` : ''}
         ${filters.map(f => `
           <button type="button" class="memory-toolbar-btn" data-history-filter="${f.key}" style="padding:1px 5px;font-size:9px;${_approvalHistoryFilter === f.key ? 'border-color:var(--accent,var(--red));font-weight:600;' : 'opacity:0.75;'}">${f.label}</button>
         `).join('')}
@@ -281,6 +324,13 @@ function _renderApprovalHistory() {
       }).join('') : '<span style="font-size:10px;opacity:0.65;">No matching decisions</span>'}
     </div>
   `;
+  const toolSelect = host.querySelector('#tasks-approval-history-tool');
+  if (toolSelect) {
+    toolSelect.addEventListener('change', async () => {
+      _approvalHistoryToolFilter = toolSelect.value || '';
+      await _fetchApprovalHistory();
+    });
+  }
   host.querySelectorAll('button[data-history-filter]').forEach(btn => {
     btn.addEventListener('click', async () => {
       _approvalHistoryFilter = btn.dataset.historyFilter || 'all';
@@ -301,6 +351,7 @@ function _renderPendingApprovals() {
   }
   _startApprovalsPolling();
   _pruneExpiredApprovals();
+  _syncSelectedApprovalIds();
   if (!_pendingApprovals.length) {
     host.style.display = 'none';
     host.innerHTML = '';
@@ -308,6 +359,10 @@ function _renderPendingApprovals() {
   }
   host.style.display = 'flex';
   const showBulkActions = _pendingApprovals.length >= 2;
+  const selectedCount = _selectedApprovalIds.size;
+  const isPartialSelection = selectedCount > 0 && selectedCount < _pendingApprovals.length;
+  const approveBulkLabel = isPartialSelection ? `Approve Selected (${selectedCount})` : 'Approve All';
+  const denyBulkLabel = isPartialSelection ? `Deny Selected (${selectedCount})` : 'Deny All';
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));">
       <div style="display:flex;align-items:center;gap:6px;">
@@ -316,14 +371,17 @@ function _renderPendingApprovals() {
       </div>
       <div style="display:flex;align-items:center;gap:4px;">
         ${showBulkActions ? `
-          <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;">Approve All</button>
-          <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;">Deny All</button>
+          <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${approveBulkLabel}</button>
+          <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${denyBulkLabel}</button>
         ` : ''}
         <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
       </div>
     </div>
-    ${_pendingApprovals.map(item => `
+    ${_pendingApprovals.map(item => {
+      const checkedAttr = _selectedApprovalIds.has(item.approval_id) ? ' checked' : '';
+      return `
       <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:11px;">
+        ${showBulkActions ? `<input type="checkbox" class="task-approval-select" data-approval-id="${_esc(item.approval_id)}" aria-label="Select approval ${_esc(item.tool_name || 'tool')}"${checkedAttr} />` : ''}
         <div style="min-width:0;flex:1;">
           <div style="display:flex;align-items:center;gap:6px;font-weight:600;">
             <span>${_esc(item.tool_name || 'tool')}</span>
@@ -338,12 +396,22 @@ function _renderPendingApprovals() {
           <button type="button" class="memory-toolbar-btn danger" data-approval-action="deny" data-approval-id="${_esc(item.approval_id)}">Deny</button>
         </div>
       </div>
-    `).join('')}
+    `;
+    }).join('')}
   `;
   const refreshBtn = host.querySelector('#tasks-approvals-refresh');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => _fetchPendingApprovals());
   }
+  host.querySelectorAll('input.task-approval-select').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.approvalId;
+      if (!id) return;
+      if (cb.checked) _selectedApprovalIds.add(id);
+      else _selectedApprovalIds.delete(id);
+      _renderPendingApprovals();
+    });
+  });
   host.querySelectorAll('button[data-bulk-approval-action]').forEach(btn => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
