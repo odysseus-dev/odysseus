@@ -20,6 +20,7 @@ export const CORPUS = [
   ['two consecutive fences', '```\nfirst block\n```\n\n```\nsecond block\n```\n\ntail'],
   ['mermaid diagram', 'Diagram:\n\n```mermaid\ngraph TD\nA-->B\n```\n\nafter diagram'],
   ['gfm table', 'Data:\n\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nafter table'],
+  ['aligned table', '| Left | Center | Right |\n| :--- | :---: | ---: |\n| A | B | 123 |\n| D | E | 7 |\n\nend'],
   [
     'mixed document',
     '# Report\n\nIntro paragraph with a `symbol`.\n\n```python\nx = 1\n```\n\n- bullet one\n- bullet two\n\n> a quote\n\nFinal words.',
