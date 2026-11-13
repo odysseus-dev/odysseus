@@ -39,7 +39,7 @@ def _read(path, default):
         return default
 
 
-def legacy_projects(webui_state):
+def legacy_projects(webui_state, folder_overrides=None):
     """[{name, colour, folder, conversations}] from the WebUI registry; folder is the one existing directory most of the project's conversations live in."""
     state = Path(webui_state)
     registry = _read(state / 'projects.json', [])
@@ -50,14 +50,22 @@ def legacy_projects(webui_state):
     for row in index:
         if isinstance(row, dict) and row.get('project_id') and row.get('workspace'):
             folders[row['project_id']][str(row['workspace'])] += 1
+    overrides = {str(k).casefold(): v for k, v in (folder_overrides or {}).items()}
     found = []
     for entry in registry if isinstance(registry, list) else []:
         if not isinstance(entry, dict) or not entry.get('name'):
             continue
         counts = folders.get(entry.get('project_id'), collections.Counter())
         usable = [(n, f) for f, n in counts.most_common() if os.path.isdir(f)]
-        found.append({'name': str(entry['name']).strip(), 'colour': entry.get('color') if COLOUR.fullmatch(str(entry.get('color') or '')) else None,
-                      'folder': usable[0][1] if usable else None, 'conversations': usable[0][0] if usable else 0, 'folders_seen': list(counts)})
+        name = str(entry['name']).strip()
+        chosen = overrides.get(name.casefold())
+        if chosen and os.path.isdir(chosen):             # an operator-named current folder for a project whose recorded folder is gone
+            folder, seen = str(chosen), sum(counts.values())
+        else:
+            folder, seen = (usable[0][1], usable[0][0]) if usable else (None, 0)
+        found.append({'name': name, 'colour': entry.get('color') if COLOUR.fullmatch(str(entry.get('color') or '')) else None,
+                      'folder': folder, 'conversations': seen, 'folders_seen': list(counts),
+                      'attach_history': [f for f in counts if not os.path.isdir(f)] if chosen and folder == str(chosen) else []})
     return found
 
 
@@ -174,8 +182,11 @@ def execute(actions, rpc):
         if item.get('colour'):
             params['color'] = item['colour']
         try:
-            rpc.call('projects.create', params)
-            done.append((item['name'], 'created'))
+            created = rpc.call('projects.create', params)
+            project_id = ((created or {}).get('project') or {}).get('id')
+            for old in item.get('attach_history') or []:     # recorded folders that no longer exist: attached as extra folders so those conversations keep their working folder and still group
+                rpc.call('projects.add_folder', {'id': project_id, 'path': old})
+            done.append((item['name'], 'created' + (f" (+{len(item['attach_history'])} historical folder(s))" if item.get('attach_history') else '')))
         except Exception as exc:                                       # one failure must not stop the rest
             done.append((item['name'], f'failed: {exc}'))
     return done
