@@ -359,88 +359,82 @@ class MemoryManager:
         return categories
 
     def get_relevant_memories(self, query: str, memories: list, threshold: float = 0.05, max_items: int = 8):
-        """Get memories that are relevant to the query based on text similarity and semantic keyword matching."""
+        """Rank memories by subject relevance without leaking unrelated named records."""
         if not memories or not query.strip():
             return []
-            
-        # Define keyword categories for semantic matching
-        identity_words = ["name", "called", "identity", "myself"]
-        contact_words = ["phone", "email", "address", "contact", "number", "where", "located", "reach"]
-        preference_words = ["like", "prefer", "favorite", "want", "love", "hate", "dislike", "enjoy", "interested"]
-        task_words = ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline"]
-        fact_words = ["what", "when", "where", "how", "why", "explain", "describe", "information", "know"]
-        
-        query_lower = query.lower()
-        query_words = set(re.findall(r'\w+', query_lower))
-        query_tokens = set(tokenize(query_lower))
-        
-        # Determine query type based on keywords
-        query_type = None
-        if query_words.intersection(identity_words) or re.search(r'\bwho\s+am\s+i\b', query_lower):
-            query_type = "identity"
-        elif query_words.intersection(contact_words):
-            query_type = "contact"
-        elif query_words.intersection(preference_words):
-            query_type = "preference"
-        elif query_words.intersection(task_words):
-            query_type = "task"
-        elif query_words.intersection(fact_words):
-            query_type = "fact"
-        
+
+        import re
+
+        def words(value):
+            return set(re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", value.lower()))
+
+        query_lower = query.strip().lower()
+        query_terms = words(query_lower)
+
+        identity_questions = {
+            "who am i", "what is my name", "tell me my name"
+        }
+        normalized_question = query_lower.strip(" ?!.")
+
+        personal_identity_phrases = (
+            "my name is ", "i am called ", "call me "
+        )
+
+        if normalized_question in identity_questions:
+            return [
+                memory for memory in memories
+                if any(
+                    phrase in memory.get("text", "").lower()
+                    for phrase in personal_identity_phrases
+                )
+            ][:max_items]
+
+        generic = {
+            "a", "an", "the", "is", "are", "am", "i", "my",
+            "me", "what", "who", "where", "when", "why", "how",
+            "do", "does", "did", "to", "of", "for", "in", "on",
+            "and", "it", "this", "that", "name", "called",
+            "named", "tell", "about", "your", "have"
+        }
+
+        project_generic = generic | {"project"}
+        project_query = "project" in query_terms
+
+        if project_query:
+            meaningful = query_terms - project_generic
+            if not meaningful:
+                return []
+        else:
+            meaningful = query_terms - generic
+
+        if not meaningful:
+            return []
+
         relevant = []
-        # Every memory participates in the same ranking and threshold check.
-        # Query type is a scoring hint, not an unconditional insertion path.
+
         for memory in memories:
-            memory_text = memory["text"].lower()
-            # Check if this is an identity memory (contains name patterns or identity indicators)
-            is_identity = any([
-                re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
-                any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
-            ])
-            memory_tokens = set(tokenize(memory_text))
-            
-            # Calculate base Jaccard similarity
-            if not query_tokens or not memory_tokens:
+            memory_text = memory.get("text", "").lower()
+            memory_terms = words(memory_text)
+            overlap = meaningful & memory_terms
+
+            if not overlap:
                 continue
-                
-            base_similarity = len(query_tokens & memory_tokens) / len(query_tokens | memory_tokens)
-            final_score = base_similarity
-            
-            # Apply boosts based on semantic matching
-            if query_type == "identity" and is_identity:
-                # Keep explicit name/identity recall useful without outranking
-                # a closer textual match or bypassing the caller's threshold.
-                final_score = max(final_score * 1.3, 0.6)
-            elif query_type == "contact":
-                # Boost memories with contact information
-                has_contact_info = any(word in memory_text for word in ["@gmail.com", "@", ".com", 
-                                                                     "phone", "number", "address", 
-                                                                     "http", "www", "tel:"])
-                if has_contact_info:
-                    final_score *= 1.4  # 40% boost for contact-related memories
-            
-            elif query_type == "preference":
-                # Boost memories with preference indicators
-                has_preference = any(word in memory_text for word in ["like", "love", "hate", "dislike", 
-                                                                   "prefer", "favorite", "enjoy", "interested"])
-                if has_preference:
-                    final_score *= 1.3  # 30% boost for preference-related memories
-            
-            elif query_type == "task":
-                # Boost memories with task indicators
-                has_task = any(word in memory_text for word in ["todo", "task", "remind", "meeting", 
-                                                              "appointment", "schedule", "deadline", "need to"])
-                if has_task:
-                    final_score *= 1.3  # 30% boost for task-related memories
-            
-            # Always consider exact phrase matches as highly relevant
-            if query.lower() in memory["text"].lower():
-                final_score = max(final_score, 0.8)  # Ensure high relevance for exact matches
-            
-            # Include memory if it meets threshold after boosts
-            if final_score >= threshold:
-                relevant.append((final_score, memory))
-        
-        # Sort by final score (descending) and return top matches
-        relevant.sort(key=lambda x: x[0], reverse=True)
-        return [mem for _, mem in relevant[:max_items]]
+
+            if project_query and not meaningful.issubset(memory_terms):
+                continue
+
+            coverage = len(overlap) / len(meaningful)
+            precision = len(overlap) / max(1, len(memory_terms))
+            score = 0.7 * coverage + 0.3 * precision
+
+            if meaningful.issubset(memory_terms):
+                score += 0.2
+
+            if query_lower in memory_text:
+                score = max(score, 0.8)
+
+            if score >= threshold:
+                relevant.append((score, memory))
+
+        relevant.sort(key=lambda item: item[0], reverse=True)
+        return [memory for _, memory in relevant[:max_items]]
