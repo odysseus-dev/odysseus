@@ -125,4 +125,19 @@ assert.equal(selectAllEl.checked, true);
 assert.equal(selectAllEl.indeterminate, false);
 assert.ok(pendingHost.innerHTML.includes('Approve All'));
 
-console.log('PASS: ops-release-v7 master Select All & Select Safe Only UI tests');
+const historyHost = elements.get('tasks-approval-history');
+vm.runInContext("_approvalDecisionHistory = [{ approval_id: 'h-1', tool_name: 'write_file', decision: 'approve_task', digest: 'aaaa1111' }, { approval_id: 'h-2', tool_name: 'send_email', decision: 'deny', digest: 'bbbb2222' }, { approval_id: 'h-3', tool_name: 'read_file', decision: 'approve_task', digest: 'cccc3333' }]; _approvalHistoryFilter = 'approve'; _approvalHistoryToolFilter = 'write_file';", sandbox);
+sandbox._renderApprovalHistory();
+
+assert.ok(historyHost.innerHTML.includes('Approved: 2 · Denied: 1'));
+assert.ok(historyHost.innerHTML.includes('id="tasks-approval-history-reset"'));
+
+const appJs = fs.readFileSync('static/app.js', 'utf8');
+const swJs = fs.readFileSync('static/sw.js', 'utf8');
+const runbook = fs.readFileSync('docs/OPS_RELEASE_V7.md', 'utf8');
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev7'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev7'));
+assert.ok(swJs.includes('odysseus-v1139-ops-release-v7'));
+assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev7'));
+
+console.log('PASS: ops-release-v7 Select All, Select Safe Only, history counters & asset cache sync tests');

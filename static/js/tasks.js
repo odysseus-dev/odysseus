@@ -312,9 +312,15 @@ function _renderApprovalHistory() {
     { key: 'deny', label: 'Denied' },
   ];
   const toolOptions = [..._knownApprovalHistoryTools].sort();
+  const approvedCount = _approvalDecisionHistory.filter(item => item && item.decision !== 'deny').length;
+  const deniedCount = _approvalDecisionHistory.filter(item => item && item.decision === 'deny').length;
+  const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter);
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;flex-wrap:wrap;">
-      <span style="font-weight:600;">Recent Decisions (${_approvalDecisionHistory.length})</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-weight:600;">Recent Decisions (${_approvalDecisionHistory.length})</span>
+        ${_approvalDecisionHistory.length ? `<span style="opacity:0.7;">Approved: ${approvedCount} · Denied: ${deniedCount}</span>` : ''}
+      </div>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
         ${toolOptions.length ? `
           <select id="tasks-approval-history-tool" aria-label="Filter decisions by tool" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
@@ -325,6 +331,9 @@ function _renderApprovalHistory() {
         ${filters.map(f => `
           <button type="button" class="memory-toolbar-btn" data-history-filter="${f.key}" style="padding:1px 5px;font-size:9px;${_approvalHistoryFilter === f.key ? 'border-color:var(--accent,var(--red));font-weight:600;' : 'opacity:0.75;'}">${f.label}</button>
         `).join('')}
+        ${hasActiveHistoryFilters ? `
+          <button type="button" id="tasks-approval-history-reset" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Reset Filters</button>
+        ` : ''}
         <button type="button" id="tasks-approval-history-export" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Export CSV</button>
       </div>
     </div>
@@ -358,6 +367,14 @@ function _renderApprovalHistory() {
       await _fetchApprovalHistory();
     });
   });
+  const resetBtn = host.querySelector('#tasks-approval-history-reset');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      _approvalHistoryFilter = 'all';
+      _approvalHistoryToolFilter = '';
+      await _fetchApprovalHistory();
+    });
+  }
   const exportBtn = host.querySelector('#tasks-approval-history-export');
   if (exportBtn) {
     exportBtn.addEventListener('click', () => _exportApprovalHistoryCsv());
