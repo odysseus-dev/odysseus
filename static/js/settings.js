@@ -626,7 +626,7 @@ var _searchProviderHints = {
   google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at ' + _LINK('https://programmablesearchengine.google.com/', 'programmablesearchengine.google.com'),
   tavily: 'AI-optimized search. 1,000 free credits/month at ' + _LINK('https://tavily.com/', 'tavily.com'),
   serper: 'Google results via API. 2,500 free queries at ' + _LINK('https://serper.dev/', 'serper.dev'),
-  you_com: 'Works with no key (100 free searches/day). Optional API key from ' + _LINK('https://you.com/platform?utm_source=odysseus-dev-odysseus&utm_medium=oss_integration&utm_campaign=2026-10-oss-integrations&utm_content=settings', 'you.com/platform') + ' for higher limits.',
+  you_com: 'Works with no key, but keyless requests are subject to usage limits and Deep Research can consume multiple requests. Optional API key from ' + _LINK('https://you.com/platform?utm_source=odysseus-dev-odysseus&utm_medium=oss_integration&utm_campaign=2026-10-oss-integrations&utm_content=settings', 'you.com/platform') + ' for higher limits.',
   disabled: 'Web search and deep research tools will be unavailable.',
 };
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
@@ -728,28 +728,22 @@ async function initSearchSettings() {
       // hasKey from saved settings (what /api/auth/settings returns).
       var hasKey = kf ? ((s[kf] || '').trim() || legacyKey) : false;
       // For optional-key providers, also check runtime key presence via
-      // /api/search/config so that a key set through the environment
-      // (e.g. YDC_API_KEY in docker-compose) is reflected in the UI even
-      // when the settings field is empty (#6809).
+      // /api/search/config so that a configured key (from settings or
+      // environment) is reflected even when credentials are hidden or
+      // empty in /api/auth/settings (#6809).
       if (_searchOptionalKey[active] && !hasKey) {
         try {
           var cfgRes = await fetch('/api/search/config', { credentials: 'same-origin' });
           var cfg = await cfgRes.json();
           if (cfg.active_provider === active && cfg.has_api_key) {
-            hasKey = 'env';  // truthy sentinel: key is active via environment
+            hasKey = true;
           }
         } catch (_) { /* /api/search/config is best-effort */ }
       }
       if (_searchNeedsKey[active]) {
         extra = hasKey ? ' (key set)' : ' (no key)';
       } else if (_searchOptionalKey[active]) {
-        if (!hasKey) {
-          extra = ' (keyless)';
-        } else if (hasKey === 'env') {
-          extra = ' (env key active)';
-        } else {
-          extra = ' (key set)';
-        }
+        extra = hasKey ? ' (key active)' : ' (keyless)';
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
