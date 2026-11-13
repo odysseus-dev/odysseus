@@ -31,6 +31,82 @@ let _taskCompletionPending = false;
 let _taskBulkDeleting = false;
 let _pendingFocusAction = null;
 let _pendingApprovals = [];
+let _approvalsPollTimer = null;
+let _approvalsTickTimer = null;
+let _approvalsVisibilityBound = false;
+
+function _formatApprovalTtl(expiresAt) {
+  const exp = Number(expiresAt || 0);
+  if (!exp) return '';
+  const remaining = Math.max(0, Math.ceil(exp - Date.now() / 1000));
+  if (remaining <= 0) return 'Expired';
+  if (remaining < 60) return `${remaining}s left`;
+  const mins = Math.floor(remaining / 60);
+  const secs = remaining % 60;
+  return `${mins}m ${secs}s left`;
+}
+
+function _pruneExpiredApprovals() {
+  const nowSec = Date.now() / 1000;
+  const before = _pendingApprovals.length;
+  _pendingApprovals = _pendingApprovals.filter(item => !item.expires_at || Number(item.expires_at) > nowSec);
+  return _pendingApprovals.length !== before;
+}
+
+function _stopApprovalsPolling() {
+  if (_approvalsPollTimer) {
+    clearInterval(_approvalsPollTimer);
+    _approvalsPollTimer = null;
+  }
+  if (_approvalsTickTimer) {
+    clearInterval(_approvalsTickTimer);
+    _approvalsTickTimer = null;
+  }
+}
+
+function _startApprovalsPolling() {
+  if (!_approvalsVisibilityBound && typeof document !== 'undefined') {
+    _approvalsVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      const host = document.getElementById('tasks-pending-approvals');
+      if (!host) {
+        _stopApprovalsPolling();
+        return;
+      }
+      if (!document.hidden) {
+        _fetchPendingApprovals();
+      }
+    });
+  }
+  if (!_approvalsPollTimer) {
+    _approvalsPollTimer = setInterval(() => {
+      const host = document.getElementById('tasks-pending-approvals');
+      if (!host) {
+        _stopApprovalsPolling();
+        return;
+      }
+      if (typeof document !== 'undefined' && document.hidden) return;
+      _fetchPendingApprovals();
+    }, 10000);
+  }
+  if (!_approvalsTickTimer) {
+    _approvalsTickTimer = setInterval(() => {
+      const host = document.getElementById('tasks-pending-approvals');
+      if (!host) {
+        _stopApprovalsPolling();
+        return;
+      }
+      if (!_pendingApprovals.length) return;
+      if (_pruneExpiredApprovals()) {
+        _renderPendingApprovals();
+        return;
+      }
+      host.querySelectorAll('[data-approval-ttl]').forEach(el => {
+        el.textContent = _formatApprovalTtl(el.dataset.approvalTtl);
+      });
+    }, 1000);
+  }
+}
 
 async function _fetchPendingApprovals() {
   try {
@@ -38,6 +114,7 @@ async function _fetchPendingApprovals() {
     if (!res.ok) return;
     const data = await res.json();
     _pendingApprovals = Array.isArray(data.approvals) ? data.approvals : [];
+    _pruneExpiredApprovals();
   } catch (_) {
     // Non-fatal: keep last known list
   }
@@ -70,7 +147,12 @@ async function _resolvePendingApproval(approvalId, decision) {
 
 function _renderPendingApprovals() {
   const host = document.getElementById('tasks-pending-approvals');
-  if (!host) return;
+  if (!host) {
+    _stopApprovalsPolling();
+    return;
+  }
+  _startApprovalsPolling();
+  _pruneExpiredApprovals();
   if (!_pendingApprovals.length) {
     host.style.display = 'none';
     host.innerHTML = '';
@@ -78,9 +160,12 @@ function _renderPendingApprovals() {
   }
   host.style.display = 'flex';
   host.innerHTML = `
-    <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));">
-      <span>Pending Approvals (${_pendingApprovals.length})</span>
-      <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span>Pending Approvals (${_pendingApprovals.length})</span>
+        <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
+      </div>
+      <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
     </div>
     ${_pendingApprovals.map(item => `
       <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:11px;">
@@ -89,6 +174,7 @@ function _renderPendingApprovals() {
             <span>${_esc(item.tool_name || 'tool')}</span>
             <span style="opacity:0.55;font-family:monospace;font-size:10px;">#${_esc(item.digest || '')}</span>
             ${item.external_untrusted_context_seen ? '<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.16);color:#fbbf24;">External context</span>' : ''}
+            ${item.expires_at ? `<span data-approval-ttl="${_esc(String(item.expires_at))}" style="opacity:0.65;font-weight:400;font-size:10px;">${_esc(_formatApprovalTtl(item.expires_at))}</span>` : ''}
           </div>
           <div style="opacity:0.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${_esc(item.content_preview || '')}</div>
         </div>
@@ -99,6 +185,10 @@ function _renderPendingApprovals() {
       </div>
     `).join('')}
   `;
+  const refreshBtn = host.querySelector('#tasks-approvals-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => _fetchPendingApprovals());
+  }
   host.querySelectorAll('button[data-approval-action]').forEach(btn => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
