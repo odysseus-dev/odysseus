@@ -584,6 +584,42 @@ def require_user(request: Request) -> str:
     return _require_auth(request)
 
 
+def require_email_browser_session(request: Request) -> str:
+    """Require an interactive browser session; block delegated API tokens."""
+    from src.auth_helpers import is_delegated_credential
+
+    if is_delegated_credential(request):
+        raise HTTPException(
+            status_code=403,
+            detail="Email account management requires an interactive session.",
+        )
+    return require_owner(request, account_id=None)
+
+
+def _require_email_scope(request: Request, scope: str, account_id: str | None = None) -> str:
+    """Enforce bearer token scope while preserving browser-session auth and account ownership checks."""
+    from src.auth_helpers import require_api_token_scope
+
+    owner = require_owner(request, account_id=account_id)
+    scoped_owner = require_api_token_scope(request, scope)
+    return scoped_owner if scoped_owner is not None else owner
+
+
+def require_email_read(request: Request, account_id: str | None = Query(None)) -> str:
+    """Enforce email:read scope for API tokens; preserve browser authentication."""
+    return _require_email_scope(request, "email:read", account_id=account_id)
+
+
+def require_email_draft(request: Request, account_id: str | None = Query(None)) -> str:
+    """Enforce email:draft scope for API tokens; preserve browser authentication."""
+    return _require_email_scope(request, "email:draft", account_id=account_id)
+
+
+def require_email_send(request: Request, account_id: str | None = Query(None)) -> str:
+    """Enforce email:send scope for API tokens; preserve browser authentication."""
+    return _require_email_scope(request, "email:send", account_id=account_id)
+
+
 def _assert_owns_account(account_id: str, owner: str) -> None:
     """Reject requests that name an `account_id` belonging to another user.
     Previously the account lookup in `_get_email_config` filtered only on
