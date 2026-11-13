@@ -264,11 +264,19 @@ class SessionManager:
             message: ChatMessage to add
         """
         session = self.get_session(session_id)
+        prev_len = len(session.history)
+        prev_count = getattr(session, "message_count", prev_len)
         session.history.append(message)
         session._history = session.history
         session.message_count = len(session.history)
 
-        self._persist_message(session_id, message)
+        try:
+            self._persist_message(session_id, message)
+        except Exception:
+            del session.history[prev_len:]
+            session._history = session.history
+            session.message_count = prev_count
+            raise
 
     def _persist_message(self, session_id: str, message: ChatMessage):
         """Persist a single message to the database."""
@@ -334,6 +342,7 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Error persisting message: {e}")
             db.rollback()
+            raise
         finally:
             db.close()
 
