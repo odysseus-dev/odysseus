@@ -208,6 +208,10 @@ button.hamburger {
   margin: 0.3em 0 0.3em 1.2em;
   padding: 0;
 }
+.msg ol {
+  /* Leave room for decimal markers inside the clipped message body. */
+  margin-left: 2.5em;
+}
 .msg li {
   margin: 0.15em 0;
 }

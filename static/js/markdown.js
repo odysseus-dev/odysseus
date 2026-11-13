@@ -985,7 +985,10 @@ function renderMarkdownLists(source) {
     }
     if (!level || indent > level.indent) {
       if (level) closeText(level);
-      list.push(`<${tag}>`);
+      // Each ordered run starts at its first marker, including nested runs
+      // and lists resumed after a paragraph. Later markers count normally.
+      const start = tag === 'ol' ? match[2].slice(0, -1).replace(/^0+(?=\d)/, '') : '1';
+      list.push(tag === 'ol' && start !== '1' ? `<ol start="${start}">` : `<${tag}>`);
       level = { indent, tag, taskText: false };
       stack.push(level);
     } else {
@@ -1281,7 +1284,7 @@ export function mdToHtml(src, opts) {
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_|___SVG_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul>|<ol\b|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_|___SVG_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {

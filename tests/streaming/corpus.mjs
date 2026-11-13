@@ -15,6 +15,7 @@ export const CORPUS = [
   ['nested list', '- top\n  - nested one\n  - nested two\n- back to top\n\nend'],
   ['nested ordered and mixed lists', '1. first\n2. second\n   - child\n     1. grandchild\n   - sibling\n3. third\n\nend'],
   ['nested tasks and emphasis', '* [x] **parent**\n  * [ ] *child*\n* [ ] sibling\n\nend'],
+  ['ordered starts and resumption', '3. parent\n   7. child\n4. sibling\n\nA note.\n\n5. resumed\n6. next'],
   ['blockquote', '> quoted line one\n> quoted line two\n\nplain after'],
   ['thematic break', 'above the line\n\n---\n\nbelow the line'],
   ['python code fence', 'Run this:\n\n```python\nprint("hi")\nfor i in range(3):\n    print(i)\n```\n\nThat prints numbers.'],

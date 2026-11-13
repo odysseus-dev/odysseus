@@ -12,12 +12,15 @@ class ListStructure(HTMLParser):
         self.stack = []
         self.lists = []
         self.items = []
+        self.ordered_starts = []
         self.feed(html)
 
     def handle_starttag(self, tag, attrs):
         if tag in {'ul', 'ol'}:
             self.lists.append((tag, sum(t in {'ul', 'ol'} for t in self.stack)))
             assert 'p' not in self.stack, 'a list must not be inside a paragraph'
+            if tag == 'ol':
+                self.ordered_starts.append(int(dict(attrs).get('start', '1')))
         if tag == 'li':
             self.items.append((sum(t in {'ul', 'ol'} for t in self.stack), dict(attrs).get('class', '')))
         if tag not in {'br', 'hr', 'img', 'input', 'meta', 'link'}:
@@ -94,3 +97,25 @@ def test_flat_lists_paragraphs_and_fenced_code_keep_existing_behavior(node_avail
     structure = ListStructure(_run_markdown_case(source))
     assert structure.lists == lists
     assert [depth for depth, _ in structure.items] == depths
+
+
+@pytest.mark.parametrize('source,starts', [
+    ('7. Seven\n8. Eight', [7]),
+    ('1. First\n\nA note.\n\n2. Second', [1, 2]),
+    ('4. First\n1. Next\n99. Last', [4]),
+    ('0. Zero\n1. One', [0]),
+    ('007. Seven\n008. Eight', [7]),
+    ('- Parent\n  5. Child\n  6. Next child\n- Sibling', [5]),
+    ('3. Parent\n   8. Child\n   9. Next child\n4. Sibling', [3, 8]),
+    ('- Parent\n  4. Number\n  - Bullet\n  9. New number', [4, 9]),
+    ('1. First\n2. Second', [1]),
+    ('Before\n\n5. **Five**\n\nAfter', [5]),
+    ('```text\n7. Literal\n```', []),
+])
+def test_each_ordered_run_preserves_its_first_marker(node_available, source, starts):
+    html = _run_markdown_case(source)
+    structure = ListStructure(html)
+    assert structure.ordered_starts == starts
+    assert structure.stack == []
+    if '**Five**' in source:
+        assert '<strong>Five</strong>' in html
