@@ -588,6 +588,10 @@ class ToolApprovalStore:
                 # another owner's pending action.
                 return None
             normalized_decision = str(decision or "").strip().lower()
+            if normalized_decision == 'deny':
+                self._pending.pop(approval_key, None)
+                self._decision_history.append({'approval_id': pending.approval_id, 'session_id': pending.session_id, 'tool_name': pending.tool_name, 'digest': pending.digest[:16], 'decision': 'deny'})
+                return None
             scope = scope_for_decision(normalized_decision)
             if scope is None:
                 return None
