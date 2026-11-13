@@ -3897,8 +3897,154 @@ function renderLogs(isAutoPoll = false) {
   }
 }
 
+function _escOps(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function _opsBadgeColor(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'ok' || s === 'healthy') return '#34d399';
+  if (s === 'degraded' || s === 'warning') return '#fbbf24';
+  if (s === 'down' || s === 'error') return 'var(--red, #f87171)';
+  return 'var(--text-muted, #9ca3af)';
+}
+
+async function inspectEffectRun(runId) {
+  const drawer = el('admin-ops-effect-drawer');
+  if (!drawer) return;
+  drawer.style.display = 'block';
+  drawer.innerHTML = `<div style="opacity:0.7;">Loading effect run ${_escOps(runId)}...</div>`;
+  try {
+    const res = await fetch(`/api/diagnostics/effects/${encodeURIComponent(runId)}`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      drawer.innerHTML = `<div style="color:var(--red);">Failed to load run ${_escOps(runId)} (HTTP ${res.status})</div>`;
+      return;
+    }
+    const data = await res.json();
+    const rec = data.reconciliation || {};
+    const records = Array.isArray(data.records) ? data.records : [];
+    drawer.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+        <div style="font-weight:600;font-family:monospace;">Run ${_escOps(data.run_id)}</div>
+        <button type="button" id="admin-ops-drawer-close" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Close</button>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px;opacity:0.85;">
+        <span>Claims: <strong>${Number(data.counts?.claims || 0)}</strong></span>
+        <span>Outcomes: <strong>${Number(data.counts?.outcomes || 0)}</strong></span>
+        <span>Observations: <strong>${Number(data.counts?.observations || 0)}</strong></span>
+        <span>Interrupted: <strong>${(rec.interrupted_claims || []).length}</strong></span>
+        <span>Unsettled: <strong>${(rec.unsettled_claims || []).length}</strong></span>
+        ${data.corrupt ? '<span style="color:var(--red);font-weight:600;">Corrupt tail detected</span>' : ''}
+      </div>
+      <div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
+        ${records.length ? records.map(r => `
+          <div style="padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.22);font-family:monospace;font-size:10px;">
+            <strong>#${Number(r.sequence || 0)} [${_escOps(r.kind)}]</strong>
+            ${_escOps(r.effect_id || '')}
+            ${r.tool ? ` ? ${_escOps(r.tool)}${r.subcommand ? ':' + _escOps(r.subcommand) : ''}` : ''}
+            ${r.execution ? ` ? ${_escOps(r.execution)} (${_escOps(r.impact || '')})` : ''}
+            ${r.external ? ' ? <span style="color:#fbbf24;">external</span>' : ''}
+          </div>
+        `).join('') : '<div style="opacity:0.65;">No complete records in log.</div>'}
+      </div>
+    `;
+    const closeBtn = el('admin-ops-drawer-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        drawer.style.display = 'none';
+        drawer.innerHTML = '';
+      });
+    }
+  } catch (err) {
+    drawer.innerHTML = `<div style="color:var(--red);">Error loading effect run: ${_escOps(err.message)}</div>`;
+  }
+}
+
+async function loadAdminOpsPanel() {
+  const panel = el('admin-ops-runtime-panel');
+  if (!panel) return;
+  try {
+    const [summaryRes, effectsRes] = await Promise.all([
+      fetch('/api/diagnostics/ops-summary', { credentials: 'same-origin' }),
+      fetch('/api/diagnostics/effects?limit=8', { credentials: 'same-origin' }),
+    ]);
+    if (!summaryRes.ok) {
+      panel.style.display = 'none';
+      return;
+    }
+    const summary = await summaryRes.json();
+    const effectsData = effectsRes.ok ? await effectsRes.json() : { runs: [] };
+    const services = summary.services || {};
+    const ops = summary.ops || {};
+    const tasks = ops.tasks || {};
+    const approvals = ops.approvals || {};
+    const effects = ops.effects || {};
+    const runs = Array.isArray(effectsData.runs) ? effectsData.runs : [];
+
+    panel.style.display = 'flex';
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-weight:700;letter-spacing:0.02em;">OPS RUNTIME</span>
+          <span style="padding:1px 6px;border-radius:4px;font-weight:600;text-transform:uppercase;font-size:10px;border:1px solid ${_opsBadgeColor(summary.overall)};color:${_opsBadgeColor(summary.overall)};">
+            ${_escOps(summary.overall || 'unknown')}
+          </span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;opacity:0.85;">
+          <span>Tasks: <strong>${Number(tasks.active || 0)}</strong> active / ${Number(tasks.paused || 0)} paused</span>
+          <span>Pending Approvals: <strong style="color:${Number(approvals.pending_total || 0) > 0 ? '#fbbf24' : 'inherit'};">${Number(approvals.pending_total || 0)}</strong></span>
+          <span>Effect Runs: <strong>${Number(effects.recent_runs || 0)}</strong> (${Number(effects.external_claim_runs || 0)} ext)</span>
+          <button type="button" id="admin-ops-refresh-btn" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${Object.entries(services).map(([name, info]) => {
+          const st = (info && info.status) || 'disabled';
+          return `<span style="padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:10px;">
+            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${_opsBadgeColor(st)};margin-right:4px;"></span>
+            <strong>${_escOps(name)}</strong>: ${_escOps(st)}
+          </span>`;
+        }).join('')}
+      </div>
+      ${runs.length ? `
+        <div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;">
+          <div style="font-weight:600;opacity:0.75;font-size:10px;text-transform:uppercase;">Recent Effect Runs (Click to inspect)</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${runs.map(r => `
+              <button type="button" class="memory-toolbar-btn" data-inspect-run-id="${_escOps(r.run_id)}" style="font-family:monospace;font-size:10px;padding:2px 6px;">
+                ${_escOps(String(r.run_id || '').slice(0, 10))}? (${Number(r.claims || 0)}c/${Number(r.outcomes || 0)}o${r.corrupt ? ' !' : ''})
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+      <div id="admin-ops-effect-drawer" style="display:none;padding:8px;border-radius:5px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);"></div>
+    `;
+
+    const refreshBtn = el('admin-ops-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => loadAdminOpsPanel());
+    }
+    panel.querySelectorAll('button[data-inspect-run-id]').forEach(btn => {
+      btn.addEventListener('click', () => inspectEffectRun(btn.dataset.inspectRunId));
+    });
+  } catch (_) {
+    // Keep logs viewer resilient if ops panel fails
+  }
+}
+
 async function loadLogs(isAutoPoll = false) {
   const consoleContainer = el('log-console-container');
+  if (!isAutoPoll) {
+    loadAdminOpsPanel();
+  }
   const limitSelect = el('log-limit-select');
 
   if (!consoleContainer) return;
