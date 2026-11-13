@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
+from src.research_report_lock import research_report_lock
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL, username_error
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.auth_helpers import _auth_disabled
@@ -526,30 +527,31 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # owner field while the job is running. Do this before sweeping
         # completed JSON files so a job that finishes during the rename saves
         # with the new owner or is caught by the disk sweep below.
-        try:
-            rh = getattr(request.app.state, "research_handler", None)
-            rename_owner = getattr(rh, "rename_owner", None)
-            if callable(rename_owner):
-                rename_owner(old_username, new_username)
-        except Exception as e:
-            logger.warning("Failed to rename active research tasks %s -> %s: %s", old_username, new_username, e)
+        with research_report_lock:
+            try:
+                rh = getattr(request.app.state, "research_handler", None)
+                rename_owner = getattr(rh, "rename_owner", None)
+                if callable(rename_owner):
+                    rename_owner(old_username, new_username)
+            except Exception as e:
+                logger.warning("Failed to rename active research tasks %s -> %s: %s", old_username, new_username, e)
 
-        # deep_research: each completed report is a standalone JSON file with
-        # an `owner` field. research_routes filters by d.get("owner") == user,
-        # so a stale owner makes every report invisible to the renamed user.
-        try:
-            dr_dir = Path(DEEP_RESEARCH_DIR)
-            if dr_dir.is_dir():
-                for p in dr_dir.glob("*.json"):
-                    try:
-                        d = json.loads(p.read_text(encoding="utf-8"))
-                        if str(d.get("owner", "")).strip().lower() == old_username:
-                            d["owner"] = new_username
-                            atomic_write_json(str(p), d)
-                    except Exception as err:
-                        logger.warning("Failed to update research owner in %s: %s", p.name, err)
-        except Exception as e:
-            logger.warning("Failed to rename research owner references %s -> %s: %s", old_username, new_username, e)
+            # deep_research: each completed report is a standalone JSON file with
+            # an `owner` field. research_routes filters by d.get("owner") == user,
+            # so a stale owner makes every report invisible to the renamed user.
+            try:
+                dr_dir = Path(DEEP_RESEARCH_DIR)
+                if dr_dir.is_dir():
+                    for p in dr_dir.glob("*.json"):
+                        try:
+                            d = json.loads(p.read_text(encoding="utf-8"))
+                            if str(d.get("owner", "")).strip().lower() == old_username:
+                                d["owner"] = new_username
+                                atomic_write_json(str(p), d)
+                        except Exception as err:
+                            logger.warning("Failed to update research owner in %s: %s", p.name, err)
+            except Exception as e:
+                logger.warning("Failed to rename research owner references %s -> %s: %s", old_username, new_username, e)
 
         # memory.json: a flat JSON array where each entry carries an `owner`
         # field. memory_manager.load(owner=user) filters on it, so stale
