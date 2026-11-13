@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const src = fs.readFileSync('static/js/tasks.js', 'utf8');
-const sanitized = src.replace(/^import\s[\s\S]*?;\s*$/gm, '').replace(/^export\s+/gm, '');
+const sanitized = src.replace(/^import\s[\s\S]*?;\s*$/gm, '').replace(/^export\s+default\s+.*?;\s*$/gm, '').replace(/^export\s+/gm, '');
 
 const elements = new Map();
 function makeEl(id) {

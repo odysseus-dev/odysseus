@@ -32,6 +32,7 @@ let _taskBulkDeleting = false;
 let _pendingFocusAction = null;
 let _pendingApprovals = [];
 let _approvalDecisionHistory = [];
+let _approvalHistoryFilter = 'all';
 let _approvalsPollTimer = null;
 let _approvalsTickTimer = null;
 let _approvalsVisibilityBound = false;
@@ -118,9 +119,31 @@ function _startApprovalsPolling() {
   }
 }
 
+function _approvalHistoryQueryParams(limit) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
+    params.set('decision', _approvalHistoryFilter);
+  }
+  return params.toString();
+}
+
+function _exportApprovalHistoryCsv() {
+  const params = new URLSearchParams({ format: 'csv', limit: '200' });
+  if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
+    params.set('decision', _approvalHistoryFilter);
+  }
+  const url = `${API_BASE}/api/tasks/approvals/history/export?${params.toString()}`;
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(url, '_blank', 'noopener');
+  }
+  return url;
+}
+
 async function _fetchApprovalHistory() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/approvals/history?limit=8`, { credentials: 'same-origin' });
+    const qs = _approvalHistoryQueryParams(8);
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/history?${qs}`, { credentials: 'same-origin' });
     if (!res.ok) return;
     const data = await res.json();
     _approvalDecisionHistory = Array.isArray(data.decisions) ? data.decisions : [];
@@ -171,12 +194,28 @@ async function _resolvePendingApproval(approvalId, decision) {
 async function _resolveAllPendingApprovals(decision) {
   const approvalIds = _pendingApprovals.map(item => item.approval_id).filter(Boolean);
   if (!approvalIds.length) return;
+  let skipExternalUntrusted = false;
+  if (decision !== 'deny') {
+    const externalCount = _pendingApprovals.filter(item => Boolean(item.external_untrusted_context_seen)).length;
+    if (externalCount > 0 && typeof confirm === 'function') {
+      const includeExternal = confirm(
+        `${externalCount} pending action(s) involve external untrusted context. Click OK to approve all, or Cancel to skip external-context actions.`
+      );
+      if (!includeExternal) {
+        skipExternalUntrusted = true;
+      }
+    }
+  }
   try {
     const res = await fetch(`${API_BASE}/api/tasks/approvals/resolve-bulk`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approval_ids: approvalIds, decision }),
+      body: JSON.stringify({
+        approval_ids: approvalIds,
+        decision,
+        skip_external_untrusted: skipExternalUntrusted,
+      }),
     });
     if (!res.ok) {
       let msg = `Failed bulk approval action (${res.status})`;
@@ -188,8 +227,12 @@ async function _resolveAllPendingApprovals(decision) {
     } else if (uiModule) {
       const data = await res.json();
       const count = Number(data.resolved_count || 0);
+      const skippedExternal = Array.isArray(data.failed)
+        ? data.failed.filter(f => f && f.reason === 'external_untrusted_context').length
+        : 0;
       const verb = decision === 'deny' ? 'Denied' : 'Approved';
-      uiModule.showToast(`${verb} ${count} pending action${count === 1 ? '' : 's'}`, { duration: 3500 });
+      const suffix = skippedExternal > 0 ? ` (${skippedExternal} external skipped)` : '';
+      uiModule.showToast(`${verb} ${count} pending action${count === 1 ? '' : 's'}${suffix}`, { duration: 3500 });
     }
   } catch (e) {
     if (uiModule) uiModule.showError('Network error during bulk approval');
@@ -200,19 +243,29 @@ async function _resolveAllPendingApprovals(decision) {
 function _renderApprovalHistory() {
   const host = document.getElementById('tasks-approval-history');
   if (!host) return;
-  if (!_approvalDecisionHistory.length) {
+  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all') {
     host.style.display = 'none';
     host.innerHTML = '';
     return;
   }
   host.style.display = 'flex';
+  const filters = [
+    { key: 'all', label: 'All' },
+    { key: 'approve', label: 'Approved' },
+    { key: 'deny', label: 'Denied' },
+  ];
   host.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.75;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;">
       <span style="font-weight:600;">Recent Decisions (${_approvalDecisionHistory.length})</span>
-      <span>Owner-scoped audit trail</span>
+      <div style="display:flex;align-items:center;gap:4px;">
+        ${filters.map(f => `
+          <button type="button" class="memory-toolbar-btn" data-history-filter="${f.key}" style="padding:1px 5px;font-size:9px;${_approvalHistoryFilter === f.key ? 'border-color:var(--accent,var(--red));font-weight:600;' : 'opacity:0.75;'}">${f.label}</button>
+        `).join('')}
+        <button type="button" id="tasks-approval-history-export" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Export CSV</button>
+      </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;">
-      ${_approvalDecisionHistory.map(item => {
+      ${_approvalDecisionHistory.length ? _approvalDecisionHistory.map(item => {
         const isDenied = item.decision === 'deny';
         const pillColor = isDenied ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)';
         const textColor = isDenied ? '#fca5a5' : '#6ee7b7';
@@ -225,9 +278,19 @@ function _renderApprovalHistory() {
             ${item.resolved_at ? `<span style="opacity:0.7;">${_esc(_formatDecisionAge(item.resolved_at))}</span>` : ''}
           </span>
         `;
-      }).join('')}
+      }).join('') : '<span style="font-size:10px;opacity:0.65;">No matching decisions</span>'}
     </div>
   `;
+  host.querySelectorAll('button[data-history-filter]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      _approvalHistoryFilter = btn.dataset.historyFilter || 'all';
+      await _fetchApprovalHistory();
+    });
+  });
+  const exportBtn = host.querySelector('#tasks-approval-history-export');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => _exportApprovalHistoryCsv());
+  }
 }
 
 function _renderPendingApprovals() {
