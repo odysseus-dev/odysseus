@@ -771,12 +771,67 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         }
 
     @router.get("/approvals/history")
-    async def list_approval_history(request: Request, limit: int = 20):
-        """Return bounded owner-scoped recent approval decisions."""
+    async def list_approval_history(
+        request: Request,
+        limit: int = 20,
+        tool_name: str | None = None,
+        decision: str | None = None,
+    ):
+        """Return bounded owner-scoped recent approval decisions with optional filters."""
         user = _owner(request)
         from src.tool_approvals import tool_approval_store
-        decisions = tool_approval_store.list_recent_decisions(owner=user, limit=limit)
+        decisions = tool_approval_store.list_recent_decisions(
+            owner=user,
+            limit=limit,
+            tool_name=tool_name,
+            decision=decision,
+        )
         return {"decisions": decisions, "count": len(decisions)}
+
+    @router.get("/approvals/history/export")
+    async def export_approval_history(
+        request: Request,
+        format: str = "json",
+        limit: int = 200,
+        tool_name: str | None = None,
+        decision: str | None = None,
+    ):
+        """Export owner-scoped approval decision audit history as JSON or CSV."""
+        import csv
+        import io
+        import json as _json
+        from fastapi.responses import Response
+        from src.tool_approvals import tool_approval_store
+
+        user = _owner(request)
+        fmt = str(format or "json").strip().lower()
+        if fmt not in {"json", "csv"}:
+            raise HTTPException(400, "format must be 'json' or 'csv'")
+        decisions = tool_approval_store.list_recent_decisions(
+            owner=user,
+            limit=limit,
+            tool_name=tool_name,
+            decision=decision,
+        )
+        if fmt == "csv":
+            buf = io.StringIO()
+            writer = csv.DictWriter(
+                buf,
+                fieldnames=["approval_id", "session_id", "tool_name", "digest", "decision", "resolved_at"],
+            )
+            writer.writeheader()
+            for row in decisions:
+                writer.writerow(row)
+            return Response(
+                content=buf.getvalue(),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": 'attachment; filename="approval-audit-history.csv"'},
+            )
+        return Response(
+            content=_json.dumps({"decisions": decisions, "count": len(decisions)}, indent=2),
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="approval-audit-history.json"'},
+        )
 
     @router.post("/approvals/resolve-bulk")
     async def resolve_pending_approvals_bulk(request: Request):
@@ -800,6 +855,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             raise HTTPException(400, "approval_ids must be a non-empty list")
         if len(raw_ids) > 50:
             raise HTTPException(400, "approval_ids cannot exceed 50 items")
+        skip_external_untrusted = bool((body or {}).get("skip_external_untrusted"))
 
         normalized_owner = str(user or "").strip().casefold()
         seen: set[str] = set()
@@ -814,6 +870,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             pending = tool_approval_store.peek(approval_id)
             if pending is None or pending.owner != normalized_owner:
                 failed.append({"approval_id": approval_id, "reason": "not_found_or_expired"})
+                continue
+            if skip_external_untrusted and decision == TASK_APPROVAL_DECISION and pending.external_untrusted_context_seen:
+                failed.append({"approval_id": approval_id, "reason": "external_untrusted_context"})
                 continue
             if decision == DENY_APPROVAL_DECISION:
                 ok = tool_approval_store.deny(

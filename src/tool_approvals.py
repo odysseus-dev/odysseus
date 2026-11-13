@@ -643,10 +643,23 @@ class ToolApprovalStore:
             )
             return True
 
-    def list_recent_decisions(self, *, owner: Any, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent_decisions(
+        self,
+        *,
+        owner: Any,
+        limit: int = 20,
+        tool_name: Any = None,
+        decision: Any = None,
+    ) -> list[dict[str, Any]]:
         """Return bounded owner-scoped recent approval resolution decisions."""
         normalized_owner = _normalized_owner(owner)
-        bounded_limit = max(1, min(int(limit), 100))
+        bounded_limit = max(1, min(int(limit), 200))
+        tool_filter = str(tool_name or "").strip().casefold()
+        decision_filter = str(decision or "").strip().casefold()
+        if decision_filter in {"approve", "approved"}:
+            decision_filter = "approve_task"
+        elif decision_filter == "denied":
+            decision_filter = "deny"
         with self._lock:
             entries = [
                 {
@@ -659,6 +672,8 @@ class ToolApprovalStore:
                 }
                 for entry in reversed(self._decision_history)
                 if entry.get("owner") == normalized_owner
+                and (not tool_filter or str(entry.get("tool_name") or "").strip().casefold() == tool_filter)
+                and (not decision_filter or str(entry.get("decision") or "").strip().casefold() == decision_filter)
             ]
         return entries[:bounded_limit]
 
