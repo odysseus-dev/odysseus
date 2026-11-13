@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1139-ops-release-v7';
+const CACHE_NAME = 'odysseus-v1140-ops-release-v8';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -170,7 +170,7 @@ const PRECACHE = [
   '/static/js/features/notes/application/workflows.js',
   '/static/js/features/notes/infrastructure/http.js',
   '/static/js/features/notes/infrastructure/storage.js',
-  '/static/js/tasks.js?v=20261113opsreleasev7',
+  '/static/js/tasks.js?v=20261113opsreleasev8',
   '/static/js/calendar.js?v=20260914emailsource11',
   '/static/js/calendar/utils.js',
   '/static/js/calendar/reminders.js',
