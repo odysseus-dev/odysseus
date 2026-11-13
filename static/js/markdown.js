@@ -55,8 +55,59 @@ function decodeMathSource(text) {
 }
 
 let _mermaidPromise = null;
+let _mermaidRenderQueue = Promise.resolve();
+let _mermaidThemeSignature = null;
+let _mermaidThemeObserver = null;
+const _mermaidSources = new WeakMap();
 let _katexPromise = null;
 let _mathFlushScheduled = false;
+
+function mermaidThemeConfig() {
+  const config = { startOnLoad: false, theme: 'dark', securityLevel: 'loose' };
+  if (!document.documentElement || typeof getComputedStyle !== 'function') return config;
+  const css = getComputedStyle(document.documentElement);
+  const value = name => css.getPropertyValue(name).trim();
+  const bg = value('--bg'), fg = value('--fg'), panel = value('--panel');
+  const border = value('--border'), accent = value('--red');
+  if (!bg || !fg || !panel || !border || !accent) return config;
+  // App palettes are hexadecimal, as required by Mermaid's theme engine.
+  const hex = bg.slice(1).replace(/^([\da-f])([\da-f])([\da-f])$/i, '$1$1$2$2$3$3');
+  const rgb = [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+  return {
+    ...config,
+    theme: 'base',
+    themeVariables: {
+      darkMode: rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 128,
+      background: bg,
+      primaryColor: panel, primaryTextColor: fg, primaryBorderColor: accent,
+      secondaryColor: panel, secondaryTextColor: fg, secondaryBorderColor: border,
+      tertiaryColor: bg, tertiaryTextColor: fg, tertiaryBorderColor: border,
+      textColor: fg, lineColor: fg, edgeLabelBackground: bg,
+      mainBkg: panel, nodeBorder: accent,
+      noteBkgColor: panel, noteTextColor: fg, noteBorderColor: accent,
+      fontFamily: value('--font-family') || getComputedStyle(document.body).fontFamily,
+    },
+  };
+}
+
+function configureMermaidTheme(mermaid) {
+  const config = mermaidThemeConfig();
+  const signature = JSON.stringify(config);
+  if (signature === _mermaidThemeSignature) return false;
+  mermaid.initialize(config);
+  _mermaidThemeSignature = signature;
+  return true;
+}
+
+function observeMermaidTheme() {
+  if (_mermaidThemeObserver || !document.documentElement) return;
+  _mermaidThemeObserver = new MutationObserver(() => {
+    if (JSON.stringify(mermaidThemeConfig()) !== _mermaidThemeSignature) {
+      return renderMermaid(document, true);
+    }
+  });
+  _mermaidThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+}
 
 function _loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -88,7 +139,8 @@ export function ensureMermaid() {
   return (_mermaidPromise ??= _loadScript(MERMAID_SRC)
     .then(() => {
       if (!window.mermaid) throw new Error('mermaid global missing after load');
-      window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+      configureMermaidTheme(window.mermaid);
+      observeMermaidTheme();
       return window.mermaid;
     })
     .catch((err) => {
@@ -1304,21 +1356,39 @@ export function renderContent(content) {
  * Initialize any unprocessed Mermaid diagrams in a container (or whole document).
  * Returns a promise so callers can await the (lazy) library load if they need to.
  */
-export function renderMermaid(container) {
+export function renderMermaid(container, checkTheme = false) {
   const target = container || document;
   if (!target || typeof target.querySelectorAll !== 'function') return Promise.resolve();
   // Cheap pre-check: no fence on the page means Mermaid is never fetched.
-  if (target.querySelectorAll('pre.mermaid:not([data-processed])').length === 0) return Promise.resolve();
-  return ensureMermaid()
-    .then((mermaid) => {
+  if (!checkTheme && target.querySelectorAll('pre.mermaid:not([data-processed])').length === 0) return Promise.resolve();
+  _mermaidRenderQueue = Promise.all([_mermaidRenderQueue, ensureMermaid()])
+    .then(async ([, mermaid]) => {
+      // Initialization and drawing share one queue: a theme switch must wait
+      // for an in-flight draw, then use the latest palette rather than a stale
+      // snapshot from when it was requested.
+      const themeChanged = configureMermaidTheme(mermaid);
+      const scope = themeChanged ? document : target;
       // Re-query after the load: during streaming the renderer replaces the
       // message body repeatedly, so the nodes seen before the fetch are stale.
-      const nodes = [...target.querySelectorAll('pre.mermaid:not([data-processed])')]
-        .filter((node) => node.isConnected);
+      let nodes = [...scope.querySelectorAll('pre.mermaid:not([data-processed])')];
+      if (themeChanged) {
+        const fresh = new Set(nodes);
+        nodes = [...scope.querySelectorAll('pre.mermaid')]
+          .filter(node => _mermaidSources.has(node) || fresh.has(node));
+      }
+      nodes = nodes.filter(node => node.isConnected);
       if (nodes.length === 0) return;
-      return mermaid.run({ nodes });
+      for (const node of nodes) {
+        if (!_mermaidSources.has(node)) _mermaidSources.set(node, node.textContent);
+        else if (themeChanged) {
+          node.textContent = _mermaidSources.get(node);
+          node.removeAttribute('data-processed');
+        }
+      }
+      await mermaid.run({ nodes });
     })
     .catch((e) => { console.warn('Mermaid render error:', e); });
+  return _mermaidRenderQueue;
 }
 
 /**
