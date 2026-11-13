@@ -135,4 +135,17 @@ assert.ok(historyHost.innerHTML.includes('data-approval-id="apr-beta-202"'));
 assert.ok(!historyHost.innerHTML.includes('data-approval-id="apr-alpha-101"'));
 assert.ok(historyHost.innerHTML.includes('id="tasks-approval-history-reset"'));
 
-console.log('PASS: ops-release-v10 risk-context filter, polling pause/resume & audit search UI tests');
+const adminJs = fs.readFileSync('static/js/admin.js', 'utf8');
+const appJs = fs.readFileSync('static/app.js', 'utf8');
+const swJs = fs.readFileSync('static/sw.js', 'utf8');
+const runbook = fs.readFileSync('docs/OPS_RELEASE_V10.md', 'utf8');
+assert.ok(adminJs.includes('admin-ops-jump-unsettled'));
+assert.ok(adminJs.includes('effects.unsettled_runs'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev10'));
+assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev10'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev10'));
+assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev10'));
+assert.ok(swJs.includes('odysseus-v1142-ops-release-v10'));
+assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev10'));
+
+console.log('PASS: ops-release-v10 risk-context filter, polling pause/resume, audit search, Admin Ops jump & cache sync tests');
