@@ -61,6 +61,8 @@ let _pendingApprovalsToolFilter = '';
 let _pendingApprovalsRiskFilter = '';
 let _approvalsPollingPaused = false;
 let _approvalHistorySearch = '';
+let _approvalHistoryRiskFilter = '';
+let _pendingApprovalsSort = '';
 let _approvalHistoryEscapeBound = false;
 
 let _pendingApprovalsSearch = '';
@@ -172,12 +174,19 @@ function _formatDecisionAge(resolvedAt) {
   return `${Math.floor(delta / 3600)}h ago`;
 }
 
+function _isApprovalExpiringSoon(expiresAt) {
+  const exp = Number(expiresAt || 0);
+  if (!exp) return false;
+  const remaining = Math.ceil(exp - Date.now() / 1000);
+  return remaining > 0 && remaining <= 60;
+}
+
 function _formatApprovalTtl(expiresAt) {
   const exp = Number(expiresAt || 0);
   if (!exp) return '';
   const remaining = Math.max(0, Math.ceil(exp - Date.now() / 1000));
   if (remaining <= 0) return 'Expired';
-  if (remaining < 60) return `${remaining}s left`;
+  if (remaining <= 60) return `Expiring soon · ${remaining}s left`;
   const mins = Math.floor(remaining / 60);
   const secs = remaining % 60;
   return `${mins}m ${secs}s left`;
@@ -424,7 +433,7 @@ function _renderApprovalHistory() {
   const host = document.getElementById('tasks-approval-history');
   if (!host) return;
   const searchNeedle = String(_approvalHistorySearch || '').trim().toLowerCase();
-  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all' && !_approvalHistoryToolFilter && !searchNeedle) {
+  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all' && !_approvalHistoryToolFilter && !_approvalHistoryRiskFilter && !searchNeedle) {
     host.style.display = 'none';
     host.innerHTML = '';
     return;
@@ -435,18 +444,21 @@ function _renderApprovalHistory() {
     { key: 'approve', label: 'Approved' },
     { key: 'deny', label: 'Denied' },
   ];
-  const visibleDecisions = searchNeedle
-    ? _approvalDecisionHistory.filter(item => {
-        if (!item) return false;
-        const idStr = String(item.approval_id || '').toLowerCase();
-        const digestStr = String(item.digest || '').toLowerCase();
-        return idStr.includes(searchNeedle) || digestStr.includes(searchNeedle);
-      })
-    : _approvalDecisionHistory;
+  const visibleDecisions = _approvalDecisionHistory.filter(item => {
+    if (!item) return false;
+    if (_approvalHistoryRiskFilter === 'external' && !item.external_untrusted_context_seen) return false;
+    if (_approvalHistoryRiskFilter === 'safe' && item.external_untrusted_context_seen) return false;
+    if (searchNeedle) {
+      const idStr = String(item.approval_id || '').toLowerCase();
+      const digestStr = String(item.digest || '').toLowerCase();
+      if (!idStr.includes(searchNeedle) && !digestStr.includes(searchNeedle)) return false;
+    }
+    return true;
+  });
   const toolOptions = [..._knownApprovalHistoryTools].sort();
   const approvedCount = visibleDecisions.filter(item => item && item.decision !== 'deny').length;
   const deniedCount = visibleDecisions.filter(item => item && item.decision === 'deny').length;
-  const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter) || Boolean(searchNeedle);
+  const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter) || Boolean(_approvalHistoryRiskFilter) || Boolean(searchNeedle);
   const selectedDetail = visibleDecisions.find(item => item && String(item.approval_id) === _selectedApprovalHistoryId) || null;
   if (!selectedDetail && _selectedApprovalHistoryId) {
     _selectedApprovalHistoryId = '';
@@ -459,6 +471,11 @@ function _renderApprovalHistory() {
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
         <input type="search" id="tasks-approval-history-search" aria-label="Search decisions by ID or digest" placeholder="ID or digest…" value="${_esc(_approvalHistorySearch)}" style="padding:1px 5px;font-size:9px;width:96px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
+        <select id="tasks-approval-history-risk" aria-label="Filter decisions by context risk" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+          <option value="">All contexts</option>
+          <option value="safe"${_approvalHistoryRiskFilter === 'safe' ? ' selected' : ''}>Safe only</option>
+          <option value="external"${_approvalHistoryRiskFilter === 'external' ? ' selected' : ''}>External untrusted</option>
+        </select>
         ${toolOptions.length ? `
           <select id="tasks-approval-history-tool" aria-label="Filter decisions by tool" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
             <option value="">All tools</option>
@@ -518,6 +535,13 @@ function _renderApprovalHistory() {
       }
     });
   }
+  const historyRiskSelect = host.querySelector('#tasks-approval-history-risk');
+  if (historyRiskSelect) {
+    historyRiskSelect.addEventListener('change', () => {
+      _approvalHistoryRiskFilter = historyRiskSelect.value || '';
+      _renderApprovalHistory();
+    });
+  }
   const toolSelect = host.querySelector('#tasks-approval-history-tool');
   if (toolSelect) {
     toolSelect.addEventListener('change', async () => {
@@ -559,6 +583,7 @@ function _renderApprovalHistory() {
       _approvalHistoryFilter = 'all';
       _approvalHistoryToolFilter = '';
       _approvalHistorySearch = '';
+      _approvalHistoryRiskFilter = '';
       await _fetchApprovalHistory();
     });
   }
@@ -598,7 +623,14 @@ function _renderPendingApprovals() {
   if (_pendingApprovalsRiskFilter && !anyExternalUntrusted) {
     _pendingApprovalsRiskFilter = '';
   }
-  const visibleApprovals = _getFilteredPendingApprovals();
+  const filteredApprovals = _getFilteredPendingApprovals();
+  const visibleApprovals = _pendingApprovalsSort === 'expiring'
+    ? [...filteredApprovals].sort((a, b) => {
+        const ea = Number((a && a.expires_at) || 0) || Number.POSITIVE_INFINITY;
+        const eb = Number((b && b.expires_at) || 0) || Number.POSITIVE_INFINITY;
+        return ea - eb;
+      })
+    : filteredApprovals;
   host.style.display = 'flex';
   const showBulkActions = visibleApprovals.length >= 2;
   const visibleSelectedCount = visibleApprovals.filter(item => item && _selectedApprovalIds.has(item.approval_id)).length;
@@ -644,21 +676,32 @@ function _renderPendingApprovals() {
           <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${approveBulkLabel}</button>
           <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${denyBulkLabel}</button>
         ` : ''}
+        ${(visibleApprovals.length >= 2 || _pendingApprovalsSort === 'expiring') ? `
+          <select id="tasks-approvals-sort" aria-label="Sort pending approvals" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">Queue order</option>
+            <option value="expiring"${_pendingApprovalsSort === 'expiring' ? ' selected' : ''}>Expiring soonest</option>
+          </select>
+        ` : ''}
         <button type="button" id="tasks-approvals-pause-toggle" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;${_approvalsPollingPaused ? 'border-color:var(--accent,var(--red));font-weight:600;' : ''}">${_approvalsPollingPaused ? 'Resume Poll' : 'Pause Poll'}</button>
         <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
       </div>
     </div>
     ${visibleApprovals.map(item => {
       const checkedAttr = _selectedApprovalIds.has(item.approval_id) ? ' checked' : '';
+      const expiringSoon = _isApprovalExpiringSoon(item.expires_at);
+      const rowBorder = expiringSoon ? '1px solid rgba(245,158,11,0.48)' : '1px solid rgba(255,255,255,0.08)';
+      const ttlStyle = expiringSoon
+        ? 'color:#fbbf24;font-weight:600;font-size:10px;'
+        : 'opacity:0.65;font-weight:400;font-size:10px;';
       return `
-      <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:11px;">
+      <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}"${expiringSoon ? ' data-approval-expiring="true"' : ''} style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:${rowBorder};font-size:11px;">
         ${showBulkActions ? `<input type="checkbox" class="task-approval-select" data-approval-id="${_esc(item.approval_id)}" aria-label="Select approval ${_esc(item.tool_name || 'tool')}"${checkedAttr} />` : ''}
         <div style="min-width:0;flex:1;">
           <div style="display:flex;align-items:center;gap:6px;font-weight:600;">
             <span>${_esc(item.tool_name || 'tool')}</span>
             <span style="opacity:0.55;font-family:monospace;font-size:10px;">#${_esc(item.digest || '')}</span>
             ${item.external_untrusted_context_seen ? '<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.16);color:#fbbf24;">External context</span>' : ''}
-            ${item.expires_at ? `<span data-approval-ttl="${_esc(String(item.expires_at))}" style="opacity:0.65;font-weight:400;font-size:10px;">${_esc(_formatApprovalTtl(item.expires_at))}</span>` : ''}
+            ${item.expires_at ? `<span data-approval-ttl="${_esc(String(item.expires_at))}" style="${ttlStyle}">${_esc(_formatApprovalTtl(item.expires_at))}</span>` : ''}
           </div>
           <div style="opacity:0.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${_esc(item.content_preview || '')}</div>
         </div>
@@ -706,6 +749,13 @@ function _renderPendingApprovals() {
       _pendingApprovalsToolFilter = '';
       _pendingApprovalsRiskFilter = '';
       _pendingApprovalsSearch = '';
+      _renderPendingApprovals();
+    });
+  }
+  const pendingSortSelect = host.querySelector('#tasks-approvals-sort');
+  if (pendingSortSelect) {
+    pendingSortSelect.addEventListener('change', () => {
+      _pendingApprovalsSort = pendingSortSelect.value || '';
       _renderPendingApprovals();
     });
   }
