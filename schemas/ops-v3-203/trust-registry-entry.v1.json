@@ -1,0 +1,242 @@
+{
+  "": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OPS-V3-203 Trust Registry Entry",
+  "type": "object",
+  "required": [
+    "envelope_version",
+    "payload_type",
+    "canonical_payload_b64",
+    "payload",
+    "signatures"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "envelope_version": {
+      "const": "1.0.0"
+    },
+    "payload_type": {
+      "const": "application/vnd.odyai.trust-transition+json"
+    },
+    "canonical_payload_b64": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "entry_id",
+        "sequence_number",
+        "prev_entry_sha256",
+        "timestamp_utc",
+        "certification_id",
+        "subject_binding",
+        "transition",
+        "authorization"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entry_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sequence_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "prev_entry_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "certification_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "subject_binding": {
+          "type": "object",
+          "required": [
+            "artifact_sha256",
+            "sbom_sha256",
+            "environment_baseline_sha256",
+            "ops_v3_202_challenge_nonce"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "artifact_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "sbom_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "environment_baseline_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "ops_v3_202_challenge_nonce": {
+              "type": "string",
+              "minLength": 32
+            }
+          }
+        },
+        "transition": {
+          "type": "object",
+          "required": [
+            "from_state",
+            "to_state",
+            "trigger_class",
+            "reason_code",
+            "evidence_refs"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "from_state": {
+              "enum": [
+                "PENDING",
+                "CERTIFIED",
+                "SUSPENDED"
+              ]
+            },
+            "to_state": {
+              "enum": [
+                "CERTIFIED",
+                "SUSPENDED",
+                "REVOKED",
+                "EXPIRED",
+                "SUPERSEDED"
+              ]
+            },
+            "trigger_class": {
+              "enum": [
+                "VALIDATION_PASS",
+                "KEY_COMPROMISE",
+                "CRITICAL_VULNERABILITY",
+                "ENVIRONMENT_DRIFT",
+                "TAMPER_OR_REPLAY",
+                "EVIDENCE_FALSIFIED",
+                "TTL_EXPIRATION",
+                "VERSION_SUPERSEDED",
+                "DISPUTE_RESOLUTION"
+              ]
+            },
+            "reason_code": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 128
+            },
+            "superseded_by_certification_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "evidence_refs": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "uri",
+                  "sha256",
+                  "media_type"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "uri": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "media_type": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "authorization": {
+          "type": "object",
+          "required": [
+            "mode",
+            "required_quorum",
+            "original_certifier_ids"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "AUTOMATED_POLICY_ENGINE",
+                "HUMAN_QUORUM",
+                "DISPUTE_REVIEW_BOARD"
+              ]
+            },
+            "required_quorum": {
+              "enum": [
+                "1-OF-1-SYSTEM",
+                "2-OF-N-DUAL-ROLE",
+                "3-OF-5-BOARD"
+              ]
+            },
+            "original_certifier_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "signer_id",
+          "role",
+          "key_id",
+          "algorithm",
+          "webauthn_authenticator_data",
+          "signature_b64"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "signer_id": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "POLICY_ENGINE",
+              "SECURITY_AUTHORITY",
+              "GOVERNANCE_AUTHORITY",
+              "REVIEW_BOARD"
+            ]
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "algorithm": {
+            "enum": [
+              "ECDSA-P256-SHA256",
+              "ED25519"
+            ]
+          },
+          "webauthn_authenticator_data": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signature_b64": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

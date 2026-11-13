@@ -970,6 +970,8 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+from routes.trust_routes import setup_trust_routes
+app.include_router(setup_trust_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
@@ -1185,6 +1187,11 @@ def _docker_default_gateway_ip() -> str:
 async def _lifespan(app):
     """Modern lifespan context manager replacing deprecated @app.on_event."""
     # ── STARTUP ──
+    from routes.trust_routes import evaluate_current_trust_gate
+    _td = evaluate_current_trust_gate()
+    if os.getenv("TRUST_ENFORCE_STARTUP", "0") == "1" and not _td.allowed:
+        raise RuntimeError("Fail-closed startup blocked by Trust Gate: " + _td.reason)
+    logger.info("Trust Gate startup check: decision=%s state=%s", _td.decision, _td.effective_state)
     await _startup_event()
     yield
     # ── SHUTDOWN ──
