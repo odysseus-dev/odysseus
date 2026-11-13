@@ -60,7 +60,9 @@ export function clearDocuments() {
 }
 
 export function markDeleted(id) {
-  _deletedDocIds.add(id);
+  if (id) {
+    _deletedDocIds.add(id);
+  }
 }
 
 export function beginDelete(id, task) {
@@ -76,5 +78,8 @@ export function retainClosingDraft(id, doc) {
 }
 
 export function releaseClosingDraft(id, doc) {
-  _closingDocs.delete(id);
+  if (doc && _closingDocs.get(id) !== doc) {
+    return false;
+  }
+  return _closingDocs.delete(id);
 }

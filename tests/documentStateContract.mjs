@@ -1,6 +1,9 @@
 // tests/documentStateContract.mjs
 import test, { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { parse } from 'acorn';
 
 import {
   API_BASE,
@@ -190,6 +193,13 @@ describe('Document State Contract', () => {
       endDelete('doc-flight-1');
       assert.ok(!_inFlightDeletes.has('doc-flight-1'));
     });
+
+    it('ignores falsy id in markDeleted', () => {
+      markDeleted(null);
+      markDeleted(undefined);
+      markDeleted('');
+      assert.equal(_deletedDocIds.size, 0);
+    });
   });
 
   describe('Draft Retention Transitions', () => {
@@ -202,6 +212,33 @@ describe('Document State Contract', () => {
 
       releaseClosingDraft('draft-1', draftObj);
       assert.ok(!_closingDocs.has('draft-1'));
+    });
+
+    it('preserves closing draft when releasing with non-matching document record', () => {
+      const draftA = { id: 'draft-concur', content: 'draft A', _saveState: 'saving' };
+      const draftB = { id: 'draft-concur', content: 'draft B', _saveState: 'saving' };
+
+      retainClosingDraft('draft-concur', draftA);
+      // Attempting to release with draftB should not remove draftA
+      const released = releaseClosingDraft('draft-concur', draftB);
+      assert.equal(released, false);
+      assert.ok(_closingDocs.has('draft-concur'));
+      assert.equal(_closingDocs.get('draft-concur'), draftA);
+
+      // Releasing with matching draftA removes it
+      const releasedMatching = releaseClosingDraft('draft-concur', draftA);
+      assert.equal(releasedMatching, true);
+      assert.ok(!_closingDocs.has('draft-concur'));
+    });
+
+    it('releases closing draft unconditionally when doc argument is omitted', () => {
+      const draft = { id: 'draft-unconditional', content: 'text' };
+      retainClosingDraft('draft-unconditional', draft);
+      assert.ok(_closingDocs.has('draft-unconditional'));
+
+      const released = releaseClosingDraft('draft-unconditional');
+      assert.equal(released, true);
+      assert.ok(!_closingDocs.has('draft-unconditional'));
     });
   });
 });
@@ -317,5 +354,149 @@ describe('Document Command Port Contract', () => {
     assert.deepEqual(recordedCalls[9], { name: '_hideLoadingOverlay', args: [] });
     assert.deepEqual(recordedCalls[10], { name: '_minimizeNotesForDocumentOpen', args: [] });
     assert.deepEqual(recordedCalls[11], { name: '_ensureDocChipRegistered', args: ['chip-id'] });
+  });
+
+  it('supports idempotent activation when idempotent option is passed with same implementations', () => {
+    const impls = createValidCommandImplementations();
+    bindDocumentCommands(impls);
+
+    // Re-binding the exact same implementation with idempotent: true must not throw
+    assert.doesNotThrow(() => {
+      bindDocumentCommands(impls, { idempotent: true });
+    });
+
+    // Calling duplicate registration without idempotent: true must throw
+    assert.throws(
+      () => bindDocumentCommands(impls),
+      /Document commands already bound/
+    );
+
+    // Calling with different implementation even with idempotent: true must throw
+    const otherImpls = createValidCommandImplementations();
+    assert.throws(
+      () => bindDocumentCommands(otherImpls, { idempotent: true }),
+      /Document commands already bound/
+    );
+  });
+
+  it('supports nested command forwarding without unintended reentrancy issues', () => {
+    const log = [];
+    const impls = createValidCommandImplementations();
+    // Have openPanel invoke renderTabs and saveCurrentToMap via the port stubs
+    impls.openPanel = () => {
+      log.push('start:openPanel');
+      renderTabs();
+      saveCurrentToMap();
+      log.push('end:openPanel');
+      return 'nested:ok';
+    };
+    impls.renderTabs = () => {
+      log.push('called:renderTabs');
+    };
+    impls.saveCurrentToMap = () => {
+      log.push('called:saveCurrentToMap');
+    };
+
+    bindDocumentCommands(impls);
+    const res = openPanel();
+    assert.equal(res, 'nested:ok');
+    assert.deepEqual(log, [
+      'start:openPanel',
+      'called:renderTabs',
+      'called:saveCurrentToMap',
+      'end:openPanel'
+    ]);
+  });
+
+  it('prevents rebinding during reentrant command execution', () => {
+    const impls = createValidCommandImplementations();
+    impls.openPanel = () => {
+      bindDocumentCommands(impls);
+    };
+    bindDocumentCommands(impls);
+    assert.throws(() => openPanel(), /Document commands already bound/);
+  });
+});
+
+describe('Legacy Host Bridge Contract (ui/host.js)', () => {
+  const hostPath = path.resolve('frontend/src/features/documents/ui/host.js');
+
+  const EXPECTED_LEGACY_SPECIFIERS = [
+    '/static/js/ui.js?v=20260916largetoolscroll1',
+    '/static/js/sessions.js',
+    '/static/js/emojiPicker.js',
+    '/static/js/emailReplyStream.js',
+    '/static/js/markdown.js',
+    '/static/js/codeRunner.js?v=20260831richtexttools91',
+    '/static/js/langIcons.js?v=20260831richtexttools91',
+    '/static/js/spinner.js',
+    '/static/js/documentLibrary.js?v=20260911librarybulkdelete1',
+    '/static/js/signature.js',
+    '/static/js/modalManager.js',
+    '/static/js/escMenuStack.js',
+    '/static/js/toolWindowZOrder.js',
+    '/static/js/documentStats.js?v=20260831richtexttools91',
+    '/static/js/documentOutline.js?v=20260831richtexttools91',
+    '/static/js/colorPicker.js?v=20260910eyedropper1'
+  ];
+
+  it('re-exports exact 16 legacy module imports with identical query strings', () => {
+    const hostSrc = fs.readFileSync(hostPath, 'utf8');
+    const hostAst = parse(hostSrc, { ecmaVersion: 'latest', sourceType: 'module' });
+
+    // Collect export sources from ui/host.js
+    const hostExportSources = hostAst.body
+      .filter(n => ['ExportNamedDeclaration', 'ExportAllDeclaration'].includes(n.type) && n.source)
+      .map(n => n.source.value);
+
+    assert.equal(EXPECTED_LEGACY_SPECIFIERS.length, 16, 'must expect exactly 16 legacy imports');
+
+    // Verify each legacy import has a corresponding export in host.js with exact query string
+    for (const spec of EXPECTED_LEGACY_SPECIFIERS) {
+      assert.ok(
+        hostExportSources.includes(spec),
+        `ui/host.js must export legacy module with exact specifier: ${spec}`
+      );
+    }
+  });
+
+  it('ensures all target legacy modules exist on disk', () => {
+    const hostSrc = fs.readFileSync(hostPath, 'utf8');
+    const hostAst = parse(hostSrc, { ecmaVersion: 'latest', sourceType: 'module' });
+
+    for (const n of hostAst.body) {
+      if (['ExportNamedDeclaration', 'ExportAllDeclaration'].includes(n.type) && n.source) {
+        const spec = n.source.value;
+        const pathname = new URL(spec, 'https://odysseus.invalid').pathname;
+        const fullDiskPath = path.resolve(pathname.replace(/^\//, ''));
+        assert.ok(
+          fs.existsSync(fullDiskPath),
+          `Target legacy file on disk must exist: ${fullDiskPath}`
+        );
+      }
+    }
+  });
+
+  it('verifies that no legacy modules create circular imports with host or document', () => {
+    const hostSrc = fs.readFileSync(hostPath, 'utf8');
+    const hostAst = parse(hostSrc, { ecmaVersion: 'latest', sourceType: 'module' });
+
+    for (const n of hostAst.body) {
+      if (['ExportNamedDeclaration', 'ExportAllDeclaration'].includes(n.type) && n.source) {
+        const pathname = new URL(n.source.value, 'https://odysseus.invalid').pathname;
+        const fullDiskPath = path.resolve(pathname.replace(/^\//, ''));
+        const legacySrc = fs.readFileSync(fullDiskPath, 'utf8');
+        const legacyAst = parse(legacySrc, { ecmaVersion: 'latest', sourceType: 'module' });
+
+        for (const item of legacyAst.body) {
+          if (item.type === 'ImportDeclaration' && item.source) {
+            assert.ok(
+              !item.source.value.includes('host') && !item.source.value.includes('document.js'),
+              `Legacy module ${pathname} must not import host or document.js`
+            );
+          }
+        }
+      }
+    }
   });
 });

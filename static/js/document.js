@@ -13238,7 +13238,7 @@ try {
     _hideLoadingOverlay,
     _minimizeNotesForDocumentOpen,
     _ensureDocChipRegistered,
-  });
+  }, { idempotent: true });
 } catch (e) {
   if (!String(e?.message).includes('already bound')) {
     throw e;

@@ -28,8 +28,11 @@ function _getImpl() {
   return _impl;
 }
 
-export function bindDocumentCommands(commands) {
+export function bindDocumentCommands(commands, { idempotent = false } = {}) {
   if (_impl !== null) {
+    if (idempotent && _impl === commands) {
+      return;
+    }
     throw new Error('Document commands already bound');
   }
   if (!commands || typeof commands !== 'object') {
