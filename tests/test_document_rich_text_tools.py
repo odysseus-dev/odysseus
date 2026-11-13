@@ -307,9 +307,7 @@ def test_rich_code_styles_are_scoped_and_exported():
 
 
 def test_rich_link_dialog_supports_edit_open_and_remove_actions():
-    link_dialog = DOC_JS.split("function _normalizeRichLinkUrl", 1)[1].split(
-        "function _promptImageAlt", 1
-    )[0]
+    link_dialog = function_body("_promptLink")
 
     assert "editing ? 'Edit link' : 'Insert link'" in link_dialog
     assert 'id="doc-link-open"' in link_dialog
@@ -321,9 +319,7 @@ def test_rich_link_dialog_supports_edit_open_and_remove_actions():
 
 
 def test_rich_links_validate_protocols_during_paste_save_and_editing():
-    normalizer = DOC_JS.split("function _normalizeRichLinkUrl", 1)[1].split(
-        "function _promptLink", 1
-    )[0]
+    normalizer = function_body("_normalizeRichLinkUrl")
     sanitizer = function_body("_sanitizedRichTextHtml")
     paste_cleaner = function_body("_cleanRichTextPasteHtml")
 

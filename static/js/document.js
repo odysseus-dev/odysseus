@@ -91,6 +91,10 @@ import {
   _applyRichTableAction,
   initRichTables,
 } from './document/ui/richTables.js';
+import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from './document/domain/documentKinds.js';
+import { _ATTACH_RE, _accountCanSend, _buildEmailContent, _buildEmailContentFromFields, _decodeBase64EmailWrapper, _emailQuoteMarkerMatch, _looksLikeWrappedEmailContent, _parseEmailHeader } from './document/domain/emailMessage.js';
+import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH_SLASH_COMMANDS, _isRichInlineCodeMarker, _normalizeRichLinkUrl } from './document/domain/richTextRules.js';
+
 
   let API_BASE = '';
   let isOpen = false;
@@ -138,39 +142,15 @@ import {
   let _mdPreviewHintLastAt = 0;
 
   // Language auto-detection config
-  const AUTO_DETECT_DELAY = 500;
-  const AUTO_DETECT_MIN_CHARS = 30;
-  const AUTO_DETECT_MIN_RELEVANCE = 8;
-  const AUTO_DETECT_SAMPLE_SIZE = 2000;
-  const HLJS_TO_DROPDOWN = {
-    python: 'python', javascript: 'javascript', typescript: 'typescript',
-    xml: 'html', html: 'html', css: 'css', markdown: 'markdown',
-    json: 'json', yaml: 'yaml', bash: 'bash', shell: 'bash',
-    sql: 'sql', rust: 'rust', go: 'go', java: 'java', c: 'c', cpp: 'cpp',
-    csv: 'csv',
-  };
 
   // Languages rendered in the sandboxed preview iframe. SVG and XML markup
   // render as inline content in an HTML document, so they share the HTML
   // "Run / Preview" path. (hljs maps detected `xml` → `html` already; this also
   // covers the doc being explicitly typed svg/xml.)
-  const _isRenderLang = (l) => ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
-  const _isRichTextLang = (l) => ['richtext', 'rich-text'].includes((l || '').toLowerCase());
-  const _isDocxLang = (l) => (l || '').toLowerCase() === 'docx';
-  // Languages that get the segmented Code / Run-or-View toggle in the toolbar
+        // Languages that get the segmented Code / Run-or-View toggle in the toolbar
   // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
   // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
   // the iframe preview.
-  const _hasViewToggle = (l) => {
-    const lang = (l || '').toLowerCase();
-    return [
-      'csv', 'python', 'javascript', 'typescript', 'bash', 'sh', 'shell',
-      'php', 'ruby', 'sql', 'java', 'go', 'rust',
-      'c', 'cpp', 'c++', 'csharp', 'c#',
-      'yaml', 'json', 'css',
-      'ini', 'toml',
-    ].includes(lang) || _isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang);
-  };
 
   async function _getEmailAccountsCached() {
     const now = Date.now();
@@ -187,10 +167,6 @@ import {
     return _emailAccountsCache;
   }
 
-  function _accountCanSend(account) {
-    if (!account || !account.smtp_host || !account.smtp_user) return false;
-    return !!(account.has_smtp_password || account.oauth_provider);
-  }
 
   async function _resolveComposeSendAccountId() {
     const activeAccountId = window.__odysseusActiveEmailAccount || null;
@@ -340,12 +316,6 @@ import {
   let _richSlashActiveIndex = 0;
   let _docHistoryStateFrame = 0;
 
-  const _DOC_SAVE_STATE = {
-    dirty: { label: 'Unsaved', title: 'Changes are waiting to be saved' },
-    saving: { label: 'Saving', title: 'Saving document' },
-    saved: { label: 'Saved', title: 'All changes saved' },
-    error: { label: 'Save failed', title: 'Document could not be saved' },
-  };
 
   function _scheduleAutoSave(docId = activeDocId, delay = 800, options = {}) {
     if (!docId || _deletedDocIds.has(docId)) return;
@@ -989,43 +959,7 @@ import {
     _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
   }
 
-  const _RICH_SLASH_COMMANDS = [
-    { action: 'paragraph', label: 'Text', icon: 'P', keywords: 'paragraph normal body' },
-    { action: 'h1', label: 'Heading 1', icon: 'H1', keywords: 'title large' },
-    { action: 'h2', label: 'Heading 2', icon: 'H2', keywords: 'subtitle medium' },
-    { action: 'h3', label: 'Heading 3', icon: 'H3', keywords: 'section small' },
-    { action: 'h4', label: 'Heading 4', icon: 'H4', keywords: 'subsection small' },
-    { action: 'h5', label: 'Heading 5', icon: 'H5', keywords: 'subsection minor' },
-    { action: 'h6', label: 'Heading 6', icon: 'H6', keywords: 'subsection minor' },
-    { action: 'ul', label: 'Bullet list', icon: '•', keywords: 'unordered bullets' },
-    { action: 'ol', label: 'Numbered list', icon: '1.', keywords: 'ordered numbers' },
-    { action: 'check', label: 'Checklist', icon: '✓', keywords: 'todo task checkbox' },
-    { action: 'quote', label: 'Quote', icon: '“', keywords: 'blockquote citation' },
-    { action: 'codeblock', label: 'Code block', icon: '</>', keywords: 'preformatted snippet' },
-    { action: 'hr', label: 'Divider', icon: '—', keywords: 'rule separator line' },
-    { action: 'pagebreak', label: 'Page break', icon: '↵', keywords: 'new page print break export' },
-    { action: 'table:insert:3:3', label: 'Table', icon: '▦', keywords: 'grid rows columns' },
-    { action: 'image', label: 'Image', icon: '▧', keywords: 'photo picture upload' },
-  ];
 
-  const _RICH_BLOCK_INPUT_RULES = new Map([
-    ['#', { action: 'h1' }],
-    ['##', { action: 'h2' }],
-    ['###', { action: 'h3' }],
-    ['####', { action: 'h4' }],
-    ['#####', { action: 'h5' }],
-    ['######', { action: 'h6' }],
-    ['-', { action: 'ul' }],
-    ['*', { action: 'ul' }],
-    ['1.', { action: 'ol' }],
-    ['>', { action: 'quote' }],
-    ['```', { action: 'codeblock' }],
-    ['[]', { action: 'check' }],
-    ['- []', { action: 'check' }],
-    ['- [ ]', { action: 'check' }],
-    ['- [x]', { action: 'check', checked: true }],
-    ['- [X]', { action: 'check', checked: true }],
-  ]);
 
   function _applyRichBlockInputRule(rich) {
     const selection = window.getSelection?.();
@@ -2107,86 +2041,10 @@ import {
 
   // ── Email document type helpers ──
 
-  function _unfoldEmailHeaderLines(header) {
-    const lines = [];
-    for (const rawLine of String(header || '').replace(/\r\n/g, '\n').split('\n')) {
-      if (/^[ \t]/.test(rawLine) && lines.length) {
-        lines[lines.length - 1] += ' ' + rawLine.trim();
-      } else {
-        lines.push(rawLine);
-      }
-    }
-    return lines;
-  }
 
-  function _parseEmailHeader(content) {
-    const empty = { to: '', cc: '', bcc: '', subject: '', inReplyTo: '', references: '', sourceUid: '', sourceFolder: '', forwardAttachments: false, attachments: [], body: content || '' };
-    if (!content) return empty;
-    const parts = content.split(/\n---\n/);
-    if (parts.length < 2) return empty;
-    const header = parts[0];
-    const body = parts.slice(1).join('\n---\n');
-    const fields = { to: '', cc: '', bcc: '', subject: '', inReplyTo: '', references: '', sourceUid: '', sourceFolder: '', forwardAttachments: false, attachments: [], body: body };
-    for (const line of _unfoldEmailHeaderLines(header)) {
-      const m = line.match(/^(To|Cc|Bcc|Subject|In-Reply-To|References|X-Source-UID|X-Source-Folder|X-Forward-Attachments|X-Attachments):\s*(.*)$/i);
-      if (m) {
-        let key = m[1].toLowerCase();
-        if (key === 'in-reply-to') key = 'inReplyTo';
-        else if (key === 'x-source-uid') key = 'sourceUid';
-        else if (key === 'x-source-folder') key = 'sourceFolder';
-        else if (key === 'x-forward-attachments') {
-          fields.forwardAttachments = /^(1|true|yes)$/i.test((m[2] || '').trim());
-          continue;
-        }
-        else if (key === 'x-attachments') {
-          fields.attachments = m[2].trim().split('|').map(a => {
-            const [index, filename, size] = a.split(':');
-            return { index: parseInt(index), filename, size: parseInt(size) };
-          });
-          continue;
-        }
-        fields[key] = m[2].trim();
-      }
-    }
-    return fields;
-  }
 
-  function _buildEmailContent(to, subject, inReplyTo, references, body, sourceUid, sourceFolder, cc, bcc) {
-    let header = `To: ${to}`;
-    if (cc) header += `\nCc: ${cc}`;
-    if (bcc) header += `\nBcc: ${bcc}`;
-    header += `\nSubject: ${subject}`;
-    if (inReplyTo) header += `\nIn-Reply-To: ${inReplyTo}`;
-    if (references) header += `\nReferences: ${references}`;
-    if (sourceUid) header += `\nX-Source-UID: ${sourceUid}`;
-    if (sourceFolder) header += `\nX-Source-Folder: ${sourceFolder}`;
-    return header + '\n---\n' + body;
-  }
 
-  function _looksLikeWrappedEmailContent(text) {
-    const t = String(text || '').replace(/\r\n/g, '\n').trim();
-    return /\n---\n/.test(t) && /^(To|Cc|Bcc|Subject|In-Reply-To|References|X-Source-UID|X-Source-Folder):\s*/im.test(t);
-  }
 
-  function _decodeBase64EmailWrapper(block) {
-    const compact = String(block || '').replace(/\s+/g, '');
-    if (compact.length < 24 || compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null;
-    try {
-      const bin = atob(compact);
-      let decoded = '';
-      if (typeof TextDecoder !== 'undefined') {
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-        decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-      } else {
-        decoded = decodeURIComponent(escape(bin));
-      }
-      decoded = decoded.replace(/\r\n/g, '\n');
-      return _looksLikeWrappedEmailContent(decoded) ? decoded : null;
-    } catch (_) {
-      return null;
-    }
-  }
 
   function _sanitizeOutgoingEmailBody(raw) {
     let text = String(raw || '').replace(/\r\n/g, '\n');
@@ -2370,11 +2228,6 @@ import {
     catch (_) { return _emailPlainTextToHtml(raw); }
   }
 
-  function _emailQuoteMarkerMatch(text) {
-    const raw = String(text || '');
-    return raw.match(/(?:<p[^>]*>\s*)?-{5,}\s*Previous message\s*-{5,}(?:\s*<\/p>)?/i)
-      || raw.match(/-{5,}\s*Previous message\s*-{5,}/i);
-  }
 
   function _emailBodyFragmentToHtml(text) {
     const t = (text || '').trim();
@@ -2795,10 +2648,6 @@ import {
     return null;
   }
 
-  function _isRichInlineCodeMarker(element) {
-    return element?.tagName === 'SPAN'
-      && String(element.style?.fontFamily || '').includes('OdysseusInlineCode');
-  }
 
   function _normalizeRichInlineCode(root) {
     root.querySelectorAll('code, span').forEach(code => {
@@ -4431,16 +4280,7 @@ import {
     _loadOdysseusAttachItems(menu, 'document');
   }
 
-  function _isMarkdownImageFile(file) {
-    if (!file) return false;
-    if ((file.type || '').toLowerCase().startsWith('image/')) return true;
-    return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(file.name || '');
-  }
 
-  function _markdownImageAlt(name) {
-    const base = String(name || 'image').replace(/\.[^.]+$/, '').trim() || 'image';
-    return base.replace(/[\[\]\n\r]/g, ' ').replace(/\s+/g, ' ').trim() || 'image';
-  }
 
   function _activeDocLanguage() {
     const doc = activeDocId && docs.get(activeDocId);
@@ -4982,7 +4822,6 @@ import {
     document.getElementById('doc-editor-highlight')?.classList.remove('email-mode');
   }
 
-  const _ATTACH_RE = /\b(attach(ed|ment|ments|ing)?|enclosed|enclosing|PFA|find attached|see attached|ci-joint|en pi[eè]ce jointe|ajout[eé]|joint|jointe|anbei|im Anhang|beigef[uü]gt|添付|fichier joint)\b/i;
 
   function _bodyMentionsAttachment(text) {
     if (!text) return false;
@@ -7793,14 +7632,6 @@ import {
   let _lastMdFormat = { action: null, t: 0 };
   let _savedFormatTextareaSelection = null;
   let _savedFormatRichRange = null;
-  function _normalizeRichLinkUrl(rawUrl) {
-    let url = String(rawUrl || '').trim();
-    if (!url) return '';
-    if (/^(?:#|\/|\.\/|\.\.\/)/.test(url)) return url;
-    if (url.startsWith('//')) url = `https:${url}`;
-    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = `https://${url}`;
-    return /^(?:https?:|mailto:|tel:)/i.test(url) ? url : '';
-  }
 
   // Styled two-field link dialog. Existing links also expose Open and Remove;
   // all actions resolve through the same selection-safe command path.
@@ -8649,35 +8480,6 @@ import {
   // <body> so the draggable panel's transform can't clip its fixed position.
   let _mdDdActivationSerial = 0;
   let _mdDdLastActivation = { kind: '', token: 0, time: 0 };
-  const _RICH_FONT_SIZE_PX = Object.freeze({
-    1: 10,
-    2: 13,
-    3: 16,
-    4: 18,
-    5: 24,
-    6: 32,
-    7: 48,
-  });
-  const _RICH_COLOR_PALETTE = Object.freeze({
-    dark: Object.freeze([
-      ['#111827', 'Ink'],
-      ['#7f1d1d', 'Crimson'],
-      ['#7c2d12', 'Copper'],
-      ['#713f12', 'Gold'],
-      ['#14532d', 'Forest'],
-      ['#0c4a6e', 'Ocean'],
-      ['#4c1d95', 'Plum'],
-    ]),
-    light: Object.freeze([
-      ['#ffffff', 'White'],
-      ['#fecdd3', 'Rose'],
-      ['#fed7aa', 'Peach'],
-      ['#fef3c7', 'Lemon'],
-      ['#bbf7d0', 'Mint'],
-      ['#bae6fd', 'Sky'],
-      ['#ddd6fe', 'Lavender'],
-    ]),
-  });
 
   function _richColorMenuItems(kind) {
     const prefix = kind === 'color' ? 'forecolor' : 'highlight';
@@ -10365,25 +10167,6 @@ import {
     _scheduleAutoSave(docId, 800);
   }
 
-  function _buildEmailContentFromFields(fields, body) {
-    const f = fields || {};
-    let header = `To: ${f.to || ''}`;
-    if (f.cc) header += `\nCc: ${f.cc}`;
-    if (f.bcc) header += `\nBcc: ${f.bcc}`;
-    header += `\nSubject: ${f.subject || ''}`;
-    if (f.inReplyTo) header += `\nIn-Reply-To: ${f.inReplyTo}`;
-    if (f.references) header += `\nReferences: ${f.references}`;
-    if (f.sourceUid) header += `\nX-Source-UID: ${f.sourceUid}`;
-    if (f.sourceFolder) header += `\nX-Source-Folder: ${f.sourceFolder}`;
-    if (f.forwardAttachments) header += `\nX-Forward-Attachments: 1`;
-    if (Array.isArray(f.attachments) && f.attachments.length) {
-      const attStr = f.attachments
-        .map(a => `${a.index}:${a.filename}:${a.size}`)
-        .join('|');
-      header += `\nX-Attachments: ${attStr}`;
-    }
-    return header + '\n---\n' + (body || '');
-  }
 
   export async function ensureEmailDraftEnvelope(docId, freshContent) {
     const doc = docs.get(docId);
@@ -10988,21 +10771,6 @@ import {
 
   /** Attempt language auto-detection using hljs.highlightAuto() */
   /** Quick heuristic check for markdown before falling back to hljs */
-  function _looksLikeMarkdown(text) {
-    const lines = text.slice(0, 2000).split('\n');
-    let score = 0;
-    for (const line of lines) {
-      if (/^#{1,6}\s/.test(line)) score += 3;         // headings
-      else if (/^\s*[-*+]\s/.test(line)) score += 1;  // list items
-      else if (/^\s*\d+\.\s/.test(line)) score += 1;  // ordered list
-      else if (/^\s*>/.test(line)) score += 1;         // blockquote
-      else if (/\[.+\]\(.+\)/.test(line)) score += 2; // links
-      else if (/^```/.test(line)) score += 2;          // fenced code
-      else if (/\*\*.+\*\*/.test(line)) score += 1;   // bold
-      else if (/^---\s*$/.test(line)) score += 1;      // horizontal rule
-    }
-    return score >= 3;
-  }
 
   function attemptAutoDetect() {
     if (!window.hljs || !activeDocId) return;
@@ -11681,18 +11449,7 @@ import {
     return true;
   }
 
-  function _escHtml(s) {
-    return (s == null ? '' : String(s))
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
 
-  function _esc(s) {
-    return _escHtml(s);
-  }
 
   // ── Inline Suggestion Comments (Google Docs style) extracted to ./document/ui/suggestions.js ──
 
@@ -13172,31 +12929,6 @@ import {
   }
 
   /** Build a short diff summary between two strings */
-  function _buildDiffSummary(oldText, newText) {
-    if (!oldText && !newText) return '';
-    const oldLines = (oldText || '').split('\n');
-    const newLines = (newText || '').split('\n');
-    const added = [], removed = [];
-    // Simple line diff — collect changed lines
-    const maxCheck = Math.max(oldLines.length, newLines.length);
-    for (let i = 0; i < maxCheck; i++) {
-      const ol = oldLines[i], nl = newLines[i];
-      if (ol === nl) continue;
-      if (ol !== undefined && (nl === undefined || ol !== nl)) removed.push(ol.trim());
-      if (nl !== undefined && (ol === undefined || ol !== nl)) added.push(nl.trim());
-    }
-    // Show up to 3 changes
-    const parts = [];
-    for (const line of removed.slice(0, 2)) {
-      if (line) parts.push(`<span class="diff-del">${_escHtml(line.slice(0, 60))}</span>`);
-    }
-    for (const line of added.slice(0, 2)) {
-      if (line) parts.push(`<span class="diff-add">${_escHtml(line.slice(0, 60))}</span>`);
-    }
-    const extra = (added.length + removed.length) - 4;
-    if (extra > 0) parts.push(`<span>+${extra} more changes</span>`);
-    return parts.join('<br>');
-  }
 
   /** Load version history list */
   async function loadVersionHistory(state = _versionHistory) {

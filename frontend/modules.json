@@ -238,6 +238,18 @@
     {
       "source": "features/documents/ui/richTables.js",
       "deployment": "js/document/ui/richTables.js"
+    },
+    {
+      "source": "features/documents/domain/documentKinds.js",
+      "deployment": "js/document/domain/documentKinds.js"
+    },
+    {
+      "source": "features/documents/domain/emailMessage.js",
+      "deployment": "js/document/domain/emailMessage.js"
+    },
+    {
+      "source": "features/documents/domain/richTextRules.js",
+      "deployment": "js/document/domain/richTextRules.js"
     }
   ]
 }
