@@ -106,4 +106,17 @@ assert.ok(historyHost.innerHTML.includes('data-approval-id="dec-ext"'));
 assert.ok(!historyHost.innerHTML.includes('data-approval-id="dec-safe"'));
 assert.ok(historyHost.innerHTML.includes('id="tasks-approval-history-reset"'));
 
-console.log('PASS: ops-release-v12 TTL urgency sort/highlight & audit risk-context filter UI tests');
+const adminJs = fs.readFileSync('static/js/admin.js', 'utf8');
+const appJs = fs.readFileSync('static/app.js', 'utf8');
+const swJs = fs.readFileSync('static/sw.js', 'utf8');
+const runbook = fs.readFileSync('docs/OPS_RELEASE_V12.md', 'utf8');
+assert.ok(adminJs.includes('admin-ops-run-search'));
+assert.ok(adminJs.includes('_opsRunSearch'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev12'));
+assert.ok(appJs.includes('./js/admin.js?v=20261113opsreleasev12'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev12'));
+assert.ok(swJs.includes('/static/js/admin.js?v=20261113opsreleasev12'));
+assert.ok(swJs.includes('odysseus-v1144-ops-release-v12'));
+assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev12'));
+
+console.log('PASS: ops-release-v12 TTL urgency sort/highlight, audit risk filter, Admin Ops run search & cache sync tests');

@@ -135,9 +135,9 @@ assert.ok(historyHost.innerHTML.includes('id="tasks-approval-history-reset"'));
 const appJs = fs.readFileSync('static/app.js', 'utf8');
 const swJs = fs.readFileSync('static/sw.js', 'utf8');
 const runbook = fs.readFileSync('docs/OPS_RELEASE_V7.md', 'utf8');
-assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev11'));
-assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev11'));
-assert.ok(swJs.includes('odysseus-v1143-ops-release-v11'));
+assert.ok(appJs.includes('./js/tasks.js?v=20261113opsreleasev12'));
+assert.ok(swJs.includes('/static/js/tasks.js?v=20261113opsreleasev12'));
+assert.ok(swJs.includes('odysseus-v1144-ops-release-v12'));
 assert.ok(runbook.includes('tasks.js?v=20261113opsreleasev7'));
 
 console.log('PASS: ops-release-v7 Select All, Select Safe Only, history counters & asset cache sync tests');

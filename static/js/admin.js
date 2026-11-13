@@ -3899,9 +3899,14 @@ function renderLogs(isAutoPoll = false) {
 
 let _opsUnsettledOnly = false;
 let _opsRunStatusFilter = '';
+let _opsRunSearch = '';
 
 function _filterOpsEffectRuns(runs) {
-  const list = Array.isArray(runs) ? runs : [];
+  let list = Array.isArray(runs) ? runs : [];
+  const needle = String(_opsRunSearch || '').trim().toLowerCase();
+  if (needle) {
+    list = list.filter(r => r && String(r.run_id || '').toLowerCase().includes(needle));
+  }
   if (_opsRunStatusFilter === 'attention') {
     return list.filter(r => r && (Number(r.unsettled_claims || 0) > 0 || Boolean(r.corrupt)));
   }
@@ -4088,6 +4093,7 @@ async function loadAdminOpsPanel() {
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
           <span style="font-weight:600;opacity:0.75;font-size:10px;text-transform:uppercase;">Recent Effect Runs (Click to inspect)</span>
           <div style="display:flex;align-items:center;gap:8px;">
+            <input type="search" id="admin-ops-run-search" aria-label="Search effect runs by run ID" placeholder="Run ID…" value="${_escOps(_opsRunSearch)}" style="padding:1px 5px;font-size:10px;width:96px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
             <select id="admin-ops-run-status-filter" aria-label="Filter effect runs by status" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
               <option value="">All runs</option>
               <option value="attention"${_opsRunStatusFilter === 'attention' ? ' selected' : ''}>Needs attention</option>
@@ -4116,6 +4122,18 @@ async function loadAdminOpsPanel() {
     const refreshBtn = el('admin-ops-refresh-btn');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', () => loadAdminOpsPanel());
+    }
+    const runSearchInput = el('admin-ops-run-search');
+    if (runSearchInput) {
+      runSearchInput.addEventListener('input', () => {
+        _opsRunSearch = runSearchInput.value || '';
+        loadAdminOpsPanel().then(() => {
+          const restored = el('admin-ops-run-search');
+          if (restored && typeof restored.focus === 'function') {
+            restored.focus();
+          }
+        });
+      });
     }
     const runStatusSelect = el('admin-ops-run-status-filter');
     if (runStatusSelect) {
