@@ -12,6 +12,9 @@ class FakeDashboard:
     def __init__(self):
         self.calls = []
 
+    def sessions(self):
+        return [{'id': 's1', 'title': 'One', 'workspace': 'F:/x', 'state': 'idle'}]
+
     def overview(self):
         self.calls.append('overview')
         return {'projects': [{'id': 'aaaaaaaaaa', 'name': 'One'}]}
@@ -44,6 +47,7 @@ def test_routes_serve_the_dashboard_read_only_and_never_cacheable():
     assert status == 200 and body['projects'][0]['name'] == 'One' and headers[b'cache-control'] == b'no-store' and headers[b'x-content-type-options'] == b'nosniff'
     assert call(LOCAL_PREFIX + 'projects/aaaaaaaaaa', dash=dash)[0] == 200 and ('detail', 'aaaaaaaaaa', 7000, False) in dash.calls          # basic detail only: the slow part is separate
     assert call(LOCAL_PREFIX + 'projects/aaaaaaaaaa/related', dash=dash)[2] == {'related_sessions': []}
+    assert call(LOCAL_PREFIX + 'sessions', dash=dash)[2]['sessions'][0]['id'] == 's1' and call(LOCAL_PREFIX + 'sessions', method='POST')[0] == 405 and call(LOCAL_PREFIX + 'sessions', grant=None)[0] == 401
 
 
 def test_no_grant_wrong_method_cross_site_unknown_and_malformed_ids_are_refused():

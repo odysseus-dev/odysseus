@@ -41,7 +41,7 @@ def test_projects_opens_inside_hermes_as_a_settings_page_and_only_the_diagnostic
     assert 'focusedStoredSessionId' in PLUGIN and 'VALID.test(active)' in PLUGIN
     assert PLUGIN.count('window.location.assign(') == 1 and 'window.open' not in PLUGIN
     assert "const API = '/__odysseus/api/projects'" in PLUGIN and "credentials: 'same-origin'" in PLUGIN       # same-origin data only
-    for forbidden in ('session-token', '/api/ws', 'projects.create', 'projects.update', 'session.workspace.move', "method: 'POST'", "method: 'PUT'", "method: 'DELETE'"):
+    for forbidden in ('session-token', 'sessionToken', '/api/ws', "method: 'POST'", "method: 'PUT'", "method: 'DELETE'", 'localStorage'):
         assert forbidden not in PLUGIN
     assert 'searchParams.get(' in PLUGIN and 'takeRequestedSession()' in PLUGIN       # resume still reads only its one parameter
     assert "searchParams.get('from')" not in PLUGIN and "get('url')" not in PLUGIN and "get('next')" not in PLUGIN
@@ -63,3 +63,12 @@ def test_manage_in_hermes_only_opens_hermes_and_adds_no_project_controls_of_its_
     assert 'Filters' in JS and 'Move to project' in JS                              # tells the user where the native controls are
     for forbidden in ('projects.create', 'projects.update', 'session.workspace.move', 'session-token', '/api/ws'):
         assert forbidden not in JS
+
+
+def test_project_management_goes_through_the_webapps_own_gateway_connection_only():
+    assert 'host.request(method, params)' in PLUGIN
+    used = set(re.findall(r"'((?:projects|session)\.[a-z_.]+)'", PLUGIN))
+    assert used == {'projects.list', 'projects.create', 'projects.update', 'projects.add_folder', 'projects.remove_folder', 'projects.set_primary', 'projects.archive', 'session.list', 'session.workspace.move'}
+    assert 'projects.delete' not in PLUGIN and 'session.cwd.set' not in PLUGIN and 'grant' not in ' '.join(used)          # no deletion, no live-agent cwd change, no write grants
+    assert "BUSY_STATES = new Set(['working', 'waiting'])" in PLUGIN and 'row.running' in PLUGIN                           # a running conversation is never moved
+    assert 'Write permissions do not change' in PLUGIN

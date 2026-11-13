@@ -13,7 +13,7 @@ import re
 
 LOCAL_PREFIX = '/__odysseus/api/'
 PROJECT_ID = re.compile(r'[0-9a-f]{10}')
-_ROUTE = re.compile(r'^/__odysseus/api/projects(?:/([^/]+)(?:/(related))?)?$')
+_ROUTE = re.compile(r'^/__odysseus/api/(?:projects(?:/([^/]+)(?:/(related))?)?|(sessions))$')
 _HEADERS = [(b'content-type', b'application/json; charset=utf-8'), (b'cache-control', b'no-store'), (b'pragma', b'no-cache'), (b'x-content-type-options', b'nosniff'),
             (b'referrer-policy', b'no-referrer')]
 TIMEOUT_S = 25
@@ -50,7 +50,7 @@ class LocalProjectsApi:
         match = _ROUTE.match(scope['path'])
         if not match:
             return await self._reply(send, 404, {'detail': 'Unknown route'})
-        project_id, part = match.group(1), match.group(2)
+        project_id, part, sessions = match.group(1), match.group(2), match.group(3)
         if project_id is not None and not PROJECT_ID.fullmatch(project_id):
             return await self._reply(send, 404, {'detail': 'Unknown project'})
         port = self._port(scope)
@@ -59,6 +59,8 @@ class LocalProjectsApi:
             self._slots = asyncio.Semaphore(self._concurrency)
 
         def work():
+            if sessions:
+                return {'sessions': dash.sessions()}
             if project_id is None:
                 return dash.overview()
             if part == 'related':

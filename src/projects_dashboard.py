@@ -207,6 +207,8 @@ PROJECT_ID = re.compile(r'[0-9a-f]{10}')
 # The related-conversation scan reads every recorded tool call, which is by far the slowest part of a project's detail (~0.9 s of ~1.1 s measured on the real
 # history, growing with it). It is loaded separately from the basic detail and its result is reused for this long.
 RELATED_TTL_S = 120
+RELATED_CACHE_MAX = 32       # entries (one per distinct project folder set); cleared when full
+RELATED_KEEP = 50            # per entry, far above the 8 ever shown
 
 
 class Dashboard:
@@ -327,6 +329,16 @@ class Dashboard:
             return 'http://hermes.localhost:%d/%s' % (port, quote(session['id'], safe='')), 'webapp'
         return 'http://localhost:%d/session/%s' % (int(self.environment.get('ODYSSEUS_WEBUI_PORT') or 8787), quote(session['id'], safe='')), 'legacy-webui'
 
+    def _store_fingerprint(self):
+        out = []
+        for name in ('state.db', 'state.db-wal'):
+            try:
+                st = (self.hermes_home / name).stat()
+                out.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                out.append(None)
+        return tuple(out)
+
     def related_sessions(self, scope, exclude_ids, limit=8, minimum=3):
         """Conversations that did not run in this project's folders but whose agent tool calls referenced files under them.
 
@@ -339,7 +351,9 @@ class Dashboard:
             patterns += [forward + '/', forward + '"']
         if not patterns:
             return []
-        key = (tuple(patterns), minimum)
+        # The key carries the folders searched AND a fingerprint of the conversation store (size + mtime of the database and its write-ahead log), so any new
+        # message or tool call, and any change to a project's folders, misses the cache instead of showing an out-of-date answer; the TTL only bounds age.
+        key = (tuple(patterns), minimum, self._store_fingerprint())
         cached = self._related_cache.get(key)
         if cached and time.monotonic() - cached[0] < RELATED_TTL_S:
             return [r for r in cached[1] if r['id'] not in exclude_ids][:limit]
@@ -352,9 +366,9 @@ class Dashboard:
         except sqlite3.Error:
             return []
         found = [{'id': sid, 'calls': n} for sid, n in sorted(rows, key=lambda r: -r[1]) if n >= minimum]
-        if len(self._related_cache) > 64:
+        if len(self._related_cache) >= RELATED_CACHE_MAX:
             self._related_cache.clear()
-        self._related_cache[key] = (time.monotonic(), found)
+        self._related_cache[key] = (time.monotonic(), found[:RELATED_KEEP])
         return [r for r in found if r['id'] not in exclude_ids][:limit]
 
     # -- projects --------------------------------------------------------------------------------------------------------------
