@@ -338,4 +338,4 @@ class TestResumeLink:
     def test_plugin_validates_the_id_and_only_opens_a_session(self):
         text = (Path(__file__).resolve().parents[2] / 'integrations/hermes-mode/desktop-plugins/odysseus-resume/plugin.js').read_text(encoding='utf-8')
         assert "/^[A-Za-z0-9._-]{1,200}$/" in text and 'host.openSession(id)' in text
-        assert 'location.assign' not in text and 'location.href =' not in text and 'window.open' not in text
+        assert text.count('window.location.assign(') == 1 and 'location.href =' not in text and 'window.open' not in text      # the single navigation is the diagnostic-dashboard link

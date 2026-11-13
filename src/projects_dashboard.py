@@ -204,6 +204,11 @@ BS = chr(92)
 PROJECT_ID = re.compile(r'[0-9a-f]{10}')
 
 
+# The related-conversation scan reads every recorded tool call, which is by far the slowest part of a project's detail (~0.9 s of ~1.1 s measured on the real
+# history, growing with it). It is loaded separately from the basic detail and its result is reused for this long.
+RELATED_TTL_S = 120
+
+
 class Dashboard:
     def __init__(self, hermes_home, webui_state, component_root, wiki_root=None, environment=None):
         self.hermes_home = Path(hermes_home) if hermes_home else None
@@ -211,6 +216,7 @@ class Dashboard:
         self.component_root = Path(component_root) if component_root else None
         self.wiki_root = Path(wiki_root) if wiki_root else None
         self.environment = os.environ if environment is None else environment
+        self._related_cache = {}
 
     # -- sources ---------------------------------------------------------------------------------------------------------------
     def _webapp_config(self):
@@ -333,6 +339,10 @@ class Dashboard:
             patterns += [forward + '/', forward + '"']
         if not patterns:
             return []
+        key = (tuple(patterns), minimum)
+        cached = self._related_cache.get(key)
+        if cached and time.monotonic() - cached[0] < RELATED_TTL_S:
+            return [r for r in cached[1] if r['id'] not in exclude_ids][:limit]
         clause = ' or '.join('instr(t, ?) > 0' for _ in patterns)
         flatten = "lower(replace(replace(replace(tool_calls, char(92,92,92,92), char(92)), char(92,92), char(92)), char(92), '/'))"
         try:
@@ -341,7 +351,11 @@ class Dashboard:
                                   patterns).fetchall()
         except sqlite3.Error:
             return []
-        return [{'id': sid, 'calls': n} for sid, n in sorted(rows, key=lambda r: -r[1]) if n >= minimum and sid not in exclude_ids][:limit]
+        found = [{'id': sid, 'calls': n} for sid, n in sorted(rows, key=lambda r: -r[1]) if n >= minimum]
+        if len(self._related_cache) > 64:
+            self._related_cache.clear()
+        self._related_cache[key] = (time.monotonic(), found)
+        return [r for r in found if r['id'] not in exclude_ids][:limit]
 
     # -- projects --------------------------------------------------------------------------------------------------------------
     def _candidates(self, sessions):
@@ -455,7 +469,7 @@ class Dashboard:
         return {**found[0], 'partial': False}
 
     # -- one project ------------------------------------------------------------------------------------------------------------
-    def detail(self, project_id, now=None, port=7000):
+    def detail(self, project_id, now=None, port=7000, related=True):
         if not PROJECT_ID.fullmatch(str(project_id)):
             return None
         now = now or time.time()
@@ -498,13 +512,7 @@ class Dashboard:
             s['resume_url'], s['resume_kind'] = self.resume(s, port)
         placed = {s['id'] for s in sessions}
         by_id = {s['id']: s for s in self.sessions(now)}
-        related = []
-        for hit in self.related_sessions(scope, placed):
-            base = by_id.get(hit['id'])
-            if base:
-                url, kind = self.resume(base, port)
-                related.append({**base, 'calls': hit['calls'], 'resume_url': url, 'resume_kind': kind,
-                                'evidence': 'inferred: %d agent tool calls referenced files under this project (it ran in %s)' % (hit['calls'], base['workspace'] or 'no recorded folder')})
+        related_list = self._related_list(scope, placed, by_id, port) if related else None
         wiki = None
         if project['wiki']:
             name = project['wiki']['project']
@@ -522,7 +530,33 @@ class Dashboard:
                       'request': self.request_command(path), 'request_template': self.request_command('{path}'), 'revoke_template': self.revoke_command('{path}'), 'revoke': self.revoke_command(project['permission'].get('grant')),
                       'note': 'These are file-tool write rules, not OS containment: a terminal, MCP servers and any program running as you are not limited by them. '
                               '"Allow for this chat" approvals are held in memory by the running Hermes process and cannot be listed here.'}
-        return {**project, 'git': git, 'worktrees': worktrees, 'session_list': sessions, 'related_sessions': related, 'wiki_detail': wiki, 'permission_detail': permission, 'generated_at': now}
+        return {**project, 'git': git, 'worktrees': worktrees, 'session_list': sessions, 'related_sessions': related_list, 'related_pending': related_list is None, 'wiki_detail': wiki, 'permission_detail': permission, 'generated_at': now}
+
+    def _related_list(self, scope, placed, by_id, port):
+        out = []
+        for hit in self.related_sessions(scope, placed):
+            base = by_id.get(hit['id'])
+            if base:
+                url, kind = self.resume(base, port)
+                out.append({**base, 'calls': hit['calls'], 'resume_url': url, 'resume_kind': kind,
+                            'evidence': 'inferred: %d agent tool calls referenced files under this project (it ran in %s)' % (hit['calls'], base['workspace'] or 'no recorded folder')})
+        return out
+
+    def related_detail(self, project_id, now=None, port=7000):
+        """The inferred-conversation list for one project (the slow part of detail), or None for an unknown project."""
+        if not PROJECT_ID.fullmatch(str(project_id)):
+            return None
+        now = now or time.time()
+        project = next((p for p in self.projects(now) if p['id'] == project_id), None)
+        if not project:
+            return None
+        scope = list(project['paths'])
+        for line in (_git(project['path'], 'worktree', 'list', '--porcelain') or '').splitlines() if project['kind'] == 'git' else []:
+            if line.startswith('worktree '):
+                scope.append(os.path.normpath(line[9:]))
+        sessions = self.sessions(now)
+        placed = {s['id'] for s in sessions if self._belongs(s['workspace'], scope, project_id)}
+        return self._related_list(scope, placed, {s['id']: s for s in sessions}, port)
 
     @staticmethod
     def request_command(path):

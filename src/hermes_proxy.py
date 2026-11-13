@@ -45,6 +45,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from src.hermes_grants import ENTER_PATH, ENTERED_COOKIE, GRANT_COOKIE, GrantDenied, GrantError
+from src.hermes_local_api import LOCAL_PREFIX
 
 PROXY_HOST = 'hermes.localhost'
 MODES = ('webui', 'gateway')
@@ -249,7 +250,8 @@ class _StatelessClient(httpx.AsyncClient):
 
 
 class HermesHostProxy:
-    def __init__(self, app, upstream, mode='webui', policy=None, grants=None):
+    def __init__(self, app, upstream, mode='webui', policy=None, grants=None, local_api=None):
+        self.local_api = local_api
         parts = urlsplit(upstream)
         if parts.scheme != 'http' or parts.hostname != '127.0.0.1' or not parts.port:
             raise ValueError('The Hermes upstream must be an explicit http://127.0.0.1:PORT/ address')
@@ -448,6 +450,8 @@ class HermesHostProxy:
             grant = self._authorize(scope)
             if grant is None:
                 return await self._fail(send, *self._deny_no_grant(scope))
+        if self.local_api is not None and self.mode == 'gateway' and scope['path'].startswith(LOCAL_PREFIX):
+            return await self.local_api(scope, receive, send, grant)           # answered here, never forwarded to Hermes
         await self._forward(scope, receive, send, grant)
 
     def _toward_upstream(self, scope, headers):
@@ -719,7 +723,7 @@ def build_grant_store(app, environment):
     return store
 
 
-def install_hermes_proxy(app, service, environment=None):
+def install_hermes_proxy(app, service, environment=None, local_api=None):
     """Install as the outermost middleware so Odysseus auth, CSP and compression never touch Hermes traffic."""
     import os
     source = os.environ if environment is None else environment
@@ -741,7 +745,7 @@ def install_hermes_proxy(app, service, environment=None):
             grants = build_grant_store(app, source)
             if grants is None:
                 return False
-    app.add_middleware(HermesHostProxy, upstream=service.config.url, mode=mode, policy=policy, grants=grants)
+    app.add_middleware(HermesHostProxy, upstream=service.config.url, mode=mode, policy=policy, grants=grants, local_api=local_api)
     if mode == 'gateway':
         redact_request_logs()
     service.grants = grants

@@ -34,12 +34,16 @@ def test_the_return_id_pattern_matches_the_server_and_rejects_urls():
 PLUGIN = (ROOT / 'integrations/hermes-mode/desktop-plugins/odysseus-resume/plugin.js').read_text(encoding='utf-8')
 
 
-def test_sidebar_entry_builds_its_destination_from_this_pages_port_and_the_active_conversation_only():
-    assert "area: 'sidebar.nav'" in PLUGIN and "area: 'routes'" in PLUGIN and "label: 'Projects'" in PLUGIN
-    assert "hostname !== 'hermes.localhost'" in PLUGIN and 'http://localhost:${port}/static/projects.html?' in PLUGIN
+def test_projects_opens_inside_hermes_as_a_settings_page_and_only_the_diagnostic_link_leaves():
+    assert "area: 'sidebar.nav'" in PLUGIN and 'registerSettingsPage' in PLUGIN and "label: 'Projects'" in PLUGIN and 'pluginSettingsHref' in PLUGIN
+    assert "area: 'routes'" not in PLUGIN
+    assert "hostname !== 'hermes.localhost'" in PLUGIN and 'http://localhost:${port}/static/projects.html?' in PLUGIN      # the diagnostic link is still built from this page's own port
     assert 'focusedStoredSessionId' in PLUGIN and 'VALID.test(active)' in PLUGIN
     assert PLUGIN.count('window.location.assign(') == 1 and 'window.open' not in PLUGIN
-    assert 'location.search' in PLUGIN and 'searchParams.get(' in PLUGIN       # resume still reads only its one parameter
+    assert "const API = '/__odysseus/api/projects'" in PLUGIN and "credentials: 'same-origin'" in PLUGIN       # same-origin data only
+    for forbidden in ('session-token', '/api/ws', 'projects.create', 'projects.update', 'session.workspace.move', "method: 'POST'", "method: 'PUT'", "method: 'DELETE'"):
+        assert forbidden not in PLUGIN
+    assert 'searchParams.get(' in PLUGIN and 'takeRequestedSession()' in PLUGIN       # resume still reads only its one parameter
     assert "searchParams.get('from')" not in PLUGIN and "get('url')" not in PLUGIN and "get('next')" not in PLUGIN
 
 
