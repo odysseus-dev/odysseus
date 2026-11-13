@@ -57,10 +57,27 @@ function _syncSelectedApprovalIds() {
   }
 }
 
+let _pendingApprovalsToolFilter = '';
+let _approvalHistoryEscapeBound = false;
+
+function _getFilteredPendingApprovals() {
+  if (!_pendingApprovalsToolFilter) return _pendingApprovals;
+  return _pendingApprovals.filter(item => item && String(item.tool_name || '') === _pendingApprovalsToolFilter);
+}
+
 function _selectAllPendingApprovals(checked) {
+  for (const item of _pendingApprovals) {
+    if (item && item.approval_id) _knownPendingApprovalIds.add(item.approval_id);
+  }
+  const visible = _getFilteredPendingApprovals();
   if (checked) {
-    for (const item of _pendingApprovals) {
+    if (_pendingApprovalsToolFilter) _selectedApprovalIds.clear();
+    for (const item of visible) {
       if (item && item.approval_id) _selectedApprovalIds.add(item.approval_id);
+    }
+  } else if (_pendingApprovalsToolFilter) {
+    for (const item of visible) {
+      if (item && item.approval_id) _selectedApprovalIds.delete(item.approval_id);
     }
   } else {
     _selectedApprovalIds.clear();
@@ -69,8 +86,18 @@ function _selectAllPendingApprovals(checked) {
 }
 
 function _selectSafePendingApprovals() {
-  _selectedApprovalIds.clear();
   for (const item of _pendingApprovals) {
+    if (item && item.approval_id) _knownPendingApprovalIds.add(item.approval_id);
+  }
+  const visible = _getFilteredPendingApprovals();
+  if (_pendingApprovalsToolFilter) {
+    for (const item of visible) {
+      if (item && item.approval_id) _selectedApprovalIds.delete(item.approval_id);
+    }
+  } else {
+    _selectedApprovalIds.clear();
+  }
+  for (const item of visible) {
     if (item && item.approval_id && !item.external_untrusted_context_seen) {
       _selectedApprovalIds.add(item.approval_id);
     }
@@ -426,7 +453,22 @@ function _renderApprovalHistory() {
   });
   host.querySelectorAll('.task-approval-history-pill[data-approval-id]').forEach(pill => {
     pill.addEventListener('click', () => _toggleApprovalHistoryDetail(pill.dataset.approvalId));
+    pill.addEventListener('keydown', (ev) => {
+      if (ev && (ev.key === 'Enter' || ev.key === ' ')) {
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        _toggleApprovalHistoryDetail(pill.dataset.approvalId);
+      }
+    });
   });
+  if (!_approvalHistoryEscapeBound && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    _approvalHistoryEscapeBound = true;
+    document.addEventListener('keydown', (ev) => {
+      if (ev && ev.key === 'Escape' && _selectedApprovalHistoryId) {
+        _selectedApprovalHistoryId = '';
+        _renderApprovalHistory();
+      }
+    });
+  }
   const copyIdBtn = host.querySelector('#tasks-approval-history-copy-id');
   if (copyIdBtn) {
     copyIdBtn.addEventListener('click', () => _copyApprovalHistoryId(copyIdBtn.dataset.copyApprovalId));
@@ -459,26 +501,40 @@ function _renderPendingApprovals() {
   _pruneExpiredApprovals();
   _syncSelectedApprovalIds();
   if (!_pendingApprovals.length) {
+    _pendingApprovalsToolFilter = '';
     host.style.display = 'none';
     host.innerHTML = '';
     return;
   }
+  const pendingTools = [...new Set(_pendingApprovals.map(item => String((item && item.tool_name) || '')).filter(Boolean))].sort();
+  if (_pendingApprovalsToolFilter && !pendingTools.includes(_pendingApprovalsToolFilter)) {
+    _pendingApprovalsToolFilter = '';
+  }
+  const visibleApprovals = _getFilteredPendingApprovals();
   host.style.display = 'flex';
-  const showBulkActions = _pendingApprovals.length >= 2;
+  const showBulkActions = visibleApprovals.length >= 2;
+  const visibleSelectedCount = visibleApprovals.filter(item => item && _selectedApprovalIds.has(item.approval_id)).length;
   const selectedCount = _selectedApprovalIds.size;
-  const allSelected = selectedCount === _pendingApprovals.length;
-  const isPartialSelection = selectedCount > 0 && !allSelected;
-  const hasExternalUntrusted = _pendingApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
+  const allSelected = visibleApprovals.length > 0 && visibleSelectedCount === visibleApprovals.length;
+  const isPartialSelection = Boolean((visibleSelectedCount > 0 && !allSelected) || (_pendingApprovalsToolFilter && selectedCount > 0));
+  const hasExternalUntrusted = visibleApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
   const approveBulkLabel = isPartialSelection ? `Approve Selected (${selectedCount})` : 'Approve All';
   const denyBulkLabel = isPartialSelection ? `Deny Selected (${selectedCount})` : 'Deny All';
+  const countLabel = _pendingApprovalsToolFilter ? `${visibleApprovals.length}/${_pendingApprovals.length}` : `${_pendingApprovals.length}`;
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:6px;">
         ${showBulkActions ? `<input type="checkbox" id="tasks-approvals-select-all" aria-label="Select all pending approvals"${allSelected ? ' checked' : ''} />` : ''}
-        <span>Pending Approvals (${_pendingApprovals.length})</span>
+        <span>Pending Approvals (${countLabel})</span>
         <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        ${pendingTools.length >= 2 ? `
+          <select id="tasks-approvals-tool-filter" aria-label="Filter pending approvals by tool" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">All tools</option>
+            ${pendingTools.map(t => `<option value="${_esc(t)}"${_pendingApprovalsToolFilter === t ? ' selected' : ''}>${_esc(t)}</option>`).join('')}
+          </select>
+        ` : ''}
         ${showBulkActions && hasExternalUntrusted ? `
           <button type="button" id="tasks-approvals-select-safe" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Select Safe Only</button>
         ` : ''}
@@ -489,7 +545,7 @@ function _renderPendingApprovals() {
         <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
       </div>
     </div>
-    ${_pendingApprovals.map(item => {
+    ${visibleApprovals.map(item => {
       const checkedAttr = _selectedApprovalIds.has(item.approval_id) ? ' checked' : '';
       return `
       <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:11px;">
@@ -515,6 +571,13 @@ function _renderPendingApprovals() {
   if (selectAllCb) {
     selectAllCb.indeterminate = isPartialSelection;
     selectAllCb.addEventListener('change', () => _selectAllPendingApprovals(Boolean(selectAllCb.checked)));
+  }
+  const pendingToolSelect = host.querySelector('#tasks-approvals-tool-filter');
+  if (pendingToolSelect) {
+    pendingToolSelect.addEventListener('change', () => {
+      _pendingApprovalsToolFilter = pendingToolSelect.value || '';
+      _renderPendingApprovals();
+    });
   }
   const selectSafeBtn = host.querySelector('#tasks-approvals-select-safe');
   if (selectSafeBtn) {
