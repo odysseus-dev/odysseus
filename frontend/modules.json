@@ -250,6 +250,84 @@
     {
       "source": "features/documents/domain/richTextRules.js",
       "deployment": "js/document/domain/richTextRules.js"
+    },
+    {
+      "source": "features/documents/application/documentCommands.js",
+      "deployment": "js/document/application/documentCommands.js"
+    },
+    {
+      "source": "features/documents/application/documentState.js",
+      "deployment": "js/document/application/documentState.js"
+    },
+    {
+      "source": "features/documents/ui/host.js",
+      "deployment": "js/document/ui/host.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/ui.js?v=20260916largetoolscroll1",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/sessions.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/emojiPicker.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/emailReplyStream.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/markdown.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/codeRunner.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/langIcons.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/spinner.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/documentLibrary.js?v=20260911librarybulkdelete1",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/signature.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/modalManager.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/escMenuStack.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/toolWindowZOrder.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/documentStats.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/documentOutline.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/colorPicker.js?v=20260910eyedropper1",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        }
+      ]
     }
   ]
 }

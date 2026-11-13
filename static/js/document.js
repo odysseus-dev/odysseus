@@ -94,11 +94,12 @@ import {
 import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from './document/domain/documentKinds.js';
 import { _ATTACH_RE, _accountCanSend, _buildEmailContent, _buildEmailContentFromFields, _decodeBase64EmailWrapper, _emailQuoteMarkerMatch, _looksLikeWrappedEmailContent, _parseEmailHeader } from './document/domain/emailMessage.js';
 import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH_SLASH_COMMANDS, _isRichInlineCodeMarker, _normalizeRichLinkUrl } from './document/domain/richTextRules.js';
+import { API_BASE, isOpen, _deletedDocIds, _inFlightDeletes, _closingDocs, _documentNavigationGeneration, activeDocId, _lastSessionId, docs, _minimizedDocId, isPanelOpen, setApiBase, setActiveDocId, setLastSessionId, bumpNavigationGeneration, setPanelOpen, setMinimizedDocId, registerDocument, removeDocument, clearDocuments, markDeleted, beginDelete, endDelete, retainClosingDraft, releaseClosingDraft } from './document/application/documentState.js';
+import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClosePanel, switchToDoc as cmdSwitchToDoc, saveCurrentToMap as cmdSaveCurrentToMap, renderTabs as cmdRenderTabs, _syncDocIndicator as cmdSyncDocIndicator, _syncHeaderActions as cmdSyncHeaderActions, showEmptyState as cmdShowEmptyState, _showLoadingOverlay as cmdShowLoadingOverlay, _hideLoadingOverlay as cmdHideLoadingOverlay, _minimizeNotesForDocumentOpen as cmdMinimizeNotesForDocumentOpen, _ensureDocChipRegistered as cmdEnsureDocChipRegistered } from './document/application/documentCommands.js';
 
 
-  let API_BASE = '';
-  let isOpen = false;
-  // The initial pane mount happens while the startup/session layout is still
+
+      // The initial pane mount happens while the startup/session layout is still
   // settling. Animating that first flex insertion makes the whole workspace
   // appear to overshoot. Later restores are safe to animate.
   let _hasMountedPanel = false;
@@ -120,17 +121,14 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   let _emailLocalDraftDebounce = null;
   let _emailRichbodySaveDebounce = null;
   const _pendingAutoSaves = new Map();
-  const _deletedDocIds = new Set();
-  const _inFlightDeletes = new Map();
-  const _closingDocs = new Map();
 
   // Detached drafts retain the same object until persistence succeeds. Reopening
   // adopts that object rather than replacing a failed draft with a server row.
   function _saveClosingDraft(docId, doc) {
-    _closingDocs.set(docId, doc);
+    retainClosingDraft(docId, doc);
     return saveDocument({ silent: true, docId }).then(ok => {
       if (ok && doc._saveState === 'saved' && _closingDocs.get(docId) === doc) {
-        _closingDocs.delete(docId);
+        releaseClosingDraft(docId);
       }
       return ok;
     });
@@ -187,10 +185,9 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   }
 
   // Multi-document state
-  let _documentNavigationGeneration = 0;
-  let activeDocId = null;           // currently visible doc
-  let _lastSessionId = '';          // session context for "+" button
-  const docs = new Map();           // docId -> { id, title, language, content, version, sessionId }
+               // currently visible doc
+            // session context for "+" button
+             // docId -> { id, title, language, content, version, sessionId }
 
   function _wireExportDocx() {
     initExportDocx({
@@ -1238,13 +1235,13 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   export function prepareDocumentOpen(sessionId) {
     if (sessionId) _markDocVisibleState(sessionId, 'open');
     if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
-      _minimizedDocId = null;
+      setMinimizedDocId(null);
       Modals.unregister('doc-panel');
     }
   }
 
   export function init(apiBase) {
-    API_BASE = apiBase;
+    setApiBase(apiBase);
     _wirePreviewModes();
     _wireSuggestions();
     _wireDiffViewer();
@@ -1685,8 +1682,8 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         const [moved] = entries.splice(fromIdx, 1);
         entries.splice(toIdx, 0, moved);
 
-        docs.clear();
-        for (const [k, v] of entries) docs.set(k, v);
+        clearDocuments();
+        for (const [k, v] of entries) registerDocument(v);
 
         renderTabs();
       });
@@ -1695,7 +1692,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
 
   /** Show empty state when no documents exist yet */
   function showEmptyState() {
-    activeDocId = null;
+    setActiveDocId(null);
     _setDocumentHistoryControlState(false, false);
     const textarea = document.getElementById('doc-editor-textarea');
     const langSelect = document.getElementById('doc-language-select');
@@ -5081,13 +5078,13 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         }
         // Delete the compose document after successful send.
         if (sendDocId) {
-          _deletedDocIds.add(sendDocId);
+          markDeleted(sendDocId);
           _cancelAutoSave(sendDocId);
           fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
           const wasActiveSentDoc = isOpen && activeDocId === sendDocId;
-          docs.delete(sendDocId);
+          removeDocument(sendDocId);
           if (wasActiveSentDoc) {
-            activeDocId = null;
+            setActiveDocId(null);
             const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));
             if (nextId) switchToDoc(nextId);
             else closePanel();
@@ -5196,7 +5193,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     _cancelAutoSave(closingId);
     _cancelPdfPaneSave(closingId);
     if (deleteDoc) {
-      _deletedDocIds.add(closingId);
+      markDeleted(closingId);
       _cleanupPdfDocState(closingId);
       fetch(`${API_BASE}/api/document/${closingId}`, { method: 'DELETE' }).catch(() => {});
     }
@@ -5208,7 +5205,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         _saveClosingDraft(closingId, doc);
       }
     }
-    docs.delete(closingId);
+    removeDocument(closingId);
     const remaining = Array.from(docs.keys());
     if (remaining.length > 0) {
       switchToDoc(remaining[0]);
@@ -5660,7 +5657,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
 
   function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } = {}) {
     if (!docs.has(docId)) return;
-    ++_documentNavigationGeneration;
+    bumpNavigationGeneration();
     if (!preserveHistory) _closeVersionPanel();
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
@@ -5696,10 +5693,10 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     if (prevId && prevId !== docId && docs.has(prevId)) {
       const prev = docs.get(prevId);
       if (prev.language !== 'email' && !(prev.content || '').trim() && !(prev.title || '').trim()) {
-        _deletedDocIds.add(prevId);
+        markDeleted(prevId);
         _cancelAutoSave(prevId);
         fetch(`${API_BASE}/api/document/${prevId}`, { method: 'DELETE' }).catch(() => {});
-        docs.delete(prevId);
+        removeDocument(prevId);
         _syncDocIndicator();
       } else {
         _flushAutoSave(prevId);
@@ -5707,7 +5704,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     }
 
     if (prevId && prevId !== docId) _releasePdfPane(prevId);
-    activeDocId = docId;
+    setActiveDocId(docId);
     if (mountedPane) mountedPane.dataset.activeDocumentId = docId;
     _rememberActiveDoc(docId);
     clearSelection();
@@ -5860,11 +5857,11 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
       _saveClosingDraft(docId, doc);
       if (toast && uiModule) uiModule.showToast('Document closed');
     } else {
-      _deletedDocIds.add(docId);
+      markDeleted(docId);
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
     }
     _forgetActiveDoc(doc?.sessionId || _lastSessionId, docId);
-    docs.delete(docId);
+    removeDocument(docId);
     _syncDocIndicator();
   }
 
@@ -5885,7 +5882,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
       }
     }
     if (!nextId) {
-      activeDocId = null;
+      setActiveDocId(null);
       closePanel();
       (document.getElementById('message') || document.getElementById('doc-indicator-btn'))?.focus();
       return;
@@ -5907,7 +5904,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   async function _autoCreateFromInput(content) {
     if (_autoCreating) return;
     _autoCreating = true;
-    const generation = ++_documentNavigationGeneration;
+    const generation = bumpNavigationGeneration();
     try {
       let sessionId = _lastSessionId
         || (sessionModule && sessionModule.getCurrentSessionId());
@@ -6026,13 +6023,13 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     // a different path (toolbar button, indicator), clear that chip — the
     // doc is becoming visible again.
     if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
-      _minimizedDocId = null;
+      setMinimizedDocId(null);
       Modals.unregister('doc-panel');
     }
     const container = document.getElementById('chat-container');
     if (!container) return;
 
-    isOpen = true;
+    setPanelOpen(true);
     // Doc was opened last → it goes in front of the email windows (clears the
     // email-front flag; the doc/email z-index alternation lives in CSS).
     document.body.classList.remove('email-front');
@@ -9813,7 +9810,6 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   // When the doc panel is "tab/chevron down" minimized, it lives as a chip
   // in the bottom dock instead of a red toolbar indicator. We remember which
   // doc was active so the chip can restore it.
-  let _minimizedDocId = null;
 
   function _ensureDocChipRegistered() {
     if (Modals.isRegistered('doc-panel')) return;
@@ -9824,12 +9820,12 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         // Content was already saved to the map when the panel was minimized,
         // so just detach (don't re-read the now-removed editor).
         const id = _minimizedDocId;
-        _minimizedDocId = null;
+        setMinimizedDocId(null);
         if (id) _detachDocFromSession(id);
       },
       restoreFn: () => {
         const id = _minimizedDocId;
-        _minimizedDocId = null;
+        setMinimizedDocId(null);
         // openPanel builds the pane shell; switchToDoc re-renders the
         // saved doc content into it (including PDF render-pages, syntax
         // highlighting, etc.). Without switchToDoc, the pane is empty.
@@ -9844,16 +9840,16 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   export function closePanel(direction) {
     if (!isOpen) {
       if (direction !== 'down' && Modals.isRegistered('doc-panel')) {
-        _minimizedDocId = null;
+        setMinimizedDocId(null);
         _markDocVisibleState(_lastSessionId, 'closed');
         Modals.unregister('doc-panel');
       }
       return;
     }
-    ++_documentNavigationGeneration;
+    bumpNavigationGeneration();
     _closeVersionPanel();
     document.getElementById('doc-version-panel')?.remove();
-    isOpen = false;
+    setPanelOpen(false);
     _closeDocumentOutline();
     _hideRichSelectionToolbar();
     _hideRichSlashMenu();
@@ -9890,12 +9886,12 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     // other direction is a real close — make sure any leftover chip from a
     // prior minimize cycle is cleared too.
     if (direction === 'down') {
-      _minimizedDocId = activeDocId;
+      setMinimizedDocId(activeDocId);
       _markDocVisibleState(_lastSessionId, 'minimized');
       _ensureDocChipRegistered();
       Modals.minimize('doc-panel');
     } else if (Modals.isRegistered('doc-panel')) {
-      _minimizedDocId = null;
+      setMinimizedDocId(null);
       _markDocVisibleState(_lastSessionId, 'closed');
       Modals.unregister('doc-panel');
     } else {
@@ -9918,7 +9914,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
       if (container) container.style.display = '';
       if (pane) pane.remove();
       if (divider) divider.remove();
-      activeDocId = null;
+      setActiveDocId(null);
       const btn = document.getElementById('overflow-doc-btn');
       if (btn) btn.classList.remove('active');
       const docInd = document.getElementById('doc-indicator-btn');
@@ -10033,7 +10029,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   export async function createDocument(sessionId) {
     if (_creatingDoc) return;
     _creatingDoc = true;
-    const generation = ++_documentNavigationGeneration;
+    const generation = bumpNavigationGeneration();
     // If the panel was in empty-state, the user may type into the editor
     // during the create round-trip — preserve that text into the new doc
     // instead of letting switchToDoc blank it.
@@ -10099,7 +10095,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
    */
   export function injectFreshDoc(doc) {
     if (!doc || !doc.id) return;
-    const generation = ++_documentNavigationGeneration;
+    const generation = bumpNavigationGeneration();
     const sessionId = doc.session_id || _lastSessionId || null;
     if (doc.language === 'email') {
       doc._skipLocalDraftOnce = true;
@@ -10242,11 +10238,11 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     // the editor has mounted. Clear that stale dock state before deciding
     // whether the existing pane can be reused.
     if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
-      _minimizedDocId = null;
+      setMinimizedDocId(null);
       Modals.unregister('doc-panel');
     }
     if (!isOpen || !document.getElementById('doc-editor-pane')) {
-      isOpen = false;
+      setPanelOpen(false);
       openPanel();
     } else {
       _markDocVisibleState(_lastSessionId, 'open');
@@ -10254,11 +10250,11 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   }
 
   export async function loadDocument(docId) {
-    const generation = ++_documentNavigationGeneration;
+    const generation = bumpNavigationGeneration();
     _minimizeNotesForDocumentOpen();
     if (_closingDocs.has(docId)) {
-      docs.set(docId, _closingDocs.get(docId));
-      _closingDocs.delete(docId);
+      registerDocument(_closingDocs.get(docId));
+      releaseClosingDraft(docId);
     }
     // If already in tabs, just switch
     if (docs.has(docId)) {
@@ -10323,7 +10319,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     if (!forceNew && sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       await sessionModule.materializePendingSession();
       const id = sessionModule.getCurrentSessionId();
-      if (id) { _lastSessionId = id; return id; }
+      if (id) { setLastSessionId(id); return id; }
     }
     // Preserve the current model when creating a doc session
     const curModel = sessionModule?.getCurrentModel ? sessionModule.getCurrentModel() : null;
@@ -10347,7 +10343,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     if (!res.ok) throw new Error(payload.detail || `Session create failed: HTTP ${res.status}`);
     const sessionId = payload.id;
     if (!sessionId) throw new Error('Session create returned no session ID');
-    _lastSessionId = sessionId;
+    setLastSessionId(sessionId);
     // Tell sessions module so chat uses the same session
     if (adopt && sessionModule && sessionModule.setCurrentSessionId) {
       sessionModule.setCurrentSessionId(sessionId);
@@ -10359,9 +10355,9 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   /** Load all documents for a session into tabs */
   export async function loadSessionDocs(sessionId, opts = {}) {
     suspendSuggestions();
-    const generation = ++_documentNavigationGeneration;
+    const generation = bumpNavigationGeneration();
     _closeVersionPanel();
-    _lastSessionId = sessionId;
+    setLastSessionId(sessionId);
     const restoreMode = !!opts.restoreMode;
     const shouldRestoreOpen = localStorage.getItem(_docOpenKey(sessionId)) === '1';
     const shouldRestoreMinimized = localStorage.getItem(_docMinimizedKey(sessionId)) === '1';
@@ -10379,7 +10375,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
           _cancelPdfPaneSave(id);
           _saveClosingDraft(id, doc);
         } else if (doc._saveState === 'saving') {
-          _closingDocs.set(id, doc);
+          retainClosingDraft(id, doc);
         } else {
           _cancelAutoSave(id);
           _cancelPdfPaneSave(id);
@@ -10390,10 +10386,10 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     // Clear docs from other sessions so tabs are per-session,
     // but keep session-less docs (e.g. email compose) - they are independent
     for (const [id, doc] of [...docs]) {
-      if (doc.sessionId && doc.sessionId !== sessionId) docs.delete(id);
+      if (doc.sessionId && doc.sessionId !== sessionId) removeDocument(id);
     }
     _releasePdfPane(activeDocId);
-    activeDocId = null;
+    setActiveDocId(null);
 
     // Show loading state while fetching
     if (isOpen) _showLoadingOverlay();
@@ -10439,8 +10435,8 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         // Coming back to a chat with documents should advertise the doc without
         // stealing half the screen. Default to a docked chip; only reopen the
         // full editor when this session explicitly persisted an open state.
-        activeDocId = target.id;
-        _minimizedDocId = target.id;
+        setActiveDocId(target.id);
+        setMinimizedDocId(target.id);
         _markDocVisibleState(sessionId, 'minimized');
         _ensureDocChipRegistered();
         if (isOpen) {
@@ -10468,11 +10464,11 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   function addDocToTabs(doc, sessionId) {
     const existing = docs.get(doc.id) || _closingDocs.get(doc.id);
     if (existing && ['dirty', 'saving', 'error'].includes(existing._saveState)) {
-      docs.set(doc.id, existing);
-      _closingDocs.delete(doc.id);
+      registerDocument(existing);
+      releaseClosingDraft(doc.id);
       return;
     }
-    docs.set(doc.id, Object.assign(existing || {}, {
+    registerDocument(Object.assign(existing || {}, {
       id: doc.id,
       title: doc.title || '',
       language: doc.language || '',
@@ -11635,8 +11631,8 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     doc.title = updated.title ?? doc.title;
     doc.language = updated.language ?? doc.language;
     doc.content = updated.current_content ?? doc.content;
-    docs.set(docId, doc);
-    _lastSessionId = sessionId;
+    registerDocument(doc);
+    setLastSessionId(sessionId);
     try { sessionModule?.setSessionHasDocs?.(sessionId, true); } catch (_) {}
     if (switchChat && sessionModule?.selectSession) {
       await sessionModule.selectSession(sessionId);
@@ -12038,7 +12034,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     } finally {
       releaseSaveTurn();
       if (!docs.has(savingDocId) && localDoc._saveState === 'saved'
-          && _closingDocs.get(savingDocId) === localDoc) _closingDocs.delete(savingDocId);
+          && _closingDocs.get(savingDocId) === localDoc) releaseClosingDraft(savingDocId);
     }
   }
 
@@ -12079,21 +12075,21 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         const res = await fetch(`${API_BASE}/api/document/${idToDelete}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(`Delete failed: HTTP ${res.status}`);
 
-        _deletedDocIds.add(idToDelete);
+        markDeleted(idToDelete);
         _cleanupPdfDocState(idToDelete);
         // Remove tab
         const tab = document.querySelector(`.doc-tab[data-doc-id="${idToDelete}"]`);
         if (tab) tab.remove();
         _forgetActiveDoc(targetDoc?.sessionId || _lastSessionId, idToDelete);
-        docs.delete(idToDelete);
-        _closingDocs.delete(idToDelete);
+        removeDocument(idToDelete);
+        releaseClosingDraft(idToDelete);
         // Switch to another doc or close panel when deleting the currently viewed doc
         if (activeDocId === idToDelete) {
           const remaining = Array.from(docs.keys());
           if (remaining.length > 0) {
             switchToDoc(remaining[0]);
           } else {
-            activeDocId = null;
+            setActiveDocId(null);
             closePanel();
           }
         } else {
@@ -12112,11 +12108,11 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
         }
         if (uiModule) uiModule.showError('Failed to delete document');
       } finally {
-        _inFlightDeletes.delete(idToDelete);
+        endDelete(idToDelete);
       }
     })();
 
-    _inFlightDeletes.set(idToDelete, deleteTask);
+    beginDelete(idToDelete, deleteTask);
     return deleteTask;
   }
 
@@ -12310,7 +12306,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
 
   /** Open the document panel immediately for a doc being streamed in */
   export function streamDocOpen(title, language) {
-    ++_documentNavigationGeneration;
+    bumpNavigationGeneration();
     _closeVersionPanel();
     // Discard any pending AI-edit diff before this stream changes the active
     // document. When the AI streams a NEW document while an unapproved diff is
@@ -12353,7 +12349,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     }
     if (!docId) {
       docId = '_streaming_' + Date.now();
-      docs.set(docId, {
+      registerDocument({
         id: docId,
         title: title || '',
         language: language || '',
@@ -12368,7 +12364,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
       _releasePdfPane(activeDocId);
     }
     _streamDocId = docId;
-    activeDocId = docId;
+    setActiveDocId(docId);
     _syncDocIndicator();
 
     if (!isOpen) openPanel();
@@ -12591,7 +12587,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
     suspendSuggestions();
-    ++_documentNavigationGeneration;
+    bumpNavigationGeneration();
     _closeVersionPanel();
     const streamingId = streamDocFinalize();
     // Discard any pending AI-edit diff before this update changes the active
@@ -12610,15 +12606,15 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     // Migrate streaming temp doc to real ID
     if (streamingId && streamingId.startsWith('_streaming_') && docs.has(streamingId)) {
       const tempDoc = docs.get(streamingId);
-      docs.delete(streamingId);
+      removeDocument(streamingId);
       tempDoc.id = docId;
       tempDoc.version = data.version || 1;
       if (data.title) tempDoc.title = data.title;
       if (data.language) tempDoc.language = data.language;
       tempDoc.content = newContent;
-      docs.set(docId, tempDoc);
+      registerDocument(tempDoc);
       // Fix activeDocId reference
-      if (activeDocId === streamingId) activeDocId = docId;
+      if (activeDocId === streamingId) setActiveDocId(docId);
     }
 
     // Deduplicate: if a new doc has same title as existing doc in this session, update it instead
@@ -12715,7 +12711,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
       if (data.title) doc.title = data.title;
       if (data.language) doc.language = data.language;
     } else {
-      docs.set(docId, {
+      registerDocument({
         id: docId,
         title: data.title || '',
         language: data.language || '',
@@ -12743,7 +12739,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
     if (docInd) docInd.classList.add('visible');
 
     // Switch to this doc's tab
-    activeDocId = docId;
+    setActiveDocId(docId);
 
     const badge = document.getElementById('doc-version-badge');
     const titleInput = document.getElementById('doc-title-input');
@@ -13154,18 +13150,15 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
   /** Clear all tab state (e.g. on session switch) */
   export function clearAll() {
     suspendSuggestions();
-    ++_documentNavigationGeneration;
+    bumpNavigationGeneration();
     _closeVersionPanel();
-    docs.clear();
-    activeDocId = null;
-    _lastSessionId = '';
+    clearDocuments();
+    setActiveDocId(null);
+    setLastSessionId('');
     if (isOpen) closePanel();
     _syncDocIndicator();
   }
 
-  export function isPanelOpen() {
-    return isOpen;
-  }
 
   export function getCurrentDocId() {
     return activeDocId;
@@ -13230,6 +13223,28 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
 
 
 
+
+try {
+  bindDocumentCommands({
+    openPanel,
+    closePanel,
+    switchToDoc,
+    saveCurrentToMap,
+    renderTabs,
+    _syncDocIndicator,
+    _syncHeaderActions,
+    showEmptyState,
+    _showLoadingOverlay,
+    _hideLoadingOverlay,
+    _minimizeNotesForDocumentOpen,
+    _ensureDocChipRegistered,
+  });
+} catch (e) {
+  if (!String(e?.message).includes('already bound')) {
+    throw e;
+  }
+}
+
 const documentModule = {
   init,
   openPanel,
@@ -13272,7 +13287,7 @@ const documentModule = {
   isLibraryOpen,
 };
 
-export { handleDocSuggestions };
+export { handleDocSuggestions, isPanelOpen };
 
 export default documentModule;
 window.documentModule = documentModule;
