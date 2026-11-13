@@ -916,3 +916,90 @@ async def test_config_response_does_not_expose_oauth_storage_fields():
     assert "oauth_token_expiry" not in result
     assert encrypted_access not in json.dumps(result)
     assert encrypted_refresh not in json.dumps(result)
+
+def test_oauth_state_contains_expiration_timestamp():
+    from routes.email_helpers import make_oauth_state, verify_oauth_state
+
+    state = make_oauth_state("acct-123", "user@example.com")
+    payload = verify_oauth_state(state)
+
+    assert payload is not None
+    assert isinstance(payload.get("iat"), (int, float))
+    assert isinstance(payload.get("exp"), (int, float))
+    assert payload["exp"] > payload["iat"]
+    assert payload["exp"] - payload["iat"] <= 600
+
+
+def test_oauth_state_rejects_expired_token(monkeypatch):
+    import time
+    from routes.email_helpers import make_oauth_state, verify_oauth_state
+
+    issued = 1800000000
+    monkeypatch.setattr(time, "time", lambda: issued)
+    state = make_oauth_state("acct-123", "user@example.com")
+
+    monkeypatch.setattr(time, "time", lambda: issued + 601)
+    assert verify_oauth_state(state) is None
+
+
+def test_oauth_state_rejects_future_dated_token(monkeypatch):
+    import time
+    from routes.email_helpers import make_oauth_state, verify_oauth_state
+
+    issued = 1800000000
+    monkeypatch.setattr(time, "time", lambda: issued)
+    state = make_oauth_state("acct-123", "user@example.com")
+
+    monkeypatch.setattr(time, "time", lambda: issued - 1)
+    assert verify_oauth_state(state) is None
+
+
+def test_oauth_state_cannot_be_consumed_twice():
+    from routes.email_helpers import (
+        make_oauth_state, verify_oauth_state, consume_oauth_state,
+    )
+
+    db, Factory = _make_db()
+    db.close()
+
+    state = make_oauth_state("acct-123", "user@example.com")
+    payload = verify_oauth_state(state)
+    assert payload is not None
+
+    with mock.patch("core.database.SessionLocal", Factory):
+        assert consume_oauth_state(payload) is True
+        assert consume_oauth_state(payload) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state_owner, account_owner",
+    [("", "alice"), ("alice", None)],
+)
+async def test_callback_rejects_missing_owner_before_token_exchange(
+    state_owner, account_owner,
+):
+    from routes.email_helpers import make_oauth_state
+
+    db, Factory = _make_db()
+    _make_account(
+        db,
+        account_id="acct-missing-owner",
+        owner=account_owner,
+    )
+    db.close()
+
+    state = make_oauth_state("acct-missing-owner", state_owner)
+    callback = _callback_endpoint()
+
+    with mock.patch("core.database.SessionLocal", Factory), \
+         mock.patch("httpx.post") as token_exchange:
+        response = await callback(
+            code="test-code",
+            state=state,
+            error=None,
+            request=_FakeRequest(),
+        )
+
+    assert "ownership_error" in _location(response)
+    token_exchange.assert_not_called()
