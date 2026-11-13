@@ -573,3 +573,113 @@ def list_recent_effect_runs(
             }
         )
     return runs
+
+
+def get_effect_run_detail(
+    run_id: str,
+    *,
+    directory: str | os.PathLike | None = None,
+) -> dict[str, Any] | None:
+    """Read-only per-run inspection of durable Wave 4 effect records and reconciliation flags."""
+    normalized_run_id = str(run_id or "").strip()
+    if not _RUN_ID.fullmatch(normalized_run_id):
+        raise ValueError("Invalid effect run identifier")
+
+    base_dir = Path(directory) if directory is not None else effects_dir()
+    path = base_dir / f"{normalized_run_id}.jsonl"
+    if not path.is_file():
+        return None
+
+    records: list[dict[str, Any]] = []
+    claimed_ids: set[str] = set()
+    settled_ids: set[str] = set()
+    interrupted_ids: list[str] = []
+    corrupt = False
+
+    try:
+        raw = path.read_bytes()
+        last_nl = raw.rfind(b"\n")
+        if last_nl < 0 and raw.strip():
+            corrupt = True
+        elif last_nl >= 0 and raw[last_nl + 1 :].strip():
+            corrupt = True
+
+        complete = raw[: last_nl + 1] if last_nl >= 0 else b""
+        for line in complete.splitlines():
+            if not line.strip():
+                continue
+            kind, record = _parse(line)
+            if kind == "claim":
+                effect_id = str(getattr(record, "effect_id", ""))
+                claimed_ids.add(effect_id)
+                op = getattr(record, "operation", None)
+                scope = getattr(record, "impact_scope", ()) or ()
+                records.append(
+                    {
+                        "kind": "claim",
+                        "sequence": getattr(record, "sequence", 0),
+                        "effect_id": effect_id,
+                        "action_id": str(getattr(record, "action_id", "")),
+                        "tool": str(getattr(op, "tool", "")),
+                        "subcommand": str(getattr(op, "subcommand", "")),
+                        "external": bool(getattr(record, "external", False)),
+                        "targets": [
+                            {
+                                "kind": str(getattr(getattr(t, "kind", None), "value", getattr(t, "kind", ""))),
+                                "role": str(getattr(t, "role", "")),
+                                "location": list(getattr(t, "location", ()) or ()),
+                            }
+                            for t in scope
+                        ],
+                    }
+                )
+            elif kind == "outcome":
+                effect_id = str(getattr(record, "effect_id", ""))
+                settled_ids.add(effect_id)
+                execution = getattr(record, "execution", None)
+                exec_val = str(getattr(execution, "value", execution or ""))
+                if execution is ExecutionOutcome.INTERRUPTED or exec_val == ExecutionOutcome.INTERRUPTED.value:
+                    if effect_id and effect_id not in interrupted_ids:
+                        interrupted_ids.append(effect_id)
+                impact = getattr(record, "impact", None)
+                facts = getattr(record, "facts", None)
+                records.append(
+                    {
+                        "kind": "outcome",
+                        "sequence": getattr(record, "sequence", 0),
+                        "effect_id": effect_id,
+                        "execution_id": str(getattr(record, "execution_id", "")),
+                        "execution": exec_val,
+                        "impact": str(getattr(impact, "value", impact or "")),
+                        "mutation_attempted": bool(getattr(facts, "mutation_attempted", False)),
+                        "replayed": bool(getattr(record, "replayed", False)),
+                    }
+                )
+            elif kind == "observation":
+                records.append(
+                    {
+                        "kind": "observation",
+                        "sequence": getattr(record, "sequence", 0),
+                        "effect_id": str(getattr(record, "effect_id", "")),
+                    }
+                )
+    except Exception:
+        corrupt = True
+
+    unsettled_ids = sorted(claimed_ids - settled_ids)
+    return {
+        "run_id": normalized_run_id,
+        "updated_at": path.stat().st_mtime,
+        "records": records,
+        "counts": {
+            "claims": sum(1 for r in records if r["kind"] == "claim"),
+            "outcomes": sum(1 for r in records if r["kind"] == "outcome"),
+            "observations": sum(1 for r in records if r["kind"] == "observation"),
+        },
+        "reconciliation": {
+            "interrupted_claims": interrupted_ids,
+            "unsettled_claims": unsettled_ids,
+            "needs_attention": bool(corrupt or interrupted_ids or unsettled_ids),
+        },
+        "corrupt": corrupt,
+    }

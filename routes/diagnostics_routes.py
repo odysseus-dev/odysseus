@@ -44,6 +44,20 @@ def setup_diagnostics_routes(
         runs = list_recent_effect_runs(limit=limit)
         return {"status": "success", "runs": runs, "count": len(runs)}
 
+    @router.get("/api/diagnostics/effects/{run_id}")
+    async def get_diagnostics_effect_run(request: Request, run_id: str) -> Dict[str, Any]:
+        """Admin-only per-run inspection of durable Wave 4 effect records."""
+        require_admin(request)
+        from src.agent_runtime.effect_log import get_effect_run_detail
+
+        try:
+            detail = get_effect_run_detail(run_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid effect run identifier")
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Effect run not found")
+        return {"status": "success", **detail}
+
     @router.get("/api/diagnostics/logs")
     async def get_diagnostics_logs(request: Request, limit: int = 200) -> Dict[str, Any]:
         require_admin(request)
