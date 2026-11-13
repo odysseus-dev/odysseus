@@ -24,8 +24,7 @@ class Element {
 }
 
 function text(element) {
-  return [element.textContent || '', (element.innerHTML || '').replace(/<[^>]*>/g, ''),
-    ...element.children.map(text)].join('').trim();
+  return [element.textContent || '', ...element.children.map(text)].join('').trim();
 }
 
 function response() {
@@ -57,7 +56,7 @@ function response() {
     _findSiblingEmailCard: () => null,
     _animateEmailCardRemoval: async uids => calls.animations.push([...uids]),
     _renderGrid: () => calls.renders++, _libCacheWriteBack: () => calls.cache_writes++,
-    showError: message => calls.errors.push(message), showToast: message => calls.errors.push(message),
+    showEmailMoveError: message => calls.errors.push(message), showToast: message => calls.errors.push(message),
     fetch: async (url, options) => {
       calls.requests.push({url, method: options.method});
       if (job.mode === 'network-error') throw new Error('Synthetic disconnect');

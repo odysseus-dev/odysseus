@@ -13,7 +13,7 @@ import spinnerModule from '../spinner.js';
 import { SELECT_MENU_ICON, actionMenuRank, orderActionMenuItems } from '../actionMenuOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '../escMenuStack.js';
 import { topPortalZ } from '../toolWindowZOrder.js';
-import { showError, showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
+import { showError as showEmailMoveError, showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';
 import {
   _handleAiReplyButton,
@@ -244,7 +244,7 @@ export function _showReaderMoreMenu(em, card, reader, anchor, data) {
           await closeAndRemove();
         } catch (e) {
           console.error(e);
-          showError('Failed to move email to Spam');
+          showEmailMoveError('Failed to move email to Spam');
         }
       },
     },
