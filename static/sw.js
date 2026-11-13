@@ -170,7 +170,7 @@ const PRECACHE = [
   '/static/js/features/notes/application/workflows.js',
   '/static/js/features/notes/infrastructure/http.js',
   '/static/js/features/notes/infrastructure/storage.js',
-  '/static/js/tasks.js?v=20260914taskmodel1',
+  '/static/js/tasks.js?v=20261113opsreleasev2',
   '/static/js/calendar.js?v=20260914emailsource11',
   '/static/js/calendar/utils.js',
   '/static/js/calendar/reminders.js',
