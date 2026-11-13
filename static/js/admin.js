@@ -3897,6 +3897,8 @@ function renderLogs(isAutoPoll = false) {
   }
 }
 
+let _opsUnsettledOnly = false;
+
 function _escOps(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -3914,6 +3916,44 @@ function _opsBadgeColor(status) {
   return 'var(--text-muted, #9ca3af)';
 }
 
+async function reconcileEffectRun(runId, action = 'interrupted', note = '') {
+  const statusEl = el('admin-ops-reconcile-status');
+  if (statusEl) {
+    statusEl.style.color = 'var(--text-muted, #9ca3af)';
+    statusEl.textContent = `Reconciling as ${action}...`;
+  }
+  try {
+    const res = await fetch(`/api/diagnostics/effects/${encodeURIComponent(runId)}/reconcile`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, note }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errBody = await res.json();
+        if (errBody && errBody.detail) detail = String(errBody.detail);
+      } catch (_) {}
+      if (statusEl) {
+        statusEl.style.color = 'var(--red, #f87171)';
+        statusEl.textContent = `Reconcile failed: ${detail}`;
+      }
+      return null;
+    }
+    const result = await res.json();
+    await loadAdminOpsPanel();
+    await inspectEffectRun(runId);
+    return result;
+  } catch (err) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--red, #f87171)';
+      statusEl.textContent = `Reconcile error: ${err.message}`;
+    }
+    return null;
+  }
+}
+
 async function inspectEffectRun(runId) {
   const drawer = el('admin-ops-effect-drawer');
   if (!drawer) return;
@@ -3929,6 +3969,7 @@ async function inspectEffectRun(runId) {
     }
     const data = await res.json();
     const rec = data.reconciliation || {};
+    const unsettled = Array.isArray(rec.unsettled_claims) ? rec.unsettled_claims : [];
     const records = Array.isArray(data.records) ? data.records : [];
     drawer.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
@@ -3940,9 +3981,17 @@ async function inspectEffectRun(runId) {
         <span>Outcomes: <strong>${Number(data.counts?.outcomes || 0)}</strong></span>
         <span>Observations: <strong>${Number(data.counts?.observations || 0)}</strong></span>
         <span>Interrupted: <strong>${(rec.interrupted_claims || []).length}</strong></span>
-        <span>Unsettled: <strong>${(rec.unsettled_claims || []).length}</strong></span>
+        <span>Unsettled: <strong style="color:${unsettled.length ? '#fbbf24' : 'inherit'};">${unsettled.length}</strong></span>
         ${data.corrupt ? '<span style="color:var(--red);font-weight:600;">Corrupt tail detected</span>' : ''}
       </div>
+      ${unsettled.length ? `
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;padding:6px;border-radius:4px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);">
+          <input type="text" id="admin-ops-reconcile-note" maxlength="240" placeholder="Operator triage note (optional)" style="flex:1;min-width:160px;padding:3px 6px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);" />
+          <button type="button" data-reconcile-action="interrupted" class="memory-toolbar-btn" style="padding:2px 8px;font-size:10px;">Mark Interrupted</button>
+          <button type="button" data-reconcile-action="cancelled" class="memory-toolbar-btn" style="padding:2px 8px;font-size:10px;">Mark Cancelled</button>
+          <span id="admin-ops-reconcile-status" style="font-size:10px;"></span>
+        </div>
+      ` : ''}
       <div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
         ${records.length ? records.map(r => `
           <div style="padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.22);font-family:monospace;font-size:10px;">
@@ -3962,6 +4011,13 @@ async function inspectEffectRun(runId) {
         drawer.innerHTML = '';
       });
     }
+    drawer.querySelectorAll('button[data-reconcile-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const noteInput = el('admin-ops-reconcile-note');
+        const noteVal = noteInput ? noteInput.value : '';
+        reconcileEffectRun(runId, btn.dataset.reconcileAction || 'interrupted', noteVal);
+      });
+    });
   } catch (err) {
     drawer.innerHTML = `<div style="color:var(--red);">Error loading effect run: ${_escOps(err.message)}</div>`;
   }
@@ -3971,9 +4027,12 @@ async function loadAdminOpsPanel() {
   const panel = el('admin-ops-runtime-panel');
   if (!panel) return;
   try {
+    const effectsUrl = _opsUnsettledOnly
+      ? '/api/diagnostics/effects?limit=8&unsettled_only=true'
+      : '/api/diagnostics/effects?limit=8';
     const [summaryRes, effectsRes] = await Promise.all([
       fetch('/api/diagnostics/ops-summary', { credentials: 'same-origin' }),
-      fetch('/api/diagnostics/effects?limit=8', { credentials: 'same-origin' }),
+      fetch(effectsUrl, { credentials: 'same-origin' }),
     ]);
     if (!summaryRes.ok) {
       panel.style.display = 'none';
@@ -4013,24 +4072,38 @@ async function loadAdminOpsPanel() {
           </span>`;
         }).join('')}
       </div>
-      ${runs.length ? `
-        <div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;">
-          <div style="font-weight:600;opacity:0.75;font-size:10px;text-transform:uppercase;">Recent Effect Runs (Click to inspect)</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            ${runs.map(r => `
-              <button type="button" class="memory-toolbar-btn" data-inspect-run-id="${_escOps(r.run_id)}" style="font-family:monospace;font-size:10px;padding:2px 6px;">
-                ${_escOps(String(r.run_id || '').slice(0, 10))}? (${Number(r.claims || 0)}c/${Number(r.outcomes || 0)}o${r.corrupt ? ' !' : ''})
-              </button>
-            `).join('')}
-          </div>
+      <div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span style="font-weight:600;opacity:0.75;font-size:10px;text-transform:uppercase;">Recent Effect Runs (Click to inspect)</span>
+          <label style="display:inline-flex;align-items:center;gap:4px;font-size:10px;opacity:0.85;cursor:pointer;">
+            <input type="checkbox" id="admin-ops-unsettled-only" ${_opsUnsettledOnly ? 'checked' : ''} />
+            <span>Unsettled only</span>
+          </label>
         </div>
-      ` : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${runs.length ? runs.map(r => {
+            const unsettledCount = Number(r.unsettled_claims || 0);
+            return `
+              <button type="button" class="memory-toolbar-btn" data-inspect-run-id="${_escOps(r.run_id)}" style="font-family:monospace;font-size:10px;padding:2px 6px;${unsettledCount > 0 ? 'border-color:rgba(251,191,36,0.55);color:#fbbf24;' : ''}">
+                ${_escOps(String(r.run_id || '').slice(0, 10))}? (${Number(r.claims || 0)}c/${Number(r.outcomes || 0)}o${unsettledCount > 0 ? ` ? ${unsettledCount} unsettled` : ''}${r.corrupt ? ' !' : ''})
+              </button>
+            `;
+          }).join('') : `<span style="opacity:0.65;font-size:10px;">${_opsUnsettledOnly ? 'No unsettled effect runs.' : 'No recent effect runs.'}</span>`}
+        </div>
+      </div>
       <div id="admin-ops-effect-drawer" style="display:none;padding:8px;border-radius:5px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);"></div>
     `;
 
     const refreshBtn = el('admin-ops-refresh-btn');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', () => loadAdminOpsPanel());
+    }
+    const unsettledToggle = el('admin-ops-unsettled-only');
+    if (unsettledToggle) {
+      unsettledToggle.addEventListener('change', (e) => {
+        _opsUnsettledOnly = Boolean(e.target.checked);
+        loadAdminOpsPanel();
+      });
     }
     panel.querySelectorAll('button[data-inspect-run-id]').forEach(btn => {
       btn.addEventListener('click', () => inspectEffectRun(btn.dataset.inspectRunId));
