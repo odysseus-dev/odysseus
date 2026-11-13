@@ -31,9 +31,19 @@ let _taskCompletionPending = false;
 let _taskBulkDeleting = false;
 let _pendingFocusAction = null;
 let _pendingApprovals = [];
+let _approvalDecisionHistory = [];
 let _approvalsPollTimer = null;
 let _approvalsTickTimer = null;
 let _approvalsVisibilityBound = false;
+
+function _formatDecisionAge(resolvedAt) {
+  const ts = Number(resolvedAt || 0);
+  if (!ts) return '';
+  const delta = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (delta < 60) return `${delta}s ago`;
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  return `${Math.floor(delta / 3600)}h ago`;
+}
 
 function _formatApprovalTtl(expiresAt) {
   const exp = Number(expiresAt || 0);
@@ -108,6 +118,18 @@ function _startApprovalsPolling() {
   }
 }
 
+async function _fetchApprovalHistory() {
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/history?limit=8`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    _approvalDecisionHistory = Array.isArray(data.decisions) ? data.decisions : [];
+  } catch (_) {
+    // Non-fatal: keep last known history
+  }
+  _renderApprovalHistory();
+}
+
 async function _fetchPendingApprovals() {
   try {
     const res = await fetch(`${API_BASE}/api/tasks/approvals/pending`, { credentials: 'same-origin' });
@@ -119,6 +141,7 @@ async function _fetchPendingApprovals() {
     // Non-fatal: keep last known list
   }
   _renderPendingApprovals();
+  await _fetchApprovalHistory();
 }
 
 async function _resolvePendingApproval(approvalId, decision) {
@@ -145,6 +168,68 @@ async function _resolvePendingApproval(approvalId, decision) {
   await _fetchPendingApprovals();
 }
 
+async function _resolveAllPendingApprovals(decision) {
+  const approvalIds = _pendingApprovals.map(item => item.approval_id).filter(Boolean);
+  if (!approvalIds.length) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/resolve-bulk`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approval_ids: approvalIds, decision }),
+    });
+    if (!res.ok) {
+      let msg = `Failed bulk approval action (${res.status})`;
+      try {
+        const err = await res.json();
+        if (err && err.detail) msg = err.detail;
+      } catch (_) {}
+      if (uiModule) uiModule.showError(msg);
+    } else if (uiModule) {
+      const data = await res.json();
+      const count = Number(data.resolved_count || 0);
+      const verb = decision === 'deny' ? 'Denied' : 'Approved';
+      uiModule.showToast(`${verb} ${count} pending action${count === 1 ? '' : 's'}`, { duration: 3500 });
+    }
+  } catch (e) {
+    if (uiModule) uiModule.showError('Network error during bulk approval');
+  }
+  await _fetchPendingApprovals();
+}
+
+function _renderApprovalHistory() {
+  const host = document.getElementById('tasks-approval-history');
+  if (!host) return;
+  if (!_approvalDecisionHistory.length) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  host.style.display = 'flex';
+  host.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.75;">
+      <span style="font-weight:600;">Recent Decisions (${_approvalDecisionHistory.length})</span>
+      <span>Owner-scoped audit trail</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+      ${_approvalDecisionHistory.map(item => {
+        const isDenied = item.decision === 'deny';
+        const pillColor = isDenied ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)';
+        const textColor = isDenied ? '#fca5a5' : '#6ee7b7';
+        const label = isDenied ? 'Denied' : 'Approved';
+        return `
+          <span class="task-approval-history-pill" data-approval-id="${_esc(item.approval_id)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:${pillColor};color:${textColor};font-size:10px;">
+            <strong>${_esc(item.tool_name || 'tool')}</strong>
+            <span>${label}</span>
+            ${item.digest ? `<span style="opacity:0.7;font-family:monospace;">#${_esc(item.digest)}</span>` : ''}
+            ${item.resolved_at ? `<span style="opacity:0.7;">${_esc(_formatDecisionAge(item.resolved_at))}</span>` : ''}
+          </span>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function _renderPendingApprovals() {
   const host = document.getElementById('tasks-pending-approvals');
   if (!host) {
@@ -159,13 +244,20 @@ function _renderPendingApprovals() {
     return;
   }
   host.style.display = 'flex';
+  const showBulkActions = _pendingApprovals.length >= 2;
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));">
       <div style="display:flex;align-items:center;gap:6px;">
         <span>Pending Approvals (${_pendingApprovals.length})</span>
         <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
       </div>
-      <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
+      <div style="display:flex;align-items:center;gap:4px;">
+        ${showBulkActions ? `
+          <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;">Approve All</button>
+          <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;">Deny All</button>
+        ` : ''}
+        <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
+      </div>
     </div>
     ${_pendingApprovals.map(item => `
       <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:11px;">
@@ -189,6 +281,12 @@ function _renderPendingApprovals() {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => _fetchPendingApprovals());
   }
+  host.querySelectorAll('button[data-bulk-approval-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      await _resolveAllPendingApprovals(btn.dataset.bulkApprovalAction);
+    });
+  });
   host.querySelectorAll('button[data-approval-action]').forEach(btn => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
@@ -3270,6 +3368,7 @@ function _renderMainView() {
         <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div id="tasks-pending-approvals" style="display:none;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+      <div id="tasks-approval-history" style="display:none;flex-direction:column;gap:4px;margin-bottom:8px;"></div>
       <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:0;"></div>
       <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:4px;"></div>
     </div>
