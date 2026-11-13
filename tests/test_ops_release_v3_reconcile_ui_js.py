@@ -137,3 +137,8 @@ global.fetch = async (url, opts = {{}}) => {{
 """
     res = subprocess.run(["node"], input=script, capture_output=True, text=True, encoding="utf-8", check=False)
     assert res.returncode == 0, res.stderr or res.stdout
+
+
+def test_ops_release_v3_admin_asset_version_bumped():
+    a=(ROOT/'static/app.js').read_text('utf-8'); w=(ROOT/'static/sw.js').read_text('utf-8')
+    assert 'admin.js?v=20261113opsreleasev3' in a and 'admin.js?v=20261113opsreleasev3' in w
