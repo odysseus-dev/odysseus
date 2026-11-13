@@ -1364,3 +1364,578 @@ async def test_cached_flags_refresh_prunes_checkpoint_after_message_is_read(
     assert state["notified_uids"] == []
     assert state["per_uid"]["acct-a:1"]["unread"] is False
     assert state["total_unread"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ministral_scanner_uses_ai_when_enabled(monkeypatch, tmp_path):
+    import routes.note_routes as note_routes
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-silent"]
+    )
+
+    calls = []
+    deliveries = []
+
+    async def fake_classify(subject, body):
+        calls.append((subject, body))
+        return {
+            "score": 0,
+            "reason": "AI classified as silent",
+            "tags": [],
+            "spam": False,
+        }
+
+    async def fake_delivery(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", fake_classify
+    )
+    monkeypatch.setattr(
+        note_routes, "dispatch_reminder", fake_delivery
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok is True, message
+    assert len(calls) == 1
+    assert deliveries == []
+
+    cache_path = tmp_path / "urgency-cache" / "acct-silent.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    verdict = cache["uids"]["1"]
+
+    assert verdict["score"] == 0
+    assert verdict["triage_version"] == 11
+    assert verdict["reason"] == "AI classified as silent"
+    assert verdict["message_id"] == "<acct-silent-1@example.com>"
+
+
+@pytest.mark.asyncio
+async def test_ministral_failure_preserves_urgent_checkpoint(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(
+        monkeypatch, tmp_path, ["acct-a"]
+    )
+
+    classifications = []
+    deliveries = []
+
+    async def critical(subject, body):
+        classifications.append("critical")
+        return {
+            "score": 3,
+            "reason": "AI marked critical",
+            "tags": [],
+            "spam": False,
+        }
+
+    async def fake_delivery(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(
+        note_routes, "dispatch_reminder", fake_delivery
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok is True, message
+    assert classifications == ["critical"]
+    assert len(deliveries) == 1
+
+    # A cached second scan must not reclassify or renotify.
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok is True, message
+    assert classifications == ["critical"]
+    assert len(deliveries) == 1
+
+    # Simulate an expired AI cache entry, then an AI outage.
+    cache_path = tmp_path / "urgency-cache" / "acct-a.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    cache["uids"]["1"]["triage_version"] = 10
+    cache_path.write_text(json.dumps(cache), encoding="utf-8")
+
+    async def unavailable(subject, body):
+        raise ConnectionError("Simulated Ollama outage")
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", unavailable
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok is True, message
+
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    verdict = cache["uids"]["1"]
+
+    # Heuristic fallback retains the urgent classification,
+    # but cannot be mistaken for a successful AI verdict.
+    assert verdict["score"] == 3
+    assert verdict["triage_version"] == 10
+
+    # Previous notification checkpoint must prevent duplicates.
+    assert len(deliveries) == 1
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "acct-a:1" in json.dumps(state)
+
+@pytest.mark.asyncio
+async def test_ministral_outage_does_not_downgrade_prior_critical(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from routes import email_helpers
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(monkeypatch, tmp_path, ["acct-a"])
+
+    deliveries = []
+
+    async def critical(_subject, _body):
+        return {"score": 3, "reason": "Verified critical alert"}
+
+    async def deliver(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(note_routes, "dispatch_reminder", deliver)
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+    assert len(deliveries) == 1
+
+    cache_path = tmp_path / "urgency-cache" / "acct-a.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    cache["uids"]["1"]["triage_version"] = 10
+    cache_path.write_text(json.dumps(cache), encoding="utf-8")
+
+    original_imap = email_helpers._imap_connect
+
+    class NeutralImap:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def uid(self, command, *args):
+            if command == "FETCH" and str(args[-1]) != "(UID FLAGS)":
+                uid = args[0]
+                raw = (
+                    b"From: Example <sender@example.com>\r\n"
+                    b"Subject: Weekly update\r\n"
+                    b"Message-ID: <acct-a-1@example.com>\r\n"
+                    b"\r\n"
+                    b"Routine informational summary."
+                )
+                return "OK", [(b"1 (UID 1 FLAGS ())", raw)]
+            return self.connection.uid(command, *args)
+
+    monkeypatch.setattr(
+        email_helpers,
+        "_imap_connect",
+        lambda *args, **kwargs: NeutralImap(
+            original_imap(*args, **kwargs)
+        ),
+    )
+
+    async def outage(_subject, _body):
+        raise ConnectionError("Simulated model outage")
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", outage
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    prior = state["per_uid"]["acct-a:1"]
+
+    assert prior["score"] == 3, (
+        "Previous critical verdict was downgraded during AI outage"
+    )
+    assert len(deliveries) == 1
+
+@pytest.mark.asyncio
+async def test_ministral_outage_preserves_critical_without_cache(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from routes import email_helpers
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(monkeypatch, tmp_path, ["acct-a"])
+
+    deliveries = []
+
+    async def critical(_subject, _body):
+        return {"score": 3, "reason": "Verified critical alert"}
+
+    async def deliver(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(note_routes, "dispatch_reminder", deliver)
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+    assert len(deliveries) == 1
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["per_uid"]["acct-a:1"]["score"] == 3
+
+    # Remove the cache while preserving the authoritative state file.
+    cache_path = tmp_path / "urgency-cache" / "acct-a.json"
+    cache_path.unlink()
+
+    original_imap = email_helpers._imap_connect
+
+    class NeutralImap:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def uid(self, command, *args):
+            if command == "FETCH" and str(args[-1]) != "(UID FLAGS)":
+                raw = (
+                    b"From: Example <sender@example.com>\r\n"
+                    b"Subject: Weekly update\r\n"
+                    b"Message-ID: <acct-a-1@example.com>\r\n"
+                    b"\r\n"
+                    b"Routine informational summary."
+                )
+                return "OK", [(b"1 (UID 1 FLAGS ())", raw)]
+            return self.connection.uid(command, *args)
+
+    monkeypatch.setattr(
+        email_helpers,
+        "_imap_connect",
+        lambda *args, **kwargs: NeutralImap(
+            original_imap(*args, **kwargs)
+        ),
+    )
+
+    async def outage(_subject, _body):
+        raise ConnectionError("Simulated model outage")
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", outage
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert state["per_uid"]["acct-a:1"]["score"] == 3, (
+        "Critical verdict lost when cache was missing during Ollama outage"
+    )
+    assert len(deliveries) == 1
+
+@pytest.mark.asyncio
+async def test_ministral_partial_scan_preserves_prior_critical(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(monkeypatch, tmp_path, ["acct-a"])
+
+    deliveries = []
+
+    async def critical(_subject, _body):
+        return {"score": 3, "reason": "Previously critical"}
+
+    async def deliver(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(note_routes, "dispatch_reminder", deliver)
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    initial = json.loads(state_path.read_text(encoding="utf-8"))
+    assert initial["per_uid"]["acct-a:1"]["score"] == 3
+    assert len(deliveries) == 1
+
+    # More than 30 UIDs makes the next scan partial.
+    # UID 1 falls outside the processed 30-message window.
+    runtime["search_uids"]["acct-a"] = [
+        str(uid) for uid in range(1, 33)
+    ]
+
+    async def normal(_subject, _body):
+        return {"score": 0, "reason": "Routine message"}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", normal
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    updated = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert updated["per_uid"]["acct-a:1"]["score"] == 3, (
+        "Partial scan erased a previously critical email"
+    )
+    assert "acct-a:1" in updated["notified_uids"]
+    assert len(deliveries) == 1
+
+@pytest.mark.asyncio
+async def test_ministral_corrupt_cache_preserves_critical(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(monkeypatch, tmp_path, ["acct-a"])
+
+    deliveries = []
+
+    async def critical(_subject, _body):
+        return {"score": 3, "reason": "Verified critical alert"}
+
+    async def deliver(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(note_routes, "dispatch_reminder", deliver)
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+    assert len(deliveries) == 1
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    cache_path = tmp_path / "urgency-cache" / "acct-a.json"
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["per_uid"]["acct-a:1"]["score"] == 3
+
+    # Damage the cache, leaving the authoritative state intact.
+    cache_path.write_text("{corrupted-json", encoding="utf-8")
+
+    async def outage(_subject, _body):
+        raise ConnectionError("Simulated Ollama outage")
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", outage
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["per_uid"]["acct-a:1"]["score"] == 3
+    assert "acct-a:1" in state["notified_uids"]
+    assert len(deliveries) == 1
+
+@pytest.mark.asyncio
+async def test_ministral_uid_reuse_does_not_inherit_old_critical(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from routes import email_helpers
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(monkeypatch, tmp_path, ["acct-a"])
+
+    deliveries = []
+
+    async def critical(_subject, _body):
+        return {"score": 3, "reason": "Old critical email"}
+
+    async def deliver(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(note_routes, "dispatch_reminder", deliver)
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["per_uid"]["acct-a:1"]["score"] == 3
+
+    # A different message reuses the same UID.
+    original_imap = email_helpers._imap_connect
+
+    class ReusedUidImap:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def uid(self, command, *args):
+            if command == "FETCH" and str(args[-1]) != "(UID FLAGS)":
+                raw = (
+                    b"From: Example <sender@example.com>\r\n"
+                    b"Subject: Weekly update\r\n"
+                    b"Message-ID: <different-message@example.com>\r\n"
+                    b"\r\n"
+                    b"Routine informational summary."
+                )
+                return "OK", [(b"1 (UID 1 FLAGS ())", raw)]
+            return self.connection.uid(command, *args)
+
+    monkeypatch.setattr(
+        email_helpers,
+        "_imap_connect",
+        lambda *args, **kwargs: ReusedUidImap(
+            original_imap(*args, **kwargs)
+        ),
+    )
+
+    # Force the scanner to fetch the new message.
+    cache_path = tmp_path / "urgency-cache" / "acct-a.json"
+    cache_path.unlink()
+
+    async def outage(_subject, _body):
+        raise ConnectionError("Simulated Ollama outage")
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", outage
+    )
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    verdict = state["per_uid"]["acct-a:1"]
+
+    assert verdict["message_id"] == "<different-message@example.com>"
+    assert verdict["score"] == 0, (
+        "New email incorrectly inherited the old critical verdict"
+    )
+
+@pytest.mark.asyncio
+async def test_ministral_cached_uid_reuse_rejects_old_verdict(
+    monkeypatch, tmp_path
+):
+    import routes.note_routes as note_routes
+    from routes import email_helpers
+    from src import ministral_email_classifier
+
+    monkeypatch.setenv("ODYAI_EMAIL_MINISTRAL_ENABLED", "1")
+    actions, runtime = _configure_action(monkeypatch, tmp_path, ["acct-a"])
+
+    deliveries = []
+
+    async def critical(_subject, _body):
+        return {"score": 3, "reason": "Old critical email"}
+
+    async def deliver(**kwargs):
+        deliveries.append(kwargs)
+        return {"browser_sent": True}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", critical
+    )
+    monkeypatch.setattr(note_routes, "dispatch_reminder", deliver)
+
+    message, ok = await actions.action_check_email_urgency("alice")
+    assert ok, message
+    assert len(deliveries) == 1
+
+    state_path = tmp_path / "email_urgency_state_alice.json"
+    cache_path = tmp_path / "urgency-cache" / "acct-a.json"
+
+    previous_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert previous_state["per_uid"]["acct-a:1"]["score"] == 3
+
+    # The same UID now points to a different email.
+    original_imap = email_helpers._imap_connect
+
+    class DifferentMessageImap:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def uid(self, command, *args):
+            if command == "FETCH":
+                query = str(args[-1]) if args else ""
+                if "RFC822.HEADER" in query:
+                    raw = (
+                        b"From: Example <sender@example.com>\r\n"
+                        b"Subject: Replacement message\r\n"
+                        b"Message-ID: <replacement@example.com>\r\n"
+                        b"\r\n"
+                    )
+                    return "OK", [(b"1 (UID 1 FLAGS ())", raw)]
+            return self.connection.uid(command, *args)
+
+    monkeypatch.setattr(
+        email_helpers,
+        "_imap_connect",
+        lambda *args, **kwargs: DifferentMessageImap(
+            original_imap(*args, **kwargs)
+        ),
+    )
+
+    calls = []
+
+    async def classify_new(_subject, _body):
+        calls.append(True)
+        return {"score": 0, "reason": "New routine message"}
+
+    monkeypatch.setattr(
+        ministral_email_classifier, "classify_email", classify_new
+    )
+
+    with pytest.raises(actions.TaskNoop):
+        await actions.action_check_email_urgency("alice")
+    assert ok, message
+
+    updated = json.loads(state_path.read_text(encoding="utf-8"))
+    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+
+    # The mismatched UID must not be accepted as the old cached email.
+    # This interim fail-closed behavior preserves state but does not
+    # classify the replacement until a future safe transition.
+    assert calls == []
+    assert updated["per_uid"]["acct-a:1"]["score"] == 3
+    assert cached["uids"]["1"]["message_id"] == "<acct-a-1@example.com>"
+    assert len(deliveries) == 1
