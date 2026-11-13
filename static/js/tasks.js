@@ -58,11 +58,29 @@ function _syncSelectedApprovalIds() {
 }
 
 let _pendingApprovalsToolFilter = '';
+let _pendingApprovalsRiskFilter = '';
+let _approvalsPollingPaused = false;
+let _approvalHistorySearch = '';
 let _approvalHistoryEscapeBound = false;
 
+function _hasActivePendingFilter() {
+  return Boolean(_pendingApprovalsToolFilter || _pendingApprovalsRiskFilter);
+}
+
 function _getFilteredPendingApprovals() {
-  if (!_pendingApprovalsToolFilter) return _pendingApprovals;
-  return _pendingApprovals.filter(item => item && String(item.tool_name || '') === _pendingApprovalsToolFilter);
+  return _pendingApprovals.filter(item => {
+    if (!item) return false;
+    if (_pendingApprovalsToolFilter && String(item.tool_name || '') !== _pendingApprovalsToolFilter) {
+      return false;
+    }
+    if (_pendingApprovalsRiskFilter === 'safe' && item.external_untrusted_context_seen) {
+      return false;
+    }
+    if (_pendingApprovalsRiskFilter === 'external' && !item.external_untrusted_context_seen) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function _selectAllPendingApprovals(checked) {
@@ -70,12 +88,13 @@ function _selectAllPendingApprovals(checked) {
     if (item && item.approval_id) _knownPendingApprovalIds.add(item.approval_id);
   }
   const visible = _getFilteredPendingApprovals();
+  const hasFilter = _hasActivePendingFilter();
   if (checked) {
-    if (_pendingApprovalsToolFilter) _selectedApprovalIds.clear();
+    if (hasFilter) _selectedApprovalIds.clear();
     for (const item of visible) {
       if (item && item.approval_id) _selectedApprovalIds.add(item.approval_id);
     }
-  } else if (_pendingApprovalsToolFilter) {
+  } else if (hasFilter) {
     for (const item of visible) {
       if (item && item.approval_id) _selectedApprovalIds.delete(item.approval_id);
     }
@@ -90,7 +109,7 @@ function _selectSafePendingApprovals() {
     if (item && item.approval_id) _knownPendingApprovalIds.add(item.approval_id);
   }
   const visible = _getFilteredPendingApprovals();
-  if (_pendingApprovalsToolFilter) {
+  if (_hasActivePendingFilter()) {
     for (const item of visible) {
       if (item && item.approval_id) _selectedApprovalIds.delete(item.approval_id);
     }
@@ -152,7 +171,7 @@ function _startApprovalsPolling() {
         _stopApprovalsPolling();
         return;
       }
-      if (!document.hidden) {
+      if (!document.hidden && !_approvalsPollingPaused) {
         _fetchPendingApprovals();
       }
     });
@@ -164,6 +183,7 @@ function _startApprovalsPolling() {
         _stopApprovalsPolling();
         return;
       }
+      if (_approvalsPollingPaused) return;
       if (typeof document !== 'undefined' && document.hidden) return;
       _fetchPendingApprovals();
     }, 10000);
@@ -364,7 +384,8 @@ function _exportApprovalHistory(format = 'csv') {
 function _renderApprovalHistory() {
   const host = document.getElementById('tasks-approval-history');
   if (!host) return;
-  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all' && !_approvalHistoryToolFilter) {
+  const searchNeedle = String(_approvalHistorySearch || '').trim().toLowerCase();
+  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all' && !_approvalHistoryToolFilter && !searchNeedle) {
     host.style.display = 'none';
     host.innerHTML = '';
     return;
@@ -375,21 +396,30 @@ function _renderApprovalHistory() {
     { key: 'approve', label: 'Approved' },
     { key: 'deny', label: 'Denied' },
   ];
+  const visibleDecisions = searchNeedle
+    ? _approvalDecisionHistory.filter(item => {
+        if (!item) return false;
+        const idStr = String(item.approval_id || '').toLowerCase();
+        const digestStr = String(item.digest || '').toLowerCase();
+        return idStr.includes(searchNeedle) || digestStr.includes(searchNeedle);
+      })
+    : _approvalDecisionHistory;
   const toolOptions = [..._knownApprovalHistoryTools].sort();
-  const approvedCount = _approvalDecisionHistory.filter(item => item && item.decision !== 'deny').length;
-  const deniedCount = _approvalDecisionHistory.filter(item => item && item.decision === 'deny').length;
-  const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter);
-  const selectedDetail = _approvalDecisionHistory.find(item => item && String(item.approval_id) === _selectedApprovalHistoryId) || null;
+  const approvedCount = visibleDecisions.filter(item => item && item.decision !== 'deny').length;
+  const deniedCount = visibleDecisions.filter(item => item && item.decision === 'deny').length;
+  const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter) || Boolean(searchNeedle);
+  const selectedDetail = visibleDecisions.find(item => item && String(item.approval_id) === _selectedApprovalHistoryId) || null;
   if (!selectedDetail && _selectedApprovalHistoryId) {
     _selectedApprovalHistoryId = '';
   }
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-weight:600;">Recent Decisions (${_approvalDecisionHistory.length})</span>
-        ${_approvalDecisionHistory.length ? `<span style="opacity:0.7;">Approved: ${approvedCount} · Denied: ${deniedCount}</span>` : ''}
+        <span style="font-weight:600;">Recent Decisions (${visibleDecisions.length})</span>
+        ${visibleDecisions.length ? `<span style="opacity:0.7;">Approved: ${approvedCount} · Denied: ${deniedCount}</span>` : ''}
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        <input type="search" id="tasks-approval-history-search" aria-label="Search decisions by ID or digest" placeholder="ID or digest…" value="${_esc(_approvalHistorySearch)}" style="padding:1px 5px;font-size:9px;width:96px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
         ${toolOptions.length ? `
           <select id="tasks-approval-history-tool" aria-label="Filter decisions by tool" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
             <option value="">All tools</option>
@@ -407,7 +437,7 @@ function _renderApprovalHistory() {
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;">
-      ${_approvalDecisionHistory.length ? _approvalDecisionHistory.map(item => {
+      ${visibleDecisions.length ? visibleDecisions.map(item => {
         const isDenied = item.decision === 'deny';
         const isSelected = Boolean(selectedDetail && String(item.approval_id) === String(selectedDetail.approval_id));
         const pillColor = isDenied ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)';
@@ -438,6 +468,17 @@ function _renderApprovalHistory() {
       </div>
     ` : ''}
   `;
+  const historySearchInput = host.querySelector('#tasks-approval-history-search');
+  if (historySearchInput) {
+    historySearchInput.addEventListener('input', () => {
+      _approvalHistorySearch = historySearchInput.value || '';
+      _renderApprovalHistory();
+      const restored = host.querySelector('#tasks-approval-history-search');
+      if (restored && typeof restored.focus === 'function') {
+        restored.focus();
+      }
+    });
+  }
   const toolSelect = host.querySelector('#tasks-approval-history-tool');
   if (toolSelect) {
     toolSelect.addEventListener('change', async () => {
@@ -478,6 +519,7 @@ function _renderApprovalHistory() {
     resetBtn.addEventListener('click', async () => {
       _approvalHistoryFilter = 'all';
       _approvalHistoryToolFilter = '';
+      _approvalHistorySearch = '';
       await _fetchApprovalHistory();
     });
   }
@@ -502,6 +544,7 @@ function _renderPendingApprovals() {
   _syncSelectedApprovalIds();
   if (!_pendingApprovals.length) {
     _pendingApprovalsToolFilter = '';
+    _pendingApprovalsRiskFilter = '';
     host.style.display = 'none';
     host.innerHTML = '';
     return;
@@ -510,17 +553,22 @@ function _renderPendingApprovals() {
   if (_pendingApprovalsToolFilter && !pendingTools.includes(_pendingApprovalsToolFilter)) {
     _pendingApprovalsToolFilter = '';
   }
+  const anyExternalUntrusted = _pendingApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
+  if (_pendingApprovalsRiskFilter && !anyExternalUntrusted) {
+    _pendingApprovalsRiskFilter = '';
+  }
   const visibleApprovals = _getFilteredPendingApprovals();
   host.style.display = 'flex';
   const showBulkActions = visibleApprovals.length >= 2;
   const visibleSelectedCount = visibleApprovals.filter(item => item && _selectedApprovalIds.has(item.approval_id)).length;
   const selectedCount = _selectedApprovalIds.size;
   const allSelected = visibleApprovals.length > 0 && visibleSelectedCount === visibleApprovals.length;
-  const isPartialSelection = Boolean((visibleSelectedCount > 0 && !allSelected) || (_pendingApprovalsToolFilter && selectedCount > 0));
+  const hasPendingFilter = _hasActivePendingFilter();
+  const isPartialSelection = Boolean((visibleSelectedCount > 0 && !allSelected) || (hasPendingFilter && selectedCount > 0));
   const hasExternalUntrusted = visibleApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
   const approveBulkLabel = isPartialSelection ? `Approve Selected (${selectedCount})` : 'Approve All';
   const denyBulkLabel = isPartialSelection ? `Deny Selected (${selectedCount})` : 'Deny All';
-  const countLabel = _pendingApprovalsToolFilter ? `${visibleApprovals.length}/${_pendingApprovals.length}` : `${_pendingApprovals.length}`;
+  const countLabel = hasPendingFilter ? `${visibleApprovals.length}/${_pendingApprovals.length}` : `${_pendingApprovals.length}`;
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:6px;">
@@ -535,6 +583,13 @@ function _renderPendingApprovals() {
             ${pendingTools.map(t => `<option value="${_esc(t)}"${_pendingApprovalsToolFilter === t ? ' selected' : ''}>${_esc(t)}</option>`).join('')}
           </select>
         ` : ''}
+        ${anyExternalUntrusted ? `
+          <select id="tasks-approvals-risk-filter" aria-label="Filter pending approvals by context risk" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">All contexts</option>
+            <option value="safe"${_pendingApprovalsRiskFilter === 'safe' ? ' selected' : ''}>Safe only</option>
+            <option value="external"${_pendingApprovalsRiskFilter === 'external' ? ' selected' : ''}>External untrusted</option>
+          </select>
+        ` : ''}
         ${showBulkActions && hasExternalUntrusted ? `
           <button type="button" id="tasks-approvals-select-safe" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Select Safe Only</button>
         ` : ''}
@@ -542,6 +597,7 @@ function _renderPendingApprovals() {
           <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${approveBulkLabel}</button>
           <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${denyBulkLabel}</button>
         ` : ''}
+        <button type="button" id="tasks-approvals-pause-toggle" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;${_approvalsPollingPaused ? 'border-color:var(--accent,var(--red));font-weight:600;' : ''}">${_approvalsPollingPaused ? 'Resume Poll' : 'Pause Poll'}</button>
         <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
       </div>
     </div>
@@ -576,6 +632,20 @@ function _renderPendingApprovals() {
   if (pendingToolSelect) {
     pendingToolSelect.addEventListener('change', () => {
       _pendingApprovalsToolFilter = pendingToolSelect.value || '';
+      _renderPendingApprovals();
+    });
+  }
+  const pendingRiskSelect = host.querySelector('#tasks-approvals-risk-filter');
+  if (pendingRiskSelect) {
+    pendingRiskSelect.addEventListener('change', () => {
+      _pendingApprovalsRiskFilter = pendingRiskSelect.value || '';
+      _renderPendingApprovals();
+    });
+  }
+  const pauseToggleBtn = host.querySelector('#tasks-approvals-pause-toggle');
+  if (pauseToggleBtn) {
+    pauseToggleBtn.addEventListener('click', () => {
+      _approvalsPollingPaused = !_approvalsPollingPaused;
       _renderPendingApprovals();
     });
   }
