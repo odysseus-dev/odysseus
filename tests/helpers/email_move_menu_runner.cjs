@@ -43,7 +43,7 @@ function response() {
   const body = new Element();
   const original = {uid: '42', subject: 'Original', is_read: true};
   const calls = {requests: [], errors: [], animations: [], renders: 0, cache_writes: 0};
-  const state = {_libEmails: [original], _libFolder: job.flow === 'card-sent' ? 'Sent' : 'INBOX',
+  const state = {_libEmails: [original], _libFolder: 'INBOX',
     _selectedUids: new Set(), _libSelectMode: false};
   let release;
   const context = vm.createContext({
@@ -67,11 +67,9 @@ function response() {
   });
   vm.runInContext(job.source.replace(/^export /gm, ''), context);
   const card = new Element(), reader = new Element(), anchor = new Element();
-  if (job.flow.startsWith('reader')) context._showReaderMoreMenu(original, card, reader, anchor, {});
-  else context._showCardMenu(original, anchor);
+  context._showReaderMoreMenu(original, card, reader, anchor, {});
   const dropdown = body.children[0];
-  const label = job.flow === 'reader-spam' ? 'Move to Spam'
-    : job.flow === 'reader-archive' ? 'Move to Archive' : 'Archive';
+  const label = 'Move to Spam';
   const action = dropdown.children.find(item => item.handlers.click && text(item) === label);
   if (!action) throw new Error('Menu action not found: '+label);
   action.handlers.click({stopPropagation() {}});

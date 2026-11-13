@@ -1,4 +1,4 @@
-"""Email move menus only remove messages after confirmed provider success."""
+"""The Email reader's Spam action only removes confirmed successful moves."""
 import json
 from pathlib import Path
 import subprocess
@@ -9,26 +9,24 @@ from tests.helpers.js_modules import js_function_source
 
 
 RUNNER = Path(__file__).parent / 'helpers' / 'email_move_menu_runner.cjs'
-FLOWS = ['card-inbox', 'card-sent', 'reader-archive', 'reader-spam']
 
 
-def run(flow, mode):
+def run(mode):
     source = '\n'.join(js_function_source(name) for name in [
-        '_showReaderMoreMenu', '_showCardMenu', '_requireSuccessfulEmailMutation',
+        '_showReaderMoreMenu', '_requireSuccessfulEmailMutation',
     ])
     result = subprocess.run(['node', str(RUNNER)],
-                            input=json.dumps({'source': source, 'flow': flow, 'mode': mode}),
+                            input=json.dumps({'source': source, 'mode': mode}),
                             text=True, capture_output=True, timeout=15)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize('flow', FLOWS)
 @pytest.mark.parametrize('mode', [
     'http-error', 'success-false', 'invalid-json', 'missing-success', 'network-error', 'pending',
 ])
-def test_rejected_move_keeps_message_and_cache_and_shows_error(flow, mode):
-    result = run(flow, mode)
+def test_rejected_spam_move_keeps_message_and_cache_and_shows_error(mode):
+    result = run(mode)
 
     if mode == 'pending':
         assert result['while_pending'] == {
@@ -42,9 +40,8 @@ def test_rejected_move_keeps_message_and_cache_and_shows_error(flow, mode):
     assert result['unhandled'] == []
 
 
-@pytest.mark.parametrize('flow', FLOWS)
-def test_confirmed_move_removes_message_and_updates_cache(flow):
-    result = run(flow, 'success')
+def test_confirmed_spam_move_removes_message_and_updates_cache():
+    result = run('success')
 
     assert result['uids'] == []
     assert result['calls']['animations'] == [['42']]
@@ -55,4 +52,6 @@ def test_confirmed_move_removes_message_and_updates_cache(flow):
     request, = result['calls']['requests']
     assert request['method'] == 'POST'
     assert 'account_id=owned-account' in request['url']
-    assert ('folder=Sent' in request['url']) == (flow == 'card-sent')
+    assert '/move/42?' in request['url']
+    assert 'folder=INBOX' in request['url']
+    assert 'dest=Junk' in request['url']

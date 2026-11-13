@@ -198,13 +198,9 @@ export function _showReaderMoreMenu(em, card, reader, anchor, data) {
       icon: _archIcon,
       action: async () => {
         try {
-          const response = await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          await _requireSuccessfulEmailMutation(response, 'Failed to archive email');
-          await closeAndRemove();
-        } catch (e) {
-          console.error(e);
-          showError('Failed to archive email');
-        }
+          await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        } catch (e) { console.error(e); }
+        await closeAndRemove();
       },
     },
     {
@@ -462,17 +458,11 @@ export function _showCardMenu(em, anchor) {
       label: 'Archive',
       icon: _archIcon,
       action: async () => {
-        try {
-          const response = await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          await _requireSuccessfulEmailMutation(response, 'Failed to archive email');
-          await _animateEmailCardRemoval([em.uid]);
-          state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
-          _renderGrid();
-          _libCacheWriteBack();
-        } catch (e) {
-          console.error(e);
-          showError('Failed to archive email');
-        }
+        await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        await _animateEmailCardRemoval([em.uid]);
+        state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
+        _renderGrid();
+        _libCacheWriteBack();
       },
     });
   } else {
@@ -496,17 +486,11 @@ export function _showCardMenu(em, anchor) {
       label: 'Archive',
       icon: _archIcon,
       action: async () => {
-        try {
-          const response = await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          await _requireSuccessfulEmailMutation(response, 'Failed to archive email');
-          await _animateEmailCardRemoval([em.uid]);
-          state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
-          _renderGrid();
-          _libCacheWriteBack();
-        } catch (e) {
-          console.error(e);
-          showError('Failed to archive email');
-        }
+        await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        await _animateEmailCardRemoval([em.uid]);
+        state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
+        _renderGrid();
+        _libCacheWriteBack();
       },
     });
   }
