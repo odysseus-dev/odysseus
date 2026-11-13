@@ -4058,7 +4058,7 @@ async function loadAdminOpsPanel() {
         </div>
         <div style="display:flex;align-items:center;gap:10px;opacity:0.85;">
           <span>Tasks: <strong>${Number(tasks.active || 0)}</strong> active / ${Number(tasks.paused || 0)} paused</span>
-          <span>Pending Approvals: <strong style="color:${Number(approvals.pending_total || 0) > 0 ? '#fbbf24' : 'inherit'};">${Number(approvals.pending_total || 0)}</strong></span>
+          <span>Pending Approvals: <strong style="color:${Number(approvals.pending_total || 0) > 0 ? '#fbbf24' : 'inherit'};">${Number(approvals.pending_total || 0)}</strong>${Number(approvals.external_untrusted_count || 0) > 0 ? ` (${Number(approvals.external_untrusted_count)} ext)` : ''}${Number(approvals.pending_total || 0) > 0 ? ` <button type="button" id="admin-ops-open-approvals" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;margin-left:3px;" onclick="document.querySelector('[data-tab=&quot;tasks&quot;]')?.click()">Open Queue</button>` : ''}</span>
           <span>Effect Runs: <strong>${Number(effects.recent_runs || 0)}</strong> (${Number(effects.external_claim_runs || 0)} ext)</span>
           <button type="button" id="admin-ops-refresh-btn" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
         </div>
