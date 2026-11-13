@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import subprocess
 
 
@@ -141,4 +141,4 @@ global.fetch = async (url, opts = {{}}) => {{
 
 def test_ops_release_v3_admin_asset_version_bumped():
     a=(ROOT/'static/app.js').read_text('utf-8'); w=(ROOT/'static/sw.js').read_text('utf-8')
-    assert 'admin.js?v=20261113opsreleasev3' in a and 'admin.js?v=20261113opsreleasev3' in w
+    assert 'admin.js?v=20261113opsreleasev12' in a and 'admin.js?v=20261113opsreleasev12' in w

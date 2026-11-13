@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import re
 import subprocess
 
@@ -73,7 +73,7 @@ async function loadTasks() {{}}
 
 assert.equal(_formatApprovalTtl(0), '');
 assert.equal(_formatApprovalTtl(_nowMs / 1000 - 1), 'Expired');
-assert.equal(_formatApprovalTtl(_nowMs / 1000 + 42), '42s left');
+assert.equal(_formatApprovalTtl(_nowMs / 1000 + 42), 'Expiring soon · 42s left');
 assert.equal(_formatApprovalTtl(_nowMs / 1000 + 125), '2m 5s left');
 
 _pendingApprovals = [
@@ -115,5 +115,5 @@ def test_ops_release_v2_tasks_asset_version_bumped():
     app_match = re.search(r"tasks\.js\?v=([^'\"]+)", app_src)
     sw_match = re.search(r"tasks\.js\?v=([^'\"]+)", sw_src)
     assert app_match and sw_match
-    assert app_match.group(1) == "20261113opsreleasev2"
+    assert app_match.group(1) == "20261113opsreleasev12"
     assert sw_match.group(1) == app_match.group(1)
