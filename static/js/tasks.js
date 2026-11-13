@@ -297,6 +297,43 @@ async function _resolveAllPendingApprovals(decision) {
   await _fetchPendingApprovals();
 }
 
+let _selectedApprovalHistoryId = '';
+
+function _toggleApprovalHistoryDetail(approvalId) {
+  const target = String(approvalId || '');
+  _selectedApprovalHistoryId = (_selectedApprovalHistoryId === target) ? '' : target;
+  _renderApprovalHistory();
+}
+
+async function _copyApprovalHistoryId(approvalId) {
+  const idStr = String(approvalId || '');
+  if (!idStr) return false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    await navigator.clipboard.writeText(idStr);
+    if (uiModule && typeof uiModule.showToast === 'function') {
+      uiModule.showToast('Copied approval ID', 'info');
+    }
+    return true;
+  }
+  return false;
+}
+
+function _exportApprovalHistory(format = 'csv') {
+  const fmt = format === 'json' ? 'json' : 'csv';
+  const params = new URLSearchParams({ format: fmt, limit: '200' });
+  if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
+    params.set('decision', _approvalHistoryFilter);
+  }
+  if (_approvalHistoryToolFilter) {
+    params.set('tool_name', _approvalHistoryToolFilter);
+  }
+  const url = `/api/tasks/approvals/history/export?${params.toString()}`;
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(url, '_blank', 'noopener');
+  }
+  return url;
+}
+
 function _renderApprovalHistory() {
   const host = document.getElementById('tasks-approval-history');
   if (!host) return;
@@ -315,6 +352,10 @@ function _renderApprovalHistory() {
   const approvedCount = _approvalDecisionHistory.filter(item => item && item.decision !== 'deny').length;
   const deniedCount = _approvalDecisionHistory.filter(item => item && item.decision === 'deny').length;
   const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter);
+  const selectedDetail = _approvalDecisionHistory.find(item => item && String(item.approval_id) === _selectedApprovalHistoryId) || null;
+  if (!selectedDetail && _selectedApprovalHistoryId) {
+    _selectedApprovalHistoryId = '';
+  }
   host.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:6px;">
@@ -335,16 +376,19 @@ function _renderApprovalHistory() {
           <button type="button" id="tasks-approval-history-reset" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Reset Filters</button>
         ` : ''}
         <button type="button" id="tasks-approval-history-export" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Export CSV</button>
+        <button type="button" id="tasks-approval-history-export-json" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Export JSON</button>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;">
       ${_approvalDecisionHistory.length ? _approvalDecisionHistory.map(item => {
         const isDenied = item.decision === 'deny';
+        const isSelected = Boolean(selectedDetail && String(item.approval_id) === String(selectedDetail.approval_id));
         const pillColor = isDenied ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)';
         const textColor = isDenied ? '#fca5a5' : '#6ee7b7';
         const label = isDenied ? 'Denied' : 'Approved';
+        const borderStyle = isSelected ? '1px solid currentColor' : '1px solid transparent';
         return `
-          <span class="task-approval-history-pill" data-approval-id="${_esc(item.approval_id)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:${pillColor};color:${textColor};font-size:10px;">
+          <span class="task-approval-history-pill" role="button" tabindex="0" data-approval-id="${_esc(item.approval_id)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;border:${borderStyle};background:${pillColor};color:${textColor};font-size:10px;cursor:pointer;">
             <strong>${_esc(item.tool_name || 'tool')}</strong>
             <span>${label}</span>
             ${item.digest ? `<span style="opacity:0.7;font-family:monospace;">#${_esc(item.digest)}</span>` : ''}
@@ -353,6 +397,19 @@ function _renderApprovalHistory() {
         `;
       }).join('') : '<span style="font-size:10px;opacity:0.65;">No matching decisions</span>'}
     </div>
+    ${selectedDetail ? `
+      <div id="tasks-approval-history-detail" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);font-size:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span><strong>ID:</strong> <code style="font-family:monospace;">${_esc(selectedDetail.approval_id)}</code></span>
+          <span><strong>Tool:</strong> ${_esc(selectedDetail.tool_name || 'tool')}</span>
+          <span><strong>Decision:</strong> ${_esc(selectedDetail.decision || '')}</span>
+          ${selectedDetail.digest ? `<span><strong>Digest:</strong> <code style="font-family:monospace;">${_esc(selectedDetail.digest)}</code></span>` : ''}
+          ${selectedDetail.resolved_at ? `<span><strong>Resolved:</strong> ${_esc(String(selectedDetail.resolved_at))}</span>` : ''}
+          ${selectedDetail.external_untrusted_context_seen ? '<span style="color:#fbbf24;font-weight:600;">External Untrusted Context</span>' : ''}
+        </div>
+        <button type="button" id="tasks-approval-history-copy-id" data-copy-approval-id="${_esc(selectedDetail.approval_id)}" class="memory-toolbar-btn" style="padding:1px 6px;font-size:9px;">Copy ID</button>
+      </div>
+    ` : ''}
   `;
   const toolSelect = host.querySelector('#tasks-approval-history-tool');
   if (toolSelect) {
@@ -367,6 +424,13 @@ function _renderApprovalHistory() {
       await _fetchApprovalHistory();
     });
   });
+  host.querySelectorAll('.task-approval-history-pill[data-approval-id]').forEach(pill => {
+    pill.addEventListener('click', () => _toggleApprovalHistoryDetail(pill.dataset.approvalId));
+  });
+  const copyIdBtn = host.querySelector('#tasks-approval-history-copy-id');
+  if (copyIdBtn) {
+    copyIdBtn.addEventListener('click', () => _copyApprovalHistoryId(copyIdBtn.dataset.copyApprovalId));
+  }
   const resetBtn = host.querySelector('#tasks-approval-history-reset');
   if (resetBtn) {
     resetBtn.addEventListener('click', async () => {
@@ -377,7 +441,11 @@ function _renderApprovalHistory() {
   }
   const exportBtn = host.querySelector('#tasks-approval-history-export');
   if (exportBtn) {
-    exportBtn.addEventListener('click', () => _exportApprovalHistoryCsv());
+    exportBtn.addEventListener('click', () => _exportApprovalHistory('csv'));
+  }
+  const exportJsonBtn = host.querySelector('#tasks-approval-history-export-json');
+  if (exportJsonBtn) {
+    exportJsonBtn.addEventListener('click', () => _exportApprovalHistory('json'));
   }
 }
 
