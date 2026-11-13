@@ -734,27 +734,122 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         user = _owner(request)
         body = await request.json()
         decision = str((body or {}).get("decision") or "").strip().lower()
-        if decision not in {TASK_APPROVAL_DECISION, DENY_APPROVAL_DECISION, "approve"}:
+        if decision == "approve":
+            decision = TASK_APPROVAL_DECISION
+        elif decision == "deny":
+            decision = DENY_APPROVAL_DECISION
+        if decision not in {TASK_APPROVAL_DECISION, DENY_APPROVAL_DECISION}:
             raise HTTPException(400, "Invalid approval decision")
         pending = tool_approval_store.peek(approval_id)
         normalized_owner = str(user or "").strip().casefold()
         if pending is None or pending.owner != normalized_owner:
             raise HTTPException(404, "Pending approval not found or expired")
-        resolved = tool_approval_store.consume(
-            approval_id,
-            decision=decision,
-            owner=user,
-            session_id=pending.session_id,
-            allow_continuation=False,
-        )
-        if resolved is None:
-            raise HTTPException(409, "Pending approval could not be resolved")
+        if decision == DENY_APPROVAL_DECISION:
+            ok = tool_approval_store.deny(
+                approval_id,
+                owner=user,
+                session_id=pending.session_id,
+            )
+            if not ok:
+                raise HTTPException(409, "Pending approval could not be resolved")
+        else:
+            resolved = tool_approval_store.consume(
+                approval_id,
+                decision=decision,
+                owner=user,
+                session_id=pending.session_id,
+                allow_continuation=False,
+            )
+            if resolved is None:
+                raise HTTPException(409, "Pending approval could not be resolved")
         return {
             "ok": True,
             "approval_id": approval_id,
             "decision": decision,
             "tool_name": pending.tool_name,
             "session_id": pending.session_id,
+        }
+
+    @router.get("/approvals/history")
+    async def list_approval_history(request: Request, limit: int = 20):
+        """Return bounded owner-scoped recent approval decisions."""
+        user = _owner(request)
+        from src.tool_approvals import tool_approval_store
+        decisions = tool_approval_store.list_recent_decisions(owner=user, limit=limit)
+        return {"decisions": decisions, "count": len(decisions)}
+
+    @router.post("/approvals/resolve-bulk")
+    async def resolve_pending_approvals_bulk(request: Request):
+        """Resolve multiple owner-scoped pending tool approvals atomically per item."""
+        from src.agent_runtime.authority import require_user_approval_request
+        from src.tool_approvals import tool_approval_store
+        from src.tool_approval_scopes import DENY_APPROVAL_DECISION, TASK_APPROVAL_DECISION
+
+        require_user_approval_request(request)
+        user = _owner(request)
+        body = await request.json()
+        decision = str((body or {}).get("decision") or "").strip().lower()
+        if decision == "approve":
+            decision = TASK_APPROVAL_DECISION
+        elif decision == "deny":
+            decision = DENY_APPROVAL_DECISION
+        if decision not in {TASK_APPROVAL_DECISION, DENY_APPROVAL_DECISION}:
+            raise HTTPException(400, "Invalid approval decision")
+        raw_ids = (body or {}).get("approval_ids")
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise HTTPException(400, "approval_ids must be a non-empty list")
+        if len(raw_ids) > 50:
+            raise HTTPException(400, "approval_ids cannot exceed 50 items")
+
+        normalized_owner = str(user or "").strip().casefold()
+        seen: set[str] = set()
+        resolved: list[dict[str, Any]] = []
+        failed: list[dict[str, str]] = []
+
+        for raw_id in raw_ids:
+            approval_id = str(raw_id or "").strip()
+            if not approval_id or approval_id in seen:
+                continue
+            seen.add(approval_id)
+            pending = tool_approval_store.peek(approval_id)
+            if pending is None or pending.owner != normalized_owner:
+                failed.append({"approval_id": approval_id, "reason": "not_found_or_expired"})
+                continue
+            if decision == DENY_APPROVAL_DECISION:
+                ok = tool_approval_store.deny(
+                    approval_id,
+                    owner=user,
+                    session_id=pending.session_id,
+                )
+                if not ok:
+                    failed.append({"approval_id": approval_id, "reason": "conflict"})
+                    continue
+            else:
+                grant = tool_approval_store.consume(
+                    approval_id,
+                    decision=decision,
+                    owner=user,
+                    session_id=pending.session_id,
+                    allow_continuation=False,
+                )
+                if grant is None:
+                    failed.append({"approval_id": approval_id, "reason": "conflict"})
+                    continue
+            resolved.append(
+                {
+                    "approval_id": approval_id,
+                    "decision": decision,
+                    "tool_name": pending.tool_name,
+                    "session_id": pending.session_id,
+                }
+            )
+
+        return {
+            "ok": True,
+            "decision": decision,
+            "resolved": resolved,
+            "resolved_count": len(resolved),
+            "failed": failed,
         }
 
     @router.get("/{task_id}")
