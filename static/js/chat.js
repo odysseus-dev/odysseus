@@ -1538,6 +1538,9 @@ import { invalidateSettings } from './appConfig.js';
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-Odysseus-Run-Id': runId },
+    }).then(r => (r && r.ok ? r.json() : null)).then(body => {
+      // `stopped` only means the cancellation was delivered; `confirmed` says the run really ended (a long tool call can outlive the request).
+      if (body && body.stopped && body.confirmed === false) showToast('Stop requested. The run is still finishing its current step.', 6000);
     }).catch(() => {});
   }
 
@@ -5007,6 +5010,10 @@ import { invalidateSettings } from './appConfig.js';
                   else if (_regenKeptUserBubble) _regenKeptUserBubble.dataset.dbId = json.id;
                   _regenKeptUserBubble = null;
                 }
+
+              } else if (json.type === 'message_save_failed') {
+                // The reply is on screen and in memory but the database write failed; the server keeps it and retries with the next save.
+                if (!_isBg) showToast('This reply could not be saved to the conversation history yet. It is kept and will be retried; do not close the server.', 9000);
 
               } else if (json.type === 'message_saved') {
                 // Wire the persisted DB id onto the just-streamed bubble so it

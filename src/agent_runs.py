@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class _Run:
-    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id", "finish_requested", "finish_event")
+    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id", "finish_requested", "finish_event", "head", "buffer_bytes")
 
     def __init__(self) -> None:
         self.buffer: list = []          # ordered SSE event strings (replay log)
@@ -37,6 +37,9 @@ class _Run:
         self.run_id: str = uuid.uuid4().hex
         self.finish_requested: bool = False
         self.finish_event = asyncio.Event()
+        # Replay memory bound: events before ``head`` were released (their slots are None) once the retained events exceeded _MAX_BUFFER_BYTES.
+        self.head: int = 0
+        self.buffer_bytes: int = 0
 
 
 _RUNS: Dict[str, _Run] = {}
@@ -47,10 +50,42 @@ _RUNS: Dict[str, _Run] = {}
 # it, every session that ever streamed kept its entire event log forever.
 _EVICT_GRACE_S = 180
 
+# A run's replay log is bounded: a long agent run with large tool outputs used to retain every byte until 180 s after it ended (131 MB measured for
+# 2000 x 64 KB tool results). Live subscribers always get every event; only a LATE reconnect loses the oldest events, and is told so with a replay_gap
+# marker (the finished reply is loaded from the saved conversation anyway). One oversize event is shortened in the replay copy only.
+_MAX_BUFFER_BYTES = 32 * 1024 * 1024
+_MAX_EVENT_BYTES = 256 * 1024
+_REPLAY_GAP_EVENT = 'data: {"type": "replay_gap", "message": "Older output of this run is no longer available for replay."}\n\n'
+
+
+def _shorten_for_replay(ev: str) -> str:
+    """Replay copy of an oversize event: long string values cut, still valid JSON. Anything unparseable is cut hard."""
+    try:
+        prefix, _, payload = ev.partition("data: ")
+        data = json.loads(payload)
+
+        def cut(value):
+            if isinstance(value, str) and len(value) > 32768:
+                return value[:32768] + f"... [{len(value) - 32768} characters not kept for replay]"
+            if isinstance(value, dict):
+                return {k: cut(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [cut(v) for v in value]
+            return value
+        return f"{prefix}data: {json.dumps(cut(data))}\n\n"
+    except Exception:
+        return ev[:_MAX_EVENT_BYTES] + "\n\n"
+
 
 def _publish(run: _Run, ev: str) -> None:
     """Append one SSE event and fan it out to every live subscriber."""
-    run.buffer.append(ev)
+    kept = _shorten_for_replay(ev) if len(ev) > _MAX_EVENT_BYTES else ev
+    run.buffer.append(kept)
+    run.buffer_bytes += len(kept)
+    while run.buffer_bytes > _MAX_BUFFER_BYTES and run.head < len(run.buffer) - 1:
+        run.buffer_bytes -= len(run.buffer[run.head])
+        run.buffer[run.head] = None
+        run.head += 1
     seq = len(run.buffer) - 1
     for q in list(run.subscribers):
         try:
@@ -231,9 +266,16 @@ async def subscribe(
     if run.evict_task and not run.evict_task.done():
         run.evict_task.cancel()
     try:
-        next_seq = 0
+        next_seq = run.head
+        if run.head:
+            yield _REPLAY_GAP_EVENT
         while next_seq < len(run.buffer):
-            yield run.buffer[next_seq]
+            item = run.buffer[next_seq]
+            if item is None:           # released while this replay was running: jump to what is still retained
+                next_seq = run.head
+                yield _REPLAY_GAP_EVENT
+                continue
+            yield item
             next_seq += 1
         if run.status != "running":
             return
@@ -252,6 +294,7 @@ async def subscribe(
                     continue
                 seq, ev = (None, None)
             if seq is None:            # end sentinel
+                next_seq = max(next_seq, run.head)
                 while next_seq < len(run.buffer):   # flush any tail the sentinel raced
                     yield run.buffer[next_seq]
                     next_seq += 1
@@ -281,6 +324,24 @@ def stop(session_id: str, expected_run_id: Optional[str] = None) -> bool:
         run.task.cancel()
         return True
     return False
+
+
+async def stop_confirmed(session_id: str, expected_run_id: Optional[str] = None, timeout: float = 5.0) -> dict:
+    """Stop, then report what actually happened.
+
+    ``requested`` - the cancellation was delivered to the matching run. ``confirmed`` - the run has really ended (its partial reply is saved and its
+    task is finished) within ``timeout``; a long blocking tool call can outlive the request, in which case confirmed is False and ``state`` says so.
+    """
+    run = _RUNS.get(session_id)
+    task = run.task if run is not None else None
+    requested = stop(session_id, expected_run_id)
+    if not requested or task is None:
+        return {"requested": False, "confirmed": False, "state": run.status if run is not None else "none"}
+    try:
+        await asyncio.wait({task}, timeout=timeout)
+    except Exception:
+        pass
+    return {"requested": True, "confirmed": task.done(), "state": run.status if task.done() else "stopping"}
 
 
 def request_finish(session_id: str, expected_run_id: Optional[str] = None) -> bool:
