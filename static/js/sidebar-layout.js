@@ -597,6 +597,11 @@ function _initChatSwipeToOpenSidebar() {
   ].join(', ');
 
   let sx = 0, sy = 0, track = false, decided = false;
+  const EDGE_SWIPE_WIDTH = 32;
+  const hasSelection = () => {
+    const selection = window.getSelection?.();
+    return selection && !selection.isCollapsed;
+  };
 
   const reset = () => { track = false; decided = false; };
 
@@ -604,7 +609,7 @@ function _initChatSwipeToOpenSidebar() {
     reset();
     if (window.innerWidth >= 768) return;
     if (!e.touches || e.touches.length !== 1) return;
-    if (window._chipDragging) return;
+    if (window._chipDragging || hasSelection()) return;
     const sb = document.getElementById('sidebar');
     if (sb && !sb.classList.contains('hidden')) return; // already open
     // Only in the chat / empty-chat view. Not when a document or PDF is open
@@ -624,12 +629,15 @@ function _initChatSwipeToOpenSidebar() {
     if (!(t && t.closest && t.closest('#chat-container'))) return;
     sx = e.touches[0].clientX;
     sy = e.touches[0].clientY;
+    // Leave drags over message text to native selection. Either screen edge
+    // remains available for the deliberate drawer-opening gesture.
+    if (sx > EDGE_SWIPE_WIDTH && sx < window.innerWidth - EDGE_SWIPE_WIDTH) return;
     track = true;
   }, { passive: true, capture: true });
 
   document.addEventListener('touchmove', (e) => {
     if (!track) return;
-    if (window._chipDragging) { track = false; return; }
+    if (window._chipDragging || hasSelection()) { reset(); return; }
     if (!e.touches || !e.touches.length) return;
     const dx = e.touches[0].clientX - sx;
     const dy = e.touches[0].clientY - sy;
