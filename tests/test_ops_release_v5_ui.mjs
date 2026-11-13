@@ -41,7 +41,6 @@ let pendingList = [
 let historyList = [];
 
 const sandbox = {
-  API_BASE: '',
   console,
   Date,
   Math,
@@ -55,6 +54,7 @@ const sandbox = {
   clearInterval: () => {},
   confirm: () => confirmResult,
   window: {
+    location: { origin: '' },
     open(url) { openedUrls.push(url); },
   },
   document: {

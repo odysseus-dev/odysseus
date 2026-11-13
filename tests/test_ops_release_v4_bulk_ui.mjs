@@ -43,7 +43,7 @@ let pendingList = [
 let historyList = [];
 
 const sandbox = {
-  API_BASE: '',
+  window: { location: { origin: '' } },
   console,
   Date,
   Math,
