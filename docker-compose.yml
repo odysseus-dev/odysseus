@@ -113,6 +113,14 @@ services:
 
   chromadb:
     image: docker.io/chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,uid=10001,gid=10001
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:

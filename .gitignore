@@ -125,3 +125,5 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+docker-compose.override.yml
