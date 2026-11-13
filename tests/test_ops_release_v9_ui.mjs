@@ -94,7 +94,7 @@ assert.ok(!pendingHost.innerHTML.includes('data-approval-id="p-3"'));
 
 sandbox._selectAllPendingApprovals(true);
 const selectedAfterScopedAll = vm.runInContext('[..._selectedApprovalIds]', sandbox);
-assert.deepEqual(selectedAfterScopedAll, ['p-1', 'p-2']);
+assert.deepEqual(Array.from(selectedAfterScopedAll), ['p-1', 'p-2']);
 assert.ok(pendingHost.innerHTML.includes('Approve Selected (2)'));
 
 // 2. Escape key dismisses open audit detail drawer
