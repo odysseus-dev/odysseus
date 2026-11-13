@@ -29,6 +29,13 @@ def setup_diagnostics_routes(
         from src.service_health import collect_service_health
         return await collect_service_health(rag_manager, memory_vector)
 
+    @router.get("/api/diagnostics/ops-summary")
+    async def get_ops_runtime_summary(request: Request) -> Dict[str, Any]:
+        """Unified admin operational health, task queue, approval, and effect summary."""
+        require_admin(request)
+        from src.service_health import collect_ops_runtime_summary
+        return await collect_ops_runtime_summary(rag_manager, memory_vector)
+
     @router.get("/api/diagnostics/effects")
     async def get_diagnostics_effects(request: Request, limit: int = 50) -> Dict[str, Any]:
         """Read-only audit summary of recent durable Wave 4 effect logs."""

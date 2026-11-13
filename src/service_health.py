@@ -559,3 +559,71 @@ async def collect_service_health(rag_manager: Any = None,
         # datetime.utcnow() flagged in review (overlaps with #1116).
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+async def collect_ops_runtime_summary(
+    rag_manager: Any = None,
+    memory_vector: Any = None,
+) -> Dict[str, Any]:
+    """Unified admin snapshot combining service health, task queue counts,
+    pending supervised approvals, and recent effect-log audit counters."""
+    health = await collect_service_health(rag_manager, memory_vector)
+
+    task_counts: Dict[str, Any] = {"active": 0, "paused": 0, "completed": 0}
+    try:
+        from core.database import SessionLocal, ScheduledTask
+        db = SessionLocal()
+        try:
+            for status_key in ("active", "paused", "completed"):
+                task_counts[status_key] = (
+                    db.query(ScheduledTask)
+                    .filter(ScheduledTask.status == status_key)
+                    .count()
+                )
+        finally:
+            db.close()
+    except Exception:
+        task_counts = {"error": "unavailable"}
+
+    pending_total = 0
+    try:
+        from src.tool_approvals import tool_approval_store
+        now = time.time()
+        with tool_approval_store._lock:
+            tool_approval_store._purge_expired_locked(now)
+            pending_total = len(tool_approval_store._pending)
+    except Exception:
+        pending_total = 0
+
+    effects_summary: Dict[str, Any] = {
+        "recent_runs": 0,
+        "external_claim_runs": 0,
+        "mutation_attempted_runs": 0,
+        "corrupt_runs": 0,
+    }
+    try:
+        from src.agent_runtime.effect_log import list_recent_effect_runs
+        recent = list_recent_effect_runs(limit=25)
+        effects_summary["recent_runs"] = len(recent)
+        effects_summary["external_claim_runs"] = sum(
+            1 for r in recent if (r.get("external_claims") or 0) > 0
+        )
+        effects_summary["mutation_attempted_runs"] = sum(
+            1 for r in recent if r.get("mutation_attempted")
+        )
+        effects_summary["corrupt_runs"] = sum(
+            1 for r in recent if r.get("corrupt")
+        )
+    except Exception:
+        effects_summary = {"error": "unavailable"}
+
+    return {
+        "overall": health["overall"],
+        "timestamp": health["timestamp"],
+        "services": health["services"],
+        "ops": {
+            "tasks": task_counts,
+            "approvals": {"pending_total": pending_total},
+            "effects": effects_summary,
+        },
+    }
