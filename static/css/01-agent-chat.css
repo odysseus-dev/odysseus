@@ -2791,9 +2791,15 @@ body.bg-pattern-ascii-fireflies {
     li.task-item {
       list-style: none;
       margin-left: -1.2em;
-      display: flex;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
       align-items: flex-start;
       gap: 8px;
+    }
+    li.task-item > .task-text,
+    li.task-item > ul,
+    li.task-item > ol {
+      grid-column: 2;
     }
     li.task-item .task-check {
       flex: 0 0 auto;
@@ -2805,11 +2811,11 @@ body.bg-pattern-ascii-fireflies {
       box-sizing: border-box;
       position: relative;
     }
-    li.task-item.task-done .task-check {
+    li.task-item.task-done > .task-check {
       background: var(--accent);
       border-color: var(--accent);
     }
-    li.task-item.task-done .task-check::after {
+    li.task-item.task-done > .task-check::after {
       content: '';
       position: absolute;
       left: 4px;
@@ -2820,7 +2826,7 @@ body.bg-pattern-ascii-fireflies {
       border-width: 0 2px 2px 0;
       transform: rotate(45deg);
     }
-    li.task-item.task-done .task-text {
+    li.task-item.task-done > .task-text {
       opacity: 0.6;
       text-decoration: line-through;
     }
