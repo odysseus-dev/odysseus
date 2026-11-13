@@ -187,16 +187,145 @@ def test_news_fallback_when_web_empty(monkeypatch):
     assert results == [{"title": "N", "url": "https://news.test", "snippet": "D", "age": ""}]
 
 
-def test_count_clamped_to_api_max(monkeypatch):
-    seen = {}
+def test_keyless_count_limits_and_bounds(monkeypatch):
+    seen = []
 
     def post(url, **kwargs):
-        seen["json"] = kwargs.get("json") or {}
+        seen.append({
+            "url": url,
+            "headers": kwargs.get("headers") or {},
+            "count": (kwargs.get("json") or {}).get("count"),
+        })
         return _Resp(payload={"results": {"web": []}})
 
     monkeypatch.setattr(providers.httpx, "post", post)
+
+    # Keyless: count=1 remains 1
+    providers.you_com_search("q", count=1)
+    assert seen[-1]["count"] == 1
+    assert seen[-1]["url"] == providers._YOU_COM_FREE_URL
+    assert "X-API-Key" not in seen[-1]["headers"]
+
+    # Keyless: count=50 remains 50
+    providers.you_com_search("q", count=50)
+    assert seen[-1]["count"] == 50
+
+    # Keyless: count=51 clamped to 50
+    providers.you_com_search("q", count=51)
+    assert seen[-1]["count"] == 50
+
+    # Keyless: count=100 clamped to 50
+    providers.you_com_search("q", count=100)
+    assert seen[-1]["count"] == 50
+
+    # Keyless: count=500 clamped to 50
     providers.you_com_search("q", count=500)
-    assert seen["json"]["count"] == 100
+    assert seen[-1]["count"] == 50
+
+    # Keyless lower bound: count=0 -> 1, count=-5 -> 1
+    providers.you_com_search("q", count=0)
+    assert seen[-1]["count"] == 1
+    providers.you_com_search("q", count=-5)
+    assert seen[-1]["count"] == 1
+
+
+def test_authenticated_count_limits_and_bounds(monkeypatch):
+    monkeypatch.setenv("YDC_API_KEY", "test-key")
+    seen = []
+
+    def post(url, **kwargs):
+        seen.append({
+            "url": url,
+            "headers": kwargs.get("headers") or {},
+            "count": (kwargs.get("json") or {}).get("count"),
+        })
+        return _Resp(payload={"results": {"web": []}})
+
+    monkeypatch.setattr(providers.httpx, "post", post)
+
+    # Authenticated: count=1 remains 1
+    providers.you_com_search("q", count=1)
+    assert seen[-1]["count"] == 1
+    assert seen[-1]["url"] == providers._YOU_COM_KEYED_URL
+    assert seen[-1]["headers"]["X-API-Key"] == "test-key"
+
+    # Authenticated: count=51 remains 51
+    providers.you_com_search("q", count=51)
+    assert seen[-1]["count"] == 51
+
+    # Authenticated: count=100 remains 100
+    providers.you_com_search("q", count=100)
+    assert seen[-1]["count"] == 100
+
+    # Authenticated: count=500 clamped to 100
+    providers.you_com_search("q", count=500)
+    assert seen[-1]["count"] == 100
+
+    # Authenticated lower bound: count=0 -> 1, count=-5 -> 1
+    providers.you_com_search("q", count=0)
+    assert seen[-1]["count"] == 1
+    providers.you_com_search("q", count=-5)
+    assert seen[-1]["count"] == 1
+
+
+def test_empty_and_whitespace_query_does_not_call_http(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("HTTP request should not be made for empty/whitespace query")
+
+    monkeypatch.setattr(providers.httpx, "post", boom)
+
+    assert providers.you_com_search("") == []
+    assert providers.you_com_search("   ") == []
+    assert providers.you_com_search("\t\n") == []
+
+
+def test_malformed_response_structures_gracefully_return_empty(monkeypatch):
+    malformed_payloads = [
+        None,
+        123,
+        "not a dict",
+        {},
+        {"results": None},
+        {"results": 123},
+        {"results": "string"},
+        {"results": {"web": 123}},
+        {"results": {"web": "not a list"}},
+        {"results": {"web": True}},
+        {"results": {"web": [], "news": 123}},
+        {"results": {"web": [], "news": "not a list"}},
+        {"results": {"web": [123, "string", None, []]}},
+    ]
+    for payload in malformed_payloads:
+        assert providers._you_com_parse_results(payload, count=10) == []
+
+        monkeypatch.setattr(
+            providers.httpx,
+            "post",
+            lambda *a, **k: _Resp(payload=payload if isinstance(payload, dict) else None, text="{}" if not isinstance(payload, dict) else ""),
+        )
+        assert providers.you_com_search("q") == []
+
+
+def test_invalid_urls_safely_skipped():
+    payload = {
+        "results": {
+            "web": [
+                {"title": "Missing URL"},
+                {"url": "", "title": "Empty URL"},
+                {"url": "   ", "title": "Whitespace URL"},
+                {"url": 12345, "title": "Integer URL"},
+                {"url": ["https://nested.test"], "title": "List URL"},
+                {"url": {"link": "https://obj.test"}, "title": "Dict URL"},
+                {"url": "https://valid.test/1", "title": "Valid Result", "snippets": ["snippet"]},
+                {"url": None, "title": "None URL"},
+            ]
+        }
+    }
+    results = providers._you_com_parse_results(payload, count=10)
+    assert len(results) == 1
+    assert results[0]["url"] == "https://valid.test/1"
+    assert results[0]["title"] == "Valid Result"
+    assert results[0]["snippet"] == "snippet"
 
 
 def test_call_provider_dispatches_you_com(monkeypatch):
@@ -267,3 +396,55 @@ def test_ydc_api_key_is_scrubbed_and_not_returned_by_search_config(monkeypatch):
     assert config["active_provider"] == "you_com"
     assert config["has_api_key"] is True
     assert "k" not in config.values()
+
+
+def test_environment_only_key_recognized_and_not_leaked(monkeypatch):
+    monkeypatch.setenv("YDC_API_KEY", "fixture")
+    settings = {"search_provider": "you_com", "ydc_api_key": ""}
+    monkeypatch.setattr(core, "_get_search_settings", lambda: settings)
+    monkeypatch.setattr(providers, "_get_search_settings", lambda: settings)
+
+    assert providers._get_provider_key("you_com") == "fixture"
+    config = core.get_search_config()
+    assert config["active_provider"] == "you_com"
+    assert config["has_api_key"] is True
+    assert "fixture" not in config.values()
+    assert "fixture" not in json.dumps(config)
+
+    # Settings precedence: non-empty settings key overrides env key
+    settings["ydc_api_key"] = "settings-override-key"
+    assert providers._get_provider_key("you_com") == "settings-override-key"
+
+
+def test_provider_availability_without_key():
+    # Without a key, you_com is available because needs_key is False
+    label, needs_key, needs_url = providers.PROVIDER_INFO["you_com"]
+    assert label == "You.com"
+    assert needs_key is False
+    assert providers.provider_configured("you_com") is True
+
+    # Required-key providers are not configured without a key
+    brave_label, brave_needs_key, _ = providers.PROVIDER_INFO["brave"]
+    assert brave_needs_key is True
+    assert providers.provider_configured("brave") is False
+
+
+def test_frontend_optional_key_behavior():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    settings_js = (root / "static/js/settings.js").read_text(encoding="utf-8")
+
+    # 1. You.com is registered as an optional-key provider
+    assert "_searchOptionalKey = { you_com: 1 };" in settings_js
+
+    # 2. Keyless mode is not flagged as misconfigured in Deep Research
+    assert "!hasKey && !_searchOptionalKey[prov]" in settings_js
+
+    # 3. Environment-provided key is reflected via /api/search/config check
+    assert "cfg.active_provider === active && cfg.has_api_key" in settings_js
+    assert "hasKey = 'env';" in settings_js
+    assert "extra = ' (env key active)';" in settings_js
+    assert "extra = ' (keyless)';" in settings_js
+
+    # 4. Required-key providers still require a key
+    assert "_searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };" in settings_js

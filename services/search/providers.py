@@ -753,15 +753,17 @@ def _you_com_parse_results(data: dict, count: int) -> List[dict]:
     results_block = data.get("results") if isinstance(data, dict) else None
     if not isinstance(results_block, dict):
         return []
-    items = list(results_block.get("web") or [])
+    raw_web = results_block.get("web")
+    items = raw_web if isinstance(raw_web, list) else []
     if not items:
-        items = list(results_block.get("news") or [])
+        raw_news = results_block.get("news")
+        items = raw_news if isinstance(raw_news, list) else []
     parsed = []
     for item in items[:count]:
         if not isinstance(item, dict):
             continue
         url = item.get("url", "")
-        if not url:
+        if not isinstance(url, str) or not url.strip():
             continue
         snippets = item.get("snippets") or []
         if isinstance(snippets, list):
@@ -773,10 +775,10 @@ def _you_com_parse_results(data: dict, count: int) -> List[dict]:
         if not snippet:
             snippet = item.get("description", "") or ""
         parsed.append({
-            "title": item.get("title", "") or "",
+            "title": str(item.get("title") or ""),
             "url": url,
-            "snippet": snippet,
-            "age": item.get("page_age", "") or "",
+            "snippet": str(snippet or ""),
+            "age": str(item.get("page_age") or ""),
         })
     return parsed
 
@@ -784,12 +786,18 @@ def _you_com_parse_results(data: dict, count: int) -> List[dict]:
 def you_com_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using You.com. Works without a key; YDC_API_KEY is optional.
 
-    No key: free agent search at api.you.com/v1/agents/search (100/day).
-    With a key: keyed Web Search API at ydc-index.io/v1/search (X-API-Key).
+    No key: free agent search at api.you.com/v1/agents/search (100/day, max 50 results).
+    With a key: keyed Web Search API at ydc-index.io/v1/search (X-API-Key, max 100 results).
     """
-    count = count if count is not None else _get_result_count()
-    count = max(1, min(int(count), 100))
-    api_key = _get_provider_key("you_com") or os.environ.get("YDC_API_KEY", "")
+    if not query or not query.strip():
+        return []
+    api_key = _get_provider_key("you_com")
+    max_count = 100 if api_key else 50
+    try:
+        count = int(count) if count is not None else _get_result_count()
+    except (ValueError, TypeError):
+        count = _get_result_count()
+    count = max(1, min(count, max_count))
     payload = {
         "query": query,
         "count": count,

@@ -725,11 +725,31 @@ async function initSearchSettings() {
       var extra = '';
       var kf = keyFieldFor(active);
       var legacyKey = _searchOptionalKey[active] ? '' : (s.search_api_key || '').trim();
+      // hasKey from saved settings (what /api/auth/settings returns).
       var hasKey = kf ? ((s[kf] || '').trim() || legacyKey) : false;
+      // For optional-key providers, also check runtime key presence via
+      // /api/search/config so that a key set through the environment
+      // (e.g. YDC_API_KEY in docker-compose) is reflected in the UI even
+      // when the settings field is empty (#6809).
+      if (_searchOptionalKey[active] && !hasKey) {
+        try {
+          var cfgRes = await fetch('/api/search/config', { credentials: 'same-origin' });
+          var cfg = await cfgRes.json();
+          if (cfg.active_provider === active && cfg.has_api_key) {
+            hasKey = 'env';  // truthy sentinel: key is active via environment
+          }
+        } catch (_) { /* /api/search/config is best-effort */ }
+      }
       if (_searchNeedsKey[active]) {
         extra = hasKey ? ' (key set)' : ' (no key)';
       } else if (_searchOptionalKey[active]) {
-        extra = hasKey ? ' (key set)' : ' (keyless)';
+        if (!hasKey) {
+          extra = ' (keyless)';
+        } else if (hasKey === 'env') {
+          extra = ' (env key active)';
+        } else {
+          extra = ' (key set)';
+        }
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
@@ -1114,7 +1134,9 @@ async function initResearchSearchSettings() {
       var kf = _searchKeyFields[prov];
       if (!kf) return;
       var hasKey = ((settings[kf] || '').trim() || (settings.search_api_key || '').trim());
-      if (!hasKey) {
+      // Optional-key providers work without a key; do not flag them as
+      // misconfigured when no key is saved in settings (#6809).
+      if (!hasKey && !_searchOptionalKey[prov]) {
         opt.textContent = (_searchLabels[prov] || prov) + ' (no key)';
         opt.style.color = 'var(--red)';
       } else {
