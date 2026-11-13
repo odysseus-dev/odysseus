@@ -60,6 +60,19 @@ const sandbox = {
   document: {
     hidden: false,
     addEventListener() {},
+    createElement() {
+      let _t = '';
+      return {
+        set textContent(v) { _t = String(v ?? ''); },
+        get innerHTML() {
+          return _t
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+        },
+      };
+    },
     getElementById(id) { return elements.get(id) || null; },
   },
   uiModule: {
