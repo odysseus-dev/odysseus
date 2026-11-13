@@ -4777,12 +4777,12 @@ def setup_email_routes():
             msg = email_mod.message_from_bytes(raw)
             idx = 0
             for part in msg.walk():
-                cd = str(part.get("Content-Disposition", ""))
+                cd = part.get_content_disposition()
                 ct = part.get_content_type()
-                is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+                is_attached_email = ct == "message/rfc822" and (cd == "attachment" or part.get_filename())
                 if part.is_multipart() and not is_attached_email:
                     continue
-                if ct in ("text/plain", "text/html") and "attachment" not in cd:
+                if ct in ("text/plain", "text/html") and cd != "attachment":
                     continue
                 content_id = (part.get("Content-ID") or "").strip().strip("<>")
                 if content_id != want:
@@ -5103,12 +5103,12 @@ def setup_email_routes():
                         return b""
                     idx = 0
                     for part in msg.walk():
-                        cd = str(part.get("Content-Disposition", ""))
+                        cd = part.get_content_disposition()
                         ct = part.get_content_type()
-                        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+                        is_attached_email = ct == "message/rfc822" and (cd == "attachment" or part.get_filename())
                         if part.is_multipart() and not is_attached_email:
                             continue
-                        if ct in ("text/plain", "text/html") and "attachment" not in cd:
+                        if ct in ("text/plain", "text/html") and cd != "attachment":
                             continue
                         if idx == index:
                             payload = part.get_payload(decode=True)
