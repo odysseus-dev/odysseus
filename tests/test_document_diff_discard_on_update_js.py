@@ -47,6 +47,13 @@ HANDLE_DOC_UPDATE = _function_body(DOC_JS, "export function handleDocUpdate(data
 STREAM_DOC_OPEN = _function_body(DOC_JS, "export function streamDocOpen(title, language)")
 
 
+def _find_reassign(fn_body: str) -> int:
+    for target in ("setActiveDocId(docId);", "activeDocId = docId;"):
+        if target in fn_body:
+            return fn_body.index(target)
+    raise ValueError("activeDocId reassignment not found")
+
+
 def test_handle_doc_update_discards_pending_diff():
     # A new AI update on a different document must not leave a stale diff bound
     # to the old doc, or a later tab switch / Accept-All overwrites the wrong doc.
@@ -55,20 +62,20 @@ def test_handle_doc_update_discards_pending_diff():
 
 def test_diff_discard_runs_before_active_doc_is_switched():
     # The discard must run while activeDocId still points at the previously
-    # active doc, so exitDiffMode(true) restores and saves THAT doc — not the new
+    # active doc, so exitDiffMode(true) restores and saves THAT doc - not the new
     # one. Any activeDocId reassignment inside handleDocUpdate must come after it.
     guard_at = HANDLE_DOC_UPDATE.index("if (_diffModeActive) exitDiffMode(true,")
-    reassign_at = HANDLE_DOC_UPDATE.index("activeDocId = docId;")
+    reassign_at = _find_reassign(HANDLE_DOC_UPDATE)
     assert guard_at < reassign_at
 
 
 def test_stream_doc_open_discards_pending_diff_before_switching():
     # The AI-creates-a-new-document path switches activeDocId inside
     # streamDocOpen (before any doc_update reaches handleDocUpdate), so the guard
-    # must be here too — and before streamDocOpen reassigns activeDocId, or the
+    # must be here too - and before streamDocOpen reassigns activeDocId, or the
     # streamed new doc gets overwritten by the stale diff (the issue's own repro).
     assert GUARD in STREAM_DOC_OPEN
-    assert STREAM_DOC_OPEN.index(GUARD) < STREAM_DOC_OPEN.index("activeDocId = docId;")
+    assert STREAM_DOC_OPEN.index(GUARD) < _find_reassign(STREAM_DOC_OPEN)
 
 
 def test_diff_discard_reuses_the_existing_idiom():
