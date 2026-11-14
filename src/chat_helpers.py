@@ -81,6 +81,19 @@ _VISION_MODEL_KEYWORDS = (
 _VISION_VL_RE = re.compile(r'(?<![a-z])vl(?![a-z])|vlm')
 
 
+def _vision_override_matches(model_name: str) -> bool:
+    """Per-model override (comma-separated substrings), e.g. a local model whose
+    name carries no vision/VL hint but answers images natively."""
+    m = (model_name or "").lower()
+    if not m:
+        return False
+    for token in os.getenv("ODYSSEUS_VISION_MODELS", "").split(","):
+        token = token.strip().lower()
+        if token and token in m:
+            return True
+    return False
+
+
 def is_vision_model(model_name: str) -> bool:
     """Best-effort check of whether a model can natively accept images.
 
@@ -91,14 +104,8 @@ def is_vision_model(model_name: str) -> bool:
     m = (model_name or "").lower()
     if not m:
         return False
-    # Per-model override (comma-separated substrings), e.g. a local model whose
-    # name carries no vision/VL hint but answers images natively.
-    override = os.getenv("ODYSSEUS_VISION_MODELS", "")
-    if override:
-        for token in override.split(","):
-            token = token.strip().lower()
-            if token and token in m:
-                return True
+    if _vision_override_matches(m):
+        return True
     if any(kw in m for kw in _VISION_MODEL_KEYWORDS):
         return True
     return bool(_VISION_VL_RE.search(m))
@@ -107,6 +114,8 @@ def is_vision_model(model_name: str) -> bool:
 _PROVIDER_FINGERPRINT_TTL = 60.0
 # (host, port) -> (models_list | None, expiry); list = LM Studio, None = not LM Studio.
 _lmstudio_models_cache: dict = {}
+# (host, port) -> (vision | None, expiry); None = no llama.cpp modalities reported.
+_llamacpp_vision_cache: dict = {}
 
 
 _BLOCKED_METADATA_IPS = {
@@ -324,15 +333,47 @@ def lmstudio_supports_vision(url: str, model: str, headers: Optional[dict] = Non
     return None
 
 
+def llamacpp_supports_vision(url: str, headers: Optional[dict] = None) -> Optional[bool]:
+    """Read modalities.vision from llama-server's native /props, or None when
+    the endpoint isn't llama.cpp or doesn't report it (so callers fall back).
+
+    A vision-capable model name proves nothing here: llama-server refuses
+    images unless it was started with an --mmproj projector.
+    """
+    parsed = urlparse(url)
+    # Never probe a remote provider or disallowed host.
+    if not _is_safe_local_host(parsed.hostname):
+        return None
+    key = (parsed.hostname or "", parsed.port)
+    now = time.time()
+    cached = _llamacpp_vision_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    try:
+        r = _safe_probe_get(f"{parsed.scheme or 'http'}://{parsed.netloc}/props", headers=headers, timeout=1.0)
+    except Exception:
+        return None
+    try:
+        data = r.json() if r.is_success else {}
+    except Exception:
+        data = {}
+    modalities = data.get("modalities") if isinstance(data, dict) else None
+    vision = modalities.get("vision") if isinstance(modalities, dict) else None
+    verdict = vision if isinstance(vision, bool) else None
+    _llamacpp_vision_cache[key] = (verdict, now + _PROVIDER_FINGERPRINT_TTL)
+    return verdict
+
+
 def model_supports_vision(
     model_name: str,
     endpoint_url: str = "",
     owner: Optional[str] = None,
 ) -> bool:
-    """Whether a model accepts images, using the endpoint's reported
-    capability when available (LM Studio), a cached one-time probe for local
-    OpenAI-compatible endpoints, and name-based detection otherwise."""
-    if is_vision_model(model_name):
+    """Whether a model accepts images: an explicit ODYSSEUS_VISION_MODELS match
+    first, then the endpoint's reported capability (LM Studio, llama.cpp), then
+    name-based detection, with a cached one-time probe of local
+    OpenAI-compatible endpoints for names that don't match."""
+    if _vision_override_matches(model_name):
         return True
     if endpoint_url:
         target_url = endpoint_url
@@ -391,6 +432,14 @@ def model_supports_vision(
         if advertised is not None:
             return advertised
         try:
+            reported = llamacpp_supports_vision(target_url, headers=headers)
+        except Exception:
+            reported = None
+        if reported is not None:
+            return reported
+        if is_vision_model(model_name):
+            return True
+        try:
             if headers:
                 probed = probe_endpoint_supports_vision(target_url, model_name or "", headers=headers)
             else:
@@ -434,8 +483,9 @@ def probe_endpoint_supports_vision(
     an image_url content part for `model_name`?
 
     Returns True on a 200, False when the endpoint rejects the image (400/413/
-    415/422), and None when we cannot decide (remote host, auth required,
-    unreachable, or probing disabled) so the caller falls back to name rules.
+    415/422, or llama-server's 500 for a missing projector), and None when we
+    cannot decide (remote host, auth required, unreachable, or probing
+    disabled) so the caller falls back to name rules.
     """
     if not endpoint_url or not model_name or not _vision_probe_enabled():
         return None
@@ -475,6 +525,8 @@ def probe_endpoint_supports_vision(
                 verdict = False
             else:
                 verdict = False
+        elif r.status_code == 500 and "image input is not supported" in (r.text or "").lower():
+            verdict = False
     except Exception:
         verdict = None
     _vision_probe_cache[key] = (verdict, now + _VISION_PROBE_TTL)
