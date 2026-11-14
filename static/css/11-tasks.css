@@ -1981,3 +1981,8 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .research-synapse.rs-complete .rs-meta .rs-status { color: var(--color-success, #4caf50); }
 .research-synapse.rs-error .rs-meta .rs-status { color: var(--red); }
+
+/* Per-Model Settings: labels left, one right-aligned field column */
+.adm-mc-card .settings-row { gap: 16px; min-height: 30px; }
+.adm-mc-card .settings-label { flex: 0 0 140px; }
+.adm-mc-card .settings-row .settings-select { flex: 1 1 0; width: auto; min-width: 200px; }

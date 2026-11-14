@@ -927,12 +927,25 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             from src.context_compactor import auto_compact_threshold_percent
             from src.model_context import estimate_tokens, get_context_length
-            from src.model_profiles import supports_user_thinking_toggle
+            from src.model_customization import lookup, resolve_temperature
 
             messages = session.get_context_messages()
             used = int(estimate_tokens(messages))
             ctx_len = int(get_context_length(session.endpoint_url, session.model) or 0)
-            thinking_supported = supports_user_thinking_toggle(session.model)
+            thinking_supported = True
+            stored_temperature = (lookup(session.endpoint_url, session.model) or {}).get("temperature")
+            override_temperature = getattr(session, "temperature_override", None)
+            if override_temperature is not None:
+                effective_temperature = override_temperature
+                temperature_source = "session"
+            elif stored_temperature is not None:
+                effective_temperature = resolve_temperature(
+                    session.endpoint_url, session.model, None)
+                temperature_source = "model"
+            else:
+                effective_temperature = resolve_temperature(
+                    session.endpoint_url, session.model, None)
+                temperature_source = "default"
             pct = round((used / ctx_len) * 100, 1) if ctx_len else 0.0
             pct = max(0.0, min(100.0, pct))
             auto_threshold = auto_compact_threshold_percent()
@@ -965,6 +978,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "thinking_mode": (getattr(session, "thinking_mode", "") or "off") if thinking_supported else "off",
                 "thinking_supported": thinking_supported,
                 "temperature_override": getattr(session, "temperature_override", None),
+                "effective_temperature": effective_temperature,
+                "temperature_source": temperature_source,
                 "max_tokens_override": getattr(session, "max_tokens_override", None),
             }
         except Exception as e:
@@ -1100,9 +1115,6 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 mode = _effort_mode(session.model, raw_mode[7:])
             elif raw_mode in {"", "on", "off"}:
                 mode = raw_mode
-                from src.model_profiles import supports_user_thinking_toggle
-                if not supports_user_thinking_toggle(session.model):
-                    mode = "off"
             else:
                 raise HTTPException(400, "Invalid thinking mode")
 

@@ -1,3 +1,4 @@
+import { effectiveTemperature, loadSessionTemperature, temperatureHint } from '../sessionTemperature.js';
 // compare/panes.js — pane lifecycle, actions, layout
 import state from './state.js';
 import { _persistSelections } from './models.js';
@@ -154,9 +155,27 @@ function togglePaneSettings(paneIdx, anchorBtn) {
     });
     row.appendChild(input);
     popup.appendChild(row);
+    return input;
   };
-  addSlider('Temperature', settings.temperature_override ?? 1, 0, 2, 0.1, value => Number(value).toFixed(1), 'temperature_override', value => value);
+  const temperatureInput = addSlider('Temperature', effectiveTemperature(settings), 0, 2, 0.1, value => Number(value).toFixed(1), 'temperature_override', value => value);
   addSlider('Max tokens', settings.max_tokens_override ?? 8448, 256, 8448, 256, value => value > 8192 ? 'No limit' : Number(value).toLocaleString(), 'max_tokens_override', value => value > 8192 ? null : value);
+  const paneSessionId = state._paneSessionIds[paneIdx];
+  if (paneSessionId) {
+    loadSessionTemperature(fetch, state.API_BASE, paneSessionId).then((info) => {
+      if (!info) return;
+      if (settings.temperature_override == null) {
+        temperatureInput.value = String(info.value);
+        const top = temperatureInput.parentElement.querySelector('.chat-context-threshold-top span:last-child');
+        if (top) top.textContent = Number(info.value).toFixed(1);
+      }
+      if (info.hint) {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'font-size:11px;opacity:0.65;margin-top:2px;';
+        hint.textContent = info.hint;
+        popup.appendChild(hint);
+      }
+    }).catch(() => {});
+  }
 
   document.body.appendChild(popup);
   const rect = anchorBtn.getBoundingClientRect();

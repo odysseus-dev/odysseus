@@ -266,6 +266,16 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     return ctx, known
 
 
+def _configured_context_window(endpoint_url: str, model: str) -> Optional[int]:
+    """Admin-set Ollama ``num_ctx`` for this model, if any (Settings → Added Models).
+
+    Checked outside the discovery cache so a saved value applies on the next call.
+    Imported lazily: this module sits below ``src.model_customization``.
+    """
+    from src.model_customization import context_window_override
+    return context_window_override(endpoint_url, model)
+
+
 def get_context_length(endpoint_url: str, model: str) -> int:
     """Get the context window size for a model.
 
@@ -273,6 +283,9 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     or context_window fields. Caches result per (endpoint, model).
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
+    override = _configured_context_window(endpoint_url, model)
+    if override:
+        return override
     return _get_context_length_cached(endpoint_url, model)[0]
 
 
@@ -282,6 +295,9 @@ def get_context_length_known(endpoint_url: str, model: str) -> Tuple[int, bool]:
     DEFAULT_CONTEXT fallback. Callers that *scale* a budget off the window must not
     trust an unknown value — a fallback 128K isn't proof the model holds 128K
     (review on #4122)."""
+    override = _configured_context_window(endpoint_url, model)
+    if override:
+        return override, True
     return _get_context_length_cached(endpoint_url, model)
 
 

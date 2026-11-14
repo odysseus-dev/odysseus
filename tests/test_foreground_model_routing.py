@@ -1807,7 +1807,7 @@ async def test_chat_stream_threads_form_endpoint_id_to_descriptor_builder(monkey
 
 
 @pytest.mark.asyncio
-async def test_model_reconciliation_clears_stale_thinking_toggle(monkeypatch):
+async def test_model_reconciliation_keeps_the_thinking_toggle(monkeypatch):
     captured = {}
     endpoint = _chat_stream_endpoint(
         monkeypatch,
@@ -1833,7 +1833,7 @@ async def test_model_reconciliation_clears_stale_thinking_toggle(monkeypatch):
         pass
 
     assert captured["agent"]["primary"][1] == "x-ai/grok-4.5"
-    assert captured["agent"]["thinking_mode"] == "off"
+    assert captured["agent"]["thinking_mode"] == "on"
 
 
 @pytest.mark.asyncio
