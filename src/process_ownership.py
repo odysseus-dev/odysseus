@@ -192,6 +192,14 @@ def _win32_token(pid: int) -> Optional[str]:
     if not handle:
         return None
     try:
+        # A process that has exited stays openable, and still answers
+        # GetProcessTimes, for as long as anyone (e.g. the Popen that launched
+        # it) holds a handle. The pid is nonetheless no longer held by a
+        # process: report it as gone, as procfs/ps do for a reaped pid.
+        still_active = 259  # STILL_ACTIVE
+        exit_code = wintypes.DWORD()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)) and exit_code.value != still_active:
+            return None
         creation = wintypes.FILETIME()
         exit_time = wintypes.FILETIME()
         kernel_time = wintypes.FILETIME()
