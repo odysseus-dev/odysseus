@@ -61,6 +61,8 @@ checkIssueDescription({ github, context, core })
         ["node", "-e", harness, str(_CHECKER), action],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(_REPO),
         timeout=30,
     )
@@ -128,6 +130,8 @@ checkIssueDescription({ github, context, core })
         ["node", "-e", harness, str(_CHECKER), body],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(_REPO),
         timeout=30,
     )
