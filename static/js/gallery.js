@@ -1128,17 +1128,7 @@ function _draftsPaint() {
         confirmText: 'Delete', cancelText: 'Cancel', danger: true,
       });
       if (!ok) return;
-      // Graceful exit: fade + shrink the card before the grid re-renders.
-      const card = btn.closest('.gallery-editor-draft-card');
-      if (card) card.classList.add('gallery-draft-removing');
-      try {
-        await fetch(`${API_BASE}/api/editor-drafts/${encodeURIComponent(id)}`, {
-          method: 'DELETE', credentials: 'same-origin',
-        });
-      } catch (_) { /* swallow — refresh below */ }
-      await new Promise(r => setTimeout(r, 240));   // let the animation finish
-      _draftsSelected.delete(id);
-      _renderEditorDrafts();
+      await _deleteEditorDrafts([id]);
     });
   });
   _draftsSyncBulkBar();
@@ -1169,6 +1159,34 @@ function _draftsSyncBulkBar() {
 }
 
 let _draftsWired = false;
+
+async function _deleteEditorDrafts(ids) {
+  const results = await Promise.allSettled(ids.map(async id => {
+    const response = await fetch(`${API_BASE}/api/editor-drafts/${encodeURIComponent(id)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    });
+    if (!response.ok) throw new Error('Project delete failed');
+    return id;
+  }));
+  const deleted = new Set(results.filter(result => result.status === 'fulfilled').map(result => result.value));
+  if (deleted.size) {
+    // Only confirmed deletions fade out; failed projects remain available.
+    const grid = document.getElementById('gallery-editor-drafts-grid');
+    grid?.querySelectorAll('.gallery-editor-draft-card').forEach(card => {
+      if (deleted.has(card.dataset.draftId)) card.classList.add('gallery-draft-removing');
+    });
+    await new Promise(resolve => setTimeout(resolve, 240));
+    _draftsCache = _draftsCache.filter(draft => !deleted.has(draft.id));
+    for (const id of deleted) _draftsSelected.delete(id);
+  }
+  if (!_draftsSelected.size) _draftsSelectMode = false;
+  const section = document.getElementById('gallery-editor-drafts');
+  if (section) section.hidden = !_draftsCache.length;
+  _draftsPaint();
+  const failed = results.length - deleted.size;
+  if (failed) uiModule.showError(`Could not delete ${failed} project${failed === 1 ? '' : 's'}. Please try again.`);
+}
+
 function _draftsWireOnce() {
   if (_draftsWired) return;
   _draftsWired = true;
@@ -1209,19 +1227,7 @@ function _draftsWireOnce() {
       confirmText: 'Delete', cancelText: 'Cancel', danger: true,
     });
     if (!ok) return;
-    const ids = [..._draftsSelected];
-    // Graceful exit on the selected cards before they're removed.
-    const grid = document.getElementById('gallery-editor-drafts-grid');
-    if (grid) ids.forEach(id => grid.querySelector(`.gallery-editor-draft-card[data-draft-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`)?.classList.add('gallery-draft-removing'));
-    await new Promise(r => setTimeout(r, 240));
-    await Promise.allSettled(ids.map(id =>
-      fetch(`${API_BASE}/api/editor-drafts/${encodeURIComponent(id)}`, {
-        method: 'DELETE', credentials: 'same-origin',
-      })
-    ));
-    _draftsSelected.clear();
-    _draftsSelectMode = false;
-    _renderEditorDrafts();
+    await _deleteEditorDrafts([..._draftsSelected]);
   });
 }
 
