@@ -1162,7 +1162,10 @@ def _parse_qwen3_native_text_call(
                 return block
 
     # Python-like single-call rendering: manage_notes(action="list").
-    match = re.search(r"\b([A-Za-z_][\w:.-]*)\s*\(([^()]*)\)", text)
+    # The name is length-bounded: `.`, `-` and `:` are also word boundaries, so an
+    # unbounded run of them restarts the scan at every boundary and is O(n^2) on a
+    # long dotted or hyphenated token. No tool name comes near 256 characters.
+    match = re.search(r"\b([A-Za-z_][\w:.-]{0,255})\s*\(([^()]*)\)", text)
     if match:
         name, raw_args = match.groups()
         normalized_name = name.strip().lower()
