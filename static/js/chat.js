@@ -8316,6 +8316,7 @@ import { invalidateSettings } from './appConfig.js';
       const decoder = new TextDecoder();
       let buffer = '';
       let newText = '';
+      let rewriteEvent = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -8325,15 +8326,24 @@ import { invalidateSettings } from './appConfig.js';
         buffer = lines.pop() || '';
 
         for (const line of lines) {
+          if (line.startsWith('event:')) {
+            rewriteEvent = line.slice(6).trim();
+            continue;
+          }
+          if (!line.trim()) {
+            rewriteEvent = '';
+            continue;
+          }
           if (!line.startsWith('data: ')) continue;
           const payload = line.slice(6).trim();
           if (payload === '[DONE]') continue;
           try {
             const data = JSON.parse(payload);
-            // The endpoint streams `event: error\ndata: {error,status}` on
-            // failure — surface it instead of silently hanging on "Rewriting…".
-            if (data.error) {
-              throw new Error(data.error || ('HTTP ' + (data.status || 500)));
+            // Provider failures can use {status,text}, while local failures
+            // use {error,status}. Preserve either form, including errors after
+            // partial content, instead of saving a truncated rewrite.
+            if (rewriteEvent === 'error' || data.error || Number(data.status) >= 400) {
+              throw createTerminalStreamError(data);
             }
             // Reasoning tokens (vLLM --reasoning-parser: Qwen3 / DeepSeek-R1)
             // arrive as separate {delta, thinking:true} chunks. They are NOT
