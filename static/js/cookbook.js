@@ -33,6 +33,7 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel, _cancelCachedModelScan,
 } from './cookbookServe.js';
 
+import { isVisionModel } from './cookbookVision.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
@@ -507,6 +508,9 @@ export function _detectBackend(model) {
     return { backend: 'diffusers', label: 'Diffusers' };
   }
   if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
+    // Vision models must not land on mlx_lm.server: it takes no images, so the
+    // model would come up looking healthy with no way to pass it a picture.
+    if (isVisionModel(model)) return { backend: 'mlx_vlm', label: 'MLX VLM' };
     return { backend: 'mlx', label: 'MLX' };
   }
   const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
@@ -535,6 +539,7 @@ export function _detectBackend(model) {
   // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
+    if (isVisionModel(model)) return { backend: 'mlx_vlm', label: 'MLX VLM' };
     return { backend: 'mlx', label: 'MLX' };
   }
 
@@ -979,6 +984,20 @@ export function _buildServeCmd(f, modelName, backend) {
     if (_mlxLoraPaths.length) cmd += ` --lora-paths ${_mlxLoraPaths.map(_shellQuote).join(' ')}`;
     const _mlxLoraScales = _listField(f.mlx_lora_scales).filter(s => /^-?\d+(?:\.\d+)?$/.test(s));
     if (_mlxLoraScales.length) cmd += ` --lora-scales ${_mlxLoraScales.map(_shellQuote).join(' ')}`;
+  } else if (backend === 'mlx_vlm') {
+    // Vision models: mlx-vlm's server takes images, mlx_lm's does not. Its own
+    // defaults are --host 0.0.0.0 --port 8080, but 8080 is already the MLX text
+    // default in this form, so two MLX servers would collide out of the box.
+    // mlx-vlm needs mlx>=0.32.4 while the main venv pins 0.32.2, so it belongs
+    // in its own venv — point the Venv field at it and the absolute python path
+    // below launches the right interpreter.
+    const vlmPy = _isWindows() ? 'python' : _py3Bin;
+    const vlmHost = f.host ? '0.0.0.0' : '127.0.0.1';
+    cmd += `${vlmPy} -m mlx_vlm.server --model ${_shellQuote(modelName)} --host ${vlmHost} --port ${f.port || '8090'}`;
+    // No vLLM-style --context-length upstream; --max-tokens is the closest
+    // request budget, same wiring as the MLX text backend below.
+    const _vlmMaxTokens = String(f.ctx || '').trim();
+    if (/^\d+$/.test(_vlmMaxTokens)) cmd += ` --max-tokens ${_vlmMaxTokens}`;
   } else if (backend === 'mlx') {
     const mlxPy = _isWindows() ? 'python' : _py3Bin;
     const mlxHost = f.host ? '0.0.0.0' : '127.0.0.1';

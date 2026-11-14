@@ -76,7 +76,8 @@ const _RECIPES = [
   },
   {
     backend: 'mlx_vlm',
-    label: 'MLX image models (HiDream)',
+    // Two uses now: serving vision models (image input) and backing HiDream.
+    label: 'MLX vision models and HiDream images',
     match: () => true,
     variants: {
       pip:    { commands: ['python -m pip install -U fastapi uvicorn python-multipart mlx mlx-vlm "transformers>=4.57.0,<6.0" huggingface_hub safetensors numpy pillow tqdm sentencepiece hf_transfer'] },
