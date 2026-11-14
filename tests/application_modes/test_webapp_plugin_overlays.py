@@ -7,6 +7,7 @@ import shutil
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -118,6 +119,24 @@ class SecurityPluginPatch(Base):
         self.assertEqual(sha(self.plugin_py), edited)
         self.assertFalse(list((self.component.directory / 'staging').glob('hermes-security-*')), 'the staging copy is removed after a refusal')
         self.assertFalse((self.component.directory / 'backups').exists() and any((self.component.directory / 'backups').glob('hermes-security-*')))
+
+    def test_a_failed_swap_restores_the_original(self):
+        if self.component.security_plugin_state(self.home) != 'pristine':
+            self.skipTest('the installed plugin is already patched or modified')
+        original = sha(self.plugin_py)
+        real = os.replace
+        calls = []
+
+        def flaky(src, dst):
+            calls.append((str(src), str(dst)))
+            if os.path.normcase(str(dst)) == os.path.normcase(str(self.home / 'plugins' / 'hermes-security')) and 'staging' in str(src):
+                raise PermissionError('locked')
+            return real(src, dst)
+        with mock.patch('src.hermes_webapp_component.os.replace', side_effect=flaky):
+            with self.assertRaises(ComponentError):
+                self.component.apply_security_plugin_patch(self.home, dry_run=False)
+        self.assertEqual(sha(self.plugin_py), original)
+        self.assertEqual(self.component.security_plugin_state(self.home), 'pristine')
 
 
 if __name__ == '__main__':

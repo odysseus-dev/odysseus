@@ -867,7 +867,11 @@ class WebappComponent:
                          ' (skill descriptions in the skill index). Applied ' + stamp + '. The original is in the component backups folder.\n').encode('utf-8'))
             backup = private_directory(self.directory / 'backups') / f'{SECURITY_PLUGIN}-{stamp}'
             os.replace(source, backup)
-            os.replace(staging, source)
+            try:
+                os.replace(staging, source)
+            except OSError as exc:                      # never leave the gateway home without the plugin: put the original straight back
+                os.replace(backup, source)
+                raise ComponentError('The patched plugin could not be put in place; the original was restored: ' + str(exc)) from exc
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
