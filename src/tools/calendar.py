@@ -681,6 +681,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     continue
                 ev = _event_query().filter(CalendarEvent.uid == candidate_base_uid).first()
                 if ev:
+                    if candidate_base_uid != candidate_uid:
+                        # An occurrence UID must not silently target the whole series.
+                        return {
+                            "error": "Individual occurrences cannot be changed with this tool. "
+                                     "Ask the user before changing the whole series, then use its UID.",
+                            "exit_code": 1,
+                        }
                     base_uid = candidate_base_uid
                     break
             if not ev:
@@ -823,6 +830,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     continue
                 ev = _event_query().filter(CalendarEvent.uid == candidate_base_uid).first()
                 if ev:
+                    if candidate_base_uid != candidate_uid:
+                        # An occurrence UID must not silently target the whole series.
+                        return {
+                            "error": "Individual occurrences cannot be changed with this tool. "
+                                     "Ask the user before changing the whole series, then use its UID.",
+                            "exit_code": 1,
+                        }
                     base_uid = candidate_base_uid
                     break
             if not ev:
