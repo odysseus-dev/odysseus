@@ -7846,8 +7846,30 @@ def setup_email_routes():
         state_data = verify_oauth_state(state)
         if not state_data:
             return _RR("/?section=integrations&email_oauth_error=invalid_state")
+        from routes.email_helpers import consume_oauth_state
+        if not consume_oauth_state(state_data):
+            return _RR("/?section=integrations&email_oauth_error=invalid_state")
         account_id = state_data.get("a", "")
         owner = state_data.get("o", "")
+
+        # Reject invalid account ownership before contacting Google.
+        from core.database import SessionLocal as _OwnerSession, EmailAccount as _OwnerAccount
+        owner_db = None
+        try:
+            owner_db = _OwnerSession()
+            account = owner_db.query(_OwnerAccount).filter(
+                _OwnerAccount.id == account_id
+            ).first()
+            if not account:
+                return _RR("/?section=integrations&email_oauth_error=account_not_found")
+            if not owner or not account.owner or account.owner != owner:
+                return _RR("/?section=integrations&email_oauth_error=ownership_error")
+        except Exception:
+            logger.warning("OAuth callback account ownership lookup failed")
+            return _RR("/?section=integrations&email_oauth_error=ownership_error")
+        finally:
+            if owner_db is not None:
+                owner_db.close()
         client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
         client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
         redirect_uri = (
@@ -7894,7 +7916,7 @@ def setup_email_routes():
             if not row:
                 return _RR("/?section=integrations&email_oauth_error=account_not_found")
             # SECURITY: verify the account belongs to the initiating user.
-            if owner and row.owner and row.owner != owner:
+            if not owner or not row.owner or row.owner != owner:
                 logger.warning("OAuth callback owner mismatch — rejecting token write")
                 return _RR("/?section=integrations&email_oauth_error=ownership_error")
 
