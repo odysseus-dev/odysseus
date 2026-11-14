@@ -91,3 +91,28 @@ Same-user terminal access is outside the protection boundary. An agent that can 
 - Verified without any login or tool call: Codex 0.167.0 accepts per-run `-c mcp_servers.wiki.*` overrides and lists the server (`codex mcp list --json`), so no config file needs to change for the test.
 - Blocked: the stored login fails with "refresh token was already used" (no codex process is running now; `auth.json` was last written 2026-11-01). Credentials were not read, modified or reset. After you run `codex login`, rerun `real_clients/run_all.py <abs scratch dir> codex`.
 - Not claimed: Codex has not called a single wiki tool.
+
+## 11. Project-aware context (plugin `odysseus-wiki-context`)
+
+Why: the maintenance skill only runs if the model chooses it. This plugin makes use of the wiki depend on the workspace instead.
+
+How it works (official Hermes `pre_llm_call` hook; the returned text is added to that user message, never the system prompt):
+1. The chat's workspace (`sessions.cwd` / `git_repo_root` in the Hermes `state.db`) is matched against `projects.<name>.workspaces` in `<HERMES_HOME>/wiki-context.json`. No match: return at once, no wiki call (0.03 ms median measured). Detection is cached per session.
+2. First turn of a tracked chat: one short note (about 900 characters, once per session) with the start routine (`wiki_inbox`, `wiki_begin`), the end routine (`wiki_sync`, `wiki_record_task`, at most three narrow claims) and the name of the `wiki-knowledge-maintenance` skill.
+3. Every tracked turn: `Wiki.search` as the configured agent (so the wiki's own project boundaries and capabilities apply) for the user's message, with simple inflections added because the wiki matches whole words. At most `max_claims` (default 4, 1800 characters) relevant claims are injected, each labelled `VERIFIED <grade>`, `STALE`, `PENDING REVIEW`, `UNVERIFIED` or `CONFLICT`, and a claim already shown in this session is not repeated. Relevance needs two shared word stems with the message.
+4. Read-only: the plugin never calls begin, record, propose or verify. Writes stay explicit agent actions through the MCP tools.
+5. Failure: a missing config, wiki, import or a search slower than `timeout_s` (default 2) adds one short "unavailable" note per session and never blocks a turn.
+
+Not duplicated: Hermes memory keeps user preferences; the wiki keeps project facts that can be checked against the code. The note tells the model not to store anything memory already holds.
+
+Install (needs your approval; nothing here is installed by the repository):
+```
+copy integrations\wiki\plugins\odysseus-wiki-context  ->  <managed home>\plugins\odysseus-wiki-context
+<managed home>\wiki-context.json:
+  {"wiki_root": "F:/Projects/Odysseus-Wiki", "steward_src": "<folder with wiki_steward.py>", "agent": "hermes",
+   "projects": {"odysseus": {"workspaces": ["F:/Odysseus"]}}, "max_claims": 4, "max_chars": 1800, "timeout_s": 2.0}
+config.yaml: add odysseus-wiki-context under plugins.enabled, then reload (new sessions only).
+```
+`steward_src` must be a stable checkout that contains `src/wiki_steward.py`; the plugin loads it as a private module, it does not alter Python's import path.
+
+Tests: `tests/wiki_steward/test_wiki_context_plugin.py` (10: detection, relevance, labels, read-only, boundaries, unavailable, timeout, and the full begin/propose/verify/record loop through the real MCP server followed by retrieval from a fresh session) and `test_wiki_context_hermes.py` (3: the real Hermes plugin loader and turn collector in a disposable home).
