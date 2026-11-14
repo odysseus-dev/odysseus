@@ -418,7 +418,9 @@ model downloads and the agent shell tool, also install
 [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
 Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
 [Ollama](https://ollama.com/download) is the easiest path — point Odysseus at
-`http://localhost:11434/v1` in Settings.
+`http://127.0.0.1:11434/v1` in Settings (use `127.0.0.1` rather than `localhost`: on
+Windows `localhost` tries IPv6 first, which Ollama does not listen on, adding about
+2 s to every new connection).
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
