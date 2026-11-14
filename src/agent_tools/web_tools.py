@@ -836,6 +836,8 @@ class PdfExtractTool:
             if parsed.netloc not in {"", "localhost"}:
                 return None
             raw = urllib.parse.unquote(parsed.path)
+            if os.name == "nt" and re.match(r"^/[A-Za-z]:[/\\]", raw):
+                raw = raw[1:]  # file:///C:/x gives path /C:/x; drop the slash
         if not raw.startswith("/workspace/") and not Path(raw).is_absolute():
             return None
         try:
