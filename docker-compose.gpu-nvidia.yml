@@ -54,6 +54,8 @@ services:
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
+      # In-container loopback: the app listens on 7000 here; APP_PORT is only the host mapping.
+      - ODYSSEUS_INTERNAL_BASE=${ODYSSEUS_INTERNAL_BASE:-http://127.0.0.1:7000}
       - COMPANION_BASE_URL=${COMPANION_BASE_URL:-}
       - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
       - ODYSSEUS_ADMIN_PASSWORD=${ODYSSEUS_ADMIN_PASSWORD:-}
