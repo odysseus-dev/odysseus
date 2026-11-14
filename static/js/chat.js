@@ -1536,12 +1536,12 @@ import { invalidateSettings } from './appConfig.js';
    *  incomplete stream as if it were whole. The saved reply is complete; a resumed run is reloaded from it automatically. */
   function _noteReplayGap(holderEl, sessionId) {
     try {
-      uiModule.showToast('Part of this run\u2019s output was no longer available to show live. The saved conversation has the complete reply.', 8000);
+      uiModule.showToast('Part of this run\u2019s output was no longer available to show live. Reload the conversation once the run has finished to see the complete reply.', 8000);
       if (!holderEl || !holderEl.isConnected || holderEl.querySelector('.replay-gap-note')) return;
       const note = document.createElement('div');
       note.className = 'replay-gap-note';
       note.style.cssText = 'font-size:0.78rem;font-style:italic;opacity:0.75;padding:2px 0;';
-      note.textContent = 'Some output of this run was not shown live; the saved reply below/after is complete.';
+      note.textContent = 'Some output of this run was not shown live. This view may be incomplete until the run finishes; the saved conversation holds the full reply.';
       const body = holderEl.querySelector('.body') || holderEl;
       body.insertBefore(note, body.firstChild);
     } catch (_) {}
