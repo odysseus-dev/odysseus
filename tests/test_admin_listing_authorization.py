@@ -109,6 +109,7 @@ def test_diagnostics_require_real_admin_before_sensitive_work(
     tmp_path, monkeypatch, authenticated_app, user, method, path,
 ):
     import core.database as database
+    import src.endpoint_resolver as endpoints
     import src.service_health as health
     from routes import diagnostics_routes as routes
 
@@ -117,6 +118,7 @@ def test_diagnostics_require_real_admin_before_sensitive_work(
     stats = Mock(return_value={"marker": marker})
     rag = SimpleNamespace(get_stats=Mock(return_value={"marker": marker}))
     research = SimpleNamespace(call_research_service=AsyncMock(return_value=marker))
+    resolve = Mock(return_value=("http://research-fixture.test/v1/chat/completions", "fixture-model", {}))
     extract_id = Mock(return_value="fixture")
     transcript = AsyncMock(return_value={"success": True, "transcript": marker})
     collect = AsyncMock(return_value={"marker": marker})
@@ -125,6 +127,7 @@ def test_diagnostics_require_real_admin_before_sensitive_work(
     (log_dir / "app.log").write_text(marker + "\n", encoding="utf-8")
     read_log = Mock(wraps=builtins.open)
     monkeypatch.setattr(database, "get_detailed_stats", stats)
+    monkeypatch.setattr(endpoints, "resolve_endpoint", resolve)
     monkeypatch.setattr(routes, "extract_youtube_id", extract_id)
     monkeypatch.setattr(routes, "extract_transcript_async", transcript)
     monkeypatch.setattr(health, "collect_service_health", collect)
@@ -136,11 +139,18 @@ def test_diagnostics_require_real_admin_before_sensitive_work(
     if user == "admin":
         assert response.status_code == 200
         assert marker in response.text
+        if path == "/api/test-research":
+            resolve.assert_called_once_with("research", owner="admin")
+            research.call_research_service.assert_awaited_once_with(
+                "What is machine learning?",
+                "http://research-fixture.test/v1/chat/completions",
+                "fixture-model", llm_headers={},
+            )
     else:
         assert response.status_code == 403
         assert response.json() == {"detail": "Admin only"}
         assert marker not in response.text
-        for operation in (stats, rag.get_stats, research.call_research_service,
+        for operation in (stats, rag.get_stats, research.call_research_service, resolve,
                           extract_id, transcript, collect, read_log):
             operation.assert_not_called()
 
