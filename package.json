@@ -19,5 +19,8 @@
     "@antithesishq/bombadil": "^0.7.0",
     "@playwright/test": "^1.62.1",
     "acorn": "8.19.0"
+  },
+  "dependencies": {
+    "@playwright/mcp": "^0.0.80"
   }
 }
