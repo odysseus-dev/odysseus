@@ -1,8 +1,16 @@
-Hermes Security plugin 0.1.3: give the plugin's skills real descriptions in the system prompt's skill index.
-ctx.register_skill(name, path) without description/frontmatter registers an EMPTY description, so the seven hermes-security:* skills appear in
-<available_skills> with nothing to select on (the REA plugin passes both). Also tells the tool-backed hermes-security:security-audit apart from the
-guidance-only security-audit skill. Apply inside plugins/hermes-security with: git apply hermes-security-skill-descriptions.patch  (new sessions only).
-Plugin updates replace the file: re-apply or upstream the change.
+Hermes Security plugin: give the plugin's skills real descriptions in the system prompt's skill index.
+
+Attribution: hermes-security is by NousResearch (https://github.com/NousResearch/hermes-official-plugins, subdir hermes-security, catalog
+revision 85e835c3deb972ca49cb58f7d3517b10b6672a1a, installed 0.1.3), licensed Apache-2.0. This patch is a modification of its file
+hermes_security/plugin.py made by Odysseus (Apache-2.0 section 4(b)); the upstream LICENSE and NOTICE stay with the plugin.
+
+Why: ctx.register_skill(name, path) without description/frontmatter registers an EMPTY description, so the seven hermes-security:* skills appear in
+<available_skills> with nothing to select on (the REA plugin passes both). The patch reads each SKILL.md's own frontmatter with Hermes' parser and
+tells the tool-backed hermes-security:security-audit apart from the guidance-only security-audit skill.
+
+Applied by the managed component, never in place: scripts/hermes-webapp-component.py security-plugin [--apply] (staging copy, git apply --check,
+compile check, original kept in the component backups folder, takes effect at the next gateway start). Plugin updates replace the file: re-apply
+or upstream the change.
 
 diff --git a/hermes_security/plugin.py b/hermes_security/plugin.py
 --- a/hermes_security/plugin.py

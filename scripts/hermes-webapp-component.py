@@ -20,7 +20,12 @@ from src.hermes_webapp_component import LOGIN_WARNING
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'ensure', 'repair', 'status', 'start', 'stop', 'restart', 'rollback', 'disable', 'enable', 'blocked', 'roots', 'logins'))
+    parser.add_argument('action', choices=('plan', 'ensure', 'repair', 'status', 'start', 'stop', 'restart', 'rollback', 'disable', 'enable', 'blocked', 'roots', 'logins', 'wiki-context', 'security-plugin'))
+    parser.add_argument('--apply', action='store_true', help='wiki-context / security-plugin: actually change the managed home (default: report only)')
+    parser.add_argument('--wiki-root', help='wiki-context: the Wiki Steward wiki folder')
+    parser.add_argument('--steward-src', help='wiki-context: folder that holds wiki_steward.py (its src folder)')
+    parser.add_argument('--workspace', action='append', default=[], help='wiki-context: a workspace folder that belongs to the tracked project')
+    parser.add_argument('--project', default='odysseus', help='wiki-context: the wiki project name')
     parser.add_argument('--block', action='append', default=[], help='blocked: add a folder the gateway must never read, write or delete')
     parser.add_argument('--unblock', action='append', default=[], help='blocked: remove a folder from the list')
     parser.add_argument('--add-root', action='append', default=[], help='roots: a folder the managed gateway may write to (its own HERMES_WRITE_SAFE_ROOT)')
@@ -63,6 +68,18 @@ def main(argv=None):
                                        repo_roots=args.repo_root, build=not args.no_build, repair=args.action == 'repair', enable=args.action == 'enable',
                                        rebuild=args.rebuild)
             payload = {**payload, 'actions': component.last_actions}
+        elif args.action in ('wiki-context', 'security-plugin'):
+            config = component.config()
+            if not config or config.get('origin') != 'managed':
+                raise ComponentError('These overlays only apply to a managed gateway home.')
+            if args.action == 'security-plugin':
+                payload = component.apply_security_plugin_patch(config['home'], dry_run=not args.apply)
+            else:
+                if not (args.wiki_root and args.steward_src and args.workspace):
+                    parser.error('wiki-context needs --wiki-root, --steward-src and at least one --workspace.')
+                options = dict(wiki_root=args.wiki_root, steward_src=args.steward_src, workspaces=args.workspace, project=args.project)
+                payload = component.install_wiki_context_plugin(config['home'], config['python'], **options) if args.apply else component.wiki_context_plan(config['home'], config['python'], **options)
+                payload = {'installed': payload} if args.apply else payload
         elif args.action == 'start':
             payload = component.start()
         elif args.action == 'stop':

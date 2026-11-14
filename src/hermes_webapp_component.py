@@ -43,6 +43,11 @@ WORKSPACE_GRANTS_PLUGIN = 'odysseus-workspace-grants'
 WORKSPACE_GRANTS_PLUGIN_SOURCE = 'integrations/hermes-mode/plugins/odysseus-workspace-grants'
 KNOWN_PREVIOUS_PLUGIN_SHA256 = ('f72f51dabc67c4c99f40aca182ac66546220c678e5341020c95c3e73536d1760',
                                 'd87945810fe157502ff0dc498e03d59dea737f469a7f571716a7955bfff1b0a5')       # earlier shipped copies of OUR plugin: safe to upgrade; anything else is the user's and is never overwritten
+WIKI_CONTEXT_PLUGIN = 'odysseus-wiki-context'
+WIKI_CONTEXT_PLUGIN_SOURCE = 'integrations/wiki/plugins/odysseus-wiki-context'
+WIKI_CONTEXT_CONFIG = 'wiki-context.json'
+SECURITY_PLUGIN = 'hermes-security'
+SECURITY_PLUGIN_PATCH = 'integrations/hermes-mode/patches/hermes-security-skill-descriptions.patch'
 BUILD_SCRIPT = 'apps/desktop/scripts/build-webapp.mjs'
 BUNDLE_RELATIVE = 'apps/desktop/dist-webapp'
 ROUTE_GUARD_PATCH = 'integrations/hermes-mode/patches/webapp-route-guard.patch'
@@ -769,6 +774,105 @@ class WebappComponent:
 
     def installed_desktop_plugins(self, home):
         return [name for name, source, target, known in self._plugin_pairs(home) if target.is_file() and self._same_plugin(target.read_bytes(), source.read_bytes())]
+
+    # -- reviewed plugin overlays (opt-in, never run by ensure/repair) -----------------------------------------------------------------
+    def wiki_context_plan(self, home, python, *, wiki_root, steward_src, workspaces, project='odysseus', agent='hermes'):
+        """What installing the Wiki context plugin would do. Writes nothing."""
+        source = self.application_root / WIKI_CONTEXT_PLUGIN_SOURCE
+        if not (source / 'plugin.yaml').is_file():
+            raise ComponentError('The packaged Wiki context plugin is missing from this Odysseus installation.')
+        if not (Path(steward_src) / 'wiki_steward.py').is_file() or not (Path(wiki_root) / 'steward.json').is_file():
+            raise ComponentError('steward_src must hold wiki_steward.py and wiki_root must be a Wiki Steward wiki (steward.json).')
+        target = Path(home) / 'plugins' / WIKI_CONTEXT_PLUGIN
+        config_path = Path(home) / WIKI_CONTEXT_CONFIG
+        wanted = {'wiki_root': str(wiki_root), 'steward_src': str(steward_src), 'agent': agent, 'projects': {project: {'workspaces': [str(w) for w in workspaces]}}}
+        settings = self.home_settings(python, home)
+        enabled = [x for x in (settings.get('plugins_enabled') or []) if isinstance(x, str)]
+        files = {item.relative_to(source).as_posix() for item in source.rglob('*') if item.is_file() and '__pycache__' not in item.parts}
+        state = 'new'
+        if target.exists():
+            manifest = target / 'plugin.yaml'
+            if not manifest.is_file() or f'name: {WIKI_CONTEXT_PLUGIN}' not in manifest.read_text(encoding='utf-8', errors='replace'):
+                raise ComponentError('A different plugin with this name already exists; it was not overwritten.')
+            same = all((target / name).is_file() and (target / name).read_bytes().replace(b'\r\n', b'\n') == (source / name).read_bytes().replace(b'\r\n', b'\n') for name in files)
+            state = 'same' if same else 'upgrade'
+        config_state = 'new'
+        if config_path.exists():
+            try:
+                config_state = 'same' if json.loads(config_path.read_text(encoding='utf-8-sig')) == wanted else 'differs'
+            except ValueError:
+                config_state = 'differs'
+        return {'plugin': state, 'config': config_state, 'enabled': WIKI_CONTEXT_PLUGIN in enabled, 'target': str(target), 'config_path': str(config_path),
+                'wanted_config': wanted, 'applies': 'new chats after a gateway restart or plugin reload'}
+
+    def install_wiki_context_plugin(self, home, python, **kwargs):
+        """Copy the Wiki context plugin into a managed home, write its settings file and enable it. An existing settings file that differs is never overwritten."""
+        plan = self.wiki_context_plan(home, python, **kwargs)
+        if plan['config'] == 'differs':
+            raise ComponentError(f'{plan["config_path"]} already exists with different content; it was not overwritten.')
+        source = self.application_root / WIKI_CONTEXT_PLUGIN_SOURCE
+        target = Path(plan['target'])
+        target.mkdir(parents=True, exist_ok=True)
+        for item in source.rglob('*'):
+            if item.is_file() and '__pycache__' not in item.parts:
+                dest = target / item.relative_to(source)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                atomic_bytes(dest, item.read_bytes())
+        if plan['config'] == 'new':
+            atomic_json(Path(plan['config_path']), plan['wanted_config'])
+        if not plan['enabled']:
+            settings = self.home_settings(python, home)
+            enabled = [x for x in (settings.get('plugins_enabled') or []) if isinstance(x, str)] + [WIKI_CONTEXT_PLUGIN]
+            self._hermes_yaml(python, _WRITE_SETTINGS, str(Path(home) / 'config.yaml'), json.dumps({'plugins': {'enabled': enabled}}))
+        return WIKI_CONTEXT_PLUGIN
+
+    def security_plugin_state(self, home):
+        """absent | pristine (the unpatched upstream file) | patched (our reviewed patch is in) | unknown (anything else: never touched)."""
+        plugin_py = Path(home) / 'plugins' / SECURITY_PLUGIN / 'hermes_security' / 'plugin.py'
+        if not plugin_py.is_file():
+            return 'absent'
+        text = plugin_py.read_text(encoding='utf-8', errors='replace')
+        if '_skill_metadata(' in text and 'description=description' in text:
+            return 'patched'
+        return 'pristine' if 'ctx.register_skill(name, skill_root / name / "SKILL.md")' in text else 'unknown'
+
+    def apply_security_plugin_patch(self, home, dry_run=True):
+        """Give the hermes-security plugin's skills real descriptions (upstream registers them with none).
+
+        Reviewed patch: integrations/hermes-mode/patches/hermes-security-skill-descriptions.patch. Built in a staging copy and checked there; the
+        installed folder is never edited in place: it is moved to the component's backups folder and the patched copy takes its name. Only a plugin
+        whose file is the exact upstream one is touched. Takes effect when the gateway next starts.
+        Attribution: hermes-security, NousResearch/hermes-official-plugins, Apache-2.0 (see the plugin's own LICENSE and NOTICE)."""
+        state = self.security_plugin_state(home)
+        report = {'state': state, 'patch': SECURITY_PLUGIN_PATCH, 'applied': False}
+        if state in ('absent', 'patched', 'unknown') or dry_run:
+            return report
+        patch = (self.application_root / SECURITY_PLUGIN_PATCH).resolve()
+        if not patch.is_file():
+            raise ComponentError('The reviewed hermes-security patch is missing from this Odysseus installation.')
+        git = shutil.which('git')
+        if not git:
+            raise ComponentError('git is required to apply the reviewed patch.')
+        source = Path(home) / 'plugins' / SECURITY_PLUGIN
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        staging = private_directory(self.directory / 'staging') / f'{SECURITY_PLUGIN}-{stamp}'
+        shutil.copytree(source, staging, ignore=shutil.ignore_patterns('__pycache__'))
+        try:
+            for step in (('apply', '--check'), ('apply',)):
+                done = subprocess.run([git, *step, str(patch)], cwd=str(staging), capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW)
+                if done.returncode:
+                    raise ComponentError('The reviewed hermes-security patch does not apply to the installed plugin: ' + done.stderr.strip()[:200])
+            compile((staging / 'hermes_security' / 'plugin.py').read_text(encoding='utf-8'), 'plugin.py', 'exec')
+            atomic_bytes(staging / 'ODYSSEUS_PATCH.txt', ('hermes-security by NousResearch (hermes-official-plugins, Apache-2.0).\nModified by Odysseus: ' + SECURITY_PLUGIN_PATCH +
+                         ' (skill descriptions in the skill index). Applied ' + stamp + '. The original is in the component backups folder.\n').encode('utf-8'))
+            backup = private_directory(self.directory / 'backups') / f'{SECURITY_PLUGIN}-{stamp}'
+            os.replace(source, backup)
+            os.replace(staging, source)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        report.update(applied=True, backup=str(backup), applies='when the gateway next starts')
+        return report
 
     def install_workspace_grants_plugin(self, home, python):
         """Copy the workspace-grants plugin into a managed home and enable it, preserving the existing plugins.enabled list.
