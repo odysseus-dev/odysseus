@@ -95,6 +95,76 @@ def _patch_agent_loop(monkeypatch, round_responses, executed):
     return agent_loop
 
 
+@pytest.mark.parametrize("action", [None, "", "   ", 123])
+@pytest.mark.parametrize("external_context", [False, True])
+def test_notes_without_an_action_are_rejected_before_approval(monkeypatch, action, external_context):
+    from src.prompt_security import untrusted_context_message
+
+    args = {"title": "Fixture", "content": "Fixture content"}
+    if action is not None:
+        args["action"] = action
+    executed = []
+    agent_loop = _patch_agent_loop(monkeypatch, ["```manage_notes\n" + json.dumps(args) + "\n```"], executed)
+    messages = [{"role": "user", "content": "Continue with the requested action."}]
+    if external_context:
+        messages.append(untrusted_context_message("prefetched context", "Fixture external content"))
+    events = _collect_agent_events(agent_loop.stream_agent_loop(
+        "http://local.test/v1", "small-local-model",
+        messages,
+        max_rounds=1, relevant_tools={"manage_notes"}, forced_tools={"manage_notes"},
+    ))
+
+    assert executed == []
+    assert not any(event.get("ask_user", {}).get("kind") == "tool_approval"
+                   or event.get("data", {}).get("kind") == "tool_approval" for event in events), events
+    outputs = [e for e in events if e.get("type") == "tool_output" and e.get("tool") == "manage_notes"]
+    assert outputs, events
+    assert outputs[0]["exit_code"] == 1
+    assert outputs[0]["execution_attempted"] is False
+    assert "action" in outputs[0]["output"] and 'add' in outputs[0]["output"]
+
+
+def test_valid_note_create_still_requires_approval_after_external_context(monkeypatch):
+    from src.prompt_security import untrusted_context_message
+
+    executed = []
+    agent_loop = _patch_agent_loop(monkeypatch,
+        ['```manage_notes\n{"action":"create","title":"Fixture","content":"Fixture content"}\n```'], executed)
+    events = _collect_agent_events(agent_loop.stream_agent_loop(
+        "http://local.test/v1", "small-local-model",
+        [{"role": "user", "content": "Continue with the requested action."},
+         untrusted_context_message("prefetched context", "Fixture external content")],
+        max_rounds=1, relevant_tools={"manage_notes"}, forced_tools={"manage_notes"},
+    ))
+
+    assert executed == []
+    assert any(event.get("ask_user", {}).get("kind") == "tool_approval"
+               or event.get("data", {}).get("kind") == "tool_approval" for event in events), events
+
+
+def test_note_action_can_be_corrected_after_validation_without_losing_approval(monkeypatch):
+    from src.prompt_security import untrusted_context_message
+
+    executed = []
+    agent_loop = _patch_agent_loop(monkeypatch, [
+        '```manage_notes\n{"title":"Fixture","content":"Fixture content"}\n```',
+        '```manage_notes\n{"action":"add","title":"Fixture","content":"Fixture content"}\n```',
+    ], executed)
+    events = _collect_agent_events(agent_loop.stream_agent_loop(
+        "http://local.test/v1", "small-local-model",
+        [{"role": "user", "content": "Continue with the requested action."},
+         untrusted_context_message("prefetched context", "Fixture external content")],
+        max_rounds=2, relevant_tools={"manage_notes"}, forced_tools={"manage_notes"},
+    ))
+
+    assert executed == []
+    outputs = [e for e in events if e.get("type") == "tool_output" and e.get("tool") == "manage_notes"]
+    assert outputs[0]["exit_code"] == 1 and "action" in outputs[0]["output"]
+    approvals = [e["ask_user"] for e in outputs if e.get("ask_user", {}).get("kind") == "tool_approval"]
+    assert len(approvals) == 1, events
+    assert json.loads(approvals[0]["action"]["content"])["action"] == "add"
+
+
 def test_all_fence_tools_have_explicit_capabilities():
     from src.agent_tools import TOOL_TAGS
 
