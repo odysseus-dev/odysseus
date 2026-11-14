@@ -1,0 +1,651 @@
+diff --git a/apps/desktop/src/app/chat/composer/control-center-utils.test.ts b/apps/desktop/src/app/chat/composer/control-center-utils.test.ts
+new file mode 100644
+index 0000000000..3408430300
+--- /dev/null
++++ b/apps/desktop/src/app/chat/composer/control-center-utils.test.ts
+@@ -0,0 +1,41 @@
++import { describe, expect, it } from 'vitest'
++
++import type { UsageStats } from '@/types/hermes'
++
++import { contextGaugeView, pathLeaf } from './control-center-utils'
++
++const usage = (extra: Partial<UsageStats>): UsageStats => ({ calls: 1, input: 1, output: 1, total: 2, ...extra })
++
++describe('contextGaugeView', () => {
++  it('reads unavailable instead of inventing a number', () => {
++    expect(contextGaugeView(null).state).toBe('unavailable')
++    expect(contextGaugeView(usage({})).percent).toBeNull()
++    expect(contextGaugeView(usage({ context_max: 0, context_used: 5 })).state).toBe('unavailable')
++    expect(contextGaugeView(usage({ context_max: 1000 })).state).toBe('unavailable')
++  })
++
++  it('marks a provider-measured reading and an estimate differently', () => {
++    const measured = contextGaugeView(usage({ context_max: 200_000, context_percent: 6, context_used: 12_000 }))
++    expect(measured).toMatchObject({ label: '6%', percent: 6, state: 'reported' })
++    expect(measured.tooltip).toContain('reported by the provider')
++
++    const guess = contextGaugeView(usage({ context_estimated: true, context_max: 200_000, context_percent: 6, context_used: 12_000 }))
++    expect(guess).toMatchObject({ label: '~6%', state: 'estimated' })
++    expect(guess.tooltip).toContain('estimated')
++  })
++
++  it('clamps and derives the percent when the backend omits it', () => {
++    expect(contextGaugeView(usage({ context_max: 100, context_used: 250 })).percent).toBe(100)
++    expect(contextGaugeView(usage({ context_max: 100, context_used: 25 })).percent).toBe(25)
++  })
++})
++
++describe('pathLeaf', () => {
++  it('handles Windows and POSIX paths, long paths and drive roots', () => {
++    expect(pathLeaf('F:\\Odysseus')).toBe('Odysseus')
++    expect(pathLeaf('F:/Odysseus/')).toBe('Odysseus')
++    expect(pathLeaf('E:\\Perso\\Job search\\Jobup-Tauri-Phase1')).toBe('Jobup-Tauri-Phase1')
++    expect(pathLeaf('F:\\')).toBe('F:\\')
++    expect(pathLeaf('')).toBe('')
++  })
++})
+diff --git a/apps/desktop/src/app/chat/composer/control-center-utils.ts b/apps/desktop/src/app/chat/composer/control-center-utils.ts
+new file mode 100644
+index 0000000000..611d31358e
+--- /dev/null
++++ b/apps/desktop/src/app/chat/composer/control-center-utils.ts
+@@ -0,0 +1,47 @@
++import type { UsageStats } from '@/types/hermes'
++
++export type ContextGaugeState = 'estimated' | 'reported' | 'unavailable'
++
++export interface ContextGaugeView {
++  state: ContextGaugeState
++  /** 0-100 when known, else null. */
++  percent: null | number
++  label: string
++  tooltip: string
++}
++
++const compact = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 100) / 10}k` : String(Math.round(n)))
++
++/** What the composer's context ring shows. A figure is only shown when the backend sent a context window; a backend estimate is
++ *  marked as such, and anything else reads "unavailable" instead of a made-up number. */
++export function contextGaugeView(usage: null | undefined | UsageStats): ContextGaugeView {
++  const max = usage?.context_max
++
++  if (!usage || !max || max <= 0 || typeof usage.context_used !== 'number') {
++    return { label: '\u2014', percent: null, state: 'unavailable', tooltip: 'Context usage unavailable for this conversation yet' }
++  }
++
++  const percent = Math.max(0, Math.min(100, Math.round(usage.context_percent ?? (usage.context_used / max) * 100)))
++  const estimated = Boolean(usage.context_estimated)
++  const source = estimated ? 'estimated' : 'reported by the provider'
++
++  return {
++    label: `${estimated ? '~' : ''}${percent}%`,
++    percent,
++    state: estimated ? 'estimated' : 'reported',
++    tooltip: `Context ${estimated ? '~' : ''}${compact(usage.context_used)} of ${compact(max)} tokens (${percent}%), ${source}`
++  }
++}
++
++/** Last folder name of a path, either separator, drive root kept. */
++export function pathLeaf(path: string): string {
++  const clean = (path || '').trim().replace(/[\\/]+$/, '')
++
++  if (!clean) {
++    return ''
++  }
++
++  const leaf = clean.split(/[\\/]/).pop() || clean
++
++  return /^[A-Za-z]:$/.test(leaf) ? `${leaf}\\` : leaf
++}
+diff --git a/apps/desktop/src/app/chat/composer/control-center.tsx b/apps/desktop/src/app/chat/composer/control-center.tsx
+new file mode 100644
+index 0000000000..d175e219fb
+--- /dev/null
++++ b/apps/desktop/src/app/chat/composer/control-center.tsx
+@@ -0,0 +1,275 @@
++import { useStore } from '@nanostores/react'
++import { useEffect, useMemo, useState } from 'react'
++import { useNavigate } from 'react-router'
++
++import { ProfileSwitcher } from '@/app/chat/sidebar/profile-dropdown-switcher'
++import { Button } from '@/components/ui/button'
++import { Codicon } from '@/components/ui/codicon'
++import { ConfirmDialog } from '@/components/ui/confirm-dialog'
++import {
++  DropdownMenu,
++  DropdownMenuContent,
++  DropdownMenuItem,
++  DropdownMenuLabel,
++  DropdownMenuSeparator,
++  DropdownMenuTrigger
++} from '@/components/ui/dropdown-menu'
++import { Tip } from '@/components/ui/tooltip'
++import { pluginSettingsHref } from '@/contrib/settings-pages'
++import { selectDesktopPaths } from '@/lib/desktop-fs'
++import { displayPath } from '@/lib/display-path'
++import { triggerHaptic } from '@/lib/haptics'
++import { cn } from '@/lib/utils'
++import { $composerContextGauge, $composerWorkspaceBridge } from '@/store/composer-control-center'
++import { requestGatewayForActiveRoute } from '@/store/active-route-request'
++import { notify } from '@/store/notifications'
++import {
++  $projectTree,
++  moveSessionToProject,
++  projectIdForCwd,
++  projectNameForCwd,
++  projectRootCwd,
++  refreshProjectTree
++} from '@/store/projects'
++import { $activeGatewayProfile } from '@/store/profile'
++import { $currentBranch } from '@/store/session'
++
++import { contextGaugeView, pathLeaf } from './control-center-utils'
++
++const CHIP =
++  'h-6 min-w-0 max-w-full shrink gap-1 rounded-md px-1.5 text-[0.75rem] font-normal text-(--ui-text-secondary) hover:text-(--ui-text-primary) data-[state=open]:bg-(--ui-control-active-background)'
++
++interface ChipsProps {
++  busy: boolean
++  compact: boolean
++  cwd?: null | string
++  profile?: null | string
++  sessionId?: null | string
++}
++
++type Pending = { kind: 'cwd'; path: string } | { kind: 'project'; id: string; label: string; root: string }
++
++/** Profile, project and workspace for the conversation in this composer. Read-only facts come from the stores the status bar and
++ *  sidebar already use; every change goes through the same calls those surfaces make, so this row adds no permission of its own:
++ *  choosing a folder never grants write access, and an existing conversation only changes after an explicit confirmation. */
++export function ComposerContextChips({ busy, compact, cwd, profile, sessionId }: ChipsProps) {
++  const navigate = useNavigate()
++  const tree = useStore($projectTree)
++  const liveBranch = useStore($currentBranch)
++  const gatewayProfile = useStore($activeGatewayProfile)
++  const [probe, setProbe] = useState<{ branch: string; cwd: string } | null>(null)
++  const bridge = useStore($composerWorkspaceBridge)
++  const [pending, setPending] = useState<null | Pending>(null)
++  const folder = (cwd || '').trim()
++  const existing = Boolean(sessionId)
++
++  // A draft has no session yet, so the app has no branch for it: ask the backend about the folder itself (the same read the
++  // workspace picker uses) instead of showing the previous conversation's branch.
++  useEffect(() => {
++    if (existing || !folder) {
++      return
++    }
++
++    let live = true
++
++    requestGatewayForActiveRoute<{ branch?: string; cwd?: string }>(gatewayProfile, 'config.get', { cwd: folder, key: 'project' })
++      .then(info => live && setProbe({ branch: info?.branch || '', cwd: folder }))
++      .catch(() => live && setProbe({ branch: '', cwd: folder }))
++
++    return () => {
++      live = false
++    }
++  }, [existing, folder, gatewayProfile])
++
++  const branch = existing ? liveBranch : probe?.cwd === folder ? probe.branch : ''
++  const projectName = useMemo(() => (folder ? projectNameForCwd(folder) : null), [folder, tree])
++  const projectId = useMemo(() => (folder ? projectIdForCwd(folder) : null), [folder, tree])
++  const targets = tree.filter(node => !node.isNoProject)
++  const busyWhy = 'A turn is running. Wait for it to finish or stop it first.'
++
++  const applyCwd = async (path: string) => {
++    if (!bridge.changeSessionCwd) {
++      notify({ kind: 'warning', message: 'The workspace cannot be changed right now.' })
++
++      return
++    }
++
++    await bridge.changeSessionCwd(path, sessionId || undefined)
++  }
++
++  const pickFolder = async () => {
++    const [dir] = await selectDesktopPaths({ defaultPath: folder, directories: true, multiple: false, title: 'Choose a working folder' })
++
++    if (!dir) {
++      return
++    }
++
++    if (existing) {
++      setPending({ kind: 'cwd', path: dir })
++    } else {
++      await applyCwd(dir)
++    }
++  }
++
++  const chooseProject = (node: (typeof targets)[number]) => {
++    const root = projectRootCwd(node)
++
++    if (!root) {
++      return
++    }
++
++    triggerHaptic('selection')
++
++    if (existing) {
++      setPending({ id: node.id, kind: 'project', label: node.label, root })
++    } else {
++      void applyCwd(root)
++    }
++  }
++
++  const confirm = async () => {
++    const todo = pending
++
++    if (!todo) {
++      return
++    }
++
++    if (todo.kind === 'cwd') {
++      await applyCwd(todo.path)
++      notify({ durationMs: 2_500, kind: 'success', message: `Working folder is now ${displayPath(todo.path)}.` })
++    } else {
++      await moveSessionToProject(sessionId as string, todo.id, profile || undefined)
++      notify({ durationMs: 2_500, kind: 'success', message: `Moved to ${todo.label}.` })
++    }
++  }
++
++  const folderLabel = folder ? pathLeaf(folder) : 'Default folder'
++  const full = folder ? displayPath(folder) : 'No folder chosen yet: the profile\u2019s default working folder applies'
++
++  return (
++    <div className="flex min-w-0 grow basis-0 flex-wrap items-center gap-x-1 gap-y-0.5" data-slot="composer-context-chips">
++      <div aria-label="Profile" className="min-w-0 max-w-44 shrink" data-slot="composer-profile">
++        <ProfileSwitcher />
++      </div>
++
++      <DropdownMenu>
++        <Tip label={projectName ? `Project: ${projectName}` : 'Project: none. This folder is not in a Hermes project.'}>
++          <DropdownMenuTrigger asChild>
++            <Button aria-label={`Project: ${projectName || 'none'}`} className={cn(CHIP, 'max-w-40')} data-slot="composer-project" size="xs" type="button" variant="ghost">
++              <Codicon aria-hidden="true" className="shrink-0" name="project" size="0.8125rem" />
++              {!compact && <span className="truncate">{projectName || 'No project'}</span>}
++              <Codicon aria-hidden="true" className="shrink-0 opacity-60" name="chevron-down" size="0.75rem" />
++            </Button>
++          </DropdownMenuTrigger>
++        </Tip>
++        <DropdownMenuContent align="start" className="min-w-56 max-w-80" collisionPadding={8} side="top">
++          <DropdownMenuLabel className="text-[0.6875rem] font-normal text-(--ui-text-tertiary)">
++            {existing ? 'Move this conversation to a project (asks first)' : 'Start this conversation in a project'}
++          </DropdownMenuLabel>
++          {targets.map(node => {
++            const root = projectRootCwd(node)
++            const current = node.id === projectId
++            const why = current ? 'current' : !root ? 'no folder' : node.isAuto ? 'detected' : ''
++
++            return (
++              <DropdownMenuItem
++                disabled={current || !root || (existing && busy)}
++                key={node.id}
++                onSelect={() => chooseProject(node)}
++                title={root || 'This project has no folder yet'}
++              >
++                <span className="min-w-0 flex-1 truncate">{node.label}</span>
++                {why && <span className="shrink-0 text-[0.6875rem] text-(--ui-text-tertiary)">{why}</span>}
++              </DropdownMenuItem>
++            )
++          })}
++          {targets.length === 0 && <DropdownMenuItem disabled>No projects yet</DropdownMenuItem>}
++          <DropdownMenuSeparator />
++          <DropdownMenuItem onSelect={() => void refreshProjectTree()}>Refresh project list</DropdownMenuItem>
++          <DropdownMenuItem onSelect={() => navigate(pluginSettingsHref('odysseus-resume'))}>{'Manage projects\u2026'}</DropdownMenuItem>
++        </DropdownMenuContent>
++      </DropdownMenu>
++
++      <DropdownMenu>
++        <Tip label={`Working folder: ${full}${branch ? ` \u00b7 branch ${branch}` : ''}`}>
++          <DropdownMenuTrigger asChild>
++            <Button aria-label={`Working folder: ${full}`} className={cn(CHIP, 'max-w-60')} data-slot="composer-workspace" size="xs" type="button" variant="ghost">
++              <Codicon aria-hidden="true" className="shrink-0" name="folder" size="0.8125rem" />
++              {!compact && <span className="truncate">{folderLabel}</span>}
++              {branch && !compact && (
++                <span className="flex min-w-0 shrink-[2] items-center gap-0.5 text-(--ui-text-tertiary)">
++                  <Codicon aria-hidden="true" className="shrink-0" name="git-branch" size="0.75rem" />
++                  <span className="truncate">{branch}</span>
++                </span>
++              )}
++              <Codicon aria-hidden="true" className="shrink-0 opacity-60" name="chevron-down" size="0.75rem" />
++            </Button>
++          </DropdownMenuTrigger>
++        </Tip>
++        <DropdownMenuContent align="start" className="min-w-56 max-w-96" collisionPadding={8} side="top">
++          <DropdownMenuLabel className="break-all text-[0.6875rem] font-normal text-(--ui-text-tertiary)">{full}</DropdownMenuLabel>
++          <DropdownMenuItem disabled={existing && busy} onSelect={() => void pickFolder()} title={existing && busy ? busyWhy : undefined}>
++            {existing ? 'Change working folder\u2026' : 'Choose working folder\u2026'}
++          </DropdownMenuItem>
++          {existing && busy && <DropdownMenuLabel className="text-[0.6875rem] font-normal text-(--ui-text-tertiary)">{busyWhy}</DropdownMenuLabel>}
++          <DropdownMenuLabel className="text-[0.6875rem] font-normal text-(--ui-text-tertiary)">
++            Choosing a folder never grants write access.
++          </DropdownMenuLabel>
++        </DropdownMenuContent>
++      </DropdownMenu>
++
++      <ConfirmDialog
++        confirmLabel={pending?.kind === 'project' ? 'Move conversation' : 'Change folder'}
++        description={
++          pending?.kind === 'project'
++            ? `This conversation will move to \u201c${pending.label}\u201d and work in ${displayPath(pending.root)}. Its messages stay as they are. No files move and no write permission changes.`
++            : pending
++              ? `The agent will work in ${displayPath(pending.path)} from the next turn on. Messages and files stay as they are, and no write permission changes: the folder must already be allowed for writing.`
++              : ''
++        }
++        onClose={() => setPending(null)}
++        onConfirm={confirm}
++        open={Boolean(pending)}
++        title={pending?.kind === 'project' ? 'Move this conversation to another project?' : 'Change this conversation\u2019s working folder?'}
++      />
++    </div>
++  )
++}
++
++/** Context usage ring. Provider-measured values are plain, a backend estimate is marked "~", and without a context window the
++ *  ring says "unavailable" instead of showing a guessed number. */
++export function ComposerContextRing() {
++  const usage = useStore($composerContextGauge)
++  const view = contextGaugeView(usage)
++  const radius = 8
++  const circumference = 2 * Math.PI * radius
++  const dash = view.percent === null ? 0 : (view.percent / 100) * circumference
++
++  return (
++    <Tip label={view.tooltip}>
++      <span
++        aria-label={view.tooltip}
++        className={cn('relative inline-flex size-6 shrink-0 items-center justify-center', view.state === 'unavailable' && 'opacity-50')}
++        data-slot="composer-context-ring"
++        data-state={view.state}
++        role="img"
++      >
++        <svg aria-hidden="true" className="size-5 -rotate-90" viewBox="0 0 20 20">
++          <circle cx="10" cy="10" fill="none" r={radius} stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
++          {view.percent !== null && (
++            <circle
++              cx="10"
++              cy="10"
++              fill="none"
++              r={radius}
++              stroke="currentColor"
++              strokeDasharray={view.state === 'estimated' ? `${Math.max(dash - 2, 0)} 2 ${circumference}` : `${dash} ${circumference}`}
++              strokeLinecap="round"
++              strokeWidth="2"
++            />
++          )}
++        </svg>
++      </span>
++    </Tip>
++  )
++}
+diff --git a/apps/desktop/src/app/chat/composer/hooks/use-composer-metrics.ts b/apps/desktop/src/app/chat/composer/hooks/use-composer-metrics.ts
+index e891943d97..cfd5b46dd5 100644
+--- a/apps/desktop/src/app/chat/composer/hooks/use-composer-metrics.ts
++++ b/apps/desktop/src/app/chat/composer/hooks/use-composer-metrics.ts
+@@ -263,7 +263,9 @@ export function useComposerMetrics({
+     compactPill: fit.compactPill || fit.tight,
+     foldVoice: fit.foldVoice || fit.minimal,
+     minimal: fit.minimal,
+-    stacked: expanded || fit.tight,
++    // Always stacked: the input is on its own full-width row and every control sits beneath it, so profile, project, workspace,
++    // model, reasoning and context stay visible instead of appearing only once the text wraps.
++    stacked: true,
+     tight: fit.tight,
+     singleColumn: fit.singleColumn
+   }
+diff --git a/apps/desktop/src/app/chat/composer/index.tsx b/apps/desktop/src/app/chat/composer/index.tsx
+index 9ef8daa80f..6a7e034c00 100644
+--- a/apps/desktop/src/app/chat/composer/index.tsx
++++ b/apps/desktop/src/app/chat/composer/index.tsx
+@@ -57,6 +57,7 @@ import {
+   slashArgStage
+ } from './composer-utils'
+ import { ContextMenu } from './context-menu'
++import { ComposerContextChips, ComposerContextRing } from './control-center'
+ import { COMPOSER_AREAS } from './contrib'
+ import { ComposerControls } from './controls'
+ import { ComposerDirectiveActions } from './directive-actions'
+@@ -126,7 +127,7 @@ function controlRowGridClass(singleColumn: boolean, stacked: boolean): string {
+   }
+ 
+   return stacked
+-    ? 'grid-cols-[auto_1fr] gap-(--composer-row-gap) [grid-template-areas:"input_input"_"menu_controls"]'
++    ? 'grid-cols-[minmax(0,1fr)_auto] items-center gap-(--composer-row-gap) [grid-template-areas:"input_input"_"menu_controls"]'
+     : 'grid-cols-[auto_1fr_auto] items-center gap-(--composer-control-gap) [grid-template-areas:"menu_input_controls"]'
+ }
+ 
+@@ -1504,9 +1505,12 @@ export function ChatBar({
+                   {queueEdit && editingQueuedPrompt && <QueuedEditBanner onExit={exitQueuedEdit} />}
+                   {attachments.length > 0 && <AttachmentList attachments={attachments} onRemove={onRemoveAttachment} />}
+                   <div className={cn('grid w-full', controlRowGridClass(singleColumn, stacked))}>
+-                    <div className="flex translate-y-[3px] items-start gap-(--composer-control-gap) self-start [grid-area:menu]">
++                    <div className={cn('flex min-w-0 gap-(--composer-control-gap) [grid-area:menu]', stacked ? 'flex-wrap items-center' : 'translate-y-[3px] items-start self-start')}>
+                       {contextMenu}
+                       <ContribSlot area={COMPOSER_AREAS.leading} />
++                      {!guidedChat && !botChat && (
++                        <ComposerContextChips busy={busy} compact={compactPill} cwd={cwd} profile={profile} sessionId={sessionId} />
++                      )}
+                     </div>
+                     <div className="min-w-0 [grid-area:input]">{input}</div>
+                     {/* `justify-end` packs contributed actions and the send cluster
+@@ -1516,6 +1520,7 @@ export function ChatBar({
+                       start, detached from the cluster (#116332). */}
+                     <div className="flex min-w-0 items-center justify-end gap-(--composer-control-gap) [grid-area:controls]">
+                       <ContribSlot area={COMPOSER_AREAS.actions} />
++                      {!guidedChat && !botChat && <ComposerContextRing />}
+                       {controls}
+                     </div>
+                   </div>
+diff --git a/apps/desktop/src/app/chat/sidebar/session-actions-menu.tsx b/apps/desktop/src/app/chat/sidebar/session-actions-menu.tsx
+index bdaf15a5ef..dbbfac3bd7 100644
+--- a/apps/desktop/src/app/chat/sidebar/session-actions-menu.tsx
++++ b/apps/desktop/src/app/chat/sidebar/session-actions-menu.tsx
+@@ -223,7 +223,9 @@ function MoveToProjectItems({ kit, sessionId, profile }: { kit: MenuKit; session
+   const session = useStore($sessions).find(s => sessionMatchesStoredId(s, sessionId))
+   const cwd = session?.cwd?.trim() || ''
+   const currentProjectId = cwd ? projectIdForCwd(cwd) : null
+-  const targets = tree.filter(node => node.id !== currentProjectId && !node.isNoProject && projectRootCwd(node))
++  // Every project the sidebar knows stays in the list. One that cannot be chosen says why (it is the current project, or it has no
++  // folder to work in) instead of vanishing, and a project Hermes only detected from conversation folders is marked as such.
++  const targets = tree.filter(node => !node.isNoProject)
+ 
+   // The flat (non-grouped) sidebar view only warms $projectTree on a
+   // background timer (PROJECT_TREE_WARM_MS in sidebar/index.tsx), so opening
+@@ -241,19 +243,27 @@ function MoveToProjectItems({ kit, sessionId, profile }: { kit: MenuKit; session
+ 
+   return (
+     <>
+-      {targets.map(node => (
+-        <kit.Item
+-          key={node.id}
+-          onSelect={() => {
+-            triggerHaptic('selection')
+-            moveSessionToProject(sessionId, node.id, profile)
+-              .then(() => notify({ durationMs: 2_000, kind: 'success', message: p.movedTo(node.label) }))
+-              .catch(err => notifyError(err, p.moveFailed))
+-          }}
+-        >
+-          {node.label}
+-        </kit.Item>
+-      ))}
++      {targets.map(node => {
++        const root = projectRootCwd(node)
++        const current = node.id === currentProjectId
++        const note = current ? 'current' : !root ? 'no folder' : node.isAuto ? 'detected' : ''
++
++        return (
++          <kit.Item
++            disabled={current || !root}
++            key={node.id}
++            onSelect={() => {
++              triggerHaptic('selection')
++              moveSessionToProject(sessionId, node.id, profile)
++                .then(() => notify({ durationMs: 2_000, kind: 'success', message: p.movedTo(node.label) }))
++                .catch(err => notifyError(err, p.moveFailed))
++            }}
++          >
++            {node.label}
++            {note && <span className="ml-2 text-[0.6875rem] text-(--ui-text-tertiary)">{note}</span>}
++          </kit.Item>
++        )
++      })}
+     </>
+   )
+ }
+diff --git a/apps/desktop/src/app/contrib/surfaces.tsx b/apps/desktop/src/app/contrib/surfaces.tsx
+index 1308c69291..d9fb73a4c5 100644
+--- a/apps/desktop/src/app/contrib/surfaces.tsx
++++ b/apps/desktop/src/app/contrib/surfaces.tsx
+@@ -8,11 +8,12 @@
+  */
+ 
+ import { useStore } from '@nanostores/react'
+-import { type ComponentProps, lazy, memo, type ReactNode, Suspense, useMemo } from 'react'
++import { type ComponentProps, lazy, memo, type ReactNode, Suspense, useEffect, useMemo } from 'react'
+ import { Navigate, Route, Routes, useParams } from 'react-router'
+ 
+ import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
+ import { useContributions } from '@/contrib/react/use-contributions'
++import { $composerWorkspaceBridge } from '@/store/composer-control-center'
+ import { $activeConnectionId } from '@/store/connections'
+ import { $gateway } from '@/store/gateway'
+ import { $chatOnboardingSolo } from '@/store/onboarding-intro'
+@@ -90,6 +91,11 @@ export const StatusbarSurface = memo(function StatusbarSurface({
+   const extraLeftItems = useStatusbarContributions('left')
+   const extraRightItems = useStatusbarContributions('right')
+ 
++  // eslint-disable-next-line no-restricted-syntax -- hands the app's own cwd mutation to the composer's workspace chip
++  useEffect(() => {
++    $composerWorkspaceBridge.set({ changeSessionCwd: actions.changeSessionCwd })
++  }, [actions.changeSessionCwd])
++
+   const { leftStatusbarItems, statusbarItems } = useStatusbarItems({
+     agentsOpen,
+     changeSessionCwd: actions.changeSessionCwd,
+diff --git a/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx b/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx
+index a0f3fbf712..0c51b98954 100644
+--- a/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx
++++ b/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx
+@@ -1,6 +1,6 @@
+ import { gaugeTitle } from '@hermes/shared'
+ import { useStore } from '@nanostores/react'
+-import { useCallback, useMemo } from 'react'
++import { useCallback, useEffect, useMemo } from 'react'
+ import { useNavigate } from 'react-router'
+ 
+ import { ConnectionSwitcher } from '@/app/chat/sidebar/connection-switcher'
+@@ -51,6 +51,7 @@ import { $freeTierSignInOpen, $freeTierStatus, FREE_TIER_MODEL } from '@/store/f
+ import { openFreeTierSignIn } from '@/store/free-tier-sign-in'
+ import { $gateway } from '@/store/gateway'
+ import { revealFileInTree } from '@/store/layout'
++import { $composerContextGauge } from '@/store/composer-control-center'
+ import { $activeGatewayProfile } from '@/store/profile'
+ import { $profileRailVisible } from '@/store/profile-rail-prefs'
+ import { $projectTree, projectNameForCwd } from '@/store/projects'
+@@ -360,6 +361,12 @@ export function useStatusbarItems({
+     }
+   }, [contextBreakdown, currentUsage, focusedUsage])
+ 
++  // The composer's context ring reads the same gauge: no second request or timer.
++  // eslint-disable-next-line no-restricted-syntax -- publishes a derived reading to the composer's store
++  useEffect(() => {
++    $composerContextGauge.set(gaugeUsage)
++  }, [gaugeUsage])
++
+   const contextUsage = useMemo(() => usageContextLabel(gaugeUsage), [gaugeUsage])
+   const contextBar = useMemo(() => contextBarLabel(gaugeUsage), [gaugeUsage])
+   // Both ride the same usage payload the context meter does (session.usage
+diff --git a/apps/desktop/src/sdk/index.ts b/apps/desktop/src/sdk/index.ts
+index 416e2e4490..955dce3fed 100644
+--- a/apps/desktop/src/sdk/index.ts
++++ b/apps/desktop/src/sdk/index.ts
+@@ -59,6 +59,7 @@ import {
+   retainGatewayForRelay,
+   retireLocalProfileGateways
+ } from '@/store/gateway'
++import { deleteProject, refreshProjects, refreshProjectTree } from '@/store/projects'
+ import { notify, notifyError } from '@/store/notifications'
+ import {
+   $activeGatewayProfile,
+@@ -1239,6 +1240,16 @@ export const host = {
+     newSessionTarget: WorkspaceNewSessionTarget | null = null
+   ): boolean => publishWorkspaceScope(mode, ownerKey, newSessionTarget),
+ 
++  /** Hermes' own project registry, through the calls the sidebar makes: `delete` removes only the registration (conversations,
++   *  folders and files are untouched) and `refresh` re-reads every project list on screen. */
++  projects: {
++    delete: async (id: string): Promise<void> => deleteProject(id),
++    refresh: async (): Promise<void> => {
++      await refreshProjects()
++      await refreshProjectTree()
++    }
++  },
++
+   /** Feature flag: `newChat` honours `options.cwd`. Older desktops lack it, so a plugin falls back to telling the user which folder to pick. */
+   supportsNewChatCwd: true as const,
+ 
+diff --git a/apps/desktop/src/store/composer-control-center.ts b/apps/desktop/src/store/composer-control-center.ts
+new file mode 100644
+index 0000000000..020d2d1aac
+--- /dev/null
++++ b/apps/desktop/src/store/composer-control-center.ts
+@@ -0,0 +1,11 @@
++import { atom } from 'nanostores'
++
++import type { UsageStats } from '@/types/hermes'
++
++/** The context gauge the status bar already computes (measured breakdown, else the streamed usage). Published once so the
++ *  composer's ring reads the same numbers with no extra request or timer. */
++export const $composerContextGauge = atom<null | UsageStats>(null)
++
++/** The workspace mutation the app already owns (`session.cwd.set`, or the new-chat target for a draft), handed to the
++ *  composer's workspace chip so it never re-implements cwd handling. */
++export const $composerWorkspaceBridge = atom<{ changeSessionCwd?: (cwd: string, sessionId?: string) => Promise<void> }>({})
+diff --git a/hermes_cli/projects_db.py b/hermes_cli/projects_db.py
+index 39bfc043e8..3251bec272 100644
+--- a/hermes_cli/projects_db.py
++++ b/hermes_cli/projects_db.py
+@@ -368,8 +368,12 @@ def restore_project(conn: sqlite3.Connection, project_id: str) -> bool:
+ 
+ 
+ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
+-    """Hard-delete a project and its folders (cascade)."""
+-    return _execute_rowcount(conn, "DELETE FROM projects WHERE id = ?", (project_id,)) > 0
++    """Hard-delete a project and its folders (cascade). The active-project pointer goes with it, in the same transaction, so
++    the UI is never left selecting a project that no longer exists."""
++    with write_txn(conn):
++        cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
++        conn.execute("DELETE FROM project_meta WHERE key = ? AND value = ?", (_ACTIVE_META_KEY, project_id))
++    return cur.rowcount > 0
+ 
+ 
+ # --- Active-project pointer + discovery policy (project_meta KV) --------------
+@@ -397,7 +401,11 @@ def set_active(conn: sqlite3.Connection, project_id: Optional[str]) -> None:
+ 
+ 
+ def get_active_id(conn: sqlite3.Connection) -> Optional[str]:
+-    return _get_meta(conn, _ACTIVE_META_KEY)
++    """The active project, or None when the pointer names a project that no longer exists (a pointer left by an older delete)."""
++    active = _get_meta(conn, _ACTIVE_META_KEY)
++    if active is not None and conn.execute("SELECT 1 FROM projects WHERE id = ?", (active,)).fetchone() is None:
++        return None
++    return active
+ 
+ 
+ def get_discovery_policy_key(conn: sqlite3.Connection) -> Optional[str]:
+diff --git a/tui_gateway/methods_session.py b/tui_gateway/methods_session.py
+index 5b1ca47904..5e2cc76d63 100644
+--- a/tui_gateway/methods_session.py
++++ b/tui_gateway/methods_session.py
+@@ -1108,6 +1108,10 @@ def _(rid, params: dict) -> dict:
+         live_sid, live = next(
+             ((sid, sess) for sid, sess in list(_sessions.items()) if sess.get("session_key") == target), ("", None))
+     # The live session's profile decides (as _set_session_cwd below does); an ssh workspace is never host-validated.
++    # Refused while a turn runs, like session.cwd.set: the running agent's tools and frozen policy would change under it.
++    # The Desktop maps data.reason == "session_busy" to its "wait for the turn to finish" message.
++    if live is not None and live.get("running"):
++        return _err(rid, 4009, "session busy", {"reason": "session_busy"})
+     home = live.get("profile_home") if live is not None else _profile_home(params.get("profile"))
+     try:
+         target_cwd = _workspace_cwd(home, translate_cwd_for_wsl_backend(raw))

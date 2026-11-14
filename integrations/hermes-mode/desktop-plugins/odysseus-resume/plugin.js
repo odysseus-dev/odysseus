@@ -294,6 +294,25 @@ function useNativeProjects() {
   return [state, load]
 }
 
+function useNativeTree() {
+  const [state, setState] = useState({ status: 'loading', projects: [] })
+  const alive = useRef(true)
+  useEffect(() => () => { alive.current = false }, [])
+  const load = useCallback(async () => {
+    try {
+      const result = await rpc('projects.tree', { preview_limit: 0 })
+      if (alive.current) setState({ status: 'ready', projects: (result && result.projects) || [] })
+    } catch { if (alive.current) setState({ status: 'error', projects: [] }) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+  return [state, load]
+}
+
+// Re-read every Hermes project list that is on screen: the sidebar and its Move to project menu share the native store, this page keeps its own copies.
+async function refreshHermesLists() {
+  try { if (host.projects && host.projects.refresh) await host.projects.refresh() } catch { /* the sidebar refreshes itself on its next tick */ }
+}
+
 const matchNative = (projects, d) => projects.filter(p => (p.folders || []).some(f => (d.paths || [d.path]).some(x => normPath(x) === normPath(f.path))))
 
 function Note({ note }) {
@@ -408,9 +427,11 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
   const [confirm, setConfirm] = useState(null)
   const [newFolder, setNewFolder] = useState('')
   const [rename, setRename] = useState({})
+  const [del, setDel] = useState(null)
+  const [delText, setDelText] = useState('')
   const run = async (fn, ok) => {
     setBusy(true); setNote(null)
-    try { await fn(); await reloadNative(); onChanged(); setNote({ ok: true, text: ok }) } catch (error) { setNote({ ok: false, text: error.message }) } finally { setBusy(false) }
+    try { await fn(); await refreshHermesLists(); await reloadNative(); onChanged(); setNote({ ok: true, text: ok }) } catch (error) { setNote({ ok: false, text: error.message }) } finally { setBusy(false) }
   }
   if (native.status === 'loading') return h(Loading, { rows: 3 })
   if (native.status === 'error') return h(Retry, { error: Object.assign(native.error, { retryable: true }), onRetry: reloadNative })
@@ -462,9 +483,36 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
             : 'Opens a fresh draft. This Hermes Desktop cannot preset the folder, so pick it in the composer\u2019s workspace chip (the path is copied); existing permissions apply.')),
         h('div', { style: { borderTop: LINE, paddingTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' } },
           h(Button, { size: 'xs', variant: 'ghost', disabled: busy, onClick: () => p.archived ? run(() => rpc('projects.archive', { id: p.id, restore: true }), 'Restored.') : setConfirm({ kind: 'archive', project: p }), children: p.archived ? 'Restore project' : 'Archive project' }),
-          h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, 'Archiving hides the project in Hermes. Conversations, folders and files stay as they are.')))
+          h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, 'Archiving hides the project in Hermes. Conversations, folders and files stay as they are.')),
+        h('div', { style: { display: 'grid', gap: '0.4rem', border: '1px solid color-mix(in srgb, var(--ui-text-danger, #e5534b) 40%, transparent)', borderRadius: '0.5rem', padding: '0.75rem' } },
+          h(PanelSectionLabel, null, 'Delete project'),
+          h('div', { style: { fontSize: '0.78rem' } }, 'Deleting is permanent and different from archiving: it removes this project\u2019s registration from Hermes (its name, colour and folder list).'),
+          h('ul', { style: { ...MUTED, fontSize: '0.72rem', margin: 0, paddingLeft: '1.1rem' } },
+            h('li', null, 'Conversations are not deleted. They stay in your history and fall back to Recents.'),
+            h('li', null, `The folder${folders.length === 1 ? '' : 's'} and every file on disk (${folders.map(f => f.path).join(', ') || 'none registered'}) are not touched.`),
+            h('li', null, 'Write permissions are not changed. Deleting never grants or revokes access.')),
+          h('div', null, h(Button, { size: 'xs', variant: 'ghost', disabled: busy, style: { color: 'var(--ui-text-danger, #e5534b)' }, onClick: () => { setDelText(''); setDel(p) }, children: 'Delete project\u2026' })))
+      )
     }),
     h('div', { style: { ...MUTED, fontSize: '0.72rem' } }, 'A default model per project is not supported by Hermes projects yet, so there is no control for it here.'),
+    h(ConfirmDialog, {
+      open: !!del, onClose: () => setDel(null), destructive: true, confirmLabel: 'Delete project', busyLabel: 'Deleting\u2026', doneLabel: 'Deleted',
+      title: del ? `Delete \u201c${del.name}\u201d?` : '',
+      description: del ? 'This removes the project from Hermes permanently. Conversations, folders and files are not deleted, and permissions do not change. To only hide it, use Archive instead.' : '',
+      onConfirm: async () => {
+        const target = del
+        if (!target) return
+        if (delText.trim() !== target.name) throw new Error(`Type the exact project name \u201c${target.name}\u201d to confirm.`)
+        if (host.projects && typeof host.projects.delete === 'function') await host.projects.delete(target.id)
+        else { await rpc('projects.delete', { id: target.id }); await refreshHermesLists() }
+        await reloadNative(); onChanged()
+        const text = `Deleted the Hermes project \u201c${target.name}\u201d. Its conversations and folders were left untouched.`
+        setNote({ ok: true, text })
+        if (host.notify) host.notify({ kind: 'success', message: text })
+      }
+    }, del ? h('div', { style: { display: 'grid', gap: '0.4rem', marginTop: '0.5rem' } },
+      h('label', { style: { fontSize: '0.8rem' } }, `Type ${del.name} to confirm`),
+      h(Input, { value: delText, autoFocus: true, spellCheck: false, 'aria-label': 'Project name to confirm', placeholder: del.name, onChange: e => setDelText(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && delText.trim() !== del.name) { e.preventDefault(); e.stopPropagation() } } })) : null),
     h(ConfirmDialog, {
       open: !!confirm, onClose: () => setConfirm(null), destructive: true,
       confirmLabel: confirm && confirm.kind === 'archive' ? 'Archive' : 'Remove folder',
@@ -473,7 +521,7 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
       onConfirm: async () => {
         const current = confirm
         await rpc(current.kind === 'archive' ? 'projects.archive' : 'projects.remove_folder', current.kind === 'archive' ? { id: current.project.id } : { id: current.project.id, path: current.path })
-        await reloadNative(); onChanged(); setNote({ ok: true, text: current.kind === 'archive' ? 'Archived.' : 'Folder removed.' })
+        await refreshHermesLists(); await reloadNative(); onChanged(); setNote({ ok: true, text: current.kind === 'archive' ? 'Archived.' : 'Folder removed.' })
       }
     }))
 }
@@ -506,7 +554,10 @@ function ProjectDetail({ id, onOpenSession, diagnosticUrl, onChanged }) {
 }
 
 function ProjectsPage() {
-  const [overview, reloadOverview] = useRequest('overview', signal => getJson(API, signal))
+  const [overview, reloadOverviewOnly] = useRequest('overview', signal => getJson(API, signal))
+  const [nativeAll, reloadNativeAll] = useNativeProjects()
+  const [tree, reloadTree] = useNativeTree()
+  const reloadOverview = useCallback(() => { reloadOverviewOnly(); void reloadNativeAll(); void reloadTree() }, [reloadOverviewOnly, reloadNativeAll, reloadTree])
   const [tick, setTick] = useState(0)
   const [selected, setSelected] = useState(() => { try { return sessionStorage.getItem('odysseus.projects.selected') || null } catch { return null } })
   const [query, setQuery] = useState('')
@@ -547,13 +598,32 @@ function ProjectsPage() {
   void tick; void setTick
   const diagnostic = projectsUrl()
 
+  const registeredOf = p => nativeAll.status === 'ready' ? matchNative(nativeAll.projects.filter(x => !x.archived), p) : null
+  const registered = shown.filter(p => { const m = registeredOf(p); return m && m.length })
+  const isArchivedRow = p => nativeAll.status === 'ready' && matchNative(nativeAll.projects.filter(x => x.archived), p).length > 0
+  const unregistered = shown.filter(p => { const m = registeredOf(p); return m && !m.length && !isArchivedRow(p) })
+  const archivedRows = shown.filter(p => { const m = registeredOf(p); return m && !m.length && isArchivedRow(p) })
+  const detected = tree.status === 'ready' ? tree.projects.filter(x => x.isAuto && x.path && !nativeAll.projects.some(n => (n.folders || []).some(f => normPath(f.path) === normPath(x.path))) && !projects.some(p => (p.paths || [p.path]).some(q => normPath(q) === normPath(x.path)))) : []
+  const reasonOf = p => (p.exists === false ? 'its folder is missing on disk \u00b7 ' : '') + `known from: ${(p.sources || []).join(', ') || 'conversation folders'}`
+  const row = (p, note) => h(PanelListRow, {
+    key: p.id, rowKey: p.id, active: p.id === selected, onSelect: () => setSelected(p.id), icon: p.kind === 'git' ? 'git-branch' : 'root-folder',
+    dotClassName: p.sessions && p.sessions.attention ? 'bg-amber-500' : undefined, title: p.name, tooltip: note,
+    meta: p.sessions && p.sessions.total ? String(p.sessions.total) : undefined
+  })
+  const groupLabel = (text, help) => h('div', { style: { margin: '0.6rem 0 0.2rem' } }, h(PanelSectionLabel, null, text), help ? h('div', { style: { ...MUTED, fontSize: '0.68rem', lineHeight: 1.3 } }, help) : null)
   const list = overview.status === 'error' ? h(Retry, { error: overview.error, onRetry: reloadOverview })
     : overview.status === 'loading' && !projects.length ? h(Loading, { rows: 6 })
-    : shown.length ? h('div', { role: 'listbox', 'aria-label': 'Projects' }, shown.map(p => h(PanelListRow, {
-      key: p.id, rowKey: p.id, active: p.id === selected, onSelect: () => setSelected(p.id), icon: p.kind === 'git' ? 'git-branch' : 'root-folder',
-      dotClassName: p.sessions && p.sessions.attention ? 'bg-amber-500' : undefined, title: p.name,
-      meta: p.sessions && p.sessions.total ? String(p.sessions.total) : undefined
-    })))
+    : shown.length || detected.length ? h('div', { role: 'listbox', 'aria-label': 'Projects' },
+        registered.length ? groupLabel('Hermes projects', 'Registered in Hermes. These appear in the sidebar and in a conversation\u2019s \u201cMove to project\u201d menu.') : null,
+        ...registered.map(p => row(p, 'Registered Hermes project')),
+        unregistered.length ? groupLabel('Not registered', 'Known to Odysseus, but not Hermes projects, so \u201cMove to project\u201d does not list them. Open one and use Manage \u203a Create Hermes project.') : null,
+        ...unregistered.map(p => h('div', { key: p.id, title: reasonOf(p) }, row(p, reasonOf(p)), h('div', { style: { ...MUTED, fontSize: '0.66rem', padding: '0 0.75rem 0.25rem 2rem', overflowWrap: 'anywhere' } }, reasonOf(p)))),
+        detected.length ? groupLabel('Detected from conversations', 'Hermes groups these by conversation folder automatically. They are not registered and are not changed here.') : null,
+        ...detected.map(x => h('div', { key: x.id, style: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.25rem 0.75rem' } },
+          h('span', { style: { flex: 1, minWidth: 0, fontSize: '0.8rem', overflowWrap: 'anywhere' }, title: x.path }, x.label || x.path),
+          h(Button, { size: 'xs', variant: 'ghost', title: `Register ${x.path} as a Hermes project (no write access is granted)`, onClick: async () => { try { await rpc('projects.create', { name: x.label || x.path, folders: [x.path] }); await refreshHermesLists(); reloadOverview() } catch (error) { host.notify && host.notify({ kind: 'error', message: error.message }) } }, children: 'Register' }))),
+        archivedRows.length ? groupLabel('Archived', 'Hidden in Hermes, so not offered by \u201cMove to project\u201d. Open one and use Manage \u203a Restore project.') : null,
+        ...archivedRows.map(p => row(p, 'Archived Hermes project')))
     : h(PanelEmpty, { icon: 'search', title: 'No projects match' })
 
   return h('div', { ref: rootRef, style: { display: 'grid', gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'minmax(12rem, 16rem) minmax(0, 1fr)', gap: '1rem', minHeight: narrow ? undefined : '28rem', alignItems: 'start', minWidth: 0 } },
