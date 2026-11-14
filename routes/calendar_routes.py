@@ -827,6 +827,46 @@ def _recurrence_exdates(ev: CalendarEvent) -> list[str]:
     return [str(v) for v in values if isinstance(v, str) and v.strip()]
 
 
+def _ics_recurrence_exdates(component, all_day: bool) -> list[str]:
+    """Read repeated/list EXDATE values into the existing occurrence keys."""
+    properties = component.get("exdate") or []
+    if not isinstance(properties, list):
+        properties = [properties]
+    keys = set()
+    for prop in properties:
+        for entry in getattr(prop, "dts", []):
+            value = getattr(entry, "dt", None)
+            if all_day:
+                if isinstance(value, date) and not isinstance(value, datetime):
+                    keys.add(value.strftime("%Y-%m-%d"))
+            elif isinstance(value, datetime):
+                keys.add(_ics_naive_dtstart(value).strftime("%Y-%m-%dT%H:%M"))
+    return sorted(keys)
+
+
+def _ics_exdate_lines(ev: CalendarEvent) -> list[str]:
+    """Serialize canonical skipped starts with DTSTART's value type/seconds."""
+    lines = []
+    for key in sorted(set(_recurrence_exdates(ev))):
+        try:
+            if ev.all_day:
+                if len(key) != 10:
+                    continue
+                value = date.fromisoformat(key)
+                lines.append(f"EXDATE;VALUE=DATE:{value.strftime('%Y%m%d')}")
+            else:
+                if len(key) != 16 or key[10] != "T":
+                    continue
+                # Occurrence IDs have minute precision. Keep the series'
+                # seconds so an exported EXDATE still matches its DTSTART.
+                value = datetime.fromisoformat(key).replace(second=ev.dtstart.second)
+                suffix = "Z" if getattr(ev, "is_utc", False) else ""
+                lines.append(f"EXDATE:{value.strftime('%Y%m%dT%H%M%S')}{suffix}")
+        except (TypeError, ValueError, OverflowError):
+            logger.debug("Skipping invalid stored recurrence exclusion %r", key)
+    return lines
+
+
 def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
     if "::" not in uid:
         return ""
@@ -1701,6 +1741,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                         end_dt = start_dt + timedelta(hours=1)
 
                 end_dt = _ensure_positive_duration(start_dt, end_dt, all_day)
+                exdates = _ics_recurrence_exdates(comp, all_day) if comp.get("rrule") else []
 
                 ev = CalendarEvent(
                     uid=uid_val,
@@ -1713,6 +1754,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     all_day=all_day,
                     is_utc=row_is_utc,
                     rrule=(comp.get("rrule").to_ical().decode() if comp.get("rrule") else ""),
+                    recurrence_exdates=json.dumps(exdates) if exdates else "",
                 )
                 db.add(ev)
                 event_uids.append(uid_val)
@@ -1774,6 +1816,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     lines.append(f"LOCATION:{_ics_escape(ev.location)}")
                 if ev.rrule:
                     lines.append(f"RRULE:{ev.rrule}")
+                    lines.extend(_ics_exdate_lines(ev))
                 lines.append("END:VEVENT")
             lines.append("END:VCALENDAR")
 
