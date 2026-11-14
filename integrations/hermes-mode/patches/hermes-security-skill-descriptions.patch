@@ -1,0 +1,38 @@
+Hermes Security plugin 0.1.3: give the plugin's skills real descriptions in the system prompt's skill index.
+ctx.register_skill(name, path) without description/frontmatter registers an EMPTY description, so the seven hermes-security:* skills appear in
+<available_skills> with nothing to select on (the REA plugin passes both). Also tells the tool-backed hermes-security:security-audit apart from the
+guidance-only security-audit skill. Apply inside plugins/hermes-security with: git apply hermes-security-skill-descriptions.patch  (new sessions only).
+Plugin updates replace the file: re-apply or upstream the change.
+
+diff --git a/hermes_security/plugin.py b/hermes_security/plugin.py
+--- a/hermes_security/plugin.py
++++ b/hermes_security/plugin.py
+@@ -8,6 +8,21 @@
+ _SERVICE_LOCK = Lock()
+ _SKILLS = ("security-audit", "security-diff-review", "threat-model", "validate-finding",
+            "fix-finding", "verify-fix", "define-security-policy")
++
++
++# The generic `security-audit` skill (guidance only) shares this name; say which one drives the tool-backed scan.
++_HINTS = {"security-audit": " Tool-backed: runs the security_scan_* scan with evidence and coverage tracking (the plain security-audit skill is guidance only)."}
++
++
++def _skill_metadata(path, name):
++    """Description and frontmatter for the system prompt's skill index (register_skill does not read them from SKILL.md by itself)."""
++    try:
++        from agent.skill_utils import parse_frontmatter
++        data, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
++        description = str(data.get("description") or "").strip()
++        return (description + _HINTS.get(name, "")).strip(), dict(data)
++    except Exception:
++        return "", {}
+ 
+ 
+ def get_service(ctx=None):
+@@ -48,4 +63,5 @@
+             ctx.register_hook(name, callback)
+     skill_root = Path(__file__).resolve().parent.parent / "skills"
+     for name in _SKILLS:
+-        ctx.register_skill(name, skill_root / name / "SKILL.md")
++        description, frontmatter = _skill_metadata(skill_root / name / "SKILL.md", name)
++        ctx.register_skill(name, skill_root / name / "SKILL.md", description=description, frontmatter=frontmatter)
