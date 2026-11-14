@@ -1192,6 +1192,7 @@ body.gallery-selecting .gallery-dl-btn,
   font-size: 11px;
   margin-bottom: 4px;
 }
+textarea.gallery-detail-name-input { resize: vertical; min-height: 96px; font: inherit; line-height: 1.45; }
 .gallery-tag-input:focus,
 .gallery-detail-name-input:focus {
   border-color: var(--red);

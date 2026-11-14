@@ -1475,6 +1475,11 @@ def setup_gallery_routes() -> APIRouter:
                 img.tags = ', '.join(cleaned)
             if req.favorite is not None:
                 img.favorite = req.favorite
+            if req.caption is not None:
+                caption = req.caption.strip()
+                if len(caption) > 20000:
+                    raise HTTPException(400, "Description is too long")
+                img.caption = caption
             if req.album_id is not None:
                 if req.album_id:
                     # Validate the target album belongs to the caller before
