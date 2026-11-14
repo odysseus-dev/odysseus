@@ -594,9 +594,11 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         from src.constants import DATA_DIR
         from src.llm_core import llm_call_async_with_fallback
         from src.memory import MemoryManager
+        from copy import deepcopy
 
         manager = MemoryManager(DATA_DIR)
-        all_memories = manager.load_all()
+        all_memories = manager.load_all_for_update()
+        before = deepcopy(all_memories)
 
         _owner_clean = (owner or "").strip()
         text_limit = 2000
@@ -855,15 +857,30 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
             total_removed += group_removed
 
         if total_removed or total_cleaned:
-            manager.save(all_memories)
+            result = manager.apply_snapshot(before, all_memories)
+            total_removed = len(result["removed"])
+            total_cleaned = sum(
+                entry.get("text") != next(m.get("text") for m in before if m["id"] == entry["id"])
+                for entry in result["updated"]
+            )
+            if not total_removed and not result["updated"]:
+                raise TaskNoop("memories changed during consolidation; kept the newer records")
+            # Reuse the app's initialized index; never construct another
+            # embedding backend from a scheduled housekeeping action.
+            from src.ai_interaction import _memory_vector
+            manager.sync_vector(_memory_vector,
+                                [entry["id"] for entry in result["removed"] + result["updated"]])
             if ai_used:
-                reasons = ai_reasons[:3]
+                reasons = ai_reasons[:3] if not result["conflicts"] else []
                 reason_text = f": {'; '.join(reasons)}" if reasons else ""
                 return (
                     f"AI tidied {total_scanned} memories: "
                     f"removed {total_removed}, cleaned {total_cleaned}{reason_text}",
                     True,
                 )
+            removed_examples = [
+                (entry.get("text") or "(empty)")[:60] for entry in result["removed"][:3]
+            ]
             preview = "; ".join(removed_examples)
             extra = f" (+{total_removed - len(removed_examples)} more)" if total_removed > len(removed_examples) else ""
             return f"Removed {total_removed} duplicate(s) of {total_scanned}: {preview}{extra}", True

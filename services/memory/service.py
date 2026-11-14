@@ -115,12 +115,10 @@ class MemoryService:
 
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID."""
-        memories = self.manager.load_all()
-        remaining = [m for m in memories if m.get("id") != memory_id]
-        if len(remaining) == len(memories):
-            return False
-
-        self.manager.save(remaining)
-        if self.vector_store and self.vector_store.healthy:
-            self.vector_store.remove(memory_id)
+        with self.manager.transaction() as memories:
+            remaining = [m for m in memories if m.get("id") != memory_id]
+            if len(remaining) == len(memories):
+                return False
+            memories[:] = remaining
+        self.manager.sync_vector(self.vector_store, [memory_id])
         return True

@@ -47,6 +47,9 @@ class _BrokenVectorStore:
     def add(self, memory_id, text):
         raise RuntimeError("embedding backend unavailable")
 
+    def remove(self, memory_id):
+        pass
+
 
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
