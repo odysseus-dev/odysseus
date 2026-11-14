@@ -1143,6 +1143,12 @@
 @media (max-width: 520px) {
   .cal-hero-time { font-size: 44px; }
   .cal-form-bespoke { margin: 16px 12px; padding: 32px 16px 14px; }
+  .cal-form-bespoke .cal-form-row,
+  .cal-form-bespoke .cal-form-actions { flex-wrap: wrap; }
+  .cal-form-bespoke .cal-form-row > input.cal-input {
+    width: auto;
+    flex: 1 1 auto;
+  }
   .cal-form-mobile-cancel {
     display: inline-flex;
     position: absolute;
