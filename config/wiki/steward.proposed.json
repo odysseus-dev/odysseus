@@ -1,0 +1,32 @@
+{
+ "version": 2,
+ "reviewers": ["user"],
+ "projects": {
+  "odysseus": {"repo": "F:\\Odysseus\\integration-backups\\webapp-proxy"},
+  "selftest": {"repo": "F:\\Odysseus\\integration-backups\\webapp-proxy"}
+ },
+ "agents": {
+  "hermes": {
+   "projects": ["odysseus"],
+   "can": ["search", "propose", "verify", "record_task", "handoff", "status", "conflicts", "inbox", "ack"]
+  },
+  "claude-code": {
+   "projects": ["odysseus"],
+   "can": ["search", "propose", "verify", "record_task", "handoff", "status", "conflicts", "inbox", "ack"]
+  },
+  "wiki-bot": {
+   "projects": ["odysseus"],
+   "can": ["search", "propose", "verify", "record_task", "handoff", "status", "conflicts", "inbox", "ack"]
+  }
+ },
+ "tests": {
+  "selftest-unit": {
+   "project": "selftest",
+   "subjects": ["selftest.wiki-steward-unit-tests-pass"],
+   "watch": ["src/wiki_steward.py", "scripts/wiki_mcp.py", "scripts/wiki.py"],
+   "argv": ["F:\\Odysseus-Backups\\desktop-lab\\ody-full-venv\\Scripts\\python.exe", "-m", "pytest", "tests/wiki_steward/test_wiki_steward.py", "-q", "-p", "no:cacheprovider", "-W", "ignore", "-x"],
+   "timeout": 300
+  }
+ },
+ "external": {"hosts": [], "min_sources": 2, "ttl_days": 30}
+}

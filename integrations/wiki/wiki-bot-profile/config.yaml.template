@@ -1,0 +1,20 @@
+# Wiki Bot profile template. The four bracketed fields below are filled in by `scripts/wiki-install.py render`.
+# This profile exposes ONLY the wiki MCP server's tools (explicit platform_toolsets allowlist on every platform).
+# Verified with the pinned Hermes' own resolver: tests/wiki_steward/real_clients/bot_tools_probe.py and bridge_probe.py.
+# Reviewer-only operations (decide, adopt, revert) are not exposed over MCP at all; wiki_resolve is the one bot tool and the
+# steward itself refuses it for sensitive, attested or still-contested claims.
+mcp_servers:
+  wiki:
+    command: "<python>"
+    args: ["<wiki_mcp_script>"]
+    env:
+      WIKI_ROOT: "<wiki_root>"
+      WIKI_AGENT: "wiki-bot"
+      PYTHONPATH: ""
+    connect_timeout: 60
+
+platform_toolsets:
+<platform_toolsets>
+
+approvals:
+  mode: manual

@@ -1,0 +1,16 @@
+{
+  "_comment": "PREPARED, NOT INSTALLED. Claude Code Stop hook: record new commits as wiki task logs. Merge into <project>/.claude/settings.json (project scope) after the real-client tests pass. Replace the two paths if the wiki or this repo moves.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/Protagonist/AppData/Local/Programs/Python/Python312/python.exe\" \"F:/Odysseus/integration-backups/webapp-proxy/integrations/wiki/hooks/wiki_hook.py\" --root \"F:/Projects/Odysseus-Wiki\" --agent claude-code",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

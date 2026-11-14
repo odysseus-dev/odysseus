@@ -1,0 +1,9 @@
+name: odysseus-wiki-context
+version: 0.1.0
+manifest_version: 2
+kind: standalone
+description: "Project-aware Wiki Steward context: when a chat's workspace belongs to a wiki-tracked project, the first turn gets a short start/end-of-task note and each turn gets only the few wiki claims relevant to the user's message, labelled verified / stale / pending review / conflict. Read-only (search only), never writes the wiki, silent for every other chat, and a missing or broken wiki never blocks a turn."
+author: Odysseus
+license: MIT
+provides_hooks:
+  - pre_llm_call
