@@ -18,6 +18,7 @@ from core.platform_compat import IS_WINDOWS, find_bash
 from core.constants import internal_api_base
 from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 from src.interactive_gate import wait_for_interactive_quiet
+from src.note_rules import note_is_fully_done
 
 logger = logging.getLogger(__name__)
 
@@ -2407,6 +2408,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
 
             for n in notes:
                 seen_ids.add(n.id)
+                if note_is_fully_done(n.note_type, n.items):
+                    continue
                 due = _parse_due(n.due_date)
                 if not due:
                     continue
