@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from core.guard_deco import content_type, usage_monitor
 from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
 from src.constants import VAULT_FILE as _VAULT_FILE
 
@@ -154,6 +155,8 @@ def setup_vault_routes():
         }
 
     @router.post("/config")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def save_config(req: VaultConfig, request: Request):
         """Save vault URL + email. Runs 'bw config server' to point at Vaultwarden."""
         require_admin(request)
@@ -171,6 +174,8 @@ def setup_vault_routes():
         return {"ok": True}
 
     @router.post("/login")
+    @usage_monitor(20, 3600, "log")
+    @content_type(["application/json"])
     async def login(req: VaultLoginRequest, request: Request):
         """Log in to Vaultwarden (required once per account)."""
         require_admin(request)
@@ -196,6 +201,8 @@ def setup_vault_routes():
         return {"ok": True}
 
     @router.post("/unlock")
+    @usage_monitor(20, 3600, "log")
+    @content_type(["application/json"])
     async def unlock(req: VaultUnlockRequest, request: Request):
         """Unlock the vault and save the session key."""
         require_admin(request)

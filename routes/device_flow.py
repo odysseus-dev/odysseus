@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 from fastapi import APIRouter, Form, HTTPException, Request
 
 from core.middleware import require_admin
+from core.guard_deco import suspicious_frequency, usage_monitor
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,7 @@ def create_device_flow_router(
     router = APIRouter(prefix=prefix, tags=list(tags))
 
     @router.post("/device/start")
+    @usage_monitor(20, 3600, "log")
     async def device_start(request: Request):
         require_admin(request)
         form = await request.form()
@@ -157,6 +159,7 @@ def create_device_flow_router(
         return response
 
     @router.post("/device/poll")
+    @suspicious_frequency(0.5, 60, "log")
     async def device_poll(request: Request, poll_id: str = Form(...)):
         require_admin(request)
         payload = store.get_payload(poll_id)
