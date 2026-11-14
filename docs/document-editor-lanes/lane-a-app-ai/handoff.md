@@ -46,18 +46,45 @@ node /home/alteixeira20/Projects/Odysseus/audit-artifacts/tools/document-extract
   --manifest /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-lanes/lane-a-app-ai/docs/document-editor-lanes/lane-a-app-ai/removal.json
 ```
 
-Verifier result for this checkpoint:
+After checkpoint 1 the removal manifest verified those four declarations, with 6 Class 2 rewrites and a clean simulation. The ledger's only violations were the four expected `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` entries.
+
+The full ledger stays red because this lane must not delete the declarations from `static/js/document.js`. The removal simulation is the gate for each module.
+
+## Checkpoint 2: versionHistory
+
+Source: `frontend/src/features/documents/ui/history/versionHistory.js`
+
+Moved declarations:
+
+- `_versionClickOutside`
+- `_versionHistory`
+- `_versionHistoryGeneration`
+- `_historyOwnsView`
+- `toggleVersionHistory`
+- `_closeVersionPanel`
+- `loadVersionHistory`
+- `previewVersion`
+- `restoreVersion`
+
+All nine bodies match `087e6c88` with no state-write rewrites. Class 1 exports are `_closeVersionPanel`, `_historyOwnsView`, `_versionHistory`, and `toggleVersionHistory`. The three internal operations stay unexported and are published on `globalThis` for the monolith wrappers.
+
+`_versionHistory` and `_versionHistoryGeneration` stay owned by this module. External reads of `_versionHistory` use the exported live binding.
+
+Focused check:
+
+```bash
+node --test tests/documentVersionHistory.test.mjs
+```
+
+Cumulative verifier result after this checkpoint:
 
 - Overall `passed`: false.
-- Ledger: 565 total, 289 moved, 272 unmoved, 4 duplicate, 0 missing.
-- The only ledger violations are `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` for `_animationCancel`, `lineDiff`, `animateDocChange`, and `handleDocUpdate`.
-- Removal manifest: 4 declarations verified, 6 Class 2 rewrites, 0 human-review exceptions, simulation clean, `passed: true`.
-- No export, graph, state-ownership, or port violations were reported.
-
-The full ledger stays red because this lane must not delete the declarations from `static/js/document.js`. The removal simulation is the gate for this module. The other Lane A declarations are still unmoved, so a fully green ledger is not expected yet.
+- Ledger: 565 total, 289 moved, 263 unmoved, 13 duplicate, 0 missing.
+- All 13 violations are `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` for the documentUpdate and versionHistory declarations still present in `static/js/document.js`.
+- Removal manifest: 13 declarations verified, 10 rewrites, 0 human-review exceptions, simulation clean, `passed: true`.
+- No export, graph, state-ownership, or port violations.
 
 ## Remaining Lane A modules
 
-1. `ui/history/versionHistory` (9 declarations)
-2. `ui/aiUpdates/liveStream` (8 declarations)
-3. `ui/status/documentStatus` (22 declarations)
+1. `ui/aiUpdates/liveStream` (8 declarations)
+2. `ui/status/documentStatus` (22 declarations)

@@ -6,22 +6,49 @@
     "_animationCancel",
     "animateDocChange",
     "handleDocUpdate",
-    "lineDiff"
+    "lineDiff",
+    "_closeVersionPanel",
+    "_historyOwnsView",
+    "_versionClickOutside",
+    "_versionHistory",
+    "_versionHistoryGeneration",
+    "loadVersionHistory",
+    "previewVersion",
+    "restoreVersion",
+    "toggleVersionHistory"
   ],
   "targetModules": {
     "_animationCancel": "ui/aiUpdates/documentUpdate",
     "animateDocChange": "ui/aiUpdates/documentUpdate",
     "handleDocUpdate": "ui/aiUpdates/documentUpdate",
-    "lineDiff": "ui/aiUpdates/documentUpdate"
+    "lineDiff": "ui/aiUpdates/documentUpdate",
+    "_closeVersionPanel": "ui/history/versionHistory",
+    "_historyOwnsView": "ui/history/versionHistory",
+    "_versionClickOutside": "ui/history/versionHistory",
+    "_versionHistory": "ui/history/versionHistory",
+    "_versionHistoryGeneration": "ui/history/versionHistory",
+    "loadVersionHistory": "ui/history/versionHistory",
+    "previewVersion": "ui/history/versionHistory",
+    "restoreVersion": "ui/history/versionHistory",
+    "toggleVersionHistory": "ui/history/versionHistory"
   },
-  "destinationExports": [],
+  "destinationExports": [
+    "_closeVersionPanel",
+    "_historyOwnsView",
+    "_versionHistory",
+    "toggleVersionHistory"
+  ],
   "addedImports": [
     "import \"./document/ui/aiUpdates/documentUpdate.js\";",
     "const lineDiff = (...args) => globalThis.lineDiff?.(...args);",
     "const animateDocChange = (...args) => globalThis.animateDocChange?.(...args);",
-    "const handleDocUpdate = (...args) => globalThis.handleDocUpdate?.(...args);"
+    "const handleDocUpdate = (...args) => globalThis.handleDocUpdate?.(...args);",
+    "import { _closeVersionPanel, _historyOwnsView, _versionHistory, toggleVersionHistory } from \"./document/ui/history/versionHistory.js\";",
+    "const loadVersionHistory = (...args) => globalThis.loadVersionHistory?.(...args);",
+    "const previewVersion = (...args) => globalThis.previewVersion?.(...args);",
+    "const restoreVersion = (...args) => globalThis.restoreVersion?.(...args);"
   ],
-  "description": "Lane A checkpoint 1: ui/aiUpdates/documentUpdate. Appendix A exports are empty, so the monolith reaches the moved declarations through the globalThis bridge. Do not delete the declarations from static/js/document.js in this lane.",
+  "description": "Lane A checkpoints: documentUpdate and versionHistory. Appendix A exports for documentUpdate are empty, so the monolith reaches those declarations through the globalThis bridge. Version history exports the four Appendix A names and bridges the three internal history operations. Do not delete the declarations from static/js/document.js in this lane.",
   "intentionalNonVerbatimChanges": [
     {
       "declaration": "handleDocUpdate",
@@ -46,6 +73,12 @@
       "change": "Replaced both activeDocId assignments with setActiveDocId(...)",
       "classification": "Class 2 state primitive assignment rewrite",
       "justification": "Only application/documentState may assign activeDocId"
+    },
+    {
+      "declaration": "_closeVersionPanel, _historyOwnsView, _versionHistory, toggleVersionHistory",
+      "change": "Added export modifiers",
+      "classification": "Class 1 export modifier rewrite",
+      "justification": "These are the Appendix A exports for ui/history/versionHistory"
     }
   ],
   "modules": [
@@ -57,7 +90,19 @@
     },
     {
       "module": "ui/history/versionHistory",
-      "status": "pending"
+      "source": "frontend/src/features/documents/ui/history/versionHistory.js",
+      "declarations": [
+        "_closeVersionPanel",
+        "_historyOwnsView",
+        "_versionClickOutside",
+        "_versionHistory",
+        "_versionHistoryGeneration",
+        "loadVersionHistory",
+        "previewVersion",
+        "restoreVersion",
+        "toggleVersionHistory"
+      ],
+      "status": "extracted"
     },
     {
       "module": "ui/aiUpdates/liveStream",
