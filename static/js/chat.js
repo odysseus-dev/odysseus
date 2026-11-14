@@ -1536,7 +1536,7 @@ import { invalidateSettings } from './appConfig.js';
    *  incomplete stream as if it were whole. The saved reply is complete; a resumed run is reloaded from it automatically. */
   function _noteReplayGap(holderEl, sessionId) {
     try {
-      showToast('Part of this run\u2019s output was no longer available to show live. The saved conversation has the complete reply.', 8000);
+      uiModule.showToast('Part of this run\u2019s output was no longer available to show live. The saved conversation has the complete reply.', 8000);
       if (!holderEl || !holderEl.isConnected || holderEl.querySelector('.replay-gap-note')) return;
       const note = document.createElement('div');
       note.className = 'replay-gap-note';
@@ -1560,7 +1560,7 @@ import { invalidateSettings } from './appConfig.js';
       text = 'Stopped. ' + (names || 'A tool') + ' was interrupted and may still be finishing in the background.';
     }
     try { document.body.dataset.chatStop = kind; if (kind === 'stopped') setTimeout(() => { if (document.body.dataset.chatStop === 'stopped') delete document.body.dataset.chatStop; }, 4000); } catch (_) {}
-    if (text) showToast(text, kind === 'stopping' ? 3000 : 7000);
+    if (text) uiModule.showToast(text, kind === 'stopping' ? 3000 : 7000);
   }
 
   /** POST the exact Stop for one observed run identity. */
@@ -5060,7 +5060,7 @@ import { invalidateSettings } from './appConfig.js';
 
               } else if (json.type === 'message_save_failed') {
                 // The reply is on screen and in memory but the database write failed; the server keeps it and retries with the next save.
-                if (!_isBg) showToast('This reply could not be saved to the conversation history yet. It is kept and will be retried; do not close the server.', 9000);
+                if (!_isBg) uiModule.showToast('This reply could not be saved to the conversation history yet. It is kept and will be retried; do not close the server.', 9000);
 
               } else if (json.type === 'message_saved') {
                 // Wire the persisted DB id onto the just-streamed bubble so it
