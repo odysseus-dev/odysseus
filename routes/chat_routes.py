@@ -5153,7 +5153,14 @@ def setup_chat_routes(
         _expected_run_id = request.headers.get("X-Odysseus-Run-Id")
         result = await agent_runs.stop_confirmed(session_id, _expected_run_id)
         # ``stopped`` keeps its old meaning (the cancellation was delivered); ``confirmed``/``state`` say whether the run has really ended.
-        return {"stopped": result["requested"], "confirmed": result["confirmed"], "state": result["state"]}
+        return {"stopped": result["requested"], "confirmed": result["confirmed"], "state": result["state"],
+                "interrupted_tools": result.get("interrupted_tools", []), "tools_may_still_run": result.get("tools_may_still_run", False)}
+
+    @router.get("/api/chat/stop/{session_id}")
+    async def chat_stop_state(request: Request, session_id: str) -> Dict[str, Any]:
+        """Where a stopped run is now (stopping / stopped / done / none). Read-only; the client polls it after a Stop that was not confirmed in time."""
+        _verify_session_owner(request, session_id)
+        return agent_runs.run_state(session_id, request.headers.get("X-Odysseus-Run-Id"))
 
     @router.post("/api/chat/finish/{session_id}")
     async def chat_finish(request: Request, session_id: str) -> Dict[str, Any]:
