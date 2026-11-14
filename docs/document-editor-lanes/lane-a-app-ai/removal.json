@@ -23,7 +23,29 @@
     "_syncStreamDocChrome",
     "streamDocDelta",
     "streamDocFinalize",
-    "streamDocOpen"
+    "streamDocOpen",
+    "_activeDocLanguage",
+    "_closeDocumentOutline",
+    "_docHistoryStateFrame",
+    "_docOutlineClose",
+    "_docOutlineMenu",
+    "_docStatsFrame",
+    "_documentOutlineEntries",
+    "_documentOutlineSupported",
+    "_documentStatsSource",
+    "_flashOutlineTarget",
+    "_jumpToDocumentOutlineEntry",
+    "_normalizeRichStatsText",
+    "_openDocumentOutline",
+    "_refreshDocumentOutline",
+    "_renderDocumentOutlineMenu",
+    "_renderDocumentSaveState",
+    "_renderDocumentStats",
+    "_scheduleDocumentHistoryControls",
+    "_scheduleDocumentStats",
+    "_setDocumentHistoryControlState",
+    "_syncDocumentHistoryControlsNow",
+    "_syncEditorPlaceholder"
   ],
   "targetModules": {
     "_animationCancel": "ui/aiUpdates/documentUpdate",
@@ -46,14 +68,49 @@
     "_syncStreamDocChrome": "ui/aiUpdates/liveStream",
     "streamDocDelta": "ui/aiUpdates/liveStream",
     "streamDocFinalize": "ui/aiUpdates/liveStream",
-    "streamDocOpen": "ui/aiUpdates/liveStream"
+    "streamDocOpen": "ui/aiUpdates/liveStream",
+    "_activeDocLanguage": "ui/status/documentStatus",
+    "_closeDocumentOutline": "ui/status/documentStatus",
+    "_docHistoryStateFrame": "ui/status/documentStatus",
+    "_docOutlineClose": "ui/status/documentStatus",
+    "_docOutlineMenu": "ui/status/documentStatus",
+    "_docStatsFrame": "ui/status/documentStatus",
+    "_documentOutlineEntries": "ui/status/documentStatus",
+    "_documentOutlineSupported": "ui/status/documentStatus",
+    "_documentStatsSource": "ui/status/documentStatus",
+    "_flashOutlineTarget": "ui/status/documentStatus",
+    "_jumpToDocumentOutlineEntry": "ui/status/documentStatus",
+    "_normalizeRichStatsText": "ui/status/documentStatus",
+    "_openDocumentOutline": "ui/status/documentStatus",
+    "_refreshDocumentOutline": "ui/status/documentStatus",
+    "_renderDocumentOutlineMenu": "ui/status/documentStatus",
+    "_renderDocumentSaveState": "ui/status/documentStatus",
+    "_renderDocumentStats": "ui/status/documentStatus",
+    "_scheduleDocumentHistoryControls": "ui/status/documentStatus",
+    "_scheduleDocumentStats": "ui/status/documentStatus",
+    "_setDocumentHistoryControlState": "ui/status/documentStatus",
+    "_syncDocumentHistoryControlsNow": "ui/status/documentStatus",
+    "_syncEditorPlaceholder": "ui/status/documentStatus"
   },
   "destinationExports": [
     "_closeVersionPanel",
     "_historyOwnsView",
     "_versionHistory",
     "toggleVersionHistory",
-    "streamDocFinalize"
+    "streamDocFinalize",
+    "_activeDocLanguage",
+    "_closeDocumentOutline",
+    "_documentOutlineEntries",
+    "_documentOutlineSupported",
+    "_openDocumentOutline",
+    "_refreshDocumentOutline",
+    "_renderDocumentSaveState",
+    "_renderDocumentStats",
+    "_scheduleDocumentHistoryControls",
+    "_scheduleDocumentStats",
+    "_setDocumentHistoryControlState",
+    "_syncDocumentHistoryControlsNow",
+    "_syncEditorPlaceholder"
   ],
   "addedImports": [
     "import \"./document/ui/aiUpdates/documentUpdate.js\";",
@@ -66,9 +123,10 @@
     "const restoreVersion = (...args) => globalThis.restoreVersion?.(...args);",
     "import { streamDocFinalize } from \"./document/ui/aiUpdates/liveStream.js\";",
     "const streamDocOpen = (...args) => globalThis.streamDocOpen?.(...args);",
-    "const streamDocDelta = (...args) => globalThis.streamDocDelta?.(...args);"
+    "const streamDocDelta = (...args) => globalThis.streamDocDelta?.(...args);",
+    "import { _activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder } from \"./document/ui/status/documentStatus.js\";"
   ],
-  "description": "Lane A checkpoints: documentUpdate, versionHistory, and liveStream. Appendix A exports for documentUpdate are empty, so the monolith reaches those declarations through the globalThis bridge. Version history exports its four Appendix A names. Live stream exports streamDocFinalize and bridges streamDocOpen and streamDocDelta. Do not delete the declarations from static/js/document.js in this lane.",
+  "description": "Lane A checkpoints: documentUpdate, versionHistory, liveStream, and documentStatus. Appendix A exports for documentUpdate are empty, so the monolith reaches those declarations through the globalThis bridge. Version history, live stream, and document status export their Appendix A names. Live stream bridges streamDocOpen and streamDocDelta. Do not delete the declarations from static/js/document.js in this lane.",
   "intentionalNonVerbatimChanges": [
     {
       "declaration": "handleDocUpdate",
@@ -117,6 +175,12 @@
       "change": "Replaced activeDocId assignment with setActiveDocId(...)",
       "classification": "Class 2 state primitive assignment rewrite",
       "justification": "Only application/documentState may assign activeDocId"
+    },
+    {
+      "declaration": "_activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder",
+      "change": "Added export modifiers",
+      "classification": "Class 1 export modifier rewrite",
+      "justification": "These are the Appendix A exports for ui/status/documentStatus"
     }
   ],
   "modules": [
@@ -159,7 +223,32 @@
     },
     {
       "module": "ui/status/documentStatus",
-      "status": "pending"
+      "source": "frontend/src/features/documents/ui/status/documentStatus.js",
+      "declarations": [
+        "_activeDocLanguage",
+        "_closeDocumentOutline",
+        "_docHistoryStateFrame",
+        "_docOutlineClose",
+        "_docOutlineMenu",
+        "_docStatsFrame",
+        "_documentOutlineEntries",
+        "_documentOutlineSupported",
+        "_documentStatsSource",
+        "_flashOutlineTarget",
+        "_jumpToDocumentOutlineEntry",
+        "_normalizeRichStatsText",
+        "_openDocumentOutline",
+        "_refreshDocumentOutline",
+        "_renderDocumentOutlineMenu",
+        "_renderDocumentSaveState",
+        "_renderDocumentStats",
+        "_scheduleDocumentHistoryControls",
+        "_scheduleDocumentStats",
+        "_setDocumentHistoryControlState",
+        "_syncDocumentHistoryControlsNow",
+        "_syncEditorPlaceholder"
+      ],
+      "status": "extracted"
     }
   ]
 }

@@ -123,6 +123,55 @@ Cumulative verifier result after this checkpoint:
 - Removal manifest: 21 declarations verified, 13 rewrites, 0 human-review exceptions, simulation clean, `passed: true`.
 - No export, graph, state-ownership, or port violations.
 
+## Checkpoint 4: documentStatus
+
+Source: `frontend/src/features/documents/ui/status/documentStatus.js`
+
+Moved declarations:
+
+- `_docStatsFrame`
+- `_docOutlineMenu`
+- `_docOutlineClose`
+- `_docHistoryStateFrame`
+- `_renderDocumentSaveState`
+- `_syncEditorPlaceholder`
+- `_setDocumentHistoryControlState`
+- `_syncDocumentHistoryControlsNow`
+- `_scheduleDocumentHistoryControls`
+- `_normalizeRichStatsText`
+- `_documentStatsSource`
+- `_renderDocumentStats`
+- `_scheduleDocumentStats`
+- `_documentOutlineSupported`
+- `_documentOutlineEntries`
+- `_flashOutlineTarget`
+- `_jumpToDocumentOutlineEntry`
+- `_renderDocumentOutlineMenu`
+- `_refreshDocumentOutline`
+- `_closeDocumentOutline`
+- `_openDocumentOutline`
+- `_activeDocLanguage`
+
+All 22 bodies match `087e6c88`. The only rewrites are Class 1 exports for the 13 Appendix A names. The nine private declarations stay unexported. `_normalizeRichStatsText`, `_documentStatsSource`, `_flashOutlineTarget`, `_jumpToDocumentOutlineEntry`, and `_renderDocumentOutlineMenu` are published on `globalThis` for tests. The monolith reaches the exported names through the manifest import.
+
+Focused check:
+
+```bash
+node --test tests/documentStatus.test.mjs
+```
+
+That command passed: 1 runner test, which executed 11 behavior assertions.
+
+Cumulative verifier result after this checkpoint:
+
+- Overall `passed`: false.
+- Ledger: 565 total, 289 moved, 233 unmoved, 43 duplicate, 0 missing.
+- All 43 violations are `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` for the Lane A declarations still present in `static/js/document.js`.
+- Removal manifest: 43 declarations verified, 26 rewrites, 0 human-review exceptions, simulation clean, `passed: true`.
+- No export, graph, state-ownership, or port violations.
+
+The full ledger stays red because this lane must not delete the declarations from `static/js/document.js`. The removal simulation is the gate, and it is clean for every assigned declaration.
+
 ## Remaining Lane A modules
 
-1. `ui/status/documentStatus` (22 declarations)
+None. All 43 assigned declarations are extracted in this worktree.
