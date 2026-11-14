@@ -412,6 +412,25 @@ The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind
 outside loopback only for a trusted LAN/VPN such as Tailscale: keep
 `AUTH_ENABLED=true` and do not expose the port directly to the public internet.
 
+**Vector memory and document RAG (ChromaDB):** the app talks to a ChromaDB
+server on `CHROMADB_PORT` (default `8100`), which Docker Compose would normally
+run for you. The launcher starts one itself: it installs the full `chromadb`
+package into a separate `venv-chroma` (it can't share a venv with the
+`chromadb-client` the app uses), runs `chroma run` on `127.0.0.1` with data in
+`data\chroma`, and stops it when Odysseus exits. It skips this when something
+already listens on that port or `CHROMADB_HOST` points elsewhere, and
+`-NoChroma` turns it off. With the manual steps, run the server yourself in a
+second terminal:
+
+```powershell
+py -3 -m venv venv-chroma
+venv-chroma\Scripts\pip install chromadb==1.5.9
+venv-chroma\Scripts\chroma run --host 127.0.0.1 --port 8100 --path data\chroma
+```
+
+Keep the `chromadb` version equal to the installed `chromadb-client`
+(`pip show chromadb-client`).
+
 **Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
 email, calendar, deep research) runs fully native. For full **Cookbook** background
 model downloads and the agent shell tool, also install
