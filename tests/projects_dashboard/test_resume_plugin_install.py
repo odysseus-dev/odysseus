@@ -131,3 +131,10 @@ class TestStart:
 def test_the_first_deployed_resume_plugin_digests_are_listed_for_in_place_upgrade():
     from src.hermes_webapp_component import KNOWN_PREVIOUS_RESUME_SHA256
     assert KNOWN_PREVIOUS_RESUME_SHA256[1].startswith('596d5f44b76d') and KNOWN_PREVIOUS_RESUME_SHA256[0].startswith('71c3a1ff23b1')   # sha256 of cdc287ad's plugin, LF and CRLF
+
+
+def test_the_copy_deployed_with_the_sidebar_entry_can_be_upgraded_in_place():
+    """The resume plugin live on 2026-11-13 (d918daf3) was missing from the known list, so a new release refused to upgrade it (found when staging the production release)."""
+    import hashlib
+    from src.hermes_webapp_component import KNOWN_PREVIOUS_RESUME_SHA256
+    assert 'db774b38fd7d' in ''.join(h[:12] for h in KNOWN_PREVIOUS_RESUME_SHA256) and '9e5c02a49f3c' in ''.join(h[:12] for h in KNOWN_PREVIOUS_RESUME_SHA256)

@@ -38,6 +38,9 @@ RESUME_PLUGIN_NAME = 'odysseus-resume'
 KNOWN_PREVIOUS_RESUME_SHA256 = (            # earlier shipped copies of the resume plugin that may be upgraded in place (first deployment: CRLF and LF forms)
     '71c3a1ff23b12020c0de2f3d5fa097f67d61d4f0a1f73a35e0a864b46b5727e4',
     '596d5f44b76d532148bcf9bc536852d7f37f0225099658752a04e20f8e8814b0',
+    # the copy deployed on 2026-11-13 (Projects sidebar entry, commit d918daf3): CRLF and LF forms
+    'db774b38fd7da2b507907fe5d7d9709604df9f471dc323042b3887e9a5031f50',
+    '9e5c02a49f3c4d09a7646073201ce778c9bfd53bb59cf45792364fb444d595ea',
 )
 WORKSPACE_GRANTS_PLUGIN = 'odysseus-workspace-grants'
 WORKSPACE_GRANTS_PLUGIN_SOURCE = 'integrations/hermes-mode/plugins/odysseus-workspace-grants'
