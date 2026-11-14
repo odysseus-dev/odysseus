@@ -29,12 +29,14 @@ ROLE_GROUPS = {
     "all": ("creator_video_clip", "stream_vod_recording"),
     "creator": ("creator_video_clip",),
     "vod": ("stream_vod_recording",),
+    "dji": ("dji_camera_clip",),
 }
 
 
-def run_batch(limit: int = 10, role_filter: str = "all", model_size: str = "base.en", ignore_gpu_governor: bool = False) -> None:
+def run_batch(limit: int = 10, role_filter: str = "all", model_size: str = "base.en", ignore_gpu_governor: bool = False, paired_only: bool = False) -> None:
     roles = ROLE_GROUPS[role_filter]
     placeholders = ", ".join("?" for _ in roles)
+    paired_clause = "AND paired_audio_path IS NOT NULL AND TRIM(paired_audio_path) != ''" if paired_only else ""
 
     con = sqlite3.connect(ROOT / "data" / "stream_media_catalog.db")
     con.row_factory = sqlite3.Row
@@ -49,6 +51,7 @@ def run_batch(limit: int = 10, role_filter: str = "all", model_size: str = "base
         WHERE transcript_status = 'pending'
           AND is_duplicate = 0
           AND media_role IN ({placeholders})
+          {paired_clause}
         ORDER BY size_bytes ASC
         LIMIT ?
         """,
@@ -183,8 +186,9 @@ def main() -> None:
     parser.add_argument("--role", choices=tuple(ROLE_GROUPS.keys()), default="all", help="Target role group: all, creator, or vod.")
     parser.add_argument("--model", default="base.en", help="faster-whisper model size (default: base.en).")
     parser.add_argument("--ignore-gpu-governor", action="store_true", help="Ignore GPU/VRAM blockers when running on CPU int8.")
+    parser.add_argument("--paired-only", action="store_true", help="Only process items that have a paired_audio_path (.WAV mic track).")
     args = parser.parse_args()
-    run_batch(limit=args.limit, role_filter=args.role, model_size=args.model, ignore_gpu_governor=args.ignore_gpu_governor)
+    run_batch(limit=args.limit, role_filter=args.role, model_size=args.model, ignore_gpu_governor=args.ignore_gpu_governor, paired_only=args.paired_only)
 
 
 if __name__ == "__main__":
