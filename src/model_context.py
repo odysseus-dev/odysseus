@@ -500,13 +500,16 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
 
 
 def estimate_text_tokens(value: object) -> int:
-    """Estimate tokens for one text value without undercounting Unicode."""
+    """Estimate tokens for one text value without undercounting Unicode or digits."""
 
     text = value if isinstance(value, str) else str(value or "")
     dense = 0
     for char in text:
         if ord(char) > 127:
             dense += 1
+    # Qwen and Gemma tokenizers split numbers into single digits, so count
+    # ASCII digits as one token each like non-ASCII characters.
+    dense += sum(text.count(digit) for digit in "0123456789")
     return dense + int((len(text) - dense) * 0.3)
 
 
@@ -520,8 +523,9 @@ def estimate_tokens(messages: List[Dict]) -> int:
     """Rough token estimate for a list of messages.
 
     Uses chars * 0.3 for Latin-heavy text and approximately one token per CJK
-    character. A single global character ratio severely undercounts CJK input
-    and can prevent context compaction from running before provider rejection.
+    character or ASCII digit. A single global character ratio severely
+    undercounts CJK and number-heavy input and can prevent context compaction
+    from running before provider rejection.
     Also adds ~4 tokens per message for role/formatting overhead, and counts
     assistant tool_calls (name + arguments) — a tool-only turn carries
     content=None with the real payload in tool_calls, so ignoring them made the
