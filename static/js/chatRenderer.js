@@ -484,6 +484,19 @@ function _formatSize(bytes) {
 // Build the `.attach-cards` element for a message's attachment list. Shared by
 // addMessage and updateMessageAttachments so a live (optimistic) user bubble
 // can be re-rendered with real upload ids once the upload resolves.
+// A turn sent to a vision model is saved as its text plus reference lines
+// ("[1 inline media payload omitted]", "[Attachment: name | id=… | …]") in
+// place of the image bytes. The photo card already shows the attachment, so
+// the lines are hidden from the bubble and never sent back as the user's
+// words by Edit or Resend.
+export function stripAttachmentRefText(text) {
+  return String(text || '')
+    .replace(/\s*\[Attachment description: [\s\S]*?\](?=\s*(?:\[Attachment: |\[\d+ inline media payloads? omitted\]|$))/g, '')
+    .replace(/\s*\[Attachment: [^\]\r\n]*\|\s*id=[^\]\r\n]*\]/g, '')
+    .replace(/\s*\[\d+ inline media payloads? omitted\]/g, '')
+    .trim();
+}
+
 export function buildAttachCards(attachments) {
   const attachWrap = document.createElement('div');
   attachWrap.className = 'attach-cards';
@@ -3592,6 +3605,7 @@ export function addMessage(role, content, modelName, metadata) {
         .replace(/\n*\[Image attached: [^\]]+\]/g, '')
         .replace(/\n*\[Attached (?:document|non-text) file\]/g, '')
         .trim();
+      text = stripAttachmentRefText(text);
     }
 
 	    wrap.dataset.raw = text;
@@ -3874,6 +3888,7 @@ const chatRenderer = {
   displayMetrics,
   addMessage,
   buildAttachCards,
+  stripAttachmentRefText,
   updateMessageAttachments,
 };
 

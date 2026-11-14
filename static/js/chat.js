@@ -8,7 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer, { renderToolIcon, stripAttachmentRefText } from './chatRenderer.js?v=20261114resendphoto1';
 import chatStream from './chatStream.js?v=20261026devsync1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -4855,7 +4855,14 @@ import { invalidateSettings } from './appConfig.js';
                 // Update user bubble — replace file chips with image previews
                 const _ub = document.querySelector('#chat-history .msg-user:last-of-type');
                 if (_ub) {
-                  const _aw = _ub.querySelector('.attach-cards');
+                  let _aw = _ub.querySelector('.attach-cards');
+                  // An edited or resent message carries its photos by id only,
+                  // so its new bubble has no card strip yet; add one to fill.
+                  if (!_aw && Array.isArray(json.data) && json.data.length) {
+                    _aw = document.createElement('div');
+                    _aw.className = 'attach-cards';
+                    (_ub.querySelector(':scope > .body') || _ub).appendChild(_aw);
+                  }
                   if (_aw) {
                     for (const _att of json.data) {
                       const _isImg = (_att.mime || '').startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(_att.name || '');
@@ -7251,6 +7258,21 @@ import { invalidateSettings } from './appConfig.js';
    */
   // Recover attached file IDs from rendered user bubbles, including older
   // image previews that were rendered before data-file-id was stamped.
+  // The user's own words in a rendered bubble. dataset.raw holds them ('' for
+  // a photo-only message); the bubble's textContent would also pick up the
+  // photo card's labels ("Vision: …", the file name).
+  function _userMessageText(msgElement) {
+    let text = msgElement.dataset.raw;
+    if (text === undefined) {
+      const bodyEl = msgElement.querySelector('.body');
+      if (!bodyEl) return '';
+      const copy = bodyEl.cloneNode(true);
+      copy.querySelectorAll('.attach-cards').forEach(el => el.remove());
+      text = copy.textContent || '';
+    }
+    return stripAttachmentRefText(text).replace(/\s*\[\d+ attachment\(s\)\]$/, '').trim();
+  }
+
   function _userMessageAttachmentIds(msgElement) {
     if (!msgElement) return [];
     const els = msgElement.querySelectorAll('[data-file-id]');
@@ -7272,8 +7294,13 @@ import { invalidateSettings } from './appConfig.js';
     if (msgIndex < 0) return;
 
     const bodyEl = userMsgElement.querySelector('.body');
-    let currentText = (userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
-    currentText = currentText.replace(/\s*\[\d+ attachment\(s\)\]$/, '');
+    if (!bodyEl) return;
+    // Read the attachments before the editor goes in: the photos live inside
+    // .body, and the old code cleared it first, so the edit went out without
+    // them.
+    const editAttachmentIds = _userMessageAttachmentIds(userMsgElement);
+    const attachCards = bodyEl.querySelector(':scope > .attach-cards');
+    const currentText = _userMessageText(userMsgElement);
 
     // Replace body with an editable textarea
     const editor = document.createElement('textarea');
@@ -7297,22 +7324,36 @@ import { invalidateSettings } from './appConfig.js';
     btnRow.appendChild(saveBtn);
     btnRow.appendChild(cancelBtn);
 
-    const originalHTML = bodyEl.innerHTML;
-    bodyEl.innerHTML = '';
-    bodyEl.appendChild(editor);
-    bodyEl.appendChild(btnRow);
+    // Hide the text while editing but keep the photos on show, so it's clear
+    // they go out again.
+    const hidden = Array.from(bodyEl.children).filter(el => el !== attachCards && el.style.display !== 'none');
+    const hiddenText = Array.from(bodyEl.childNodes || []).filter(n => n.nodeType === 3 && n.textContent.trim());
+    hidden.forEach(el => { el.style.display = 'none'; });
+    hiddenText.forEach(n => n.remove());
+    const editWrap = document.createElement('div');
+    editWrap.className = 'edit-wrap';
+    editWrap.appendChild(editor);
+    editWrap.appendChild(btnRow);
+    if (attachCards) bodyEl.insertBefore(editWrap, attachCards);
+    else bodyEl.appendChild(editWrap);
     editor.focus();
+    const restoreBody = () => {
+      editWrap.remove();
+      hidden.forEach(el => { el.style.display = ''; });
+      const anchor = bodyEl.firstChild;
+      hiddenText.forEach(n => bodyEl.insertBefore(n, anchor));
+    };
 
     cancelBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      bodyEl.innerHTML = originalHTML;
+      restoreBody();
     });
 
     saveBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const newText = editor.value.trim();
-      if (!newText) return;
-      const editAttachmentIds = _userMessageAttachmentIds(userMsgElement);
+      // A photo-only message can be sent again with no text.
+      if (!newText && !editAttachmentIds.length) return;
 
       const sessionId = sessionModule.getCurrentSessionId();
       if (!sessionId) return;
@@ -7327,7 +7368,7 @@ import { invalidateSettings } from './appConfig.js';
         // chat keeps the original message and everything after it.
         try {
           await _forkAndSend(msgIndex, userMsgElement.dataset.dbId || '', newText, editAttachmentIds);
-          bodyEl.innerHTML = originalHTML;
+          restoreBody();
         } catch (err) {
           console.error('Fork failed:', err);
           if (uiModule) uiModule.showError('Fork failed: ' + err.message);
@@ -7363,7 +7404,7 @@ import { invalidateSettings } from './appConfig.js';
       } catch (err) {
         console.error('Edit failed:', err);
         if (uiModule) uiModule.showError('Edit failed: ' + err.message);
-        bodyEl.innerHTML = originalHTML;
+        restoreBody();
       }
     });
 
@@ -7448,9 +7489,7 @@ import { invalidateSettings } from './appConfig.js';
     // — the latter slurps the rendered "View image description" collapsible
     // content too, which would then be sent back as the user's question and
     // the AI would reply to that gibberish instead of the actual prompt.
-    const bodyEl = userMsgElement.querySelector('.body');
-    let text = (userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
-    text = text.replace(/\s*\[\d+ attachment\(s\)\]$/, '');
+    let text = _userMessageText(userMsgElement);
 
     const _ids = _userMessageAttachmentIds(userMsgElement);
 
@@ -7539,9 +7578,7 @@ import { invalidateSettings } from './appConfig.js';
         // user text) over the rendered body's textContent — the latter
         // pulls in the "View image description" collapsible content too,
         // duplicating the OCR text on regen.
-        const bodyEl = userMsgEl.querySelector('.body');
-        userText = (userMsgEl.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
-        userText = userText.replace(/\s*\[\d+ attachment\(s\)\]$/, '');
+        userText = _userMessageText(userMsgEl);
         break;
       }
     }
