@@ -24,7 +24,7 @@ ROLE_GROUPS = {
 }
 
 
-def run_batch(limit: int = 10, role_filter: str = "all", model_size: str = "base.en") -> None:
+def run_batch(limit: int = 10, role_filter: str = "all", model_size: str = "base.en", ignore_gpu_governor: bool = False) -> None:
     roles = ROLE_GROUPS[role_filter]
     placeholders = ", ".join("?" for _ in roles)
 
@@ -58,8 +58,11 @@ def run_batch(limit: int = 10, role_filter: str = "all", model_size: str = "base
 
     for r in rows:
         gov = evaluate_workstation_state()
-        if not gov["allowed"]:
-            print(f"[M10 Governor] Yielding batch -> blockers={gov['blockers']}")
+        blockers = list(gov.get("blockers") or [])
+        if ignore_gpu_governor:
+            blockers = [b for b in blockers if not (b.startswith("gpu_util_high") or b.startswith("vram_high"))]
+        if blockers:
+            print(f"[M10 Governor] Yielding batch -> blockers={blockers}")
             deferred += 1
             break
 
@@ -171,8 +174,9 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10, help="Maximum number of pending items to process in this batch.")
     parser.add_argument("--role", choices=tuple(ROLE_GROUPS.keys()), default="all", help="Target role group: all, creator, or vod.")
     parser.add_argument("--model", default="base.en", help="faster-whisper model size (default: base.en).")
+    parser.add_argument("--ignore-gpu-governor", action="store_true", help="Ignore GPU/VRAM blockers when running on CPU int8.")
     args = parser.parse_args()
-    run_batch(limit=args.limit, role_filter=args.role, model_size=args.model)
+    run_batch(limit=args.limit, role_filter=args.role, model_size=args.model, ignore_gpu_governor=args.ignore_gpu_governor)
 
 
 if __name__ == "__main__":
