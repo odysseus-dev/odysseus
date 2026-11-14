@@ -925,6 +925,91 @@ function replaceRawSvgBlocks(source, makePlaceholder) {
   return output;
 }
 
+// Keep each parent item open while emitting its indented children. List markers
+// must be consumed before inline emphasis, which also uses asterisks.
+function renderMarkdownLists(source) {
+  const lines = [];
+  const stack = [];
+  let list = [];
+  const indentation = whitespace => {
+    let width = 0;
+    for (const ch of whitespace) width += ch === '\t' ? 4 - width % 4 : 1;
+    return width;
+  };
+  const closeText = level => {
+    if (level.taskText) {
+      list.push('</span>');
+      level.taskText = false;
+    }
+  };
+  const closeLevel = () => {
+    const level = stack.pop();
+    closeText(level);
+    list.push(`</li></${level.tag}>`);
+  };
+  const flush = () => {
+    while (stack.length) closeLevel();
+    if (list.length) lines.push(list.join(''));
+    list = [];
+  };
+
+  for (const line of source.split('\n')) {
+    const match = /^([ \t]*)(\d+\.|[-*])[ \t]+(.*)$/.exec(line);
+    if (!match) {
+      const indent = indentation(/^[ \t]*/.exec(line)[0]);
+      if (line.trim()) {
+        while (stack.length && indent <= stack[stack.length - 1].indent) closeLevel();
+      }
+      if (stack.length && line.trim() && indent > stack[stack.length - 1].indent) {
+        const level = stack[stack.length - 1];
+        if (level.isTask && !level.taskText) {
+          list.push('<span class="task-text">', line.trim());
+          level.taskText = true;
+        } else {
+          list.push('<br>', line.trim());
+        }
+      } else {
+        flush();
+        lines.push(line);
+      }
+      continue;
+    }
+
+    const indent = indentation(match[1]);
+    const tag = /^\d/.test(match[2]) ? 'ol' : 'ul';
+    while (stack.length && indent < stack[stack.length - 1].indent) closeLevel();
+    let level = stack[stack.length - 1];
+    if (level && indent === level.indent && tag !== level.tag) {
+      closeLevel();
+      level = stack[stack.length - 1];
+    }
+    if (!level || indent > level.indent) {
+      if (level) closeText(level);
+      // Each ordered run starts at its first marker, including nested runs
+      // and lists resumed after a paragraph. Later markers count normally.
+      const start = tag === 'ol' ? match[2].slice(0, -1).replace(/^0+(?=\d)/, '') : '1';
+      list.push(tag === 'ol' && start !== '1' ? `<ol start="${start}">` : `<${tag}>`);
+      level = { indent, tag, taskText: false };
+      stack.push(level);
+    } else {
+      closeText(level);
+      list.push('</li>');
+    }
+
+    const task = tag === 'ul' && /^\[([ xX])\] (.*)$/.exec(match[3]);
+    level.isTask = !!task;
+    if (task) {
+      const done = task[1].toLowerCase() === 'x';
+      list.push(`<li class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">`, task[2]);
+      level.taskText = true;
+    } else {
+      list.push('<li>', match[3]);
+    }
+  }
+  flush();
+  return lines.join('\n');
+}
+
 export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
@@ -1179,6 +1264,8 @@ export function mdToHtml(src, opts) {
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
+  s = renderMarkdownLists(s);
+
   // Bold, italic, strikethrough
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
@@ -1191,32 +1278,13 @@ export function mdToHtml(src, opts) {
        .replace(/^## (.*)$/gm, '<h2>$1</h2>')
        .replace(/^# (.*)$/gm, '<h1>$1</h1>');
 
-  // Ordered lists (1. 2. 3. etc.)
-  s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
-  s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
-
-  // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
-  // the generic unordered-list rule so the "- " prefix isn't consumed first.
-  // Emits <uli> (with a class) so the unordered-list wrapper below treats it
-  // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
-    const done = mark.toLowerCase() === 'x';
-    return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
-  });
-
-  // Unordered lists. <uli> may carry attributes (task-item class), so the
-  // wrapper preserves them when converting <uli ...> → <li ...>.
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
-  s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
-    `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
-
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');
   s = s.replace(/(?:^|\n)(<bq>[\s\S]*?)(?=\n(?!<bq>)|$)/g, m =>
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_|___SVG_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul>|<ol\b|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_|___SVG_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {
