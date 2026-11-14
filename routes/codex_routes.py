@@ -420,7 +420,11 @@ def setup_codex_routes(
         return await email_draft_endpoint(req=req, owner=owner)
 
     @router.post("/emails/send")
-    async def codex_email_send(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    async def codex_email_send(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        body: dict[str, Any] = Body(default_factory=dict),
+    ):
         owner = _scope_owner(request, EMAIL_SEND_SCOPES)
         if email_send_endpoint is None:
             raise HTTPException(503, "Email integration is not available")
@@ -430,7 +434,7 @@ def setup_codex_routes(
             req = SendEmailRequest(**body)
         except Exception as exc:
             raise HTTPException(400, f"Invalid send payload: {exc}")
-        return await email_send_endpoint(req=req, background_tasks=BackgroundTasks(), owner=owner)
+        return await email_send_endpoint(req=req, background_tasks=background_tasks, owner=owner)
 
     # ── Memory ────────────────────────────────────────────────────────────
 
