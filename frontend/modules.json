@@ -244,6 +244,46 @@
       "deployment": "js/document/ui/editor/sourceEditor.js"
     },
     {
+      "source": "features/documents/ui/richEditor/formatMenus.js",
+      "deployment": "js/document/ui/richEditor/formatMenus.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/formatting.js",
+      "deployment": "js/document/ui/richEditor/formatting.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/imageMenus.js",
+      "deployment": "js/document/ui/richEditor/imageMenus.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/imageOps.js",
+      "deployment": "js/document/ui/richEditor/imageOps.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/links.js",
+      "deployment": "js/document/ui/richEditor/links.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/richBodySync.js",
+      "deployment": "js/document/ui/richEditor/richBodySync.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/richBodyWiring.js",
+      "deployment": "js/document/ui/richEditor/richBodyWiring.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/richOperations.js",
+      "deployment": "js/document/ui/richEditor/richOperations.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/selectionToolbar.js",
+      "deployment": "js/document/ui/richEditor/selectionToolbar.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/slashMenu.js",
+      "deployment": "js/document/ui/richEditor/slashMenu.js"
+    },
+    {
       "source": "features/documents/domain/documentKinds.js",
       "deployment": "js/document/domain/documentKinds.js"
     },
