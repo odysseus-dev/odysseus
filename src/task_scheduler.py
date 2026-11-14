@@ -878,7 +878,7 @@ class TaskScheduler:
         finally:
             db.close()
 
-    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True):
+    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True, manual: bool = False):
         # Create the run record with status="queued" BEFORE waiting on the
         # semaphore so the UI can show that a manually-triggered task is in
         # line behind another. Once we acquire the slot, flip to "running"
@@ -910,7 +910,7 @@ class TaskScheduler:
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=not bypass_model_slot,
+                    gate_foreground=not bypass_model_slot and not manual,
                 )
                 return
 
@@ -919,7 +919,7 @@ class TaskScheduler:
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=True,
+                    gate_foreground=not manual,
                 )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
@@ -2456,16 +2456,25 @@ class TaskScheduler:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
             raise
 
-    async def run_task_now(self, task_id: str, *, force: bool = False):
-        """Manually trigger a task execution."""
+    async def run_task_now(self, task_id: str, *, force: bool = False, manual: bool = False):
+        """Trigger a task execution outside its schedule.
+
+        Pass manual=True only when a person in the UI asked for this run.
+        Their own request counts as foreground activity, so gating the run
+        on it would hold or abort the run they just started. Event triggers,
+        webhooks and the agent's own tool leave it False and stay gated.
+        """
         if force:
-            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
+            # bypass_model_slot already turns the foreground gate off, so
+            # manual changes nothing here; it is passed for clarity.
+            asyncio.create_task(self._execute_task(
+                task_id, bypass_model_slot=True, release_executing=False, manual=manual))
             return True
         async with self._executing_guard():
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
-        asyncio.create_task(self._execute_task(task_id))
+        asyncio.create_task(self._execute_task(task_id, manual=manual))
         return True
 
     async def stop_task(self, task_id: str) -> bool:
