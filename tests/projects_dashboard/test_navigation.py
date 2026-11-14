@@ -68,7 +68,7 @@ def test_manage_in_hermes_only_opens_hermes_and_adds_no_project_controls_of_its_
 def test_project_management_goes_through_the_webapps_own_gateway_connection_only():
     assert 'host.request(method, params)' in PLUGIN
     used = set(re.findall(r"'((?:projects|session)\.[a-z_.]+)'", PLUGIN))
-    assert used == {'projects.list', 'projects.create', 'projects.update', 'projects.add_folder', 'projects.remove_folder', 'projects.set_primary', 'projects.archive', 'session.list', 'session.workspace.move'}
-    assert 'projects.delete' not in PLUGIN and 'session.cwd.set' not in PLUGIN and 'grant' not in ' '.join(used)          # no deletion, no live-agent cwd change, no write grants
+    assert used == {'projects.list', 'projects.create', 'projects.update', 'projects.add_folder', 'projects.remove_folder', 'projects.set_primary', 'projects.archive', 'session.list', 'session.workspace.move', 'projects.delete', 'projects.tree'}
+    assert 'session.cwd.set' not in PLUGIN and 'grant' not in ' '.join(used)          # no live-agent cwd change, no write grants (deletion is deliberate: typed confirmation, registry only)
     assert "BUSY_STATES = new Set(['working', 'waiting'])" in PLUGIN and 'row.running' in PLUGIN                           # a running conversation is never moved
-    assert 'Write permissions do not change' in PLUGIN
+    assert 'File-tool write grants do not change' in PLUGIN

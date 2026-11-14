@@ -1,7 +1,7 @@
 const API = '/api/projects-dashboard';
 const STATE_LABEL = { working: 'Working', waiting: 'Waiting for you', blocked: 'Blocked', completed: 'Completed', idle: 'Idle', interrupted: 'Interrupted', unknown: 'Unknown' };
 const ATTENTION = ['waiting', 'blocked', 'interrupted'];
-const FILTERS = [['all', 'All'], ['attention', 'Needs attention'], ['granted', 'Write access'], ['git', 'Git']];
+const FILTERS = [['all', 'All'], ['attention', 'Needs attention'], ['granted', 'File-tool write access'], ['git', 'Git']];
 const TABS = [['overview', 'Overview'], ['sessions', 'Sessions'], ['git', 'Git'], ['wiki', 'Wiki'], ['access', 'Access']];
 
 const $ = id => document.getElementById(id);
@@ -59,9 +59,9 @@ function stateBadge(state, evidence) {
 
 function permissionChip(permission) {
   if (!permission) return null;
-  if (permission.state === 'granted') return h('span', { class: 'chip ok', title: permission.reason }, permission.partial ? 'Write access (some folders)' : 'Write access');
+  if (permission.state === 'granted') return h('span', { class: 'chip ok', title: permission.reason }, permission.partial ? 'File-tool write access (some folders)' : 'File-tool write access');
   if (permission.state === 'blocked') return h('span', { class: 'chip bad', title: permission.reason }, 'Blocked folder');
-  return h('span', { class: 'chip', title: permission.reason }, 'No write grant');
+  return h('span', { class: 'chip', title: permission.reason }, 'No file-tool write grant');
 }
 
 function visibleProjects() {
@@ -212,14 +212,14 @@ function grantButton(d, w) {
   if (!store.overview?.grants?.enabled) return null;
   const exact = w.permission.state === 'granted' && sameFolder(w.permission.grant, w.path);
   if (exact) return h('button', { type: 'button', onclick: () => review('revoke', w.path, d.id) }, 'Revoke\u2026');
-  if (w.permission.state === 'none') return h('button', { type: 'button', onclick: () => review('grant', w.path, d.id) }, 'Grant write access\u2026');
+  if (w.permission.state === 'none') return h('button', { type: 'button', onclick: () => review('grant', w.path, d.id) }, 'Grant file-tool write access\u2026');
   return h('span', { class: 'evidence' }, w.permission.state === 'blocked' ? 'blocked folder' : 'covered by a parent grant');
 }
 
 function worktreeTable(d, actions) {
   if (!d.worktrees.length) return h('p', { class: 'empty' }, d.kind === 'git' ? 'Git reported no worktrees.' : 'Not a Git repository.');
   return h('table', null,
-    h('thead', null, h('tr', null, h('th', null, 'Worktree'), h('th', null, 'Branch'), h('th', null, 'Write access'), actions ? h('th', null, '') : null)),
+    h('thead', null, h('tr', null, h('th', null, 'Worktree'), h('th', null, 'Branch'), h('th', null, 'File-tool write access'), actions ? h('th', null, '') : null)),
     h('tbody', null, d.worktrees.map(w => h('tr', null,
       h('td', null, h('div', { class: 'mono' }, w.path), w.current ? h('span', { class: 'chip' }, 'this project folder') : null, w.prunable ? h('span', { class: 'chip warn' }, 'missing on disk (prunable)') : null, w.locked ? h('span', { class: 'chip' }, 'locked') : null),
       h('td', null, w.branch || (w.detached ? 'detached ' + w.head : w.head)),
@@ -288,7 +288,7 @@ async function review(action, path, projectId) {
     confirmButton.disabled = true;
     try {
       const result = await api('/grants/apply', { confirmation: report.confirmation, typed_name: typed ? typed.value : '' });
-      toast(action === 'grant' ? 'Write access granted. ' + result.live : 'Write access revoked. ' + result.live);
+      toast(action === 'grant' ? 'File-tool write access granted. ' + result.live : 'File-tool write access revoked. ' + result.live);
       store.audit = undefined;
       close();
       select(store.selected);

@@ -1,0 +1,211 @@
+diff --git a/.odysseus-managed.json b/.odysseus-managed.json
+new file mode 100644
+index 0000000000..6503a0efaf
+--- /dev/null
++++ b/.odysseus-managed.json
+@@ -0,0 +1,5 @@
++{
++  "managed_by": "odysseus",
++  "schema": 1,
++  "note": "This Hermes tree is an Odysseus-managed release (reviewed pin + reviewed patches). Direct updates are refused; use the reviewed Odysseus update process. This guards supported updater commands only; it is not a sandbox."
++}
+diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
+index d5296795ed..e5ee3bb06e 100644
+--- a/gateway/slash_commands.py
++++ b/gateway/slash_commands.py
+@@ -1345,6 +1345,10 @@ class GatewaySlashCommandsMixin(
+             return f"✗ {format_managed_message(t('gateway.update.managed_action'))}"
+ 
+         project_root = Path(__file__).parent.parent.resolve()
++        from hermes_cli.update_contract import odysseus_managed_refusal
++        managed_refusal = odysseus_managed_refusal(project_root)
++        if managed_refusal is not None:
++            return f"✗ {managed_refusal.message}"
+ 
+         # Not a git-managed install (docker/nix/desktop-app/source): refuse
+         # with the steward's own update mechanism instead of git-pulling a
+diff --git a/hermes_cli/cli_commands_mixin.py b/hermes_cli/cli_commands_mixin.py
+index 47c8dfb783..9ff096d9b7 100644
+--- a/hermes_cli/cli_commands_mixin.py
++++ b/hermes_cli/cli_commands_mixin.py
+@@ -2114,6 +2114,12 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
+         if is_managed():
+             print(f"  ✗ {format_managed_message(_t('update.managed_action'))}")
+             return False
++        from pathlib import Path as _Path
++        from hermes_cli.update_contract import odysseus_managed_refusal
++        managed_refusal = odysseus_managed_refusal(_Path(__file__).resolve().parent.parent)
++        if managed_refusal is not None:
++            print(f"  ✗ {managed_refusal.message}")
++            return False
+         # prompt_toolkit-native modal: renders above the composer, no raw input() races.
+         choices = [("once", _t("update.choice_update"), _t("update.choice_update_desc")),
+                    ("cancel", _t("update.choice_cancel"), _t("update.choice_cancel_desc"))]
+diff --git a/hermes_cli/main.py b/hermes_cli/main.py
+index 5394bbde62..6499376878 100644
+--- a/hermes_cli/main.py
++++ b/hermes_cli/main.py
+@@ -2229,6 +2229,15 @@ def _update_preflight_handled(args) -> bool:
+             sys.exit(VENV_HOLDERS_EXIT)
+         return True
+ 
++    if not getattr(args, "check", False):  # Odysseus-managed release: discovery (--check/--plan) stays, every apply is refused
++        from hermes_cli.update_contract import odysseus_managed_refusal, record_refusal_receipt as _record_refusal
++
++        managed_refusal = odysseus_managed_refusal(PROJECT_ROOT)
++        if managed_refusal is not None:
++            print(f"✗ {managed_refusal.message}")
++            _record_refusal(managed_refusal)
++            sys.exit(2)
++
+     # Image/package-managed admission gate (#91277 Phase 3): baked provenance marker first (fail-closed
+     # on malformed), then docker/nix/apt heuristics; one shared decision for every mutation surface, so
+     # --check never reports git state for an image-managed install. Prints the real update command,
+diff --git a/hermes_cli/odysseus_managed.py b/hermes_cli/odysseus_managed.py
+new file mode 100644
+index 0000000000..0b5be1df06
+--- /dev/null
++++ b/hermes_cli/odysseus_managed.py
+@@ -0,0 +1,54 @@
++"""Odysseus-managed install marker: the updater guard's single source of truth.
++
++Odysseus builds each Hermes release side by side (pinned source + reviewed patches) and activates it deliberately. A direct
++``hermes update``, ``/update``, dashboard update or ``hermes pm update`` run against such a tree would replace those patches, so
++the supported updater operations refuse it and point at the reviewed Odysseus process. Update *discovery* is left alone.
++
++This guards supported updater operations only. It is not a permission boundary: any process with the user's privileges can still
++change files on disk.
++
++The marker is a tracked file shipped by the reviewed update-protection patch, so every release Odysseus builds from the pin gets it
++automatically and ``patch_state`` still recognises the tree. A tree is Odysseus-managed when it carries ``.odysseus-managed.json`` or sits in the managed layout
++(``<component>/releases/<id>/src`` beside that release's ``release.json``). A marker that exists but cannot be read, or does not
++say ``managed_by: odysseus``, still counts as managed (``invalid``): a damaged marker is never permission to update. A tree with
++neither signal is an independent install and is untouched.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++MARKER_NAME = ".odysseus-managed.json"
++NONE, MANAGED, INVALID = "none", "managed", "invalid"
++
++REFUSAL_MESSAGE = (
++    "This Hermes installation is managed by Odysseus. Direct updates are disabled to protect custom integrations. "
++    "Use the reviewed Odysseus update process."
++)
++INVALID_SUFFIX = " (The managed-install marker is damaged, so updates stay disabled until it is repaired by that process.)"
++REMEDIATION = "Use the reviewed Odysseus update process (scripts/hermes-webapp-component.py)"
++
++
++def managed_state(project_root) -> str:
++    """``none`` (independent install), ``managed`` or ``invalid`` (marker present but unusable). Never raises."""
++    try:
++        root = Path(project_root)
++        marker = root / MARKER_NAME
++        if marker.exists():
++            try:
++                data = json.loads(marker.read_text(encoding="utf-8-sig"))
++            except (OSError, ValueError):
++                return INVALID
++            if isinstance(data, dict) and data.get("managed_by") == "odysseus":
++                return MANAGED
++            return INVALID
++        if root.parent.parent.name == "releases" and (root.parent / "release.json").is_file():
++            return MANAGED
++    except OSError:
++        return NONE
++    return NONE
++
++
++def refusal_message(state: str) -> str:
++    return REFUSAL_MESSAGE + (INVALID_SUFFIX if state == INVALID else "")
+diff --git a/hermes_cli/update_contract.py b/hermes_cli/update_contract.py
+index 18c64ade20..73ad7998c8 100644
+--- a/hermes_cli/update_contract.py
++++ b/hermes_cli/update_contract.py
+@@ -146,6 +146,18 @@ def evaluate_update_admission(project_root: Path) -> Optional[UpdateRefusal]:
+     return None
+ 
+ 
++def odysseus_managed_refusal(project_root: Path) -> Optional[UpdateRefusal]:
++    """Refusal for a tree Odysseus manages (see ``hermes_cli.odysseus_managed``); ``None`` for every other install.
++
++    Applied to the mutating update surfaces only: ``--check`` and the dashboard check keep reporting versions."""
++    from hermes_cli.odysseus_managed import NONE, REMEDIATION, managed_state, refusal_message
++
++    state = managed_state(project_root)
++    if state == NONE:
++        return None
++    return UpdateRefusal(code="odysseus-managed", message=refusal_message(state), update_command=REMEDIATION)
++
++
+ def record_refusal_receipt(refusal: UpdateRefusal) -> None:
+     """Write a minimal ``refused`` receipt for a blocked update attempt.
+ 
+diff --git a/hermes_cli/web_routers/actions.py b/hermes_cli/web_routers/actions.py
+index df183e424b..2ec17b0ecf 100644
+--- a/hermes_cli/web_routers/actions.py
++++ b/hermes_cli/web_routers/actions.py
+@@ -249,6 +249,12 @@ async def update_hermes():
+         # No runnable command exists here: the outer launcher/image owns updates.
+         return _update_refused("dashboard_update_managed_externally", message, "")
+ 
++    from hermes_cli.update_contract import odysseus_managed_refusal
++
++    managed = odysseus_managed_refusal(_server_path("PROJECT_ROOT"))
++    if managed is not None:
++        return _update_refused("odysseus_managed", managed.message, "")
++
+     # Shared admission gate: marker-first, then the docker/nix/apt heuristics —
+     # one decision with the CLI paths.
+     from hermes_cli.update_contract import evaluate_update_admission, record_refusal_receipt
+@@ -315,13 +321,18 @@ async def check_hermes_update(force: bool = False, profile: Optional[str] = None
+         }
+ 
+     install_method = detect_install_method(_server_path("PROJECT_ROOT"))
++    from hermes_cli.update_contract import odysseus_managed_refusal
++
++    managed = odysseus_managed_refusal(_server_path("PROJECT_ROOT"))
+     payload: dict[str, Any] = {
+         "install_method": install_method,
+         "current_version": get_version_info().derived_version,
+         "behind": None,
+-        "update_available": False, "can_apply": install_method == "git",
+-        "update_command": recommended_update_command_for_method(install_method), "message": None,
++        "update_available": False, "can_apply": install_method == "git" and managed is None,
++        "update_command": "" if managed else recommended_update_command_for_method(install_method), "message": None,
+     }
++    if managed is not None:
++        payload["managed_by"] = "odysseus"
+     non_applyable = _NON_APPLYABLE_MESSAGES.get(install_method)
+     if non_applyable is not None:
+         payload["message"] = non_applyable()
+@@ -363,6 +374,8 @@ async def check_hermes_update(force: bool = False, profile: Optional[str] = None
+                        source_version=status.get("sourceVersion"))
+         payload["commits"] = [{**row, "sha": row["sha"][:7], "at": row["at"] // 1000}
+                               for row in status.get("commits", [])[:20]]
++    if managed is not None and payload["update_available"]:
++        payload["message"] = managed.message  # discovery stays; the explanation replaces the apply path
+     return payload
+ 
+ 
+diff --git a/pm/cli.py b/pm/cli.py
+index ed0c9939fd..fdb492f019 100644
+--- a/pm/cli.py
++++ b/pm/cli.py
+@@ -750,6 +750,13 @@ def cmd_update(args) -> int:
+     --termux is its own repair pass: it repins only the pool archives the
+     rolling termux-main pool has retired under our pins.
+     """
++    if not args.check:  # re-pinning the lockfile mutates the tree: refused for an Odysseus-managed release, --check still reports
++        from pathlib import Path as _Path
++        from hermes_cli.update_contract import odysseus_managed_refusal
++        managed_refusal = odysseus_managed_refusal(_Path(__file__).resolve().parent.parent)
++        if managed_refusal is not None:
++            print(f"pm update: {managed_refusal.message}")
++            return 2
+     if args.termux:
+         ignored = [name for name, given in (("names", args.names), ("--target", args.target),
+                                             ("--uv", args.uv), ("--pnpm", args.pnpm)) if given]

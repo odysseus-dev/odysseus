@@ -172,7 +172,7 @@ function ago(seconds) {
 }
 
 function permissionLabel(permission) {
-  const states = { granted: 'Write access', partial: 'Write access (some folders)', none: 'No write grant', blocked: 'Blocked', legacy: 'Write access (legacy)', unknown: 'Unknown' }
+  const states = { granted: 'File-tool write access', partial: 'File-tool write access (some folders)', none: 'No file-tool write grant', blocked: 'Blocked', legacy: 'File-tool write access (legacy)', unknown: 'Unknown' }
   return states[permission && permission.state] || (permission && permission.state) || 'Unknown'
 }
 
@@ -202,11 +202,11 @@ function OverviewTab({ d }) {
     open.length ? h('div', null, h(PanelSectionLabel, null, 'Open handoffs (Wiki Steward)'), ...open.slice(0, 4).map(x => h('div', { key: x.id, style: { padding: '0.35rem 0', borderBottom: LINE } }, x.summary))) : null,
     h('div', { style: { ...MUTED, fontSize: '0.78rem', lineHeight: 1.5, borderTop: LINE, paddingTop: '0.75rem' } },
       h('strong', null, 'Four different things share a folder path: '),
-      'the project folder (a registration that groups conversations), a folder added as read-only context to one message, a conversation\u2019s working directory (where its tools run, recorded when it starts), and a write grant (what the agent may change; see Access). Choosing one never implies the others.'),
+      'the project folder (a registration that groups conversations), a folder added as read-only context to one message, a conversation\u2019s working directory (where its tools run, recorded when it starts), and a file-tool write grant (where Hermes file tools may write; see Access). Choosing one never implies the others.'),
     h('div', { style: { ...MUTED, fontSize: '0.78rem', lineHeight: 1.5 } },
       h('strong', null, 'Manage projects here or in the sidebar. '),
       'Use the Manage tab to rename, change folders, archive or add conversations. In the sidebar: Sidebar \u25B8 Sessions \u25B8 Filters \u25B8 Grouping \u25B8 Project turns on project groups; then + creates a project, a project\u2019s own menu renames, adds folders or archives it, ',
-      'and a conversation\u2019s menu has Move to project. Moving a conversation changes its working folder (it does not move files or change write grants); do it only when the conversation is idle.'))
+      'and a conversation\u2019s menu has Move to project. Moving a conversation changes its working folder (it does not move files or change file-tool write grants); do it only when the conversation is idle.'))
 }
 
 function SessionsTab({ d, onOpen }) {
@@ -248,7 +248,14 @@ function AccessTab({ d }) {
   const roots = p.write_roots || []
   return h('div', { style: { display: 'grid', gap: '0.75rem' } },
     h('div', null, h(PanelSectionLabel, null, 'This folder'), h(PanelPill, { tone: d.permission && d.permission.state === 'granted' ? 'good' : 'muted', children: permissionLabel(d.permission) }), h('span', { style: { ...MUTED, marginLeft: '0.5rem' } }, (d.permission && d.permission.reason) || '')),
-    h('div', null, h(PanelSectionLabel, null, 'Write roots on this machine'), roots.length ? roots.map(r => h('div', { key: r, style: { overflowWrap: 'anywhere' } }, r)) : h('div', { style: MUTED }, 'none')),
+    h('div', null, h(PanelSectionLabel, null, 'File-tool write roots on this machine'), roots.length ? roots.map(r => h('div', { key: r, style: { overflowWrap: 'anywhere' } }, r)) : h('div', { style: MUTED }, 'none')),
+    h('details', { style: { ...MUTED, fontSize: '0.78rem', lineHeight: 1.5 } },
+      h('summary', { style: { cursor: 'pointer' } }, 'These grants limit Hermes file tools only. They are not an operating-system sandbox.'),
+      h('ul', { style: { margin: '0.35rem 0 0 1.1rem', padding: 0 } },
+        h('li', null, 'They restrict where Hermes file tools (write and patch) may write.'),
+        h('li', null, 'Terminal commands and MCP tools are not necessarily confined to these folders.'),
+        h('li', null, 'Whether a terminal command asks for approval depends on how the command is classified, not on where it writes.'),
+        h('li', null, 'A grant does not protect against every possible write.'))),
     h('div', { style: { ...MUTED, fontSize: '0.78rem', lineHeight: 1.5 } }, p.note || ''),
     p.request ? h('div', null, h(PanelSectionLabel, null, 'To allow writes here (run by an operator, not from this page)'), h('code', { style: { fontSize: '0.72rem', overflowWrap: 'anywhere' } }, p.request)) : null)
 }
@@ -415,7 +422,7 @@ function AddConversation({ d, project, onMoved }) {
       description: pending ? `\u201c${pending.title || pending.id}\u201d will run in ${target} instead of ${pending.workspace || 'its current folder'}.` : '',
       children: h('div', { style: { fontSize: '0.8rem', lineHeight: 1.5, display: 'grid', gap: '0.35rem' } },
         h('div', null, 'This changes the conversation\u2019s real working folder. No files are moved or copied, and the transcript is kept.'),
-        h('div', null, 'Write permissions do not change: the agent can write in the new folder only if it is already allowed (see the Access tab).'),
+        h('div', null, 'File-tool write grants do not change: Hermes file tools can write in the new folder only if it is already allowed (see the Access tab).'),
         h('div', null, 'The conversation will see the new folder\u2019s files from its next message on.'))
     }))
 }
@@ -440,7 +447,7 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
       h('div', null, 'This folder is not a Hermes project yet. Creating one lets Hermes group its conversations by project.'),
       h(Note, { note }),
       h('div', null, h(Button, { size: 'xs', disabled: busy, onClick: () => run(() => rpc('projects.create', { name: d.name, folders: [d.path] }), `Created the Hermes project \u201c${d.name}\u201d.`), children: 'Create Hermes project from this folder' })),
-      h('div', { style: { ...MUTED, fontSize: '0.75rem' } }, 'No write access is granted and no conversation is moved.'))
+      h('div', { style: { ...MUTED, fontSize: '0.75rem' } }, 'No file-tool write access is granted and no conversation is moved.'))
   }
   return h('div', { style: { display: 'grid', gap: '1.25rem' } },
     h(Note, { note }),
@@ -479,7 +486,7 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
             host.notify && host.notify({ kind: 'info', message: path ? `New conversation started. Choose the workspace ${path} in the composer (path copied).` : 'New conversation started.' })
           }, children: host.supportsNewChatCwd ? '+ New conversation here' : '+ New conversation' }),
           h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, host.supportsNewChatCwd
-            ? 'Starts a draft whose working folder is this project\u2019s primary folder, exactly as if you had picked it in the composer. It does not grant write access.'
+            ? 'Starts a draft whose working folder is this project\u2019s primary folder, exactly as if you had picked it in the composer. It does not grant file-tool write access.'
             : 'Opens a fresh draft. This Hermes Desktop cannot preset the folder, so pick it in the composer\u2019s workspace chip (the path is copied); existing permissions apply.')),
         h('div', { style: { borderTop: LINE, paddingTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' } },
           h(Button, { size: 'xs', variant: 'ghost', disabled: busy, onClick: () => p.archived ? run(() => rpc('projects.archive', { id: p.id, restore: true }), 'Restored.') : setConfirm({ kind: 'archive', project: p }), children: p.archived ? 'Restore project' : 'Archive project' }),
@@ -490,7 +497,7 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
           h('ul', { style: { ...MUTED, fontSize: '0.72rem', margin: 0, paddingLeft: '1.1rem' } },
             h('li', null, 'Conversations are not deleted. They stay in your history and fall back to Recents.'),
             h('li', null, `The folder${folders.length === 1 ? '' : 's'} and every file on disk (${folders.map(f => f.path).join(', ') || 'none registered'}) are not touched.`),
-            h('li', null, 'Write permissions are not changed. Deleting never grants or revokes access.')),
+            h('li', null, 'File-tool write grants are not changed. Deleting never grants or revokes access.')),
           h('div', null, h(Button, { size: 'xs', variant: 'ghost', disabled: busy, style: { color: 'var(--ui-text-danger, #e5534b)' }, onClick: () => { setDelText(''); setDel(p) }, children: 'Delete project\u2026' })))
       )
     }),
@@ -621,7 +628,7 @@ function ProjectsPage() {
         detected.length ? groupLabel('Detected from conversations', 'Hermes groups these by conversation folder automatically. They are not registered and are not changed here.') : null,
         ...detected.map(x => h('div', { key: x.id, style: { display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.25rem 0.75rem' } },
           h('span', { style: { flex: 1, minWidth: 0, fontSize: '0.8rem', overflowWrap: 'anywhere' }, title: x.path }, x.label || x.path),
-          h(Button, { size: 'xs', variant: 'ghost', title: `Register ${x.path} as a Hermes project (no write access is granted)`, onClick: async () => { try { await rpc('projects.create', { name: x.label || x.path, folders: [x.path] }); await refreshHermesLists(); reloadOverview() } catch (error) { host.notify && host.notify({ kind: 'error', message: error.message }) } }, children: 'Register' }))),
+          h(Button, { size: 'xs', variant: 'ghost', title: `Register ${x.path} as a Hermes project (no file-tool write access is granted)`, onClick: async () => { try { await rpc('projects.create', { name: x.label || x.path, folders: [x.path] }); await refreshHermesLists(); reloadOverview() } catch (error) { host.notify && host.notify({ kind: 'error', message: error.message }) } }, children: 'Register' }))),
         archivedRows.length ? groupLabel('Archived', 'Hidden in Hermes, so not offered by \u201cMove to project\u201d. Open one and use Manage \u203a Restore project.') : null,
         ...archivedRows.map(p => row(p, 'Archived Hermes project')))
     : h(PanelEmpty, { icon: 'search', title: 'No projects match' })

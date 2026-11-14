@@ -22,7 +22,7 @@ def test_delete_uses_the_native_method_and_never_touches_files_or_grants():
 
 
 def test_delete_dialog_explains_conversations_folders_and_permissions():
-    for sentence in ('Conversations are not deleted', 'every file on disk', 'Write permissions are not changed', 'use Archive instead'):
+    for sentence in ('Conversations are not deleted', 'every file on disk', 'File-tool write grants are not changed', 'use Archive instead'):
         assert sentence in PLUGIN
 
 

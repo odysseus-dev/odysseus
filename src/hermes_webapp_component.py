@@ -44,6 +44,9 @@ KNOWN_PREVIOUS_RESUME_SHA256 = (            # earlier shipped copies of the resu
     # the copy deployed on 2026-11-14 with release f36711161129 (commit 66152ea4): CRLF and LF forms
     'f32302a7efa828392c91c12914b6a1ea66c2ed5d5d0f6b1d53226b66516c984a',
     'be98c959607c10aed099e46b602704633e79e663612e95896e3fa3d520c47234',
+    # the copy deployed on 2026-11-14 with release b1e8abf79b78 (commit c4f0a95d, composer control center): CRLF and LF forms
+    '0c439ab6ab31f1475ba975d47ca06a1de49030e46c3a4d18eae46c6d667619c7',
+    '6909ac35e3165d149049e7cf5e039d92c410c93d79d7d5ede00fda65c2e77ede',
 )
 WORKSPACE_GRANTS_PLUGIN = 'odysseus-workspace-grants'
 WORKSPACE_GRANTS_PLUGIN_SOURCE = 'integrations/hermes-mode/plugins/odysseus-workspace-grants'
@@ -61,6 +64,8 @@ MCP_RECOVERY_PATCH = 'integrations/hermes-mode/patches/webapp-mcp-recovery.patch
 DESKTOP_WORKSPACE_PATCH = 'integrations/hermes-mode/patches/webapp-desktop-workspace.patch'
 COMPOSER_PATCH = 'integrations/hermes-mode/patches/webapp-composer-control-center.patch'
 RESUME_OUTCOMES_PATCH = 'integrations/hermes-mode/patches/webapp-resume-outcomes.patch'
+UPDATE_PROTECTION_PATCH = 'integrations/hermes-mode/patches/webapp-update-protection.patch'
+MANAGED_MARKER = '.odysseus-managed.json'
 # What importing each runtime extra must make possible, proven against the committed environment before a release is 'ready'.
 RUNTIME_EXTRA_IMPORTS = {'mcp': 'mcp.client.stdio'}
 _EXTRA_NAME = re.compile(r'[a-z0-9][a-z0-9_-]*')
@@ -214,6 +219,18 @@ def find_tool(name, minimum_major, environment):
         if result.returncode == 0 and match and int(match.group(0).split('.')[0]) >= minimum_major:
             return Tool(name, executable, str(directory), match.group(0))
     return None
+
+
+def verify_managed_marker(source):
+    """A release is only built when the update-protection patch really left its managed-install marker in the tree: without it the
+    pinned updater would treat the release as an ordinary git checkout. The marker is a tracked file of that patch, so it is recreated
+    for every release; this proves it, rather than trusting it."""
+    try:
+        data = json.loads((Path(source) / MANAGED_MARKER).read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError) as exc:
+        raise ComponentError('The managed-install marker is missing from the new release, so direct updates would not be refused; it was not built.') from exc
+    if not isinstance(data, dict) or data.get('managed_by') != 'odysseus':
+        raise ComponentError('The managed-install marker in the new release is invalid; it was not built.')
 
 
 def engine_majors(source):
@@ -649,6 +666,7 @@ class WebappComponent:
         env = {**self.environment, 'GIT_TERMINAL_PROMPT': '0'}
         source = release_dir / 'src'
         checkout_source(source, pin, log, env, self.webapp_patches())
+        verify_managed_marker(source)
         bundle, verdict, tool_versions = self._build(source, release_dir, log)
         extras = load_runtime_extras(self.application_root)
         home_path = private_directory(home or (previous['home'] if previous else self.root / 'state/hermes-gateway'))
@@ -1228,7 +1246,17 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
+        return (*self.resume_patches(), self.update_protection_patch())
+
+    def resume_patches(self):
+        """The five-patch set (through the resume-outcomes patch) releases carried before update protection (kept for rollback)."""
         return (*self.composer_patches(), self.resume_outcomes_patch())
+
+    def update_protection_patch(self):
+        path = (self.application_root / UPDATE_PROTECTION_PATCH).resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed update-protection patch is missing from this Odysseus installation.')
+        return path
 
     def composer_patches(self):
         """The four-patch set (workspace patches plus the composer control center) releases carried before the resume-outcomes patch (kept for rollback)."""
@@ -1264,9 +1292,9 @@ class WebappComponent:
         return path
 
     def applied_patches(self, agent):
-        """The reviewed patch set a managed source carries exactly: the current set, the previous four- and three-patch sets, the route guard with the MCP recovery, or the route guard alone
+        """The reviewed patch set a managed source carries exactly: the current set, the previous five-, four- and three-patch sets, the route guard with the MCP recovery, or the route guard alone
         (earlier releases kept side by side for rollback). The current set when it matches neither, so a mismatch is reported against it."""
-        for patches in (self.webapp_patches(), self.composer_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
+        for patches in (self.webapp_patches(), self.resume_patches(), self.composer_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
             if patch_state(agent, patches) == 'applied':
                 return patches
         return self.webapp_patches()
