@@ -99,6 +99,7 @@ const PRECACHE = [
   '/static/js/document/ui/pdfTools.js',
   '/static/js/document/ui/suggestions.js',
   '/static/js/document/ui/richTables.js',
+  '/static/js/document/ui/editor/sourceEditor.js',
   '/static/js/document/ui/previewModes.js',
   '/static/js/gallery.js?v=20260910promptcopy1',
   '/static/js/chatRenderer.js?v=20260914metricssummary1',

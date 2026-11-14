@@ -240,6 +240,10 @@
       "deployment": "js/document/ui/richTables.js"
     },
     {
+      "source": "features/documents/ui/editor/sourceEditor.js",
+      "deployment": "js/document/ui/editor/sourceEditor.js"
+    },
+    {
       "source": "features/documents/domain/documentKinds.js",
       "deployment": "js/document/domain/documentKinds.js"
     },
