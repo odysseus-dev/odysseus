@@ -109,7 +109,7 @@ def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -213,7 +213,7 @@ def test_mobile_toolbar_menu_preserves_selection_and_restores_focus():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -332,7 +332,7 @@ def test_rich_toolbar_menus_track_live_formatting_values():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

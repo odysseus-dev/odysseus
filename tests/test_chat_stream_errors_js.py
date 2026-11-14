@@ -32,7 +32,7 @@ def test_terminal_provider_errors_preserve_text_and_never_auto_retry():
         ["node", "--input-type=module"],
         input=script,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         cwd=_REPO,
         timeout=30,
     )

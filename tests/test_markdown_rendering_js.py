@@ -22,7 +22,7 @@ def node_available():
 def test_blockquoted_html_codefence_does_not_leak_placeholders(node_available):
     result = subprocess.run(
         ["node", "tests/markdown_codefence_placeholder_regression.mjs"],
-        cwd=_REPO, capture_output=True, text=True, timeout=15,
+        cwd=_REPO, capture_output=True, text=True, encoding="utf-8", timeout=15,
     )
     assert result.returncode == 0, result.stderr + result.stdout
 
@@ -106,7 +106,7 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", 
         cwd=_REPO,
         capture_output=True,
         timeout=15,
-        text=True,
+        text=True, encoding="utf-8",
     )
     if result.returncode != 0:
         raise AssertionError(f"node failed:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")
@@ -132,7 +132,7 @@ def _run_svg_case(markdown: str):
       })().catch(error => { console.error(error); process.exit(1); });
     '''
     result = subprocess.run(
-        ["node", "-e", script], cwd=_REPO, capture_output=True, text=True,
+        ["node", "-e", script], cwd=_REPO, capture_output=True, text=True, encoding="utf-8",
         env={**os.environ, "ODYSSEUS_SVG_TEST_INPUT": json.dumps(markdown)}, timeout=30,
     )
     assert result.returncode == 0, result.stderr

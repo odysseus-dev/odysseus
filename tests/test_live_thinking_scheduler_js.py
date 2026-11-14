@@ -21,7 +21,7 @@ def test_live_thinking_scheduler_behavior():
         cwd=_REPO,
         capture_output=True,
         timeout=30,
-        text=True,
+        text=True, encoding="utf-8",
     )
     if result.returncode != 0:
         raise AssertionError(

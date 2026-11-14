@@ -79,7 +79,7 @@ def test_ctrl_s_saves_rich_text_immediately_once_and_updates_status():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

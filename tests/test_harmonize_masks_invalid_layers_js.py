@@ -26,7 +26,7 @@ def test_layer_union_alpha_returns_null_for_non_array_layers():
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip()) == [None, None, None]

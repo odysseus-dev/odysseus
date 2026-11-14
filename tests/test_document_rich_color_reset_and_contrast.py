@@ -94,7 +94,7 @@ def test_rich_colors_follow_theme_and_undo_as_one_edit():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

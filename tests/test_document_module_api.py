@@ -127,7 +127,7 @@ def _module_surface():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         env=os.environ.copy(),
     )
     assert result.returncode == 0, result.stderr

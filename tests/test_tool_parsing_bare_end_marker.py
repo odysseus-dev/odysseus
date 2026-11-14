@@ -88,7 +88,7 @@ def test_js_copy_of_the_pattern_matches_the_python_one():
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script, json.dumps(cases)],
-        cwd=_REPO, capture_output=True, timeout=15, text=True,
+        cwd=_REPO, capture_output=True, timeout=15, text=True, encoding="utf-8",
     )
     assert result.returncode == 0, f"node failed:\n{result.stderr}"
     got = json.loads(result.stdout.splitlines()[-1])

@@ -140,7 +140,7 @@ def test_rich_url_paste_links_selections_and_plain_urls_without_unsafe_autolinks
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
