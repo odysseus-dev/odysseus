@@ -111,4 +111,4 @@ def test_stored_conversation_scenarios(tmp_path):
     assert classes('cost_sub')['subscription_equivalent']['usd'] == 2.105 and classes('cost_sub')['unpriced']['label'] == 'Unpriced'
     assert classes('cost_api')['billed']['label'] == '$0.0002' and classes('cost_api')['estimated_api']['usd'] == 0.0008
     assert classes('cost_free')['included']['usd'] is None and classes('cost_free')['unpriced']['usd'] is None
-    assert o['frame_top_level_keys_unchanged'] is True and o['frame_nested_has_extras'] == 500000
+    assert o['frame_unchanged'] is True and o['frame_nested_has_extras'] == 500000

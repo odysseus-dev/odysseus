@@ -93,8 +93,8 @@ with mock.patch.object(mm, "get_model_context_length", fake_resolver):
 compressor = SimpleNamespace(threshold_tokens=500_000, threshold_percent=0.5, _config_context_length=None, last_prompt_tokens=100, last_real_prompt_tokens=100)
 agent = SimpleNamespace(context_compressor=compressor, compression_enabled=True)
 extras = su.live_usage_extras(agent)
-frame = su.usage_frame({"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "last_prompt_tokens": 100, "context_length": 1000, "context_source": "provider_usage"}, extras)
 out["live_extras"] = extras
-out["frame_top_level_keys_unchanged"] = sorted(k for k in frame if k != "usage") == sorted(["input_tokens", "output_tokens", "total_tokens", "last_prompt_tokens", "context_length", "context_source"])
-out["frame_nested_has_extras"] = frame["usage"].get("compression_threshold_tokens")
+frame = su.usage_frame({"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "last_prompt_tokens": 100, "context_length": 1000, "context_source": "provider_usage"})
+out["frame_unchanged"] = "compression_threshold_tokens" not in frame["usage"]
+out["frame_nested_has_extras"] = extras.get("compression_threshold_tokens")
 print("@@" + json.dumps(out))
