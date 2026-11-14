@@ -117,7 +117,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (!activeAccountId) return null;
     const accounts = await _getEmailAccountsCached();
     const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
-    if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
+    if (!activeAccount) {
+      if (uiModule) uiModule.showToast('Selected email account no longer exists; using your SMTP account.');
+      return null;
+    }
+    if (_accountCanSend(activeAccount)) return activeAccountId;
     if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
     return null;
   }
