@@ -67,25 +67,14 @@ if ! command -v brew >/dev/null 2>&1; then
 fi
 
 # 2. Find a Python 3.11+ to build the environment with.
-#    On Apple Silicon we require an *arm64* interpreter (Homebrew's, under
-#    /opt/homebrew). A universal2 or x86 Python — e.g. the python.org installer
-#    at /usr/local — produces a venv whose compiled extensions get loaded as the
-#    wrong architecture when launched from the .app bundle (Cookbook then dies
-#    with "incompatible architecture"). So on arm64 we only look under
-#    /opt/homebrew and install Homebrew's python@3.11 if it's missing. On Intel
-#    (or non-mac) we just use whatever Python 3.11+ is on PATH.
-PY=""
-if [ "$(uname -m)" = "arm64" ]; then
-    cands="/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11"
-else
-    cands="python3 python3.13 python3.12 python3.11"
-fi
-for cand in $cands; do
-    p="$(command -v "$cand" 2>/dev/null)" || continue
-    if "$p" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null; then
-        PY="$p"; break
-    fi
-done
+#    Respect PATH (including pyenv shims), then try Homebrew's usual paths.
+#    On Apple Silicon the running interpreter must be arm64: accepting an
+#    Intel Python here creates a venv with incompatible compiled extensions.
+source "$REPO_DIR/scripts/python-interpreter.sh"
+MACHINE_ARCH="$(uname -m)"
+PYTHON_CANDIDATES=(python3 python3.13 python3.12 python3.11
+    /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11)
+PY="$(find_python_interpreter "$MACHINE_ARCH" "${PYTHON_CANDIDATES[@]}")" || PY=""
 
 # System dependencies (each installed only if missing, so re-runs stay fast and
 # don't re-hit Homebrew over the network):
@@ -119,7 +108,7 @@ if [ -n "$PY" ]; then
 else
     echo "  installing python@3.11…"
     brew install python@3.11 || true
-    PY="$(command -v /opt/homebrew/bin/python3.11 || command -v python3.11 || true)"
+    PY="$(find_python_interpreter "$MACHINE_ARCH" "${PYTHON_CANDIDATES[@]}")" || PY=""
 fi
 brew_ensure tmux tmux
 brew_ensure llama-server llama.cpp
