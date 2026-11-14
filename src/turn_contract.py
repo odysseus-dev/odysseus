@@ -330,6 +330,11 @@ _CONDITIONAL_ACTION = re.compile(
     r"(?:,\s*|\bthen\s+)(?P<action>" + _ACTION_REQUEST + r"[\s\S]*)$",
     re.I,
 )
+_DISTRIBUTIVE_ACTION = re.compile(
+    r"^\s*(?:please\s*,?\s+)?(?P<scope>for\s+(?:each|every)\b[^,;\n]{1,240}?),\s*"
+    r"(?P<action>" + _ACTION_REQUEST + r"[\s\S]*)$",
+    re.I,
+)
 _EXPLICIT_URL_RETRIEVAL = re.compile(
     r"\b(?:read|visit|open|browse|fetch|download|inspect|extract)\b"
     r"[\s\S]{0,320}?https?://",
@@ -741,7 +746,8 @@ def calendar_retiming_request(text: str) -> bool:
 def _has_action_signal(text: str) -> bool:
     """Recognize a normal action prefix or one transposition/typo in its verb."""
     if (_ACTION.search(text) or _CONTEXTUAL_ACTION.search(text)
-            or _RETURN_TO_ACTION.search(text) or calendar_retiming_request(text)):
+            or _RETURN_TO_ACTION.search(text) or calendar_retiming_request(text)
+            or _DISTRIBUTIVE_ACTION.search(text)):
         return True
     tokens = re.findall(r"[a-z]+", str(text or "").lower())[:6]
     while tokens and tokens[0] in {"please", "ok", "okay", "also", "then", "yes", "yeah", "sure"}:
@@ -4204,6 +4210,14 @@ def _clause_capabilities(text: str) -> set[str]:
         # The premise supplies context; the post-condition clause owns the
         # requested side effect and therefore its product family.
         return _clause_capabilities(conditional["action"])
+    if distributive := _DISTRIBUTIVE_ACTION.fullmatch(text):
+        # "For each X, do Y" asks for exactly what "Do Y for each X" asks for.
+        # Unlike a conditional premise, X is what the action works on, so keep
+        # it and only move the verb to the front where the action grammar
+        # looks for it.
+        return _clause_capabilities(
+            f"{distributive['action'].strip()} {distributive['scope'].strip()}"
+        )
     if (
         re.search(r"\b(?:tasks?|jobs?|automations?)\b(?!\s+ids?\b)", text, re.I)
         and re.search(
