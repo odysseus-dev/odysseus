@@ -8,13 +8,18 @@ This is the single place that handles:
 - Session lifecycle (create, archive, delete)
 """
 
+import asyncio
 import json
+import os
+import threading
+import time
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError
 
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
@@ -78,6 +83,10 @@ class SessionManager:
         self.sessions: Dict[str, Session] = {}
         self.upload_handler = None
         self.load_sessions()
+        try:
+            self.recover_spooled()
+        except Exception as exc:                                 # recovery must never stop the server from starting
+            logger.error("Unsaved-message recovery failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Loading
@@ -257,8 +266,191 @@ class SessionManager:
 
         self._persist_message(session_id, message)
 
-    def _persist_message(self, session_id: str, message: ChatMessage):
-        """Persist a single message to the database."""
+    # A failed save is never silent: the message stays in memory (the live conversation keeps working), is flagged, and is re-saved in order on the next
+    # successful save for that session. Retries cover brief lock contention only; they block the caller for at most ~0.2 s.
+    _PERSIST_RETRY_DELAYS = (0.05, 0.15)
+    _UNSAVED_MAX = 200
+    # A message whose save failed is also appended to a small on-disk spool, so a process exit cannot lose it. Bounded per session and in total; when the
+    # bound is reached the message stays in memory only and that is logged loudly (never silently dropped).
+    _SPOOL_MAX_PER_SESSION = 500
+    _SPOOL_MAX_BYTES = 32 * 1024 * 1024
+    _spool_lock = threading.Lock()
+
+    @staticmethod
+    def _spool_dir() -> str:
+        from .constants import DATA_DIR
+        return os.path.join(os.getenv('ODYSSEUS_DATA_DIR') or DATA_DIR, 'unsaved-messages')
+
+    def _spool_path(self, session_id: str) -> str:
+        safe = ''.join(c for c in session_id if c.isalnum() or c in '-_')[:120] or 'session'
+        return os.path.join(self._spool_dir(), safe + '.jsonl')
+
+    def _spool_add(self, session_id: str, message: ChatMessage, msg_time) -> bool:
+        """Append the unsaved message to the spool (flushed to disk). True when it is durably recorded."""
+        try:
+            if message.metadata is None:
+                message.metadata = {}
+            spool_id = message.metadata.setdefault('_spool_id', uuid.uuid4().hex)
+            meta = {k: v for k, v in message.metadata.items() if k not in ('_persist_failed', '_db_id')}
+            record = {'sid': session_id, 'spool_id': spool_id, 'role': message.role, 'content': persistable_message_content(message.content, message.metadata),
+                      'metadata': meta, 'ts': msg_time.isoformat()}
+            line = json.dumps(record, default=str, ensure_ascii=False) + '\n'
+            with self._spool_lock:
+                folder = self._spool_dir()
+                os.makedirs(folder, exist_ok=True)
+                path = self._spool_path(session_id)
+                if os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8') as handle:
+                        existing = handle.read().splitlines()
+                    if any(('"%s"' % spool_id) in row for row in existing):
+                        return True                              # already spooled (a retry of the same message)
+                    if len(existing) >= self._SPOOL_MAX_PER_SESSION:
+                        logger.error("Session %s: unsaved-message spool is full (%d); this message is held in memory only", session_id, self._SPOOL_MAX_PER_SESSION)
+                        return False
+                total = sum(os.path.getsize(os.path.join(folder, n)) for n in os.listdir(folder))
+                if total + len(line) > self._SPOOL_MAX_BYTES:
+                    logger.error("Unsaved-message spool is over its size limit; this message is held in memory only")
+                    return False
+                with open(path, 'a', encoding='utf-8') as handle:
+                    handle.write(line)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            return True
+        except Exception as exc:
+            logger.error("Could not spool an unsaved message for session %s: %s", session_id, exc)
+            return False
+
+    def _spool_ack(self, session_id: str, spool_id: str) -> None:
+        """The message is in the database: remove it from the spool."""
+        try:
+            with self._spool_lock:
+                path = self._spool_path(session_id)
+                if not os.path.exists(path):
+                    return
+                with open(path, 'r', encoding='utf-8') as handle:
+                    rows = handle.read().splitlines()
+                keep = [row for row in rows if ('"%s"' % spool_id) not in row]
+                if len(keep) == len(rows):
+                    return
+                if keep:
+                    with open(path + '.tmp', 'w', encoding='utf-8') as handle:
+                        handle.write('\n'.join(keep) + '\n')
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(path + '.tmp', path)
+                else:
+                    os.remove(path)
+        except Exception as exc:
+            logger.warning("Could not update the unsaved-message spool for session %s: %s", session_id, exc)
+
+    def recover_spooled(self) -> dict:
+        """After a restart: save every spooled message that is not already in the database, in its original order, then clear it from the spool. Idempotent:
+        a message carries its spool id in its stored metadata, so running this twice (or after a partial run) can never create a duplicate."""
+        report = {'recovered': 0, 'already_saved': 0, 'failed': 0}
+        folder = self._spool_dir()
+        if not os.path.isdir(folder):
+            return report
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith('.jsonl'):
+                continue
+            path = os.path.join(folder, name)
+            try:
+                with open(path, 'r', encoding='utf-8') as handle:
+                    records = [json.loads(row) for row in handle.read().splitlines() if row.strip()]
+            except (OSError, ValueError) as exc:
+                logger.error("Unreadable unsaved-message spool %s: %s", name, exc)
+                report['failed'] += 1
+                continue
+            for record in sorted(records, key=lambda r: r.get('ts', '')):
+                sid, spool_id = record['sid'], record['spool_id']
+                db = SessionLocal()
+                try:
+                    exists = db.query(DbChatMessage.id).filter(DbChatMessage.session_id == sid, DbChatMessage.meta_data.like('%"' + spool_id + '"%')).first()
+                finally:
+                    db.close()
+                if exists:
+                    report['already_saved'] += 1
+                    self._spool_ack(sid, spool_id)
+                    continue
+                message = ChatMessage(record['role'], record['content'], dict(record.get('metadata') or {}))
+                try:
+                    when = datetime.fromisoformat(record['ts'])
+                    if self._persist_message_once(sid, message, when):
+                        report['recovered'] += 1
+                        self._spool_ack(sid, spool_id)
+                except Exception as exc:
+                    logger.error("Could not recover spooled message %s: %s", spool_id, exc)
+                    report['failed'] += 1
+        if report['recovered'] or report['failed']:
+            logger.warning("Unsaved-message spool recovery: %s", report)
+        return report
+
+    @staticmethod
+    def _is_transient_db_error(error: Exception) -> bool:
+        text = str(error).lower()
+        return isinstance(error, OperationalError) or 'database is locked' in text or 'database is busy' in text
+
+    def unsaved_messages(self, session_id: str) -> int:
+        """How many messages of this session are in memory but not yet in the database (0 when everything is saved)."""
+        return len(getattr(self, '_unsaved', {}).get(session_id, ()))
+
+    def _persist_message(self, session_id: str, message: ChatMessage) -> bool:
+        """Persist a single message to the database. Returns True only when it is committed; a failure is logged, flagged on the message and retried later."""
+        unsaved = self.__dict__.setdefault('_unsaved', {})
+        pending = unsaved.get(session_id)
+        if pending:
+            # Older unsaved messages go first, with their original timestamps, so the transcript order is preserved.
+            for older in list(pending):
+                if older[0] is not message and self._persist_message_checked(session_id, older[0], older[1]):
+                    pending.remove(older)
+        msg_time = datetime.utcnow()
+        ok = self._persist_message_checked(session_id, message, msg_time)
+        if not ok:
+            spooled = self._spool_add(session_id, message, msg_time)
+            queue = unsaved.setdefault(session_id, [])
+            if not any(item[0] is message for item in queue):
+                if len(queue) >= self._UNSAVED_MAX:
+                    oldest = queue.pop(0)
+                    if (oldest[0].metadata or {}).get('_spool_id'):
+                        logger.error("Session %s: unsaved queue of %d full; the oldest message stays in the on-disk spool and is saved at the next restart", session_id, self._UNSAVED_MAX)
+                    else:
+                        logger.error("Session %s: dropped the oldest unsaved message (queue of %d full, not spooled)", session_id, self._UNSAVED_MAX)
+                queue.append((message, msg_time))
+            if not spooled:
+                message.metadata['_spool_failed'] = True
+        elif not unsaved.get(session_id):
+            unsaved.pop(session_id, None)
+        return ok
+
+    @staticmethod
+    def _on_event_loop() -> bool:
+        try:
+            asyncio.get_running_loop()
+            return True
+        except RuntimeError:
+            return False
+
+    def _persist_message_checked(self, session_id: str, message: ChatMessage, msg_time) -> bool:
+        if (message.metadata or {}).get('_db_id'):
+            return True                                         # already committed (idempotent: a retry can never duplicate a row)
+        last_error = None
+        for attempt in range(len(self._PERSIST_RETRY_DELAYS) + 1):
+            try:
+                return self._persist_message_once(session_id, message, msg_time)
+            except Exception as e:
+                last_error = e
+                if attempt < len(self._PERSIST_RETRY_DELAYS) and self._is_transient_db_error(e):
+                    if not self._on_event_loop():               # never stall the event loop: from a coroutine the next save retries instead
+                        time.sleep(self._PERSIST_RETRY_DELAYS[attempt])
+                        continue
+                break
+        logger.error(f"Error persisting message: {last_error}")
+        if message.metadata is None:
+            message.metadata = {}
+        message.metadata['_persist_failed'] = True
+        return False
+
+    def _persist_message_once(self, session_id: str, message: ChatMessage, msg_time) -> bool:
         db = SessionLocal()
         try:
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
@@ -267,8 +459,9 @@ class SessionManager:
                 # create a chat_messages row with no parent session; also drop
                 # any stale cached session so later writes fail closed too.
                 self.sessions.pop(session_id, None)
+                self.__dict__.get('_unsaved', {}).pop(session_id, None)
                 logger.warning("Dropping message for deleted session %s", session_id)
-                return
+                return True                                     # nothing to save and nothing to retry: the session is gone
 
             missing_upload_id = reserve_message_upload_references(
                 getattr(self, "upload_handler", None),
@@ -282,7 +475,6 @@ class SessionManager:
                 )
 
             msg_id = str(uuid.uuid4())
-            msg_time = datetime.utcnow()
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
@@ -290,12 +482,13 @@ class SessionManager:
             # model call. Persist only readable text plus attachment references
             # so chat_messages/FTS do not duplicate upload bytes.
             _content = persistable_message_content(message.content, message.metadata)
+            stored_meta = {k: v for k, v in message.metadata.items() if k not in ('_persist_failed', '_spool_failed')}
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
                 role=message.role,
                 content=_content,
-                meta_data=json.dumps(message.metadata) if message.metadata else None,
+                meta_data=json.dumps(stored_meta) if stored_meta else None,
                 timestamp=msg_time,
             )
             db.add(db_message)
@@ -315,12 +508,17 @@ class SessionManager:
 
             # Store DB ID on the in-memory message for edit/delete by ID
             message.metadata['_db_id'] = msg_id
+            message.metadata.pop('_persist_failed', None)
+            message.metadata.pop('_spool_failed', None)
+            spool_id = message.metadata.get('_spool_id')
+            if spool_id:
+                self._spool_ack(session_id, spool_id)
 
             logger.debug(f"Persisted message to session {session_id}")
-
-        except Exception as e:
-            logger.error(f"Error persisting message: {e}")
+            return True
+        except Exception:
             db.rollback()
+            raise
         finally:
             db.close()
 

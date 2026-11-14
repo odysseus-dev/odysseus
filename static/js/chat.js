@@ -1532,13 +1532,60 @@ import { invalidateSettings } from './appConfig.js';
     return `${runId}:${event && event.teacher ? 'teacher' : 'primary'}`;
   }
 
+  /** The server could not replay everything this client missed (it was too slow, or reconnected late). Say so in the conversation instead of showing an
+   *  incomplete stream as if it were whole. The saved reply is complete; a resumed run is reloaded from it automatically. */
+  function _noteReplayGap(holderEl, sessionId) {
+    try {
+      uiModule.showToast('Part of this run\u2019s output was no longer available to show live. Reload the conversation once the run has finished to see the complete reply.', 8000);
+      if (!holderEl || !holderEl.isConnected || holderEl.querySelector('.replay-gap-note')) return;
+      const note = document.createElement('div');
+      note.className = 'replay-gap-note';
+      note.style.cssText = 'font-size:0.78rem;font-style:italic;opacity:0.75;padding:2px 0;';
+      note.textContent = 'Some output of this run was not shown live. This view may be incomplete until the run finishes; the saved conversation holds the full reply.';
+      const body = holderEl.querySelector('.body') || holderEl;
+      body.insertBefore(note, body.firstChild);
+    } catch (_) {}
+  }
+
+  /** Stop: show "Stopping\u2026" at once, then "Stopped" only when the server confirms the run has really ended; a long tool call keeps it in "Stopping". */
+  function _showStopState(kind, detail) {
+    const messages = {
+      stopping: 'Stopping\u2026',
+      stopped: 'Stopped.',
+      slow: 'Still stopping: a long step is finishing. You can keep waiting; nothing new will start.',
+    };
+    let text = messages[kind] || '';
+    if (kind === 'stopped' && detail && detail.tools_may_still_run && detail.interrupted_tools && detail.interrupted_tools.length) {
+      const names = detail.interrupted_tools.map(t => t.tool).filter(Boolean).slice(0, 3).join(', ');
+      text = 'Stopped. ' + (names || 'A tool') + ' was interrupted and may still be finishing in the background.';
+    }
+    try { document.body.dataset.chatStop = kind; if (kind === 'stopped') setTimeout(() => { if (document.body.dataset.chatStop === 'stopped') delete document.body.dataset.chatStop; }, 4000); } catch (_) {}
+    if (text) uiModule.showToast(text, kind === 'stopping' ? 3000 : 7000);
+  }
+
   /** POST the exact Stop for one observed run identity. */
   function _postExactStop(sessionId, runId) {
+    _showStopState('stopping');
     fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-Odysseus-Run-Id': runId },
-    }).catch(() => {});
+    }).then(r => (r && r.ok ? r.json() : null)).then(async body => {
+      // `stopped` only means the cancellation was delivered; `confirmed` says the run really ended (a long tool call can outlive the request).
+      if (!body || !body.stopped) { try { delete document.body.dataset.chatStop; } catch (_) {} return; }
+      if (body.confirmed) return _showStopState('stopped', body);
+      _showStopState('slow');
+      for (let attempt = 0; attempt < 60; attempt++) {                 // poll up to a minute; the server says when the run has really ended
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        let state = null;
+        try {
+          const r = await fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, { credentials: 'same-origin', headers: { 'X-Odysseus-Run-Id': runId } });
+          state = r && r.ok ? await r.json() : null;
+        } catch (_) { /* try again */ }
+        if (state && state.confirmed) return _showStopState('stopped', state);
+      }
+      _showStopState('slow');
+    }).catch(() => { try { delete document.body.dataset.chatStop; } catch (_) {} });
   }
 
   /** Stop only the exact detached run whose identity this browser observed. */
@@ -5008,6 +5055,13 @@ import { invalidateSettings } from './appConfig.js';
                   _regenKeptUserBubble = null;
                 }
 
+              } else if (json.type === 'replay_gap') {
+                if (!_isBg) _noteReplayGap(holder, sessionId);
+
+              } else if (json.type === 'message_save_failed') {
+                // The reply is on screen and in memory but the database write failed; the server keeps it and retries with the next save.
+                if (!_isBg) uiModule.showToast('This reply could not be saved to the conversation history yet. It is kept and will be retried; do not close the server.', 9000);
+
               } else if (json.type === 'message_saved') {
                 // Wire the persisted DB id onto the just-streamed bubble so it
                 // can be edited/deleted immediately, without reloading the chat.
@@ -6799,6 +6853,7 @@ import { invalidateSettings } from './appConfig.js';
           }
           let json;
           try { json = JSON.parse(payload); } catch (_) { continue; }
+          if (json.type === 'replay_gap') { rich = true; _noteReplayGap(holder, sessionId); continue; }       // the finished reply is then loaded from the saved conversation
           if (eventIsError || ['stable', 'complete', 'error', 'agent_terminal', 'chat_terminal'].includes(json.type)) replayRendering.settle();
           if (eventIsError) {
             replayError = createTerminalStreamError(json);

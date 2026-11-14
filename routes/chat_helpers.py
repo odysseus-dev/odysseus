@@ -1756,6 +1756,15 @@ def save_assistant_response(
     return None
 
 
+def persist_failure_event(session_manager, session_id: str):
+    """SSE payload for the client when this session still holds messages that are not in the database, else None."""
+    try:
+        count = session_manager.unsaved_messages(session_id)
+    except Exception:
+        return None
+    return {"type": "message_save_failed", "unsaved": count} if count else None
+
+
 def _is_session_stream_active(session_id: str) -> bool:
     """Best-effort check for "is a chat completion currently streaming for
     this session?" — used to keep background extraction from overlapping a

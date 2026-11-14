@@ -146,7 +146,7 @@ class Session:
     def _history(self, messages: List[ChatMessage]):
         self.history = messages
 
-    def add_message(self, message: ChatMessage):
+    def add_message(self, message: ChatMessage) -> bool:
         """
         Add a message to this session.
 
@@ -157,9 +157,11 @@ class Session:
         self.history.append(message)
         self.message_count = len(self.history)
 
-        # Delegate to session manager for persistence
+        # Delegate to session manager for persistence. True only when the message is committed; on False the message stays in memory flagged
+        # ``_persist_failed`` and the manager re-saves it (in order) with the next successful save.
         if _SESSION_MANAGER_INSTANCE:
-            _SESSION_MANAGER_INSTANCE._persist_message(self.id, message)
+            return bool(_SESSION_MANAGER_INSTANCE._persist_message(self.id, message))
+        return True
 
     def get_context_messages(self) -> List[Dict[str, Any]]:
         """Get messages in format for LLM API.

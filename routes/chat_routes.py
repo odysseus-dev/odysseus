@@ -66,6 +66,7 @@ from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
 from routes.model_routes import _visible_models
 from routes.chat_helpers import (
+    persist_failure_event,
     resolve_session_auth,
     build_chat_context,
     save_assistant_response,
@@ -4495,6 +4496,10 @@ def setup_chat_routes(
                                 _stream_set(session, status="error")
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                else:
+                                    _save_failed = persist_failure_event(session_manager, session)
+                                    if _save_failed:
+                                        yield f'data: {json.dumps(_save_failed)}\n\n'
                                 yield f'data: {json.dumps({"type": "chat_terminal", "data": _terminal_metrics})}\n\n'
                             yield chunk
                         elif chunk.startswith("event: "):
@@ -4579,6 +4584,10 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                else:
+                                    _save_failed = persist_failure_event(session_manager, session)
+                                    if _save_failed:
+                                        yield f'data: {json.dumps(_save_failed)}\n\n'
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, _response_to_save,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -4870,6 +4879,10 @@ def setup_chat_routes(
                                         _stream_set(session, status="error")
                                         if _saved_id:
                                             yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                        else:
+                                            _save_failed = persist_failure_event(session_manager, session)
+                                            if _save_failed:
+                                                yield f'data: {json.dumps(_save_failed)}\n\n'
                                     yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = _render_state.metadata(data.get("data"))
@@ -4931,6 +4944,10 @@ def setup_chat_routes(
                                         _terminal_saved = True
                                         if _saved_id:
                                             yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                        else:
+                                            _save_failed = persist_failure_event(session_manager, session)
+                                            if _save_failed:
+                                                yield f'data: {json.dumps(_save_failed)}\n\n'
                                         run_post_response_tasks(
                                             sess, session_manager, session, message, _saveable_no_tool_response,
                                             _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -4992,6 +5009,10 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                else:
+                                    _save_failed = persist_failure_event(session_manager, session)
+                                    if _save_failed:
+                                        yield f'data: {json.dumps(_save_failed)}\n\n'
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, _response_to_save,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -5130,8 +5151,16 @@ def setup_chat_routes(
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
         _expected_run_id = request.headers.get("X-Odysseus-Run-Id")
-        stopped = agent_runs.stop(session_id, _expected_run_id)
-        return {"stopped": stopped}
+        result = await agent_runs.stop_confirmed(session_id, _expected_run_id)
+        # ``stopped`` keeps its old meaning (the cancellation was delivered); ``confirmed``/``state`` say whether the run has really ended.
+        return {"stopped": result["requested"], "confirmed": result["confirmed"], "state": result["state"],
+                "interrupted_tools": result.get("interrupted_tools", []), "tools_may_still_run": result.get("tools_may_still_run", False)}
+
+    @router.get("/api/chat/stop/{session_id}")
+    async def chat_stop_state(request: Request, session_id: str) -> Dict[str, Any]:
+        """Where a stopped run is now (stopping / stopped / done / none). Read-only; the client polls it after a Stop that was not confirmed in time."""
+        _verify_session_owner(request, session_id)
+        return agent_runs.run_state(session_id, request.headers.get("X-Odysseus-Run-Id"))
 
     @router.post("/api/chat/finish/{session_id}")
     async def chat_finish(request: Request, session_id: str) -> Dict[str, Any]:

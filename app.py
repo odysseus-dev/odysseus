@@ -725,7 +725,8 @@ app.include_router(make_mode_router(app.state.application_mode_service))
 
 # Outermost middleware: hermes.localhost:<port> is proxied to the loopback Hermes backend.
 from src.hermes_proxy import install_hermes_proxy
-install_hermes_proxy(app, app.state.application_mode_service)
+from src.hermes_local_api import LocalProjectsApi
+install_hermes_proxy(app, app.state.application_mode_service, local_api=LocalProjectsApi(lambda: _projects_runtime.dashboard))
 
 
 @app.post("/api/activity/heartbeat")

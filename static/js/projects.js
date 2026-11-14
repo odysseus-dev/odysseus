@@ -198,7 +198,9 @@ function sessionTable(rows, showProject) {
 
 function sessionsView(d) {
   const related = d.related_sessions || [];
+  const relatedNote = d.related_pending ? h('p', { class: 'evidence' }, 'Looking for related conversations\u2026') : null;
   return h('div', null, sessionTable(d.session_list, false),
+    relatedNote,
     related.length ? h('div', null, h('h3', null, 'Related conversations (inferred, not counted above)'),
       h('p', { class: 'evidence' }, 'These ran in another folder, but their agent tool calls referenced files in this project. This is evidence from recorded tool calls, not a recorded link.'),
       sessionTable(related, true)) : null);
@@ -360,7 +362,7 @@ function renderDetail() {
   const el = $('detail');
   if (store.error) {
     const auth = store.error.status === 401 || store.error.status === 403;
-    el.replaceChildren(h('div', { class: 'err' }, h('strong', null, auth ? 'Administrator sign-in required. ' : 'Could not load. '), store.error.message, auth ? [' ', h('a', { href: '/' }, 'Sign in to Odysseus'), ' as the local administrator, then reload.'] : null));
+    el.replaceChildren(h('div', { class: 'err' }, h('strong', null, auth ? 'Administrator sign-in required. ' : 'Could not load. '), store.error.message, auth ? [' ', h('a', { href: '/' }, 'Sign in to Odysseus'), ' as the local administrator, then reload.'] : [' ', h('button', { type: 'button', onclick: () => select(store.selected) }, 'Retry')]));
     return;
   }
   if (store.selected === '_sessions') {
@@ -372,7 +374,7 @@ function renderDetail() {
   const counts = { sessions: d.session_list.length, wiki: d.wiki_detail ? d.wiki_detail.handoffs.filter(x => x.status === 'open').length : 0 };
   const tabs = h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([id, label], i) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(store.tab === id), title: 'Key ' + (i + 1), onclick: () => { store.tab = id; setHash(); renderDetail(); } }, label, counts[id] ? h('span', { class: 'count' }, counts[id]) : null)));
   const body = { overview: overviewView, sessions: sessionsView, git: gitView, wiki: wikiView, access: accessView }[store.tab](d);
-  el.replaceChildren(
+  el.replaceChildren(...[
     h('h2', null, d.name, permissionChip(d.permission), d.sources.map(s => h('span', { class: 'chip' }, s))),
     h('div', { class: 'path' }, h('span', null, d.path), h('button', { type: 'button', onclick: () => copy(d.path) }, 'Copy path'),
       d.kind === 'git' ? h('span', { class: 'chip' }, d.branch || 'detached HEAD') : null, d.is_worktree ? h('span', { class: 'chip' }, 'linked worktree') : null,
@@ -380,22 +382,35 @@ function renderDetail() {
       h('button', { type: 'button', class: 'to-hermes', title: MANAGE_HINT, onclick: () => openProjects() }, 'Manage in Hermes')),
     d.sources.includes('WebUI project') && !d.sources.includes('Hermes project')
       ? h('p', { class: 'evidence' }, 'Legacy project: not yet in the Hermes project list. An operator can import it with scripts/hermes-projects-import.py (dry run first). Conversations are not moved.') : null,
-    tabs, body);
+    tabs, body].filter(Boolean));
 }
 
 function setHash() { history.replaceState(null, '', '#p=' + encodeURIComponent(store.selected || '') + '&t=' + store.tab); }
 
+let selection = 0;
 async function select(id) {
+  const mine = ++selection;                                  // a newer selection makes every older request's result irrelevant
   store.selected = id;
   store.detail = null;
+  store.error = null;
   setHash();
   renderList();
   renderDetail();
   try {
-    if (id === '_sessions') store.allSessions = (await api('/sessions')).sessions;
-    else { const detail = await api('/project/' + encodeURIComponent(id)); if (store.selected === id) store.detail = detail; }
+    if (id === '_sessions') { const body = await api('/sessions'); if (mine !== selection) return; store.allSessions = body.sessions; }
+    else {
+      const detail = await api('/project/' + encodeURIComponent(id) + '?related=0');
+      if (mine !== selection) return;
+      store.detail = detail;
+      renderDetail();
+      api('/project/' + encodeURIComponent(id) + '/related').then(body => {
+        if (mine !== selection || !store.detail) return;
+        store.detail = { ...store.detail, related_sessions: body.related_sessions, related_pending: false };
+        renderDetail();
+      }).catch(() => { if (mine === selection && store.detail) { store.detail = { ...store.detail, related_pending: false }; renderDetail(); } });
+    }
     store.error = null;
-  } catch (error) { store.error = error; }
+  } catch (error) { if (mine !== selection) return; store.error = error; }
   renderDetail();
 }
 

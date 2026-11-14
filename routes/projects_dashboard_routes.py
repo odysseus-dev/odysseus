@@ -62,15 +62,26 @@ def make_projects_dashboard_router(get_dashboard, guard=_reader, get_grants=None
         return {'sessions': get_dashboard().sessions()}
 
     @router.get('/project/{project_id}')
-    def project(project_id: str, request: Request, response: Response):
+    def project(project_id: str, request: Request, response: Response, related: bool = True):
         guard(request)
         _private(response)
         if not PROJECT_ID.fullmatch(project_id):
             raise HTTPException(404, 'Unknown project')
-        result = get_dashboard().detail(project_id, port=request.url.port or 7000)
+        result = get_dashboard().detail(project_id, port=request.url.port or 7000, related=related)
         if result is None:
             raise HTTPException(404, 'Unknown project')
         return result
+
+    @router.get('/project/{project_id}/related')
+    def project_related(project_id: str, request: Request, response: Response):
+        guard(request)
+        _private(response)
+        if not PROJECT_ID.fullmatch(project_id):
+            raise HTTPException(404, 'Unknown project')
+        result = get_dashboard().related_detail(project_id, port=request.url.port or 7000)
+        if result is None:
+            raise HTTPException(404, 'Unknown project')
+        return {'related_sessions': result}
 
     if get_grants is not None:
         def user_of(request):

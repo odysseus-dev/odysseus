@@ -204,6 +204,13 @@ BS = chr(92)
 PROJECT_ID = re.compile(r'[0-9a-f]{10}')
 
 
+# The related-conversation scan reads every recorded tool call, which is by far the slowest part of a project's detail (~0.9 s of ~1.1 s measured on the real
+# history, growing with it). It is loaded separately from the basic detail and its result is reused for this long.
+RELATED_TTL_S = 120
+RELATED_CACHE_MAX = 32       # entries (one per distinct project folder set); cleared when full
+RELATED_KEEP = 50            # per entry, far above the 8 ever shown
+
+
 class Dashboard:
     def __init__(self, hermes_home, webui_state, component_root, wiki_root=None, environment=None):
         self.hermes_home = Path(hermes_home) if hermes_home else None
@@ -211,6 +218,7 @@ class Dashboard:
         self.component_root = Path(component_root) if component_root else None
         self.wiki_root = Path(wiki_root) if wiki_root else None
         self.environment = os.environ if environment is None else environment
+        self._related_cache = {}
 
     # -- sources ---------------------------------------------------------------------------------------------------------------
     def _webapp_config(self):
@@ -248,6 +256,25 @@ class Dashboard:
                 continue
             out.append(record)
         return out
+
+    def _wiki_claims(self, project):
+        """Knowledge claims for one Wiki project, read from the claim files (never through the Wiki's write API). Verified first, then the ones awaiting review."""
+        base = self.wiki_root / 'claims' / project if self.wiki_root else None
+        found = []
+        for path in sorted(base.glob('c-*.md')) if base and base.is_dir() else []:
+            try:
+                record = json.loads(path.read_text(encoding='utf-8').split('---\n', 2)[1])
+            except (OSError, ValueError, IndexError):
+                continue
+            found.append({'id': record.get('id'), 'claim': str(record.get('claim') or '')[:260], 'status': record.get('status'), 'grade': record.get('grade'),
+                          'kind': record.get('kind'), 'subject': record.get('subject'), 'verified_commit': (record.get('verified_commit') or '')[:9] or None,
+                          'conflicts': len(record.get('conflicts_with') or [])})
+        order = {'verified': 0, 'needs-review': 1}
+        found.sort(key=lambda c: (order.get(c['status'], 2), c['subject'] or ''))
+        counts = {}
+        for c in found:
+            counts[c['status'] or 'unknown'] = counts.get(c['status'] or 'unknown', 0) + 1
+        return {'counts': counts, 'items': found[:20]}
 
     def webui_live(self):
         port = int(self.environment.get('ODYSSEUS_WEBUI_PORT') or 8787)
@@ -321,6 +348,16 @@ class Dashboard:
             return 'http://hermes.localhost:%d/%s' % (port, quote(session['id'], safe='')), 'webapp'
         return 'http://localhost:%d/session/%s' % (int(self.environment.get('ODYSSEUS_WEBUI_PORT') or 8787), quote(session['id'], safe='')), 'legacy-webui'
 
+    def _store_fingerprint(self):
+        out = []
+        for name in ('state.db', 'state.db-wal'):
+            try:
+                st = (self.hermes_home / name).stat()
+                out.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                out.append(None)
+        return tuple(out)
+
     def related_sessions(self, scope, exclude_ids, limit=8, minimum=3):
         """Conversations that did not run in this project's folders but whose agent tool calls referenced files under them.
 
@@ -333,6 +370,12 @@ class Dashboard:
             patterns += [forward + '/', forward + '"']
         if not patterns:
             return []
+        # The key carries the folders searched AND a fingerprint of the conversation store (size + mtime of the database and its write-ahead log), so any new
+        # message or tool call, and any change to a project's folders, misses the cache instead of showing an out-of-date answer; the TTL only bounds age.
+        key = (tuple(patterns), minimum, self._store_fingerprint())
+        cached = self._related_cache.get(key)
+        if cached and time.monotonic() - cached[0] < RELATED_TTL_S:
+            return [r for r in cached[1] if r['id'] not in exclude_ids][:limit]
         clause = ' or '.join('instr(t, ?) > 0' for _ in patterns)
         flatten = "lower(replace(replace(replace(tool_calls, char(92,92,92,92), char(92)), char(92,92), char(92)), char(92), '/'))"
         try:
@@ -341,7 +384,11 @@ class Dashboard:
                                   patterns).fetchall()
         except sqlite3.Error:
             return []
-        return [{'id': sid, 'calls': n} for sid, n in sorted(rows, key=lambda r: -r[1]) if n >= minimum and sid not in exclude_ids][:limit]
+        found = [{'id': sid, 'calls': n} for sid, n in sorted(rows, key=lambda r: -r[1]) if n >= minimum]
+        if len(self._related_cache) >= RELATED_CACHE_MAX:
+            self._related_cache.clear()
+        self._related_cache[key] = (time.monotonic(), found[:RELATED_KEEP])
+        return [r for r in found if r['id'] not in exclude_ids][:limit]
 
     # -- projects --------------------------------------------------------------------------------------------------------------
     def _candidates(self, sessions):
@@ -446,6 +493,61 @@ class Dashboard:
             state, why = 'none', 'no write grant covers this folder'
         return {'state': state, 'reason': why, 'grant': grant, 'legacy_env': legacy, 'blocked_by': block}
 
+    # -- folders: drives and one typed path (read-only; nothing is listed, created or changed) ----------------------------------------
+    @staticmethod
+    def drives():
+        """Windows drives with their file system (NTFS, Btrfs, ...). Other systems: the filesystem root."""
+        if os.name != 'nt':
+            return [{'path': '/', 'label': '/', 'filesystem': None, 'type': 'fixed', 'ready': True}]
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kinds = {2: 'removable', 3: 'fixed', 4: 'network', 5: 'optical', 6: 'ram'}
+        found = []
+        bitmask = kernel.GetLogicalDrives()
+        for index in range(26):
+            if not bitmask & (1 << index):
+                continue
+            root = '%s:\\' % chr(65 + index)
+            kind = kinds.get(kernel.GetDriveTypeW(root))
+            if not kind:
+                continue
+            label, fs = ctypes.create_unicode_buffer(261), ctypes.create_unicode_buffer(261)
+            ready = bool(kernel.GetVolumeInformationW(root, label, 261, None, None, None, fs, 261))
+            found.append({'path': root, 'label': label.value if ready else '', 'filesystem': fs.value if ready else None, 'type': kind, 'ready': ready})
+        return found
+
+    def check_path(self, raw):
+        """What an absolute path is, before anyone registers it, opens a chat there or asks for write access. Never reads inside the folder."""
+        text = (raw or '').strip().strip('"')
+        out = {'input': text[:400], 'valid': False, 'absolute': False, 'exists': False, 'is_dir': False}
+        if not text or len(text) > 400 or any(ord(c) < 32 for c in text):
+            return {**out, 'problem': 'Enter a full folder path, for example F:\\Odysseus.'}
+        if text.startswith('\\\\') or text.startswith('//'):
+            return {**out, 'problem': 'Network (UNC) paths are not accepted; map the share to a drive letter first.'}
+        absolute = bool(re.match(r'^[A-Za-z]:[\\/]', text)) if os.name == 'nt' else text.startswith('/')
+        if not absolute:
+            return {**out, 'problem': 'The path must be absolute (start with a drive letter such as F:\\).'}
+        path = os.path.normpath(text)
+        drive = os.path.splitdrive(path)[0] + '\\' if os.name == 'nt' else '/'
+        volume = next((d for d in self.drives() if os.path.normcase(d['path']) == os.path.normcase(drive)), None)
+        out.update(absolute=True, path=path, drive=drive, filesystem=volume and volume['filesystem'], drive_type=volume and volume['type'])
+        if volume is None or not volume['ready']:
+            return {**out, 'problem': 'Drive %s is not available.' % drive}
+        try:
+            out['exists'] = os.path.exists(path)
+            out['is_dir'] = os.path.isdir(path)
+        except OSError:
+            return {**out, 'problem': 'That location could not be read.'}
+        if out['exists'] and not out['is_dir']:
+            return {**out, 'problem': 'That path is a file, not a folder.'}
+        info = repo_info(path) if out['is_dir'] else None
+        out.update(valid=out['is_dir'], kind='git' if info else ('folder' if out['is_dir'] else 'missing'),
+                   git=info and {'toplevel': info['toplevel'], 'branch': info['branch'], 'is_worktree': info['is_worktree']},
+                   permission=self.permission(path))
+        if not out['is_dir']:
+            out['problem'] = 'This folder does not exist yet. Hermes accepts it as a project folder, but a conversation cannot start there until it exists.'
+        return out
+
     def summary_permission(self, paths, roots, blocked):
         found = [self.permission(p, roots, blocked) for p in dict.fromkeys(paths)]
         for wanted in ('blocked', 'granted'):
@@ -455,7 +557,7 @@ class Dashboard:
         return {**found[0], 'partial': False}
 
     # -- one project ------------------------------------------------------------------------------------------------------------
-    def detail(self, project_id, now=None, port=7000):
+    def detail(self, project_id, now=None, port=7000, related=True):
         if not PROJECT_ID.fullmatch(str(project_id)):
             return None
         now = now or time.time()
@@ -498,18 +600,12 @@ class Dashboard:
             s['resume_url'], s['resume_kind'] = self.resume(s, port)
         placed = {s['id'] for s in sessions}
         by_id = {s['id']: s for s in self.sessions(now)}
-        related = []
-        for hit in self.related_sessions(scope, placed):
-            base = by_id.get(hit['id'])
-            if base:
-                url, kind = self.resume(base, port)
-                related.append({**base, 'calls': hit['calls'], 'resume_url': url, 'resume_kind': kind,
-                                'evidence': 'inferred: %d agent tool calls referenced files under this project (it ran in %s)' % (hit['calls'], base['workspace'] or 'no recorded folder')})
+        related_list = self._related_list(scope, placed, by_id, port) if related else None
         wiki = None
         if project['wiki']:
             name = project['wiki']['project']
             tasks = sorted(self._wiki_records('tasks', name), key=lambda t: -(t.get('created_ts') or 0))
-            wiki = {'project': name, 'root': str(self.wiki_root), 'tasks': [], 'handoffs': []}
+            wiki = {'project': name, 'root': str(self.wiki_root), 'tasks': [], 'handoffs': [], 'claims': self._wiki_claims(name)}
             for t in tasks[:12]:
                 state, evidence = task_state(t, now)
                 wiki['tasks'].append({'id': t.get('id'), 'agent': t.get('agent'), 'summary': t.get('summary'), 'status': t.get('status'), 'state': state, 'evidence': evidence,
@@ -522,7 +618,33 @@ class Dashboard:
                       'request': self.request_command(path), 'request_template': self.request_command('{path}'), 'revoke_template': self.revoke_command('{path}'), 'revoke': self.revoke_command(project['permission'].get('grant')),
                       'note': 'These are file-tool write rules, not OS containment: a terminal, MCP servers and any program running as you are not limited by them. '
                               '"Allow for this chat" approvals are held in memory by the running Hermes process and cannot be listed here.'}
-        return {**project, 'git': git, 'worktrees': worktrees, 'session_list': sessions, 'related_sessions': related, 'wiki_detail': wiki, 'permission_detail': permission, 'generated_at': now}
+        return {**project, 'git': git, 'worktrees': worktrees, 'session_list': sessions, 'related_sessions': related_list, 'related_pending': related_list is None, 'wiki_detail': wiki, 'permission_detail': permission, 'generated_at': now}
+
+    def _related_list(self, scope, placed, by_id, port):
+        out = []
+        for hit in self.related_sessions(scope, placed):
+            base = by_id.get(hit['id'])
+            if base:
+                url, kind = self.resume(base, port)
+                out.append({**base, 'calls': hit['calls'], 'resume_url': url, 'resume_kind': kind,
+                            'evidence': 'inferred: %d agent tool calls referenced files under this project (it ran in %s)' % (hit['calls'], base['workspace'] or 'no recorded folder')})
+        return out
+
+    def related_detail(self, project_id, now=None, port=7000):
+        """The inferred-conversation list for one project (the slow part of detail), or None for an unknown project."""
+        if not PROJECT_ID.fullmatch(str(project_id)):
+            return None
+        now = now or time.time()
+        project = next((p for p in self.projects(now) if p['id'] == project_id), None)
+        if not project:
+            return None
+        scope = list(project['paths'])
+        for line in (_git(project['path'], 'worktree', 'list', '--porcelain') or '').splitlines() if project['kind'] == 'git' else []:
+            if line.startswith('worktree '):
+                scope.append(os.path.normpath(line[9:]))
+        sessions = self.sessions(now)
+        placed = {s['id'] for s in sessions if self._belongs(s['workspace'], scope, project_id)}
+        return self._related_list(scope, placed, {s['id']: s for s in sessions}, port)
 
     @staticmethod
     def request_command(path):

@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 class _Run:
-    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id", "finish_requested", "finish_event")
+    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id", "finish_requested", "finish_event", "head", "buffer_bytes", "open_tools")
 
     def __init__(self) -> None:
         self.buffer: list = []          # ordered SSE event strings (replay log)
+        self.open_tools: list = []      # tools that started and have not reported output yet (what a Stop would interrupt)
         self.subscribers: set = set()   # one asyncio.Queue per connected client
         self.status: str = "running"    # running | done | error | stopped
         self.task: Optional[asyncio.Task] = None
@@ -37,6 +38,9 @@ class _Run:
         self.run_id: str = uuid.uuid4().hex
         self.finish_requested: bool = False
         self.finish_event = asyncio.Event()
+        # Replay memory bound: events before ``head`` were released (their slots are None) once the retained events exceeded _MAX_BUFFER_BYTES.
+        self.head: int = 0
+        self.buffer_bytes: int = 0
 
 
 _RUNS: Dict[str, _Run] = {}
@@ -47,14 +51,105 @@ _RUNS: Dict[str, _Run] = {}
 # it, every session that ever streamed kept its entire event log forever.
 _EVICT_GRACE_S = 180
 
+# A run's replay log is bounded: a long agent run with large tool outputs used to retain every byte until 180 s after it ended (131 MB measured for
+# 2000 x 64 KB tool results). Live subscribers always get every event; only a LATE reconnect loses the oldest events, and is told so with a replay_gap
+# marker (the finished reply is loaded from the saved conversation anyway). One oversize event is shortened in the replay copy only.
+_MAX_BUFFER_BYTES = 32 * 1024 * 1024
+_MAX_EVENT_BYTES = 256 * 1024
+_REPLAY_GAP_EVENT = 'data: {"type": "replay_gap", "message": "Older output of this run is no longer available for replay."}\n\n'
+
+
+# Each connected client has a bounded delivery queue (events and bytes). A client that cannot keep up is marked as lagging instead of growing without limit:
+# its queue is dropped and it catches up from the run's replay buffer, which already holds every retained event in order. Fast clients never notice. If the
+# buffer itself moved past what the slow client had not yet read, it gets the replay_gap marker (never a silent hole).
+_SUBSCRIBER_MAX_EVENTS = 256
+_SUBSCRIBER_MAX_BYTES = 8 * 1024 * 1024
+
+
+class _Subscriber(asyncio.Queue):
+    """A client's bounded delivery queue. ``lagged`` means events were not queued for it and it must resynchronise from the replay buffer."""
+
+    def __init__(self) -> None:
+        super().__init__(maxsize=_SUBSCRIBER_MAX_EVENTS + 8)      # a few slots stay free for the end sentinel
+        self.lagged = False
+        self.pending_bytes = 0
+
+    def offer(self, seq, ev: str) -> None:
+        if self.lagged:
+            return
+        if self.qsize() >= _SUBSCRIBER_MAX_EVENTS or self.pending_bytes + len(ev) > _SUBSCRIBER_MAX_BYTES:
+            self.lagged = True
+            return
+        self.put_nowait((seq, ev))
+        self.pending_bytes += len(ev)
+
+    def taken(self, item) -> None:
+        if item and item[1]:
+            self.pending_bytes = max(0, self.pending_bytes - len(item[1]))
+
+    def drop_pending(self) -> None:
+        while True:
+            try:
+                item = self.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item[0] is None:                    # keep an end sentinel
+                self.put_nowait(item)
+                break
+        self.pending_bytes = 0
+        self.lagged = False
+
+
+def _shorten_for_replay(ev: str) -> str:
+    """Replay copy of an oversize event: long string values cut, still valid JSON. Anything unparseable is cut hard."""
+    try:
+        prefix, _, payload = ev.partition("data: ")
+        data = json.loads(payload)
+
+        def cut(value):
+            if isinstance(value, str) and len(value) > 32768:
+                return value[:32768] + f"... [{len(value) - 32768} characters not kept for replay]"
+            if isinstance(value, dict):
+                return {k: cut(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [cut(v) for v in value]
+            return value
+        return f"{prefix}data: {json.dumps(cut(data))}\n\n"
+    except Exception:
+        return ev[:_MAX_EVENT_BYTES] + "\n\n"
+
+
+def _track_tools(run: _Run, ev: str) -> None:
+    """Remember which tools are mid-flight, so Stop can say honestly what it interrupted."""
+    try:
+        if '"tool_start"' in ev[:200] or '"tool_output"' in ev[:200]:
+            data = json.loads(ev.split('data: ', 1)[1])
+            if data.get('type') == 'tool_start':
+                run.open_tools.append({'tool': str(data.get('tool') or '')[:60], 'command': str(data.get('command') or '')[:120]})
+                del run.open_tools[:-32]
+            elif data.get('type') == 'tool_output':
+                for index, item in enumerate(run.open_tools):
+                    if item['tool'] == str(data.get('tool') or '')[:60]:
+                        del run.open_tools[index]
+                        break
+    except (ValueError, IndexError, AttributeError):
+        pass
+
 
 def _publish(run: _Run, ev: str) -> None:
     """Append one SSE event and fan it out to every live subscriber."""
-    run.buffer.append(ev)
+    kept = _shorten_for_replay(ev) if len(ev) > _MAX_EVENT_BYTES else ev
+    run.buffer.append(kept)
+    run.buffer_bytes += len(kept)
+    while run.buffer_bytes > _MAX_BUFFER_BYTES and run.head < len(run.buffer) - 1:
+        run.buffer_bytes -= len(run.buffer[run.head])
+        run.buffer[run.head] = None
+        run.head += 1
+    _track_tools(run, ev)
     seq = len(run.buffer) - 1
     for q in list(run.subscribers):
         try:
-            q.put_nowait((seq, ev))
+            q.offer(seq, ev)
         except Exception:
             pass
 
@@ -144,7 +239,7 @@ async def _drain(session_id: str, run: _Run, agen: AsyncGenerator[str, None],
                 terminal_event = ev
                 continue
             _publish(run, ev)
-        if run.status == "running":
+        if run.status in ("running", "stopping"):
             run.status = "done"
         if terminal_event is not None:
             _publish(run, terminal_event)
@@ -224,23 +319,47 @@ async def subscribe(
     run = expected_run or _RUNS.get(session_id)
     if run is None:
         return
-    q: asyncio.Queue = asyncio.Queue()
+    q = _Subscriber()
     run.subscribers.add(q)            # register BEFORE replaying so nothing is missed
     # A live subscriber is connected — don't let a pending grace timer evict
     # the run out from under it mid-replay.
     if run.evict_task and not run.evict_task.done():
         run.evict_task.cancel()
     try:
-        next_seq = 0
+        next_seq = run.head
+        if run.head:
+            yield _REPLAY_GAP_EVENT
         while next_seq < len(run.buffer):
-            yield run.buffer[next_seq]
+            item = run.buffer[next_seq]
+            if item is None:           # released while this replay was running: jump to what is still retained
+                next_seq = run.head
+                yield _REPLAY_GAP_EVENT
+                continue
+            yield item
             next_seq += 1
         if run.status != "running":
             return
         heartbeat_idx = 0
         while True:
+            if q.lagged:                                  # this client fell behind: drop its queue and read on from the replay buffer
+                q.drop_pending()
+                if next_seq < run.head:
+                    next_seq = run.head
+                    yield _REPLAY_GAP_EVENT
+                while next_seq < len(run.buffer):
+                    item = run.buffer[next_seq]
+                    if item is None:
+                        next_seq = run.head
+                        yield _REPLAY_GAP_EVENT
+                        continue
+                    yield item
+                    next_seq += 1
+                if run.status != "running":
+                    return
+                continue
             try:
                 seq, ev = await asyncio.wait_for(q.get(), timeout=10.0)
+                q.taken((seq, ev))
             except asyncio.TimeoutError:
                 # Keep slow local models/proxies alive while they prefill before
                 # the first token. SSE comments are ignored by the UI but reset
@@ -252,6 +371,7 @@ async def subscribe(
                     continue
                 seq, ev = (None, None)
             if seq is None:            # end sentinel
+                next_seq = max(next_seq, run.head)
                 while next_seq < len(run.buffer):   # flush any tail the sentinel raced
                     yield run.buffer[next_seq]
                     next_seq += 1
@@ -278,9 +398,45 @@ def stop(session_id: str, expected_run_id: Optional[str] = None) -> bool:
     if not expected_run_id or run is None or run.run_id != expected_run_id:
         return False
     if run and run.task and not run.task.done():
+        if run.status == "running":
+            run.status = "stopping"                         # visible to run_state until the task has really unwound
         run.task.cancel()
         return True
     return False
+
+
+async def stop_confirmed(session_id: str, expected_run_id: Optional[str] = None, timeout: float = 5.0) -> dict:
+    """Stop, then report what actually happened.
+
+    ``requested`` - the cancellation was delivered to the matching run. ``confirmed`` - the run has really ended (its partial reply is saved and its
+    task is finished) within ``timeout``; a long blocking tool call can outlive the request, in which case confirmed is False and ``state`` says so.
+    """
+    run = _RUNS.get(session_id)
+    task = run.task if run is not None else None
+    requested = stop(session_id, expected_run_id)
+    if not requested or task is None:
+        return {"requested": False, "confirmed": False, "state": run.status if run is not None else "none"}
+    try:
+        await asyncio.wait({task}, timeout=timeout)
+    except Exception:
+        pass
+    done = task.done()
+    interrupted = list(run.open_tools) if done else []
+    # confirmed = the agent loop ended and its partial reply was saved. A tool that was mid-flight may still be running in its own thread or process:
+    # it is named here and ``tools_may_still_run`` says so, instead of reporting a clean stop.
+    return {"requested": True, "confirmed": done, "state": run.status if done else "stopping", "interrupted_tools": interrupted, "tools_may_still_run": bool(interrupted)}
+
+
+def run_state(session_id: str, expected_run_id: Optional[str] = None) -> dict:
+    """Where a run is after a Stop was requested: ``stopping`` while its task is unwinding, ``stopped``/``done``/``error`` once it has ended, ``none`` when the run is
+    gone (evicted, which only happens after it ended) or is not the one asked about."""
+    run = _RUNS.get(session_id)
+    if run is None or (expected_run_id and run.run_id != expected_run_id):
+        return {"state": "none", "confirmed": True, "interrupted_tools": [], "tools_may_still_run": False}
+    ended = run.task is None or run.task.done()
+    state = run.status if ended else ("stopping" if run.status == "stopping" else run.status)
+    return {"state": state, "confirmed": ended, "interrupted_tools": list(run.open_tools) if ended and run.status == "stopped" else [],
+            "tools_may_still_run": bool(ended and run.status == "stopped" and run.open_tools)}
 
 
 def request_finish(session_id: str, expected_run_id: Optional[str] = None) -> bool:
