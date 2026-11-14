@@ -5,6 +5,7 @@ import uuid
 import random
 from datetime import datetime
 from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from typing import List
 from pydantic import BaseModel
 import logging
@@ -235,50 +236,72 @@ def setup_compare_routes(session_manager: SessionManager):
         }
 
     @router.post("/{comp_id}/vote")
-    def vote_comparison(
+    async def vote_comparison(
         request: Request,
         comp_id: str,
-        winner: str = Form(...),  # "left", "right", or "tie"
     ):
         """Record the user's vote and reveal model names if blind."""
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+        if content_type == "application/json":
+            try:
+                vote_payload = await request.json()
+            except Exception as exc:
+                raise HTTPException(400, "Invalid vote JSON") from exc
+            if not isinstance(vote_payload, dict):
+                raise HTTPException(422, "Vote request must be an object")
+            winner = vote_payload.get("winner")
+        else:
+            form = await request.form()
+            winner = form.get("winner")
+        if not isinstance(winner, str) or not winner.strip():
+            raise HTTPException(422, "winner is required")
+        winner = winner.strip()
+
         user = get_current_user(request)
-        db = SessionLocal()
-        try:
-            comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
-            if not comp:
-                raise HTTPException(404, "Comparison not found")
-            # SECURITY: strict ownership — null-owner Comparisons were
-            # accessible to every user.
-            if user and comp.owner != user:
-                raise HTTPException(404, "Comparison not found")
-            if comp.winner:
-                raise HTTPException(400, "Already voted")
 
-            mapping = json.loads(comp.blind_mapping) if comp.blind_mapping else {"left": "a", "right": "b"}
+        def _commit_vote():
+            # The handler is async only so it can parse JSON/form request bodies.
+            # Keep synchronous SQLAlchemy work off the event loop just as the
+            # original sync FastAPI route did via its threadpool dispatch.
+            db = SessionLocal()
+            try:
+                comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
+                if not comp:
+                    raise HTTPException(404, "Comparison not found")
+                # SECURITY: strict ownership — null-owner Comparisons were
+                # accessible to every user.
+                if user and comp.owner != user:
+                    raise HTTPException(404, "Comparison not found")
+                if comp.winner:
+                    raise HTTPException(400, "Already voted")
 
-            if winner == "tie":
-                comp.winner = "tie"
-            elif winner == "left":
-                comp.winner = mapping["left"]
-            elif winner == "right":
-                comp.winner = mapping["right"]
-            else:
-                raise HTTPException(400, "winner must be 'left', 'right', or 'tie'")
+                mapping = json.loads(comp.blind_mapping) if comp.blind_mapping else {"left": "a", "right": "b"}
 
-            comp.voted_at = datetime.utcnow()
-            db.commit()
+                if winner == "tie":
+                    comp.winner = "tie"
+                elif winner == "left":
+                    comp.winner = mapping["left"]
+                elif winner == "right":
+                    comp.winner = mapping["right"]
+                else:
+                    raise HTTPException(400, "winner must be 'left', 'right', or 'tie'")
 
-            return {
-                "winner": comp.winner,
-                "model_a": comp.model_a,
-                "model_b": comp.model_b,
-                "revealed": {
-                    "left": comp.model_a if mapping["left"] == "a" else comp.model_b,
-                    "right": comp.model_a if mapping["right"] == "a" else comp.model_b,
-                },
-            }
-        finally:
-            db.close()
+                comp.voted_at = datetime.utcnow()
+                db.commit()
+
+                return {
+                    "winner": comp.winner,
+                    "model_a": comp.model_a,
+                    "model_b": comp.model_b,
+                    "revealed": {
+                        "left": comp.model_a if mapping["left"] == "a" else comp.model_b,
+                        "right": comp.model_a if mapping["right"] == "a" else comp.model_b,
+                    },
+                }
+            finally:
+                db.close()
+
+        return await run_in_threadpool(_commit_vote)
 
     @router.post("/record")
     def record_comparison(request: Request, body: RecordVoteRequest):
