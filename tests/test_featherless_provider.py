@@ -595,7 +595,7 @@ class TestFeatherlessFrontend:
     def test_featherless_js_panel_and_helpers(self):
         js = f"""
           import fs from 'node:fs';
-          import {{ isChatgptSubscriptionEndpoint }} from '{(_REPO / 'static' / 'js' / 'chatgptSubscriptionUsage.js').as_posix()}';
+          import {{ isChatgptSubscriptionEndpoint }} from '{(_REPO / 'static' / 'js' / 'chatgptSubscriptionUsage.js').as_uri()}';
           const source = fs.readFileSync('{_ADMIN_JS.as_posix()}', 'utf8');
           const fnStart = source.indexOf('function shouldDisplayEndpointBaseUrl');
           const fnEnd = source.indexOf('// ChatGPT per-endpoint usage panel', fnStart);
