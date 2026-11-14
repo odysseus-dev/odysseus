@@ -101,6 +101,15 @@ def extract_youtube_id(url: str) -> Optional[str]:
     return None
 
 
+def _format_transcript_timestamp(start: float) -> str:
+    """Keep short timestamps as MM:SS and carry longer ones into H:MM:SS."""
+    minutes, seconds = divmod(int(start), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
 async def extract_transcript_async(
     url: str, video_id: str, max_retries: int = 3
 ) -> Dict[str, Any]:
@@ -134,7 +143,7 @@ async def extract_transcript_async(
                     "text": text,
                     "start": start,
                     "duration": snippet.duration,
-                    "timestamp": f"{int(start // 60):02d}:{int(start % 60):02d}",
+                    "timestamp": _format_transcript_timestamp(start),
                 })
 
             full_text = " ".join(e["text"] for e in formatted)
