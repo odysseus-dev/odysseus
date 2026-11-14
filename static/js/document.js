@@ -97,6 +97,7 @@ import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH
 import { API_BASE, isOpen, _deletedDocIds, _inFlightDeletes, _closingDocs, _documentNavigationGeneration, activeDocId, _lastSessionId, docs, _minimizedDocId, isPanelOpen, setApiBase, setActiveDocId, setLastSessionId, bumpNavigationGeneration, setPanelOpen, setMinimizedDocId, registerDocument, removeDocument, clearDocuments, markDeleted, beginDelete, endDelete, retainClosingDraft, releaseClosingDraft } from './document/application/documentState.js';
 import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClosePanel, switchToDoc as cmdSwitchToDoc, saveCurrentToMap as cmdSaveCurrentToMap, renderTabs as cmdRenderTabs, _syncDocIndicator as cmdSyncDocIndicator, _syncHeaderActions as cmdSyncHeaderActions, showEmptyState as cmdShowEmptyState, _showLoadingOverlay as cmdShowLoadingOverlay, _hideLoadingOverlay as cmdHideLoadingOverlay, _minimizeNotesForDocumentOpen as cmdMinimizeNotesForDocumentOpen, _ensureDocChipRegistered as cmdEnsureDocChipRegistered } from './document/application/documentCommands.js';
 import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, saveDocument, awaitWrites, runSerializedWrite, bindPersistenceHooks } from './document/application/persistence.js';
+import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs } from './document/application/documentSession.js';
 
 
 
@@ -1113,33 +1114,10 @@ import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushA
     _renderRichSlashMenu(rich, context);
   }
 
-  const _docOpenKey = (sessionId) => 'odysseus-doc-open-' + sessionId;
-  const _docMinimizedKey = (sessionId) => 'odysseus-doc-minimized-' + sessionId;
-  const _docActiveKey = (sessionId) => 'odysseus-doc-active-' + sessionId;
-
   function _rememberActiveDoc(docId) {
     const doc = docs.get(docId);
     const sessionId = doc?.sessionId || _lastSessionId || sessionModule?.getCurrentSessionId?.();
     if (sessionId && docId) localStorage.setItem(_docActiveKey(sessionId), docId);
-  }
-
-  function _forgetActiveDoc(sessionId, docId) {
-    if (!sessionId || localStorage.getItem(_docActiveKey(sessionId)) !== docId) return;
-    localStorage.removeItem(_docActiveKey(sessionId));
-  }
-
-  function _markDocVisibleState(sessionId, state) {
-    if (!sessionId) return;
-    if (state === 'open') {
-      localStorage.setItem(_docOpenKey(sessionId), '1');
-      localStorage.removeItem(_docMinimizedKey(sessionId));
-    } else if (state === 'minimized') {
-      localStorage.removeItem(_docOpenKey(sessionId));
-      localStorage.setItem(_docMinimizedKey(sessionId), '1');
-    } else {
-      localStorage.removeItem(_docOpenKey(sessionId));
-      localStorage.removeItem(_docMinimizedKey(sessionId));
-    }
   }
 
   // Library opens are explicit navigation, not passive session restoration.
@@ -10371,32 +10349,6 @@ import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushA
       if (!isOpen) openPanel();
       showEmptyState();
     }
-  }
-
-  /** Add a document to the tabs map */
-  function addDocToTabs(doc, sessionId) {
-    const existing = docs.get(doc.id) || _closingDocs.get(doc.id);
-    if (existing && ['dirty', 'saving', 'error'].includes(existing._saveState)) {
-      registerDocument(existing);
-      releaseClosingDraft(doc.id);
-      return;
-    }
-    registerDocument(Object.assign(existing || {}, {
-      id: doc.id,
-      title: doc.title || '',
-      language: doc.language || '',
-      content: doc.current_content || doc.content || '',
-      version: doc.version_count || 1,
-      sessionId: sessionId || doc.session_id,
-      userSetLanguage: !!doc.language,
-      _composeAtts: existing?._composeAtts,
-      _skipLocalDraftOnce: !!doc._skipLocalDraftOnce,
-      // Provenance for the "Send signed reply" flow
-      sourceEmailUid:       doc.source_email_uid || null,
-      sourceEmailFolder:    doc.source_email_folder || null,
-      sourceEmailAccountId: doc.source_email_account_id || null,
-      sourceEmailMessageId: doc.source_email_message_id || null,
-    }));
   }
 
   /** Populate the editor with document data (used internally) */

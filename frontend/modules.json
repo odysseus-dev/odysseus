@@ -264,6 +264,10 @@
       "deployment": "js/document/application/persistence.js"
     },
     {
+      "source": "features/documents/application/documentSession.js",
+      "deployment": "js/document/application/documentSession.js"
+    },
+    {
       "source": "features/documents/ui/host.js",
       "deployment": "js/document/ui/host.js",
       "legacyImports": [
