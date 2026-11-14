@@ -20,6 +20,7 @@ import concurrent.futures
 import io
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -382,6 +383,65 @@ def test_smoke_normal_upload(tmp_path):
     assert info["id"] == result["id"]
     assert info["hash"] == result["hash"]
 
+
+def test_failed_upload_removes_partial_file(tmp_path, monkeypatch):
+    handler = _make_handler(tmp_path)
+    handler.upload_rate_limit = 100
+    upload_dir = Path(handler.get_upload_dir())
+    monkeypatch.setattr(handler, "get_upload_dir", lambda: str(upload_dir))
+    upload_id = "c" * 32 + ".txt"
+    monkeypatch.setattr("src.upload_handler._build_upload_id", lambda _name: upload_id)
+    real_fdopen = os.fdopen
+    class FailingWriter:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+        def __enter__(self):
+            self.wrapped.__enter__()
+            return self
+        def write(self, chunk):
+            self.wrapped.write(chunk[:3])
+            raise OSError("simulated interrupted upload")
+        def __exit__(self, *args):
+            return self.wrapped.__exit__(*args)
+    monkeypatch.setattr("src.upload_handler.os.fdopen", lambda fd, mode: FailingWriter(real_fdopen(fd, mode)))
+    fake = SimpleNamespace(filename="partial.txt", file=io.BytesIO(b"partial upload payload"))
+    with pytest.raises(HTTPException) as exc:
+        handler.save_upload(fake, "127.0.0.1", "owner_a")
+    assert exc.value.status_code == 500
+    assert not (upload_dir / upload_id).exists()
+
+
+def test_upload_id_collision_preserves_existing_file(tmp_path, monkeypatch):
+    handler = _make_handler(tmp_path)
+    handler.upload_rate_limit = 100
+    upload_dir = Path(handler.get_upload_dir())
+    monkeypatch.setattr(handler, "get_upload_dir", lambda: str(upload_dir))
+    upload_id = "d" * 32 + ".txt"
+    monkeypatch.setattr("src.upload_handler._build_upload_id", lambda _name: upload_id)
+    existing_path = upload_dir / upload_id
+    existing_path.write_bytes(b"original protected contents")
+    fake = SimpleNamespace(filename="collision.txt", file=io.BytesIO(b"new upload contents"))
+    with pytest.raises(HTTPException) as exc:
+        handler.save_upload(fake, "127.0.0.1", "owner_a")
+    assert exc.value.status_code == 500
+    assert existing_path.read_bytes() == b"original protected contents"
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file permissions")
+def test_new_upload_file_has_restrictive_permissions(tmp_path):
+    """New uploads must not be readable by other local users."""
+    handler = _make_handler(tmp_path)
+    handler.upload_rate_limit = 100
+    content = b"private upload contents"
+    fake = SimpleNamespace(filename="private.txt", file=io.BytesIO(content))
+    result = handler.save_upload(fake, "127.0.0.1", "owner_a")
+    file_stat = os.stat(result["path"])
+    permissions = stat.S_IMODE(file_stat.st_mode)
+    assert permissions == 0o600, f"Expected private permissions 0600, got {oct(permissions)}"
+    with open(result["path"], "rb") as f:
+        assert f.read() == content
+    info = handler.get_upload_info(result["id"])
+    assert info is not None
+    assert info["owner"] == "owner_a"
 
 def test_smoke_duplicate_upload(tmp_path):
     """Smoke test: re-uploading the same content as the same owner returns
