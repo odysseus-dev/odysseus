@@ -75,6 +75,28 @@ A test that genuinely spans categories (e.g. a route test that also pins a
 security invariant) is classified by its **primary** assertion target and may be
 split if it grows.
 
+## Where to add tests today
+
+The taxonomy above describes migration targets, not an instruction
+to move every new test immediately. Follow the current layout until
+a category migration is accepted under #2523.
+
+| Test type | Current placement |
+|---|---|
+| CLI / script | `tests/cli/` |
+| Python, category not yet migrated | Existing flat `tests/test_*.py` layout |
+| Node / browser | Existing Node-test and pytest-wrapper conventions |
+| New feature-specific group | Coordinate a shallow directory within the appropriate category |
+
+**Node and pytest discovery are separate.** Running `node --test`
+against a new `.test.mjs` file does not automatically register it
+with pytest or required CI jobs. Verify the intended entry point
+actually executes the test.
+
+Before adding coverage, check neighboring tests for equivalent
+behavior. Preserve distinct regression and boundary assertions.
+Repeated setup alone does not justify another shared fixture.
+
 ## Fast lane policy
 
 The fast lane is `not slow`: `tests/run_focus.py --fast` selects every test that
@@ -208,6 +230,27 @@ tests/
 Suggested move order: **js / cli first → security / routes / services → split
 oversized catch-all files last.** Each move is mechanical (no assertion changes
 in the same PR), with an identical pass set before and after.
+
+### Safe test-location migrations
+
+For each accepted migration:
+
+1. Inventory the affected tests, runner commands, imports, fixtures,
+   and path references. Record the original collected test set.
+2. Move a small coherent group without changing assertions,
+   parametrization, or production behavior.
+3. Update relocation-required imports, paths, wrappers, documentation,
+   and CI references. Preserve taxonomy and shard coverage.
+4. Compare collection and execution with the baseline. Verify Node
+   tests and their intended pytest or CI entry points.
+5. Review duplicate or unreliable coverage separately, preserving
+   distinct regression scenarios.
+
+Keep helper extraction, assertion changes, and behavior fixes
+separate from mechanical file moves.
+
+Avoid deep directory structures without meaningful ownership or
+test-selection benefits.
 
 ## Related: CI-hardening track (tracked separately)
 

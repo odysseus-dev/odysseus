@@ -16,7 +16,7 @@ Thanks for helping improve Odysseus. The best contributions are **focused, revie
 | **Review** | Follow the [risk-based maintainer policy](docs/maintainers/changes-and-review.md) and applicable repository protections |
 | **Security** | Report vulnerabilities privately using [SECURITY.md](SECURITY.md) |
 
-**Jump to:** [Branches](#branch-model) · [Getting started](#before-you-start) · [Setup](#setup) · [Checks](#running-checks) · [Pull requests](#pull-requests) · [Modularization](#structural-changes-and-modularization) · [Visual changes](#style-and-visual-changes) · [Code conventions](#code-conventions) · [Issue reports](#issue-reports)
+**Jump to:** [Branches](#branch-model) · [Getting started](#before-you-start) · [Setup](#setup) · [Checks](#running-checks) · [Tests](#adding-and-organizing-tests) · [Pull requests](#pull-requests) · [Modularization](#structural-changes-and-modularization) · [Visual changes](#style-and-visual-changes) · [Code conventions](#code-conventions) · [Issue reports](#issue-reports)
 
 ---
 
@@ -92,6 +92,27 @@ docker compose logs --tail=120 odysseus
 > **Report what actually ran.** Include commands, results, and relevant manual/runtime verification in the PR description. If a check was not run, mark it as **not run** and explain the limitation. Passing syntax checks and unit tests do not automatically prove changed behavior works in the running application.
 
 See the [testing and releases handbook](docs/maintainers/testing-and-releases.md) for risk-based validation and isolation requirements.
+
+## Adding and organizing tests
+
+Read the [testing standard](tests/TESTING_STANDARD.md) before adding
+or moving tests. The [test suite notes](tests/README.md) document
+current runners, helpers, taxonomy, and CI behavior.
+
+- **Placement:** Follow the existing taxonomy. Migration is
+  incremental under [#2523](https://github.com/odysseus-dev/odysseus/issues/2523).
+  Planned directories are not necessarily active yet.
+- **Behavior:** Prefer deterministic behavioral tests covering
+  meaningful outcomes, failures, and recovery.
+- **Discovery:** Verify new tests execute through the intended pytest,
+  Node, or CI runner. Node tests are not automatically pytest tests.
+- **Organization:** Group tests by cohesive responsibility within
+  approved categories. Coordinate new feature directories.
+- **Migration:** Move older tests in small batches without changing
+  assertions or fixtures in the same change.
+- **Quality:** Avoid redundant coverage, unnecessary mocks, brittle
+  source assertions, and premature shared helpers. Never weaken
+  tests merely to obtain passing CI.
 
 ## Maintainer governance and review guidance
 
