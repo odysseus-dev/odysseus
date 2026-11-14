@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 import yaml
@@ -39,7 +40,9 @@ def test_compose_probe_owns_only_its_temporary_resources(tmp_path, failure, expe
     """Exercise the real helper with a Docker double, including failure cleanup."""
     binary = tmp_path / "docker"
     calls = tmp_path / "calls.jsonl"
-    binary.write_text('''#!/usr/bin/env python3
+    # Shebang names this interpreter: "env python3" is the Microsoft Store shim
+    # on Windows.
+    binary.write_text('#!' + Path(sys.executable).as_posix() + '''
 import json, os, sys
 args = sys.argv[1:]
 with open(os.environ["DOCKER_CALLS"], "a") as log:
@@ -53,7 +56,9 @@ if "up" in args and failure == "up":
     sys.exit(9)
 ''')
     binary.chmod(0o755)
-    result = subprocess.run(["bash", str(ROOT / ".github/scripts/validate-searxng-image.sh"), "localhost/searxng:validated"], env={**os.environ, "PATH": str(tmp_path) + ":" + os.environ["PATH"], "DOCKER_CALLS": str(calls), "DOCKER_FAILURE": failure, "SEARXNG_SECRET": "operator-secret-must-not-propagate"}, capture_output=True, text=True)
+    # Git Bash rewrites a bare /dev/null argument to "nul" for a native docker
+    # double; keep it literal so the --env-file assertion sees what the script sent.
+    result = subprocess.run(["bash", str(ROOT / ".github/scripts/validate-searxng-image.sh"), "localhost/searxng:validated"], env={**os.environ, "MSYS2_ARG_CONV_EXCL": "/dev/null", "PATH": str(tmp_path) + ":" + os.environ["PATH"], "DOCKER_CALLS": str(calls), "DOCKER_FAILURE": failure, "SEARXNG_SECRET": "operator-secret-must-not-propagate"}, capture_output=True, text=True)
     assert result.returncode == expected, result.stderr
     entries = [json.loads(line) for line in calls.read_text().splitlines()]
     assert all(entry["secret"] == "searxng-ci-validation-only" for entry in entries)
