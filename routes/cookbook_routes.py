@@ -4408,7 +4408,15 @@ def setup_cookbook_routes() -> APIRouter:
                     ))
                 )
             )
-            if is_alive or (local_win_task and full_snapshot):
+            if _persisted_terminal:
+                # Durable terminal state: the outcome is already recorded in the
+                # state file, so it survives a refresh, a reconnect and an
+                # Odysseus restart. Never re-derive it from pane text — a stored
+                # log that merely contains the word "error" would flip a
+                # completed download back to error, and a session reusing the
+                # name could flip a finished task back to running.
+                status = _task_status
+            elif is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
                 exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
                 has_exit = exit_match is not None
@@ -4475,7 +4483,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "ready"
             serve_phase = phase_info.get("phase", "")
             diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
-            if diagnosis and status in {"running", "unknown", "stopped"} and phase_info.get("status") != "ready":
+            if diagnosis and not _persisted_terminal and status in {"running", "unknown", "stopped"} and phase_info.get("status") != "ready":
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
