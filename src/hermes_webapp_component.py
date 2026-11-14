@@ -41,6 +41,9 @@ KNOWN_PREVIOUS_RESUME_SHA256 = (            # earlier shipped copies of the resu
     # the copy deployed on 2026-11-13 (Projects sidebar entry, commit d918daf3): CRLF and LF forms
     'db774b38fd7da2b507907fe5d7d9709604df9f471dc323042b3887e9a5031f50',
     '9e5c02a49f3c4d09a7646073201ce778c9bfd53bb59cf45792364fb444d595ea',
+    # the copy deployed on 2026-11-14 with release f36711161129 (commit 66152ea4): CRLF and LF forms
+    'f32302a7efa828392c91c12914b6a1ea66c2ed5d5d0f6b1d53226b66516c984a',
+    'be98c959607c10aed099e46b602704633e79e663612e95896e3fa3d520c47234',
 )
 WORKSPACE_GRANTS_PLUGIN = 'odysseus-workspace-grants'
 WORKSPACE_GRANTS_PLUGIN_SOURCE = 'integrations/hermes-mode/plugins/odysseus-workspace-grants'
@@ -56,6 +59,7 @@ BUNDLE_RELATIVE = 'apps/desktop/dist-webapp'
 ROUTE_GUARD_PATCH = 'integrations/hermes-mode/patches/webapp-route-guard.patch'
 MCP_RECOVERY_PATCH = 'integrations/hermes-mode/patches/webapp-mcp-recovery.patch'
 DESKTOP_WORKSPACE_PATCH = 'integrations/hermes-mode/patches/webapp-desktop-workspace.patch'
+COMPOSER_PATCH = 'integrations/hermes-mode/patches/webapp-composer-control-center.patch'
 # What importing each runtime extra must make possible, proven against the committed environment before a release is 'ready'.
 RUNTIME_EXTRA_IMPORTS = {'mcp': 'mcp.client.stdio'}
 _EXTRA_NAME = re.compile(r'[a-z0-9][a-z0-9_-]*')
@@ -1219,7 +1223,17 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
+        return (*self.workspace_patches(), self.composer_patch())
+
+    def workspace_patches(self):
+        """The three-patch set (route guard, MCP recovery, desktop workspace) releases carried before the composer control center (kept for rollback)."""
         return (*self.recovery_patches(), self.desktop_workspace_patch())
+
+    def composer_patch(self):
+        path = (self.application_root / COMPOSER_PATCH).resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed composer patch is missing from this Odysseus installation.')
+        return path
 
     def recovery_patches(self):
         """The route guard then the MCP recovery: the set releases carried before the desktop-workspace patch (kept for rollback)."""
@@ -1235,9 +1249,9 @@ class WebappComponent:
         return path
 
     def applied_patches(self, agent):
-        """The reviewed patch set a managed source carries exactly: the current set, the route guard with the MCP recovery, or the route guard alone
+        """The reviewed patch set a managed source carries exactly: the current set, the previous three-patch set, the route guard with the MCP recovery, or the route guard alone
         (earlier releases kept side by side for rollback). The current set when it matches neither, so a mismatch is reported against it."""
-        for patches in (self.webapp_patches(), self.recovery_patches(), self.route_guard_patch()):
+        for patches in (self.webapp_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
             if patch_state(agent, patches) == 'applied':
                 return patches
         return self.webapp_patches()
