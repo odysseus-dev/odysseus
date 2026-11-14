@@ -96,6 +96,7 @@ const PRECACHE = [
   '/static/js/colorPicker.js?v=20260910eyedropper1',
   '/static/js/panels.js?v=20260909movepicklayer1',
   '/static/js/theme.js?v=20260911organsrain1',
+  '/static/js/bgEffectClock.js',
   '/static/js/censor.js',
   '/static/js/settings.js?v=20260912writingstyle3',
   '/static/js/admin.js?v=20260929csssplit',
