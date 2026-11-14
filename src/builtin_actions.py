@@ -189,10 +189,17 @@ def _email_urgency_account_generations(state):
             complete = max(0, int(complete))
         except (TypeError, ValueError):
             complete = 0
-        generations[str(account_id)] = {
-            "checkpoint": checkpoint,
-            "complete": complete,
-        }
+        record = {"checkpoint": checkpoint, "complete": complete}
+        # Persist mailbox identity alongside the existing concurrency fence.
+        epoch = value.get("mailbox_epoch") if isinstance(value, dict) else None
+        if epoch is not None:
+            try:
+                number = int(epoch)
+                if 1 <= number <= 4294967295 and str(number) == str(epoch):
+                    record["mailbox_epoch"] = str(number)
+            except (TypeError, ValueError):
+                pass
+        generations[str(account_id)] = record
     return generations
 
 
@@ -397,6 +404,7 @@ def _merge_email_urgency_state(
     retired_account_ids=(),
     base_payload_account_ids=(),
     known_account_ids=(),
+    observed_mailbox_epochs=None,
 ):
     """Merge a scan without letting an older snapshot erase newer facts."""
     prior_per_uid = prior.get("per_uid", {})
@@ -430,7 +438,17 @@ def _merge_email_urgency_state(
         )
     }
     fresh_complete = complete - stale_accounts - retired_accounts
-    changed_accounts = set(fresh_complete)
+    # Only a successful, authoritative UIDVALIDITY response permits a reset.
+    # Do this under the same lock as notification delivery / state publication.
+    epochs = {str(k): str(v) for k, v in (observed_mailbox_epochs or {}).items()}
+    epoch_switched = set()
+    for account_id, epoch in epochs.items():
+        if account_id in stale_accounts or account_id in retired_accounts:
+            continue
+        previous = prior_generations.get(account_id, {}).get("mailbox_epoch")
+        if previous != epoch:
+            epoch_switched.add(account_id)
+    changed_accounts = set(fresh_complete) | epoch_switched
 
     merged_per_uid = {
         key: value
@@ -439,7 +457,7 @@ def _merge_email_urgency_state(
     }
     for key in list(merged_per_uid):
         account_id = _email_urgency_account_key(key)
-        if account_id in fresh_complete:
+        if account_id in fresh_complete or account_id in epoch_switched:
             merged_per_uid.pop(key, None)
             changed_accounts.add(account_id)
     # Partial scans may add or refresh facts, but absence from a partial scan
@@ -470,8 +488,14 @@ def _merge_email_urgency_state(
         changed_accounts.add(account_id)
     for key in list(merged_notified):
         if (
-            _email_urgency_account_key(key) in fresh_complete
-            and key not in all_unread_keys
+            (
+                _email_urgency_account_key(key) in epoch_switched
+                and key not in all_unread_keys
+            )
+            or (
+                _email_urgency_account_key(key) in fresh_complete
+                and key not in all_unread_keys
+            )
         ):
             merged_notified.discard(key)
             changed_accounts.add(_email_urgency_account_key(key))
@@ -488,6 +512,13 @@ def _merge_email_urgency_state(
         generation["checkpoint"] += 1
         if account_id in fresh_complete:
             generation["complete"] += 1
+        if account_id in epochs and account_id not in stale_accounts:
+            generation["mailbox_epoch"] = epochs[account_id]
+    # Preserve observed epoch even for a partial scan with no messages.
+    for account_id, epoch in epochs.items():
+        if account_id in stale_accounts or account_id in retired_accounts:
+            continue
+        next_generations.setdefault(account_id, {"checkpoint": 0, "complete": 0})["mailbox_epoch"] = epoch
     for account_id in {str(value) for value in known_account_ids}:
         next_generations.setdefault(
             account_id,
@@ -2630,6 +2661,11 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         AGE_CUTOFF = _dt.utcnow() - _td(days=7)
+        import os as _ministral_os
+        _MINISTRAL_ENABLED = (
+            _ministral_os.environ.get("ODYAI_EMAIL_MINISTRAL_ENABLED", "")
+            .strip().lower() in {"1", "true", "yes"}
+        )
         TRIAGE_VERSION = 11
         CATEGORY_TAGS = set(EMAIL_URGENCY_CATEGORY_TAGS)
         VISIBLE_EMAIL_TAGS = CATEGORY_TAGS | {"urgent", "reply-soon"}
@@ -2789,7 +2825,13 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         tag_write_details = []
         scanned = 0
         fully_scanned_account_ids = set()
+        observed_mailbox_epochs = {}
 
+        # Experimental epoch-scoped identities. Off until reset and concurrency
+        # regression coverage is complete; production behavior stays unchanged.
+        _UIDV_STRICT = _os.environ.get("ODYAI_EMAIL_UIDVALIDITY_STRICT", "").strip() == "1"
+        if _UIDV_STRICT:
+            from src.email_uidvalidity import read_uidvalidity as _read_uidvalidity
         # ── 3. Per-account scan: pull headers + lightweight body for new UIDs
         # since 7 days ago, score via LLM, cache the verdict.
         for acc in accounts:
@@ -2803,19 +2845,26 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 """Sync IMAP work runs in a thread."""
                 results = []
                 scan_complete = True
+                mailbox_epoch = None
                 conn = _imap_connect(account.id)
                 try:
                     select_status, _select_data = conn.select("INBOX", readonly=True)
                     if select_status != "OK":
-                        return results, False
+                        return results, False, mailbox_epoch
+                    if _UIDV_STRICT:
+                        # Require an authoritative epoch before consuming cached
+                        # verdicts, state, or notification checkpoints.
+                        mailbox_epoch = str(_read_uidvalidity(conn))
+                    else:
+                        mailbox_epoch = None
                     # Tag recent inbox mail, not only unread mail. Urgency
                     # reminders below still only notify for unread messages.
                     since_str = AGE_CUTOFF.strftime("%d-%b-%Y")
                     status, data = conn.uid("SEARCH", None, f'(SINCE {since_str})')
                     if status != "OK":
-                        return results, False
+                        return results, False, mailbox_epoch
                     if not data or not data[0]:
-                        return results, True
+                        return results, True, mailbox_epoch
                     matching_uids = data[0].split()
                     if len(matching_uids) > 30:
                         # The scale guard deliberately processes only the most
@@ -2825,18 +2874,45 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     uids = matching_uids[-30:]
                     for uid_b in uids:
                         uid = uid_b.decode() if isinstance(uid_b, bytes) else str(uid_b)
-                        key = f"{account.id}:{uid}"
-                        cached = cache_uids.get(uid)
+                        # Same UID in a different mailbox epoch is NOT the same
+                        # message. Distinct state keys also prevent old notified
+                        # checkpoints from suppressing its next notification.
+                        epoch_uid = f"{mailbox_epoch}:{uid}" if mailbox_epoch else uid
+                        key = f"{account.id}:{epoch_uid}"
+                        cached = cache_uids.get(epoch_uid)
                         cached_ok = isinstance(cached, dict) and cached.get("triage_version") == TRIAGE_VERSION
-                        results.append({"key": key, "uid": uid, "cached": cached if cached_ok else None})
+                        results.append({"key": key, "uid": uid, "cache_key": epoch_uid, "cached": cached if cached_ok else None})
                         if cached_ok:
                             # Cached verdicts still need a lightweight FLAGS
                             # refresh. Without it a cached unread message looks
                             # read and its successful notification checkpoint
                             # is pruned on the next pass.
                             try:
-                                st, flag_data = conn.uid("FETCH", uid_b, "(UID FLAGS)")
+                                # Verify identity as well as read status.
+                                # UID alone is insufficient to identify mail.
+                                st, flag_data = conn.uid(
+                                    "FETCH", uid_b, "(UID FLAGS RFC822.HEADER)"
+                                )
                                 if st != "OK" or not flag_data:
+                                    scan_complete = False
+                                    results.pop()
+                                    continue
+                                header_bytes = b"".join(
+                                    bytes(part[1])
+                                    for part in flag_data
+                                    if (
+                                        isinstance(part, tuple)
+                                        and len(part) > 1
+                                        and isinstance(part[1], (bytes, bytearray))
+                                    )
+                                )
+                                current_msg = _email_mod.message_from_bytes(header_bytes)
+                                current_id = (current_msg.get("Message-ID") or "").strip()
+                                cached_id = str(cached.get("message_id") or "").strip()
+                                if not current_id or not cached_id or current_id != cached_id:
+                                    # Do not treat a changed/unknown message as
+                                    # the cached email. Preserve existing state
+                                    # pending a verified identity transition.
                                     scan_complete = False
                                     results.pop()
                                     continue
@@ -2941,13 +3017,15 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 finally:
                     try: conn.logout()
                     except Exception: pass
-                return results, scan_complete
+                return results, scan_complete, mailbox_epoch
 
             try:
-                items, scan_complete = await _aio.to_thread(_scan_one)
+                items, scan_complete, observed_epoch = await _aio.to_thread(_scan_one)
             except Exception as e:
                 logger.warning(f"urgency: IMAP scan failed for account {acc.id}: {e}")
                 continue
+            if observed_epoch is not None:
+                observed_mailbox_epochs[str(acc.id)] = observed_epoch
             if scan_complete:
                 fully_scanned_account_ids.add(str(acc.id))
 
@@ -2969,12 +3047,77 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     triage_version=TRIAGE_VERSION,
                     category_tags=CATEGORY_TAGS,
                 )
+                if _MINISTRAL_ENABLED:
+                    try:
+                        from src.ministral_email_classifier import (
+                            classify_email as _classify_ministral_email,
+                        )
+                        _ai_verdict = await _classify_ministral_email(
+                            item.get("subject", ""),
+                            item.get("body", ""),
+                        )
+                        if (
+                            not isinstance(_ai_verdict, dict)
+                            or type(_ai_verdict.get("score")) is not int
+                            or _ai_verdict["score"] not in (0, 2, 3)
+                            or not isinstance(_ai_verdict.get("reason"), str)
+                            or not _ai_verdict["reason"].strip()
+                        ):
+                            raise ValueError("Invalid Ministral verdict")
+                        verdict["score"] = _ai_verdict["score"]
+                        verdict["reason"] = _ai_verdict["reason"].strip()[:200]
+                    except Exception as _ministral_error:
+                        # Preserve a prior verdict for the same UID and
+                        # Message-ID when AI is unavailable. Never treat the
+                        # fallback as a successful AI classification.
+                        previous = cache.get("uids", {}).get(item["cache_key"])
+                        if not isinstance(previous, dict):
+                            state_rows = base_state.get("per_uid", {})
+                            if (
+                                base_state.get("owner") == (owner or "")
+                                and isinstance(state_rows, dict)
+                            ):
+                                previous = state_rows.get(key)
+                        if isinstance(previous, dict):
+                            previous_id = str(previous.get("message_id") or "").strip()
+                            current_id = str(item.get("message_id") or "").strip()
+                            previous_score = previous.get("score")
+                            if (
+                                current_id
+                                and previous_id == current_id
+                                and type(previous_score) is int
+                                and previous_score in (0, 1, 2, 3)
+                                and isinstance(previous.get("reason"), str)
+                                and previous["reason"].strip()
+                            ):
+                                verdict["score"] = previous_score
+                                verdict["reason"] = previous["reason"][:200]
+                                if isinstance(previous.get("tags"), list):
+                                    verdict["tags"] = [
+                                        tag for tag in previous["tags"]
+                                        if isinstance(tag, str) and tag in CATEGORY_TAGS
+                                    ][:4]
+                        # Version 10 remains eligible for an AI retry.
+                        verdict["triage_version"] = 10
+                        failed_classifications.append({
+                            "subject": item.get("subject") or "(no subject)",
+                            "from": item.get("from") or "",
+                            "reason": "Ministral unavailable; heuristic fallback",
+                        })
+                        logger.warning(
+                            "urgency: Ministral failed for %s: %s",
+                            key, type(_ministral_error).__name__,
+                        )
+                    cache.setdefault("uids", {})[item["cache_key"]] = verdict
+                    per_uid_scores[key] = verdict
+                    saved_classifications += 1
+                    continue
                 # Keep deterministic handling for clearly categorized mail,
                 # but let ambiguous messages reach the configured task model.
                 # The unconditional continue here previously made the LLM
                 # classifier below unreachable for every email.
                 if verdict.get("tags") or verdict.get("reason") != "categorized by email metadata":
-                    cache.setdefault("uids", {})[item["uid"]] = verdict
+                    cache.setdefault("uids", {})[item["cache_key"]] = verdict
                     per_uid_scores[key] = verdict
                     saved_classifications += 1
                     continue
@@ -2984,7 +3127,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 # LLM candidate chain below still runs.
                 _tri = await _spec_triage_email_urgency(item, triage_version=TRIAGE_VERSION)
                 if _tri is not None:
-                    cache.setdefault("uids", {})[item["uid"]] = _tri
+                    cache.setdefault("uids", {})[item["cache_key"]] = _tri
                     per_uid_scores[key] = _tri
                     saved_classifications += 1
                     continue
@@ -3093,7 +3236,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                         "unread": bool(item.get("unread")),
                         "ts": _time.time(),
                     }
-                    cache.setdefault("uids", {})[item["uid"]] = verdict
+                    cache.setdefault("uids", {})[item["cache_key"]] = verdict
                     per_uid_scores[key] = verdict
                     saved_classifications += 1
                 except Exception as e:
@@ -3108,7 +3251,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             if scan_complete:
                 # Only a complete account scan proves a cached UID left the
                 # recent window. Partial/failing scans preserve prior facts.
-                seen_uids = {it["uid"] for it in items}
+                seen_uids = {it["cache_key"] for it in items}
                 cache_uids = cache.get("uids", {})
                 for stale in [u for u in cache_uids if u not in seen_uids]:
                     cache_uids.pop(stale, None)
@@ -3149,6 +3292,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     _spam = 1 if _v.get("spam") else 0
                     # _key is "<account_id>:<uid>" — extract uid for the row.
                     _acc_id, _uid_only = (_key.split(":", 1) + [""])[:2]
+                    _uid_only = _uid_only.rsplit(":", 1)[-1]
                     _owner_key = owner or ""
                     _row = _conn.execute(
                         "SELECT tags FROM email_tags WHERE message_id=? AND owner=? AND account_id=?",
@@ -3242,7 +3386,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 subj = (value.get("subject") or "(no subject)")[:160]
                 frm = value.get("from") or ""
                 why = value.get("reason") or ""
-                uid_for_link = str(key).split(":", 1)[-1]
+                # Epoch belongs to state identity, not the IMAP URL UID.
+                uid_for_link = str(key).rsplit(":", 1)[-1]
                 hash_link = f"#email={_quote('INBOX', safe='')}:{uid_for_link}"
                 open_link = f"{_pub}/{hash_link}" if _pub else hash_link
                 line = f"{i}. {subj}"
@@ -3275,7 +3420,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             )
             observed_accounts = {
                 _email_urgency_account_key(key) for key in per_uid_scores
-            } | fully_scanned_account_ids
+            } | fully_scanned_account_ids | set(observed_mailbox_epochs)
             stale_accounts = _email_urgency_stale_accounts(
                 prior,
                 base_account_generations,
@@ -3297,7 +3442,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             if new_urgent:
                 try:
                     dispatch_result = await _dispatch_urgency_reminder(
-                        deliverable_urgent
+                        new_urgent
                     )
                     channel = (settings.get("reminder_channel") or "browser").strip().lower()
                     delivered = bool(dispatch_result.get("browser_sent"))
@@ -3329,6 +3474,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 fully_scanned_account_ids=fully_scanned_account_ids,
                 base_account_generations=base_account_generations,
                 timestamp=_time.time(),
+                observed_mailbox_epochs=observed_mailbox_epochs,
             )
             return notified_uids, next_state
 
