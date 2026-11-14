@@ -134,6 +134,14 @@ def _local_pid_is_owned(pid, session_id: str) -> bool:
 CANCEL_REQUESTED = "cancel_requested"
 CANCELLED_STATUSES = {"cancel_requested", "stopped", "canceled", "cancelled"}
 
+#: Statuses that mean the workflow has already decided a task's outcome. The
+#: status endpoint returns these verbatim, and the state POST refuses to let a
+#: browser-supplied claim overwrite one.
+TERMINAL_TASK_STATUSES = {
+    "stopped", "done", "completed", "crashed", "error", "failed",
+    "ended", "killed",
+}
+
 
 def _set_task_status(session_id: str, status: str, *, stamp: bool = False) -> dict:
     """Atomically set one task's status in the on-disk cookbook state.
@@ -3290,6 +3298,27 @@ def setup_cookbook_routes() -> APIRouter:
             # shard pattern says N<total AND no DOWNLOAD_OK/DOWNLOAD_FAILED/
             # /snapshots/ sentinel is in the output.
             import re as _re_dl
+            # Authoritative-outcome guard: the backend establishes a task's final
+            # outcome (classifier, cancellation, PID ownership). A browser POST
+            # must not be able to replace it — an unverified client "done" could
+            # otherwise mask a genuine failure recorded server-side.
+            _disk_by_id = {
+                t.get("sessionId"): t for t in disk_tasks
+                if isinstance(t, dict) and t.get("sessionId")
+            }
+            for _it in incoming_tasks:
+                if not isinstance(_it, dict):
+                    continue
+                _disk = _disk_by_id.get(_it.get("sessionId"))
+                if not _disk:
+                    continue
+                _final = str(_disk.get("status") or "").lower()
+                if _final in TERMINAL_TASK_STATUSES and _it.get("status") != _final:
+                    logger.info(
+                        f"cookbook state POST: keeping server outcome {_final!r} for "
+                        f"{_it.get('sessionId')} (client claimed {_it.get('status')!r})"
+                    )
+                    _it["status"] = _final
             for _it in incoming_tasks:
                 if (not isinstance(_it, dict)) or _it.get("type") != "download" or _it.get("status") != "done":
                     continue
@@ -4312,9 +4341,7 @@ def setup_cookbook_routes() -> APIRouter:
                     and bool(full_snapshot)
                     and _parse_serve_phase(full_snapshot, task_type).get("status") == "ready"
                 )
-                _persisted_terminal = _task_status in {"stopped", "done", "completed",
-                                    "crashed", "error", "failed",
-                                    "ended", "killed"} and not _persisted_serve_ready
+                _persisted_terminal = _task_status in TERMINAL_TASK_STATUSES and not _persisted_serve_ready
                 if _persisted_terminal:
                     is_alive = False
                     # Keep the persisted output_tail for the UI — it's
