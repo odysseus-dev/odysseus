@@ -1,5 +1,8 @@
 """The default namespace must protect callers and simultaneous pytest runs."""
 
+import contextlib
+import logging
+import logging.handlers
 import os
 import socket
 import subprocess
@@ -57,6 +60,36 @@ def test_same_worker_name_gets_distinct_namespaces():
         assert Path(os.environ[data_variable]) == first / "data"
         assert (first / "data" / "state").read_text() == "first"
     assert not first.exists() and not second.exists()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_runtime_releases_log_files_it_owns(tmp_path, fail):
+    # app.py attaches app.log to the root logger under ODYSSEUS_DATA_DIR and
+    # never closes it. Windows refuses to delete an open file, so a passing
+    # run used to exit 1 from cleanup.
+    root_logger = logging.getLogger()
+    outside = logging.FileHandler(tmp_path / "outside.log", encoding="utf-8")
+    root_logger.addHandler(outside)
+    root = owned = None
+    try:
+        with pytest.raises(RuntimeError) if fail else contextlib.nullcontext():
+            with isolated_runtime("gw0") as root:
+                owned = logging.handlers.RotatingFileHandler(
+                    root / "data" / "app.log", encoding="utf-8"
+                )
+                root_logger.addHandler(owned)
+                root_logger.warning("held open by the log handler")
+                if fail:
+                    raise RuntimeError("test failure")
+        assert owned not in root_logger.handlers
+        assert not root.exists()
+        assert outside in root_logger.handlers
+    finally:
+        if owned is not None:
+            root_logger.removeHandler(owned)
+            owned.close()
+        root_logger.removeHandler(outside)
+        outside.close()
 
 
 def test_subprocess_inherits_private_temp_and_data_directories():
