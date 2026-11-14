@@ -3,7 +3,7 @@ import re
 from services.hwfit.models import (
     params_b, estimate_memory_gb, infer_use_case,
     get_models, is_prequantized, _active_params_b, QUANT_BYTES_PER_PARAM,
-    QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY,
+    QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY, gguf_quantizations,
 )
 
 GPU_BANDWIDTH = {
@@ -403,6 +403,8 @@ def _quant_bits(q):
 
 def _native_quant(model):
     native_quant = model.get("quantization", "Q4_K_M")
+    if gguf_quantizations(model):
+        return native_quant
     name = (model.get("name") or "").lower()
     fmt = (model.get("format") or "").lower()
     text = f"{name} {fmt}"
@@ -479,7 +481,12 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         "INT4", "INT8", "W4A16", "W8A8", "W8A16",
     )
 
-    if preq:
+    available_gguf = gguf_quantizations(model)
+    if available_gguf:
+        quant_to_try = target_quant or native_quant
+        if quant_to_try not in available_gguf:
+            return None
+    elif preq:
         # Native HF/vLLM quantized repos come at a fixed format. If the user
         # picked a GGUF quant tier (Q4/Q8/etc.), do not treat same-bit
         # AWQ/GPTQ/FP8/FP4 builds as equivalent; those formats are separate
@@ -512,6 +519,9 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     if gpu_count >= 2 and quant_to_try and not target_quant and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
         return None
 
+    sources = model.get("gguf_sources", [])
+    if available_gguf:
+        sources = [source for source in sources if isinstance(source, dict) and source.get("quant") == quant_to_try]
     result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
 
     if result is None:
@@ -537,7 +547,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "speed_tps": 0,
             "score": 0,
             "scores": {"quality": 0, "speed": 0, "fit": 0, "context": 0},
-            "gguf_sources": model.get("gguf_sources", []),
+            "gguf_sources": sources,
             "context_length": model_ctx,
             "target_context": target_context or None,
         }
@@ -617,7 +627,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "fit": round(f_score, 1),
             "context": round(c_score, 1),
         },
-        "gguf_sources": model.get("gguf_sources", []),
+        "gguf_sources": sources,
         "context_length": model_ctx,
         "release_date": model.get("release_date", ""),
         "target_context": target_context or None,
