@@ -12,6 +12,8 @@ These pin the fallback so a bogus charset degrades gracefully to utf-8.
 """
 import os
 import tempfile
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 
 _tmp_data = Path(tempfile.mkdtemp(prefix="odysseus_decode_hdr_"))
@@ -19,6 +21,14 @@ os.environ.setdefault("DATA_DIR", str(_tmp_data))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp_data / 'app.db'}")
 
 from routes.email_helpers import _decode_header
+
+
+def test_raw_utf8_subject_decodes_unknown_8bit():
+    message = BytesParser(policy=policy.compat32).parsebytes(
+        b"Subject: Weekly report \xf0\x9f\x93\x8a\r\n\r\n"
+    )
+
+    assert _decode_header(message["Subject"]) == "Weekly report \U0001f4ca"
 
 
 def test_unknown_charset_does_not_raise():
