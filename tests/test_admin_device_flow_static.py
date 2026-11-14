@@ -57,6 +57,14 @@ def test_device_auth_selection_disables_and_dims_api_test_button():
     assert "testBtn.style.cursor = ''" in form_block
 
 
+def test_anthropic_selection_links_to_console_api_key_page():
+    form_block = _between(_ADMIN, "function _setApiFormForProvider()", "function _renderPickerMenu()")
+
+    assert 'value="https://api.anthropic.com" data-logo="anthropic">Anthropic' in _INDEX
+    assert "provider.value === 'https://api.anthropic.com'" in form_block
+    assert 'href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer"' in form_block
+
+
 def test_device_auth_keeps_manual_auth_button_without_auto_opening_tab():
     # The waiting panel (code + manual Authorize link) is shared between the
     # Add Models flow and per-account ChatGPT Reconnect.
