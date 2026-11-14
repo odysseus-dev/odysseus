@@ -95,7 +95,7 @@ Long-running bash jobs can be detached with background markers. `src.bg_jobs` ow
 
 Loop-breaker final-answer rounds, explicit repeated-tool/intent-nudge guard events, round-cap continuation signals, optional verifier retries, and teacher escalation are recovery behavior owned by `agent_loop` and `src.teacher_escalation`.
 
-Approval replay injects the sealed first tool result before the resumed model round. If that replay round has neither assistant prose nor reasoning, `_append_tool_results()` omits the empty assistant spacer so Anthropic-compatible payloads do not contain a rejected non-final empty assistant message; reasoning-only carriers remain a documented compatibility edge.
+Approval replay injects the sealed first tool result before the resumed model round. An approval card ends the model's tool batch, so the pending approval records the tool names of the later calls it cut off (`deferred_tool_calls`, server-only, never replayed or treated as approved). When the approved action succeeds and such calls exist, the continuation appends a note listing them to the injected result and gives the model a round to re-issue them under normal authority and gate checks, instead of ending on the effectful "Done." shortcut. If that replay round has neither assistant prose nor reasoning, `_append_tool_results()` omits the empty assistant spacer so Anthropic-compatible payloads do not contain a rejected non-final empty assistant message; reasoning-only carriers remain a documented compatibility edge.
 
 ## Security And Policy
 

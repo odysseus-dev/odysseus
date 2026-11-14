@@ -52,6 +52,7 @@ def _normalized_workspace(workspace: Any) -> str:
 _MAX_APPROVAL_SELECTED_TOOLS = 512
 _MAX_APPROVAL_TOOL_NAME_CHARS = 512
 _MAX_APPROVAL_CONTINUATION_QUERY_CHARS = 4000
+_MAX_APPROVAL_DEFERRED_CALLS = 64
 
 
 def _normalized_selected_tools(
@@ -92,6 +93,29 @@ def _normalized_continuation_query(value: Any) -> str:
     # session history. Keep the pending copy bounded because approvals are held
     # in memory until consumed or expired.
     return str(value or "").strip()[:_MAX_APPROVAL_CONTINUATION_QUERY_CHARS]
+
+
+def _normalized_deferred_tool_calls(value: Any) -> tuple[str, ...]:
+    # Names of the model's later calls from the batch the approval card cut
+    # short, in their original order. Duplicates are meaningful here (five
+    # manage_memory adds are five skipped calls), so this keeps them. Names
+    # only: the continuation tells the model what did not run, it never
+    # replays these calls or treats them as approved.
+    if isinstance(value, str):
+        value = (value,)
+    try:
+        names = [
+            name.strip()
+            for name in (value or ())
+            if (
+                isinstance(name, str)
+                and name.strip()
+                and len(name.strip()) <= _MAX_APPROVAL_TOOL_NAME_CHARS
+            )
+        ]
+    except TypeError:
+        return ()
+    return tuple(names[:_MAX_APPROVAL_DEFERRED_CALLS])
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -186,6 +210,11 @@ class PendingToolApproval:
     # is never displayed or treated as authorization for the sealed action.
     request_text: str = ""
     request_authority: RequestAuthority | None = None
+    # Tool names of later calls from the same model batch that were not run
+    # because this card is a turn boundary. Continuation context only: the
+    # model is told they did not run and may re-issue them under the normal
+    # authority and gate checks. Never exposed in the browser payload.
+    deferred_tool_calls: tuple[str, ...] = ()
     # Server-resolved targets at proposal time; never read from the approval UI.
     resource_operation: BoundFilesystemOperation | None = None
     backend_operation: BoundBackendOperation | None = None
@@ -391,6 +420,7 @@ class ToolApprovalStore:
         request_text: Any = "",
         request_authority: RequestAuthority | None = None,
         client_runtime_context: dict | None = None,
+        deferred_tool_calls: Any = None,
     ) -> PendingToolApproval:
         if request_authority is not None and not isinstance(request_authority, RequestAuthority):
             raise TypeError("Approval authority must be server-owned RequestAuthority")
@@ -517,6 +547,7 @@ class ToolApprovalStore:
             continuation_query=payload["continuation_query"],
             request_text=str(request_text or ""),
             request_authority=request_authority,
+            deferred_tool_calls=_normalized_deferred_tool_calls(deferred_tool_calls),
             resource_operation=resource_operation,
             backend_operation=backend_operation,
             owned_operation=owned_operation,
