@@ -3765,12 +3765,21 @@ def setup_chat_routes(
             if _corrected_browser_target:
                 _selected_tools = {'private_browser', 'web_fetch', 'web_search'}
                 _required_tools = {'private_browser'}
+            from src.agent_tools.pdf_writer import pdf_creation_requested
+            _interactive_pdf_writer = bool(
+                not _native_workspace_contract and not _delegated_credential
+                and pdf_creation_requested(message)
+                and any(g.tool == "write_file" and (g.actions is None or "pdf" in g.actions)
+                        for g in _request_authority.grants)
+                and not _contract_policy.blocks("write_file")
+            )
             _turn_contract = resolve_turn_contract(
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
                 policy=_contract_policy, required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
-                always_available_tools=(FAMILY_TOOLS["documents"] if active_doc else ()),
+                always_available_tools=(set(FAMILY_TOOLS["documents"] if active_doc else ())
+                                        | ({"write_file"} if _interactive_pdf_writer else set())),
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
@@ -3788,7 +3797,7 @@ def setup_chat_routes(
                 )
                 from src.turn_contract import resolve_full_inventory_contract
                 _warm_canonical = {canonical(name) for name in _warm_tools}
-                _clean_runtime_tools = PREVIEW_TOOLS | (
+                _clean_runtime_tools = PREVIEW_TOOLS | ({"write_file"} if _interactive_pdf_writer else set()) | (
                     NATIVE_WORKSPACE_TOOLS
                     if _native_workspace_contract else frozenset()
                 )
@@ -3814,6 +3823,7 @@ def setup_chat_routes(
                     ), selection_mode=MODE),
                     _routed_turn_contract,
                     _active_turn_capabilities,
+                    recognized_operation_tools=({"write_file"} if _interactive_pdf_writer else frozenset()),
                     # A validated native workspace is a persistent capability,
                     # including on referential turns such as "undo that".
                     # scope_preview_contract still intersects the policy-filtered
@@ -3835,7 +3845,7 @@ def setup_chat_routes(
                             )
                             and not _selected_tools
                         )
-                        else INTERACTIVE_CORE_TOOLS | _warm_tools | (
+                        else INTERACTIVE_CORE_TOOLS | _warm_tools | ({"write_file"} if _interactive_pdf_writer else set()) | (
                             NATIVE_WORKSPACE_TOOLS | (
                                 {"private_browser"} if _local_browser_render_intent else frozenset()
                             )

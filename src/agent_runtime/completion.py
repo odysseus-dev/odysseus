@@ -190,10 +190,11 @@ def _completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDe
             facts.append('Output available: ' + ', '.join(ledger.requirements.required_artifacts) + '.')
         if decision.status == CompletionStatus.VERIFIED or ledger._supports_verifier_claim():
             facts.append('The latest executable verification passed.')
-        elif any(e.kind == EvidenceKind.ARTIFACT_VALIDATION and e.authoritative and e.success for e in ledger.events):
-            facts.append('Artifact readback verified. No passing executable test result was recorded.')
-        else:
-            facts.append('No passing executable test result was recorded.')
+        elif ledger.requirements.verifier_required:
+            if any(e.kind == EvidenceKind.ARTIFACT_VALIDATION and e.authoritative and e.success for e in ledger.events):
+                facts.append('Artifact readback verified. No passing executable test result was recorded.')
+            else:
+                facts.append('No passing executable test result was recorded.')
         summary = ' '.join(facts)
         return (prose.rstrip() + '\n\n' + summary) if prose.strip() else summary, removed
     return prose, removed

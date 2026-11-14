@@ -71,6 +71,8 @@ class ExactOperation:
         # classifies input and never grants permission or changes the input.
         from src.tool_capabilities import _action_from_content
         action = _action_from_content(tool, content)
+        if tool == "write_file" and isinstance(payload, dict) and payload.get("format") == "pdf":
+            action = "pdf"
         if tool == "private_browser" and isinstance(payload, dict):
             action = payload.get("action")
             if action is not None and not isinstance(action, str):
@@ -488,11 +490,19 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         tools = {canonical_tool(operation.tool)}
     else:
         operation = None
+    from src.agent_tools.pdf_writer import pdf_creation_requested
+    existing_writer = "write_file" in tools
+    pdf_only_writer = bool(pdf_creation_requested(request_text) and operation is None
+                           and (selected is None or "write_file" in selected))
+    if pdf_only_writer:
+        tools.add("write_file")
     tools.update(_trusted_local_mcp_request_tools(request_text, intent))
     grants = []
     for name in sorted(tools | {"ask_user", "update_plan"}):
         name = canonical_tool(name)
         actions = inputs = None
+        if name == "write_file" and pdf_only_writer and not existing_writer:
+            actions = frozenset({"pdf"})
         if name == "private_browser":
             actions = _BROWSER_READ_ACTIONS
             # Explicit interaction intent admits its operation class. A

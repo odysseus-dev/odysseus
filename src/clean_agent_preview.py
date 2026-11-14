@@ -279,6 +279,37 @@ SAFE_ACTIONS = {
 }
 
 
+def recover_mistral_tool_calls(content, model, offered, round_number):
+    """Recover a whole Mistral TOOL_CALLS envelope, never illustrative prose."""
+    if not re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I):
+        return []
+    text = str(content or '').strip()
+    marker = '[TOOL_CALLS]'
+    if len(text) > 1_000_000:
+        return []
+    if text.startswith(marker):
+        text = text[len(marker):].strip()
+    if not text.startswith('['):
+        return []
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list) or not 1 <= len(parsed) <= 8:
+        return []
+    available = {(s.get('function') or {}).get('name') for s in offered if isinstance(s, dict)}
+    calls = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict) or set(item) != {'name', 'arguments'}:
+            return []
+        name, args = item['name'], item['arguments']
+        if not isinstance(name, str) or name not in available or not isinstance(args, dict):
+            return []
+        calls.append({'id': f'call_mistral_{round_number}_{index}', 'type':'function',
+                      'function': {'name': name, 'arguments': json.dumps(args, ensure_ascii=False)}})
+    return calls
+
+
 def search_tool_choice_request(request):
     """Enforce a search via one offered tool, not named-tool argument decoding.
 
@@ -1443,6 +1474,23 @@ def progressive_thinking_for_turn(model, offered_schemas, thinking_mode=None):
     if str(thinking_mode or '').lower() == 'off':
         return False
     return uses_odysseus_progressive_thinking(model) and not bool(offered_schemas)
+
+
+def preview_response_token_budget(model, max_tokens):
+    """Allow local Qwen 3.6 room to finish reasoning before its answer.
+
+    Some Ollama Qwen 3.6 templates emit reasoning even with thinking disabled.
+    A 768-token total budget can therefore yield no visible answer at all.
+    Respect a smaller configured limit and keep other model budgets unchanged.
+    """
+    if re.search(r'(?:^|[/_.:-])qwen3[.-]6(?:[_.:-]|$)', str(model or ''), re.I):
+        try:
+            configured = int(max_tokens)
+        except (TypeError, ValueError):
+            configured = 0
+        if configured > 0:
+            return min(configured, 4096)
+    return 768
 
 
 def spec_router_thinking_decision(endpoint_url, model, owner, headers, direct_user_text):
@@ -3184,7 +3232,7 @@ def private_browser_dom_batch(args):
 
 
 def scope_preview_contract(preview_contract, routed_contract, active_capabilities,
-                           extra_tools=frozenset()):
+                           extra_tools=frozenset(), recognized_operation_tools=frozenset()):
     """Intersect the trained inventory with the deterministic turn scope.
 
     This is a contract boundary, not embedding/tool RAG: classification has
@@ -3199,6 +3247,9 @@ def scope_preview_contract(preview_contract, routed_contract, active_capabilitie
     routed_canonical = {canonical(name) for name in routed_offered}
     requested_family_tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in active))
     available_requested = routed_canonical & offered_canonical & requested_family_tools
+    # An explicitly authorized operation is available even if the generic
+    # classifier labels the rest of the request as unknown.
+    available_requested |= {canonical(name) for name in recognized_operation_tools} & offered_canonical
     routed_canonical.update(canonical(name) for name in extra_tools)
     if 'image_generation' not in active and 'photo_editor' not in active:
         # A past image request must not keep generation warm on email/doc turns,
@@ -3819,13 +3870,19 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
                       and (experiment_skip_action_gate or mutation_action_requested(user_text)))
     capability = capabilities_for_action(name, json.dumps(args))
     effects = tuple(sorted(effect.value for effect in capability.effects))
+    from src.agent_tools.pdf_writer import pdf_creation_requested
+    interactive_pdf = bool(
+        not allow_native_workspace and bare == 'write_file'
+        and pdf_creation_requested(user_text) and args.get('format') == 'pdf'
+        and str(args.get('path') or '').lower().endswith('.pdf')
+    )
 
     def decision(allowed, reason):
         return PreviewPolicyDecision(allowed, reason, bare, family, effects)
 
     runtime_tools = PREVIEW_TOOLS | (
         NATIVE_WORKSPACE_TOOLS if allow_native_workspace else frozenset()
-    ) | ({canonical(tool) for tool in external_runtime_tools} if allow_native_workspace else set())
+    ) | ({canonical(tool) for tool in external_runtime_tools} if allow_native_workspace else set()) | ({'write_file'} if interactive_pdf else set())
     # Spec turns are driven by the router: the Spec contract (its offered set)
     # IS the model runtime, so a Spec pick is runnable. Keyed off the same
     # marker the spec hook sets (`routing_experiment == 'spec-router'`), never
@@ -3901,6 +3958,8 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
         ToolEffect.EXTERNAL_SIDE_EFFECT, ToolEffect.UI_SIDE_EFFECT, ToolEffect.ADMIN_CHANGE,
     }
     allowed_effects = set(ALLOWED_EFFECTS)
+    if interactive_pdf:
+        allowed_effects.add(ToolEffect.WRITE_WORKSPACE)
     if bare == 'ask_user':
         allowed_effects.add(ToolEffect.USER_INTERACTION)
     # web_fetch is an intentionally brokered public reader. Its capability
@@ -4590,6 +4649,13 @@ def workspace_process_denial(executions) -> bool:
 def execution_has_write_effect(tool_name, content, capability, *, native_workspace_enabled):
     """Recognize successful native code that visibly mutates the workspace."""
 
+    if canonical(tool_name) == 'write_file':
+        try:
+            arguments = json.loads(content)
+        except (TypeError, ValueError):
+            arguments = {}
+        if isinstance(arguments, dict) and arguments.get('format') == 'pdf':
+            return True
     successful_effects = {ToolEffect.WRITE_PRIVATE}
     if native_workspace_enabled:
         successful_effects.add(ToolEffect.WRITE_WORKSPACE)
@@ -5552,6 +5618,17 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
             'messages': provider_wire_messages(request['messages']),
         }
         response_started = False
+        # Ollama models without native tool templates can still produce a
+        # grammar-constrained proposal. Dispatch remains the normal validated
+        # agent path; unknown capability and explicit disabled tools never opt in.
+        from src.ollama_tool_detection import native_tool_capability
+        if (provider_request.get('tools') and provider_request.get('tool_choice') != 'none'
+                and native_tool_capability(endpoint_url, provider_request.get('model', '')) is False):
+            from src.ollama_structured_tools import AdapterResponse, generate_proposal
+            adapter_request = {**provider_request, 'messages': request['messages']}
+            delta = await generate_proposal(client, adapter_request)
+            yield AdapterResponse(delta)
+            return
         try:
             async with client.stream(
                 'POST', endpoint_url, headers=headers or {}, json=provider_request,
@@ -5704,6 +5781,20 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     native_workspace_enabled = native_workspace_runtime(
         client_runtime_context, workspace,
     )
+    from src.agent_tools.pdf_writer import pdf_creation_requested
+    interactive_pdf = not native_workspace_enabled and pdf_creation_requested(direct_user_text)
+    if interactive_pdf:
+        for schema in offered:
+            function = schema.get('function') or {}
+            if canonical(function.get('name')) != 'write_file':
+                continue
+            function['description'] = ('Create a PDF file in the agent workspace from the supplied document text. '
+                                       'Use format pdf and a path ending in .pdf.')
+            parameters = function.get('parameters') or {}
+            properties = parameters.setdefault('properties', {})
+            properties['format'] = {'type': 'string', 'enum': ['pdf']}
+            properties['path']['description'] = 'New PDF filename within the agent workspace, ending in .pdf.'
+            parameters['required'] = list(dict.fromkeys([*(parameters.get('required') or []), 'format']))
     artifact_research_seconds, artifact_completion_reserve_seconds = (
         native_artifact_completion_timing(client_runtime_context)
         if native_workspace_enabled else (None, None)
@@ -5770,6 +5861,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
         'next to supported findings. Avoid a wall of text; do not force headings onto simple answers. '
         'Do not expose internal deliberation.'
     )
+    if interactive_pdf:
+        system += (' To create the requested PDF, call write_file with format="pdf", '
+                   'a .pdf filename, and the complete document text as content. '
+                   'Report success only after the tool succeeds.')
     if whole_draft_target:
         system += (
             ' For an explicit email-reply write, compose a complete sendable reply body grounded '
@@ -5964,7 +6059,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     has_real_usage = False
     first_request_tokens = last_request_tokens = 0
     rounds_used = 0
-    request_max_tokens = 768
+    request_max_tokens = preview_response_token_budget(model, max_tokens)
     if active_editor_target:
         # Editor payloads include exact source and replacement text. The chat
         # default truncated valid edits mid-JSON and caused repeated retries.
@@ -6738,6 +6833,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 and not source_lookup_pending
                                 and not tool_call_requested
                                 and not _spec_direct_empty_menu
+                                and not (request.get('tools') and re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I))
                             ):
                                 text_event = {'delta': text}
                                 if replace_streamed_draft_on_finish and not streamed_round_text:
@@ -6788,7 +6884,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     break
                 if progressive_thinking:
                     content = visible_content_after_qwen_thinking(content)
-                    if content and not prior_summary_answer and not source_lookup_pending:
+                    if (content and not prior_summary_answer and not source_lookup_pending
+                            and not (request.get('tools') and re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I))):
                         yield event({'delta': content})
                         streamed_round_text = True
                 if _spec_direct_empty_menu and pending:
@@ -6805,6 +6902,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 if proposed and streamed_round_text:
                     replace_streamed_draft_on_finish = True
                 unexecutable_dsml_completion = False
+                if (not proposed and not _spec_direct_empty_menu
+                        and _driver_round_kind != 'answer_directly'
+                        and request.get('tool_choice') != 'none'):
+                    mistral_calls = recover_mistral_tool_calls(content, model, request.get('tools') or [], round_number)
+                    if mistral_calls:
+                        proposed, content = mistral_calls, ''
+                        replace_streamed_draft_on_finish = True
+                        yield event({'type': 'tool_markup_recovery', 'format': 'mistral_tool_calls',
+                                     'round': round_number, 'calls': len(mistral_calls)})
                 if (not proposed and not _spec_direct_empty_menu
                         and _driver_round_kind != 'answer_directly'
                         and 'DSML' in content):
@@ -6875,6 +6981,22 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     history.append({'role': 'assistant', 'content': answer})
                     yield event({'type': 'final_response', 'content': answer})
                     break
+                # Mistral can emit the same call twice in one batch. Execute
+                # identical arguments once so a successful write is not then
+                # reported as a duplicate failure.
+                if re.search(r'(?:^|[/_.:-])mistral(?:[_.:-]|$)', str(model or ''), re.I):
+                    unique_calls, seen_calls = [], set()
+                    for call in proposed:
+                        function = call.get('function') or {}
+                        try:
+                            args_key = json.dumps(json.loads(function.get('arguments') or '{}'), sort_keys=True, ensure_ascii=False)
+                        except (ValueError, TypeError):
+                            args_key = str(function.get('arguments') or '')
+                        signature = (function.get('name'), args_key)
+                        if signature not in seen_calls:
+                            seen_calls.add(signature)
+                            unique_calls.append(call)
+                    proposed = unique_calls
                 proposed, recovered_write_calls = expand_concatenated_write_calls(proposed)
                 if recovered_write_calls:
                     yield event({
@@ -7846,6 +7968,44 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             )
                         if block is None:
                             raise ValueError('Tool arguments could not be converted for execution.')
+                        # The compact runtime must offer the same exact-action
+                        # approval path as the full runtime when untrusted
+                        # context has armed the gate. Never execute or broaden
+                        # authority here; resume goes through the normal sealed
+                        # approval continuation in stream_agent_loop.
+                        if interactive_pdf and canonical(block.tool_type) == 'write_file':
+                            from src.agent_runtime.authority import active_request_authority, ExactOperation
+                            decision = security.decision_for(block.tool_type, block.content)
+                            authority = active_request_authority()
+                            operation = ExactOperation.normalize(block.tool_type, block.content)
+                            if (not decision.allowed and not delegated_credential and authority is not None
+                                    and authority.permits(operation) and turn_contract.permits(block.tool_type)):
+                                from src.tool_approvals import tool_approval_store
+                                pending = tool_approval_store.create(
+                                    owner=owner, session_id=session_id, origin_run_id=security.run_id,
+                                    tool_name=block.tool_type, content=block.content, workspace=workspace,
+                                    external_untrusted_context_seen=security.external_untrusted_context_seen,
+                                    selected_tools=[block.tool_type], continuation_query=direct_user_text,
+                                    capabilities=capabilities_for_action(block.tool_type, block.content),
+                                    request_text=direct_user_text, request_authority=authority,
+                                    client_runtime_context=client_runtime_context,
+                                )
+                                ask = pending.public_payload(reason=decision.reason)
+                                approval_event = {
+                                    'tool': block.tool_type, 'command': arguments,
+                                    'output': 'Waiting for approval.', 'exit_code': None,
+                                    'approval_required': True, 'execution_attempted': False,
+                                    'ask_user': ask, 'round': round_number,
+                                }
+                                yield event({'type': 'tool_output', **approval_event})
+                                yield event({'type': 'final_response', 'content': ask.get('question', 'Approval required.')})
+                                yield event({'type': 'ask_user', 'data': ask})
+                                yield event({'type': 'metrics', 'data': {
+                                    'model': model, 'tool_events': [approval_event],
+                                    'tool_calls': calls, 'agent_rounds': round_number,
+                                }})
+                                yield 'data: [DONE]\n\n'
+                                return
                         calls += 1
                         yield event({'type': 'tool_start', 'tool': block.tool_type, 'command': arguments,
                                      'full_command': arguments, 'round': round_number})
@@ -8387,6 +8547,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                   'execution_attempted': execution_attempted,
                                   'blocked': policy_denied or schema is None,
                                   'desc': desc, 'round': round_number}
+                    if (not failed and canonical(actual_tool) == 'write_file'
+                            and result.get('download_url')):
+                        from src.agent_tools.pdf_writer import single_pdf_request
+                        entity_result_links[result['download_url']] = f"[Download PDF]({result['download_url']})"
+                        if single_pdf_request(direct_user_text):
+                            structured_terminal_response = result['output']
                     for error_category in ('tool_execution_error', 'invalid_tool_arguments'):
                         if result.get('error_category') == error_category:
                             tool_event['error_category'] = error_category
@@ -8956,7 +9122,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     # trace makes invisible overflow candidates selectable.
                     align_structured_tool_history(history, structured_terminal_response)
                     history.append({'role': 'assistant', 'content': structured_terminal_response})
-                    yield event({'delta': structured_terminal_response})
+                    if replace_streamed_draft_on_finish:
+                        yield event({'type': 'final_response', 'content': structured_terminal_response,
+                                     'render_owner': 'streamed', 'replacement_scope': 'turn'})
+                    else:
+                        yield event({'delta': structured_terminal_response})
                     break
             else:
                 if editor_partial_pending:
