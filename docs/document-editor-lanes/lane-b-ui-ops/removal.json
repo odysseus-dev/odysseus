@@ -1,0 +1,31 @@
+{
+  "lane": "lane-b-ui-ops",
+  "baseline": "f3a05c10c998e4efff14ac6498b01bd50138ad6e",
+  "statementBaseline": "087e6c8837969339e9e7823dd84a4d717d536cea",
+  "removedDeclarations": [
+    "autoTitleFromContent",
+    "copyDocument",
+    "runDocument",
+    "updateLanguage",
+    "updateTitle"
+  ],
+  "targetModules": {
+    "autoTitleFromContent": "ui/documentActions",
+    "copyDocument": "ui/documentActions",
+    "runDocument": "ui/documentActions",
+    "updateLanguage": "ui/documentActions",
+    "updateTitle": "ui/documentActions"
+  },
+  "destinationExports": [
+    "autoTitleFromContent",
+    "copyDocument",
+    "runDocument",
+    "updateLanguage",
+    "updateTitle"
+  ],
+  "addedImports": [
+    "import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from \"./document/ui/documentActions.js\";"
+  ],
+  "description": "Lane B checkpoint 1: ui/documentActions. All five Appendix A declarations are exported. The integrator adds the named import to static/js/document.js and deletes the five declarations there. This lane does not edit the monolith.",
+  "intentionalNonVerbatimChanges": []
+}
