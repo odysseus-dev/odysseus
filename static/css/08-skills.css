@@ -31,7 +31,7 @@
   cursor: pointer;
   user-select: none;
   padding: 6px 4px 4px;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.6;
@@ -49,7 +49,7 @@
 .skill-card-section-hidden { display: none !important; }
 /* Warning banner shown when previewing/editing a built-in capability. */
 .skill-builtin-warn {
-  font-size: 9.5px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--color-warning, #f0ad4e);
   background: color-mix(in srgb, var(--color-warning, #f0ad4e) 12%, transparent);
@@ -142,7 +142,7 @@
   height: 9px;
 }
 .skill-card-desc {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.4;
   margin-top: -1px;
   white-space: nowrap;
@@ -519,7 +519,7 @@
   color: var(--color-danger, #e06c75);
 }
 .skill-stats {
-  font-size: 9px;
+  font-size: 11px;
   font-family: monospace;
   white-space: nowrap;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
@@ -636,7 +636,7 @@
 /* Section labels separating "Your skills" from the read-only "Built-in
    capabilities" list. */
 .skills-section-label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -652,7 +652,7 @@
 .skill-builtin-card:hover { border-color: var(--border); }
 .skill-card-preview .skill-md-pre {
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -764,7 +764,7 @@
 .skills-audit-log {
   max-height: 22vh; overflow-y: auto;
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 10.5px; line-height: 1.5; opacity: 0.8;
+  font-size: 11px; line-height: 1.5; opacity: 0.8;
 }
 /* ── Skill test monitor + AI eval verdict ── */
 .skill-test { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -774,7 +774,7 @@
   max-height: 48vh;
   overflow-y: auto;
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 9.5px;
+  font-size: 11px;
   line-height: 1.45;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -785,7 +785,7 @@
 }
 .skill-test-log > div { margin: 1px 0; }
 .skill-test-meta  { opacity: 0.5; }
-.skill-test-task  { color: var(--accent, var(--red)); font-weight: 500; font-size: 9px; opacity: 0.85; }
+.skill-test-task  { color: var(--accent, var(--red)); font-weight: 500; font-size: 11px; opacity: 0.85; }
 .skill-test-round { opacity: 0.6; margin-top: 6px !important; }
 .skill-test-tool  { color: var(--accent, var(--red)); opacity: 0.85; }
 .skill-test-out   { opacity: 0.7; padding-left: 10px; }
@@ -851,7 +851,7 @@
   box-sizing: border-box;
   resize: none;
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   padding: 8px;
   border: 1px solid var(--border);
@@ -988,7 +988,7 @@
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--red) 5%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   margin-bottom: 8px;
 }
 .doclib-bulk-bar.hidden {
@@ -1000,7 +1000,7 @@
   gap: 3px;
   cursor: pointer;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
 }
 #doclib-bulk-bar .memory-toolbar-btn {
   position: relative;
