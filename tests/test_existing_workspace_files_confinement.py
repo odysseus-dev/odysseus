@@ -1,4 +1,5 @@
 from src.agent_loop import _existing_workspace_files
+from tests.helpers.symlinks import requires_symlinks
 
 
 def test_existing_workspace_files_accepts_relative_file_inside_workspace(tmp_path):
@@ -49,6 +50,7 @@ def test_existing_workspace_files_rejects_parent_traversal(tmp_path):
     ) == []
 
 
+@requires_symlinks
 def test_existing_workspace_files_rejects_symlink_escape(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

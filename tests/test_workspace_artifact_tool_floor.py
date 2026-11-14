@@ -1,6 +1,8 @@
 from pathlib import Path
 
+import os
 import pytest
+from tests.helpers.symlinks import requires_symlinks
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +44,7 @@ def test_artifact_mutation_is_not_counted_as_post_correction_verification():
 
 
 def test_post_convergence_artifact_repair_is_bounded_after_success():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_artifact_finish_convergence_sent" in source
     assert "_artifact_finish_post_correction_mutation_seen = True" in source
     assert "its automatic preview is terminal" in source
@@ -66,7 +68,7 @@ def test_consumed_post_correction_verification_closes_tool_surface():
 
 
 def test_workspace_artifact_floor_is_narrow_and_includes_writers():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_artifact_creation_requested" in source
     assert '"python", "write_file", "read_file"' in source
     assert "(workspace or _native_artifact_runtime)" in source
@@ -88,21 +90,21 @@ def test_native_declared_artifact_exposes_writer_without_creation_verb():
     than "write" or "create".  The completion contract is authoritative and
     must still make write_file available to the model.
     """
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_declared_native_artifacts" in source
     assert "bool(_declared_native_artifacts)" in source
     assert "_native_completion.get(\"required_artifacts\")" in source
 
 
 def test_artifact_creation_flag_is_initialized_before_route_builder():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     flag = "_artifact_creation_requested = False"
     route = "    def _route_relevant_tools(candidate_model: str):"
     assert source.index(flag) < source.index(route)
 
 
 def test_html_artifacts_keep_native_browser_for_render_verification():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert 'Path(path).suffix.casefold() in {".html", ".htm"}' in source
     assert "HTML artifact requires native private_browser verification" in source
     assert 'if "private_browser" not in _hard_blocked_tools:' in source
@@ -231,7 +233,7 @@ def test_url_report_artifact_still_hides_shell():
 
 
 def test_terminal_html_artifact_queues_one_native_render_check():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_html_artifact_verification_required" in source
     assert '"action": "open"' in source
     assert "queued native HTML render verification" in source
@@ -344,7 +346,7 @@ def test_native_terminal_sft_owner_keeps_workspace_writers():
 
 
 def test_native_terminal_runtime_bypasses_chat_only_general_no_tool_clamp():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_native_terminal_runtime = bool(" in source
     assert "elif _ody_general_no_tool_mode and not _native_terminal_runtime:" in source
 
@@ -705,7 +707,7 @@ def test_private_browser_duplicate_guard_is_bounded_and_state_sensitive():
 
 
 def test_local_media_floor_preserves_native_vision_and_prunes_web_tools():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '"inspect_media", "transcribe_media", "bash", "read_file", "ls"' in source
     assert "创建|生成|保存|写入|写在|输出|放进|制作|截取|剪辑|拼接|导出" in source
     assert "_native_local_media_inputs(_last_user, client_runtime_context)" in source
@@ -942,7 +944,7 @@ def test_compact_native_route_discovers_named_paper_without_url():
 
 
 def test_per_model_route_reapplies_local_media_after_contextual_web_clamps():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     route_start = source.index("    def _route_relevant_tools(candidate_model: str):")
     route_end = source.index("\n    (\n        _ody_qwen_finetune_model", route_start)
     route_source = source[route_start:route_end]
@@ -956,7 +958,7 @@ def test_per_model_route_reapplies_local_media_after_contextual_web_clamps():
 
 
 def test_compact_request_reapplies_runner_declared_media_after_compaction():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     compact_start = source.index('        if tool_surface == "compact":')
     prompt_start = source.index("        prompt_route_tools =", compact_start)
     compact_source = source[compact_start:prompt_start]
@@ -968,20 +970,20 @@ def test_compact_request_reapplies_runner_declared_media_after_compaction():
 
 
 def test_native_runtime_context_can_cap_endpoint_context_budget():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '(client_runtime_context or {}).get("model_context_window")' in source
     assert "min(candidate_context, runtime_context_window)" in source
 
 
 def test_native_local_media_prunes_host_bridge_and_cookbook_tools():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert 'client_runtime_context.get("surface") or "") == "odysseus-native"' in source
     assert '_base_relevant_tools.discard("host_shell")' in source
     assert '_DOMAIN_TOOL_MAP.get("cookbook", set())' in source
 
 
 def test_terminal_artifact_observation_budget_forces_mutation_recovery():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_artifact_observation_rounds >= 6" in source
     assert '"reason": "artifact_observation_budget"' in source
     assert "_artifact_mutation_only_mode = True" in source
@@ -1054,7 +1056,7 @@ def test_visual_text_extraction_is_distinct_from_speech_transcription():
 def test_local_media_routes_select_dedicated_ocr_for_visual_text():
     import re
 
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
 
     assert source.count(
         "_ocr_requested = _visual_text_extraction_requested(_last_user)"
@@ -1129,7 +1131,7 @@ def test_source_media_recovery_keeps_writer_for_text_companion_artifact():
 
 
 def test_source_media_schema_boundary_keeps_text_companion_writer():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     boundary = source.index(
         "# Final provenance boundary: route construction, fallbacks, and"
     )
@@ -1144,7 +1146,7 @@ def test_source_media_schema_boundary_keeps_text_companion_writer():
 
 
 def test_artifact_recovery_does_not_shadow_recovery_message_builder():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_recovery_messages = _artifact_recovery_messages(" not in source
     assert "messages = _artifact_recovery_messages(" in source
     assert "_artifact_recovery_message_list = _artifact_recovery_messages(" in source
@@ -1181,7 +1183,7 @@ def test_source_media_recovery_retains_bounded_candidate_working_notes():
 
 
 def test_direct_source_media_extraction_filter_is_reapplied_per_model_route():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     route_start = source.index("    def _route_relevant_tools(candidate_model: str):")
     route_end = source.index("\n    (\n        _ody_qwen_finetune_model,", route_start)
     route_source = source[route_start:route_end]
@@ -1627,7 +1629,7 @@ def test_fetched_detail_page_is_source_evidence():
 
 
 def test_artifact_recovery_redirects_wrong_http_and_partial_mutations():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '"artifact_wrong_tool_http"' in source
     assert '"artifact_native_acquisition_required"' in source
     assert '"reason": "partial_artifact_mutation"' in source
@@ -1645,7 +1647,7 @@ def test_artifact_recovery_redirects_wrong_http_and_partial_mutations():
 
 
 def test_answer_only_local_media_has_bounded_inspection_budget():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_completed_media_inspections >= 8" in source
     assert "round_num >= _round_limit - 1" in source
     assert "_media_inspection_budget_exhausted" in source
@@ -1656,7 +1658,7 @@ def test_answer_only_local_media_has_bounded_inspection_budget():
 
 
 def test_force_answer_discards_native_tool_plan_before_grace_synthesis():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     force_answer_start = source.index("        if _force_answer:")
     force_answer_end = source.index("        # A single giant SVG", force_answer_start)
     force_answer_block = source[force_answer_start:force_answer_end]
@@ -1667,7 +1669,7 @@ def test_force_answer_discards_native_tool_plan_before_grace_synthesis():
 
 
 def test_local_media_is_exempt_from_pure_web_schema_and_round_clamps():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     pure_web_start = source.index("    _local_media_turn = bool(")
     pure_web_end = source.index("\n    if (\n        _pure_web_turn", pure_web_start)
     assert "and not _local_media_turn" in source[pure_web_start:pure_web_end]
@@ -1676,13 +1678,13 @@ def test_local_media_is_exempt_from_pure_web_schema_and_round_clamps():
 
 
 def test_empty_local_media_round_nudges_export_instead_of_ending():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "or _local_media_turn" in source
     assert 'requested output_path, and timestamp_path when requested' in source
 
 
 def test_local_media_answer_requires_real_source_evidence():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '"type": "source_evidence_required"' in source
     assert '"reason": "local_media_not_observed"' in source
     assert "blocked local-media answer without source evidence" in source
@@ -1707,7 +1709,7 @@ def test_local_media_gate_allows_only_bounded_workspace_discovery():
 
 
 def test_local_media_gate_has_one_automatic_evidence_acquisition_path():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_auto_local_media_evidence" in source
     assert "_local_media_evidence_block_count == 0" in source
     assert 'ToolBlock(\n                    "inspect_media"' in source
@@ -1719,14 +1721,14 @@ def test_local_media_gate_has_one_automatic_evidence_acquisition_path():
 
 
 def test_combined_web_workspace_route_keeps_native_writers():
-    source = (Path(__file__).parents[1] / "routes" / "chat_routes.py").read_text()
+    source = (Path(__file__).parents[1] / "routes" / "chat_routes.py").read_text(encoding="utf-8")
     assert "_web_workspace_output" in source
     assert "if not _web_workspace_output" in source
     assert "创建|生成|保存|写入|制作|截取|剪辑|拼接|导出" in source
 
 
 def test_compact_tool_surface_does_not_expand_to_every_admin_schema():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert 'and tool_surface != "compact"' in source
 
 
@@ -1811,7 +1813,7 @@ def test_workspace_alias_resolves_inside_active_workspace(tmp_path):
 
 
 def test_combined_web_artifact_floor_hides_generic_shell():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '_relevant_tools.discard("bash")' in source
     assert "combined web artifact task prefers structured tools" in source
     assert "_named_online_document" in source
@@ -1819,14 +1821,14 @@ def test_combined_web_artifact_floor_hides_generic_shell():
 
 
 def test_source_acquisition_recovery_retains_artifact_mutation_floor():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '"python", "write_file", "read_file"' in source
     assert "set(_native_acquisition_tools)" in source
     assert "| _artifact_mutation_tools" in source
 
 
 def test_failed_artifact_verifier_skips_readonly_followthrough():
-    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_failed_artifact_verifier = any(" in source
     assert '"private_browser", "builtin_browser"' in source
     assert "2 if _failed_artifact_verifier else 0" in source
@@ -2013,7 +2015,7 @@ def test_pdf_extract_is_native_schema_and_rag_tool():
 
 
 def test_positioned_pdf_keeps_continuous_rows_between_table_anchors():
-    source = (Path(__file__).parents[1] / "src" / "agent_tools" / "web_tools.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "agent_tools" / "web_tools.py").read_text(encoding="utf-8")
     assert "table_top = max(0.0, min(anchors) - 100)" in source
     assert "table_bottom = max(anchors) + 100" in source
     assert "table_top <= row[0] <= table_bottom" in source
@@ -2166,6 +2168,7 @@ def test_python_http_download_is_rejected_before_subprocess():
     assert urlretrieve["exit_code"] == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_python_surfaces_failed_child_viewer_even_when_script_exits_zero():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2179,6 +2182,7 @@ def test_python_surfaces_failed_child_viewer_even_when_script_exits_zero():
     assert "child operation failed" in result["error"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_python_keeps_warning_only_stderr_successful():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2191,6 +2195,7 @@ def test_python_keeps_warning_only_stderr_successful():
     assert result["exit_code"] == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_python_emits_one_final_bare_expression_without_duplicating_print():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2245,9 +2250,10 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
         {},
     ))
     assert result["exit_code"] == 0, result
-    assert output.read_text() == "ok"
+    assert output.read_text(encoding="utf-8") == "ok"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: bubblewrap argv (_wrap_workspace_namespace returns None on Windows)")
 def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch, tmp_path):
     import shlex
 
@@ -2270,6 +2276,8 @@ def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch
     ]
 
 
+@requires_symlinks
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: bubblewrap argv (_wrap_workspace_namespace returns None on Windows)")
 def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypatch, tmp_path):
     import shlex
 
@@ -2301,6 +2309,7 @@ def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypa
         ]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: bubblewrap argv (_wrap_workspace_namespace returns None on Windows)")
 def test_workspace_namespace_preserves_the_64_bit_dynamic_loader(monkeypatch):
     """The namespace's /lib64 must mirror usrmerge hosts, not /usr/lib."""
     import shlex

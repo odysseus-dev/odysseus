@@ -24,6 +24,7 @@ from src.agent_runtime.resources import (
 from src.tool_approvals import ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
 from src.tool_types import ToolBlock
+from tests.helpers.symlinks import requires_symlinks
 
 
 def authority(root, *tools, roots=None, owner="alice", session="s"):
@@ -50,6 +51,7 @@ def native_admin(monkeypatch):
     monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
 
 
+@requires_symlinks
 @pytest.mark.parametrize("selector", ["a.txt", "/workspace/a.txt", "host", "link"])
 def test_aliases_resolve_to_one_observed_resource(tmp_path, selector):
     target = tmp_path / "a.txt"
@@ -71,6 +73,7 @@ def test_escapes_sensitive_and_malformed_paths_fail_closed(tmp_path, path):
         resolve(grant, "write_file", json.dumps({"path": path, "content": "x"}))
 
 
+@requires_symlinks
 def test_symlink_escape_is_not_a_resource(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -81,7 +84,7 @@ def test_symlink_escape_is_not_a_resource(tmp_path):
         resolve(authority(workspace, "read_file"), "read_file", "alias")
 
 
-@pytest.mark.parametrize("alias", ["direct", "relative", "symlink", "hardlink"])
+@pytest.mark.parametrize("alias", ["direct", "relative", pytest.param("symlink", marks=requires_symlinks), "hardlink"])
 @pytest.mark.parametrize("must_exist", [True, False])
 def test_media_workspace_paths_cannot_address_control_state(tmp_path, monkeypatch, alias, must_exist):
     from src import constants, tool_execution
@@ -408,6 +411,7 @@ def test_task_and_background_continuations_keep_original_roots(tmp_path, monkeyp
         owner="alice", session_id="continuation").resource_roots == grant.resource_roots
 
 
+@requires_symlinks
 async def test_dispatch_consumes_canonical_binding_and_pins_native_backend(tmp_path, monkeypatch):
     from src import tool_execution as execution
     import src.agent_tools
@@ -511,6 +515,7 @@ async def test_nested_resource_context_restores_on_failure_or_cancellation(tmp_p
     assert execution.get_active_workspace() is None
 
 
+@requires_symlinks
 @pytest.mark.parametrize("kind", ["collision", "hardlink", "escape", "move"])
 async def test_patch_validates_all_targets_before_any_write(tmp_path, kind):
     (tmp_path / "a").write_text("old\n")
@@ -552,6 +557,7 @@ def approval(grant, tool, content):
     return exact, security
 
 
+@requires_symlinks
 @pytest.mark.parametrize("change", ["alias", "file", "parent"])
 async def test_approval_resource_retargeting_refuses_without_claiming(tmp_path, change):
     parent = tmp_path / "sub"
@@ -673,6 +679,7 @@ async def test_restored_empty_roots_approval_is_exact_and_never_restores_generic
     assert (tmp_path / "sibling").read_text() == "private sibling"
 
 
+@requires_symlinks
 @pytest.mark.parametrize("change", ["alias", "request", "session", "owner"])
 async def test_restored_exact_filesystem_binding_rejects_retarget_and_rebinding(tmp_path, change):
     (tmp_path / "a").write_text("a")

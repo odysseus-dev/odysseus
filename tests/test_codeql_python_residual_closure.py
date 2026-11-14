@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.helpers.symlinks import requires_symlinks
 
 
 # -- 1. MCP attachment extraction -------------------------------------------
@@ -96,6 +97,7 @@ def test_mcp_download_attachment_isolates_owners_and_accounts(mcp_mail):
         assert Path(path).read_bytes() == body
 
 
+@requires_symlinks
 def test_attachment_scope_dir_rejects_symlinked_scope(tmp_path):
     from src.mail_attachment_paths import attachment_scope_dir
 
