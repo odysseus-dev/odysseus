@@ -10,6 +10,15 @@ services:
     # :latest and bare :X.Y.Z tags move on every main push.
     image: ${ODYSSEUS_IMAGE:-ghcr.io/odysseus-dev/odysseus:latest}
     build: .
+    # Native agent execution runs bash/python under bubblewrap, which needs a
+    # user namespace and pivot_root. Docker's default seccomp profile denies
+    # both to the unprivileged odysseus user, so bubblewrap reports itself
+    # unavailable and enforcing containment refuses every agent action with
+    # ContainmentUnavailable (filesystem, process_tree). CAP_SYS_ADMIN alone
+    # does not help: pivot_root stays denied, so no capability is added here.
+    security_opt:
+      - seccomp=unconfined
+
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7011}:7000"
     volumes:
