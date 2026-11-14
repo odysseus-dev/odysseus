@@ -914,7 +914,10 @@ function _syncToggleUI(name, state) {
     window._syncResearchIndicator(state);
   } else {
     const btn = document.getElementById(btnMap[name]);
-    if (btn) btn.classList.toggle('active', state);
+    if (btn) {
+      btn.classList.toggle('active', state);
+      btn.setAttribute('aria-pressed', String(state));
+    }
   }
 }
 
@@ -924,7 +927,7 @@ async function _quickToggle(name) {
   if (!chk) return false;
   chk.checked = !chk.checked;
   _syncToggleUI(name, chk.checked);
-  Storage.setToggle(name, chk.checked);
+  Storage.setToolToggle(name, chk.checked);
   await typewriterReply(`${name}: ${chk.checked ? 'on' : 'off'}`);
   return true;
 }
@@ -936,7 +939,7 @@ async function _applyToggle(name, val) {
   const newState = val === 'on' ? true : val === 'off' ? false : !chk.checked;
   chk.checked = newState;
   _syncToggleUI(name, newState);
-  Storage.setToggle(name, newState);
+  Storage.setToolToggle(name, newState);
   await typewriterReply(`${name}: ${newState ? 'on' : 'off'}`);
 }
 

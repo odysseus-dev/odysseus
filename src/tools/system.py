@@ -760,6 +760,8 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
     "/api/admin",          # admin one-shots (wipe etc.)
     "/api/shell",          # host shell execution must stay behind named command tooling
+    "/api/chat_stream",    # nested agent runs must not set allow_bash=true
+    "/api/chat",           # keep the generic bridge off chat control
     "/api/backup/restore", # destructive restore
 )
 

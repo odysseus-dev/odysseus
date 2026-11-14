@@ -2,7 +2,7 @@
 // Lightweight popup that surfaces the existing /command registry as users
 // type. Reads COMMANDS from slashCommands.js — no command logic lives here.
 
-import { COMMANDS, LEGACY_ALIASES } from './slashCommands.js?v=20260921chatgptusage1';
+import { COMMANDS, LEGACY_ALIASES } from './slashCommands.js?v=20261104shelltoggle2';
 
 const POPUP_ID = 'slash-autocomplete';
 const MAX_VISIBLE = 14;
