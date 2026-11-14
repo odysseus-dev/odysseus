@@ -22690,11 +22690,16 @@ async def stream_agent_loop(
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "[tool-rag] Tool index init exceeded %.1fs; falling back to always-available tools",
+                    "[tool-rag] Tool index init exceeded %.1fs; falling back to keyword tool selection",
                     _TOOL_SELECTION_TIMEOUT_SECONDS,
                 )
                 tool_idx = None
-                _relevant_tools = set(ALWAYS_AVAILABLE)
+                # Leave _relevant_tools unset so the keyword fallback below still
+                # runs. Hard-coding ALWAYS_AVAILABLE here skipped the deterministic
+                # keyword hints whenever a cold index init was slow, silently
+                # stripping email/calendar tools from queries that named them
+                # outright. Matches the retrieval-timeout path below.
+                _relevant_tools = None
             if tool_idx:
                 if mcp_mgr:
                     try:
