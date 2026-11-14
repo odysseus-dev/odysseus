@@ -590,7 +590,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         import json
         import re
-        from difflib import SequenceMatcher
+        import unicodedata
         from src.constants import DATA_DIR
         from src.llm_core import llm_call_async_with_fallback
         from src.memory import MemoryManager
@@ -627,9 +627,8 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         ai_used = False
 
         def _normalized_memory_text(mem: dict) -> str:
-            text = (mem.get("text") or "").lower()
-            text = re.sub(r"[^a-z0-9@._+-]+", " ", text)
-            return " ".join(text.split())
+            text = unicodedata.normalize("NFC", mem.get("text") or "")
+            return " ".join(unicodedata.normalize("NFC", text.casefold()).split())
 
         def _memory_rank(mem: dict) -> tuple:
             text = (mem.get("text") or "").strip()
@@ -650,12 +649,10 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
             b_text = _normalized_memory_text(b)
             if not a_text or not b_text:
                 return False
-            if a_text == b_text:
-                return True
-            shorter, longer = sorted((a_text, b_text), key=len)
-            if len(shorter) >= 24 and shorter in longer:
-                return True
-            return SequenceMatcher(None, a_text, b_text).ratio() >= 0.88
+            # Similarity and containment do not establish factual equivalence:
+            # a different name, number or negation can change the whole fact.
+            # Leave non-exact matches for the optional AI tidy pass.
+            return a_text == b_text
 
         def _dedupe_group(group_memories: list) -> tuple[list, int]:
             kept = []
@@ -824,35 +821,9 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                 total_removed += group_removed
                 group_memories = deduped_group
 
-            if await _try_ai_tidy_group(group_owner, group_memories):
-                continue
-
-            seen = {}
-            keep_refs = set()
-            for mem in group_memories:
-                text = (mem.get("text") or "").strip()
-                key = " ".join(text.lower().split())
-                if not key:
-                    if len(removed_examples) < 3:
-                        removed_examples.append("(empty)")
-                    continue
-                if key in seen:
-                    if len(removed_examples) < 3:
-                        removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
-                    continue
-                seen[key] = mem
-                keep_refs.add(id(mem))
-
-            group_removed = len(group_memories) - len(keep_refs)
-            if group_removed == 0:
-                continue
-
-            group_ref_ids = {id(m) for m in group_memories}
-            all_memories = [
-                m for m in all_memories
-                if id(m) not in group_ref_ids or id(m) in keep_refs
-            ]
-            total_removed += group_removed
+            # Exact duplicates and empty rows were already handled above.
+            # A second text-only pass would ignore categories and pinned rank.
+            await _try_ai_tidy_group(group_owner, group_memories)
 
         if total_removed or total_cleaned:
             manager.save(all_memories)
