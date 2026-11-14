@@ -26,3 +26,8 @@ def test_the_stop_state_route_is_read_only_and_owner_checked():
     block = ROUTES[ROUTES.index('async def chat_stop_state'):][:500]
     assert '_verify_session_owner(request, session_id)' in block and 'agent_runs.run_state' in block
     assert re.search(r'@router\.get\("/api/chat/stop/\{session_id\}"\)', ROUTES)
+
+
+def test_chat_js_never_calls_a_toast_helper_it_did_not_import():
+    """A bare ``showToast(`` threw a ReferenceError inside Stop before its request was sent (found in the browser run); chat.js reaches it as uiModule.showToast."""
+    assert not re.findall(r'(?<![\w.])showToast\(', CHAT)
