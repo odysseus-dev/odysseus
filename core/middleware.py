@@ -145,7 +145,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "font-src 'self' https://cdn.jsdelivr.net; "
                 "img-src 'self' data: blob: https:; "
                 "media-src 'self' blob:; "
-                "connect-src 'self'; "
+                "connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; "
                 "frame-src 'self'; "
                 "frame-ancestors 'none'"
             )
