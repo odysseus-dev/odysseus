@@ -13,6 +13,7 @@ writers to the same path don't collide on the same temp file.
 """
 import importlib.util
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -156,6 +157,157 @@ def test_atomic_write_json_preserves_target_when_replace_fails(tmp_path, monkeyp
     assert target.read_text(encoding="utf-8") == before
     # Temp file should be cleaned up
     assert _tmp_siblings(tmp_path, "data.json") == []
+
+
+# ---------------------------------------------------------------------------
+# file_mode — restrictive temp permissions before content is written.
+#
+# Review of #6263: under umask 022 a plain temp file is born 0644, so a
+# secret written into it is readable by other local accounts until a later
+# chmod runs. file_mode=0o600 must make the temp file (and, via os.replace,
+# the published file) 0o600 from the very first byte.
+# ---------------------------------------------------------------------------
+def test_file_mode_restricts_temp_before_any_content_is_written(tmp_path, monkeypatch):
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are not observable on Windows")
+
+    target = tmp_path / "vault.json"
+    seen = {}
+    real_dump = json.dump
+
+    def spying_dump(obj, fp, **kwargs):
+        seen["mode_at_dump"] = os.fstat(fp.fileno()).st_mode & 0o777
+        real_dump(obj, fp, **kwargs)
+
+    monkeypatch.setattr(json, "dump", spying_dump)
+    old_umask = os.umask(0o022)
+    try:
+        atomic_write_json(str(target), {"session": "s3cret"}, file_mode=0o600)
+    finally:
+        os.umask(old_umask)
+
+    assert seen["mode_at_dump"] == 0o600
+    assert os.stat(target).st_mode & 0o777 == 0o600
+
+
+def test_file_mode_temp_is_restrictive_at_replace_time(tmp_path, monkeypatch):
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are not observable on Windows")
+
+    target = tmp_path / "vault.json"
+    seen = {}
+    real_replace = os.replace
+
+    def spying_replace(src, dst):
+        seen["tmp_mode"] = os.stat(src).st_mode & 0o777
+        real_replace(src, dst)
+
+    monkeypatch.setattr(atomic_io.os, "replace", spying_replace)
+    old_umask = os.umask(0o022)
+    try:
+        atomic_write_json(str(target), {"session": "s3cret"}, file_mode=0o600)
+    finally:
+        os.umask(old_umask)
+
+    assert seen["tmp_mode"] == 0o600
+    assert os.stat(target).st_mode & 0o777 == 0o600
+
+
+def test_default_permissions_without_file_mode_are_unchanged(tmp_path):
+    # All existing callers omit file_mode and must keep 0o666 & ~umask.
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are not observable on Windows")
+
+    target = tmp_path / "data.json"
+    old_umask = os.umask(0o022)
+    try:
+        atomic_write_json(str(target), {"a": 1})
+    finally:
+        os.umask(old_umask)
+
+    assert os.stat(target).st_mode & 0o777 == 0o644
+
+
+def test_file_mode_restricts_temp_when_replacing_existing_vault(tmp_path, monkeypatch):
+    """Reviewer's exact scenario: an existing 0600 vault.json holding a live
+    secret is replaced under umask 022. The temp file must stay 0600 at both
+    moments the secret could leak (serialization and rename), and the
+    published file must remain 0600 with valid new content."""
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are not observable on Windows")
+
+    target = tmp_path / "vault.json"
+    atomic_write_json(str(target), {"session": "old-secret"}, file_mode=0o600)
+    assert os.stat(target).st_mode & 0o777 == 0o600
+
+    seen = {}
+    real_dump = json.dump
+    real_replace = os.replace
+
+    def spying_dump(obj, fp, **kwargs):
+        seen["mode_at_dump"] = os.fstat(fp.fileno()).st_mode & 0o777
+        real_dump(obj, fp, **kwargs)
+
+    def spying_replace(src, dst):
+        seen["tmp_mode"] = os.stat(src).st_mode & 0o777
+        real_replace(src, dst)
+
+    monkeypatch.setattr(json, "dump", spying_dump)
+    monkeypatch.setattr(atomic_io.os, "replace", spying_replace)
+    old_umask = os.umask(0o022)
+    try:
+        atomic_write_json(str(target), {"session": "new-secret"}, file_mode=0o600)
+    finally:
+        os.umask(old_umask)
+
+    assert seen["mode_at_dump"] == 0o600
+    assert seen["tmp_mode"] == 0o600
+    assert os.stat(target).st_mode & 0o777 == 0o600
+    assert json.loads(target.read_text(encoding="utf-8")) == {"session": "new-secret"}
+
+
+def test_fchmod_failure_cleans_tmp_and_preserves_original_exception(tmp_path, monkeypatch):
+    """If the permission-setting step itself fails, _open_tmp closes the
+    descriptor, the helper's finally block removes the temp file, and the
+    original exception is what surfaces — nothing is masked, nothing leaks."""
+    if os.name != "posix":
+        pytest.skip("requires POSIX fchmod")
+
+    target = tmp_path / "vault.json"
+    atomic_write_json(str(target), {"existing": "value"}, file_mode=0o600)
+    before = target.read_text(encoding="utf-8")
+
+    def exploding_fchmod(fd, mode):
+        raise OSError("fchmod failed")
+
+    monkeypatch.setattr(atomic_io.os, "fchmod", exploding_fchmod)
+
+    with pytest.raises(OSError, match="fchmod failed"):
+        atomic_write_json(str(target), {"session": "new"}, file_mode=0o600)
+
+    assert target.read_text(encoding="utf-8") == before
+    assert _tmp_siblings(tmp_path, "vault.json") == []
+
+
+def test_file_mode_round_trips_and_leaves_no_tmp(tmp_path):
+    target = tmp_path / "vault.json"
+
+    atomic_write_json(str(target), {"session": "abc"}, file_mode=0o600)
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"session": "abc"}
+    assert _tmp_siblings(tmp_path, "vault.json") == []
+
+
+def test_file_mode_preserves_target_when_serialization_fails(tmp_path):
+    target = tmp_path / "vault.json"
+    atomic_write_json(str(target), {"existing": "value"}, file_mode=0o600)
+    before = target.read_text(encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        atomic_write_json(str(target), {"bad": {1, 2, 3}}, file_mode=0o600)
+
+    assert target.read_text(encoding="utf-8") == before
+    assert _tmp_siblings(tmp_path, "vault.json") == []
 
 
 # ---------------------------------------------------------------------------
