@@ -602,3 +602,50 @@ index 0000000000..020d2d1aac
 +/** The workspace mutation the app already owns (`session.cwd.set`, or the new-chat target for a draft), handed to the
 + *  composer's workspace chip so it never re-implements cwd handling. */
 +export const $composerWorkspaceBridge = atom<{ changeSessionCwd?: (cwd: string, sessionId?: string) => Promise<void> }>({})
+diff --git a/hermes_cli/projects_db.py b/hermes_cli/projects_db.py
+index 39bfc043e8..3251bec272 100644
+--- a/hermes_cli/projects_db.py
++++ b/hermes_cli/projects_db.py
+@@ -368,8 +368,12 @@ def restore_project(conn: sqlite3.Connection, project_id: str) -> bool:
+ 
+ 
+ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
+-    """Hard-delete a project and its folders (cascade)."""
+-    return _execute_rowcount(conn, "DELETE FROM projects WHERE id = ?", (project_id,)) > 0
++    """Hard-delete a project and its folders (cascade). The active-project pointer goes with it, in the same transaction, so
++    the UI is never left selecting a project that no longer exists."""
++    with write_txn(conn):
++        cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
++        conn.execute("DELETE FROM project_meta WHERE key = ? AND value = ?", (_ACTIVE_META_KEY, project_id))
++    return cur.rowcount > 0
+ 
+ 
+ # --- Active-project pointer + discovery policy (project_meta KV) --------------
+@@ -397,7 +401,11 @@ def set_active(conn: sqlite3.Connection, project_id: Optional[str]) -> None:
+ 
+ 
+ def get_active_id(conn: sqlite3.Connection) -> Optional[str]:
+-    return _get_meta(conn, _ACTIVE_META_KEY)
++    """The active project, or None when the pointer names a project that no longer exists (a pointer left by an older delete)."""
++    active = _get_meta(conn, _ACTIVE_META_KEY)
++    if active is not None and conn.execute("SELECT 1 FROM projects WHERE id = ?", (active,)).fetchone() is None:
++        return None
++    return active
+ 
+ 
+ def get_discovery_policy_key(conn: sqlite3.Connection) -> Optional[str]:
+diff --git a/tui_gateway/methods_session.py b/tui_gateway/methods_session.py
+index 5b1ca47904..5e2cc76d63 100644
+--- a/tui_gateway/methods_session.py
++++ b/tui_gateway/methods_session.py
+@@ -1108,6 +1108,10 @@ def _(rid, params: dict) -> dict:
+         live_sid, live = next(
+             ((sid, sess) for sid, sess in list(_sessions.items()) if sess.get("session_key") == target), ("", None))
+     # The live session's profile decides (as _set_session_cwd below does); an ssh workspace is never host-validated.
++    # Refused while a turn runs, like session.cwd.set: the running agent's tools and frozen policy would change under it.
++    # The Desktop maps data.reason == "session_busy" to its "wait for the turn to finish" message.
++    if live is not None and live.get("running"):
++        return _err(rid, 4009, "session busy", {"reason": "session_busy"})
+     home = live.get("profile_home") if live is not None else _profile_home(params.get("profile"))
+     try:
+         target_cwd = _workspace_cwd(home, translate_cwd_for_wsl_backend(raw))
