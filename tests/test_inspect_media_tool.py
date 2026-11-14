@@ -979,7 +979,7 @@ def test_inspect_media_can_create_confined_video_clip(tmp_path: Path):
     assert result["output_path"] == "/workspace/clip.mp4"
     assert result["timestamp_path"] == "/workspace/timestamp.txt"
     assert (tmp_path / "clip.mp4").stat().st_size > 0
-    assert (tmp_path / "timestamp.txt").read_text() == "00:00:00 - 00:00:01\n"
+    assert (tmp_path / "timestamp.txt").read_text(encoding="utf-8") == "00:00:00 - 00:00:01\n"
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="ffmpeg required")
@@ -1079,7 +1079,7 @@ def test_inspect_media_can_concatenate_video_segments(tmp_path: Path):
         "-of", "default=noprint_wrappers=1:nokey=1", str(tmp_path / "combined.mp4"),
     ], text=True))
     assert duration == pytest.approx(2.0, abs=0.25)
-    assert (tmp_path / "ranges.txt").read_text() == (
+    assert (tmp_path / "ranges.txt").read_text(encoding="utf-8") == (
         "00:00:00 - 00:00:01\n00:00:02 - 00:00:03\n"
     )
 
@@ -1805,7 +1805,7 @@ def test_transcribe_media_can_write_structured_jsonl_directly(tmp_path: Path, mo
 
     assert result["exit_code"] == 0
     assert result["format"] == "jsonl"
-    rows = [json.loads(line) for line in (tmp_path / "subtitles.jsonl").read_text().splitlines()]
+    rows = [json.loads(line) for line in (tmp_path / "subtitles.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows == [
         {"start": 0.0, "end": 1.2, "text": "嗨，朋友们"},
         {"start": 1.2, "end": 2.1, "text": "第二行"},

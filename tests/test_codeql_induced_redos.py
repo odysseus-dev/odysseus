@@ -84,7 +84,7 @@ def test_subject_capture_preserves_optional_formatting_and_whitespace():
 
 def _regex_literals(path):
     root = Path(__file__).resolve().parents[1]
-    tree = ast.parse((root / path).read_text())
+    tree = ast.parse((root / path).read_text(encoding="utf-8"))
     return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
 
 
