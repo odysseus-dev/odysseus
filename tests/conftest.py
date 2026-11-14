@@ -189,6 +189,7 @@ def _serve_test_static():
     import os
     import threading
     import http.server
+    import socket
     import socketserver
     from pathlib import Path
 
@@ -210,6 +211,8 @@ def _serve_test_static():
 
     class _Server(socketserver.ThreadingTCPServer):
         allow_reuse_address = daemon_threads = True
+        # Snapshot interception fetches many stylesheets concurrently.
+        request_queue_size = socket.SOMAXCONN
 
     requested = int(os.environ.get("ODYSSEUS_TEST_STATIC_PORT") or 0)
     if not 0 <= requested <= 65535:
