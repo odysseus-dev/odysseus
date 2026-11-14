@@ -31,6 +31,9 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/peek.js'),
   path.join(JS, 'settings/oauthReturn.js'),
   path.join(JS, 'searchProviderIcons.js'),
+  // Pure data + a small string helper; no DOM or browser globals, so it loads
+  // as a real module rather than a stub.
+  path.join(JS, 'mcpPresets.js'),
 ]);
 
 const realModulesLoaded = new Set();
