@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.email_mime import decode_text_part as _decode_text_part
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
-from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR, EMAIL_SEARCH_MAX_TERMS
 try:
     from src.constants import SCHEDULED_EMAILS_DB
 except Exception:
@@ -2010,7 +2010,7 @@ def _list_emails_across_accounts(folder="INBOX", max_results=20,
     return results, errors
 
 
-def _email_search_terms(query: str) -> list[str]:
+def _email_search_terms(query: str, min_length: int = 2) -> list[str]:
     q = (query or "").strip()
     if not q:
         return []
@@ -2029,16 +2029,60 @@ def _email_search_terms(query: str) -> list[str]:
     seen: set[str] = set()
     for part in parts:
         part = part.strip().strip('"').strip()
-        if len(part) < 2:
+        if len(part) < min_length:
             continue
         key = part.lower()
         if key in seen:
             continue
         seen.add(key)
         out.append(part)
-        if len(out) >= 6:
+        if len(out) >= EMAIL_SEARCH_MAX_TERMS:
             break
     return out
+
+
+def _email_search_or_clauses(query: str) -> list[str]:
+    """Split standalone OR outside quoted text; preserve ordinary queries."""
+    q = str(query or "").strip()
+    clauses = []
+    start = token_start = 0
+    quoted = escaped = False
+    for index, char in enumerate(q + " "):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            quoted = not quoted
+        if char.isspace() and not quoted:
+            if q[token_start:index].upper() == "OR":
+                clause = q[start:token_start].strip()
+                if not clause:
+                    return [q]
+                clauses.append(clause)
+                start = index + 1
+            token_start = index + 1
+    last = q[start:].strip()
+    if quoted or not last or not clauses:
+        return [q]
+    return [*clauses, last]
+
+
+def _email_search_groups(query: str) -> list[list[str]]:
+    """AND within clauses, OR between them, sharing the existing term cap."""
+    clauses = _email_search_or_clauses(query)
+    groups = []
+    remaining = EMAIL_SEARCH_MAX_TERMS
+    for clause in clauses:
+        terms = _email_search_terms(clause, min_length=1 if len(clauses) > 1 else 2)[:remaining]
+        if terms:
+            groups.append(terms)
+            remaining -= len(terms)
+        if not remaining:
+            break
+    return groups
 
 
 def _account_key(account: str | None, owner: str = "") -> str:
@@ -2111,8 +2155,8 @@ def _imap_sent_date_criteria(start, end):
 def _indexed_search_emails(query, folders=None, max_results=20, account=None,
                            date_from=None, date_to=None) -> list[dict] | None:
     """Search the UI-maintained email header index before falling back to IMAP."""
-    terms = _email_search_terms(str(query or ""))
-    if not terms:
+    groups = _email_search_groups(str(query or ""))
+    if not groups:
         return []
     db_path = Path(SCHEDULED_EMAILS_DB)
     if not db_path.exists():
@@ -2172,14 +2216,17 @@ def _indexed_search_emails(query, folders=None, max_results=20, account=None,
             ]
             if not searchable:
                 return None
-            term_clauses = []
+            group_clauses = []
             query_params = list(params)
-            for term in terms:
-                like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-                term_clauses.append("(" + " OR ".join(
-                    f"{column} LIKE ? ESCAPE '\\'" for column in searchable
-                ) + ")")
-                query_params.extend([like] * len(searchable))
+            for terms in groups:
+                term_clauses = []
+                for term in terms:
+                    like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                    term_clauses.append("(" + " OR ".join(
+                        f"{column} LIKE ? ESCAPE '\\'" for column in searchable
+                    ) + ")")
+                    query_params.extend([like] * len(searchable))
+                group_clauses.append("(" + " AND ".join(term_clauses) + ")")
             rows = conn.execute(
                 f"""
                 SELECT account_key, folder, uid, message_id, subject, from_name,
@@ -2187,7 +2234,7 @@ def _indexed_search_emails(query, folders=None, max_results=20, account=None,
                        date_epoch
                 FROM email_message_index
                 WHERE owner=? AND {account_clause} {folder_clause} {date_clause}
-                  AND {' AND '.join(term_clauses)}
+                  AND ({' OR '.join(group_clauses)})
                 ORDER BY date_epoch DESC
                 LIMIT ?
                 """,
@@ -2266,14 +2313,26 @@ def _search_emails(query, folders=None, max_results=20, account=None,
                                      account=account, date_from=date_from, date_to=date_to)
     if indexed:
         return indexed
-    q = str(query).replace("\\", "\\\\").replace('"', '\\"')
     # MIME filenames live in Content-Disposition or Content-Type parameters.
     # Several providers omit those part headers from TEXT searches, so include
     # both explicitly. IMAP OR is binary, hence the nested expression.
-    search_cmd = (
-        f'(OR (OR (OR FROM "{q}" SUBJECT "{q}") TEXT "{q}") '
-        f'(OR HEADER Content-Disposition "{q}" HEADER Content-Type "{q}"))'
-    )
+    def text_key(term):
+        q = term.replace("\\", "\\\\").replace('"', '\\"')
+        return (
+            f'(OR (OR (OR FROM "{q}" SUBJECT "{q}") TEXT "{q}") '
+            f'(OR HEADER Content-Disposition "{q}" HEADER Content-Type "{q}"))'
+        )
+
+    if len(_email_search_or_clauses(str(query))) == 1:
+        search_cmd = text_key(str(query))
+    else:
+        groups = _email_search_groups(str(query))
+        if not groups:
+            return []
+        expressions = ["(" + " ".join(text_key(term) for term in terms) + ")" for terms in groups]
+        search_cmd = expressions[0]
+        for expression in expressions[1:]:
+            search_cmd = f"(OR {search_cmd} {expression})"
     search_cmd += _imap_sent_date_criteria(start, end)
     if folders is None:
         folders = ["INBOX", "Sent", "Archive"]
