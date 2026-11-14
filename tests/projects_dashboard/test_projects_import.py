@@ -116,3 +116,23 @@ def test_projects_db_is_read_and_backed_up_without_being_changed(tmp_path):
     copy = imp.backup_db(home, tmp_path / 'backups')
     assert sqlite3.connect(copy).execute('select name from projects').fetchall() == [('One',)]
     assert (home / 'projects.db').read_bytes() == before and imp.existing_from_db(tmp_path / 'nothing') == [] and imp.backup_db(tmp_path / 'nothing', tmp_path / 'b2') is None
+
+
+def test_a_named_current_folder_replaces_a_vanished_one_and_attaches_the_history_without_guessing(tmp_path):
+    f = folders(tmp_path)
+    live = tmp_path / 'live'
+    live.mkdir()
+    state = make_state(tmp_path, f)
+    legacy = {p['name']: p for p in imp.legacy_projects(state, {'gamma': str(live)})}
+    assert legacy['Gamma']['folder'] == str(live) and legacy['Gamma']['attach_history'] == [str(tmp_path / 'gone')]
+    assert imp.legacy_projects(state, {'gamma': str(tmp_path / 'not-a-dir')})[2]['folder'] is None      # an unreachable override is not accepted
+    calls = []
+
+    class Rpc:
+        def call(self, method, params=None):
+            calls.append((method, params))
+            return {'project': {'id': 'p1'}}
+
+    actions = [a for a in imp.plan(list(legacy.values()), []) if a['name'] == 'Gamma']
+    assert dict(imp.execute(actions, Rpc()))['Gamma'].startswith('created')
+    assert [m for m, _ in calls] == ['projects.create', 'projects.add_folder'] and calls[1][1] == {'id': 'p1', 'path': str(tmp_path / 'gone')}
