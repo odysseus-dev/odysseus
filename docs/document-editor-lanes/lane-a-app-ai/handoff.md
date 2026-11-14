@@ -84,7 +84,45 @@ Cumulative verifier result after this checkpoint:
 - Removal manifest: 13 declarations verified, 10 rewrites, 0 human-review exceptions, simulation clean, `passed: true`.
 - No export, graph, state-ownership, or port violations.
 
+## Checkpoint 3: liveStream
+
+Source: `frontend/src/features/documents/ui/aiUpdates/liveStream.js`
+
+Moved declarations:
+
+- `_streamDocId`
+- `_syncStreamDocChrome`
+- `streamDocOpen`
+- `_editAnimFrame`
+- `_animateDocEdit`
+- `_streamHlDebounce`
+- `streamDocDelta`
+- `streamDocFinalize`
+
+All eight bodies match `087e6c88`. `streamDocOpen` carries the three Class 2 rewrites already present on `f3a05c10`: `bumpNavigationGeneration()`, `registerDocument(...)`, and `setActiveDocId(...)`. The only Appendix A export is `streamDocFinalize`. `streamDocOpen` and `streamDocDelta` stay unexported and are published on `globalThis` with `_animateDocEdit` and `_syncStreamDocChrome`.
+
+Focused check:
+
+```bash
+node --test tests/documentLiveStream.test.mjs
+```
+
+The runner clears `NODE_TEST_CONTEXT` before spawning the behavior suite. A nested `node --test` otherwise skips the file and exits 0. The same runner fix is applied to the documentUpdate and version history wrappers.
+
+```bash
+node --test tests/documentLiveStream.test.mjs tests/documentUpdate.test.mjs tests/documentVersionHistory.test.mjs
+```
+
+That command passed: 3 runner tests. The live stream suite executed 17 behavior assertions.
+
+Cumulative verifier result after this checkpoint:
+
+- Overall `passed`: false.
+- Ledger: 565 total, 289 moved, 255 unmoved, 21 duplicate, 0 missing.
+- All 21 violations are `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` for the documentUpdate, versionHistory, and liveStream declarations still present in `static/js/document.js`.
+- Removal manifest: 21 declarations verified, 13 rewrites, 0 human-review exceptions, simulation clean, `passed: true`.
+- No export, graph, state-ownership, or port violations.
+
 ## Remaining Lane A modules
 
-1. `ui/aiUpdates/liveStream` (8 declarations)
-2. `ui/status/documentStatus` (22 declarations)
+1. `ui/status/documentStatus` (22 declarations)

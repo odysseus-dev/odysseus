@@ -15,7 +15,15 @@
     "loadVersionHistory",
     "previewVersion",
     "restoreVersion",
-    "toggleVersionHistory"
+    "toggleVersionHistory",
+    "_animateDocEdit",
+    "_editAnimFrame",
+    "_streamDocId",
+    "_streamHlDebounce",
+    "_syncStreamDocChrome",
+    "streamDocDelta",
+    "streamDocFinalize",
+    "streamDocOpen"
   ],
   "targetModules": {
     "_animationCancel": "ui/aiUpdates/documentUpdate",
@@ -30,13 +38,22 @@
     "loadVersionHistory": "ui/history/versionHistory",
     "previewVersion": "ui/history/versionHistory",
     "restoreVersion": "ui/history/versionHistory",
-    "toggleVersionHistory": "ui/history/versionHistory"
+    "toggleVersionHistory": "ui/history/versionHistory",
+    "_animateDocEdit": "ui/aiUpdates/liveStream",
+    "_editAnimFrame": "ui/aiUpdates/liveStream",
+    "_streamDocId": "ui/aiUpdates/liveStream",
+    "_streamHlDebounce": "ui/aiUpdates/liveStream",
+    "_syncStreamDocChrome": "ui/aiUpdates/liveStream",
+    "streamDocDelta": "ui/aiUpdates/liveStream",
+    "streamDocFinalize": "ui/aiUpdates/liveStream",
+    "streamDocOpen": "ui/aiUpdates/liveStream"
   },
   "destinationExports": [
     "_closeVersionPanel",
     "_historyOwnsView",
     "_versionHistory",
-    "toggleVersionHistory"
+    "toggleVersionHistory",
+    "streamDocFinalize"
   ],
   "addedImports": [
     "import \"./document/ui/aiUpdates/documentUpdate.js\";",
@@ -46,9 +63,12 @@
     "import { _closeVersionPanel, _historyOwnsView, _versionHistory, toggleVersionHistory } from \"./document/ui/history/versionHistory.js\";",
     "const loadVersionHistory = (...args) => globalThis.loadVersionHistory?.(...args);",
     "const previewVersion = (...args) => globalThis.previewVersion?.(...args);",
-    "const restoreVersion = (...args) => globalThis.restoreVersion?.(...args);"
+    "const restoreVersion = (...args) => globalThis.restoreVersion?.(...args);",
+    "import { streamDocFinalize } from \"./document/ui/aiUpdates/liveStream.js\";",
+    "const streamDocOpen = (...args) => globalThis.streamDocOpen?.(...args);",
+    "const streamDocDelta = (...args) => globalThis.streamDocDelta?.(...args);"
   ],
-  "description": "Lane A checkpoints: documentUpdate and versionHistory. Appendix A exports for documentUpdate are empty, so the monolith reaches those declarations through the globalThis bridge. Version history exports the four Appendix A names and bridges the three internal history operations. Do not delete the declarations from static/js/document.js in this lane.",
+  "description": "Lane A checkpoints: documentUpdate, versionHistory, and liveStream. Appendix A exports for documentUpdate are empty, so the monolith reaches those declarations through the globalThis bridge. Version history exports its four Appendix A names. Live stream exports streamDocFinalize and bridges streamDocOpen and streamDocDelta. Do not delete the declarations from static/js/document.js in this lane.",
   "intentionalNonVerbatimChanges": [
     {
       "declaration": "handleDocUpdate",
@@ -79,6 +99,24 @@
       "change": "Added export modifiers",
       "classification": "Class 1 export modifier rewrite",
       "justification": "These are the Appendix A exports for ui/history/versionHistory"
+    },
+    {
+      "declaration": "streamDocOpen",
+      "change": "Replaced ++_documentNavigationGeneration with bumpNavigationGeneration()",
+      "classification": "Class 2 state primitive update rewrite",
+      "justification": "Only application/documentState may update _documentNavigationGeneration"
+    },
+    {
+      "declaration": "streamDocOpen",
+      "change": "Replaced docs.set(...) with registerDocument(...)",
+      "classification": "Class 2 state collection mutation rewrite",
+      "justification": "Only application/documentState may mutate the docs Map"
+    },
+    {
+      "declaration": "streamDocOpen",
+      "change": "Replaced activeDocId assignment with setActiveDocId(...)",
+      "classification": "Class 2 state primitive assignment rewrite",
+      "justification": "Only application/documentState may assign activeDocId"
     }
   ],
   "modules": [
@@ -106,7 +144,18 @@
     },
     {
       "module": "ui/aiUpdates/liveStream",
-      "status": "pending"
+      "source": "frontend/src/features/documents/ui/aiUpdates/liveStream.js",
+      "declarations": [
+        "_animateDocEdit",
+        "_editAnimFrame",
+        "_streamDocId",
+        "_streamHlDebounce",
+        "_syncStreamDocChrome",
+        "streamDocDelta",
+        "streamDocFinalize",
+        "streamDocOpen"
+      ],
+      "status": "extracted"
     },
     {
       "module": "ui/status/documentStatus",
