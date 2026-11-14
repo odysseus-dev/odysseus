@@ -86,9 +86,11 @@ def _write_file_digest(execution_input: str, path: str) -> str:
     except (TypeError, ValueError):
         return ""
     body = args.get("content") if isinstance(args, dict) else None
-    if not isinstance(body, str) or os.linesep != "\n":
+    if not isinstance(body, str):
         return ""
-    return hashlib.sha256(_unwrap_fenced_source_body(body, path).encode("utf-8")).hexdigest()
+    # WriteFileTool commits in text mode, so every "\n" lands as os.linesep.
+    text = _unwrap_fenced_source_body(body, path).replace("\n", os.linesep)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _pre_state_text(resource: Any, *, newline: str | None) -> str | None:
