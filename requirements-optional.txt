@@ -14,6 +14,8 @@ onnxruntime>=1.20,<2
 # Optional extra: install `torch` too if you have a CUDA GPU and want
 # GPU-accelerated transcription — it's auto-detected, CPU is used otherwise.
 faster-whisper
+# faster-whisper <=1.2.1 calls av.open(metadata_errors=...), removed in PyAV 18.
+av<18
 
 # Local text-to-speech via Kokoro-82M for the "local" TTS provider.
 # Kokoro 0.9.4 declares Python >=3.10,<3.13; Odysseus itself requires 3.11+,
