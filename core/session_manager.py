@@ -729,12 +729,35 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     def get_sessions_for_user(self, username: Optional[str] = None) -> Dict[str, Session]:
-        """Return sessions for a specific user (or all if username is None)."""
+        """Discover saved sessions and reconcile the owner's cached listing."""
         if username is None:
             return self.sessions
+
+        db = SessionLocal()
+        try:
+            rows = db.query(DbSession).filter(
+                DbSession.owner == username,
+                DbSession.archived == False,
+            ).all()
+
+            valid_ids = {row.id for row in rows}
+
+            for sid, session in list(self.sessions.items()):
+                if session.owner == username and sid not in valid_ids:
+                    self.sessions.pop(sid, None)
+
+            for row in rows:
+                if row.id not in self.sessions:
+                    session = self._db_to_session_meta(row)
+                    if session is not None:
+                        self.sessions[row.id] = session
+        finally:
+            db.close()
+
         return {
-            sid: s for sid, s in self.sessions.items()
-            if s.owner == username
+            sid: session
+            for sid, session in self.sessions.items()
+            if session.owner == username and not session.archived
         }
 
     def save_sessions(self):

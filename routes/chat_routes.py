@@ -3437,6 +3437,10 @@ def setup_chat_routes(
         ):
             _search_enabled = True
             allow_web_search = "true"
+        # A saved-memory lookup is not an internet search.
+        # Preserve web restrictions for explicit or mixed web requests.
+        if _tool_intent and _tool_intent.category == "memory":
+            _explicit_web_intent = False
         if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
             disabled_tools.update(WEB_TOOL_NAMES)
             if not _explicit_browser_intent:
