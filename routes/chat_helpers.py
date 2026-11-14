@@ -29,6 +29,30 @@ logger = logging.getLogger(__name__)
 _INVISIBLE_RESPONSE_CHARS = "\u2063\u200b\u200c\u200d\ufeff"
 
 
+def _replay_tool_history_supported(sess) -> bool:
+    """Whether this endpoint can receive replayed historical tool calls.
+
+    Gemini requires the opaque ``thought_signature`` returned with each native
+    function call to be echoed back on the next turn. Odysseus only replays it
+    inside the live turn; it is not persisted in ``metadata["tool_events"]``, so
+    historical calls would be unsigned and can 400 (see #6506). Keep Gemini on
+    the plain text history until signatures are persisted.
+
+    ``ODYSSEUS_REPLAY_TOOL_HISTORY=0`` disables replay for every provider.
+    """
+    if os.getenv("ODYSSEUS_REPLAY_TOOL_HISTORY", "1").strip().lower() in {
+        "0", "false", "off", "no",
+    }:
+        return False
+    model = str(getattr(sess, "model", "") or "").strip().lower()
+    if "gemini" in model:
+        return False
+    url = str(getattr(sess, "endpoint_url", "") or "").strip().lower()
+    if "generativelanguage.googleapis.com" in url or "googleapis.com" in url:
+        return False
+    return True
+
+
 def youtube_prefetch_sources(message: str, transcripts: list) -> list[dict[str, str]]:
     """Expose successful automatic YouTube acquisition as answer provenance."""
     evidence = "\n".join(str(item or "") for item in transcripts)
@@ -1335,7 +1359,13 @@ async def build_chat_context(
     # Build messages. In Nobody/incognito mode, never read saved session
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
-    messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+    messages = preface + (
+        _incognito_messages(session_id)
+        if incognito
+        else sess.get_llm_messages(
+            include_tool_calls=_replay_tool_history_supported(sess)
+        )
+    )
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
