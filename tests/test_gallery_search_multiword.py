@@ -128,8 +128,10 @@ def test_gallery_tag_filter_escapes_wildcards(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     client = _client_with_gallery(monkeypatch, tmp_path)
 
-    # Unescaped, "%" / "_" match every row; escaped, only literal matches.
+    # A pill selects a complete tag: neither "%" nor "_" is a tag here.
     assert client.get("/api/gallery/library", params={"tag": "%"}).json()["items"] == []
+    assert client.get("/api/gallery/library", params={"tag": "_"}).json()["items"] == []
 
-    body = client.get("/api/gallery/library", params={"tag": "_"}).json()
+    # The complete literal tag still matches, including its underscore.
+    body = client.get("/api/gallery/library", params={"tag": "sale_2024"}).json()
     assert {item["id"] for item in body["items"]} == {"img-percent"}
