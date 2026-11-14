@@ -48,6 +48,7 @@ from src.path_confinement import confine
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
+from src.email_recipients import envelope_recipients as _envelope_recipients
 
 from .email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -1547,20 +1548,6 @@ def _normalize_addr_field(field: str) -> str:
     parts = [p.strip() for p in field.split(",")]
     parts = [p for p in parts if p]
     return ", ".join(parts)
-
-
-def _envelope_recipients(*fields: str) -> list:
-    """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
-    strings. A naive `field.split(",")` corrupts display names that contain a
-    comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
-    it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
-    email.utils.getaddresses parses the address grammar correctly."""
-    out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
-        addr = (addr or "").strip()
-        if addr:
-            out.append(addr)
-    return out
 
 
 _MD_LINK_URL_RE = re.compile(r"\((https?://)[^)\s]*")

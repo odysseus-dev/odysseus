@@ -12,7 +12,7 @@ import spinnerModule from '../spinner.js';
 import { topPortalZ } from '../toolWindowZOrder.js';
 import { showToast } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';
-import { _esc, _extractName } from './utils.js';
+import { _esc, _extractName, _splitRecipientList } from './utils.js';
 import { _snapEmailModalToLeftSidebar, _translateEmail } from './index.js';
 
 const API_BASE = window.location.origin;
@@ -216,7 +216,7 @@ export function _hasMultipleRecipients(data) {
   const myAddress = (window._myEmailAddress || '').toLowerCase();
   const extractEmails = (str) => {
     if (!str) return [];
-    return str.split(',')
+    return _splitRecipientList(str)
       .map(s => {
         const m = s.match(/<([^>]+)>/);
         return (m ? m[1] : s).trim().toLowerCase();
