@@ -1,33 +1,49 @@
 // static/js/document.js
 /**
- * Document editor module — multi-document tabbed panel alongside chat.
+ * Document editor module: multi-document tabbed panel alongside chat.
  * Supports multiple open documents with tab switching, per-doc state,
  * and theme-aware styling.
  */
 
-
 import uiModule from './ui.js?v=20260916largetoolscroll1';
+
 import sessionModule from './sessions.js';
+
 import emojiPicker from './emojiPicker.js';
+
 import { readEmailReplyResponse } from './emailReplyStream.js';
+
 import markdownModule from './markdown.js';
+
 import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
+
 import { langIcon } from './langIcons.js?v=20260831richtexttools91';
+
 import spinnerModule from './spinner.js';
+
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js?v=20260911librarybulkdelete1';
+
 import signatureModule from './signature.js';
+
 import * as Modals from './modalManager.js';
+
 import { bindMenuDismiss, dismissOrRemove, dismissTopMenu } from './escMenuStack.js';
+
 import { topPortalZ } from './toolWindowZOrder.js';
+
 import { getDocumentStats } from './documentStats.js?v=20260831richtexttools91';
+
 import { parseMarkdownOutline } from './documentOutline.js?v=20260831richtexttools91';
+
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
+
 import {
   _openFindBar,
   applyFindMarks,
   initFindReplace,
   onFindTextareaScroll,
 } from './document/ui/findReplace.js';
+
 import {
   diffLines,
   enterDiffMode,
@@ -36,11 +52,13 @@ import {
   initDiffViewer,
   _diffModeActive,
 } from './document/ui/diffViewer.js';
+
 import {
   initExportDocx,
   showExportMenu,
   _importFromDevice,
 } from './document/ui/exportDocx.js';
+
 import {
   initPreviewModes,
   _setMarkdownPreviewActive,
@@ -58,6 +76,7 @@ import {
   toggleHtmlPreview,
   exitHtmlPreview,
 } from './document/ui/previewModes.js';
+
 import {
   _isFormBackedDoc,
   _downloadFilledPdf,
@@ -76,12 +95,14 @@ import {
   _pdfViewState,
   initPdfTools,
 } from './document/ui/pdfTools.js';
+
 import {
   initSuggestions,
   handleDocSuggestions,
   suspendSuggestions,
   _restoreSuggestionsFromStorage,
 } from './document/ui/suggestions.js';
+
 import {
   _richSelectionCell,
   _focusRichTableCell,
@@ -91,24 +112,51 @@ import {
   _applyRichTableAction,
   initRichTables,
 } from './document/ui/richTables.js';
+
 import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from './document/domain/documentKinds.js';
+
 import { _ATTACH_RE, _accountCanSend, _buildEmailContent, _buildEmailContentFromFields, _decodeBase64EmailWrapper, _emailQuoteMarkerMatch, _looksLikeWrappedEmailContent, _parseEmailHeader } from './document/domain/emailMessage.js';
+
 import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH_SLASH_COMMANDS, _isRichInlineCodeMarker, _normalizeRichLinkUrl } from './document/domain/richTextRules.js';
+
 import { API_BASE, isOpen, _deletedDocIds, _inFlightDeletes, _closingDocs, _documentNavigationGeneration, activeDocId, _lastSessionId, docs, _minimizedDocId, isPanelOpen, setApiBase, setActiveDocId, setLastSessionId, bumpNavigationGeneration, setPanelOpen, setMinimizedDocId, registerDocument, removeDocument, clearDocuments, markDeleted, beginDelete, endDelete, retainClosingDraft, releaseClosingDraft } from './document/application/documentState.js';
+
 import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClosePanel, switchToDoc as cmdSwitchToDoc, saveCurrentToMap as cmdSaveCurrentToMap, renderTabs as cmdRenderTabs, _syncDocIndicator as cmdSyncDocIndicator, _syncHeaderActions as cmdSyncHeaderActions, showEmptyState as cmdShowEmptyState, _showLoadingOverlay as cmdShowLoadingOverlay, _hideLoadingOverlay as cmdHideLoadingOverlay, _minimizeNotesForDocumentOpen as cmdMinimizeNotesForDocumentOpen, _ensureDocChipRegistered as cmdEnsureDocChipRegistered } from './document/application/documentCommands.js';
+
 import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, saveDocument, awaitWrites, runSerializedWrite, bindPersistenceHooks } from './document/application/persistence.js';
+
 import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs } from './document/application/documentSession.js';
+
 import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from './document/ui/editor/sourceEditor.js';
+
 import { _emailHtmlToPlainText, _emailPlainTextToHtml, _emailRichbodyActive, _richTextContentToHtml, _sanitizedRichTextHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from './document/ui/richEditor/richBodySync.js';
+
 import { _activeRichImage, _applyRichLineSpacing, _cleanRichTextPasteHtml, _handleRichChecklistEnter, _handleRichHeadingEnter, _insertSmartRichPasteLink, _normalizeRichChecklists, _normalizeRichInlineCode, _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage, _setRichChecklistItemChecked, _toggleRichChecklist, _toggleRichInlineCode } from './document/ui/richEditor/richOperations.js';
+
 import { _clearRichImageSelection, _deleteRichImage, _insertRichTextImages, _normalizeRichTextImages, _replaceRichImage, _replaceRichImageFigure, _richImageInsertRange, _selectRichImage } from './document/ui/richEditor/imageOps.js';
+
 import { _applyRichImageAction, _editRichImageAlt, _editRichImageCaption, _removeRichLink, _restoreRichLinkRange, _richLinkAtRange, _wysiwygInsertLink } from './document/ui/richEditor/links.js';
+
 import { _currentBlockTag, _normalizedRichMenuColor, _richMenuColorHex, _richSelectionHasFormatting, _saveFormatSelection, applyMdFormat } from './document/ui/richEditor/formatting.js';
+
 import { _richDropdownCurrentActions, _showMdDropdown } from './document/ui/richEditor/formatMenus.js';
+
 import { _applyRichBlockInputRule, _chooseRichSlashCommand, _hideRichSlashMenu, _renderRichSlashMenu, _richSlashActiveIndex, _richSlashContext, _richSlashMenu, _syncRichSlashMenu } from './document/ui/richEditor/slashMenu.js';
+
 import { _showRichImageSourceMenu } from './document/ui/richEditor/imageMenus.js';
+
 import { _followRichSelectionToolbarLayout, _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from './document/ui/richEditor/selectionToolbar.js';
+
 import { _showRichTextEditor, _wireEmailRichbody } from './document/ui/richEditor/richBodyWiring.js';
+import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _emailFieldsWithLocalDraft, _emailLocalDraftDebounce, _persistEmailLocalDraftNow, _persistEmailLocalDraftSoon, _sanitizeOutgoingEmailBody } from './document/ui/email/localDraft.js';
+import { _wireRecipientAutocomplete } from './document/ui/email/recipients.js';
+import { _captureEmailBodyFocusState, _emailBodyToHtml, _emailReplyOwnText, _emailStreamAnimFrame, _emailStreamRenderedBody, _emailStreamTargetBody, _focusEmailBodyEnd, _renderStreamingEmailBody, _restoreEmailBodyFocusState, _setEmailBodyText, _splitEmailReplyQuote } from './document/ui/email/emailBody.js';
+import { _showDocAiReplyChoice } from './document/ui/email/aiReply.js';
+import { _discardEmail, _markUnreadAndClose, _saveDraft, _scheduleSend, _sendEmail } from './document/ui/email/sendWorkflow.js';
+import { _handleAttachUpload, _renderComposeAttachments, _showComposeAttachMenu, _stageForwardedSourceAttachments, _uploadComposeFiles } from './document/ui/email/attachments.js';
+import { _sendSignedReply } from './document/ui/email/signedReply.js';
+import { _hideEmailFields, _maybeAutoCollapseEmailHeader, _setEmailHeaderCollapsed, _showEmailFields, _syncEmailHeaderSummary, _syncStreamingEmailFields } from './document/ui/email/composerFields.js';
+import './document/ui/email/emailDocuments.js';
 
 if (typeof globalThis !== 'undefined') {
   globalThis.markdownModule = markdownModule;
@@ -143,6 +191,33 @@ if (typeof globalThis !== 'undefined') {
   globalThis.updateRichSelectionState = updateRichSelectionState;
   globalThis._uploadMarkdownImages = _uploadMarkdownImages;
   globalThis._persistEmailLocalDraftSoon = _persistEmailLocalDraftSoon;
+
+  // Email workflow & documents bridge
+  globalThis.openEmailDraft = (...args) => globalThis.openEmailDraft?.(...args);
+  globalThis.replaceEmailReplyBody = (...args) => globalThis.replaceEmailReplyBody?.(...args);
+  globalThis.ensureEmailDraftEnvelope = (...args) => globalThis.ensureEmailDraftEnvelope?.(...args);
+  globalThis.getActiveEmailComposerContext = (...args) => globalThis.getActiveEmailComposerContext?.(...args);
+  globalThis.findEmailDocId = (...args) => globalThis.findEmailDocId?.(...args);
+  globalThis.focusEmailReplyBody = (...args) => globalThis.focusEmailReplyBody?.(...args);
+  globalThis.generateEmailReply = (...args) => globalThis.generateEmailReply?.(...args);
+
+  // Bridges for functions called by email modules from monolith
+  globalThis.loadDocument = loadDocument;
+  globalThis.injectFreshDoc = injectFreshDoc;
+  globalThis.addDocToTabs = addDocToTabs;
+  globalThis._autoCreateSession = _autoCreateSession;
+  globalThis._closeWithoutDeleting = _closeWithoutDeleting;
+  globalThis._cancelAutoSave = _cancelAutoSave;
+  globalThis._visibleDocIdsForCurrentSession = _visibleDocIdsForCurrentSession;
+  globalThis._emailRichbodyActive = _emailRichbodyActive;
+  globalThis._emailPlainTextToHtml = _emailPlainTextToHtml;
+  globalThis._emailHtmlToPlainText = _emailHtmlToPlainText;
+  globalThis.syncHighlighting = syncHighlighting;
+  globalThis.readEmailReplyResponse = readEmailReplyResponse;
+  globalThis.dismissOrRemove = dismissOrRemove;
+  globalThis._hideRichSelectionToolbar = _hideRichSelectionToolbar;
+  globalThis._hideRichSlashMenu = _hideRichSlashMenu;
+  globalThis._wireEmailRichbody = _wireEmailRichbody;
   Object.defineProperty(globalThis, '_selections', {
     get: () => _selections,
     set: (v) => { _selections = v; },
@@ -150,78 +225,22 @@ if (typeof globalThis !== 'undefined') {
   });
 }
 
+let _hasMountedPanel = false;
 
+let _isEditingTabTitle = false;
 
-      // The initial pane mount happens while the startup/session layout is still
-  // settling. Animating that first flex insertion makes the whole workspace
-  // appear to overshoot. Later restores are safe to animate.
-  let _hasMountedPanel = false;
-  let _isEditingTabTitle = false;
-  let _disposePdfTools = null;
-  let _animationCancel = null;      // function to cancel current animation
-  // _htmlPreviewActive is managed in ./document/ui/previewModes.js
-  let _emailAccountsCache = null;
-  let _emailAccountsCacheAt = 0;
-  let _emailHeaderManualExpandUntil = 0;
-  let _emailStreamAnimFrame = null;
-  let _emailStreamRenderedBody = '';
-  let _emailStreamTargetBody = '';
-  let _emailLocalDraftDebounce = null;
-  const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
+let _disposePdfTools = null;
 
-  // Diff mode state is managed in ./document/ui/diffViewer.js
+let _animationCancel = null;
 
-  // Language auto-detection config
-
-  // Languages rendered in the sandboxed preview iframe. SVG and XML markup
-  // render as inline content in an HTML document, so they share the HTML
-  // "Run / Preview" path. (hljs maps detected `xml` → `html` already; this also
-  // covers the doc being explicitly typed svg/xml.)
-        // Languages that get the segmented Code / Run-or-View toggle in the toolbar
-  // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
-  // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
-  // the iframe preview.
-
-  async function _getEmailAccountsCached() {
-    const now = Date.now();
-    if (_emailAccountsCache && (now - _emailAccountsCacheAt) < 30000) return _emailAccountsCache;
-    try {
-      const res = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('accounts failed');
-      const data = await res.json();
-      _emailAccountsCache = Array.isArray(data.accounts) ? data.accounts : [];
-    } catch (_) {
-      _emailAccountsCache = [];
-    }
-    _emailAccountsCacheAt = now;
-    return _emailAccountsCache;
-  }
-
-
-  async function _resolveComposeSendAccountId() {
-    const activeAccountId = window.__odysseusActiveEmailAccount || null;
-    if (!activeAccountId) return null;
-    const accounts = await _getEmailAccountsCached();
-    const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
-    if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
-    if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
-    return null;
-  }
-
-  // Inject tab menu styles immediately (must exist before any hover)
-  {
+{
     const s = document.createElement('style');
     s.id = 'doc-tab-menu-styles';
     s.textContent = `.doc-tab-menu-btn{background:none!important;border:none!important;outline:none!important;box-shadow:none!important;color:var(--fg);opacity:0.25;cursor:pointer;padding:2px 4px!important;height:auto!important;line-height:1;transition:opacity .15s;flex-shrink:0;-webkit-appearance:none;appearance:none}.doc-tab-menu-btn:focus,.doc-tab-menu-btn:active{outline:none!important;box-shadow:none!important;background:none!important}.doc-tab:hover .doc-tab-menu-btn{opacity:.5}.doc-tab-menu-btn:hover{opacity:1!important}.doc-tab-dropdown .dropdown-item-compact{padding:6px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;border-bottom:none;display:flex;align-items:center;gap:10px;font-size:11px}.doc-tab-dropdown .dropdown-item-compact:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}.doc-tab-dropdown .dropdown-item-compact .dropdown-icon{width:14px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0.5}.doc-tab-dropdown .dropdown-divider{height:1px;margin:3px 0;background:color-mix(in srgb,var(--border) 40%,transparent)}.doc-tab-action-delete{color:var(--red,#e06c75)!important}.doc-tab-action-delete .dropdown-icon{opacity:0.7!important}`;
     document.head.appendChild(s);
   }
 
-  // Multi-document state
-               // currently visible doc
-            // session context for "+" button
-             // docId -> { id, title, language, content, version, sessionId }
-
-  function _wireExportDocx() {
+function _wireExportDocx() {
     initExportDocx({
       getApiBase: () => API_BASE,
       getActiveDocId: () => activeDocId,
@@ -243,9 +262,10 @@ if (typeof globalThis !== 'undefined') {
       richTextContentToHtml: _richTextContentToHtml,
     });
   }
-  _wireExportDocx();
 
-  function _wirePreviewModes() {
+_wireExportDocx();
+
+function _wirePreviewModes() {
     initPreviewModes({
       getApiBase: () => API_BASE,
       getActiveDocId: () => activeDocId,
@@ -262,9 +282,10 @@ if (typeof globalThis !== 'undefined') {
       isDocxLang: _isDocxLang,
     });
   }
-  _wirePreviewModes();
 
-  function _wireDiffViewer() {
+_wirePreviewModes();
+
+function _wireDiffViewer() {
     initDiffViewer({
       saveDocument,
       syncHighlighting,
@@ -280,7 +301,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  function _wireSuggestions() {
+function _wireSuggestions() {
     initSuggestions({
       getActiveDocId: () => activeDocId,
       getDocs: () => docs,
@@ -308,7 +329,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  function _wirePdfTools() {
+function _wirePdfTools() {
     _disposePdfTools = initPdfTools({
       getApiBase: () => API_BASE,
       getActiveDocId: () => activeDocId,
@@ -322,7 +343,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  function _wireFindReplace() {
+function _wireFindReplace() {
     initFindReplace({
       isRichActive: _emailRichbodyActive,
       syncEmailRichbody: _syncEmailRichbody,
@@ -330,13 +351,16 @@ if (typeof globalThis !== 'undefined') {
       replaceRange: _replaceRange,
     });
   }
-  let _emailSendInFlight = false;
-  let _emailAiReplyGeneration = 0;
-  let _docStatsFrame = 0;
-  let _docOutlineMenu = null;
-  let _docOutlineClose = null;  let _docHistoryStateFrame = 0;
 
-  function _renderDocumentSaveState() {
+let _docStatsFrame = 0;
+
+let _docOutlineMenu = null;
+
+let _docOutlineClose = null;
+
+let _docHistoryStateFrame = 0;
+
+function _renderDocumentSaveState() {
     const status = document.getElementById('doc-footer-copy-btn');
     if (!status) return;
     const doc = activeDocId && (docs.get(activeDocId) || _closingDocs.get(activeDocId));
@@ -349,7 +373,7 @@ if (typeof globalThis !== 'undefined') {
     if (label) label.textContent = meta.label;
   }
 
-  function _syncEditorPlaceholder() {
+function _syncEditorPlaceholder() {
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
     const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
@@ -372,7 +396,7 @@ if (typeof globalThis !== 'undefined') {
     textarea.placeholder = placeholders[lang] || `Write ${lang} code...`;
   }
 
-  function _setDocumentHistoryControlState(undoAvailable, redoAvailable) {
+function _setDocumentHistoryControlState(undoAvailable, redoAvailable) {
     const undo = document.getElementById('doc-undo-btn');
     const redo = document.getElementById('doc-redo-btn');
     if (undo) {
@@ -385,7 +409,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  function _syncDocumentHistoryControlsNow() {
+function _syncDocumentHistoryControlsNow() {
     if (_docHistoryStateFrame) cancelAnimationFrame(_docHistoryStateFrame);
     _docHistoryStateFrame = 0;
     const pdfPane = document.getElementById('doc-pdf-view');
@@ -402,19 +426,19 @@ if (typeof globalThis !== 'undefined') {
     _setDocumentHistoryControlState(canUndo, canRedo);
   }
 
-  function _scheduleDocumentHistoryControls() {
+function _scheduleDocumentHistoryControls() {
     if (_docHistoryStateFrame) return;
     _docHistoryStateFrame = requestAnimationFrame(_syncDocumentHistoryControlsNow);
   }
 
-  function _normalizeRichStatsText(value) {
+function _normalizeRichStatsText(value) {
     return String(value ?? '')
       .replace(/\u00a0/gu, ' ')
       .replace(/\n{2,}/gu, '\n')
       .replace(/\n$/u, '');
   }
 
-  function _documentStatsSource() {
+function _documentStatsSource() {
     const rich = document.getElementById('doc-email-richbody');
     if (rich && rich.style.display !== 'none') {
       const fullText = _normalizeRichStatsText(rich.innerText || rich.textContent || '');
@@ -436,7 +460,7 @@ if (typeof globalThis !== 'undefined') {
     return { text: textarea.value || '', selected: false };
   }
 
-  function _renderDocumentStats() {
+function _renderDocumentStats() {
     _docStatsFrame = 0;
     const root = document.getElementById('doc-stats');
     if (!root) return;
@@ -469,17 +493,17 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  function _scheduleDocumentStats() {
+function _scheduleDocumentStats() {
     if (_docStatsFrame) cancelAnimationFrame(_docStatsFrame);
     _docStatsFrame = requestAnimationFrame(_renderDocumentStats);
   }
 
-  function _documentOutlineSupported() {
+function _documentOutlineSupported() {
     const language = _activeDocLanguage();
     return language === 'markdown' || _isRichTextLang(language);
   }
 
-  function _documentOutlineEntries() {
+function _documentOutlineEntries() {
     const doc = activeDocId && docs.get(activeDocId);
     if (!doc) return [];
     if (_isRichTextLang(doc.language)) {
@@ -510,7 +534,7 @@ if (typeof globalThis !== 'undefined') {
     return entries;
   }
 
-  function _flashOutlineTarget(element) {
+function _flashOutlineTarget(element) {
     if (!element) return;
     element.classList.remove('doc-outline-target');
     void element.offsetWidth;
@@ -518,7 +542,7 @@ if (typeof globalThis !== 'undefined') {
     setTimeout(() => element.classList.remove('doc-outline-target'), 1100);
   }
 
-  function _jumpToDocumentOutlineEntry(entry) {
+function _jumpToDocumentOutlineEntry(entry) {
     if (entry.node?.isConnected) {
       entry.node.scrollIntoView({ behavior: 'smooth', block: 'center' });
       _flashOutlineTarget(entry.node);
@@ -549,7 +573,7 @@ if (typeof globalThis !== 'undefined') {
     _flashOutlineTarget(document.getElementById('doc-editor-wrap'));
   }
 
-  function _renderDocumentOutlineMenu() {
+function _renderDocumentOutlineMenu() {
     const menu = _docOutlineMenu;
     if (!menu) return;
     const entries = _documentOutlineEntries();
@@ -581,7 +605,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  function _refreshDocumentOutline() {
+function _refreshDocumentOutline() {
     const anchor = document.getElementById('doc-outline-toolbar-btn');
     const hasEntries = _documentOutlineSupported() && _documentOutlineEntries().length > 0;
     if (anchor) anchor.style.display = hasEntries ? '' : 'none';
@@ -589,11 +613,11 @@ if (typeof globalThis !== 'undefined') {
     if (_docOutlineMenu) _renderDocumentOutlineMenu();
   }
 
-  function _closeDocumentOutline() {
+function _closeDocumentOutline() {
     if (_docOutlineClose) _docOutlineClose();
   }
 
-  function _openDocumentOutline() {
+function _openDocumentOutline() {
     const anchor = document.getElementById('doc-outline-toolbar-btn');
     if (!anchor || !_documentOutlineSupported()) return;
     if (_docOutlineMenu) {
@@ -657,16 +681,14 @@ if (typeof globalThis !== 'undefined') {
     });
     requestAnimationFrame(() => (menu.querySelector('.doc-outline-item') || menu).focus());
   }
-  function _rememberActiveDoc(docId) {
+
+function _rememberActiveDoc(docId) {
     const doc = docs.get(docId);
     const sessionId = doc?.sessionId || _lastSessionId || sessionModule?.getCurrentSessionId?.();
     if (sessionId && docId) localStorage.setItem(_docActiveKey(sessionId), docId);
   }
 
-  // Library opens are explicit navigation, not passive session restoration.
-  // Record that intent before selectSession() schedules its delayed doc restore
-  // so the restore cannot collapse the selected document into the bottom dock.
-  export function prepareDocumentOpen(sessionId) {
+export function prepareDocumentOpen(sessionId) {
     if (sessionId) _markDocVisibleState(sessionId, 'open');
     if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
       setMinimizedDocId(null);
@@ -674,7 +696,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  export function init(apiBase) {
+export function init(apiBase) {
     setApiBase(apiBase);
     _wirePreviewModes();
     _wireSuggestions();
@@ -712,8 +734,7 @@ if (typeof globalThis !== 'undefined') {
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
 
-  /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
-  function _syncDocIndicator() {
+function _syncDocIndicator() {
     const btn = document.getElementById('overflow-doc-btn');
     // Has docs = at least one non-empty doc in the map
     const hasDocs = docs.size > 0;
@@ -730,9 +751,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  // ---- Tab bar rendering ----
-
-  function updateArrowVisibility(scrollArea, leftBtn, rightBtn) {
+function updateArrowVisibility(scrollArea, leftBtn, rightBtn) {
     const atLeft = scrollArea.scrollLeft <= 0;
     const atRight = scrollArea.scrollLeft + scrollArea.clientWidth >= scrollArea.scrollWidth - 1;
     leftBtn.style.display = atLeft ? 'none' : '';
@@ -744,11 +763,7 @@ if (typeof globalThis !== 'undefined') {
     scrollArea.classList.toggle('is-at-right', atRight);
   }
 
-  // Mobile swipe-to-dismiss for the doc sheet. Mirrors the shared bottom-sheet
-  // gesture in ui.js (finger-following drag, velocity-based dismiss, rubber-band
-  // on up-drag, spring snap-back) so it feels identical to the other windows —
-  // but dismisses through the doc panel's own closePanel() lifecycle.
-  function _wireSwipeDismiss(el) {
+function _wireSwipeDismiss(el) {
     if (!el) return;
     const DISMISS_THRESHOLD = 50;    // px
     const VELOCITY_THRESHOLD = 0.3;  // px/ms — fast flick dismisses below threshold
@@ -808,7 +823,7 @@ if (typeof globalThis !== 'undefined') {
     el.addEventListener('touchcancel', endSwipe, { passive: true });
   }
 
-  function renderTabs() {
+function renderTabs() {
     if (_isEditingTabTitle) return;  // Don't rebuild while editing a title
     const tabBar = document.getElementById('doc-tab-bar');
     if (!tabBar) return;
@@ -1021,8 +1036,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  /** Start inline editing of a tab title */
-  function startTitleEdit(titleSpan, docId, doc) {
+function startTitleEdit(titleSpan, docId, doc) {
     if (_isEditingTabTitle) return;
     _isEditingTabTitle = true;
 
@@ -1072,8 +1086,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  /** Drag-to-reorder tabs */
-  function initTabDragReorder(tabBar) {
+function initTabDragReorder(tabBar) {
     let dragId = null;
 
     tabBar.querySelectorAll('.doc-tab').forEach(tab => {
@@ -1124,8 +1137,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  /** Show empty state when no documents exist yet */
-  function showEmptyState() {
+function showEmptyState() {
     setActiveDocId(null);
     _setDocumentHistoryControlState(false, false);
     const textarea = document.getElementById('doc-editor-textarea');
@@ -1142,8 +1154,9 @@ if (typeof globalThis !== 'undefined') {
     renderTabs();
   }
 
-  let _loadingSpinner = null;
-  function _showLoadingOverlay() {
+let _loadingSpinner = null;
+
+function _showLoadingOverlay() {
     const wrap = document.getElementById('doc-editor-wrap');
     if (!wrap) return;
     let overlay = wrap.querySelector('.doc-loading-overlay');
@@ -1160,16 +1173,13 @@ if (typeof globalThis !== 'undefined') {
     _loadingSpinner.start();
   }
 
-  function _hideLoadingOverlay() {
+function _hideLoadingOverlay() {
     if (_loadingSpinner) { _loadingSpinner.destroy(); _loadingSpinner = null; }
     const overlay = document.querySelector('.doc-loading-overlay');
     if (overlay) overlay.style.display = 'none';
   }
 
-  // Force the on-screen keyboard down on touch. Firefox mobile ignores a plain
-  // blur, so use the readonly trick (a readonly field shows no keyboard), then
-  // drop readonly so the user can type again.
-  function _dismissDocKb() {
+function _dismissDocKb() {
     if (!(('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0)) return;
     const ta = document.getElementById('doc-editor-textarea');
     const ae = document.activeElement;
@@ -1182,13 +1192,7 @@ if (typeof globalThis !== 'undefined') {
     } catch (_) { try { el.blur(); } catch (_) {} }
   }
 
-  // Hide the top header bar when nothing in it is visible. With Undo + the type
-  // picker moved to the footer, a plain doc on mobile would otherwise show an
-  // empty bar (the "second footer"). Reflow-free (reads inline display only) so
-  // it's safe to call from _syncHeaderActions on every stream patch. On desktop
-  // the bar always shows (it still hosts Fullscreen + the version badge); on
-  // mobile it shows only when a contextual control is active.
-  function _syncHeaderBarVisibility() {
+function _syncHeaderBarVisibility() {
     const hdr = document.getElementById('doc-editor-actions');
     if (!hdr) return;
     // Email docs hide the whole header (they use their own send footer) — never
@@ -1213,7 +1217,7 @@ if (typeof globalThis !== 'undefined') {
     hdr.style.display = visible ? '' : 'none';
   }
 
-  function _syncHeaderActions() {
+function _syncHeaderActions() {
     const actionBtn = document.getElementById('doc-header-preview-btn');
     const exportBtn = document.getElementById('doc-export-pdf-btn');
     const pdfViewBtn = document.getElementById('doc-pdf-view-btn');
@@ -1470,1115 +1474,12 @@ if (typeof globalThis !== 'undefined') {
     _syncHeaderBarVisibility();
   }
 
-  // ── Email document type helpers ──
-
-
-
-
-
-
-  function _sanitizeOutgoingEmailBody(raw) {
-    let text = String(raw || '').replace(/\r\n/g, '\n');
-    const trimmed = text.trim();
-    const decodedWhole = _decodeBase64EmailWrapper(trimmed);
-    if (decodedWhole) text = _parseEmailHeader(decodedWhole).body || '';
-    else if (_looksLikeWrappedEmailContent(trimmed)) text = _parseEmailHeader(trimmed).body || '';
-
-    const parts = text.split(/(\n{2,})/);
-    let changed = false;
-    const clean = parts.map(part => {
-      if (/^\n+$/.test(part)) return part;
-      const decoded = _decodeBase64EmailWrapper(part);
-      if (!decoded) return part;
-      changed = true;
-      return _parseEmailHeader(decoded).body || '';
-    }).join('');
-
-    if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {
-      const probe = document.createElement('template');
-      probe.innerHTML = text;
-      const plain = (probe.content.textContent || '').trim();
-      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;
-      if (plainClean !== plain) return plainClean;
-    }
-
-    return (changed ? clean : text)
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-  }
-
-  function _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo) {
-    const uid = String(sourceUid || '').trim();
-    if (!uid) return '';
-    const folder = String(sourceFolder || 'INBOX').trim() || 'INBOX';
-    const msg = String(inReplyTo || '').trim();
-    return _EMAIL_LOCAL_DRAFT_PREFIX + encodeURIComponent(`${folder}|${uid}|${msg}`);
-  }
-
-  function _loadEmailLocalDraft(fields) {
-    const key = _emailLocalDraftKey(fields?.sourceUid, fields?.sourceFolder, fields?.inReplyTo);
-    if (!key) return null;
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return null;
-      const draft = JSON.parse(raw);
-      if (!draft || typeof draft !== 'object') return null;
-      const updatedAt = Number(draft.updatedAt || 0);
-      if (updatedAt && Date.now() - updatedAt > 45 * 24 * 60 * 60 * 1000) {
-        localStorage.removeItem(key);
-        return null;
-      }
-      return draft;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function _emailFieldsWithLocalDraft(fields) {
-    const draft = _loadEmailLocalDraft(fields);
-    if (!draft) return fields;
-    const keepRealField = (draftValue, fieldValue) => {
-      const d = draftValue == null ? '' : String(draftValue);
-      return d.trim() ? d : (fieldValue || '');
-    };
-    return {
-      ...fields,
-      to: keepRealField(draft.to, fields.to),
-      cc: keepRealField(draft.cc, fields.cc),
-      bcc: keepRealField(draft.bcc, fields.bcc),
-      subject: keepRealField(draft.subject, fields.subject),
-      inReplyTo: keepRealField(draft.inReplyTo, fields.inReplyTo),
-      references: keepRealField(draft.references, fields.references),
-      sourceUid: keepRealField(draft.sourceUid, fields.sourceUid),
-      sourceFolder: keepRealField(draft.sourceFolder, fields.sourceFolder),
-      body: _sanitizeOutgoingEmailBody(draft.body ?? fields.body),
-    };
-  }
-
-  function _persistEmailLocalDraftNow() {
-    const doc = activeDocId && docs.get(activeDocId);
-    if (!doc || doc.language !== 'email') return;
-    const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';
-    const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';
-    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value || '';
-    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);
-    if (!key) return;
-    const rich = document.getElementById('doc-email-richbody');
-    const textarea = document.getElementById('doc-editor-textarea');
-    const body = (rich && rich.style.display !== 'none') ? rich.innerHTML : (textarea?.value || '');
-    const payload = {
-      to: document.getElementById('doc-email-to')?.value || '',
-      cc: document.getElementById('doc-email-cc')?.value || '',
-      bcc: document.getElementById('doc-email-bcc')?.value || '',
-      subject: document.getElementById('doc-email-subject')?.value || '',
-      inReplyTo,
-      references: document.getElementById('doc-email-references')?.value || '',
-      sourceUid,
-      sourceFolder,
-      body,
-      updatedAt: Date.now(),
-    };
-    try { localStorage.setItem(key, JSON.stringify(payload)); } catch (_) {}
-  }
-
-  function _persistEmailLocalDraftSoon() {
-    clearTimeout(_emailLocalDraftDebounce);
-    _emailLocalDraftDebounce = setTimeout(_persistEmailLocalDraftNow, 800);
-  }
-
-  function _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo) {
-    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);
-    if (!key) return;
-    try { localStorage.removeItem(key); } catch (_) {}
-  }
-
-  function _clearCurrentEmailLocalDraft() {
-    _clearEmailLocalDraft(
-      document.getElementById('doc-email-source-uid')?.value || '',
-      document.getElementById('doc-email-source-folder')?.value || 'INBOX',
-      document.getElementById('doc-email-in-reply-to')?.value || '',
-    );
-  }
-  function _emailBodyFragmentToHtml(text) {
-    const t = (text || '').trim();
-    if (!t) return '';
-    // If it already contains a formatting/structural HTML tag, it's a saved
-    // WYSIWYG body — sanitize it before rendering. (Checking a leading '<' isn't enough: a
-    // rich body often starts with plain text, e.g. "Hi <b>there</b>".)
-    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) {
-      return markdownModule.sanitizeAllowedHtml
-        ? markdownModule.sanitizeAllowedHtml(t)
-        : _emailPlainTextToHtml(t);
-    }
-    // Email body: keep author-typed `:shortcode:` text literal. Issue #345
-    // (shortcode → emoji) is scoped to chat; do not rewrite colons in mail.
-    try { return markdownModule.mdToHtml(text, { shortcodes: false }); }
-    catch (_) { return _emailPlainTextToHtml(text); }
-  }
-
-  function _emailBodyToHtml(text) {
-    const raw = String(text || '');
-    const marker = _emailQuoteMarkerMatch(raw);
-    if (!marker) {
-      const t = raw.trim();
-      if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) {
-        return markdownModule.sanitizeAllowedHtml
-          ? markdownModule.sanitizeAllowedHtml(t)
-          : _emailPlainTextToHtml(t);
-      }
-      return _emailBodyFragmentToHtml(raw);
-    }
-    const replyPart = raw.slice(0, marker.index);
-    const quotedPart = raw.slice(marker.index);
-    const quotedText = _emailHtmlToPlainText(quotedPart)
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    const replyHtml = _emailBodyFragmentToHtml(replyPart);
-    if (!quotedText) return replyHtml;
-    const firstQuoted = quotedText
-      .split(/\n\s*-{5,}\s*Previous message\s*-{5,}\s*\n/i)[0]
-      .trim();
-    const truncatedQuote = firstQuoted.length > 1800
-      ? `${firstQuoted.slice(0, 1800).replace(/\s+\S*$/, '').trim()}\n\n[Quoted thread truncated]`
-      : firstQuoted;
-    return `${replyHtml}<div class="email-quoted-history" contenteditable="false">${_emailPlainTextToHtml(truncatedQuote)}</div>`;
-  }  function _captureEmailBodyFocusState() {
-    const rich = _emailRichbodyActive();
-    const ta = document.getElementById('doc-editor-textarea');
-    const active = document.activeElement;
-    if (rich && (active === rich || rich.contains(active))) {
-      const sel = window.getSelection();
-      const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
-      return {
-        type: 'rich',
-        range: range && rich.contains(range.commonAncestorContainer) ? range.cloneRange() : null,
-      };
-    }
-    if (ta && active === ta) {
-      return {
-        type: 'textarea',
-        start: ta.selectionStart,
-        end: ta.selectionEnd,
-      };
-    }
-    return null;
-  }
-
-  function _restoreEmailBodyFocusState(state) {
-    if (!state) return;
-    requestAnimationFrame(() => {
-      if (state.type === 'rich') {
-        const rich = _emailRichbodyActive();
-        if (!rich) return;
-        rich.focus({ preventScroll: true });
-        if (state.range) {
-          const sel = window.getSelection();
-          if (sel) {
-            sel.removeAllRanges();
-            sel.addRange(state.range);
-          }
-        }
-      } else if (state.type === 'textarea') {
-        const ta = document.getElementById('doc-editor-textarea');
-        if (!ta) return;
-        ta.focus({ preventScroll: true });
-        if (Number.isFinite(state.start) && Number.isFinite(state.end)) {
-          try { ta.setSelectionRange(state.start, state.end); } catch (_) {}
-        }
-      }
-    });
-  }
-
-  function _renderStreamingEmailBody(body, { immediate = false } = {}) {
-    const rich = document.getElementById('doc-email-richbody');
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!rich) return;
-
-    _emailStreamTargetBody = body || '';
-    if (!_emailStreamRenderedBody && textarea && textarea.value) {
-      _emailStreamRenderedBody = textarea.value;
-    }
-
-    const applyBody = (value) => {
-      if (textarea) {
-        textarea.value = value;
-        textarea.scrollTop = textarea.scrollHeight;
-      }
-      rich.innerHTML = _emailBodyToHtml(value);
-      rich.scrollTop = rich.scrollHeight;
-    };
-
-    if (immediate) {
-      if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
-      _emailStreamAnimFrame = null;
-      _emailStreamRenderedBody = _emailStreamTargetBody;
-      applyBody(_emailStreamRenderedBody);
-      return;
-    }
-
-    if (_emailStreamTargetBody.length < _emailStreamRenderedBody.length ||
-        !_emailStreamTargetBody.startsWith(_emailStreamRenderedBody)) {
-      _emailStreamRenderedBody = '';
-    }
-
-    if (_emailStreamAnimFrame) return;
-    const tick = () => {
-      const remaining = _emailStreamTargetBody.length - _emailStreamRenderedBody.length;
-      if (remaining <= 0) {
-        _emailStreamAnimFrame = null;
-        return;
-      }
-      const step = Math.max(1, Math.min(8, Math.ceil(remaining / 18)));
-      _emailStreamRenderedBody = _emailStreamTargetBody.slice(0, _emailStreamRenderedBody.length + step);
-      applyBody(_emailStreamRenderedBody);
-      _emailStreamAnimFrame = requestAnimationFrame(tick);
-    };
-    _emailStreamAnimFrame = requestAnimationFrame(tick);
-  }
-
-  function _emailQuoteStartIndex(lines) {
-    for (let i = 0; i < lines.length; i++) {
-      const line = String(lines[i] || '').trim();
-      if (
-        /^[-_=–—\s]{3,}(previous|original|forwarded)\s+(message|email|mail)[-_=–—\s]{3,}$/i.test(line)
-        || /^On .+ wrote:\s*$/i.test(line)
-        || /^-{2,}\s*Original Message\s*-{2,}$/i.test(line)
-      ) {
-        return i;
-      }
-      // Some pasted/converted threads lose the separator and start directly
-      // with mail headers. Treat that as quoted history only when the nearby
-      // lines look like a real header block.
-      if (/^From:\s+\S/i.test(line)) {
-        const nearby = lines.slice(i + 1, i + 8).map(l => String(l || '').trim());
-        if (nearby.some(l => /^To:\s+/i.test(l)) || nearby.some(l => /^Subject:\s+/i.test(l))) {
-          return i;
-        }
-      }
-    }
-    return -1;
-  }
-
-  function _emailQuoteStartOffset(text) {
-    const original = String(text || '');
-    if (!original) return -1;
-    const boundary = String.raw`(?:^|\n|<br\s*\/?>|<\/(?:p|div|blockquote|li|tr|h[1-6])>)`;
-    const patterns = [
-      new RegExp(`${boundary}\\s*(?:[-_=–—\\s]|&nbsp;){3,}(?:previous|original|forwarded)\\s+(?:message|email|mail)(?:[-_=–—\\s]|&nbsp;){3,}`, 'i'),
-      new RegExp(`${boundary}\\s*On\\s+.{1,700}?\\s+wrote:\\s*`, 'i'),
-      new RegExp(`${boundary}\\s*-{2,}\\s*Original Message\\s*-{2,}`, 'i'),
-    ];
-    let best = -1;
-    for (const re of patterns) {
-      const m = re.exec(original);
-      if (!m) continue;
-      let idx = m.index;
-      const prefix = m[0].match(/^(?:\n|<br\s*\/?>|<\/(?:p|div|blockquote|li|tr|h[1-6])>)/i);
-      if (prefix) idx += prefix[0].length;
-      if (best < 0 || idx < best) best = idx;
-    }
-    const fromRe = new RegExp(`${boundary}\\s*From:\\s*\\S`, 'i');
-    const fromMatch = fromRe.exec(original);
-    if (fromMatch) {
-      let idx = fromMatch.index;
-      const prefix = fromMatch[0].match(/^(?:\n|<br\s*\/?>|<\/(?:p|div|blockquote|li|tr|h[1-6])>)/i);
-      if (prefix) idx += prefix[0].length;
-      const nearby = original.slice(idx, idx + 1200);
-      if (/(?:^|\n|<br\s*\/?>|<\/(?:p|div|blockquote|li|tr|h[1-6])>)\s*(?:To|Subject):\s*/i.test(nearby)) {
-        if (best < 0 || idx < best) best = idx;
-      }
-    }
-    return best;
-  }
-
-  function _splitEmailReplyQuote(text) {
-    const original = String(text || '');
-    if (!original) return { body: '', quote: '', stripped: false };
-    const literal = '---------- Previous message ----------';
-    const literalIdx = original.indexOf(literal);
-    if (literalIdx >= 0) {
-      return {
-        body: original.slice(0, literalIdx).trim(),
-        quote: original.slice(literalIdx).trim(),
-        stripped: true,
-      };
-    }
-    const htmlQuoteOffset = _emailQuoteStartOffset(original);
-    if (htmlQuoteOffset >= 0) {
-      const body = original.slice(0, htmlQuoteOffset).trim();
-      const quote = original.slice(htmlQuoteOffset).trim();
-      return { body, quote, stripped: true };
-    }
-    const lines = original.split('\n');
-    const quoteIdx = _emailQuoteStartIndex(lines);
-    if (quoteIdx < 0) return { body: original.trim(), quote: '', stripped: false };
-    const body = lines.slice(0, quoteIdx).join('\n').trim();
-    const quote = lines.slice(quoteIdx).join('\n').trim();
-    return { body, quote, stripped: true };
-  }
-
-  function _stripEmailReplyQuoteText(text) {
-    const split = _splitEmailReplyQuote(text);
-    return { body: split.body, stripped: split.stripped };
-  }
-
-  function _emailReplyOwnText(text) {
-    return _stripEmailReplyQuoteText(text).body;
-  }
-
-  function _setEmailBodyText(textarea, value) {
-    if (!textarea) return;
-    textarea.value = value || '';
-    syncHighlighting();
-    const rich = _emailRichbodyActive();
-    if (rich) rich.innerHTML = _emailBodyToHtml(textarea.value);
-    _persistEmailLocalDraftSoon();
-  }
-
-  async function _streamEmailBodyText(textarea, value) {
-    if (!textarea) return;
-    const finalText = String(value || '');
-    const maxFrames = 90;
-    const chunk = Math.max(8, Math.ceil(finalText.length / maxFrames));
-    textarea.value = '';
-    const rich = _emailRichbodyActive();
-    if (rich) rich.innerHTML = '';
-    for (let i = 0; i < finalText.length; i += chunk) {
-      const next = finalText.slice(0, i + chunk);
-      textarea.value = next;
-      if (rich) rich.innerHTML = _emailBodyToHtml(next);
-      _persistEmailLocalDraftSoon();
-      await new Promise(resolve => requestAnimationFrame(resolve));
-    }
-    _setEmailBodyText(textarea, finalText);
-  }
-
-  function _focusEmailBodyEnd() {
-    const target = _emailRichbodyActive() || document.getElementById('doc-editor-textarea');
-    if (!target) return;
-    target.focus();
-    if (target.isContentEditable) {
-      const range = document.createRange();
-      const quote = target.querySelector('.email-quoted-history');
-      if (quote) {
-        let slot = quote.previousElementSibling;
-        if (!slot || slot.classList.contains('email-quoted-history')) {
-          slot = document.createElement('div');
-          slot.className = 'email-reply-edit-slot';
-          slot.innerHTML = '<br>';
-          target.insertBefore(slot, quote);
-        }
-        range.selectNodeContents(slot);
-        range.collapse(false);
-      } else {
-        range.selectNodeContents(target);
-        range.collapse(false);
-      }
-      const sel = window.getSelection();
-      if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
-    } else if (typeof target.setSelectionRange === 'function') {
-      const len = target.value.length;
-      target.setSelectionRange(len, len);
-    }
-  }
-
-  // Mobile reply drafts should open with the user's writing area at the top,
-  // ready for input. Keep this separate from the desktop Tab-to-body behavior.
-  export function focusEmailReplyBody() {
-    if (window.innerWidth > 768) return false;
-    const rich = _emailRichbodyActive();
-    if (!rich) return false;
-    const quote = rich.querySelector('.email-quoted-history');
-    const replyBlock = quote?.previousElementSibling || rich.firstElementChild || rich;
-    try { rich.focus({ preventScroll: true }); } catch (_) { rich.focus(); }
-    const range = document.createRange();
-    if (replyBlock && replyBlock !== quote) range.selectNodeContents(replyBlock);
-    else range.selectNodeContents(rich);
-    range.collapse(true);
-    const selection = window.getSelection();
-    if (selection) {
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    rich.scrollTop = 0;
-    return true;
-  }
-
-  function _syncEmailHeaderSummary() {
-    const to = document.getElementById('doc-email-to')?.value?.trim() || 'No recipient';
-    const subject = document.getElementById('doc-email-subject')?.value?.trim() || 'No subject';
-    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
-    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
-    const summary = document.getElementById('doc-email-collapse-summary');
-    if (!summary) return;
-    const extras = [];
-    if (cc) extras.push('Cc');
-    if (bcc) extras.push('Bcc');
-    summary.textContent = `${to} · ${subject}${extras.length ? ` · ${extras.join('/')}` : ''}`;
-    summary.title = summary.textContent;
-  }
-
-  function _setEmailHeaderInputValue(id, value, { preserveFocused = true, preserveNonEmpty = false } = {}) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const next = value || '';
-    if (preserveFocused && document.activeElement === el) return;
-    if (preserveNonEmpty && !next && el.value) return;
-    if (el.value !== next) el.value = next;
-  }
-
-  function _setEmailHeaderCollapsed(collapsed, { manual = true } = {}) {
-    const header = document.getElementById('doc-email-header');
-    const btn = document.getElementById('doc-email-collapse-btn');
-    if (!header) return;
-    if (window.innerWidth > 768) collapsed = false;
-    header.classList.toggle('doc-email-header-collapsed', !!collapsed);
-    if (btn) {
-      btn.setAttribute('aria-expanded', String(!collapsed));
-      btn.title = collapsed ? 'Show email fields' : 'Hide email fields';
-    }
-    const doc = activeDocId && docs.get(activeDocId);
-    if (doc && manual) doc._emailHeaderCollapsed = !!collapsed;
-    if (manual && !collapsed) _emailHeaderManualExpandUntil = Date.now() + 1400;
-    _syncEmailHeaderSummary();
-  }
-
-  function _shouldAutoCollapseEmailHeader() {
-    return window.innerWidth <= 768;
-  }
-
-  function _maybeAutoCollapseEmailHeader() {
-    const doc = activeDocId && docs.get(activeDocId);
-    if (!doc || doc.language !== 'email') return;
-    if (Date.now() < _emailHeaderManualExpandUntil) return;
-    if (document.activeElement?.closest?.('#doc-email-fields')) return;
-    if (_shouldAutoCollapseEmailHeader()) _setEmailHeaderCollapsed(true, { manual: false });
-  }
-
-  function _showEmailFields(doc, { applyLocalDraft = true, forceHeaderFields = false } = {}) {
-    const emailHeader = document.getElementById('doc-email-header');
-    const emailActions = document.getElementById('doc-email-actions');
-    document.getElementById('doc-email-richbody')?.classList.remove('richtext-mode');
-    // Show MD toolbar for email too (B, I, etc.)
-    const mdToolbar = document.getElementById('doc-md-toolbar');
-    if (mdToolbar) {
-      mdToolbar.style.display = '';
-      if (mdToolbar._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
-    }
-    // Hide toolbar items that have no clean WYSIWYG equivalent in email (Code).
-    document.querySelectorAll('.md-toolbar-email-hide').forEach(el => { el.style.display = 'none'; });
-    // Show email-only toolbar items (AI reply button).
-    document.querySelectorAll('.md-toolbar-email-only').forEach(el => { el.style.display = 'inline-flex'; });
-    if (emailHeader) emailHeader.style.display = '';
-    if (emailActions) emailActions.style.display = '';
-    // Emails have their own complete footer (Close / More / Send), so hide the
-    // generic documents action bar AND the generic bottom footer. The TYPE
-    // picker is the exception — relocate it into the email footer so the
-    // type-switching affordance is in the same footer slot across all docs.
-    const docActions = document.getElementById('doc-editor-actions');
-    if (docActions) docActions.style.display = 'none';
-    const docFooter = document.getElementById('doc-actions-footer');
-    if (docFooter) docFooter.style.display = 'none';
-    if (emailActions) {
-      const _lang = document.getElementById('doc-language-select');
-      const _langPicker = document.getElementById('doc-langpicker-trigger');
-      const _sendSplit = emailActions.querySelector('.email-send-split');
-      if (_lang && _sendSplit) emailActions.insertBefore(_lang, _sendSplit);
-      if (_langPicker && _sendSplit) {
-        _langPicker.classList.add('doc-langpicker-email-compact');
-        _langPicker.title = 'Change document type';
-        emailActions.insertBefore(_langPicker, _sendSplit);
-      }
-    }
-    // Colored system-emoji font for email compose
-    document.getElementById('doc-editor-textarea')?.classList.add('email-mode');
-    document.getElementById('doc-editor-code')?.classList.add('email-mode');
-    document.getElementById('doc-editor-highlight')?.classList.add('email-mode');
-    let fields = _parseEmailHeader(doc.content || '');
-    if (applyLocalDraft) fields = _emailFieldsWithLocalDraft(fields);
-    const preserveEmailHeader = !!(fields.sourceUid || fields.inReplyTo || fields.references);
-    const subjectInput = document.getElementById('doc-email-subject');
-    const textarea = document.getElementById('doc-editor-textarea');
-    _setEmailHeaderInputValue('doc-email-to', fields.to, { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    _setEmailHeaderInputValue('doc-email-subject', fields.subject, { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    _setEmailHeaderCollapsed(!!(doc && doc._emailHeaderCollapsed), { manual: false });
-    if (subjectInput && !subjectInput._emailTabBodyBound) {
-      subjectInput._emailTabBodyBound = true;
-      subjectInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Tab' && !e.shiftKey) {
-          e.preventDefault();
-          _focusEmailBodyEnd();
-        }
-      });
-    }
-    _setEmailHeaderInputValue('doc-email-in-reply-to', fields.inReplyTo, { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    _setEmailHeaderInputValue('doc-email-references', fields.references, { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    _setEmailHeaderInputValue('doc-email-source-uid', fields.sourceUid || '', { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    _setEmailHeaderInputValue('doc-email-source-folder', fields.sourceFolder || '', { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    // Show/hide unread button only if we have a source UID (came from inbox)
-    const unreadBtn = document.getElementById('doc-email-unread-btn');
-    if (unreadBtn) unreadBtn.style.display = fields.sourceUid ? '' : 'none';
-    // Render attachment chips
-    const attDiv = document.getElementById('doc-email-attachments');
-    if (attDiv) {
-      attDiv.innerHTML = '';
-      if (fields.attachments && fields.attachments.length > 0 && fields.sourceUid) {
-        attDiv.style.display = '';
-        for (const att of fields.attachments) {
-          const isPdf = (att.filename || '').toLowerCase().endsWith('.pdf');
-          const sizeKb = att.size > 0 ? `${Math.round(att.size / 1024)} KB` : '';
-          const chipHtml = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${_escHtml(att.filename)}</span><span class="att-size">${sizeKb}</span>`;
-          // Helper: swap chip content for a whirlpool spinner while busy.
-          const _withSpinner = async (chip, fn) => {
-            if (chip.dataset.loading === '1') return;
-            chip.dataset.loading = '1';
-            const orig = chip.innerHTML;
-            chip.innerHTML = '';
-            const sp = spinnerModule.createWhirlpool(14);
-            sp.style.marginRight = '6px';
-            chip.appendChild(sp);
-            const lbl = document.createElement('span');
-            lbl.textContent = att.filename;
-            chip.appendChild(lbl);
-            try { await fn(); }
-            finally { chip.dataset.loading = ''; chip.innerHTML = orig; }
-          };
-          if (isPdf) {
-            // PDF: open in the in-app PDF viewer as a new doc tab
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'email-attachment-chip email-attachment-chip-pdf';
-            // Full filename on hover — chip ellipsis-truncates long names.
-            chip.title = att.filename;
-            chip.innerHTML = chipHtml;
-            chip.addEventListener('click', () => _withSpinner(chip, async () => {
-              try {
-                const folderQs = encodeURIComponent(fields.sourceFolder || 'INBOX');
-                const res = await fetch(`${API_BASE}/api/email/attachment-as-doc/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`, { method: 'POST' });
-                const data = await res.json();
-                if (data.doc_id) {
-                  await loadDocument(data.doc_id);
-                } else if (uiModule) {
-                  uiModule.showError(data.error || 'Failed to open PDF');
-                  window.open(`${API_BASE}/api/email/attachment/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`, '_blank');
-                }
-              } catch (e) {
-                console.error('Open PDF attachment failed:', e);
-                if (uiModule) uiModule.showError('Failed to open PDF');
-              }
-            }));
-            attDiv.appendChild(chip);
-          } else {
-            // Non-PDF: download via fetch+blob+anchor — browser-native download
-            // with target=_blank was unreliable in some browsers (the click did
-            // nothing). The blob path forces a real Save dialog every time.
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'email-attachment-chip';
-            // Full filename on hover for the chip ellipsis-truncated label.
-            chip.title = `Download ${att.filename}`;
-            chip.innerHTML = chipHtml;
-            chip.addEventListener('click', () => _withSpinner(chip, async () => {
-              try {
-                const folderQs = encodeURIComponent(fields.sourceFolder || 'INBOX');
-                const res = await fetch(`${API_BASE}/api/email/attachment/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = att.filename;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
-              } catch (e) {
-                console.error('Download attachment failed:', e);
-                if (uiModule) uiModule.showError('Download failed: ' + e.message);
-              }
-            }));
-            attDiv.appendChild(chip);
-          }
-        }
-      } else {
-        attDiv.style.display = 'none';
-      }
-    }
-    if (textarea) {
-      textarea.value = fields.body;
-      // The textarea remains the plain-text mirror for email send/draft
-      // handling; the visible editing surface is the rich body only.
-      textarea.style.display = 'none';
-      // Store original body for change detection on close
-      if (doc) doc._originalBody = fields.body;
-      syncHighlighting();
-    }
-    // WYSIWYG: swap the source editor for the rich body and render the markdown.
-    // The textarea above stays as the plain-text mirror (kept in sync below) so
-    // send / draft / change-detection still read it.
-    const _rich = document.getElementById('doc-email-richbody');
-    const _srcWrap = document.getElementById('doc-editor-wrap');
-    if (_rich && _srcWrap) {
-      _srcWrap.style.display = 'none';
-      if (textarea) textarea.style.display = 'none';
-      _rich.style.display = '';
-      if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
-      _emailStreamAnimFrame = null;
-      _emailStreamRenderedBody = fields.body || '';
-      _emailStreamTargetBody = fields.body || '';
-      _rich.innerHTML = _emailBodyToHtml(fields.body);
-      _wireEmailRichbody(_rich);
-      setTimeout(() => {
-        try {
-          const _isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
-          if (!_isTouch) _focusEmailBodyEnd();
-          _rich.scrollTop = 0;
-        } catch (_) {}
-      }, 50);
-    }
-    // Render compose attachments (if any uploaded for this doc)
-    _renderComposeAttachments();
-    // Populate CC/BCC from parsed header, show rows if populated
-    const ccRow = document.getElementById('doc-email-cc-row');
-    const bccRow = document.getElementById('doc-email-bcc-row');
-    const ccToggle = document.getElementById('doc-email-show-cc');
-    _setEmailHeaderInputValue('doc-email-cc', fields.cc || '', { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    _setEmailHeaderInputValue('doc-email-bcc', fields.bcc || '', { preserveFocused: !forceHeaderFields, preserveNonEmpty: preserveEmailHeader && !forceHeaderFields });
-    const hasCcBcc = !!(
-      fields.cc ||
-      fields.bcc ||
-      document.getElementById('doc-email-cc')?.value ||
-      document.getElementById('doc-email-bcc')?.value
-    );
-    if (ccRow) ccRow.style.display = hasCcBcc ? '' : 'none';
-    if (bccRow) bccRow.style.display = hasCcBcc ? '' : 'none';
-    if (ccToggle) ccToggle.style.display = hasCcBcc ? 'none' : '';
-    _syncEmailHeaderSummary();
-    _stageForwardedSourceAttachments(fields).catch(err => console.error('Forward attachment staging failed:', err));
-  }
-
-  function _syncStreamingEmailFields(doc) {
-    if (!doc) return;
-    const fields = _parseEmailHeader(doc.content || '');
-    const rich = document.getElementById('doc-email-richbody');
-    const srcWrap = document.getElementById('doc-editor-wrap');
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!rich || rich.style.display === 'none') {
-      _showEmailFields(doc);
-      return;
-    }
-
-    _setEmailHeaderInputValue('doc-email-to', fields.to, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-subject', fields.subject, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-in-reply-to', fields.inReplyTo, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-references', fields.references, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-source-uid', fields.sourceUid || '', { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-source-folder', fields.sourceFolder || '', { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-cc', fields.cc || '', { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-bcc', fields.bcc || '', { preserveNonEmpty: true });
-
-    const unreadBtn = document.getElementById('doc-email-unread-btn');
-    if (unreadBtn) unreadBtn.style.display = fields.sourceUid ? '' : 'none';
-    const ccRow = document.getElementById('doc-email-cc-row');
-    const bccRow = document.getElementById('doc-email-bcc-row');
-    const ccToggle = document.getElementById('doc-email-show-cc');
-    const hasCcBcc = !!(fields.cc || fields.bcc);
-    if (ccRow) ccRow.style.display = hasCcBcc ? '' : 'none';
-    if (bccRow) bccRow.style.display = hasCcBcc ? '' : 'none';
-    if (ccToggle) ccToggle.style.display = hasCcBcc ? 'none' : '';
-
-    if (srcWrap) srcWrap.style.display = 'none';
-    rich.style.display = '';
-    _renderStreamingEmailBody(fields.body || '');
-    if (doc._originalBody == null) doc._originalBody = fields.body || '';
-    _syncEmailHeaderSummary();
-  }
-
-  async function _uploadComposeFiles(files) {
-    const list = Array.from(files || []);
-    if (list.length === 0) return;
-    const doc = docs.get(activeDocId);
-    if (!doc) return;
-    if (doc.language !== 'email') return;
-    if (!doc._composeAtts) doc._composeAtts = [];
-
-    for (const file of list) {
-      try {
-        const fd = new FormData();
-        fd.append('file', file);
-        const res = await fetch(`${API_BASE}/api/email/compose-upload`, {
-          method: 'POST',
-          body: fd,
-        });
-        const data = await res.json();
-        if (data.success) {
-          doc._composeAtts.push({
-            token: data.token,
-            filename: data.filename,
-            size: data.size,
-          });
-        } else {
-          if (uiModule) uiModule.showError(`Failed to upload ${file.name}: ${data.error || ''}`);
-        }
-      } catch (err) {
-        if (uiModule) uiModule.showError(`Failed to upload ${file.name}`);
-      }
-    }
-    _renderComposeAttachments();
-  }
-
-  async function _stageForwardedSourceAttachments(fields) {
-    const doc = docs.get(activeDocId);
-    if (!doc || doc.language !== 'email') return;
-    if (!fields?.forwardAttachments || !fields.sourceUid || !Array.isArray(fields.attachments) || fields.attachments.length === 0) return;
-    const sourceKey = `${fields.sourceFolder || 'INBOX'}:${fields.sourceUid}:${fields.attachments.map(a => a.index).join(',')}`;
-    if (doc._forwardedAttachmentSourceKey === sourceKey) return;
-    doc._forwardedAttachmentSourceKey = sourceKey;
-    if (!doc._composeAtts) doc._composeAtts = [];
-    const existingForwarded = new Set(doc._composeAtts.filter(a => a.forwardedSourceKey === sourceKey).map(a => String(a.sourceIndex)));
-    let added = 0;
-    for (const att of fields.attachments) {
-      const sourceIndex = String(att.index);
-      if (existingForwarded.has(sourceIndex)) continue;
-      try {
-        const folderQs = encodeURIComponent(fields.sourceFolder || 'INBOX');
-        const res = await fetch(`${API_BASE}/api/email/compose-from-attachment/${encodeURIComponent(fields.sourceUid)}/${encodeURIComponent(att.index)}?folder=${folderQs}`, {
-          method: 'POST',
-          credentials: 'same-origin',
-        });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'failed');
-        doc._composeAtts.push({
-          token: data.token,
-          filename: data.filename || att.filename,
-          size: data.size || att.size || 0,
-          forwardedSourceKey: sourceKey,
-          sourceIndex,
-        });
-        added += 1;
-      } catch (err) {
-        console.error('Failed to stage forwarded attachment:', err);
-        if (uiModule) uiModule.showError(`Forward attachment failed: ${att.filename || 'attachment'}`);
-      }
-    }
-    if (added) {
-      _renderComposeAttachments();
-      _scheduleAutoSave(activeDocId, 800);
-    }
-  }
-
-  async function _handleAttachUpload(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = ''; // reset for next upload
-    await _uploadComposeFiles(files);
-  }
-
-  let _odysseusAttachMenu = null;
-
-  function _closeOdysseusAttachMenu() {
-    if (_odysseusAttachMenu) {
-      _odysseusAttachMenu.remove();
-      _odysseusAttachMenu = null;
-    }
-    document.removeEventListener('click', _attachMenuOutsideClick, true);
-    document.removeEventListener('keydown', _attachMenuEscape, true);
-  }
-
-  function _attachMenuOutsideClick(e) {
-    if (_odysseusAttachMenu && !_odysseusAttachMenu.contains(e.target)) _closeOdysseusAttachMenu();
-  }
-
-  function _attachMenuEscape(e) {
-    if (e.key !== 'Escape') return;
-    _closeOdysseusAttachMenu();
-  }
-
-  function _positionOdysseusAttachMenu(anchor, menu) {
-    const r = anchor?.getBoundingClientRect?.();
-    if (!r) return;
-    menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 310))}px`;
-    menu.style.top = `${r.bottom + 6}px`;
-    requestAnimationFrame(() => {
-      const mr = menu.getBoundingClientRect();
-      if (mr.bottom > window.innerHeight - 8) {
-        menu.style.top = `${Math.max(8, r.top - mr.height - 6)}px`;
-      }
-    });
-  }
-
-  function _odysseusAttachLabel(item, kind) {
-    if (kind === 'gallery') {
-      return item.caption || item.prompt || item.filename || 'Gallery image';
-    }
-    return item.title || 'Untitled document';
-  }
-
-  async function _stageOdysseusAttachment(kind, id) {
-    const doc = docs.get(activeDocId);
-    if (!doc || doc.language !== 'email') return null;
-    if (!doc._composeAtts) doc._composeAtts = [];
-    const res = await fetch(`${API_BASE}/api/email/compose-from-odysseus`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, id }),
-    });
-    let data = null;
-    try { data = await res.json(); } catch (_) {}
-    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
-    doc._composeAtts.push({
-      token: data.token,
-      filename: data.filename,
-      size: data.size || 0,
-    });
-    return data;
-  }
-
-  async function _stageOdysseusZip(items) {
-    const doc = docs.get(activeDocId);
-    if (!doc || doc.language !== 'email') return null;
-    if (!doc._composeAtts) doc._composeAtts = [];
-    const res = await fetch(`${API_BASE}/api/email/compose-from-odysseus-zip`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-    });
-    let data = null;
-    try { data = await res.json(); } catch (_) {}
-    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
-    doc._composeAtts.push({
-      token: data.token,
-      filename: data.filename,
-      size: data.size || 0,
-    });
-    return data;
-  }
-
-  function _afterOdysseusAttachmentsAdded(count, label) {
-    _renderComposeAttachments();
-    _scheduleAutoSave(activeDocId, 800);
-    if (uiModule) uiModule.showToast(count > 1 ? `Attached ${count} items` : `Attached ${label || 'item'}`);
-  }
-
-  async function _attachOdysseusItem(kind, id, label, opts = {}) {
-    try {
-      const data = await _stageOdysseusAttachment(kind, id);
-      if (!data) return;
-      _afterOdysseusAttachmentsAdded(1, label || data.filename);
-      if (!opts.keepOpen) _closeOdysseusAttachMenu();
-    } catch (err) {
-      console.error('Failed to attach Odysseus item:', err);
-      if (uiModule) uiModule.showError('Failed to attach from Odysseus');
-    }
-  }
-
-  function _selectedOdysseusAttachRows(menu) {
-    return Array.from(menu?.querySelectorAll?.('.email-odysseus-attach-row.is-selected') || []);
-  }
-
-  function _syncOdysseusAttachSelection(menu) {
-    const selected = _selectedOdysseusAttachRows(menu);
-    const bar = menu?.querySelector?.('.email-odysseus-attach-actions');
-    const count = menu?.querySelector?.('.email-odysseus-attach-count');
-    const attachBtn = menu?.querySelector?.('.email-odysseus-attach-selected');
-    if (bar) bar.style.display = '';
-    if (count) count.textContent = selected.length ? `${selected.length} selected` : 'Select items to attach';
-    if (attachBtn) attachBtn.disabled = selected.length === 0;
-  }
-
-  async function _attachSelectedOdysseusItems(menu) {
-    const rows = _selectedOdysseusAttachRows(menu);
-    if (!rows.length) return;
-    const btn = menu.querySelector('.email-odysseus-attach-selected');
-    if (btn) {
-      btn.disabled = true;
-      btn.classList.add('is-loading');
-    }
-    let added = 0;
-    try {
-      const items = rows.map(row => ({ kind: row.dataset.kind, id: row.dataset.id })).filter(x => x.kind && x.id);
-      let zip = false;
-      if (items.length > 5) {
-        const ask = window.styledConfirm || uiModule?.styledConfirm;
-        zip = ask
-          ? await ask(`Attach ${items.length} files as one zip?`, { confirmText: 'Zip', cancelText: 'Separate' })
-          : window.confirm(`Attach ${items.length} files as one zip?`);
-      }
-      if (zip) {
-        await _stageOdysseusZip(items);
-        added = 1;
-      } else {
-        for (const item of items) {
-          await _stageOdysseusAttachment(item.kind, item.id);
-          added += 1;
-        }
-      }
-      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined);
-      _closeOdysseusAttachMenu();
-    } catch (err) {
-      console.error('Failed to attach selected Odysseus items:', err);
-      if (uiModule) uiModule.showError(added ? `Attached ${added}, then failed` : 'Failed to attach from Odysseus');
-      _renderComposeAttachments();
-    } finally {
-      if (btn) {
-        btn.classList.remove('is-loading');
-        btn.disabled = false;
-      }
-    }
-  }
-
-  async function _loadOdysseusAttachItems(menu, kind) {
-    const list = menu.querySelector('.email-odysseus-attach-list');
-    if (!list) return;
-    menu.dataset.odyAttachKind = kind;
-    list.replaceChildren(spinnerModule.createLoadingRow('Loading…', 14));
-    menu.querySelectorAll('[data-ody-attach-kind]').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.odyAttachKind === kind);
-    });
-    const q = (menu.querySelector('.email-odysseus-attach-search')?.value || '').trim();
-    try {
-      const params = new URLSearchParams({ sort: 'recent', limit: '20' });
-      if (q) params.set('search', q);
-      const endpoint = kind === 'gallery'
-        ? `${API_BASE}/api/gallery/library?${params}`
-        : `${API_BASE}/api/documents/library?${params}`;
-      const res = await fetch(endpoint, { credentials: 'same-origin' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
-      const items = kind === 'gallery'
-        ? (Array.isArray(data?.items) ? data.items : Array.isArray(data?.images) ? data.images : [])
-        : (Array.isArray(data?.documents) ? data.documents : Array.isArray(data?.items) ? data.items : []);
-      if (!items.length) {
-        list.innerHTML = `<div class="email-odysseus-attach-empty">${q ? 'No matches' : `No ${kind === 'gallery' ? 'images' : 'documents'}`}</div>`;
-        _syncOdysseusAttachSelection(menu);
-        return;
-      }
-      list.innerHTML = '';
-      for (const item of items) {
-        const label = _odysseusAttachLabel(item, kind);
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = `email-odysseus-attach-row ${kind === 'gallery' ? 'is-gallery' : ''}`;
-        row.dataset.id = item.id || '';
-        row.dataset.kind = kind;
-        if (kind === 'gallery') {
-          row.innerHTML = `
-            <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
-            <span class="email-odysseus-attach-thumb"></span>
-            <span class="email-odysseus-attach-main">
-              <span class="email-odysseus-attach-title">${_escHtml(label)}</span>
-              <span class="email-odysseus-attach-meta">${_escHtml(item.filename || 'image')}</span>
-            </span>
-          `;
-          if (item.url) {
-            const img = document.createElement('img');
-            img.alt = '';
-            img.src = `${API_BASE}${item.url}`;
-            row.querySelector('.email-odysseus-attach-thumb').appendChild(img);
-          }
-        } else {
-          row.innerHTML = `
-            <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
-            <span class="email-odysseus-attach-icon">${langIcon(item.language || 'text', 14, { style: 'opacity:0.8;' })}</span>
-            <span class="email-odysseus-attach-main">
-              <span class="email-odysseus-attach-title">${_escHtml(label)}</span>
-              <span class="email-odysseus-attach-meta">${_escHtml(item.language || 'text')}</span>
-            </span>
-          `;
-        }
-        row.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          row.classList.toggle('is-selected');
-          _syncOdysseusAttachSelection(menu);
-        });
-        row.addEventListener('dblclick', () => _attachOdysseusItem(kind, item.id, label, { keepOpen: false }));
-        list.appendChild(row);
-      }
-      _syncOdysseusAttachSelection(menu);
-    } catch (err) {
-      console.error('Failed to load Odysseus attach items:', err);
-      list.innerHTML = '<div class="email-odysseus-attach-empty">Could not load</div>';
-    }
-  }
-  function _showComposeAttachMenu(anchor) {
-    const activeLanguage = _activeDocLanguage();
-    if (_isRichTextLang(activeLanguage)) {
-      _showRichImageSourceMenu(anchor);
-      return;
-    }
-    if (activeLanguage !== 'email') {
-      document.getElementById('doc-md-image-input')?.click();
-      return;
-    }
-    _closeOdysseusAttachMenu();
-    const menu = document.createElement('div');
-    menu.className = 'email-odysseus-attach-menu';
-    menu.innerHTML = `
-      <button type="button" class="email-odysseus-attach-local">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Upload from computer
-      </button>
-      <div class="email-odysseus-attach-tabs">
-        <button type="button" data-ody-attach-kind="document" class="active">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/></svg>
-          <span>Documents</span>
-        </button>
-        <button type="button" data-ody-attach-kind="gallery">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          <span>Gallery images</span>
-        </button>
-      </div>
-      <label class="email-odysseus-attach-search-wrap">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" class="email-odysseus-attach-search" placeholder="Search documents or images">
-      </label>
-      <div class="email-odysseus-attach-list"></div>
-      <div class="email-odysseus-attach-actions">
-        <span class="email-odysseus-attach-count"></span>
-        <button type="button" class="email-odysseus-attach-selected" disabled>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-          <span>Attach</span>
-        </button>
-      </div>
-    `;
-    document.body.appendChild(menu);
-    _odysseusAttachMenu = menu;
-    _positionOdysseusAttachMenu(anchor, menu);
-    menu.querySelector('.email-odysseus-attach-local')?.addEventListener('click', () => {
-      _closeOdysseusAttachMenu();
-      document.getElementById('doc-email-file-input')?.click();
-    });
-    menu.querySelectorAll('[data-ody-attach-kind]').forEach(btn => {
-      btn.addEventListener('click', () => _loadOdysseusAttachItems(menu, btn.dataset.odyAttachKind));
-    });
-    let attachSearchTimer = null;
-    menu.querySelector('.email-odysseus-attach-search')?.addEventListener('input', () => {
-      clearTimeout(attachSearchTimer);
-      attachSearchTimer = setTimeout(() => {
-        _loadOdysseusAttachItems(menu, menu.dataset.odyAttachKind || 'document');
-      }, 220);
-    });
-    menu.querySelector('.email-odysseus-attach-selected')?.addEventListener('click', () => _attachSelectedOdysseusItems(menu));
-    setTimeout(() => {
-      document.addEventListener('click', _attachMenuOutsideClick, true);
-      document.addEventListener('keydown', _attachMenuEscape, true);
-    }, 0);
-    _loadOdysseusAttachItems(menu, 'document');
-  }
-
-
-
-  function _activeDocLanguage() {
+function _activeDocLanguage() {
     const doc = activeDocId && docs.get(activeDocId);
     return ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
   }
 
-  function _scheduleMarkdownImageAutosave(ta) {
+function _scheduleMarkdownImageAutosave(ta) {
     updateLineNumbers(ta.value);
     const codeEl = document.getElementById('doc-editor-code');
     if (codeEl && !codeEl.dataset.hasDiff) {
@@ -2592,7 +1493,7 @@ if (typeof globalThis !== 'undefined') {
     _scheduleAutoSave(activeDocId, 800);
   }
 
-  function _insertMarkdownImages(uploadedFiles) {
+function _insertMarkdownImages(uploadedFiles) {
     const ta = document.getElementById('doc-editor-textarea');
     if (!ta) return;
     const files = Array.isArray(uploadedFiles) ? uploadedFiles : [];
@@ -2620,7 +1521,8 @@ if (typeof globalThis !== 'undefined') {
     _scheduleMarkdownImageAutosave(ta);
     _refreshMarkdownPreviewIfVisible(activeDocId, ta.value);
   }
-  async function _uploadMarkdownImages(files) {
+
+async function _uploadMarkdownImages(files) {
     const images = Array.from(files || []).filter(_isMarkdownImageFile);
     if (!images.length) {
       if (uiModule) uiModule.showError('Choose an image file');
@@ -2655,633 +1557,13 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  async function _handleMarkdownImageUpload(e) {
+async function _handleMarkdownImageUpload(e) {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     await _uploadMarkdownImages(files);
   }
 
-  function _renderComposeAttachments() {
-    const container = document.getElementById('doc-email-compose-atts');
-    if (!container) return;
-    const doc = docs.get(activeDocId);
-    const atts = doc?._composeAtts || [];
-    if (atts.length === 0) {
-      container.style.display = 'none';
-      container.innerHTML = '';
-      return;
-    }
-    container.style.display = '';
-    container.innerHTML = '';
-    for (const att of atts) {
-      const chip = document.createElement('span');
-      chip.className = 'email-compose-chip';
-      const sizeKb = att.size > 0 ? `${Math.round(att.size / 1024)} KB` : '';
-      chip.innerHTML = `
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-        <span class="compose-chip-name">${_escHtml(att.filename)}</span>
-        <span class="att-size">${sizeKb}</span>
-        <button class="compose-chip-remove" title="Remove">×</button>
-      `;
-      chip.querySelector('.compose-chip-remove').addEventListener('click', async (e) => {
-        e.stopPropagation();
-        try {
-          await fetch(`${API_BASE}/api/email/compose-upload/${encodeURIComponent(att.token)}`, { method: 'DELETE' });
-        } catch (_) {}
-        const d = docs.get(activeDocId);
-        if (d) d._composeAtts = d._composeAtts.filter(a => a.token !== att.token);
-        _renderComposeAttachments();
-      });
-      container.appendChild(chip);
-    }
-  }
-
-  // Split a To/Cc/Bcc text field into recipients + the in-progress fragment
-  // the user is currently typing (after the last comma). Returns a tuple so
-  // we can show suggestions for just the fragment without disturbing the
-  // already-confirmed recipients.
-  function _splitRecipientsAndFragment(rawValue) {
-    const cut = (rawValue || '').lastIndexOf(',');
-    if (cut < 0) return { confirmed: '', fragment: (rawValue || '').trimStart() };
-    return {
-      confirmed: rawValue.slice(0, cut + 1).trimStart(),
-      fragment: rawValue.slice(cut + 1).trimStart(),
-    };
-  }
-
-  // Replace the in-progress fragment in `input` with the chosen email,
-  // append ", " so the user can type the next recipient immediately, then
-  // hide the suggestion dropdown.
-  function _commitRecipient(input, sugg, email) {
-    if (!input) return;
-    const { confirmed } = _splitRecipientsAndFragment(input.value);
-    // Preserve a single trailing space between commas for readability.
-    const head = confirmed ? confirmed.replace(/\s+$/, '') + ' ' : '';
-    input.value = head + email + ', ';
-    if (sugg) sugg.style.display = 'none';
-    input.focus();
-    // Caret to end so the next keystroke lands in the right place.
-    const end = input.value.length;
-    try { input.setSelectionRange(end, end); } catch (_) {}
-  }
-
-  // Search contacts for an autocomplete dropdown. `input` is the To/Cc/Bcc
-  // text field, `sugg` is its sibling .email-autocomplete div. Suggestions
-  // are scoped to the LAST comma-separated fragment so already-entered
-  // recipients aren't disturbed.
-  function _showContactSearchStatus(sugg, message, state = '') {
-    sugg.innerHTML = '';
-    const notice = document.createElement('div');
-    notice.className = `contact-suggestion-status${state ? ` is-${state}` : ''}`;
-    notice.setAttribute('role', 'status');
-    notice.textContent = message;
-    sugg.appendChild(notice);
-    sugg.style.display = '';
-  }
-
-  async function _searchContacts(input, sugg) {
-    if (!input || !sugg) return;
-    const { fragment } = _splitRecipientsAndFragment(input.value);
-    if (!fragment || fragment.length < 1) { sugg.style.display = 'none'; return; }
-    const searchedFragment = fragment;
-    _showContactSearchStatus(sugg, 'Searching contacts...', 'loading');
-    try {
-      const res = await fetch(`${API_BASE}/api/contacts/search?q=${encodeURIComponent(fragment)}`);
-      const data = await res.json();
-      // A later keystroke started another lookup while this one was in flight.
-      if (_splitRecipientsAndFragment(input.value).fragment !== searchedFragment) return;
-      if (!data.results || data.results.length === 0) {
-        if (data.sync?.state === 'unavailable' || data.sync?.state === 'local') {
-          _showContactSearchStatus(sugg, data.sync.message, data.sync.state);
-        } else {
-          sugg.style.display = 'none';
-        }
-        return;
-      }
-      // Already-entered emails in this field — skip in the dropdown so
-      // users don't accidentally add the same person twice.
-      const already = new Set(
-        (input.value || '').split(',').map(s => {
-          const m = s.match(/<([^>]+)>/);
-          return (m ? m[1] : s).trim().toLowerCase();
-        }).filter(Boolean)
-      );
-      sugg.innerHTML = '';
-      sugg.dataset.navStarted = '0';
-      let count = 0;
-      for (const c of data.results) {
-        for (const em of (c.emails || [])) {
-          if (already.has(em.toLowerCase())) continue;
-          const item = document.createElement('div');
-          item.className = 'contact-suggestion';
-          item.setAttribute('role', 'option');
-          item.setAttribute('aria-selected', 'false');
-          item.innerHTML = `<span class="contact-name">${_escHtml(c.name)}</span><span class="contact-email">${_escHtml(em)}</span>`;
-          item.addEventListener('mouseenter', () => {
-            sugg.dataset.navStarted = '1';
-            sugg.querySelectorAll('.contact-suggestion').forEach(it => {
-              it.classList.toggle('active', it === item);
-              it.setAttribute('aria-selected', it === item ? 'true' : 'false');
-            });
-          });
-          // mousedown fires before blur so the click doesn't get lost
-          item.addEventListener('mousedown', (e) => { e.preventDefault(); _commitRecipient(input, sugg, em); });
-          item.addEventListener('click', (e) => { e.preventDefault(); _commitRecipient(input, sugg, em); });
-          sugg.appendChild(item);
-          count += 1;
-        }
-      }
-      if (count === 0) { sugg.style.display = 'none'; return; }
-      sugg.style.display = '';
-    } catch (e) {
-      if (_splitRecipientsAndFragment(input.value).fragment !== searchedFragment) return;
-      _showContactSearchStatus(sugg, 'Unable to search contacts.', 'unavailable');
-    }
-  }
-
-  // Bind input/keydown/blur for a recipient field so it gets the same
-  // autocomplete-and-commit behavior. Used by To/Cc/Bcc.
-  function _wireRecipientAutocomplete(inputId, suggId) {
-    const input = document.getElementById(inputId);
-    const sugg = document.getElementById(suggId);
-    if (!input || !sugg) return;
-    let timer = null;
-    input.addEventListener('input', () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => _searchContacts(input, sugg), 150);
-    });
-    input.addEventListener('blur', () => {
-      setTimeout(() => { sugg.style.display = 'none'; }, 200);
-    });
-    input.addEventListener('keydown', (e) => {
-      const open = sugg.style.display !== 'none';
-      const items = open ? sugg.querySelectorAll('.contact-suggestion') : [];
-      const active = open ? sugg.querySelector('.contact-suggestion.active') : null;
-      let idx = active ? Array.from(items).indexOf(active) : -1;
-      const setActive = (nextIdx) => {
-        items.forEach((it, i) => {
-          const on = i === nextIdx;
-          it.classList.toggle('active', on);
-          it.setAttribute('aria-selected', on ? 'true' : 'false');
-        });
-        if (items[nextIdx]) {
-          items[nextIdx].scrollIntoView({ block: 'nearest' });
-        }
-      };
-      if (open && e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (!items.length) return;
-        if (sugg.dataset.navStarted !== '1') {
-          idx = Math.max(0, idx);
-          sugg.dataset.navStarted = '1';
-        } else {
-          idx = Math.min(items.length - 1, idx + 1);
-        }
-        setActive(idx);
-      } else if (open && e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (!items.length) return;
-        sugg.dataset.navStarted = '1';
-        idx = Math.max(0, idx - 1);
-        setActive(idx);
-      } else if (e.key === 'Enter') {
-        // If a suggestion is highlighted, commit it. Otherwise — if the
-        // current fragment already looks like a complete email — commit
-        // the raw text so users who type a brand-new address don't have
-        // to add the comma themselves.
-        if (active) {
-          e.preventDefault();
-          const em = active.querySelector('.contact-email')?.textContent?.trim();
-          if (em) _commitRecipient(input, sugg, em);
-        } else {
-          const { fragment } = _splitRecipientsAndFragment(input.value);
-          if (/^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/.test(fragment.trim())) {
-            e.preventDefault();
-            _commitRecipient(input, sugg, fragment.trim());
-          }
-        }
-      } else if (e.key === 'Tab' && active) {
-        e.preventDefault();
-        const em = active.querySelector('.contact-email')?.textContent?.trim();
-        if (em) _commitRecipient(input, sugg, em);
-      } else if (e.key === 'Escape') {
-        sugg.style.display = 'none';
-      } else if (e.key === ',' || (e.key === ' ' && input.value.trim().endsWith(','))) {
-        // Typing a comma directly also accepts a highlighted suggestion.
-        if (active) {
-          e.preventDefault();
-          const em = active.querySelector('.contact-email')?.textContent?.trim();
-          if (em) _commitRecipient(input, sugg, em);
-        }
-      }
-    });
-  }
-
-  function _hideEmailFields() {
-    _hideRichSelectionToolbar();
-    _hideRichSlashMenu();
-    const emailHeader = document.getElementById('doc-email-header');
-    const emailActions = document.getElementById('doc-email-actions');
-    if (emailHeader) emailHeader.style.display = 'none';
-    if (emailActions) emailActions.style.display = 'none';
-    // Restore toolbar items that were hidden for email (Code dropdown).
-    document.querySelectorAll('.md-toolbar-email-hide').forEach(el => { el.style.display = ''; });
-    // Re-hide email-only toolbar items (AI reply button).
-    document.querySelectorAll('.md-toolbar-email-only').forEach(el => { el.style.display = 'none'; });
-    // Restore the generic documents action bar + its bottom footer (Close /
-    // Copy / Export) for non-email docs.
-    const docActions = document.getElementById('doc-editor-actions');
-    if (docActions) docActions.style.display = '';
-    const docFooter = document.getElementById('doc-actions-footer');
-    if (docFooter) docFooter.style.display = '';
-    // Return the type picker to its non-email home (right before the
-    // Copy/Export split) — _showEmailFields moved it into the email footer.
-    if (docFooter) {
-      const _lang = document.getElementById('doc-language-select');
-      const _langPicker = document.getElementById('doc-langpicker-trigger');
-      const _split = docFooter.querySelector('#doc-copy-export-split');
-      if (_lang && _split) docFooter.insertBefore(_lang, _split);
-      if (_langPicker && _split) {
-        _langPicker.classList.remove('doc-langpicker-email-compact');
-        _langPicker.title = 'Change document type';
-        docFooter.insertBefore(_langPicker, _split);
-      }
-    }
-    // Restore the source editor and hide the WYSIWYG email body.
-    const _rich = document.getElementById('doc-email-richbody');
-    if (_rich) {
-      _rich.style.display = 'none';
-      _rich.classList.remove('richtext-mode');
-      _rich.setAttribute('aria-label', 'Email body');
-    }
-    const _srcWrap = document.getElementById('doc-editor-wrap');
-    if (_srcWrap) _srcWrap.style.display = '';
-    document.getElementById('doc-editor-textarea')?.style.removeProperty('display');
-    // Drop the email-mode class so editors return to monospace monochrome
-    document.getElementById('doc-editor-textarea')?.classList.remove('email-mode');
-    document.getElementById('doc-editor-code')?.classList.remove('email-mode');
-    document.getElementById('doc-editor-highlight')?.classList.remove('email-mode');
-  }
-
-
-  function _bodyMentionsAttachment(text) {
-    if (!text) return false;
-    // WYSIWYG replies render quoted mail as a non-editable block, so the
-    // plain-text mirror does not always retain a leading `>` or an `On …
-    // wrote:` line. Reuse the full reply parser to exclude every quote form.
-    return _ATTACH_RE.test(_emailReplyOwnText(text));
-  }
-
-  function _clearMissingAttachmentWarnings() {
-    document.querySelectorAll('.email-attachment-warning-modal').forEach(el => el.remove());
-  }
-
-  function _confirmMissingAttachment() {
-    return new Promise(resolve => {
-      _clearMissingAttachmentWarnings();
-      const overlay = document.createElement('div');
-      overlay.className = 'modal email-attachment-warning-modal';
-      overlay.style.display = 'flex';
-      overlay.innerHTML = `
-        <div class="modal-content" style="width:360px;max-width:90vw;">
-          <div class="modal-header"><h4>No attachments found</h4></div>
-          <div class="modal-body" style="padding:16px;font-size:13px;opacity:0.8;">
-            Your message mentions an attachment, but nothing is attached. Send anyway?
-          </div>
-          <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
-            <button class="memory-toolbar-btn" id="att-warn-cancel">Go back</button>
-            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:#fff;border-color:var(--accent-primary,var(--red));">Send anyway</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-      const cleanup = (val) => { overlay.remove(); resolve(val); };
-      overlay.querySelector('#att-warn-cancel').addEventListener('click', () => cleanup(false));
-      overlay.querySelector('#att-warn-send').addEventListener('click', () => {
-        _clearMissingAttachmentWarnings();
-        resolve(true);
-      });
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
-    });
-  }
-
-  // Persist a compose in the mailbox before sending. The draft is the
-  // recovery copy; it is removed by the send endpoint only after delivery and
-  // Sent-folder append both succeed.
-  async function _saveEmailDraftForRecovery({
-    accountId, doc, to, cc, bcc, subject, body, bodyHtml, inReplyTo, references, attachments,
-  }) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 18000);
-    try {
-      const res = await fetch(`${API_BASE}/api/email/draft`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          to: to || '',
-          cc: cc || null,
-          bcc: bcc || null,
-          subject: subject || '',
-          body: body || '',
-          body_html: bodyHtml,
-          in_reply_to: inReplyTo || null,
-          references: references || null,
-          account_id: accountId || null,
-          attachments: attachments?.length ? attachments : null,
-          draft_uid: doc?._emailDraftUid || null,
-          draft_folder: doc?._emailDraftFolder || null,
-        }),
-      });
-      let data = null;
-      try { data = await res.json(); } catch (_) { data = null; }
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `Draft save failed (${res.status})`);
-      }
-      if (doc) {
-        doc._emailDraftUid = data.draft_uid || doc._emailDraftUid || null;
-        doc._emailDraftFolder = data.draft_folder || doc._emailDraftFolder || null;
-      }
-      return data;
-    } catch (e) {
-      if (e?.name === 'AbortError') throw new Error('Saving draft timed out');
-      throw e;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async function _sendEmail() {
-    if (_emailSendInFlight) {
-      if (uiModule) uiModule.showToast('Already sending');
-      return;
-    }
-    if (uiModule) uiModule.showToast('Preparing send', { duration: 1200 });
-    const sendDocId = activeDocId;
-    const to = document.getElementById('doc-email-to')?.value?.trim();
-    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
-    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
-    const subject = document.getElementById('doc-email-subject')?.value?.trim();
-    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
-    const references = document.getElementById('doc-email-references')?.value?.trim();
-    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim();
-    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-    // WYSIWYG: the rich body's HTML becomes the email's HTML part (server
-    // sanitizes it). `body` (plain text mirror) stays the text/plain fallback.
-    const _rich = _emailRichbodyActive();
-    if (_rich) _syncEmailRichbody(_rich);
-    const textarea = document.getElementById('doc-editor-textarea');
-    const rawBody = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
-    const body = _sanitizeOutgoingEmailBody(rawBody);
-    let bodyHtml = _rich ? _rich.innerHTML : null;
-    if (_rich && body !== rawBody) bodyHtml = _emailBodyToHtml(body);
-    const doc = docs.get(activeDocId);
-    const attachments = (doc?._composeAtts || []).map(a => a.token);
-    if (!to || !body) {
-      if (uiModule) uiModule.showError('To and body are required');
-      return;
-    }
-    if (inReplyTo && !_emailReplyOwnText(body)) {
-      if (uiModule) uiModule.showError('Reply body is empty');
-      return;
-    }
-    // Warn if body mentions attachments but none are actually attached
-    if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
-      const proceed = await _confirmMissingAttachment();
-      if (!proceed) return;
-      _clearMissingAttachmentWarnings();
-    }
-    const btn = Array.from(document.querySelectorAll('#doc-email-send-btn')).find((candidate) => candidate.offsetParent !== null) || document.getElementById('doc-email-send-btn');
-    let sendSpinner = null;
-    let origBtnHtml = '';
-    let recoveryDraftSaved = Boolean(doc?._emailDraftUid);
-    _emailSendInFlight = true;
-    if (btn) {
-      btn.disabled = true;
-      origBtnHtml = btn.innerHTML;
-      sendSpinner = spinnerModule.createWhirlpool(14);
-      sendSpinner.element.style.cssText = 'display:inline-block;vertical-align:-2px;margin-right:6px;width:14px;height:14px;';
-      btn.innerHTML = '';
-      btn.appendChild(sendSpinner.element);
-      btn.appendChild(document.createTextNode('Sending'));
-    }
-    try {
-      if (uiModule) uiModule.showToast('Sending', { duration: 2200, leadingIcon: 'spinner', toastClass: 'toast-sending' });
-
-      const activeAccountIdPromise = _resolveComposeSendAccountId();
-      const activeAccountId = await activeAccountIdPromise;
-      // Do this before SMTP can start. If saving the recovery copy fails, do
-      // not send an email that the user cannot reopen after a disconnect.
-      const recoveryDraft = await _saveEmailDraftForRecovery({
-        accountId: activeAccountId,
-        doc,
-        to,
-        cc,
-        bcc,
-        subject,
-        body,
-        bodyHtml,
-        inReplyTo,
-        references,
-        attachments,
-      });
-      recoveryDraftSaved = true;
-      const sendRequest = fetch(`${API_BASE}/api/email/send`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to, cc: cc || null, bcc: bcc || null, subject, body, body_html: bodyHtml,
-          in_reply_to: inReplyTo || null, references: references || null,
-          attachments: attachments.length > 0 ? attachments : null,
-          account_id: activeAccountId,
-          source_uid: sourceUid || null,
-          source_folder: sourceFolder || null,
-          draft_uid: recoveryDraft.draft_uid || doc?._emailDraftUid || null,
-          draft_folder: recoveryDraft.draft_folder || doc?._emailDraftFolder || null,
-          wait_for_delivery: true,
-        }),
-      });
-      // Remote SMTP/IMAP confirmation can take several seconds. The request
-      // is now committed, so close the composer while the captured document
-      // remains available as the recovery draft until delivery is confirmed.
-      if (isLibraryOpen()) closeLibrary();
-      if (isOpen && activeDocId === sendDocId) closePanel();
-      const res = await sendRequest;
-      let data = null;
-      try {
-        data = await res.json();
-      } catch (_) {
-        data = { success: false, error: `Send failed (${res.status})` };
-      }
-      if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
-      if (data.success) {
-        _clearMissingAttachmentWarnings();
-        // The send endpoint appends the message to Sent, but an already-open
-        // email library needs an explicit fresh load to show it immediately.
-        import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
-          const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
-          if (refresh) return refresh();
-          return undefined;
-        }).catch(() => {});
-        if (uiModule) {
-          uiModule.showToast('Message sent', {
-            duration: 7000,
-            leadingIcon: 'check',
-            toastClass: 'toast-message-sent',
-            action: 'View Message',
-            onAction: async () => {
-        import('./emailLibrary.js?v=20260915trashmove2').then(async mod => {
-                const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
-                const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
-                if (open) open({
-                  account_id: data.account_id || activeAccountId || null,
-                  folder: data.sent_folder || 'Sent',
-                  uid: data.sent_uid || null,
-                });
-                // The new message is not guaranteed to be in the cached Sent
-                // snapshot used during open. Refresh after the modal has
-                // mounted so the pending UID can expand when the server list
-                // returns, without requiring a second manual refresh click.
-                if (refresh) {
-                  await new Promise(resolve => setTimeout(resolve, 0));
-                  await refresh();
-                }
-              }).catch(() => {});
-            },
-          });
-        }
-        // Auto-save recipients to the configured contacts backend (CardDAV).
-        // The compose fields accept plain emails and "Name <email>" chips.
-        const _contactPieces = [to, cc, bcc].join(',').split(/[,;]/).map(s => s.trim()).filter(Boolean);
-        const _seenContacts = new Set();
-        for (const piece of _contactPieces) {
-          const match = piece.match(/^(.*?)<([^>]+)>$/);
-          const email = (match ? match[2] : piece).trim();
-          const name = (match ? match[1] : '').replace(/^["']|["']$/g, '').trim();
-          if (!email || !/@/.test(email)) continue;
-          const key = email.toLowerCase();
-          if (_seenContacts.has(key)) continue;
-          _seenContacts.add(key);
-          fetch(`${API_BASE}/api/contacts/add`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, email }),
-          }).catch(() => {});
-        }
-        // Mark the source email as answered if this was a reply
-        if (sourceUid) {
-          _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo);
-          const markParams = new URLSearchParams({ folder: sourceFolder });
-          if (data.account_id || activeAccountId) markParams.set('account_id', data.account_id || activeAccountId);
-          fetch(`${API_BASE}/api/email/mark-answered/${encodeURIComponent(sourceUid)}?${markParams.toString()}`, { method: 'POST' }).catch(() => {});
-          // Tell the inbox to refresh so the answered state shows
-          window.dispatchEvent(new CustomEvent('email-answered', { detail: { uid: sourceUid, folder: sourceFolder, account_id: data.account_id || activeAccountId || null } }));
-        }
-        // Delete the compose document after successful send.
-        if (sendDocId) {
-          markDeleted(sendDocId);
-          _cancelAutoSave(sendDocId);
-          fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
-          const wasActiveSentDoc = isOpen && activeDocId === sendDocId;
-          removeDocument(sendDocId);
-          if (wasActiveSentDoc) {
-            setActiveDocId(null);
-            const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));
-            if (nextId) switchToDoc(nextId);
-            else closePanel();
-          } else {
-            renderTabs();
-          }
-          _syncDocIndicator();
-        }
-      } else {
-        if (uiModule) uiModule.showError(`${data.error || 'Failed to send'} Draft kept in Drafts.`);
-      }
-    } catch (e) {
-      if (uiModule) {
-        const reason = e?.message || 'connection lost';
-        uiModule.showError(recoveryDraftSaved
-          ? `Send failed: ${reason}. Draft kept in Drafts.`
-          : `Send cancelled: ${reason}. Could not save a recovery draft.`);
-      }
-    } finally {
-      _emailSendInFlight = false;
-      if (sendSpinner) sendSpinner.destroy();
-      if (btn) {
-        btn.disabled = false;
-        if (origBtnHtml) btn.innerHTML = origBtnHtml;
-      }
-    }
-  }
-
-  async function _saveDraft() {
-    const to = document.getElementById('doc-email-to')?.value?.trim();
-    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
-    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
-    const subject = document.getElementById('doc-email-subject')?.value?.trim();
-    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
-    const references = document.getElementById('doc-email-references')?.value?.trim();
-    const _rich = _emailRichbodyActive();
-    if (_rich) _syncEmailRichbody(_rich);
-    const textarea = document.getElementById('doc-editor-textarea');
-    const rawBody = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
-    const body = _sanitizeOutgoingEmailBody(rawBody);
-    let bodyHtml = _rich ? _rich.innerHTML : null;
-    if (_rich && body !== rawBody) bodyHtml = _emailBodyToHtml(body);
-    const btn = document.getElementById('doc-email-draft-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 18000);
-    try {
-      const res = await fetch(`${API_BASE}/api/email/draft`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          to: to || '',
-          cc: cc || null,
-          bcc: bcc || null,
-          subject: subject || '',
-          body: body || '',
-          body_html: bodyHtml,
-          in_reply_to: inReplyTo || null,
-          references: references || null,
-          account_id: window.__odysseusActiveEmailAccount || null,
-          attachments: (docs.get(activeDocId)?._composeAtts || []).map(a => a.token),
-          draft_uid: docs.get(activeDocId)?._emailDraftUid || null,
-          draft_folder: docs.get(activeDocId)?._emailDraftFolder || null,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        const savedDoc = docs.get(activeDocId);
-        if (savedDoc) {
-          savedDoc._emailDraftUid = data.draft_uid || null;
-          savedDoc._emailDraftFolder = data.draft_folder || null;
-        }
-        if (uiModule) uiModule.showToast('Draft saved to mailbox');
-      } else {
-        if (uiModule) uiModule.showError(data.error || 'Failed to save draft');
-      }
-    } catch (e) {
-      const timedOut = e && e.name === 'AbortError';
-      if (uiModule) uiModule.showError(timedOut ? 'Saving draft timed out' : 'Failed to save draft');
-    } finally {
-      clearTimeout(timeout);
-      if (btn) { btn.disabled = false; btn.textContent = 'Draft'; }
-    }
-  }
-
-  function _discardEmail() {
-    if (!activeDocId) return;
-    // Just close — the Draft button handles saving explicitly
-    _closeWithoutDeleting(true);
-  }
-
-  function _visibleDocIdsForCurrentSession() {
+function _visibleDocIdsForCurrentSession() {
     const curSession = sessionModule?.getCurrentSessionId() || '';
     const ids = [];
     for (const [id, doc] of docs) {
@@ -3291,7 +1573,7 @@ if (typeof globalThis !== 'undefined') {
     return ids;
   }
 
-  function _closeWithoutDeleting(deleteDoc = false) {
+function _closeWithoutDeleting(deleteDoc = false) {
     if (!activeDocId) return;
     const closingId = activeDocId;
     _cancelAutoSave(closingId);
@@ -3319,447 +1601,7 @@ if (typeof globalThis !== 'undefined') {
     renderTabs();
   }
 
-  // Fast AI reply + optional context popover for the doc-editor email Reply button.
-  // Mirrors the email reader's AI reply choice popover: textarea for an
-  // optional steering note, then one Submit button.
-  let _docAiReplyChoiceMenu = null;
-  const _AI_REPLY_CONTEXT_STORE_PREFIX = 'odysseus:email-ai-reply-context:v1:';
-  function _docAiReplyContextKey() {
-    try {
-      const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim() || '';
-      const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-      const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim() || '';
-      const to = document.getElementById('doc-email-to')?.value?.trim() || '';
-      const subject = document.getElementById('doc-email-subject')?.value?.trim() || '';
-      const stable = sourceUid
-        ? `uid:${sourceFolder}:${sourceUid}`
-        : inReplyTo
-          ? `msg:${inReplyTo}`
-          : activeDocId
-            ? `doc:${activeDocId}`
-            : `compose:${to}:${subject}`;
-      return _AI_REPLY_CONTEXT_STORE_PREFIX + stable;
-    } catch (_) {
-      return '';
-    }
-  }
-  function _loadDocAiReplyContext(key) {
-    if (!key) return '';
-    try { return localStorage.getItem(key) || ''; } catch (_) { return ''; }
-  }
-  function _saveDocAiReplyContext(key, value) {
-    if (!key) return;
-    try {
-      const text = String(value || '');
-      if (text.trim()) localStorage.setItem(key, text);
-      else localStorage.removeItem(key);
-    } catch (_) {}
-  }
-  function _clearDocAiReplyContext(key) {
-    if (!key) return;
-    try { localStorage.removeItem(key); } catch (_) {}
-  }
-  function _closeDocAiReplyChoice() {
-    if (_docAiReplyChoiceMenu) {
-      // Tear down through the menu's registered dismiss (drops its outside-click
-      // listener + Escape-stack entry) rather than orphaning them with a raw
-      // remove(); the onClose below nulls the ref.
-      try { dismissOrRemove(_docAiReplyChoiceMenu); } catch (_) {}
-      _docAiReplyChoiceMenu = null;
-    }
-  }
-  function _showDocAiReplyChoice(btn) {
-    _closeDocAiReplyChoice();
-    if (!btn) return;
-    const rect = btn.getBoundingClientRect();
-    const menu = document.createElement('div');
-    menu.className = 'doc-ai-reply-choice';
-    const menuMaxW = Math.min(240, window.innerWidth - 16);
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuMaxW - 8));
-    const estHeight = 150;
-    const spaceBelow = window.innerHeight - rect.bottom - 8;
-    const spaceAbove = rect.top - 8;
-    const top = (spaceBelow >= estHeight || spaceBelow >= spaceAbove)
-      ? Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - estHeight - 8))
-      : Math.max(8, rect.top - estHeight - 6);
-    menu.style.cssText = [
-      'position:fixed',
-      `left:${left}px`,
-      `top:${top}px`,
-      `max-width:${menuMaxW}px`,
-      'box-sizing:border-box',
-      'z-index:10060',
-      'display:flex',
-      'gap:6px',
-      'padding:6px',
-      'background:var(--bg,#111)',
-      'border:1px solid var(--border,#333)',
-      'border-radius:7px',
-      'box-shadow:0 8px 24px rgba(0,0,0,.28)',
-    ].join(';');
-    menu.innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
-        <textarea data-note-input rows="2" placeholder="Context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Draft reply" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>
-            Submit
-          </button>
-        </div>
-      </div>
-    `;
-    const noteInput = menu.querySelector('[data-note-input]');
-    const contextKey = _docAiReplyContextKey();
-    if (noteInput) {
-      noteInput.value = _loadDocAiReplyContext(contextKey);
-      noteInput.addEventListener('input', () => {
-        _saveDocAiReplyContext(contextKey, noteInput.value || '');
-      });
-    }
-    setTimeout(() => noteInput?.focus(), 0);
-    menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
-    document.body.appendChild(menu);
-    _docAiReplyChoiceMenu = menu;
-    // Outside-click AND Escape both route through the central esc-stack via
-    // bindMenuDismiss; onClose owns the actual teardown (node removal + state).
-    const close = bindMenuDismiss(menu, () => {
-      try { menu.remove(); } catch (_) {}
-      if (_docAiReplyChoiceMenu === menu) _docAiReplyChoiceMenu = null;
-    });
-    menu.addEventListener('click', async (ev) => {
-      const choice = ev.target.closest('[data-mode]');
-      if (!choice) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      const mode = choice.getAttribute('data-mode') || 'ai-reply-fast';
-      const noteHint = (noteInput?.value || '').trim();
-      _saveDocAiReplyContext(contextKey, noteInput?.value || '');
-      close();
-      await _aiReply({ mode, noteHint, contextKey });
-    });
-  }
-
-  export async function generateEmailReply(opts = {}) {
-    return _aiReply(opts);
-  }
-
-  async function _aiReply(opts = {}) {
-    const { mode = 'auto', noteHint = '', contextKey = '' } = (opts || {});
-    const to = document.getElementById('doc-email-to')?.value?.trim() || '';
-    const subject = document.getElementById('doc-email-subject')?.value?.trim() || '';
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return;
-    const currentBody = textarea.value || '';
-    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim() || '';
-    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim() || '';
-    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-    const sourceAccountId = docs.get(activeDocId)?.sourceEmailAccountId || window.__odysseusActiveEmailAccount || '';
-    const cleanAiReplyText = (text) => {
-      if (!text) return '';
-      let t = String(text);
-      const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
-      const close = /<<<\s*END\s*>>+/i;
-      const m = open.exec(t);
-      if (m) {
-        const rest = t.slice(m.index + m[0].length);
-        const c = close.exec(rest);
-        t = c ? rest.slice(0, c.index) : rest;
-      }
-      return t
-        .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
-        .replace(/<<<\s*END\s*>>+/gi, '')
-        .replace(/<\/?\|(?:assistant|assistan|user|system|tool)\|>?|<\/\|end\|>?/gi, '')
-        .trim();
-    };
-    const splitCurrent = _splitEmailReplyQuote(currentBody);
-    const ownBody = document.createElement('template');
-    ownBody.innerHTML = String(splitCurrent.body || '');
-    const ownText = (ownBody.content.textContent || '').trim();
-    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
-    if (!isReplaceableDraft) {
-      if (uiModule) uiModule.showToast('Reply already has text');
-      return;
-    }
-
-    // Keep the request tied to the exact draft state that the user approved.
-    // AI generation is asynchronous; a late response must never replace text
-    // the user typed while it was in flight.
-    const generationId = ++_emailAiReplyGeneration;
-    const generationDocId = activeDocId;
-    let generationBody = currentBody;
-    const generationRich = _emailRichbodyActive();
-    const richDraftSnapshot = () => {
-      if (!generationRich) return '';
-      const clone = generationRich.cloneNode(true);
-      // Focusing an empty reply inserts a caret slot, not a user edit.
-      clone.querySelectorAll('.email-reply-edit-slot').forEach(slot => {
-        if (!slot.textContent.trim() && !slot.querySelector('img,video,audio,iframe,table')) slot.remove();
-      });
-      return clone.innerHTML;
-    };
-    let generationRichHtml = richDraftSnapshot();
-    let manuallyEdited = false;
-    const markEdited = () => { manuallyEdited = true; };
-    textarea.addEventListener('input', markEdited);
-    generationRich?.addEventListener('input', markEdited);
-    const draftStillUnchanged = () => (
-      generationId === _emailAiReplyGeneration &&
-      !manuallyEdited &&
-      activeDocId === generationDocId &&
-      textarea.value === generationBody &&
-      (!generationRich || richDraftSnapshot() === generationRichHtml)
-    );
-
-    // Use the current chat model
-    let currentModel = '';
-    let currentSessionId = '';
-    try {
-      currentModel = sessionModule?.getCurrentModel() || '';
-      currentSessionId = sessionModule?.getCurrentSessionId() || '';
-    } catch (_) {}
-
-    const btn = document.getElementById('doc-email-ai-reply-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
-    if (uiModule) uiModule.showToast('Writing AI reply', {
-      duration: 8000,
-      leadingIcon: 'spinner',
-      aiReplyProgress: true,
-    });
-
-    try {
-      // Empty-compose path: if there's no original body, send a placeholder
-      // so the backend's "no body" guard doesn't fail. The user_hint carries
-      // the user's compose intent; the model uses To/Subject + that hint.
-      const bodyForApi = opts.originalBody || splitCurrent.quote || currentBody || (noteHint ? '(no prior email -- compose from the user instructions)' : '');
-      const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: to,
-          subject: subject,
-          original_body: bodyForApi,
-          stream: true,
-          model: currentModel,
-          session_id: currentSessionId,
-          message_id: inReplyTo,
-          uid: sourceUid,
-          folder: sourceFolder,
-          account_id: sourceAccountId,
-          fast: mode !== 'ai-reply-full',
-          user_hint: noteHint || '',
-        }),
-      });
-      const data = await readEmailReplyResponse(res, text => {
-        if (!draftStillUnchanged()) return false;
-        const quote = splitCurrent.quote || '';
-        _setEmailBodyText(textarea, text + (quote ? `\n\n${quote}` : ''));
-        generationBody = textarea.value;
-        generationRichHtml = richDraftSnapshot();
-        return true;
-      });
-      if (!res.ok) {
-        throw new Error(data.error || `AI reply service returned HTTP ${res.status}`);
-      }
-      if (data.success && data.reply) {
-        if (!draftStillUnchanged()) {
-          if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
-          return;
-        }
-        let cleanReply = cleanAiReplyText(data.reply);
-        // Strip any "On <date>, <name> wrote:" attribution + everything
-        // after it from the AI's output — the model sometimes re-quotes
-        // the original thread, and we already have the real quote in
-        // currentBody. Without this, AI's invented quote stacked on top
-        // of the real one and looked like the history had been "edited".
-        cleanReply = cleanReply.replace(/\n*On\b[\s\S]*?\bwrote:[\s\S]*$/m, '').trim();
-        const quote = splitCurrent.quote || '';
-        const newBody = cleanReply + (quote ? `\n\n${quote}` : '');
-        // Reconcile the final body only while this generation still owns the draft.
-        if (!draftStillUnchanged()) {
-          if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
-          return;
-        }
-        _setEmailBodyText(textarea, newBody);
-        _clearDocAiReplyContext(contextKey || _docAiReplyContextKey());
-        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`, { aiReplyResult: true });
-        return true;
-      } else {
-        if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
-        const rawMsg = data.error || 'Failed to generate reply';
-        const msg = /empty response/i.test(rawMsg)
-          ? 'AI reply failed: AI returned empty response.'
-          : rawMsg;
-        if (uiModule) uiModule.showError(msg);
-      }
-    } catch (e) {
-      if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
-      if (uiModule) uiModule.showError(`AI reply failed: ${e?.message || 'Unable to reach the AI reply service'}`);
-    } finally {
-      textarea.removeEventListener('input', markEdited);
-      generationRich?.removeEventListener('input', markEdited);
-      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
-    }
-  }
-
-  async function _scheduleSend(anchorEl = null) {
-    const to = document.getElementById('doc-email-to')?.value?.trim();
-    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
-    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
-    const subject = document.getElementById('doc-email-subject')?.value?.trim();
-    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
-    const references = document.getElementById('doc-email-references')?.value?.trim();
-    const _rich = _emailRichbodyActive();
-    if (_rich) _syncEmailRichbody(_rich);
-    const rawBody = (_rich
-      ? (_rich.innerText || _rich.textContent || '')
-      : (document.getElementById('doc-editor-textarea')?.value || '')
-    ).trim();
-    const body = _sanitizeOutgoingEmailBody(rawBody);
-    const doc = docs.get(activeDocId);
-    const attachments = (doc?._composeAtts || []).map(a => a.token);
-
-    if (!to || !body) {
-      if (uiModule) uiModule.showError('To and body are required');
-      return;
-    }
-    if (inReplyTo && !_emailReplyOwnText(body)) {
-      if (uiModule) uiModule.showError('Reply body is empty');
-      return;
-    }
-    if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
-      const proceed = await _confirmMissingAttachment();
-      if (!proceed) return;
-      _clearMissingAttachmentWarnings();
-    }
-
-    // Create a small modal with datetime input and quick presets
-    const overlay = document.createElement('div');
-    overlay.className = 'modal';
-    overlay.style.display = 'flex';
-    overlay.innerHTML = `
-      <div class="modal-content schedule-send-modal" style="width:400px;max-width:92vw;">
-        <div class="modal-header">
-          <h4>Schedule Send</h4>
-          <button class="close-btn" id="sched-close" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-        <div class="modal-body schedule-send-body">
-          <label class="schedule-send-label">Quick presets</label>
-          <div class="schedule-send-presets">
-            <button class="memory-toolbar-btn" data-preset="1h">In 1 hour</button>
-            <button class="memory-toolbar-btn" data-preset="3h">In 3 hours</button>
-            <button class="memory-toolbar-btn" data-preset="tomorrow">Tomorrow 9am</button>
-            <button class="memory-toolbar-btn" data-preset="monday">Monday 9am</button>
-          </div>
-          <label class="schedule-send-label" for="sched-datetime">Or pick a specific time</label>
-          <input type="datetime-local" id="sched-datetime" class="schedule-send-datetime" />
-        </div>
-        <div class="modal-footer schedule-send-footer">
-          <button class="memory-toolbar-btn" id="sched-cancel">Cancel</button>
-          <button class="memory-toolbar-btn schedule-send-confirm" id="sched-confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Schedule</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    const modalContent = overlay.querySelector('.schedule-send-modal');
-    const anchor = anchorEl || document.getElementById('doc-email-send-caret') || document.getElementById('doc-email-send-btn');
-    if (modalContent && anchor) {
-      const rect = anchor.getBoundingClientRect();
-      const gap = 8;
-      const width = Math.min(400, Math.max(280, window.innerWidth - 16));
-      modalContent.style.width = `${width}px`;
-      modalContent.style.position = 'fixed';
-      modalContent.style.margin = '0';
-      modalContent.style.transform = 'none';
-      const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
-      const belowTop = rect.bottom + gap;
-      const estimatedHeight = Math.min(320, window.innerHeight - 16);
-      const top = belowTop + estimatedHeight <= window.innerHeight - 8
-        ? belowTop
-        : Math.max(8, rect.top - estimatedHeight - gap);
-      modalContent.style.left = `${left}px`;
-      modalContent.style.top = `${top}px`;
-    }
-
-    const dtInput = overlay.querySelector('#sched-datetime');
-    // Default to 1 hour from now
-    const now = new Date(Date.now() + 60 * 60 * 1000);
-    const pad = (n) => String(n).padStart(2, '0');
-    dtInput.value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-
-    const escHandler = (e) => { if (e.key === 'Escape') cleanup(); };
-    const cleanup = () => {
-      overlay.remove();
-      document.removeEventListener('keydown', escHandler);
-    };
-    overlay.querySelector('#sched-close').addEventListener('click', cleanup);
-    overlay.querySelector('#sched-cancel').addEventListener('click', cleanup);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
-    document.addEventListener('keydown', escHandler);
-
-    overlay.querySelectorAll('[data-preset]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const preset = btn.getAttribute('data-preset');
-        const d = new Date();
-        if (preset === '1h') d.setHours(d.getHours() + 1);
-        else if (preset === '3h') d.setHours(d.getHours() + 3);
-        else if (preset === 'tomorrow') { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
-        else if (preset === 'monday') {
-          const daysUntilMon = (8 - d.getDay()) % 7 || 7;
-          d.setDate(d.getDate() + daysUntilMon);
-          d.setHours(9, 0, 0, 0);
-        }
-        dtInput.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      });
-    });
-
-    overlay.querySelector('#sched-confirm').addEventListener('click', async () => {
-      const localDt = dtInput.value;
-      if (!localDt) { if (uiModule) uiModule.showError('Please pick a time'); return; }
-      // Convert local datetime to UTC ISO
-      const utcIso = new Date(localDt).toISOString();
-      try {
-        const activeAccountId = await _resolveComposeSendAccountId();
-        const res = await fetch(`${API_BASE}/api/email/schedule`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to, cc: cc || null, bcc: bcc || null, subject, body,
-            in_reply_to: inReplyTo || null,
-            references: references || null,
-            attachments: attachments.length > 0 ? attachments : null,
-            send_at: utcIso,
-            account_id: activeAccountId,
-          }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          _clearMissingAttachmentWarnings();
-          if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
-          _clearCurrentEmailLocalDraft();
-          cleanup();
-          // Close the document
-          _closeWithoutDeleting(true);
-        } else {
-          if (uiModule) uiModule.showError(data.error || 'Failed to schedule');
-        }
-      } catch (e) {
-        if (uiModule) uiModule.showError('Failed to schedule');
-      }
-    });
-  }
-
-  async function _markUnreadAndClose() {
-    const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';
-    const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';
-    if (sourceUid) {
-      try {
-        await fetch(`${API_BASE}/api/email/mark-unread/${sourceUid}?folder=${encodeURIComponent(sourceFolder)}`, { method: 'POST' });
-      } catch (e) { console.error('Failed to mark unread:', e); }
-    }
-    _discardEmail();
-  }
-
-  function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } = {}) {
+function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } = {}) {
     if (!docs.has(docId)) return;
     bumpNavigationGeneration();
     if (!preserveHistory) _closeVersionPanel();
@@ -3948,10 +1790,7 @@ if (typeof globalThis !== 'undefined') {
 
   }
 
-  // Close a doc tab without breaking its chat association. The chat transcript
-  // can contain durable document links, so detaching a non-empty doc from the
-  // session makes it look like the document vanished from that chat.
-  function _detachDocFromSession(docId, { toast = false } = {}) {
+function _detachDocFromSession(docId, { toast = false } = {}) {
     const doc = docs.get(docId);
     _cancelAutoSave(docId);
     _cancelPdfPaneSave(docId);
@@ -3969,7 +1808,7 @@ if (typeof globalThis !== 'undefined') {
     _syncDocIndicator();
   }
 
-  async function closeTab(docId) {
+async function closeTab(docId) {
     // Save current editor content to map so the check below uses fresh data
     saveCurrentToMap();
     // Closing the tab is a quiet detach action. The document-close
@@ -3998,14 +1837,11 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Auto-create a document when user types/pastes into empty editor */
-  let _autoCreating = false;
-  // True while createDocument's POST is in flight — suppresses the type-to-
-  // auto-create path so clicking "New document" and immediately typing can't
-  // spawn a SECOND untitled doc (the create round-trip hadn't set activeDocId
-  // yet, so the input handler thought the editor was empty).
-  let _creatingDoc = false;
-  async function _autoCreateFromInput(content) {
+let _autoCreating = false;
+
+let _creatingDoc = false;
+
+async function _autoCreateFromInput(content) {
     if (_autoCreating) return;
     _autoCreating = true;
     const generation = bumpNavigationGeneration();
@@ -4043,8 +1879,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Save current editor state back into the docs map */
-  function saveCurrentToMap() {
+function saveCurrentToMap() {
     if (_historyOwnsView(_versionHistory) && _versionHistory.previewing) return;
     if (!activeDocId || !docs.has(activeDocId)) return;
     const doc = docs.get(activeDocId);
@@ -4093,9 +1928,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  // ---- Panel open/close ----
-
-  function _minimizeNotesForDocumentOpen() {
+function _minimizeNotesForDocumentOpen() {
     try {
       if (window.notesModule?.isPanelOpen?.()) {
         window.notesModule.closePanel('down');
@@ -4114,7 +1947,7 @@ if (typeof globalThis !== 'undefined') {
       });
   }
 
-  export function openPanel(options = {}) {
+export function openPanel(options = {}) {
     _minimizeNotesForDocumentOpen();
     if (isOpen) return;
     // Clear any pane/divider still sliding out from a just-fired close so we
@@ -5728,7 +3561,8 @@ if (typeof globalThis !== 'undefined') {
       showEmptyState();
     }
   }
-  const _DOCUMENT_TOOLBAR_GROUPS = [
+
+const _DOCUMENT_TOOLBAR_GROUPS = [
     {
       name: 'display-size',
       selectors: ['#doc-fontsize-btn'],
@@ -5811,7 +3645,7 @@ if (typeof globalThis !== 'undefined') {
     },
   ];
 
-  const _AI_WRITING_ACTIONS = Object.freeze({
+const _AI_WRITING_ACTIONS = Object.freeze({
     proofread: 'Fix spelling and grammar in the open document. Apply corrections directly using targeted edits. Preserve the meaning, voice, and formatting; do not rewrite for style. Keep already-correct sentences unchanged. Use each affected paragraph as an exact unique FIND anchor and change only the spelling or grammar errors in its replacement. Check every paragraph, including repeated errors. Do not just list corrections in chat.',
     improve: 'Review the open document and create inline suggestions for clarity, wording, structure, and readability. Do not apply changes.',
     concise: 'Make the open document more concise by proposing one concrete, shorter replacement per affected paragraph. Each REPLACE must actually shorten the prose, not merely correct spelling or grammar. Each FIND must quote the entire original paragraph exactly, including any HTML tags. Keep distinct paragraphs separate and preserve their facts and meaning. Create inline suggestions only; do not apply changes.',
@@ -5819,9 +3653,9 @@ if (typeof globalThis !== 'undefined') {
     sources: 'Check factual claims in the open document using web research. For each claim, verify it, suggest a source link/citation when valid, or clearly mark it as unverified when you cannot find reliable evidence. Create inline suggestions only; do not apply changes.',
   });
 
-  const _aiWritingButtonMarkup = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+const _aiWritingButtonMarkup = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
 
-  function _aiWritingSelectionText() {
+function _aiWritingSelectionText() {
     const rich = _emailRichbodyActive();
     const browserSelection = window.getSelection?.();
     if (rich && browserSelection?.rangeCount && rich.contains(browserSelection.anchorNode)) {
@@ -5836,7 +3670,7 @@ if (typeof globalThis !== 'undefined') {
     return '';
   }
 
-  function _setAiWritingLoading(loading) {
+function _setAiWritingLoading(loading) {
     const button = document.getElementById('doc-ai-writing-btn');
     if (!button) return;
     if (button._writingSpinner) {
@@ -5854,7 +3688,7 @@ if (typeof globalThis !== 'undefined') {
     button._writingSpinner = whirlpool;
   }
 
-  function _closeAiWritingMenu() {
+function _closeAiWritingMenu() {
     const menu = document.getElementById('doc-ai-writing-menu');
     if (menu) {
       menu._cleanup?.();
@@ -5863,7 +3697,7 @@ if (typeof globalThis !== 'undefined') {
     document.getElementById('doc-ai-writing-btn')?.setAttribute('aria-expanded', 'false');
   }
 
-  function _showAiWritingMenu(button) {
+function _showAiWritingMenu(button) {
     _closeAiWritingMenu();
     // Capture before the menu can take focus or alter the browser selection.
     // This matters for both textarea ranges and contenteditable selections.
@@ -5996,7 +3830,7 @@ if (typeof globalThis !== 'undefined') {
     }, 0);
   }
 
-  function _orderDocumentToolbar(itemsWrap) {
+function _orderDocumentToolbar(itemsWrap) {
     if (!itemsWrap) return;
     const pdfItems = Array.from(itemsWrap.querySelectorAll(':scope > .md-toolbar-pdf-only'));
     itemsWrap.querySelectorAll(':scope > .md-toolbar-sep:not(.md-toolbar-pdf-only):not(.md-toolbar-manual-sep)').forEach(separator => separator.remove());
@@ -6019,7 +3853,7 @@ if (typeof globalThis !== 'undefined') {
     pdfItems.forEach(item => itemsWrap.appendChild(item));
   }
 
-  function _syncDocumentToolbarSeparators(itemsWrap) {
+function _syncDocumentToolbarSeparators(itemsWrap) {
     if (!itemsWrap) return;
     const isVisible = (el) => el && !el.hidden && el.style.display !== 'none';
     itemsWrap.querySelectorAll(':scope > .md-toolbar-sep:not(.md-toolbar-pdf-only)').forEach((separator) => {
@@ -6033,7 +3867,8 @@ if (typeof globalThis !== 'undefined') {
         isVisible(separator.nextElementSibling) ? '' : 'none';
     });
   }
-  function initMdToolbar() {
+
+function initMdToolbar() {
     const toolbar = document.getElementById('doc-md-toolbar');
     if (!toolbar) return;
 
@@ -6185,21 +4020,22 @@ if (typeof globalThis !== 'undefined') {
     toolbar._syncOverflow = syncMdOverflow;
   }
 
-  /** Collapse action buttons into overflow "..." menu (3 most-used visible) */
-  const _DOC_RECENTS_KEY = 'odysseus-doc-actions-recent';
-  const _DOC_MAX_VISIBLE = 2;
+const _DOC_RECENTS_KEY = 'odysseus-doc-actions-recent';
 
-  function _getDocRecent() {
+const _DOC_MAX_VISIBLE = 2;
+
+function _getDocRecent() {
     try { return JSON.parse(localStorage.getItem(_DOC_RECENTS_KEY) || '[]'); } catch { return []; }
   }
-  function _trackDocAction(id) {
+
+function _trackDocAction(id) {
     let recent = _getDocRecent().filter(x => x !== id);
     recent.unshift(id);
     if (recent.length > 10) recent.length = 10;
     localStorage.setItem(_DOC_RECENTS_KEY, JSON.stringify(recent));
   }
 
-  function initActionOverflow() {
+function initActionOverflow() {
     const actionsEl = document.getElementById('doc-editor-actions');
     const wrapper = document.getElementById('doc-overflow-wrapper');
     const toggle = document.getElementById('doc-overflow-toggle');
@@ -6320,8 +4156,7 @@ if (typeof globalThis !== 'undefined') {
     _syncOverflow = syncOverflow;
   }
 
-  /** Divider drag to resize the editor pane */
-  function initDividerDrag(divider, pane, isRight) {
+function initDividerDrag(divider, pane, isRight) {
     divider._disposeResize?.();
     const controller = new AbortController();
     const options = { signal: controller.signal };
@@ -6354,12 +4189,7 @@ if (typeof globalThis !== 'undefined') {
     };
   }
 
-  /** Close the editor panel */
-  // When the doc panel is "tab/chevron down" minimized, it lives as a chip
-  // in the bottom dock instead of a red toolbar indicator. We remember which
-  // doc was active so the chip can restore it.
-
-  function _ensureDocChipRegistered() {
+function _ensureDocChipRegistered() {
     if (Modals.isRegistered('doc-panel')) return;
     Modals.register('doc-panel', {
       // The ✕ / drag-to-trash on the minimized chip is a real close — detach
@@ -6385,7 +4215,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  export function closePanel(direction) {
+export function closePanel(direction) {
     if (!isOpen) {
       if (direction !== 'down' && Modals.isRegistered('doc-panel')) {
         setMinimizedDocId(null);
@@ -6491,8 +4321,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Swap doc panel side (called when sidebar side changes) */
-  export function swapSide() {
+export function swapSide() {
     if (!isOpen) return;
     const pane = document.getElementById('doc-editor-pane');
     const divider = document.getElementById('doc-divider');
@@ -6518,13 +4347,7 @@ if (typeof globalThis !== 'undefined') {
     initDividerDrag(divider, pane, isRight);
   }
 
-  // ---- Document CRUD ----
-
-  /** Create a new document for the current session */
-  // Create a new blank document, reusing the current/last session or
-  // auto-creating one. Same flow as the tab-bar "+" — the single entry point
-  // the sidebar Library "+" should use too.
-  export async function newDocument() {
+export async function newDocument() {
     let sessionId = docs.get(activeDocId)?.sessionId
       || _lastSessionId
       || (sessionModule && sessionModule.getCurrentSessionId());
@@ -6535,46 +4358,7 @@ if (typeof globalThis !== 'undefined') {
     await createDocument(sessionId);
   }
 
-  // Open an IMAP draft in the email composer instead of treating the draft
-  // itself as a message to reply to.
-  export async function openEmailDraft(data = {}) {
-    let sessionId = _lastSessionId || (sessionModule && sessionModule.getCurrentSessionId());
-    if (!sessionId) {
-      try { sessionId = await _autoCreateSession(); } catch (_) {}
-    }
-    if (!sessionId) throw new Error('Could not open draft: no session');
-    const content = _buildEmailContent(
-      data.to || '',
-      data.subject || '',
-      data.in_reply_to || data.inReplyTo || '',
-      data.references || '',
-      data.body || '',
-      data.source_uid || data.sourceUid || '',
-      data.source_folder || data.sourceFolder || '',
-      data.cc || '',
-      data.bcc || '',
-    );
-    const res = await fetch(`${API_BASE}/api/document`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({
-        session_id: sessionId,
-        title: data.subject || 'Email draft',
-        content,
-        language: 'email',
-      }),
-    });
-    if (!res.ok) throw new Error(`Draft open failed: HTTP ${res.status}`);
-    const doc = await res.json();
-    if (!doc?.id) throw new Error('Draft open failed: missing document');
-    doc._emailDraftUid = data.uid || data.draft_uid || null;
-    doc._emailDraftFolder = data.folder || data.draft_folder || null;
-    injectFreshDoc(doc);
-    return doc.id;
-  }
-
-  export async function createDocument(sessionId) {
+export async function createDocument(sessionId) {
     if (_creatingDoc) return;
     _creatingDoc = true;
     const generation = bumpNavigationGeneration();
@@ -6635,13 +4419,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Load an existing document into a tab */
-  /** Inject a freshly-created doc dict (from a POST response) directly into
-   * the tabs without re-fetching it via GET. Fixes a race where GET
-   * /api/document/{id} can 404 right after a successful POST — we already
-   * have the full doc payload from the create response, no need to round-trip.
-   */
-  export function injectFreshDoc(doc) {
+export function injectFreshDoc(doc) {
     if (!doc || !doc.id) return;
     const generation = bumpNavigationGeneration();
     const sessionId = doc.session_id || _lastSessionId || null;
@@ -6669,117 +4447,7 @@ if (typeof globalThis !== 'undefined') {
     }));
   }
 
-  export async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
-    const doc = docs.get(docId);
-    if (!doc) return;
-    const fields = _parseEmailHeader(doc.content || '');
-    const oldSplit = _splitEmailReplyQuote(fields.body || '');
-    const quote = oldSplit.quote;
-    const ownText = _emailReplyOwnText(fields.body || '');
-    const initialBody = fields.body || '';
-    if (!force && ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
-      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
-      return;
-    }
-    const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
-    if (activeDocId === docId) {
-      const textarea = document.getElementById('doc-editor-textarea');
-      const rich = _emailRichbodyActive();
-      if (textarea && (
-        textarea.value !== initialBody ||
-        (rich && rich.innerHTML !== _emailBodyToHtml(initialBody))
-      )) {
-        if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
-        return;
-      }
-    }
-    doc.content = _buildEmailContent(
-      fields.to,
-      fields.subject,
-      fields.inReplyTo,
-      fields.references,
-      body,
-      fields.sourceUid,
-      fields.sourceFolder,
-      fields.cc,
-      fields.bcc,
-    );
-    if (activeDocId === docId) {
-      const textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) _setEmailBodyText(textarea, body);
-    }
-    _scheduleAutoSave(docId, 800);
-  }
-
-
-  export async function ensureEmailDraftEnvelope(docId, freshContent) {
-    const doc = docs.get(docId);
-    if (!doc || doc.language !== 'email') return false;
-    const current = _parseEmailHeader(doc.content || '');
-    const fresh = _parseEmailHeader(freshContent || '');
-    if (!fresh.to && !fresh.subject && !fresh.sourceUid) return false;
-
-    const needsEnvelope = (
-      (!current.to && !!fresh.to) ||
-      (!current.subject && !!fresh.subject) ||
-      (!current.inReplyTo && !!fresh.inReplyTo) ||
-      (!current.references && !!fresh.references) ||
-      (!current.sourceUid && !!fresh.sourceUid) ||
-      (!current.sourceFolder && !!fresh.sourceFolder)
-    );
-
-    const currentSplit = _splitEmailReplyQuote(current.body || '');
-    const freshSplit = _splitEmailReplyQuote(fresh.body || '');
-    const currentOwnText = String(currentSplit.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const freshOwnText = String(freshSplit.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const currentBodyText = String(current.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const freshBodyText = String(fresh.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const needsBodyRepair = (
-      !!freshBodyText &&
-      (
-        !currentBodyText ||
-        (!currentOwnText && !!freshOwnText) ||
-        (!currentSplit.quote && !!freshSplit.quote)
-      )
-    );
-    if (!needsEnvelope && !needsBodyRepair) return false;
-
-    let body = current.body || '';
-    if (needsBodyRepair && (!currentBodyText || (!currentOwnText && !!freshOwnText))) {
-      body = fresh.body || '';
-    } else if (!String(body).trim()) {
-      body = fresh.body || '';
-    } else if (currentSplit.body && freshSplit.quote && !currentSplit.quote) {
-      body = `${currentSplit.body}\n\n${freshSplit.quote}`;
-    }
-
-    const merged = {
-      ...fresh,
-      to: current.to || fresh.to || '',
-      cc: current.cc || fresh.cc || '',
-      bcc: current.bcc || fresh.bcc || '',
-      subject: current.subject || fresh.subject || '',
-      inReplyTo: current.inReplyTo || fresh.inReplyTo || '',
-      references: current.references || fresh.references || '',
-      sourceUid: current.sourceUid || fresh.sourceUid || '',
-      sourceFolder: current.sourceFolder || fresh.sourceFolder || '',
-      forwardAttachments: current.forwardAttachments || fresh.forwardAttachments || false,
-      attachments: (current.attachments && current.attachments.length) ? current.attachments : (fresh.attachments || []),
-    };
-
-    doc.content = _buildEmailContentFromFields(merged, body);
-    if (activeDocId === docId) {
-      _showEmailFields(doc, { applyLocalDraft: false });
-    }
-    _scheduleAutoSave(docId, 800);
-    return true;
-  }
-
-  // Force the panel into a genuinely-open state. `isOpen` can be true while the
-  // pane was torn down by another full-screen view (e.g. opening a doc from the
-  // email modal): in that case openPanel() early-returns and nothing mounts, so
-  // the doc silently never appears. Reset the stale flag and re-open for real.
-  function _ensureDocPaneMounted() {
+function _ensureDocPaneMounted() {
     // Loading a specific document is an explicit open action. A minimized
     // registration can survive session switching on mobile, leaving the newly
     // selected document represented only by its bottom dock tab even though
@@ -6797,7 +4465,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  export async function loadDocument(docId) {
+export async function loadDocument(docId) {
     const generation = bumpNavigationGeneration();
     _minimizeNotesForDocumentOpen();
     if (_closingDocs.has(docId)) {
@@ -6836,17 +4504,12 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  // Deep-link: #document-<id> opens that document on load / URL-bar nav.
-  // Clicks on in-chat document anchors are handled separately (they call
-  // preventDefault, so they don't change the hash); this covers refresh
-  // and pasted/typed document URLs, which previously did nothing.
-  function _maybeOpenDocFromHash() {
+function _maybeOpenDocFromHash() {
     const m = (window.location.hash || '').match(/^#document-(.+)$/);
     if (m) loadDocument(m[1]);
   }
 
-  /** Open panel and ensure a document exists, creating a session if needed */
-  export async function ensureDocPanel() {
+export async function ensureDocPanel() {
     let sessionId = _lastSessionId
       || (sessionModule && sessionModule.getCurrentSessionId());
     if (!sessionId) {
@@ -6861,8 +4524,7 @@ if (typeof globalThis !== 'undefined') {
     await loadSessionDocs(sessionId);
   }
 
-  /** Create a session and sync it with the sessions module */
-  async function _autoCreateSession({ adopt = true, forceNew = false } = {}) {
+async function _autoCreateSession({ adopt = true, forceNew = false } = {}) {
     // Materialize pending chat first if one exists
     if (!forceNew && sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       await sessionModule.materializePendingSession();
@@ -6900,8 +4562,7 @@ if (typeof globalThis !== 'undefined') {
     return sessionId;
   }
 
-  /** Load all documents for a session into tabs */
-  export async function loadSessionDocs(sessionId, opts = {}) {
+export async function loadSessionDocs(sessionId, opts = {}) {
     suspendSuggestions();
     const generation = bumpNavigationGeneration();
     _closeVersionPanel();
@@ -7008,21 +4669,18 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
+let _selections = [];
 
-  // ---- Selection-based AI editing ----
+const _richSelectionHighlightName = 'doc-ai-selections';
 
-  // Tracked selection state — when set, the next chat message auto-includes this context
-  let _selections = [];  // [{ text, startLine, endLine, start, end }, ...]
-  const _richSelectionHighlightName = 'doc-ai-selections';
-
-  function _richRootText(rich) {
+function _richRootText(rich) {
     if (!rich) return '';
     const range = document.createRange();
     range.selectNodeContents(rich);
     return range.toString();
   }
 
-  function _richRangeFromOffsets(rich, start, end) {
+function _richRangeFromOffsets(rich, start, end) {
     if (!rich || start < 0 || end <= start) return null;
     const walker = document.createTreeWalker(rich, NodeFilter.SHOW_TEXT);
     let offset = 0;
@@ -7048,7 +4706,7 @@ if (typeof globalThis !== 'undefined') {
     return range;
   }
 
-  function updateRichSelectionState(rich) {
+function updateRichSelectionState(rich) {
     if (!rich || !rich.isConnected || rich.style.display === 'none') return;
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed) return;
@@ -7076,16 +4734,9 @@ if (typeof globalThis !== 'undefined') {
     renderAllSelectionHighlights();
   }
 
-  // Pinned-selection overlays are positioned in pixel coords measured
-  // against the textarea's current size. When the window shrinks (or
-  // the sidebar collapses, or the panel resizes), the text wraps to
-  // more rows but the overlay rectangles stay where they were —
-  // visibly drifting off the real highlighted text. Re-render on any
-  // size change so the overlays follow the new wrap. Debounced via
-  // rAF to coalesce the rapid-fire ResizeObserver pulses during a
-  // drag-resize.
-  let _selResizeScheduled = false;
-  function _scheduleSelRerender() {
+let _selResizeScheduled = false;
+
+function _scheduleSelRerender() {
     if (_selResizeScheduled || _selections.length === 0) return;
     _selResizeScheduled = true;
     requestAnimationFrame(() => {
@@ -7093,15 +4744,14 @@ if (typeof globalThis !== 'undefined') {
       try { renderAllSelectionHighlights(); } catch (_) {}
     });
   }
-  if (typeof window !== 'undefined') {
+
+if (typeof window !== 'undefined') {
     window.addEventListener('resize', _scheduleSelRerender);
   }
-  // Observe the textarea itself so internal layout changes (sidebar
-  // collapse, panel snap, mobile keyboard show/hide) also trigger a
-  // re-render. The observer attaches lazily on first selection so we
-  // don't churn before the editor mounts.
-  let _selResizeObserver = null;
-  function _ensureSelResizeObserver() {
+
+let _selResizeObserver = null;
+
+function _ensureSelResizeObserver() {
     if (_selResizeObserver || typeof ResizeObserver === 'undefined') return;
     const ta = document.getElementById('doc-editor-textarea');
     if (!ta) return;
@@ -7109,9 +4759,7 @@ if (typeof globalThis !== 'undefined') {
     _selResizeObserver.observe(ta);
   }
 
-  /** Update selection tracking, show badge + persistent highlight.
-   *  Each new selection is added (pinned). Click without selecting to clear all. */
-  function updateSelectionState() {
+function updateSelectionState() {
     // The mirror measurement below uses the textarea's live computed metrics,
     // so pinned selections remain valid with wrapped lines, larger font sizes,
     // mobile widths, and non-fullscreen panes. Older code disabled selection
@@ -7150,8 +4798,7 @@ if (typeof globalThis !== 'undefined') {
     renderAllSelectionHighlights();
   }
 
-  /** Show a selection indicator badge with count + clear button */
-  function showSelectionBadge() {
+function showSelectionBadge() {
     let badge = document.getElementById('doc-selection-badge');
     if (!badge) {
       badge = document.createElement('span');
@@ -7212,12 +4859,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  /** Markdown / prose docs get character-precise highlights (like a
-   *  normal browser selection but persistent). Code docs get line-based
-   *  highlights — when working in code you usually operate on whole
-   *  lines, and the character-based version reads as jittery against
-   *  monospace alignment. */
-  function _isCodeDoc() {
+function _isCodeDoc() {
     const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
     if (!lang) return false;
     // Prose / preview types that should get character-precise highlights.
@@ -7225,11 +4867,7 @@ if (typeof globalThis !== 'undefined') {
     return !prose.has(lang);
   }
 
-  /** Measure the visual x,y position of a character index inside the
-   *  mirror element by inserting a zero-width marker span there and
-   *  reading its bounding rect. Returns {x, y} relative to the mirror's
-   *  content-box origin. */
-  function _measurePos(mirror, text, pos) {
+function _measurePos(mirror, text, pos) {
     mirror.innerHTML = '';
     if (pos > 0) mirror.appendChild(document.createTextNode(text.substring(0, pos)));
     const marker = document.createElement('span');
@@ -7240,18 +4878,7 @@ if (typeof globalThis !== 'undefined') {
     return { x: r.left - m.left, y: r.top - m.top };
   }
 
-  /** Render persistent highlight overlays for all selections */
-  // Re-anchor pinned selections against the live textarea content. After
-  // an undo or any other path that shrinks/shifts the text, captured
-  // {start, end} positions can point at unrelated content (or past the
-  // end of the buffer). We:
-  //   1. Verify the captured text still sits at [start, end].
-  //   2. If not, look for the captured text elsewhere in the doc and
-  //      re-anchor. Prefers the nearest occurrence to the old position.
-  //   3. If the captured text is gone entirely, drop the selection.
-  //   4. Refresh derived fields (startLine/endLine) when re-anchored.
-  // Cheap O(N) per selection; only runs when _selections is non-empty.
-  function _validateSelections(text) {
+function _validateSelections(text) {
     if (_selections.length === 0) return;
     const rich = _emailRichbodyActive();
     const richText = rich ? _richRootText(rich) : '';
@@ -7292,7 +4919,7 @@ if (typeof globalThis !== 'undefined') {
     _selections = survivors;
   }
 
-  function renderAllSelectionHighlights() {
+function renderAllSelectionHighlights() {
     document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
     // Delete the persistent CSS highlight before checking whether any
     // selections remain; otherwise clearing the last selection leaves the
@@ -7470,14 +5097,12 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Sync all selection highlight positions on scroll */
-  function syncSelectionOverlay() {
+function syncSelectionOverlay() {
     if (_selections.length === 0) return;
     renderAllSelectionHighlights();
   }
 
-  /** Clear all selections, badge, and highlights */
-  function clearSelection({ preserveCaret = false } = {}) {
+function clearSelection({ preserveCaret = false } = {}) {
     _selections = [];
     try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
     document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
@@ -7500,7 +5125,7 @@ if (typeof globalThis !== 'undefined') {
     _scheduleDocumentStats();
   }
 
-  function clearSelectionAt(index) {
+function clearSelectionAt(index) {
     if (index < 0 || index >= _selections.length) return;
     const removed = _selections[index];
     _selections.splice(index, 1);
@@ -7517,12 +5142,7 @@ if (typeof globalThis !== 'undefined') {
     _scheduleDocumentStats();
   }
 
-  /**
-   * Get all selection contexts for chat injection.
-   * Called by chat module before sending a message.
-   * Returns null if no selections, or array of { text, startLine, endLine }.
-   */
-  export function getSelectionContext() {
+export function getSelectionContext() {
     if (_selections.length === 0) return null;
     // Re-anchor / drop stale selections before handing them to chat —
     // shipping text from a stale offset would mean the AI sees content
@@ -7541,8 +5161,7 @@ if (typeof globalThis !== 'undefined') {
     return ctx;
   }
 
-  /** Restore a document selection referenced by a chat bubble. */
-  export async function restoreSelectionReference(reference, options = {}) {
+export async function restoreSelectionReference(reference, options = {}) {
     const requestedDocId = String(options.documentId || '').trim();
     if (requestedDocId) await loadDocument(requestedDocId);
     if (!activeDocId || !docs.has(activeDocId)) return false;
@@ -7624,12 +5243,7 @@ if (typeof globalThis !== 'undefined') {
     return true;
   }
 
-
-
-  // ── Inline Suggestion Comments (Google Docs style) extracted to ./document/ui/suggestions.js ──
-
-  /** Run the document's code using the in-browser code runner */
-  function runDocument() {
+function runDocument() {
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
 
@@ -7686,8 +5300,7 @@ if (typeof globalThis !== 'undefined') {
     setTimeout(() => { if (outputPanel) outputPanel.style.display = 'none'; }, 5000);
   }
 
-  /** Copy document content to clipboard */
-  async function copyDocument() {
+async function copyDocument() {
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea || !textarea.value) return;
     if (uiModule && uiModule.copyToClipboard) {
@@ -7700,18 +5313,13 @@ if (typeof globalThis !== 'undefined') {
     if (uiModule) uiModule.showToast('Copied to clipboard');
   }
 
-  /* ---- Per-tab context menu ---- */
+let _docTabMenu = null;
 
-  let _docTabMenu = null; // singleton dropdown element
-
-  function _closeDocTabMenu() {
+function _closeDocTabMenu() {
     if (_docTabMenu) { _docTabMenu.style.display = 'none'; }
   }
 
-  // Escape must clear document-local UI before ui.js gets a chance to close
-  // the hovered window. This listener is on window capture, which runs before
-  // document capture listeners regardless of module registration order.
-  if (!window._documentInnerEscapeBound) {
+if (!window._documentInnerEscapeBound) {
     window._documentInnerEscapeBound = true;
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !isOpen) return;
@@ -7792,7 +5400,7 @@ if (typeof globalThis !== 'undefined') {
     }, true);
   }
 
-  async function _moveDocToSession(docId, sessionId, { switchChat = false } = {}) {
+async function _moveDocToSession(docId, sessionId, { switchChat = false } = {}) {
     const doc = docs.get(docId);
     if (!doc || !sessionId) return false;
     if (docId === activeDocId) {
@@ -7825,7 +5433,7 @@ if (typeof globalThis !== 'undefined') {
     return true;
   }
 
-  async function moveActiveDocumentToCurrentChat({ quiet = false } = {}) {
+async function moveActiveDocumentToCurrentChat({ quiet = false } = {}) {
     if (!activeDocId) return;
     let sessionId = sessionModule?.getCurrentSessionId?.() || '';
     if (!sessionId) sessionId = await _autoCreateSession();
@@ -7838,7 +5446,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  async function moveActiveDocumentToNewChat() {
+async function moveActiveDocumentToNewChat() {
     if (!activeDocId) return;
     try {
       // Do not adopt the empty destination before the active document has
@@ -7853,7 +5461,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  function showDocTabMenu(btnEl, docId) {
+function showDocTabMenu(btnEl, docId) {
     // Toggle off if already open for this doc
     if (_docTabMenu && _docTabMenu.style.display === 'block' && _docTabMenu._docId === docId) {
       _closeDocTabMenu();
@@ -7996,118 +5604,7 @@ if (typeof globalThis !== 'undefined') {
     });
   }
 
-  /**
-   * "Send signed reply" — flatten the current PDF (form fields + signature
-   * stamps + freeform annotations), drop it into the compose-uploads dir,
-   * then either:
-   *   1. add the attachment to an existing open email draft for the same
-   *      source thread (so multiple signed docs accumulate into one reply), or
-   *   2. create a fresh email-language draft document pre-filled with To /
-   *      Subject / In-Reply-To / References and the first attachment.
-   * Switches the doc panel to that draft so the user can review + send.
-   */
-  async function _sendSignedReply(docId) {
-    const doc = docs.get(docId);
-    if (!doc || !doc.sourceEmailUid) return;
-    if (uiModule) uiModule.showToast('Preparing signed reply…');
-    let result;
-    try {
-      const res = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/prepare-signed-reply`, {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-      result = await res.json().catch(() => ({}));
-      if (!res.ok || !result.ok) {
-        const msg = (result && result.error) || `HTTP ${res.status}`;
-        if (uiModule) uiModule.showError(`Couldn't prepare signed reply: ${msg}`);
-        return;
-      }
-    } catch (e) {
-      console.error('prepare-signed-reply failed:', e);
-      if (uiModule) uiModule.showError("Couldn't prepare signed reply");
-      return;
-    }
-
-    const att = result.attachment;
-    const reply = result.reply || {};
-    const mid = reply.source_message_id || doc.sourceEmailMessageId || '';
-
-    // 1) Already have a draft tab open for this source thread? Append.
-    for (const [, d] of docs) {
-      if (d.language === 'email' && d._draftForMessageId === mid && mid) {
-        d._composeAtts = (d._composeAtts || []).concat([att]);
-        await loadDocument(d.id);
-        _renderComposeAttachments();
-        if (uiModule) uiModule.showToast(`Added "${att.filename}" to the reply draft`);
-        return;
-      }
-    }
-
-    // 2) Otherwise create a fresh email draft.
-    const headerLines = [
-      `To: ${reply.to || ''}`,
-      `Subject: ${reply.subject || ''}`,
-      reply.in_reply_to ? `In-Reply-To: ${reply.in_reply_to}` : null,
-      reply.references ? `References: ${reply.references}` : null,
-      reply.source_uid ? `X-Source-UID: ${reply.source_uid}` : null,
-      reply.source_folder ? `X-Source-Folder: ${reply.source_folder}` : null,
-    ].filter(Boolean);
-    const content = headerLines.join('\n') + '\n---\n\nHi' + (reply.to_name ? ' ' + reply.to_name.split(/\s+/)[0] : '') + ',\n\nPlease find the signed copy attached.\n\nBest,\n';
-
-    let draftId = null;
-    try {
-      // Use the source PDF's session if available; else fall back to current.
-      let sessionId = doc.sessionId
-        || _lastSessionId
-        || (sessionModule && sessionModule.getCurrentSessionId());
-      if (!sessionId) {
-        try { sessionId = await _autoCreateSession(); } catch (_) {}
-      }
-      const cRes = await fetch(`${API_BASE}/api/document`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          session_id: sessionId,
-          title: reply.subject || 'Signed reply',
-          language: 'email',
-          content,
-        }),
-      });
-      const created = await cRes.json();
-      draftId = created && (created.id || created.doc_id);
-      if (!draftId) throw new Error('No draft id returned');
-    } catch (e) {
-      console.error('Failed to create draft doc:', e);
-      if (uiModule) uiModule.showError("Couldn't create reply draft");
-      return;
-    }
-
-    // Tag the draft (in-memory only) with the thread message-id so future
-    // signed PDFs from the same email get appended to this same draft.
-    addDocToTabs({
-      id: draftId,
-      title: reply.subject || 'Signed reply',
-      language: 'email',
-      current_content: content,
-      version_count: 1,
-    }, doc.sessionId);
-    const draft = docs.get(draftId);
-    if (draft) {
-      draft._composeAtts = [att];
-      draft._draftForMessageId = mid;
-      if (reply.account_id) draft._draftAccountId = reply.account_id;
-    }
-
-    await loadDocument(draftId);
-    _renderComposeAttachments();
-    if (uiModule) uiModule.showToast(`Reply draft ready — "${att.filename}" attached`);
-  }
-
-  // Document export, print, and DOCX engine extracted to ./document/ui/exportDocx.js
-
-  /** Delete the active document */
-  async function deleteActiveDocument() {
+async function deleteActiveDocument() {
     if (!activeDocId) return;
     const idToDelete = activeDocId;
     if (_inFlightDeletes.has(idToDelete)) return _inFlightDeletes.get(idToDelete);
@@ -8182,8 +5679,7 @@ if (typeof globalThis !== 'undefined') {
     return deleteTask;
   }
 
-  /** Toggle fullscreen on doc editor pane */
-  function toggleFullscreen() {
+function toggleFullscreen() {
     const pane = document.getElementById('doc-editor-pane');
     const container = document.getElementById('chat-container');
     if (!pane) return;
@@ -8217,15 +5713,7 @@ if (typeof globalThis !== 'undefined') {
     if (mdToolbar?._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
   }
 
-  // Preview modes (markdown, CSV table, HTML sandbox, DOCX) extracted to ./document/ui/previewModes.js
-
-  // ---- Streaming animation engine ----
-
-  /**
-   * Compute a line-level diff between two texts.
-   * Returns array of { type: 'same'|'del'|'add', text: string } or null if too large.
-   */
-  function lineDiff(oldText, newText) {
+function lineDiff(oldText, newText) {
     const raw = diffLines(oldText, newText, { maxCells: 500000 });
     if (!raw) return null;
     return raw.map(e => ({
@@ -8234,7 +5722,7 @@ if (typeof globalThis !== 'undefined') {
     }));
   }
 
-  async function animateDocChange(oldText, newText) {
+async function animateDocChange(oldText, newText) {
     if (_animationCancel) _animationCancel();
 
     const textarea = document.getElementById('doc-editor-textarea');
@@ -8343,12 +5831,9 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  // --- Streaming helpers: open panel & feed content as AI generates ---
-  let _streamDocId = null;
+let _streamDocId = null;
 
-  /** Sync the markdown toolbar + header actions for a streaming doc, so the
-   *  Edit/Preview toggle and formatting tools appear without a manual refresh. */
-  function _syncStreamDocChrome(doc) {
+function _syncStreamDocChrome(doc) {
     if (!doc) return;
     const lang = (doc.language || 'markdown').toLowerCase();
     const isMd = lang === 'markdown';
@@ -8370,8 +5855,7 @@ if (typeof globalThis !== 'undefined') {
     _syncHeaderActions();
   }
 
-  /** Open the document panel immediately for a doc being streamed in */
-  export function streamDocOpen(title, language) {
+export function streamDocOpen(title, language) {
     bumpNavigationGeneration();
     _closeVersionPanel();
     // Discard any pending AI-edit diff before this stream changes the active
@@ -8479,10 +5963,9 @@ if (typeof globalThis !== 'undefined') {
     renderTabs();
   }
 
-  /** Simulate streaming effect for doc edits */
-  let _editAnimFrame = null;
+let _editAnimFrame = null;
 
-  function _animateDocEdit(textarea, newContent) {
+function _animateDocEdit(textarea, newContent) {
     if (_editAnimFrame) cancelAnimationFrame(_editAnimFrame);
     const indicator = document.getElementById('doc-stream-indicator');
     if (indicator) indicator.style.display = '';
@@ -8558,9 +6041,9 @@ if (typeof globalThis !== 'undefined') {
     _editAnimFrame = requestAnimationFrame(tick);
   }
 
-  /** Append streaming content to the currently-streaming doc */
-  let _streamHlDebounce = null;
-  export function streamDocDelta(content) {
+let _streamHlDebounce = null;
+
+export function streamDocDelta(content) {
     if (!_streamDocId) return;
     const doc = docs.get(_streamDocId);
     if (doc) doc.content = content;
@@ -8594,9 +6077,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Finalize streaming — called when doc_update arrives with the real ID.
-   *  Returns the old _streamDocId so handleDocUpdate can migrate temp→real. */
-  export function streamDocFinalize() {
+export function streamDocFinalize() {
     const oldId = _streamDocId;
     if (!oldId) return null;
     const finishingDoc = oldId ? docs.get(oldId) : null;
@@ -8617,8 +6098,7 @@ if (typeof globalThis !== 'undefined') {
     return oldId;
   }
 
-  /** Handle SSE doc_update event from AI */
-  export function handleDocUpdate(data) {
+export function handleDocUpdate(data) {
     suspendSuggestions();
     bumpNavigationGeneration();
     _closeVersionPanel();
@@ -8889,19 +6369,20 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Toggle version history panel */
-  let _versionClickOutside = null;
-  let _versionHistory = null;
-  let _versionHistoryGeneration = 0;
+let _versionClickOutside = null;
 
-  function _historyOwnsView(state) {
+let _versionHistory = null;
+
+let _versionHistoryGeneration = 0;
+
+function _historyOwnsView(state) {
     return state && _versionHistory === state
       && state.generation === _versionHistoryGeneration
       && state.docId === activeDocId && isOpen
       && state.pane === document.getElementById('doc-editor-pane');
   }
 
-  async function toggleVersionHistory({ focus = false } = {}) {
+async function toggleVersionHistory({ focus = false } = {}) {
     const panel = document.getElementById('doc-version-panel');
     if (!panel || !activeDocId) return;
     if (!panel.classList.contains('hidden')) {
@@ -8938,7 +6419,7 @@ if (typeof globalThis !== 'undefined') {
     if (focus && _historyOwnsView(state)) (panel.querySelector('.doc-version-preview') || panel.querySelector('#doc-version-close'))?.focus({ preventScroll: true });
   }
 
-  function _closeVersionPanel({ restoreFocus = false } = {}) {
+function _closeVersionPanel({ restoreFocus = false } = {}) {
     const state = _versionHistory;
     const ownsView = _historyOwnsView(state);
     _versionHistory = null;
@@ -8957,10 +6438,7 @@ if (typeof globalThis !== 'undefined') {
     if (restoreFocus && state) document.querySelector(`.doc-tab[data-doc-id="${CSS.escape(state.docId)}"] .doc-tab-version`)?.focus({ preventScroll: true });
   }
 
-  /** Build a short diff summary between two strings */
-
-  /** Load version history list */
-  async function loadVersionHistory(state = _versionHistory) {
+async function loadVersionHistory(state = _versionHistory) {
     if (!_historyOwnsView(state)) return;
     const list = document.getElementById('doc-version-list');
     if (!list) return;
@@ -9018,8 +6496,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Preview a specific version in the editor (without saving) */
-  async function previewVersion(num) {
+async function previewVersion(num) {
     const state = _versionHistory;
     if (!_historyOwnsView(state) || state.restoring) return;
     const operation = ++state.operation;
@@ -9042,8 +6519,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Restore against the originating draft and serialize with its other writes. */
-  async function restoreVersion(num) {
+async function restoreVersion(num) {
     const state = _versionHistory;
     if (!_historyOwnsView(state) || state.restoring) return;
     state.restoring = true;
@@ -9092,8 +6568,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Update document title via PATCH */
-  async function updateTitle(overrideDocId, overrideTitle) {
+async function updateTitle(overrideDocId, overrideTitle) {
     const docId = overrideDocId || activeDocId;
     if (!docId) return;
     const title = overrideTitle || document.getElementById('doc-title-input')?.value;
@@ -9113,8 +6588,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Auto-detect title from content if still "Untitled" */
-  function autoTitleFromContent(content, docId) {
+function autoTitleFromContent(content, docId) {
     const id = docId || activeDocId;
     if (!id) return;
     const doc = docs.get(id);
@@ -9160,8 +6634,7 @@ if (typeof globalThis !== 'undefined') {
     if (titleInput && id === activeDocId) titleInput.value = title;
   }
 
-  /** Update document language via PATCH */
-  async function updateLanguage() {
+async function updateLanguage() {
     if (!activeDocId) return;
     const select = document.getElementById('doc-language-select');
     if (!select) return;
@@ -9180,8 +6653,7 @@ if (typeof globalThis !== 'undefined') {
     }
   }
 
-  /** Clear all tab state (e.g. on session switch) */
-  export function clearAll() {
+export function clearAll() {
     suspendSuggestions();
     bumpNavigationGeneration();
     _closeVersionPanel();
@@ -9192,12 +6664,11 @@ if (typeof globalThis !== 'undefined') {
     _syncDocIndicator();
   }
 
-
-  export function getCurrentDocId() {
+export function getCurrentDocId() {
     return activeDocId;
   }
 
-  export function getChatDocumentId() {
+export function getChatDocumentId() {
     // A minimized document remains the document linked to this conversation.
     // On mobile, minimizing the sheet is the only way to reach the composer;
     // treating that layout action as unlinking erased the document exactly
@@ -9221,41 +6692,6 @@ if (typeof globalThis !== 'undefined') {
     const id = visiblyOpen ? activeDocId : minimizedId;
     return id && docs.has(id) ? id : null;
   }
-
-  export function getActiveEmailComposerContext() {
-    const docId = getChatDocumentId();
-    if (!docId) return null;
-    const doc = docs.get(docId);
-    if (!doc || doc.language !== 'email') return null;
-    const fields = _parseEmailHeader(doc.content || '');
-    return {
-      docId,
-      sourceUid: fields.sourceUid || '',
-      sourceFolder: fields.sourceFolder || 'INBOX',
-      inReplyTo: fields.inReplyTo || '',
-      to: fields.to || '',
-      subject: fields.subject || '',
-    };
-  }
-
-  /** Find an open email tab by source UID + folder. Returns docId or null. */
-  export function findEmailDocId(uid, folder) {
-    if (uid == null) return null;
-    const wantUid = String(uid);
-    const wantFolder = (folder || '').trim();
-    for (const [id, d] of docs) {
-      if (d.language !== 'email') continue;
-      const fields = _parseEmailHeader(d.content || '');
-      if (fields.sourceUid && String(fields.sourceUid) === wantUid &&
-          (!wantFolder || (fields.sourceFolder || '').trim() === wantFolder)) {
-        return id;
-      }
-    }
-    return null;
-  }
-
-
-
 
 try {
   bindDocumentCommands({
@@ -9300,6 +6736,25 @@ try {
   }
 }
 
+
+const _openEmailDraft = (...args) => globalThis.openEmailDraft?.(...args);
+const _replaceEmailReplyBody = (...args) => globalThis.replaceEmailReplyBody?.(...args);
+const _ensureEmailDraftEnvelope = (...args) => globalThis.ensureEmailDraftEnvelope?.(...args);
+const _getActiveEmailComposerContext = (...args) => globalThis.getActiveEmailComposerContext?.(...args);
+const _findEmailDocId = (...args) => globalThis.findEmailDocId?.(...args);
+const _focusEmailReplyBody = (...args) => globalThis.focusEmailReplyBody?.(...args);
+const _generateEmailReply = (...args) => globalThis.generateEmailReply?.(...args);
+
+export {
+  _openEmailDraft as openEmailDraft,
+  _replaceEmailReplyBody as replaceEmailReplyBody,
+  _ensureEmailDraftEnvelope as ensureEmailDraftEnvelope,
+  _getActiveEmailComposerContext as getActiveEmailComposerContext,
+  _findEmailDocId as findEmailDocId,
+  _focusEmailReplyBody as focusEmailReplyBody,
+  _generateEmailReply as generateEmailReply,
+};
+
 const documentModule = {
   init,
   openPanel,
@@ -9309,10 +6764,10 @@ const documentModule = {
   newDocument,
   loadDocument,
   injectFreshDoc,
-  replaceEmailReplyBody,
-  ensureEmailDraftEnvelope,
-  openEmailDraft,
-  generateEmailReply,
+  replaceEmailReplyBody: _replaceEmailReplyBody,
+  ensureEmailDraftEnvelope: _ensureEmailDraftEnvelope,
+  openEmailDraft: _openEmailDraft,
+  generateEmailReply: _generateEmailReply,
   ensurePaneMounted: _ensureDocPaneMounted,
   loadSessionDocs,
   ensureDocPanel,
@@ -9328,11 +6783,11 @@ const documentModule = {
   isDiffModeActive,
   getCurrentDocId,
   getChatDocumentId,
-  getActiveEmailComposerContext,
-  focusEmailReplyBody,
+  getActiveEmailComposerContext: _getActiveEmailComposerContext,
+  focusEmailReplyBody: _focusEmailReplyBody,
   moveActiveDocumentToCurrentChat,
   moveActiveDocumentToNewChat,
-  findEmailDocId,
+  findEmailDocId: _findEmailDocId,
   getSelectionContext,
   restoreSelectionReference,
   clearSelection,
@@ -9345,4 +6800,5 @@ const documentModule = {
 export { handleDocSuggestions, isPanelOpen, saveDocument };
 
 export default documentModule;
+
 window.documentModule = documentModule;

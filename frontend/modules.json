@@ -284,6 +284,48 @@
       "deployment": "js/document/ui/richEditor/slashMenu.js"
     },
     {
+      "source": "features/documents/ui/email/aiReply.js",
+      "deployment": "js/document/ui/email/aiReply.js"
+    },
+    {
+      "source": "features/documents/ui/email/attachments.js",
+      "deployment": "js/document/ui/email/attachments.js"
+    },
+    {
+      "source": "features/documents/ui/email/composerFields.js",
+      "deployment": "js/document/ui/email/composerFields.js"
+    },
+    {
+      "source": "features/documents/ui/email/emailBody.js",
+      "deployment": "js/document/ui/email/emailBody.js"
+    },
+    {
+      "source": "features/documents/ui/email/emailDocuments.js",
+      "deployment": "js/document/ui/email/emailDocuments.js"
+    },
+    {
+      "source": "features/documents/ui/email/localDraft.js",
+      "deployment": "js/document/ui/email/localDraft.js"
+    },
+    {
+      "source": "features/documents/ui/email/recipients.js",
+      "deployment": "js/document/ui/email/recipients.js"
+    },
+    {
+      "source": "features/documents/ui/email/sendWorkflow.js",
+      "deployment": "js/document/ui/email/sendWorkflow.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/emailLibrary.js?v=20260915trashmove2",
+          "reason": "Email library dynamic refresh and open actions."
+        }
+      ]
+    },
+    {
+      "source": "features/documents/ui/email/signedReply.js",
+      "deployment": "js/document/ui/email/signedReply.js"
+    },
+    {
       "source": "features/documents/domain/documentKinds.js",
       "deployment": "js/document/domain/documentKinds.js"
     },
