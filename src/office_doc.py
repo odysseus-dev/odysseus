@@ -64,6 +64,7 @@ def create_office_document(
             content=body_text,
             summary="Imported from Office attachment",
             source="upload",
+            is_autosave=False,
         )
         db.add(doc)
         db.add(ver)

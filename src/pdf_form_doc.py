@@ -247,6 +247,7 @@ def create_plain_pdf_document(
             content=content,
             summary="Imported from PDF",
             source="upload",
+            is_autosave=False,
         )
         db.add(doc)
         db.add(ver)
@@ -430,6 +431,7 @@ def create_form_markdown_document(
             content=content,
             summary="Imported from PDF form",
             source="upload",
+            is_autosave=False,
         )
         db.add(doc)
         db.add(ver)
