@@ -485,6 +485,9 @@ function ProjectDetail({ id, onOpenSession, diagnosticUrl, onChanged }) {
   const changed = useCallback(() => { reload(); if (onChanged) onChanged() }, [reload, onChanged])
   const [related] = useRequest(id && base.status === 'ready' ? `${id}:related` : null, signal => getJson(`${API}/${encodeURIComponent(id)}/related`, signal), [base.data])
   useEffect(() => { setTab('overview') }, [id])
+  // The registry changes while this page is open (a project was just created, a folder added elsewhere): re-read it whenever Manage is shown or the project changes,
+  // otherwise Manage would call an existing project \u201cnot a Hermes project yet\u201d.
+  useEffect(() => { if (tab === 'manage') void reloadNative() }, [tab, id, reloadNative])
   if (!id) return h(PanelEmpty, { icon: 'project', title: 'Select a project' })
   if (base.status === 'error' && !base.data) return h(Retry, { error: base.error, onRetry: reload })
   if (!base.data) return h(Loading, { rows: 5 })
