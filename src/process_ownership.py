@@ -88,8 +88,8 @@ MECHANISM_WIN32 = "win32"
 #: UNVERIFIABLE, which is the honest answer and not a permissive one.
 MECHANISM_NONE = "none"
 
-# The failure path only: a wedged `ps` must never hold up a teardown decision.
-_PS_TIMEOUT_S = 5
+# Shared by identity and lifecycle probes: a wedged ps must remain bounded.
+PS_TIMEOUT_S = 5
 
 #: Field 22 of ``/proc/<pid>/stat`` (1-indexed) is the process start time in
 #: clock ticks since boot. Fields 1 and 2 are skipped by splitting on the last
@@ -165,7 +165,7 @@ def _ps_token(pid: int) -> Optional[str]:
             ["ps", "-p", str(pid), "-o", "lstart="],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=_PS_TIMEOUT_S,
+            timeout=PS_TIMEOUT_S,
             text=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -336,7 +336,7 @@ def _ps_process_table() -> dict[int, ProcessInfo]:
             ["ps", "-axww", "-o", "pid=,ppid=,command="],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=_PS_TIMEOUT_S,
+            timeout=PS_TIMEOUT_S,
             text=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:

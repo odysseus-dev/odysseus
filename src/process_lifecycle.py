@@ -263,11 +263,27 @@ def bind_descendants(
 
 
 def is_zombie(pid: Optional[int]) -> bool:
-    """True when procfs reports ``pid`` in state ``Z``. False when it cannot tell."""
-    if not pid or not platform_compat.has_procfs():
-        return False
+    """True when procfs or POSIX ps reports state Z; False when unknown."""
     try:
-        raw = (platform_compat.PROC_ROOT / str(int(pid)) / "stat").read_text(
+        pid = int(pid) if pid else 0
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if not platform_compat.has_procfs():
+        if IS_WINDOWS:
+            return False
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "stat="],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=process_ownership.PS_TIMEOUT_S, text=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0 and result.stdout.strip().startswith("Z")
+    try:
+        raw = (platform_compat.PROC_ROOT / str(pid) / "stat").read_text(
             encoding="utf-8", errors="replace")
     except (OSError, ValueError):
         return False
