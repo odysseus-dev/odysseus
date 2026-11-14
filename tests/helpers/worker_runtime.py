@@ -25,9 +25,11 @@ def configure_runtime(config, runtime):
         # pytest's default <TMPDIR>/pytest-of-<user>/pytest-<n> beneath the
         # private TMPDIR, plus xdist's popen-gw<n>, overflows the 107-byte
         # AF_UNIX limit for sockets in tmp_path. Workers inherit a basetemp
-        # under the controller's; an explicit --basetemp still wins.
+        # under the controller's; an explicit --basetemp still wins. It sits inside
+        # the private TMPDIR so tmp_path stays within the tool path roots, which
+        # honour $TMPDIR (matters on Windows, which has no /tmp).
         if config.option.basetemp is None and not hasattr(config, "workerinput"):
-            config.option.basetemp = str(runtime.root / "pytest")
+            config.option.basetemp = str(runtime.root / "tmp" / "pytest")
     parallel = bool(getattr(config.option, "numprocesses", None)) or hasattr(config, "workerinput")
     # This consumes the existing test option; its public read and documented
     # source location remain in the static-server fixture.
