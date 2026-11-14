@@ -72,6 +72,53 @@ def _email_source_key(content: str) -> tuple[str, str]:
     return uid, folder
 
 
+def _fetch_signed_reply_headers(account_id: Optional[str], folder: str,
+                                uid: str, message_id: str = "") -> dict:
+    """Read the source email's headers for a signed-reply draft.
+
+    `uid` is the IMAP UID stored on the document, so it must be fetched with
+    UID FETCH. A plain FETCH would read it as a sequence number, which points
+    at a different message once anything older in the folder is expunged.
+    """
+    import email as _email_mod
+    import email.utils  # noqa: F401  (makes _email_mod.utils available)
+
+    reply = {
+        "to": "",
+        "to_name": "",
+        "subject": "",
+        "in_reply_to": message_id or "",
+        "references": message_id or "",
+    }
+    try:
+        from routes.email_routes import _imap, _decode_header, _imap_uid_fetch
+        from routes.email_helpers import _q
+    except Exception:
+        return reply
+
+    try:
+        with _imap(account_id or None) as conn:
+            conn.select(_q(folder), readonly=True)
+            status, data = _imap_uid_fetch(conn, uid, "(RFC822.HEADER)")
+        if status == "OK" and data and isinstance(data[0], tuple):
+            m = _email_mod.message_from_bytes(data[0][1])
+            sender = _decode_header(m.get("From", ""))
+            from_name, to_addr = _email_mod.utils.parseaddr(sender)
+            reply["to"] = to_addr or sender
+            reply["to_name"] = from_name
+            subject = _decode_header(m.get("Subject", "") or "")
+            if subject and not subject.lower().startswith("re:"):
+                subject = "Re: " + subject
+            reply["subject"] = subject
+            msg_refs = (m.get("References") or "").strip()
+            msg_in_reply = (m.get("Message-ID") or "").strip() or reply["in_reply_to"]
+            reply["in_reply_to"] = msg_in_reply
+            reply["references"] = (msg_refs + " " + msg_in_reply).strip() if msg_refs else msg_in_reply
+    except Exception as e:
+        logger.warning(f"prepare-signed-reply header fetch failed: {e}")
+    return reply
+
+
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
@@ -1849,7 +1896,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import tempfile
         import shutil
         import uuid as _uuid
-        import email as _email_mod
         from src.pdf_form_doc import (
             find_source_upload_id, parse_markdown_to_values,
             load_field_sidecar, parse_markdown_annotations,
@@ -1974,40 +2020,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             # 3) Fetch the source email's headers so we can build a clean reply
             #    context (To/Subject/In-Reply-To/References).
-            try:
-                from routes.email_routes import _imap, _decode_header
-                from routes.email_helpers import _q
-            except Exception:
-                _imap = None
-                _decode_header = lambda x: x or ""
-                _q = lambda x: x or ""
-
-            to_addr = ""
-            from_name = ""
-            subject = ""
-            in_reply_to = doc.source_email_message_id or ""
-            references = in_reply_to
-            if _imap:
-                try:
-                    with _imap(doc.source_email_account_id or None) as conn:
-                        conn.select(_q(doc.source_email_folder), readonly=True)
-                        status, data = conn.fetch(doc.source_email_uid.encode(), "(RFC822.HEADER)")
-                    if status == "OK" and data and data[0]:
-                        raw_hdr = data[0][1]
-                        m = _email_mod.message_from_bytes(raw_hdr)
-                        sender = _decode_header(m.get("From", ""))
-                        from_name, to_addr = _email_mod.utils.parseaddr(sender)
-                        if not to_addr:
-                            to_addr = sender
-                        subject = _decode_header(m.get("Subject", "") or "")
-                        if subject and not subject.lower().startswith("re:"):
-                            subject = "Re: " + subject
-                        msg_refs = (m.get("References") or "").strip()
-                        msg_in_reply = (m.get("Message-ID") or "").strip() or in_reply_to
-                        in_reply_to = msg_in_reply
-                        references = (msg_refs + " " + msg_in_reply).strip() if msg_refs else msg_in_reply
-                except Exception as e:
-                    logger.warning(f"prepare-signed-reply header fetch failed: {e}")
+            reply_headers = _fetch_signed_reply_headers(
+                doc.source_email_account_id,
+                doc.source_email_folder,
+                doc.source_email_uid,
+                doc.source_email_message_id or "",
+            )
 
             return {
                 "ok": True,
@@ -2017,11 +2035,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "size": dest.stat().st_size,
                 },
                 "reply": {
-                    "to": to_addr,
-                    "to_name": from_name,
-                    "subject": subject,
-                    "in_reply_to": in_reply_to,
-                    "references": references,
+                    **reply_headers,
                     "account_id": doc.source_email_account_id or None,
                     "source_uid": doc.source_email_uid,
                     "source_folder": doc.source_email_folder,
