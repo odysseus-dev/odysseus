@@ -1563,7 +1563,8 @@ def setup_cookbook_routes() -> APIRouter:
                     "size_bytes": m["size_bytes"],
                     "nb_files": m["nb_files"],
                     "has_incomplete": m["has_incomplete"],
-                    "status": "downloading" if m["has_incomplete"] else "ready",
+                    "status": "downloading" if m["has_incomplete"] else ("empty" if m.get("is_empty_shell") else "ready"),
+                    "is_empty_shell": bool(m.get("is_empty_shell")),
 	                    "path": m.get("path", ""),
 	                    "is_diffusion": m.get("is_diffusion", False),
 	                    "is_video": m.get("is_video", False),
@@ -4442,7 +4443,20 @@ def setup_cookbook_routes() -> APIRouter:
                 # log that merely contains the word "error" would flip a
                 # completed download back to error, and a session reusing the
                 # name could flip a finished task back to running.
-                status = _task_status
+                #
+                # The runner's own conclusive markers are the exception: they
+                # are printed only on the real outcome, so a download that ends
+                # DOWNLOAD_OK + "Fetching 0 files" is a genuine failure even if
+                # a client already recorded "done" (gated repo, wrong quant
+                # pattern, empty result). Without this the durable guard would
+                # launder that failure into a permanent success.
+                _marker = classify_dead_download(full_snapshot) if task_type == "download" else None
+                if _marker is not None:
+                    status, download_zero_files = _marker
+                    if status == "completed" and not progress_text:
+                        progress_text = "Download complete"
+                else:
+                    status = _task_status
             elif is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
                 exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)

@@ -1197,7 +1197,9 @@ function _rerenderCachedModels() {
     const hfLink = m.repo_id.includes('/') ? `https://huggingface.co/${m.repo_id}` : '';
     const metaParts = [];
     if (m.repo_id.includes('/')) metaParts.push(m.repo_id.split('/')[0]);
-    metaParts.push(m.size);
+    // An empty cache shell (only refs/, no weights) is not a usable model —
+    // show that plainly instead of a misleading "0 MB".
+    metaParts.push(m.is_empty_shell ? 'not downloaded' : m.size);
     if (m.path) {
       metaParts.push(`<span style="opacity:0.7;">${esc(m.path)}</span>`);
     }

@@ -1593,23 +1593,34 @@ async function _fetchDependencies() {
       const opts = modelOptions + otherOpt;
       // Initial recipe: the generic fallback (matches first time, no model id).
       const initial = pickRecipe(backend, '') || candidates[0];
-      const initialVariant = RECIPE_DEFAULT_VARIANT;
-      const initialCmds = recipeCommands(initial, initialVariant);
-      const initialRuntimeCmds = _recipeRuntimeCommands(initialCmds, initialVariant);
+      // Native Windows has no usable pip/CMake llama-server flow; it uses the
+      // app-managed prebuilt runtime (the same one Settings offers). Pip stays
+      // available as the advanced Python integration elsewhere.
+      const _winNative = String(_envState.hostPlatform || '').toLowerCase() === 'windows';
+      const _prebuilt = backend === 'llama_cpp' && _winNative;
+      const initialVariant = _prebuilt ? 'prebuilt' : RECIPE_DEFAULT_VARIANT;
+      const initialCmds = _prebuilt ? [] : recipeCommands(initial, initialVariant);
+      const initialRuntimeCmds = _prebuilt ? [] : _recipeRuntimeCommands(initialCmds, initialVariant);
       const rightActive = initialVariant === 'docker' ? ' mode-right' : '';
+      const _variantToggle = _prebuilt
+        ? '<button type="button" class="cookbook-dep-tag" data-dep-llama-prebuilt="1" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">Install prebuilt llama-server…</button>'
+        : `<div class="mode-toggle${rightActive}" data-dep-recipe-variants="${esc(backend)}" style="flex-shrink:0;">
+              <button type="button" class="mode-toggle-btn${initialVariant === 'pip' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="pip" aria-pressed="${initialVariant === 'pip'}">Pip</button>
+              <button type="button" class="mode-toggle-btn${initialVariant === 'docker' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="docker" aria-pressed="${initialVariant === 'docker'}">Docker</button>
+            </div>`;
+      const _cmdBlock = _prebuilt
+        ? '<div style="font-size:11px;opacity:0.8;">Uses the official prebuilt llama.cpp release for Windows (CUDA/CPU/Vulkan). No local build.</div>'
+        : `<div style="position:relative;">
+            <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialRuntimeCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre-wrap;">${esc(_recipeDisplayText(initialCmds, initialVariant))}</pre>
+            <button type="button" id="recipe-copy-${esc(backend)}" class="cookbook-dep-recipe-copy" data-dep-recipe-copy="${esc(backend)}" title="Copy" aria-label="Copy" style="position:absolute;top:6px;right:6px;padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+          </div>`;
       return `<div class="cookbook-dep-recipe-panel" data-dep-recipe-panel="${esc(backend)}" data-dep-recipe-active-variant="${esc(initialVariant)}" style="display:none;margin:-4px 0 8px;padding:8px 12px 10px;background:rgba(0,0,0,0.04);border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
             <span style="font-size:11px;opacity:0.75;flex-shrink:0;">Serving which model?</span>
             <select class="settings-select cookbook-dep-recipe-pick" data-dep-recipe-pick="${esc(backend)}" style="flex:1;font-size:11px;padding:3px 6px;">${opts}</select>
-            <div class="mode-toggle${rightActive}" data-dep-recipe-variants="${esc(backend)}" style="flex-shrink:0;">
-              <button type="button" class="mode-toggle-btn${initialVariant === 'pip' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="pip" aria-pressed="${initialVariant === 'pip'}">Pip</button>
-              <button type="button" class="mode-toggle-btn${initialVariant === 'docker' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="docker" aria-pressed="${initialVariant === 'docker'}">Docker</button>
-            </div>
+            ${_variantToggle}
           </div>
-          <div style="position:relative;">
-            <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialRuntimeCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre;">${esc(_recipeDisplayText(initialCmds, initialVariant))}</pre>
-            <button type="button" id="recipe-copy-${esc(backend)}" class="cookbook-dep-recipe-copy" data-dep-recipe-copy="${esc(backend)}" title="Copy" aria-label="Copy" style="position:absolute;top:6px;right:6px;padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-          </div>
+          ${_cmdBlock}
           <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
             <button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-recipe-run" data-dep-recipe-run="${esc(backend)}" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run</button>
           </div>
@@ -2048,6 +2059,14 @@ async function _fetchDependencies() {
     // selected deps server. Activation comes from env_prefix (same plumbing
     // the Install button uses) so the install lands in the configured venv
     // instead of a fresh .venv in some random CWD.
+    // Windows llama.cpp: the recipe panel offers the app-managed prebuilt
+    // runtime instead of a pip/CMake build.
+    list.querySelectorAll('[data-dep-llama-prebuilt]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { _llamaRuntimeInstallDialog(); } catch (err) { console.warn('[cookbook] prebuilt install dialog failed', err); }
+      });
+    });
     list.querySelectorAll('[data-dep-recipe-run]').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -3742,7 +3761,7 @@ function _renderRecipes() {
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">llama.cpp Runtime</h2>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Executable used when launching a GGUF model through llama.cpp on this machine. Leave empty to let Cookbook discover one. Cookbook never downloads or replaces a runtime.</p>';
+  html += '<p class="memory-desc doclib-desc">Executable used when launching a GGUF model through llama.cpp on this machine. Leave empty to let Cookbook discover one. Cookbook only downloads a runtime when you approve the prebuilt installer below.</p>';
   html += '<div class="memory-toolbar">';
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<input type="text" class="memory-search-input" id="cookbook-llama-path" value="${esc(_es.llamaServerPath || '')}" placeholder="C:\\path\\to\\llama-server.exe" style="flex:1;font-family:monospace;font-size:11px;" spellcheck="false" />`;

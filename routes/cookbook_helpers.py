@@ -483,7 +483,11 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "                        if _lfn in ('adapter_config.json','adapter_model.safetensors','pytorch_lora_weights.safetensors') or 'lora' in _lfn:",
         "                            is_adapter = True",
         "                for f in collect_ggufs(sf): f['rel_path'] = sd + '/' + f['rel_path']; gguf_files.append(f)",
-        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_video':is_video,'is_adapter':is_adapter,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
+        "        # A repo directory holding only refs/ (a gated repo, a wrong\n"
+        "        # quant pattern or an aborted fetch) has no weights on disk. It\n"
+        "        # must not be presented as a usable model at 0 MB.\n"
+        "        is_empty_shell = (sz == 0 and nf == 0)\n"
+        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'is_empty_shell':is_empty_shell,'path':cache,'is_diffusion':is_diffusion,'is_video':is_video,'is_adapter':is_adapter,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})\n"
         "def hf_cache_paths():",
         "    candidates = []",
         "    def add(p):",

@@ -23,6 +23,19 @@ function _isFinishedDownload(status, type) {
   return type === 'download' && (status === 'done' || status === 'completed');
 }
 
+// hf_transfer and the HF CLI emit ANSI colour codes, OSC sequences and
+// replacement characters. They are noise in the UI, so strip them for display
+// only — the raw log in localStorage/state is left untouched for diagnostics.
+function _cleanTerminalText(text) {
+  return String(text || '')
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')
+    .replace(/\x1b[()][A-Z0-9]/g, '')
+    .replace(/\x1b./g, '')
+    .replace(/\uFFFD/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+}
+
 function _statusLabel(status, type) {
   if (status === 'running' && type === 'download') return 'downloading';
   if (_isFinishedDownload(status, type)) return 'finished';
@@ -2275,6 +2288,18 @@ export function _renderRunningTab() {
     }
   }
 
+  // A task was just started: show it. The card is rendered inside the Running
+  // group, which stays hidden while another tab is active — so without this the
+  // new task is invisible and the user has to find the Active tab and expand
+  // the card by hand.
+  if (_soloExpandTaskId && runTab && hasContent && !runTab.classList.contains('active')) {
+    tabBar.querySelectorAll('.cookbook-tab').forEach(t => t.classList.remove('active'));
+    runTab.classList.add('active');
+    body.querySelectorAll('.cookbook-group').forEach(g => {
+      g.classList.toggle('hidden', g.dataset.backendGroup !== 'Running');
+    });
+  }
+
   let group = body.querySelector('.cookbook-group[data-backend-group="Running"]');
   if (hasContent && !group) {
     group = document.createElement('div');
@@ -2516,7 +2541,7 @@ export function _renderRunningTab() {
       const pre = el.querySelector('.cookbook-output-pre');
       if (pre && typeof task.output === 'string' && task.output && pre.textContent !== task.output) {
         const atBottom = (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 40;
-        pre.textContent = task.output;
+        pre.textContent = _cleanTerminalText(task.output);
         if (atBottom) pre.scrollTop = pre.scrollHeight;
       }
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
@@ -2562,7 +2587,7 @@ export function _renderRunningTab() {
         <button type="button" class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
       <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
-      <div class="cookbook-output-wrap cookbook-task-collapsible${(_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task)) ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+      <div class="cookbook-output-wrap cookbook-task-collapsible${(_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task)) ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(_cleanTerminalText(task.output))}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
     const _waveEl = el.querySelector('.cookbook-task-wave');

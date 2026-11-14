@@ -124,3 +124,28 @@ def test_unquantized_single_file_repo_is_offered():
     assert "All GGUF files (${files.length})" in source
     assert "const include = files.length === 1 ? files[0] : '*.gguf';" in source
     assert "_hideGgufPicker('No GGUF quants found');" not in source
+
+
+def test_empty_cache_shell_is_not_presented_as_a_ready_model():
+    """A repo dir with only refs/ (gated repo, wrong quant, aborted fetch) has
+    no weights; it must not render as a usable model at 0 MB."""
+    helpers = _read("routes/cookbook_helpers.py")
+    route = _read("routes/cookbook_routes.py")
+    serve = _read("static/js/cookbookServe.js")
+
+    assert "is_empty_shell = (sz == 0 and nf == 0)" in helpers
+    assert '"is_empty_shell": bool(m.get("is_empty_shell"))' in route
+    assert '("empty" if m.get("is_empty_shell") else "ready")' in route
+    assert "m.is_empty_shell ? 'not downloaded' : m.size" in serve
+
+
+def test_active_tab_is_activated_for_a_new_task():
+    source = _read("static/js/cookbookRunning.js")
+    assert "if (_soloExpandTaskId && runTab && hasContent && !runTab.classList.contains('active'))" in source
+
+
+def test_terminal_output_is_sanitised_for_display():
+    source = _read("static/js/cookbookRunning.js")
+    assert "function _cleanTerminalText(text)" in source
+    assert "pre.textContent = _cleanTerminalText(task.output);" in source
+    assert "${esc(_cleanTerminalText(task.output))}" in source

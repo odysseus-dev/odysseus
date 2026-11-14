@@ -136,3 +136,23 @@ async def test_a_genuine_success_still_round_trips(monkeypatch, tmp_path):
     saved = json.loads(state_file.read_text(encoding="utf-8"))
     by_id = {t["sessionId"]: t for t in saved["tasks"]}
     assert by_id["cookbook-2"]["status"] == "done"
+
+
+def test_conclusive_runner_markers_still_override_a_recorded_done():
+    """A gated repo / wrong pattern fetch ends DOWNLOAD_OK + 'Fetching 0 files'
+    and is a genuine failure. The durable guard must not launder it into a
+    permanent success just because a client already recorded 'done'."""
+    source = _read("routes/cookbook_routes.py")
+
+    assert "_marker = classify_dead_download(full_snapshot) if task_type == \"download\" else None" in source
+    assert "status, download_zero_files = _marker" in source
+    # The marker branch must sit inside the persisted-terminal guard.
+    guard = source.index("if _persisted_terminal:\n                # Durable terminal state")
+    marker = source.index("_marker = classify_dead_download(full_snapshot)")
+    assert guard < marker
+
+
+def test_zero_files_classifier_is_marker_based():
+    source = _read("routes/cookbook_output.py")
+    assert 'if "DOWNLOAD_OK" in full_snapshot:' in source
+    assert "return (\"error\", True)" in source
