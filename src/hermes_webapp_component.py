@@ -562,7 +562,7 @@ class WebappComponent:
         base = self.directory / 'releases'
         if not base.is_dir():
             return
-        keep = {config.get('release'), config.get('previous')}
+        keep = {config.get('release'), config.get('previous'), self.running_release(config)}   # a live gateway still serves its release's source and bundle
         failed = []
         for entry in sorted(base.iterdir()):
             if not entry.is_dir() or entry.is_symlink() or not _RELEASE.fullmatch(entry.name) or entry.name in keep:
@@ -576,7 +576,11 @@ class WebappComponent:
             if state == 'failed':
                 failed.append(entry)
                 continue
-            _remove_release_tree(entry, base)
+            try:
+                _remove_release_tree(entry, base)
+            except OSError as exc:                       # a file in use: the pointer is already switched, so leave the rest for the next sweep
+                self.last_actions.append(f'release {entry.name} left in place: {exc}')
+                continue
             self.last_actions.append(f'removed release {entry.name} ({state})')
         for entry in sorted(failed, key=lambda item: item.stat().st_mtime)[:-FAILED_RELEASES_KEPT]:
             _remove_release_tree(entry, base)
@@ -1332,12 +1336,41 @@ class WebappComponent:
         except (OSError, ValueError) as exc:
             raise controls.Unavailable("The gateway's pid record is unreadable; its identity cannot be confirmed, nothing was stopped.") from exc
         norm = lambda value: os.path.normcase(os.path.abspath(str(value)))
-        expected = norm(Path(config['agent']) / 'gateway' / 'run.py')
         argv = record.get('argv') if isinstance(record.get('argv'), list) else []
+        # The gateway was started from the release that was current THEN; activating a newer release moves the pointer but not the running
+        # process. It is still ours when its entry file is the run.py of any release this component built under its own releases directory.
         if (record.get('kind') != 'hermes-gateway' or record.get('pid') != pid or norm(record.get('hermes_home', '')) != norm(config['home'])
-                or not argv or norm(argv[0]) != expected):
+                or not argv or self._release_of_entry(argv[0]) is None):
             raise controls.Unavailable('The listener is not the gateway Odysseus provisioned; nothing was stopped.')
         return pid
+
+    def _release_of_entry(self, entry):
+        """The release id when `entry` is exactly <releases>/<id>/src/gateway/run.py of this component, else None."""
+        norm = lambda value: os.path.normcase(os.path.abspath(str(value)))
+        try:
+            relative = Path(norm(entry)).relative_to(norm(self.directory / 'releases'))
+        except ValueError:
+            return None
+        parts = relative.parts
+        if len(parts) == 4 and _RELEASE.fullmatch(parts[0]) and parts[1:] == ('src', 'gateway', 'run.py'):
+            return parts[0]
+        return None
+
+    def running_release(self, config):
+        """The release a live gateway of this component was started from (from its own pid record), or None."""
+        try:
+            record = json.loads((Path(config['home']) / 'gateway.pid').read_text(encoding='utf-8'))
+            release = self._release_of_entry((record.get('argv') or [''])[0]) if record.get('kind') == 'hermes-gateway' else None
+            pid = record.get('pid')
+        except (OSError, ValueError, TypeError, KeyError, IndexError):
+            return None
+        if release is None or not isinstance(pid, int):
+            return None
+        try:
+            from src import service_controls as controls
+            return release if pid in controls.processes() else None
+        except Exception:                                    # noqa: BLE001 - unreadable process table: keep the release, never guess it is free
+            return release
 
     def _running_admissions(self, config):
         """Turns the gateway itself records as queued or started (read-only; None when its store is unreadable). Unlike the five-minute
