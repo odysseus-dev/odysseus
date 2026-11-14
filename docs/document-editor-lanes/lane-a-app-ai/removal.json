@@ -1,0 +1,71 @@
+{
+  "lane": "lane-a-app-ai",
+  "baseline": "f3a05c10c998e4efff14ac6498b01bd50138ad6e",
+  "statementBaseline": "087e6c8837969339e9e7823dd84a4d717d536cea",
+  "removedDeclarations": [
+    "_animationCancel",
+    "animateDocChange",
+    "handleDocUpdate",
+    "lineDiff"
+  ],
+  "targetModules": {
+    "_animationCancel": "ui/aiUpdates/documentUpdate",
+    "animateDocChange": "ui/aiUpdates/documentUpdate",
+    "handleDocUpdate": "ui/aiUpdates/documentUpdate",
+    "lineDiff": "ui/aiUpdates/documentUpdate"
+  },
+  "destinationExports": [],
+  "addedImports": [
+    "import \"./document/ui/aiUpdates/documentUpdate.js\";",
+    "const lineDiff = (...args) => globalThis.lineDiff?.(...args);",
+    "const animateDocChange = (...args) => globalThis.animateDocChange?.(...args);",
+    "const handleDocUpdate = (...args) => globalThis.handleDocUpdate?.(...args);"
+  ],
+  "description": "Lane A checkpoint 1: ui/aiUpdates/documentUpdate. Appendix A exports are empty, so the monolith reaches the moved declarations through the globalThis bridge. Do not delete the declarations from static/js/document.js in this lane.",
+  "intentionalNonVerbatimChanges": [
+    {
+      "declaration": "handleDocUpdate",
+      "change": "Replaced ++_documentNavigationGeneration with bumpNavigationGeneration()",
+      "classification": "Class 2 state primitive update rewrite",
+      "justification": "Only application/documentState may update _documentNavigationGeneration"
+    },
+    {
+      "declaration": "handleDocUpdate",
+      "change": "Replaced docs.delete(streamingId) with removeDocument(streamingId)",
+      "classification": "Class 2 state collection mutation rewrite",
+      "justification": "Only application/documentState may mutate the docs Map"
+    },
+    {
+      "declaration": "handleDocUpdate",
+      "change": "Replaced both docs.set(...) calls with registerDocument(...)",
+      "classification": "Class 2 state collection mutation rewrite",
+      "justification": "Only application/documentState may mutate the docs Map"
+    },
+    {
+      "declaration": "handleDocUpdate",
+      "change": "Replaced both activeDocId assignments with setActiveDocId(...)",
+      "classification": "Class 2 state primitive assignment rewrite",
+      "justification": "Only application/documentState may assign activeDocId"
+    }
+  ],
+  "modules": [
+    {
+      "module": "ui/aiUpdates/documentUpdate",
+      "source": "frontend/src/features/documents/ui/aiUpdates/documentUpdate.js",
+      "declarations": ["_animationCancel", "animateDocChange", "handleDocUpdate", "lineDiff"],
+      "status": "extracted"
+    },
+    {
+      "module": "ui/history/versionHistory",
+      "status": "pending"
+    },
+    {
+      "module": "ui/aiUpdates/liveStream",
+      "status": "pending"
+    },
+    {
+      "module": "ui/status/documentStatus",
+      "status": "pending"
+    }
+  ]
+}
