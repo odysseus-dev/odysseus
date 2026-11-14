@@ -4,6 +4,7 @@ import os
 import json
 import re
 import subprocess
+import tempfile
 import shutil
 import sys
 from contextlib import contextmanager
@@ -58,6 +59,36 @@ def _patch_list(patch):
     return [Path(patch)] if isinstance(patch, (str, os.PathLike)) else [Path(item) for item in patch]
 
 
+def _sequence_matches(path, patches, allowed):
+    """True when the working tree is exactly the pin plus the whole patch sequence applied in order. Patches that touch the same file cannot each be reversed
+    on the final tree, so the expected tree is rebuilt in a temporary index and compared with the tree on disk. Read-only for the source: the index files and any
+    new git objects live in a temporary folder (the source's own object store is only an alternate)."""
+    git_dir = _git(path, 'rev-parse', '--absolute-git-dir', check=False).stdout.strip()
+    if not git_dir:
+        return False
+    scratch = tempfile.mkdtemp(prefix='odysseus-patch-check-')
+    try:
+        base = {**os.environ, 'GIT_OBJECT_DIRECTORY': str(Path(scratch) / 'objects'), 'GIT_ALTERNATE_OBJECT_DIRECTORIES': str(Path(git_dir) / 'objects')}
+        (Path(scratch) / 'objects').mkdir()
+
+        def run(index, *args):
+            return subprocess.run(['git', '-C', str(path), *args], capture_output=True, text=True, timeout=120, env={**base, 'GIT_INDEX_FILE': str(Path(scratch) / index)})
+        if run('expected', 'read-tree', 'HEAD').returncode:
+            return False
+        for item in patches:
+            if run('expected', 'apply', '--cached', *_PATCH_FLAGS[1:], str(item)).returncode:
+                return False
+        # Only the files the patches name are compared (hashing a whole source tree would be slow and pointless); the caller has already shown that nothing else changed.
+        if run('actual', 'read-tree', 'HEAD').returncode or run('actual', 'add', '--all', '--', *sorted(allowed)).returncode:
+            return False
+        trees = [run(index, 'write-tree') for index in ('expected', 'actual')]
+        return all(t.returncode == 0 for t in trees) and trees[0].stdout.strip() == trees[1].stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def patch_state(path, patch):
     """'absent' (clean at the pin), 'applied' (exactly the reviewed patch, or the whole reviewed sequence), or 'foreign' (anything else)."""
     if _git(path, 'rev-parse', 'HEAD').stdout.strip() and not _git(path, 'status', '--porcelain', '--untracked-files=no').stdout.strip():
@@ -68,6 +99,12 @@ def patch_state(path, patch):
         changed = {line.strip() for line in _git(path, 'diff', '--name-only').stdout.splitlines()}
         untracked = {line.strip() for line in _git(path, 'ls-files', '--others', '--exclude-standard').stdout.splitlines() if line.strip()}
         if changed <= allowed and untracked <= allowed:
+            return 'applied'
+    if len(patches) > 1:
+        allowed = set().union(*(_patch_files(item) for item in patches))
+        changed = {line.strip() for line in _git(path, 'diff', '--name-only').stdout.splitlines()}
+        untracked = {line.strip() for line in _git(path, 'ls-files', '--others', '--exclude-standard').stdout.splitlines() if line.strip()}
+        if changed <= allowed and untracked <= allowed and _sequence_matches(path, patches, allowed):
             return 'applied'
     return 'foreign'
 

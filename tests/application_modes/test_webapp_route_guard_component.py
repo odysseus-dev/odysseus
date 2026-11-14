@@ -60,6 +60,30 @@ class RouteGuardComponentTests(unittest.TestCase):
             (repo / 'a.txt').write_text('tampered\n')
             self.assertEqual(patch_state(repo, patches), 'foreign')
 
+    def test_patches_that_touch_the_same_file_are_applied_in_order_and_recognised_as_a_whole(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / 'repo'
+            repo.mkdir()
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / 'f.txt').write_text('1\n2\n3\n4\n5\n6\n7\n8\n9\n')
+            subprocess.run([*GIT, '-C', str(repo), 'add', '.'], check=True)
+            subprocess.run([*GIT, '-C', str(repo), 'commit', '-qm', 'c'], check=True)
+            patches = [Path(d) / 'p0.patch', Path(d) / 'p1.patch']
+            (repo / 'f.txt').write_text('one\n2\n3\n4\n5\n6\n7\n8\n9\n')
+            patches[0].write_bytes(subprocess.run(['git', '-C', str(repo), 'diff', '--', 'f.txt'], capture_output=True, check=True).stdout)
+            subprocess.run([*GIT, '-C', str(repo), 'add', 'f.txt'], check=True)
+            (repo / 'f.txt').write_text('one\n2\n3\n4\n5\n6\n7\n8\nnine\n')       # the second patch builds on the first: both change f.txt
+            patches[1].write_bytes(subprocess.run(['git', '-C', str(repo), 'diff', '--', 'f.txt'], capture_output=True, check=True).stdout)
+            subprocess.run([*GIT, '-C', str(repo), 'reset', '-q', '--hard'], check=True)
+            revision = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+            pin = types.SimpleNamespace(revision=revision)
+            self.assertEqual(apply_patch(repo, pin, patches), 'applied')
+            self.assertEqual(patch_state(repo, patches), 'applied')
+            self.assertEqual(apply_patch(repo, pin, patches), 'applied')                    # idempotent
+            (repo / 'f.txt').write_text((repo / 'f.txt').read_text().replace('2', 'two'))
+            self.assertEqual(patch_state(repo, patches), 'foreign')
+            self.assertFalse([p for p in (repo / '.git').iterdir() if 'patch-check' in p.name], 'the check leaves nothing in the source')
+
     def test_a_release_that_carries_only_the_route_guard_is_still_accepted_for_rollback(self):
         manager = WebappComponent.__new__(WebappComponent)
         manager.application_root = ROOT
