@@ -6,6 +6,7 @@ backends. For an ungranted call the sealing failed silently, so the approval
 card was created with no process identity and the executor refused it:
 "Approved action has no sealed process/job identity".
 """
+import os
 import pytest
 
 from src.agent_runtime.authority import OperationGrant, RequestAuthority
@@ -55,6 +56,7 @@ def test_approval_for_ungranted_bash_seals_a_launch_in_the_workspace(tmp_path):
     assert bound.request_id == authority.request_id
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 async def test_approved_ungranted_bash_runs_once(tmp_path):
     authority = _authority(tmp_path, "get_workspace")
     _, exact = _approve(authority, "bash", "printf approved-run")
@@ -102,6 +104,7 @@ def test_approval_without_a_workspace_seals_a_launch_in_the_agent_workspace(agen
     assert bound.launch.scope.root.path == agent_workspace
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 async def test_approved_bash_without_a_workspace_runs_in_the_agent_workspace(agent_workspace):
     authority = _authority("", "get_workspace")
     _, exact = _approve(authority, "bash", "pwd")

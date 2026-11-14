@@ -282,6 +282,7 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
         assert r["exit_code"] == 0 and "No files" in r["output"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 @pytest.mark.asyncio
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
@@ -291,6 +292,7 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     assert os.path.realpath(r["output"].strip()) == os.path.realpath(expected_cwd)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 @pytest.mark.asyncio
 async def test_python_virtual_workspace_path_works_for_tmp_workspace(ws, admin):
     """The bwrap /tmp tmpfs must not hide a task workspace bound at /workspace."""
