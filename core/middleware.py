@@ -21,6 +21,21 @@ INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
 
 
+PROXY_FORWARDING_HEADERS = (
+    "cf-connecting-ip", "cf-ray", "cf-visitor",
+    "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+)
+
+
+def is_trusted_loopback(request: Request) -> bool:
+    """Require direct loopback access without proxy/tunnel forwarding."""
+    client = getattr(request, "client", None)
+    if getattr(client, "host", None) not in ("127.0.0.1", "::1"):
+        return False
+    headers = getattr(request, "headers", {})
+    return not any(headers.get(name) for name in PROXY_FORWARDING_HEADERS)
+
+
 def get_application_route_path(scope: Mapping[str, object]) -> str:
     """Return the application-relative path used by Starlette routing.
 
@@ -65,10 +80,11 @@ def require_admin(request: Request):
     #     request.state.current_user = "internal-tool".
     try:
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
-            return
-        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
-            return
+        if is_trusted_loopback(request):
+            if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+                return
+            if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
+                return
     except Exception:
         pass
 
