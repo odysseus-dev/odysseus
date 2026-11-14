@@ -513,6 +513,8 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tup
     return containment.agent_spec(
         cwd, clean_env, timeout,
         readonly_extra=tuple(dict.fromkeys([*readonly, *readonly_extra])),
+        # Keep more than the model window so a spill file can hold the tail.
+        max_output_bytes=200_000,
     )
 
 
@@ -597,11 +599,17 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
         if child_failure:
             return {**common, "error": _truncate("python: a child operation failed despite a zero Python exit status:\n" + child_failure, MAX_OUTPUT_CHARS),
                     "exit_code": 1, "stderr": _truncate(result.stderr, MAX_OUTPUT_CHARS)}
-    if truncated:
-        note = "\n…[output truncated by containment capture limit]…"
-        output = output[:MAX_OUTPUT_CHARS - len(note)] + note
-    return {**common, "output": _truncate(output, MAX_OUTPUT_CHARS) or "(no output)",
+    spill_path = None
+    if truncated or len(output) > MAX_OUTPUT_CHARS:
+        from src.tool_spill import spill_tool_output
+        output, spill_path = spill_tool_output(
+            output, tool=tool, session_id=str(ctx.get("session_id") or ""),
+        )
+    result_out = {**common, "output": output or "(no output)",
             "exit_code": result.exit_code if result.exit_code is not None else 1}
+    if spill_path:
+        result_out["spill_path"] = spill_path
+    return result_out
 
 
 class BashTool:
