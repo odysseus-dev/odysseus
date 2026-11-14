@@ -304,6 +304,47 @@ def _normalize_dsml(text: str) -> str:
     t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s*>", "</parameter>", t, flags=re.IGNORECASE)
     return t
 
+# Some small local models (minicpm5-2b observed) imitate the OpenAI
+# function-calling documentation instead of the prompt's fenced-block
+# convention:
+#   <function name="web_search"><param name="query">QUERY</param></function>
+# Normalize into the canonical <invoke>/<parameter> form so the existing
+# bare-invoke parser and _strip_bare_invoke_markup handle parse + strip and
+# unknown-tool filtering stays in one place. Note this cannot collide with
+# Qwen native <function=NAME> (attribute form, no whitespace/name=) or
+# <function_call> (no name attribute).
+_FUNCTION_PARAM_OPEN_RE = re.compile(r'<function\s+name=["\'](\w+)["\']\s*>', re.IGNORECASE)
+_FUNCTION_PARAM_CLOSE_RE = re.compile(r"</function\s*>", re.IGNORECASE)
+_FUNCTION_PARAM_TAG_OPEN_RE = re.compile(r'<param\s+name=["\'](\w+)["\']\s*>', re.IGNORECASE)
+_FUNCTION_PARAM_TAG_CLOSE_RE = re.compile(r"</param\s*>", re.IGNORECASE)
+
+
+def _normalize_function_param_markup(text: str) -> str:
+    if not isinstance(text, str) or "<function" not in text:
+        return text
+    # Forward-only opener/closer pairing (see _iter_delimited): re.sub of a
+    # lazy [\s\S]*? pattern would rescan to end-of-string from every unclosed
+    # opener (CodeQL py/polynomial-redos).
+    out = []
+    last = 0
+    pos = 0
+    while True:
+        om = _FUNCTION_PARAM_OPEN_RE.search(text, pos)
+        if om is None:
+            break
+        cm = _FUNCTION_PARAM_CLOSE_RE.search(text, om.end())
+        if cm is None:
+            break
+        inner = _FUNCTION_PARAM_TAG_OPEN_RE.sub(r'<parameter name="\1">', text[om.end():cm.start()])
+        inner = _FUNCTION_PARAM_TAG_CLOSE_RE.sub("</parameter>", inner)
+        out.append(text[last:om.start()])
+        out.append(f'<invoke name="{om.group(1)}">{inner}</invoke>')
+        last = pos = cm.end()
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
 # Map model tool names to our tool types
 _TOOL_NAME_MAP = {
     "shell": "bash",
@@ -1881,6 +1922,8 @@ def parse_tool_blocks(
     # Normalize DeepSeek DSML markup into standard <invoke> form so the
     # XML patterns below catch it.
     text = _normalize_dsml(text)
+    # Same for OpenAI-docs-style <function name=..><param ..> pseudo-calls.
+    text = _normalize_function_param_markup(text)
 
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
     # Explicit envelopes take precedence over Markdown fences. A fence in the
@@ -2160,6 +2203,8 @@ def strip_tool_blocks(
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
+    # Same for OpenAI-docs-style <function name=..><param ..> pseudo-calls.
+    text = _normalize_function_param_markup(text)
     # Keep the executed-vs-illustrative fence distinction (only strip fences
     # that actually dispatched; leave example fences from native models inert
     # but visible), then remove [TOOL_CALL]{...}[/TOOL_CALL] markup.
