@@ -367,6 +367,15 @@ function _wireToastSwipe(el) {
   el.addEventListener('touchcancel', endSwipe);
 }
 
+const TOAST_MIN_DURATION = 2000;
+const TOAST_MAX_DURATION = 6000;
+const TOAST_MS_PER_CHAR = 50;
+
+function _getDefaultToastDuration(msg) {
+  const len = String(msg || '').length;
+  return Math.min(TOAST_MAX_DURATION, Math.max(TOAST_MIN_DURATION, len * TOAST_MS_PER_CHAR));
+}
+
 /**
  * Show success toast message
  */
@@ -384,9 +393,9 @@ export function showToast(msg, durationOrOpts) {
   toastEl.classList.remove('error');
   toastEl.classList.remove('toast-ai-reply-progress', 'toast-ai-reply-result', 'toast-sending', 'toast-message-sent', 'toast-transform-hint');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null, toastClass = null, aiReplyProgress = false, aiReplyResult = false;
+  let duration = _getDefaultToastDuration(msg), actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null, toastClass = null, aiReplyProgress = false, aiReplyResult = false;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
-    duration = durationOrOpts.duration || 5000;
+    duration = durationOrOpts.duration || Math.max(_getDefaultToastDuration(msg), 5000);
     actionLabel = durationOrOpts.action;
     onAction = durationOrOpts.onAction;
     actionHint = durationOrOpts.actionHint || null;
