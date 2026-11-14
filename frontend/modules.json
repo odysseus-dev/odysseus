@@ -260,6 +260,10 @@
       "deployment": "js/document/application/documentState.js"
     },
     {
+      "source": "features/documents/application/persistence.js",
+      "deployment": "js/document/application/persistence.js"
+    },
+    {
       "source": "features/documents/ui/host.js",
       "deployment": "js/document/ui/host.js",
       "legacyImports": [

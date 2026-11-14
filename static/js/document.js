@@ -96,6 +96,7 @@ import { _ATTACH_RE, _accountCanSend, _buildEmailContent, _buildEmailContentFrom
 import { _RICH_BLOCK_INPUT_RULES, _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX, _RICH_SLASH_COMMANDS, _isRichInlineCodeMarker, _normalizeRichLinkUrl } from './document/domain/richTextRules.js';
 import { API_BASE, isOpen, _deletedDocIds, _inFlightDeletes, _closingDocs, _documentNavigationGeneration, activeDocId, _lastSessionId, docs, _minimizedDocId, isPanelOpen, setApiBase, setActiveDocId, setLastSessionId, bumpNavigationGeneration, setPanelOpen, setMinimizedDocId, registerDocument, removeDocument, clearDocuments, markDeleted, beginDelete, endDelete, retainClosingDraft, releaseClosingDraft } from './document/application/documentState.js';
 import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClosePanel, switchToDoc as cmdSwitchToDoc, saveCurrentToMap as cmdSaveCurrentToMap, renderTabs as cmdRenderTabs, _syncDocIndicator as cmdSyncDocIndicator, _syncHeaderActions as cmdSyncHeaderActions, showEmptyState as cmdShowEmptyState, _showLoadingOverlay as cmdShowLoadingOverlay, _hideLoadingOverlay as cmdHideLoadingOverlay, _minimizeNotesForDocumentOpen as cmdMinimizeNotesForDocumentOpen, _ensureDocChipRegistered as cmdEnsureDocChipRegistered } from './document/application/documentCommands.js';
+import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, saveDocument, awaitWrites, runSerializedWrite, bindPersistenceHooks } from './document/application/persistence.js';
 
 
 
@@ -107,8 +108,6 @@ import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClose
   let _isEditingTabTitle = false;
   let _autoDetectDebounce = null;
   let _autoTitleDebounce = null;
-  let _autoSaveDebounce = null;
-  let _lastAutoSaveErrorAt = 0;
   let _disposePdfTools = null;
   let _animationCancel = null;      // function to cancel current animation
   // _htmlPreviewActive is managed in ./document/ui/previewModes.js
@@ -119,20 +118,6 @@ import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClose
   let _emailStreamRenderedBody = '';
   let _emailStreamTargetBody = '';
   let _emailLocalDraftDebounce = null;
-  let _emailRichbodySaveDebounce = null;
-  const _pendingAutoSaves = new Map();
-
-  // Detached drafts retain the same object until persistence succeeds. Reopening
-  // adopts that object rather than replacing a failed draft with a server row.
-  function _saveClosingDraft(docId, doc) {
-    retainClosingDraft(docId, doc);
-    return saveDocument({ silent: true, docId }).then(ok => {
-      if (ok && doc._saveState === 'saved' && _closingDocs.get(docId) === doc) {
-        releaseClosingDraft(docId);
-      }
-      return ok;
-    });
-  }
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
   // Diff mode state is managed in ./document/ui/diffViewer.js
@@ -313,63 +298,6 @@ import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClose
   let _richSlashActiveIndex = 0;
   let _docHistoryStateFrame = 0;
 
-
-  function _scheduleAutoSave(docId = activeDocId, delay = 800, options = {}) {
-    if (!docId || _deletedDocIds.has(docId)) return;
-    if (_pendingAutoSaves.has(docId)) {
-      clearTimeout(_pendingAutoSaves.get(docId).timer);
-      _pendingAutoSaves.delete(docId);
-    }
-    const timer = setTimeout(async () => {
-      _pendingAutoSaves.delete(docId);
-      if (_deletedDocIds.has(docId)) return;
-      await saveDocument({ silent: true, docId, ...options });
-    }, delay);
-    _pendingAutoSaves.set(docId, { timer, options });
-    _autoSaveDebounce = timer;
-    if (options?.isEmailRichbody) _emailRichbodySaveDebounce = timer;
-  }
-
-  function _cancelAutoSave(docId = activeDocId) {
-    if (!docId) return;
-    if (_pendingAutoSaves.has(docId)) {
-      const entry = _pendingAutoSaves.get(docId);
-      clearTimeout(entry.timer);
-      if (_autoSaveDebounce === entry.timer) _autoSaveDebounce = null;
-      if (_emailRichbodySaveDebounce === entry.timer) _emailRichbodySaveDebounce = null;
-      _pendingAutoSaves.delete(docId);
-    }
-  }
-
-  function _cancelAllAutoSaves() {
-    for (const [id, entry] of _pendingAutoSaves) {
-      clearTimeout(entry.timer);
-    }
-    _pendingAutoSaves.clear();
-    _autoSaveDebounce = null;
-    _emailRichbodySaveDebounce = null;
-  }
-
-  function _flushAutoSave(docId = activeDocId) {
-    if (!docId) return Promise.resolve(false);
-    const targetDoc = docs.get(docId) || _closingDocs.get(docId);
-    if (_pendingAutoSaves.has(docId)) {
-      const entry = _pendingAutoSaves.get(docId);
-      clearTimeout(entry.timer);
-      if (_autoSaveDebounce === entry.timer) _autoSaveDebounce = null;
-      if (_emailRichbodySaveDebounce === entry.timer) _emailRichbodySaveDebounce = null;
-      _pendingAutoSaves.delete(docId);
-      if (!_deletedDocIds.has(docId)) {
-        return saveDocument({ silent: true, docId, ...entry.options });
-      }
-      return Promise.resolve(false);
-    }
-    if ((targetDoc && targetDoc._saveState === 'dirty' || _hasPendingPdfPaneSave(docId)) && !_deletedDocIds.has(docId)) {
-      return saveDocument({ silent: true, docId });
-    }
-    return Promise.resolve(false);
-  }
-
   function _renderDocumentSaveState() {
     const status = document.getElementById('doc-footer-copy-btn');
     if (!status) return;
@@ -381,21 +309,6 @@ import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClose
     status.setAttribute('aria-label', meta.label);
     const label = status.querySelector('.doc-save-button-label');
     if (label) label.textContent = meta.label;
-  }
-
-  function _setDocumentSaveState(state, docId = activeDocId) {
-    const doc = docId && (docs.get(docId) || _closingDocs.get(docId));
-    if (!doc || !_DOC_SAVE_STATE[state]) return;
-    if (doc._saveState === state) return;
-    doc._saveState = state;
-    if (docId === activeDocId) _renderDocumentSaveState();
-  }
-
-  function _markDocumentDirty(docId = activeDocId) {
-    const doc = docId && (docs.get(docId) || _closingDocs.get(docId));
-    if (!doc) return;
-    doc._editRevision = (doc._editRevision || 0) + 1;
-    _setDocumentSaveState('dirty', docId);
   }
 
   function _syncEditorPlaceholder() {
@@ -11925,119 +11838,6 @@ import { bindDocumentCommands, openPanel as cmdOpenPanel, closePanel as cmdClose
     if (uiModule) uiModule.showToast(`Reply draft ready — "${att.filename}" attached`);
   }
 
-  /** Save manual edits */
-  export async function saveDocument({ silent = false, forceVersion = false, docId = null, keepalive = false, skipPdfSync = false } = {}) {
-    const savingDocId = docId || getChatDocumentId();
-    if (!savingDocId) return false;
-    if (_deletedDocIds.has(savingDocId)) return false;
-    const inFlightDelete = _inFlightDeletes.get(savingDocId);
-    if (inFlightDelete) {
-      await inFlightDelete.catch(() => {});
-    }
-    if (_deletedDocIds.has(savingDocId)) return false;
-    _cancelAutoSave(savingDocId);
-    _cancelPdfPaneSave(savingDocId);
-    if (!skipPdfSync) _syncPdfPaneToDoc(savingDocId);
-    // Minimizing removes the editor DOM, but closePanel already captured its
-    // content in docs. Persist that cache without reading an absent/new pane.
-    if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
-    const localDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
-    if (!localDoc || _deletedDocIds.has(savingDocId)) return false;
-    const saveRequest = (localDoc?._saveRequest || 0) + 1;
-    if (localDoc) localDoc._saveRequest = saveRequest;
-    _setDocumentSaveState('saving', savingDocId);
-    const previousSave = localDoc?._saveQueueTail || Promise.resolve();
-    let releaseSaveTurn = () => {};
-    const saveTurn = new Promise(resolve => { releaseSaveTurn = resolve; });
-    if (localDoc) {
-      localDoc._saveQueueTail = previousSave.catch(() => {}).then(() => saveTurn);
-    }
-    await previousSave.catch(() => {});
-
-    if (_deletedDocIds.has(savingDocId)) {
-      releaseSaveTurn();
-      return false;
-    }
-
-    // Choose the authoritative draft when this write gets its turn. A save
-    // queued behind a restore must not replay the pre-restore document.
-    if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
-    const contentToSave = localDoc.content ?? '';
-    const saveRevision = localDoc._editRevision || 0;
-    if (localDoc._saveRequest === saveRequest) _setDocumentSaveState('saving', savingDocId);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/document/${savingDocId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        keepalive: !!keepalive,
-        body: JSON.stringify({
-          content: contentToSave,
-          force_version: !!forceVersion,
-          summary: forceVersion ? 'Saved version' : undefined,
-        }),
-      });
-      if (_deletedDocIds.has(savingDocId)) {
-        return false;
-      }
-      if (res.status === 404 && silent && localDoc.language === 'email') {
-        _setDocumentSaveState('error', savingDocId);
-        return false;
-      }
-      // A failed request, including a missing server row, never discards the
-      // local draft. Only a confirmed explicit deletion owns that transition.
-      if (!res.ok) throw new Error(`Document save failed: HTTP ${res.status}`);
-      const doc = await res.json();
-      if (_deletedDocIds.has(savingDocId)) {
-        return false;
-      }
-      const badge = document.getElementById('doc-version-badge');
-      if (badge && activeDocId === savingDocId) {
-        const _v = doc.version_count || 1;
-        badge.textContent = `v${_v}`;
-        badge.style.display = _v > 1 ? '' : 'none';
-      }
-      // Update map
-      let versionChanged = false;
-      const targetDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
-      if (targetDoc) {
-        const previousVersion = targetDoc.version || 1;
-        targetDoc.version = Math.max(previousVersion, doc.version_count || 1);
-        versionChanged = targetDoc.version !== previousVersion;
-        if (targetDoc._saveRequest === saveRequest) {
-          // A response acknowledges a snapshot; it never owns the current draft.
-          // In particular, the editor DOM may already have been torn down.
-          _setDocumentSaveState(
-            (targetDoc._editRevision || 0) === saveRevision ? 'saved' : 'dirty',
-            savingDocId,
-          );
-        }
-      }
-      if (versionChanged) renderTabs();
-      _syncDocIndicator();
-      if (!silent && uiModule) uiModule.showToast(forceVersion ? 'New version saved' : 'Document saved');
-      return true;
-    } catch (e) {
-      if (_deletedDocIds.has(savingDocId)) {
-        return false;
-      }
-      console.error('Failed to save document:', e);
-      const failedDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
-      if (failedDoc?._saveRequest === saveRequest) _setDocumentSaveState('error', savingDocId);
-      const now = Date.now();
-      if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
-        uiModule.showError(silent ? 'Autosave failed' : 'Failed to save document');
-        _lastAutoSaveErrorAt = now;
-      }
-      return false;
-    } finally {
-      releaseSaveTurn();
-      if (!docs.has(savingDocId) && localDoc._saveState === 'saved'
-          && _closingDocs.get(savingDocId) === localDoc) releaseClosingDraft(savingDocId);
-    }
-  }
-
   // Document export, print, and DOCX engine extracted to ./document/ui/exportDocx.js
 
   /** Delete the active document */
@@ -13245,6 +13045,28 @@ try {
   }
 }
 
+try {
+  bindPersistenceHooks({
+    _hasPendingPdfPaneSave,
+    _renderDocumentSaveState,
+    getChatDocumentId,
+    _cancelPdfPaneSave,
+    _syncPdfPaneToDoc,
+    _renderVersionBadge(docId, version) {
+      const badge = document.getElementById('doc-version-badge');
+      if (badge && activeDocId === docId) {
+        const _v = version || 1;
+        badge.textContent = `v${_v}`;
+        badge.style.display = _v > 1 ? '' : 'none';
+      }
+    },
+  }, { idempotent: true });
+} catch (e) {
+  if (!String(e?.message).includes('already bound')) {
+    throw e;
+  }
+}
+
 const documentModule = {
   init,
   openPanel,
@@ -13287,7 +13109,7 @@ const documentModule = {
   isLibraryOpen,
 };
 
-export { handleDocSuggestions, isPanelOpen };
+export { handleDocSuggestions, isPanelOpen, saveDocument };
 
 export default documentModule;
 window.documentModule = documentModule;

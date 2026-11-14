@@ -87,6 +87,7 @@ const PRECACHE = [
   '/static/js/document.js?v=20260916docctx2',
   '/static/js/document/application/documentCommands.js',
   '/static/js/document/application/documentState.js',
+  '/static/js/document/application/persistence.js',
   '/static/js/document/domain/documentKinds.js',
   '/static/js/document/domain/emailMessage.js',
   '/static/js/document/domain/richTextRules.js',
