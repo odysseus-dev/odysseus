@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "moby": {
+    "repository": "https://github.com/moby/moby",
+    "commit": "35797366d7cdae8d1d84eac06fbb314ccaf3ccaf",
+    "path": "vendor/github.com/moby/profiles/seccomp/default.json",
+    "upstream_sha256": "536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74"
+  },
+  "target_arches": {
+    "x86_64": "amd64",
+    "aarch64": "arm64"
+  },
+  "default_errno": "EPERM",
+  "clone3_errno": "ENOSYS",
+  "tiocsti_errno": "EACCES",
+  "clone_namespace_mask": 2114060288,
+  "socket_families": [
+    "AF_UNIX",
+    "AF_INET",
+    "AF_INET6"
+  ],
+  "socketpair_families": [
+    "AF_UNIX"
+  ],
+  "personality_values": [
+    0,
+    8,
+    131072,
+    131080,
+    4294967295
+  ],
+  "conditional_syscalls": [
+    "clone",
+    "clone3",
+    "ioctl",
+    "personality",
+    "socket",
+    "socketpair"
+  ],
+  "denied_syscalls": [
+    "acct",
+    "add_key",
+    "bpf",
+    "delete_module",
+    "fanotify_init",
+    "fanotify_mark",
+    "finit_module",
+    "fsconfig",
+    "fsmount",
+    "fsopen",
+    "fspick",
+    "init_module",
+    "io_uring_enter",
+    "io_uring_register",
+    "io_uring_setup",
+    "ioperm",
+    "iopl",
+    "kcmp",
+    "kexec_file_load",
+    "kexec_load",
+    "keyctl",
+    "lookup_dcookie",
+    "lsm_get_self_attr",
+    "lsm_list_modules",
+    "lsm_set_self_attr",
+    "memfd_secret",
+    "mount",
+    "mount_setattr",
+    "move_mount",
+    "name_to_handle_at",
+    "open_by_handle_at",
+    "open_tree",
+    "perf_event_open",
+    "pidfd_getfd",
+    "pivot_root",
+    "process_madvise",
+    "process_mrelease",
+    "process_vm_readv",
+    "process_vm_writev",
+    "ptrace",
+    "quotactl",
+    "quotactl_fd",
+    "reboot",
+    "request_key",
+    "setdomainname",
+    "sethostname",
+    "setns",
+    "socketcall",
+    "swapoff",
+    "swapon",
+    "syslog",
+    "umount",
+    "umount2",
+    "unshare",
+    "userfaultfd",
+    "vhangup"
+  ],
+  "outer_bubblewrap": {
+    "clone_flags": 2114060305,
+    "bootstrap_syscalls": [
+      "mount",
+      "pivot_root",
+      "umount2"
+    ],
+    "bubblewrap_version_basis": "v0.11.0",
+    "bubblewrap_tag_object": "a871b148b7bc0571f50b917cd5fd03b427f54ed1",
+    "bubblewrap_commit": "9ca3b05ec787acfb4b17bed37db5719fa777834f",
+    "bubblewrap_release_sha256": "988fd6b232dafa04b8b8198723efeaccdb3c6aa9c1c7936219d5791a8b7a8646",
+    "shipped_package_basis": "0.11.0-2+deb13u1"
+  }
+}
