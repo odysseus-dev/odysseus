@@ -45,7 +45,7 @@ class TestCompactionSummaryFailure:
         async def _boom(*a, **k):
             raise RuntimeError("summary model down")
 
-        cc.get_context_length = lambda url, model: context_length
+        cc.get_context_length = lambda url, model, headers=None: context_length
         cc.estimate_tokens = lambda msgs: 10000  # well over the threshold
         cc.llm_call_async = _boom
         cc.resolve_endpoint = lambda *a, **k: (None, None, None)

@@ -225,7 +225,7 @@ class TestGetContextLength:
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
         calls = []
 
-        def fake_query(endpoint_url, model):
+        def fake_query(endpoint_url, model, headers=None):
             calls.append((endpoint_url, model))
             return (8192, True) if len(calls) == 1 else (27000, True)
 
@@ -244,7 +244,7 @@ class TestGetContextLength:
     def test_remote_endpoint_keeps_cached_context(self, monkeypatch):
         calls = []
 
-        def fake_query(endpoint_url, model):
+        def fake_query(endpoint_url, model, headers=None):
             calls.append((endpoint_url, model))
             return (200000, True) if len(calls) == 1 else (12345, True)
 

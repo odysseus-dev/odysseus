@@ -8329,8 +8329,8 @@ def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
     """Return True for local Ollama's OpenAI-compatible /v1 surface.
 
     Ollama's /v1 endpoint accepts the OpenAI chat shape, but model-level tool
-    streaming is uneven. Some local models terminate after a token when schemas
-    are present. Keep native schemas opt-in via ModelEndpoint.supports_tools.
+    streaming is uneven. Probe model capabilities in Auto mode and preserve
+    the textual fallback when the server cannot report tool support.
     """
     try:
         parsed = urlparse(endpoint_url or "")
@@ -8386,20 +8386,16 @@ def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
     return keys
 
 
-def _agent_route_tool_mode(
+_LOOKUP_ENDPOINT_TOOL_SUPPORT = object()
+
+
+def _configured_endpoint_tool_support(
     endpoint_url: str,
-    model: str,
     owner: Optional[str] = None,
     headers: Optional[Dict] = None,
-) -> tuple[bool, bool, bool]:
-    """Resolve tool transport behavior for the currently active model route."""
+) -> Optional[bool]:
+    """Return the route endpoint's explicit tool On/Off; None means Auto."""
 
-    model_lc = (model or "").lower()
-    # Odysseus/Ajax names opt into the native OpenAI-compatible tool transport
-    # as well as the compact schemas. Do not let stale endpoint flags disable
-    # the tools these models were trained to call.
-    if tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE:
-        return True, False, False
     endpoint_supports: Optional[bool] = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
@@ -8445,6 +8441,30 @@ def _agent_route_tool_mode(
             db.close()
     except Exception as exc:
         logger.debug("endpoint supports_tools lookup failed: %s", exc)
+    return endpoint_supports
+
+
+def _agent_route_tool_mode(
+    endpoint_url: str,
+    model: str,
+    owner: Optional[str] = None,
+    headers: Optional[Dict] = None,
+    endpoint_supports: Optional[bool] | object = _LOOKUP_ENDPOINT_TOOL_SUPPORT,
+) -> tuple[bool, bool, bool]:
+    """Resolve tool transport behavior for the currently active model route.
+
+    ``endpoint_supports`` lets an async caller read the endpoint row on its own
+    thread and run only the Auto-mode network probe in a worker.
+    """
+
+    model_lc = (model or "").lower()
+    # Odysseus/Ajax names opt into the native OpenAI-compatible tool transport
+    # as well as the compact schemas. Do not let stale endpoint flags disable
+    # the tools these models were trained to call.
+    if tool_schema_profile(model) == ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE:
+        return True, False, False
+    if endpoint_supports is _LOOKUP_ENDPOINT_TOOL_SUPPORT:
+        endpoint_supports = _configured_endpoint_tool_support(endpoint_url, owner, headers)
 
     model_supports_tools = any(kw in model_lc for kw in (
         "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
@@ -8459,6 +8479,10 @@ def _agent_route_tool_mode(
     ))
     is_ollama_native = _is_ollama_native_url(endpoint_url or "")
     ollama_openai_compat = _is_ollama_openai_compat_url(endpoint_url or "")
+    if endpoint_supports is None and (is_ollama_native or ollama_openai_compat):
+        from src.ollama_metadata import ollama_tool_support
+
+        endpoint_supports = ollama_tool_support(endpoint_url, model, headers)
     if endpoint_supports is True:
         is_api_model = True
     elif (
@@ -24144,7 +24168,9 @@ async def stream_agent_loop(
         and client_runtime_context.get("deterministic_compaction") is True
     )
 
-    def _trim_route_request_messages(candidate_url, candidate_model, route_messages):
+    def _trim_route_request_messages(
+        candidate_url, candidate_model, route_messages, candidate_headers,
+    ):
         """Apply the candidate route's own context budget to its request."""
 
         def _without_protection(items):
@@ -24166,6 +24192,7 @@ async def stream_agent_loop(
             candidate_context = budget_context_for_model(
                 candidate_url,
                 candidate_model,
+                headers=candidate_headers,
                 fallback=context_length,
             )
             # A proxy can serve a model under a familiar family name while
@@ -24361,11 +24388,18 @@ async def stream_agent_loop(
             _general_no_tool_mode,
         ) = _route_finetune_modes(candidate_model)
         route_tools = _route_relevant_tools(candidate_model)
-        is_api, is_native_ollama, is_ollama_compat = _agent_route_tool_mode(
+        # Auto mode can probe Ollama's /api/show over the network; keep that
+        # bounded request off the event loop. The endpoint row is read here,
+        # like the turn's other lookups, so the worker never opens a DB session.
+        is_api, is_native_ollama, is_ollama_compat = await asyncio.to_thread(
+            _agent_route_tool_mode,
             candidate_url,
             candidate_model,
             owner,
             headers=candidate_headers,
+            endpoint_supports=_configured_endpoint_tool_support(
+                candidate_url, owner, candidate_headers,
+            ),
         )
         tool_surface = _configured_model_tool_surface(
             candidate_url,
@@ -24925,6 +24959,7 @@ async def stream_agent_loop(
         endpoint_url,
         model,
         messages,
+        headers,
     )
     _initial_route_context_length = _route_context_lengths.get(
         (endpoint_url, model),
@@ -25138,6 +25173,8 @@ async def stream_agent_loop(
     # that instruction, do not re-emit the same stall nudge for every
     # remaining round; route through the bounded exhaustion synthesizer.
     _loop_breaker_force_answer_used = False
+    # An Ollama round that stops at an opening word gets one textual retry.
+    _opening_word_retry_used = False
     _calendar_completion_nudge_sent = False
     _host_bridge_failed_turn = False
     # A detached host-shell result is an unfinished action, not a successful
@@ -26485,6 +26522,7 @@ async def stream_agent_loop(
                     candidate_url,
                     candidate_model,
                     state["messages"],
+                    candidate_headers,
                 )
             deepseek_visual_messages = None
             if _is_deepseek_flash_vision_model(candidate_model):
@@ -26565,13 +26603,18 @@ async def stream_agent_loop(
             candidate_model,
             candidate_headers,
             error_chunk,
+            *,
+            remember_rejection=True,
         ):
             nonlocal messages, mcp_schemas, _relevant_tools, _is_api_model
             nonlocal _is_ollama_native, _ollama_openai_compat, _route_state
             nonlocal _active_route_state, _last_route_request_messages
             nonlocal _last_route_context_length
 
-            _disable_native_tools_temporarily(candidate_url, candidate_model)
+            # Only a provider rejection is evidence for later turns; a retry
+            # driven by reply text alone rebuilds this turn's route only.
+            if remember_rejection:
+                _disable_native_tools_temporarily(candidate_url, candidate_model)
             candidate_source_messages = (
                 _initial_route_source_messages if round_num == 1 else messages
             )
@@ -26589,6 +26632,7 @@ async def stream_agent_loop(
                 candidate_url,
                 candidate_model,
                 state["messages"],
+                candidate_headers,
             )
             state["request_messages"] = request_messages
             state["tools"] = []
@@ -27230,6 +27274,7 @@ async def stream_agent_loop(
                     endpoint_url,
                     model,
                     _active_route_state["messages"],
+                    headers,
                 )
                 _active_route_state["request_messages"] = _snapshot_messages
                 _last_route_request_messages = _snapshot_messages
@@ -27714,6 +27759,7 @@ async def stream_agent_loop(
                                     endpoint_url,
                                     model,
                                     answering_state["messages"],
+                                    headers,
                                 )
                                 answering_state["context_length"] = _route_context_lengths.get(
                                     (endpoint_url, model),
@@ -27921,6 +27967,36 @@ async def stream_agent_loop(
             _round_first_event_logged,
             _round_first_token_logged,
         )
+        # Some Ollama runners advertise tools but stop after an opening word
+        # with schemas attached. The same text can be a legitimate answer
+        # ("I", "a"), so it earns one textual retry per turn, not a capability
+        # verdict: if the retry repeats it, that reply stands, and the next
+        # turn still sends native schemas.
+        if (
+            (_is_ollama_native or _ollama_openai_compat)
+            and _is_api_model and _tool_names_sent and not native_tool_calls
+            and not guide_only and max_tokens > 1 and not _opening_word_retry_used
+            and round_response.strip().casefold() in {"the", "a", "an", "i", "here", "this", "it"}
+        ):
+            _opening_word_retry_used = True
+            _finalize_round_usage()
+            full_response = _drop_rejected_round_response(full_response, round_response)
+            await _candidate_capability_recovery(
+                0, endpoint_url, model, headers, None, remember_rejection=False,
+            )
+            if _intent_domains == {"web"} and any(
+                event.get("tool") == "web_fetch" and event.get("exit_code") == 0
+                for event in tool_events
+            ):
+                _force_answer = True
+                messages.append({"role": "system", "content": (
+                    "The page has already been fetched. Answer the user's request "
+                    "from that tool result now. Do not call more tools."
+                )})
+            yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
+
         _finalize_round_usage()
         _normalized_doc_round = (
             _normalize_stream_document_fences(
