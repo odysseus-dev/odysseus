@@ -1,0 +1,333 @@
+diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
+index 78d915d68f..1e2effdd4b 100644
+--- a/agent/agent_runtime_helpers.py
++++ b/agent/agent_runtime_helpers.py
+@@ -2939,7 +2939,8 @@ def _pair_tool_calls_positionally(messages: list[dict[str, Any]]) -> list[dict[s
+             tc, _variants = declared_calls[key]
+             paired.append({
+                 "role": "tool", "name": _ra().AIAgent._get_tool_call_name_static(tc),
+-                "content": "[Result unavailable — see context summary above]",
++                "content": ("[Result unavailable — not recorded (compacted into the summary above, or the call was interrupted). "
++                            "If the call had side effects its outcome is UNKNOWN: verify before repeating it.]"),
+                 "tool_call_id": coalesce_tool_call_id(tc) or key,
+             })
+             stubs += 1
+diff --git a/agent/interrupted_outcomes.py b/agent/interrupted_outcomes.py
+new file mode 100644
+index 0000000000..fe1620e5e1
+--- /dev/null
++++ b/agent/interrupted_outcomes.py
+@@ -0,0 +1,149 @@
++"""Per-call outcome guidance for an interrupted turn.
++
++A turn that died mid-tool-loop leaves calls whose outcome nobody recorded. ``replay_cleanup`` already gives a fully
++unanswered side-effecting call an UNKNOWN-effect result; this module names every such call in the resume note, says how to
++verify it, and keeps recorded results (success or failure) authoritative. Pure functions: nothing here runs a tool or reads
++the filesystem. Outcomes are never guessed: a call that cannot be identified is counted and reported as a limitation.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++from typing import Any, Optional
++
++from agent.tool_result_classification import tool_may_have_side_effect
++
++ORPHAN_PREFIX = "[Orphan recovery:"
++STUB_PREFIX = "[Result unavailable"
++_MAX_LISTED = 8
++_SUMMARY_CHARS = 110
++_SECRET_RE = re.compile(r"(?i)\b(token|api[_-]?key|secret|passw(?:or)?d|authorization|bearer)\b(\s*[=:]\s*|\s+)\S+")
++_GIT_HISTORY_RE = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(commit|merge|rebase|cherry-pick|revert|tag|push|am)\b")
++_SHELL_TOOLS = frozenset({"terminal", "execute_code", "process", "shell"})
++_FILE_WRITE_TOOLS = frozenset({"write_file", "patch"})
++
++
++def _call_name(call: Any) -> str:
++    fn = call.get("function") if isinstance(call, dict) else None
++    return str((fn or {}).get("name") or "") if isinstance(fn, dict) else ""
++
++
++def _call_id(call: Any) -> str:
++    return str(call.get("id") or call.get("call_id") or "") if isinstance(call, dict) else ""
++
++
++def _args(call: Any) -> dict:
++    fn = call.get("function") if isinstance(call, dict) else None
++    raw = fn.get("arguments") if isinstance(fn, dict) else None
++    if isinstance(raw, dict):
++        return raw
++    try:
++        data = json.loads(raw) if isinstance(raw, str) else {}
++    except ValueError:
++        return {}
++    return data if isinstance(data, dict) else {}
++
++
++def describe_call(name: str, args: dict) -> str:
++    """A short, bounded, secret-scrubbed description of what the call was about (never file contents)."""
++    for key in ("path", "file_path", "command", "url", "query", "name", "pattern"):
++        value = args.get(key)
++        if isinstance(value, str) and value.strip():
++            text = _SECRET_RE.sub(lambda m: f"{m.group(1)}=***", " ".join(value.split()))
++            return text if len(text) <= _SUMMARY_CHARS else text[: _SUMMARY_CHARS - 1] + "…"
++    return ""
++
++
++def verification_hint(name: str, args: dict) -> str:
++    """What to check before repeating a call whose effect is unknown."""
++    if name in _FILE_WRITE_TOOLS:
++        return "re-read the target file and compare it with the intended change before writing again"
++    command = str(args.get("command") or args.get("code") or "") if name in _SHELL_TOOLS else ""
++    if command and _GIT_HISTORY_RE.search(command):
++        return "check `git log -1` and `git status` (and the remote, for a push or tag) to see whether it already happened"
++    if name in _SHELL_TOOLS:
++        return "inspect what the command would change (files, `git status`, running processes) before running it again"
++    return "inspect the state this call would change before repeating it"
++
++
++def _is_unknown_result(msg: dict) -> bool:
++    content = msg.get("content")
++    text = content if isinstance(content, str) else ""
++    return (
++        msg.get("effect_disposition") == "unknown"
++        or text.startswith(ORPHAN_PREFIX) and "UNKNOWN" in text
++        or text.startswith(STUB_PREFIX)
++    )
++
++
++def _is_readonly_incomplete(msg: dict) -> bool:
++    content = msg.get("content")
++    return msg.get("effect_disposition") == "none" and isinstance(content, str) and content.startswith(ORPHAN_PREFIX)
++
++
++def unresolved_tool_calls(history: Optional[list]) -> tuple[list[dict], int]:
++    """Calls of the interrupted (last) turn with no reliably recorded outcome, plus how many calls could not be identified.
++
++    Items: ``{id, name, side_effect, summary, hint, state}`` where ``state`` is ``no_result``, ``unknown`` (recovered as
++    UNKNOWN) or ``read_only_incomplete``. Calls with a real recorded result, successful or failed, are never listed."""
++    if not history:
++        return [], 0
++    start = 0
++    for idx in range(len(history) - 1, -1, -1):
++        if isinstance(history[idx], dict) and history[idx].get("role") == "user":
++            start = idx + 1
++            break
++    turn = [m for m in history[start:] if isinstance(m, dict)]
++    results = {str(m.get("tool_call_id") or ""): m for m in turn if m.get("role") == "tool" and m.get("tool_call_id")}
++    items: list[dict] = []
++    unidentified = 0
++    for msg in turn:
++        if msg.get("role") != "assistant":
++            continue
++        for call in msg.get("tool_calls") or []:
++            name, cid = _call_name(call), _call_id(call)
++            if not name or not cid:
++                unidentified += 1
++                continue
++            result = results.get(cid)
++            if result is not None and not (_is_unknown_result(result) or _is_readonly_incomplete(result)):
++                continue
++            args = _args(call)
++            side_effect = tool_may_have_side_effect(name)
++            if result is None:
++                state = "no_result"
++            else:
++                state = "read_only_incomplete" if _is_readonly_incomplete(result) else "unknown"
++            if not side_effect and state == "no_result":
++                state = "read_only_incomplete"
++            items.append({"id": cid, "name": name, "side_effect": side_effect and state != "read_only_incomplete",
++                          "summary": describe_call(name, args), "hint": verification_hint(name, args), "state": state})
++    return items, unidentified
++
++
++def format_outcome_guidance(history: Optional[list]) -> str:
++    """The resume-note block: which calls are outcome-unknown and how to verify them. States its own limits."""
++    if history is None:
++        return ("The interrupted calls could not be listed here. Treat any step that may not have finished as outcome-unknown: "
++                "verify its effect before repeating it, and do not repeat a call whose result is already recorded.")
++    items, unidentified = unresolved_tool_calls(history)
++    lines: list[str] = []
++    unknown = [i for i in items if i["side_effect"]]
++    readonly = [i for i in items if not i["side_effect"]]
++    if unknown:
++        lines.append("Tool calls from the interrupted turn whose outcome is UNKNOWN (each may have completed, partly run, or never started):")
++        for i in unknown[:_MAX_LISTED]:
++            what = f" {i['summary']}" if i["summary"] else ""
++            lines.append(f"- {i['name']}{what} — verify first: {i['hint']}.")
++        if len(unknown) > _MAX_LISTED:
++            lines.append(f"- … and {len(unknown) - _MAX_LISTED} more; apply the same check to each.")
++        lines.append("Do not repeat an UNKNOWN call until you have verified its effect; if verification shows it did not happen, run it once.")
++    if readonly:
++        names = ", ".join(sorted({i["name"] for i in readonly}))
++        lines.append(f"Read-only calls that did not complete ({names}) had no effect and are safe to repeat if still needed.")
++    if unidentified:
++        lines.append(f"{unidentified} tool call(s) in the interrupted turn could not be identified individually (missing id or name); "
++                     "treat any step they may have performed as outcome-unknown and verify before repeating similar work.")
++    lines.append("Calls that have a recorded result, whether it succeeded or failed, are valid: do not repeat them.")
++    return " ".join(lines)
+diff --git a/agent/replay_cleanup.py b/agent/replay_cleanup.py
+index 879222b734..d70074af93 100644
+--- a/agent/replay_cleanup.py
++++ b/agent/replay_cleanup.py
+@@ -145,11 +145,42 @@ def strip_dangling_tool_call_tail(agent_history: list[dict[str, Any]]) -> list[d
+     return agent_history[:-1]
+ 
+ 
++def recover_partial_tool_block(agent_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
++    """A trailing ``assistant(tool_calls)`` block where the process died after SOME results were recorded.
++
++    ``strip_dangling_tool_call_tail`` only handles a block with no answers at all, so the unanswered siblings were left for the
++    pre-call sanitizer's generic stub. Give each identifiable unanswered call the same UNKNOWN/none recovery result a fully
++    dangling call gets (kept, never erased: the effect may have happened). Recorded results are untouched; a call without an
++    id cannot be paired, so it is left for ``interrupted_outcomes`` to report as unidentified."""
++    if not agent_history:
++        return agent_history
++    end = len(agent_history)
++    i = end - 1
++    while i >= 0 and isinstance(agent_history[i], dict) and agent_history[i].get("role") == "tool":
++        i -= 1
++    if i < 0 or i == end - 1:
++        return agent_history
++    block = agent_history[i]
++    if not (isinstance(block, dict) and block.get("role") == "assistant" and block.get("tool_calls")):
++        return agent_history
++    answered = {str(m.get("tool_call_id") or "") for m in agent_history[i + 1:]}
++    missing = [call for call in block.get("tool_calls") or [] if _call_id(call) and _call_id(call) not in answered]
++    if not missing:
++        return agent_history
++    recovered = list(agent_history)
++    for call in missing:
++        name = _call_name(call) or "unknown"
++        disposition, content = _orphan_recovery(name, _DANGLING_NOTICES)
++        recovered.append(make_tool_result_message(name, content, _call_id(call), effect_disposition=disposition))
++    logger.warning("Recovered %d unanswered call(s) of a partially answered tool block as UNKNOWN/none", len(missing))
++    return recovered
++
++
+ def sanitize_replay_history(agent_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+     """Both strippers in canonical order (interrupted blocks, then dangling tail); same list object when nothing strips."""
+     if not agent_history:
+         return agent_history
+-    return strip_dangling_tool_call_tail(strip_interrupted_tool_tails(agent_history))
++    return recover_partial_tool_block(strip_dangling_tool_call_tail(strip_interrupted_tool_tails(agent_history)))
+ 
+ 
+ def canonicalize_replay_history(
+@@ -169,6 +200,7 @@ def canonicalize_replay_history(
+         now = time.time()
+     cleaned = strip_interrupted_tool_tails(agent_history)
+     cleaned = strip_dangling_tool_call_tail(cleaned)
++    cleaned = recover_partial_tool_block(cleaned)
+     return strip_stale_dangerous_confirmations(cleaned, now=now)
+ 
+ 
+diff --git a/gateway/run.py b/gateway/run.py
+index 2de09616f0..0b2affef34 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -1034,7 +1034,8 @@ def _is_fresh_gateway_interruption(
+ 
+ 
+ def build_resume_recovery_note(
+-    reason: Optional[str], message: str = "", *, interactive: bool = True) -> str:
++    reason: Optional[str], message: str = "", *, interactive: bool = True,
++    history: Optional[list] = None) -> str:
+     """Build the resume-pending recovery system note for an interrupted turn (empty ``message`` = auto-resume).
+ 
+     Interactive platforms report the restore and ask what next; non-interactive ones finish the work.
+@@ -1043,22 +1044,20 @@ def build_resume_recovery_note(
+     nobody can answer; the resumed turn must instead complete the interrupted work, or the task is silently
+     abandoned behind a "restored" acknowledgement that goes nowhere (#57056).
+     """
++    from agent.interrupted_outcomes import format_outcome_guidance
++    outcome_guidance = format_outcome_guidance(history)
+     reason_phrase = (
+         "a gateway restart" if reason == "restart_timeout"
+         else "a gateway shutdown" if reason == "shutdown_timeout" else "a gateway interruption")
+     if message:
+         resume_guidance = (
+             "Address the user's NEW message below FIRST and focus on what the user is asking now.")
+-        tail_guidance = (
+-            "Do NOT re-execute old tool calls — skip any unfinished work from the conversation history."
+-        )
++        tail_guidance = outcome_guidance
+     elif interactive:
+         resume_guidance = (
+             "Report to the user that the session was restored "
+             "successfully and ask what they would like to do next.")
+-        tail_guidance = (
+-            "Do NOT re-execute old tool calls — skip any unfinished work from the conversation history."
+-        )
++        tail_guidance = outcome_guidance
+     else:
+         resume_guidance = (
+             "No user is present on this non-interactive platform, "
+@@ -1067,7 +1066,7 @@ def build_resume_recovery_note(
+             "CONTINUE the interrupted task to completion.")
+         tail_guidance = (
+             "Do NOT re-run tool calls whose results already "
+-            "appear in the history — resume from the first step that has no recorded result.")
++            "appear in the history — resume from the first step that has no recorded result. " + outcome_guidance)
+     return (
+         f"[System note: The previous turn was interrupted by "
+         f"{reason_phrase}; the gateway is now back online. "
+@@ -1077,7 +1076,8 @@ def build_resume_recovery_note(
+ 
+ 
+ def _prepare_resume_pending_message(
+-    reason: Optional[str], message: Optional[str], *, interactive: bool = True) -> tuple[str, str]:
++    reason: Optional[str], message: Optional[str], *, interactive: bool = True,
++    history: Optional[list] = None) -> tuple[str, str]:
+     """Return the recovery message and the user text to persist.
+ 
+     Empty original: persist the note (a "" user row trips the pre-call sanitizer). Real text: persist clean.
+@@ -1089,7 +1089,7 @@ def _prepare_resume_pending_message(
+     words: the transcript stays scaffold-free (the model still receives the wrapped note), and a non-empty
+     row never trips the sanitizer.
+     """
+-    recovery_message = build_resume_recovery_note(reason, message or "", interactive=interactive)
++    recovery_message = build_resume_recovery_note(reason, message or "", interactive=interactive, history=history)
+     persist_message = message if isinstance(message, str) and message.strip() else recovery_message
+     return recovery_message, persist_message
+ 
+diff --git a/gateway/run_turn_runner.py b/gateway/run_turn_runner.py
+index 641b2199dc..1a4e1a0c03 100644
+--- a/gateway/run_turn_runner.py
++++ b/gateway/run_turn_runner.py
+@@ -922,6 +922,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
+             _auto_continue_freshness_window, _is_fresh_gateway_interruption,
+             _last_transcript_timestamp, _prepare_resume_pending_message, build_resume_recovery_note,
+         )
++        from agent.interrupted_outcomes import format_outcome_guidance
+         ctx = self._ctx
+         persist_override: Optional[Any] = ctx.persist_user_message
+         from gateway.session_cli_turn import cli_turn
+@@ -955,14 +956,15 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
+             # Empty message = the startup auto-resume turn; there is no NEW user message.
+             ctx.message, persist_override = _prepare_resume_pending_message(
+                 resume_reason, ctx.message, interactive=self._resume_note_interactive(),
++                history=agent_history,
+             )
+         elif agent_history and agent_history[-1].get("role") == "tool" and interruption_is_fresh:
+             persist_override = ctx.message
+             ctx.message = (
+                 "[System note: A new message has arrived. The conversation "
+                 "history contains pending tool outputs from an interrupted turn. "
+-                "IGNORE those pending results. Address the user's NEW message "
+-                "below FIRST. Do NOT re-execute old tool calls from the history.]\n\n"
++                "Address the user's NEW message below FIRST. "
++                + format_outcome_guidance(agent_history) + "]\n\n"
+                 + ctx.message
+             )
+         self._prepend_pending_note("_pending_skills_reload_notes")
+@@ -972,7 +974,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
+         # did not fire (freshness signals disagreed, marker cleared) we must NOT hand the model a blank
+         # user turn. Restricted to resume_pending sessions so caption-less image turns are untouched.
+         if isinstance(ctx.message, str) and not ctx.message.strip() and resume_pending:
+-            ctx.message = build_resume_recovery_note(resume_reason, "", interactive=self._resume_note_interactive())
++            ctx.message = build_resume_recovery_note(resume_reason, "", interactive=self._resume_note_interactive(), history=agent_history)
+         return persist_override, ctx.persist_user_timestamp
+ 
+     def _native_image_run_message(self):

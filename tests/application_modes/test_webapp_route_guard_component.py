@@ -27,11 +27,11 @@ class RouteGuardComponentTests(unittest.TestCase):
         self.assertEqual(manager.route_guard_state({'origin': 'adopted', 'agent': 'x'}), 'absent')
         self.assertEqual(manager.route_guard_state({'origin': 'managed', 'agent': str(ROOT / 'does-not-exist')}), 'unknown')
 
-    def test_a_new_release_carries_the_route_guard_then_the_mcp_recovery_then_the_desktop_workspace_patch_then_the_composer_patch(self):
+    def test_a_new_release_carries_the_route_guard_then_the_mcp_recovery_then_the_desktop_workspace_patch_then_the_composer_patch_then_the_resume_outcomes_patch(self):
         manager = WebappComponent.__new__(WebappComponent)
         manager.application_root = ROOT
         patches = manager.webapp_patches()
-        self.assertEqual([item.name for item in patches], ['webapp-route-guard.patch', 'webapp-mcp-recovery.patch', 'webapp-desktop-workspace.patch', 'webapp-composer-control-center.patch'])
+        self.assertEqual([item.name for item in patches], ['webapp-route-guard.patch', 'webapp-mcp-recovery.patch', 'webapp-desktop-workspace.patch', 'webapp-composer-control-center.patch', 'webapp-resume-outcomes.patch'])
         self.assertTrue(all(item.is_file() for item in patches))
 
     def test_a_patch_sequence_is_applied_in_order_and_recognised_as_a_whole_or_by_its_first_part(self):
@@ -91,7 +91,14 @@ class RouteGuardComponentTests(unittest.TestCase):
         with mock.patch('src.hermes_webapp_component.patch_state', lambda path, patches: calls.append(patches) or
                         ('applied' if patches == manager.route_guard_patch() else 'foreign')):
             self.assertEqual(manager.applied_patches('x'), manager.route_guard_patch())
-            self.assertEqual(len(calls), 4)
+            self.assertEqual(len(calls), 5)
+
+    def test_a_release_with_the_four_patch_set_but_not_the_resume_outcomes_patch_is_still_accepted_for_rollback(self):
+        manager = WebappComponent.__new__(WebappComponent)
+        manager.application_root = ROOT
+        with mock.patch('src.hermes_webapp_component.patch_state', lambda path, patches: 'applied' if tuple(patches) == manager.composer_patches() else 'foreign'):
+            self.assertEqual(manager.applied_patches('x'), manager.composer_patches())
+            self.assertEqual(len(manager.composer_patches()), 4)
 
     def test_a_release_with_the_three_patch_set_but_not_the_composer_patch_is_still_accepted_for_rollback(self):
         manager = WebappComponent.__new__(WebappComponent)
