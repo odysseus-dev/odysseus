@@ -1,0 +1,150 @@
+{
+ "project": "odysseus",
+ "agent": "hermes",
+ "source_commit": "7b5db688 + integration/wiki-on-production",
+ "claims": [
+  {
+   "key": "proxy-routing",
+   "kind": "fact",
+   "subject": "odysseus.hermes-proxy.routing",
+   "scope": "source",
+   "claim": "src/hermes_proxy.py forwards a request to the Hermes backend only when its Host is exactly hermes.localhost:<listener port>; every other request goes to Odysseus untouched.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "src/hermes_proxy.py",
+     "contains": "Host is exactly hermes.localhost:<listener port> are forwarded to the Hermes backend"
+    }
+   ]
+  },
+  {
+   "key": "managed-vs-adopted",
+   "kind": "fact",
+   "subject": "odysseus.webapp-component.ownership",
+   "scope": "source",
+   "claim": "src/hermes_webapp_component.py starts, stops and restarts only a managed Webapp gateway; a gateway adopted from the user is user-owned and Odysseus refuses to start, stop or restart it.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "src/hermes_webapp_component.py",
+     "contains": "This gateway is user-owned (adopted); Odysseus never starts, stops or restarts it."
+    }
+   ]
+  },
+  {
+   "key": "gateway-stop-guard",
+   "kind": "fact",
+   "subject": "odysseus.webapp-component.stop",
+   "scope": "source",
+   "claim": "src/hermes_webapp_component.py refuses to stop the managed gateway from a command that runs inside that gateway (a turn would be lost with an unknown outcome), and refuses while turns are running unless forced.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "src/hermes_webapp_component.py",
+     "contains": "This command is running inside the gateway it would stop"
+    }
+   ],
+   "watch_paths": [
+    "src/hermes_webapp_component.py"
+   ]
+  },
+  {
+   "key": "backend-switch",
+   "kind": "decision",
+   "subject": "odysseus.hermes-backend.switch",
+   "scope": "source",
+   "claim": "src/application_modes.py selects the Hermes integration from ODYSSEUS_HERMES_BACKEND: the value gateway uses the official gateway, the value webapp uses the managed Webapp component, and an unset value keeps the older component behaviour.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "src/application_modes.py",
+     "contains": "source.get('ODYSSEUS_HERMES_BACKEND') == 'webapp'"
+    }
+   ]
+  },
+  {
+   "key": "wiki-mcp-lifecycle",
+   "kind": "fact",
+   "subject": "odysseus.wiki-mcp.lifecycle",
+   "scope": "source",
+   "claim": "scripts/wiki_mcp.py runs only for the length of an agent session, started by that agent's own MCP client, with nothing running in the background; the agent identity comes from the WIKI_AGENT environment variable.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "scripts/wiki_mcp.py",
+     "contains": "for the length of its session; nothing runs in the background."
+    }
+   ]
+  },
+  {
+   "key": "mcp-reload-consent",
+   "kind": "fact",
+   "subject": "odysseus.mcp.reload",
+   "scope": "source",
+   "claim": "integrations/hermes-mode/patches/webapp-mcp-recovery.patch adds a Reload MCP servers button to the Desktop Connectors tab that asks for confirmation before it asks the gateway to run reload.mcp, which refreshes every chat of the profile.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "integrations/hermes-mode/patches/webapp-mcp-recovery.patch",
+     "contains": "Consent gate for the manual reload"
+    }
+   ]
+  },
+  {
+   "key": "write-roots-deny-default",
+   "kind": "policy",
+   "subject": "odysseus.workspace.write-roots",
+   "scope": "source",
+   "claim": "src/hermes_webapp_component.py starts the managed gateway with HERMES_WRITE_SAFE_ROOT set to an empty folder owned by the component, so nothing is writable by default; folders the user granted are read live from the component config by the odysseus-workspace-grants plugin, and without that plugin the grants do not apply.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "src/hermes_webapp_component.py",
+     "contains": "env['HERMES_WRITE_SAFE_ROOT'] = str(private_directory(self.directory / 'no-workspace'))"
+    }
+   ]
+  },
+  {
+   "key": "git-publish-off",
+   "kind": "security",
+   "subject": "odysseus.route-guard.git-publish",
+   "scope": "source",
+   "claim": "integrations/hermes-mode/patches/webapp-route-guard.patch disables git push and pull-request creation from the Webapp's direct routes unless the operator sets HERMES_WEBAPP_ALLOW_GIT_PUBLISH=1.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "integrations/hermes-mode/patches/webapp-route-guard.patch",
+     "contains": "Publishing (push / pull request) from the web interface is disabled."
+    }
+   ]
+  },
+  {
+   "key": "grants-additional-gate",
+   "kind": "architecture",
+   "subject": "odysseus.grants.gate",
+   "scope": "source",
+   "claim": "src/hermes_grants.py keeps server-side access grants bound to an Odysseus browser session as an additional gate in front of the Hermes origin; the gateway's own authentication still decides every request and the grants do not protect against a copied gateway credential.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "src/hermes_grants.py",
+     "contains": "It is an ADDITIONAL gate"
+    }
+   ]
+  },
+  {
+   "key": "ask-not-sandbox",
+   "kind": "policy",
+   "subject": "odysseus.ask-policy.limits",
+   "scope": "source",
+   "claim": "docs/hermes-ask-policy.md states that the odysseus-ask-policy plugin asks before tools that are not on a read-only list but does not sandbox: an approved command runs with the user's full Windows rights.",
+   "evidence": [
+    {
+     "type": "file",
+     "path": "docs/hermes-ask-policy.md",
+     "contains": "It asks. It does not sandbox."
+    }
+   ]
+  }
+ ]
+}
