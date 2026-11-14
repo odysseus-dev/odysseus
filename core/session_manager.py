@@ -9,12 +9,14 @@ This is the single place that handles:
 """
 
 import json
+import time
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError
 
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
@@ -257,8 +259,62 @@ class SessionManager:
 
         self._persist_message(session_id, message)
 
-    def _persist_message(self, session_id: str, message: ChatMessage):
-        """Persist a single message to the database."""
+    # A failed save is never silent: the message stays in memory (the live conversation keeps working), is flagged, and is re-saved in order on the next
+    # successful save for that session. Retries cover brief lock contention only; they block the caller for at most ~0.2 s.
+    _PERSIST_RETRY_DELAYS = (0.05, 0.15)
+    _UNSAVED_MAX = 200
+
+    @staticmethod
+    def _is_transient_db_error(error: Exception) -> bool:
+        text = str(error).lower()
+        return isinstance(error, OperationalError) or 'database is locked' in text or 'database is busy' in text
+
+    def unsaved_messages(self, session_id: str) -> int:
+        """How many messages of this session are in memory but not yet in the database (0 when everything is saved)."""
+        return len(getattr(self, '_unsaved', {}).get(session_id, ()))
+
+    def _persist_message(self, session_id: str, message: ChatMessage) -> bool:
+        """Persist a single message to the database. Returns True only when it is committed; a failure is logged, flagged on the message and retried later."""
+        unsaved = self.__dict__.setdefault('_unsaved', {})
+        pending = unsaved.get(session_id)
+        if pending:
+            # Older unsaved messages go first, with their original timestamps, so the transcript order is preserved.
+            for older in list(pending):
+                if older[0] is not message and self._persist_message_checked(session_id, older[0], older[1]):
+                    pending.remove(older)
+        msg_time = datetime.utcnow()
+        ok = self._persist_message_checked(session_id, message, msg_time)
+        if not ok:
+            queue = unsaved.setdefault(session_id, [])
+            if not any(item[0] is message for item in queue):
+                if len(queue) >= self._UNSAVED_MAX:
+                    queue.pop(0)
+                    logger.error("Session %s: dropped the oldest unsaved message (queue of %d full)", session_id, self._UNSAVED_MAX)
+                queue.append((message, msg_time))
+        elif not unsaved.get(session_id):
+            unsaved.pop(session_id, None)
+        return ok
+
+    def _persist_message_checked(self, session_id: str, message: ChatMessage, msg_time) -> bool:
+        if (message.metadata or {}).get('_db_id'):
+            return True                                         # already committed (idempotent: a retry can never duplicate a row)
+        last_error = None
+        for attempt in range(len(self._PERSIST_RETRY_DELAYS) + 1):
+            try:
+                return self._persist_message_once(session_id, message, msg_time)
+            except Exception as e:
+                last_error = e
+                if attempt < len(self._PERSIST_RETRY_DELAYS) and self._is_transient_db_error(e):
+                    time.sleep(self._PERSIST_RETRY_DELAYS[attempt])
+                    continue
+                break
+        logger.error(f"Error persisting message: {last_error}")
+        if message.metadata is None:
+            message.metadata = {}
+        message.metadata['_persist_failed'] = True
+        return False
+
+    def _persist_message_once(self, session_id: str, message: ChatMessage, msg_time) -> bool:
         db = SessionLocal()
         try:
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
@@ -267,8 +323,9 @@ class SessionManager:
                 # create a chat_messages row with no parent session; also drop
                 # any stale cached session so later writes fail closed too.
                 self.sessions.pop(session_id, None)
+                self.__dict__.get('_unsaved', {}).pop(session_id, None)
                 logger.warning("Dropping message for deleted session %s", session_id)
-                return
+                return True                                     # nothing to save and nothing to retry: the session is gone
 
             missing_upload_id = reserve_message_upload_references(
                 getattr(self, "upload_handler", None),
@@ -282,7 +339,6 @@ class SessionManager:
                 )
 
             msg_id = str(uuid.uuid4())
-            msg_time = datetime.utcnow()
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
@@ -290,12 +346,13 @@ class SessionManager:
             # model call. Persist only readable text plus attachment references
             # so chat_messages/FTS do not duplicate upload bytes.
             _content = persistable_message_content(message.content, message.metadata)
+            stored_meta = {k: v for k, v in message.metadata.items() if k != '_persist_failed'}
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
                 role=message.role,
                 content=_content,
-                meta_data=json.dumps(message.metadata) if message.metadata else None,
+                meta_data=json.dumps(stored_meta) if stored_meta else None,
                 timestamp=msg_time,
             )
             db.add(db_message)
@@ -315,12 +372,13 @@ class SessionManager:
 
             # Store DB ID on the in-memory message for edit/delete by ID
             message.metadata['_db_id'] = msg_id
+            message.metadata.pop('_persist_failed', None)
 
             logger.debug(f"Persisted message to session {session_id}")
-
-        except Exception as e:
-            logger.error(f"Error persisting message: {e}")
+            return True
+        except Exception:
             db.rollback()
+            raise
         finally:
             db.close()
 
