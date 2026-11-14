@@ -123,7 +123,9 @@ async def do_trigger_research(content: str, owner: Optional[str] = None, *, chat
     payload: Dict[str, Any] = {"query": topic}
     if chat_session_id:
         # The dispatcher supplies the origin, never model-authored arguments.
-        payload.update(origin_chat_id=chat_session_id, max_rounds=2, max_time=120)
+        from src.settings import get_setting as _get_setting
+        _chat_max_time = max(180, int(_get_setting("research_chat_max_time_seconds", 420) or 420))
+        payload.update(origin_chat_id=chat_session_id, max_rounds=2, max_time=_chat_max_time)
     # Optional knobs the research panel supports.
     if args.get("max_rounds") is not None:
         try: payload["max_rounds"] = int(args["max_rounds"])
