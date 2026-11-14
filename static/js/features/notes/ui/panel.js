@@ -117,6 +117,8 @@ export function createPanel({
     app.setOpen(true);
     app.setEditingId(null);
     app.setSearchQuery('');
+    app.setSelectMode(false);
+    app.clearSelection();
     _clearViewedReminderGlows();
     app.setFiredDotDismissedAt(Date.now());
     try { persistence.setItem(REMINDER_DISMISSED_AT_KEY, String(state.firedDotDismissedAt)); } catch {}
