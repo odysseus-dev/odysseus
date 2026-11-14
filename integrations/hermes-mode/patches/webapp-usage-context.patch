@@ -1,0 +1,301 @@
+diff --git a/gateway/session_usage.py b/gateway/session_usage.py
+index 0d7ae09fe0..06155fc98a 100644
+--- a/gateway/session_usage.py
++++ b/gateway/session_usage.py
+@@ -10,6 +10,8 @@ from __future__ import annotations
+ 
+ import contextlib
+ import dataclasses
++import json
++import threading
+ import time
+ 
+ _COUNTERS = (("input_tokens", "session_input_tokens"), ("output_tokens", "session_output_tokens"),
+@@ -159,7 +161,7 @@ def tui_usage(stats: dict) -> dict:
+     return usage
+ 
+ 
+-def usage_frame(stats: dict) -> dict:
++def usage_frame(stats: dict, extras: dict | None = None) -> dict:
+     """The ``session.usage`` event payload: BOTH views of the same counters, in one frame.
+ 
+     ``SessionUsagePayload`` (``tui_gateway/contracts/events.py``) allows either view — the TUI
+@@ -183,7 +185,10 @@ def usage_frame(stats: dict) -> dict:
+     ACP's ``_project_usage`` (``usage_update`` / ``turn_usage``), and the flat branch of
+     ``usageFromTick`` (Desktop and Ink).
+     """
+-    return {"usage": tui_usage(stats), **stats}
++    usage = tui_usage(stats)
++    if extras:
++        usage.update(extras)  # nested view only: the deprecated top-level counters keep their frozen shape
++    return {"usage": usage, **stats}
+ 
+ 
+ def publish_usage(turn, agent, *, record: bool = False) -> None:
+@@ -194,7 +199,7 @@ def publish_usage(turn, agent, *, record: bool = False) -> None:
+         return
+     with contextlib.suppress(Exception):
+         stats = usage_stats(agent)
+-        turn._publish_execution("session.usage", usage_frame(stats))
++        turn._publish_execution("session.usage", usage_frame(stats, live_usage_extras(agent)))
+         if record:
+             from gateway.session_results import execution_result
+             captured = execution_result.get()
+@@ -222,9 +227,255 @@ def snapshot_usage(authority, ref, agent) -> dict | None:
+     if agent is not None and getattr(agent, "session_api_calls", 0):
+         result = usage_stats(agent)
+         result["compression_count"] = carried_compression_count(authority.sessions.get(ref.session_id), agent)
+-        return tui_usage(result)
++        return {**tui_usage(result), **live_usage_extras(agent)}
+     row = authority.db.get_session(ref.session_id)
+-    return tui_usage(_stored_stats(row)) if row else None
++    if not row:
++        return None
++    return {**tui_usage(_stored_stats(row)), **restored_usage(authority.db, ref.session_id, row)}
++
++
++# ── Odysseus: context and compaction facts for a conversation with no live agent ──────────────────────────────────────────
++# A session opened after a restart (or never used since) has no compressor, so the status bar had no context figures and the
++# composer ring read "unavailable". Hermes already persists the provider's last prompt size on the session row
++# (``model_config._usage_anchor``, honoured only while the transcript still matches its fingerprint); this restores it. The window
++# comes from Hermes' own metadata resolver and is NEVER the resolver's static default; each figure names its source.
++
++_WINDOW_LOCK = threading.Lock()
++_WINDOW_CACHE: dict[tuple, tuple[float, int | None]] = {}
++_WINDOW_UNKNOWN_TTL_S = 600.0
++_ESTIMATE_MAX_MESSAGES = 5000
++
++
++def _model_config(row: dict) -> dict:
++    raw = row.get("model_config")
++    if isinstance(raw, dict):
++        return raw
++    with contextlib.suppress(Exception):
++        value = json.loads(raw or "{}")
++        if isinstance(value, dict):
++            return value
++    return {}
++
++
++def stored_context_window(row: dict) -> int | None:
++    """The stored session's model window from Hermes' resolver, or None when it can only default (never invented).
++    Cached per route: the resolver may consult a cache or a provider catalog, and a UI render must not repeat that."""
++    config = _model_config(row)
++    runtime = config.get("gateway_runtime") if isinstance(config.get("gateway_runtime"), dict) else {}
++    model = str(row.get("model") or "").strip()
++    provider = str(runtime.get("provider") or row.get("billing_provider") or "").strip()
++    base_url = str(runtime.get("base_url") or row.get("billing_base_url") or "").strip()
++    if not model:
++        return None
++    key = (model, provider, base_url)
++    now = time.monotonic()
++    with _WINDOW_LOCK:
++        hit = _WINDOW_CACHE.get(key)
++    if hit is not None and (hit[1] is not None or now - hit[0] < _WINDOW_UNKNOWN_TTL_S):
++        return hit[1]
++    window = None
++    with contextlib.suppress(Exception):
++        from agent.context_default_record import was_context_defaulted
++        from agent.model_metadata import get_model_context_length
++        length = int(get_model_context_length(model, base_url=base_url, provider=provider))
++        window = None if length <= 0 or was_context_defaulted(length, model, base_url) else length
++    with _WINDOW_LOCK:
++        if len(_WINDOW_CACHE) > 256:
++            _WINDOW_CACHE.clear()
++        _WINDOW_CACHE[key] = (now, window)
++    return window
++
++
++def _anchored_input(db, session_id: str) -> dict:
++    """``{used, estimated, source}`` from the persisted provider reading, else ``{reason}``. ``estimated``: messages newer than
++    the reading were added by a local estimate; the reading itself is the provider's."""
++    from agent.usage_anchor import USAGE_ANCHOR_MODEL_CONFIG_KEY, _serialize, anchored_context_tokens
++    try:
++        messages = db.get_messages_as_conversation(session_id)
++        anchor = _serialize(db.get_session_model_config_value(session_id, USAGE_ANCHOR_MODEL_CONFIG_KEY, None))
++    except Exception:
++        return {"reason": "unreadable"}
++    if not isinstance(messages, list) or not messages:
++        return {"reason": "empty"}
++    if anchor is not None:
++        total = anchored_context_tokens(messages, anchor, charge_stale_thinking=False)
++        if total is not None:
++            base = int(anchor["prompt_tokens"]) + int(anchor.get("completion_tokens") or 0)
++            return {"used": total, "estimated": total > base, "source": "provider_anchor_plus_estimate" if total > base else "provider_anchor"}
++    reason = "no_provider_reading" if anchor is None else "transcript_changed"
++    if len(messages) <= _ESTIMATE_MAX_MESSAGES:
++        with contextlib.suppress(Exception):
++            from agent.model_metadata import estimate_messages_tokens_rough
++            return {"used": int(estimate_messages_tokens_rough(messages)), "estimated": True, "source": "transcript_estimate", "reason": reason}
++    return {"reason": reason}
++
++
++def _compaction_history(db, session_id: str) -> tuple[int, float | None]:
++    """How many compaction summaries this session's record holds, and when the last one was written."""
++    with contextlib.suppress(Exception):
++        rows = db._read_all("SELECT timestamp FROM messages WHERE session_id = ? AND _compressed_summary = 1 ORDER BY timestamp", (session_id,))
++        stamps = [float(r[0]) for r in rows if r[0] is not None]
++        return len(rows), (stamps[-1] if stamps else None)
++    return 0, None
++
++
++def _compression_settings() -> dict:
++    with contextlib.suppress(Exception):
++        from hermes_cli.config import load_config
++        section = (load_config() or {}).get("compression") or {}
++        threshold = section.get("threshold")
++        return {"enabled": bool(section.get("enabled", True)),
++                "threshold": float(threshold) if isinstance(threshold, (int, float)) and 0 < threshold <= 1 else None}
++    return {"enabled": None, "threshold": None}
++
++
++def restored_usage(db, session_id: str, row: dict) -> dict:
++    """Additive ``usage`` keys for a stored conversation (a resume snapshot with no agent that has called the model)."""
++    out: dict = {}
++    window = stored_context_window(row)
++    ctx = _anchored_input(db, session_id)
++    used = ctx.get("used")
++    if used is not None:
++        out["context_input_source"] = ctx["source"]
++        if window:
++            used = min(int(used), window)
++            out.update(context_used=used, context_max=window, context_percent=max(0, min(100, round(used / window * 100))),
++                       context_estimated=bool(ctx["estimated"]), context_source="local_estimate" if ctx["estimated"] else "provider_usage",
++                       context_window_source="model_metadata")
++        else:
++            out.update(context_known_tokens=int(used), context_window_source="unknown", context_unavailable_reason="window_unknown")
++    else:
++        out["context_unavailable_reason"] = ctx.get("reason") or "no_provider_reading"
++        if window:
++            out.update(context_max_known=window, context_window_source="model_metadata")
++    if ctx.get("reason") == "transcript_changed" and used is not None:
++        out["context_note"] = "transcript_changed_since_provider_reading"
++    count, last = _compaction_history(db, session_id)
++    settings = _compression_settings()
++    out["compressions"] = count
++    if last is not None:
++        out["last_compaction_at"] = last
++    if settings["enabled"] is not None:
++        out["compression_enabled"] = settings["enabled"]
++    if settings["threshold"] is not None:
++        out["compression_threshold_percent"] = round(settings["threshold"] * 100)
++        out["compression_threshold_source"] = "config"
++        if window:
++            out["compression_threshold_tokens"] = int(window * settings["threshold"])
++    out["cost_breakdown"] = session_cost_breakdown(db, session_id)
++    if row.get("pricing_version"):
++        out["cost_pricing_version"] = str(row["pricing_version"])
++    if row.get("compression_failure_error"):
++        out["compression_error"] = str(row["compression_failure_error"])[:300]
++    cooldown = row.get("compression_failure_cooldown_until")
++    if isinstance(cooldown, (int, float)) and cooldown > time.time():
++        out["compression_cooldown_until"] = float(cooldown)
++    return out
++
++
++
++# ── Odysseus: what a conversation cost, by what KIND of figure it is ──────────────────────────────────────────────────────
++# Hermes already prices every call and stores the result (``session_model_usage``: per model and per task, so auxiliary calls
++# are included). Nothing is re-priced here; each stored figure is only labelled so the four kinds are never summed together:
++#   billed                   a provider-confirmed charge (cost_status "actual")
++#   estimated_api            tokens x API list prices (cost_status "estimated")
++#   subscription_equivalent  what the same usage would cost on the API; NOT a charge (an estimate from a subscription route)
++#   included                 free / subscription-included / local: no API charge is invented
++#   unpriced                 no price data: shown as "Unpriced", never as $0.00
++
++COST_CLASSES = ("billed", "estimated_api", "subscription_equivalent", "included", "unpriced")
++
++
++def cost_class(status, provider="", billing_mode="") -> str:
++    status = str(status or "unknown").lower()
++    if status == "actual":
++        return "billed"
++    if status == "included":
++        return "included"
++    if status == "estimated":
++        subscription = "subscription" in str(provider or "").lower() or str(billing_mode or "").lower().startswith("subscription")
++        return "subscription_equivalent" if subscription else "estimated_api"
++    return "unpriced"
++
++
++def session_cost_breakdown(db, session_id: str) -> list[dict]:
++    """One entry per kind of figure for a conversation, from Hermes' own stored accounting. ``usd`` is None for kinds that carry
++    no dollar amount (included / unpriced); ``label`` is Hermes' own ``format_cost_label`` (sub-cent amounts keep 4 decimals)."""
++    from decimal import Decimal
++    try:
++        rows = db._read_all(
++            "SELECT model, billing_provider, billing_mode, task, api_call_count, input_tokens, output_tokens, cache_read_tokens, "
++            "cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd, cost_status, cost_source "
++            "FROM session_model_usage WHERE session_id = ?", (session_id,))
++    except Exception:
++        return []
++    groups: dict[str, dict] = {}
++    for row in rows:
++        kind = cost_class(row["cost_status"], row["billing_provider"], row["billing_mode"])
++        group = groups.setdefault(kind, {"class": kind, "usd": Decimal(0), "calls": 0, "aux_calls": 0, "input": 0, "output": 0,
++                                         "cache_read": 0, "cache_write": 0, "reasoning": 0, "models": [], "sources": []})
++        calls = int(row["api_call_count"] or 0)
++        group["calls"] += calls
++        group["aux_calls"] += calls if row["task"] else 0
++        for key, column in (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_tokens"),
++                            ("cache_write", "cache_write_tokens"), ("reasoning", "reasoning_tokens")):
++            group[key] += int(row[column] or 0)
++        amount = row["actual_cost_usd"] if kind == "billed" and row["actual_cost_usd"] is not None else row["estimated_cost_usd"]
++        if kind in ("billed", "estimated_api", "subscription_equivalent"):
++            group["usd"] += Decimal(str(amount or 0))
++        for key, value in (("models", row["model"]), ("sources", row["cost_source"])):
++            if value and value not in group[key]:
++                group[key].append(str(value))
++    result = []
++    for kind in COST_CLASSES:
++        group = groups.get(kind)
++        if group is None:
++            continue
++        priced = kind in ("billed", "estimated_api", "subscription_equivalent")
++        usd = group.pop("usd")
++        group["usd"] = float(usd) if priced else None
++        label = _cost_label(usd) if priced else ("included" if kind == "included" else "Unpriced")
++        group["label"] = label.lstrip("~") if kind == "billed" else label  # a provider-confirmed charge is not an estimate
++        result.append(group)
++    return result
++
++
++def _cost_label(amount) -> str:
++    with contextlib.suppress(Exception):
++        from agent.usage_pricing import format_cost_label
++        return format_cost_label(amount)
++    return "$%s" % amount
++
++
++def live_usage_extras(agent) -> dict:
++    """Additive ``usage`` keys for a live agent: what its compressor really uses (never the global setting alone)."""
++    out: dict = {}
++    compressor = getattr(agent, "context_compressor", None)
++    with contextlib.suppress(Exception):
++        db, sid = getattr(agent, "_session_db", None), getattr(agent, "session_id", None)
++        if db is not None and sid:
++            out["cost_breakdown"] = session_cost_breakdown(db, sid)
++    if compressor is None:
++        return out
++    with contextlib.suppress(Exception):
++        enabled = getattr(agent, "compression_enabled", None)
++        if isinstance(enabled, bool):
++            out["compression_enabled"] = enabled
++        tokens, percent = getattr(compressor, "threshold_tokens", None), getattr(compressor, "threshold_percent", None)
++        if isinstance(tokens, int) and tokens > 0:
++            out["compression_threshold_tokens"] = tokens
++            out["compression_threshold_source"] = "compressor"
++        if isinstance(percent, (int, float)) and 0 < percent <= 1:
++            out["compression_threshold_percent"] = round(percent * 100)
++        source = context_display_source_of(compressor)
++        out["context_input_source"] = "provider_usage" if source == "provider_usage" else "local_estimate"
++        out["context_window_source"] = "config" if getattr(compressor, "_config_context_length", None) else "model_metadata"
++    return out
++
++
++def context_display_source_of(compressor) -> str:
++    from agent.context_breakdown import context_display_source
++    return context_display_source(compressor)
+ 
+ 
+ async def stats(connection, ref, params):
