@@ -124,3 +124,116 @@ def test_the_stream_tells_the_client_when_a_save_failed():
     assert persist_failure_event(Manager(), 'bad') == {'type': 'message_save_failed', 'unsaved': 2}
     assert persist_failure_event(Manager(), 'ok') is None
     assert persist_failure_event(object(), 'x') is None
+
+
+def _fail_all(sm_mod):
+    real = sm_mod.SessionLocal
+
+    def factory():
+        raise RuntimeError('disk full')
+    sm_mod.SessionLocal = factory
+    return real
+
+
+def _spool_lines(manager, session_id):
+    path = manager._spool_path(session_id)
+    return [line for line in open(path, encoding='utf-8').read().splitlines()] if os.path.exists(path) else []
+
+
+def test_a_failed_save_is_spooled_to_disk_and_removed_once_it_is_saved(env):
+    from core.models import ChatMessage
+    manager, session, sm_mod = env
+    real = _fail_all(sm_mod)
+    try:
+        assert session.add_message(ChatMessage('assistant', 'reply that failed')) is False
+    finally:
+        sm_mod.SessionLocal = real
+    assert len(_spool_lines(manager, session.id)) == 1
+    assert session.add_message(ChatMessage('user', 'next')) is True
+    assert [r[0] for r in rows(session.id)] == ['reply that failed', 'next'] and _spool_lines(manager, session.id) == []
+
+
+def test_after_a_process_restart_spooled_messages_are_recovered_in_order_exactly_once(env):
+    from core.models import ChatMessage
+    import core.models as models
+    from core.session_manager import SessionManager
+    manager, session, sm_mod = env
+    real = _fail_all(sm_mod)
+    try:
+        for text in ('first', 'second', 'third'):
+            session.add_message(ChatMessage('user', text))
+    finally:
+        sm_mod.SessionLocal = real
+    assert rows(session.id) == []
+    restarted = SessionManager()                                        # a new process: nothing in memory, only the spool on disk
+    models.set_session_manager_instance(restarted)
+    assert [r[0] for r in rows(session.id)] == ['first', 'second', 'third'] and _spool_lines(manager, session.id) == []
+    assert restarted.recover_spooled() == {'recovered': 0, 'already_saved': 0, 'failed': 0}
+    assert [r[0] for r in rows(session.id)] == ['first', 'second', 'third']          # running recovery again never duplicates
+
+
+def test_a_message_saved_but_not_yet_removed_from_the_spool_is_not_saved_twice(env):
+    from core.models import ChatMessage
+    manager, session, sm_mod = env
+    real = _fail_all(sm_mod)
+    try:
+        session.add_message(ChatMessage('user', 'crash window'))
+    finally:
+        sm_mod.SessionLocal = real
+    line = _spool_lines(manager, session.id)[0]
+    assert session.add_message(ChatMessage('user', 'later')) is True                  # saves it and removes it from the spool
+    open(manager._spool_path(session.id), 'w', encoding='utf-8').write(line + '\n')    # as if the process died between the commit and the spool update
+    assert manager.recover_spooled() == {'recovered': 0, 'already_saved': 1, 'failed': 0}
+    assert [r[0] for r in rows(session.id)] == ['crash window', 'later'] and _spool_lines(manager, session.id) == []
+
+
+def test_queue_overflow_loses_nothing_because_every_message_is_on_the_spool(env):
+    from core.models import ChatMessage
+    from core.session_manager import SessionManager
+    import core.models as models
+    manager, session, sm_mod = env
+    manager._UNSAVED_MAX = 2
+    real = _fail_all(sm_mod)
+    try:
+        for i in range(5):
+            session.add_message(ChatMessage('user', 'm%d' % i))
+    finally:
+        sm_mod.SessionLocal = real
+    assert manager.unsaved_messages(session.id) == 2 and len(_spool_lines(manager, session.id)) == 5
+    models.set_session_manager_instance(SessionManager())
+    assert [r[0] for r in rows(session.id)] == ['m0', 'm1', 'm2', 'm3', 'm4']
+
+
+def test_a_full_spool_is_reported_not_silent_and_never_blocks_the_conversation(env):
+    from core.models import ChatMessage
+    manager, session, sm_mod = env
+    manager._SPOOL_MAX_PER_SESSION = 1
+    real = _fail_all(sm_mod)
+    try:
+        session.add_message(ChatMessage('user', 'a'))
+        late = ChatMessage('user', 'b')
+        assert session.add_message(late) is False
+    finally:
+        sm_mod.SessionLocal = real
+    assert len(_spool_lines(manager, session.id)) == 1 and late.metadata.get('_spool_failed') is True and late.metadata.get('_persist_failed') is True
+    assert [m.content for m in session.history] == ['a', 'b']
+
+
+def test_a_busy_database_never_sleeps_on_the_event_loop(env, monkeypatch):
+    import asyncio
+    from core.models import ChatMessage
+    from sqlalchemy.exc import OperationalError
+    manager, session, sm_mod = env
+    manager._PERSIST_RETRY_DELAYS = (0.05, 0.15)
+    slept = []
+    monkeypatch.setattr(sm_mod.time, 'sleep', lambda s: slept.append(s))
+    real, factory = failing(sm_mod, 99, OperationalError('INSERT', {}, Exception('database is locked')))
+    sm_mod.SessionLocal = factory
+
+    async def inside():
+        return session.add_message(ChatMessage('user', 'on the loop'))
+    try:
+        assert asyncio.run(inside()) is False and slept == []
+        assert session.add_message(ChatMessage('user', 'on a worker thread')) is False and slept
+    finally:
+        sm_mod.SessionLocal = real
