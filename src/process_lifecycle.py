@@ -321,7 +321,7 @@ def signal_group(pid: Optional[int], pgid: Optional[int], sig: int, *,
     Returns whether a signal was delivered. The server's own group is never
     signalled; a pgid equal to it falls through to the single pid.
     """
-    if pgid and pgid > 0 and pgid != (own_pgid() if own is None else own):
+    if pgid and pgid > 0 and hasattr(os, "killpg") and pgid != (own_pgid() if own is None else own):
         try:
             os.killpg(pgid, sig)
             return True
@@ -443,7 +443,7 @@ class Escalation:
 def term_kill_steps(grace_s: float, kill_wait_s: float = KILL_WAIT_S) -> tuple[tuple[int, float], ...]:
     """The standard POSIX ladder: SIGTERM, ``grace_s``, SIGKILL, ``kill_wait_s``."""
     return ((signal.SIGTERM, max(float(grace_s), 0.0)),
-            (signal.SIGKILL, max(float(kill_wait_s), 0.0)))
+            (getattr(signal, "SIGKILL", signal.SIGTERM), max(float(kill_wait_s), 0.0)))
 
 
 def escalate(
