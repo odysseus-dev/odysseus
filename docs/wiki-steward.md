@@ -116,3 +116,14 @@ config.yaml: add odysseus-wiki-context under plugins.enabled, then reload (new s
 `steward_src` must be a stable checkout that contains `src/wiki_steward.py`; the plugin loads it as a private module, it does not alter Python's import path.
 
 Tests: `tests/wiki_steward/test_wiki_context_plugin.py` (10: detection, relevance, labels, read-only, boundaries, unavailable, timeout, and the full begin/propose/verify/record loop through the real MCP server followed by retrieval from a fresh session) and `test_wiki_context_hermes.py` (3: the real Hermes plugin loader and turn collector in a disposable home).
+
+## 12. `llm-wiki` skill: complement, but keep it separate
+
+| | Wiki Steward | `llm-wiki` skill (Karpathy pattern) |
+|---|---|---|
+| Purpose | Verified, project-bound facts about a code base, with freshness and reviewer gates | Free-form research notes: sources, entities, concepts, syntheses |
+| Writes | One controlled path (the MCP tools); out-of-band edits are flagged by `integrity` | The agent edits markdown files directly under `WIKI_PATH` (default `~/wiki`) |
+| Trust model | Evidence graded mechanically (source-confirmed, behavior-tested, externally verified); sensitive claims need the user | None built in; lint checks structure and links, not truth |
+| Project awareness | `odysseus-wiki-context` plugin by workspace | None; loaded by choice |
+
+Recommendation: keep both, never merge them. Do not point `WIKI_PATH` at the Steward wiki (the skill would write files the Steward then reports as tampering). Use a separate folder for `llm-wiki` research notes (articles, papers, comparisons). Anything from there that becomes a checkable statement about Odysseus is proposed to the Steward with file evidence; reference the claim id from the research page instead of copying the claim. The context plugin deliberately ignores `llm-wiki`.
