@@ -2472,6 +2472,10 @@ def _extract_report_title(markdown_text: str, fallback: str):
     candidates.sort(key=lambda t: (t[0], t[1].start()))
     if candidates:
         _level, match, title = candidates[0]
+        # A later section can supply the hero title without losing its own
+        # heading or TOC entry. Only strip a title at the start of the report.
+        if markdown_text[:match.start()].strip():
+            return title, markdown_text
         stripped = markdown_text[:match.start()] + markdown_text[match.end():]
         return title, stripped.lstrip()
     return fallback, markdown_text
