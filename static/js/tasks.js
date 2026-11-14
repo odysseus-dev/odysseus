@@ -3357,6 +3357,12 @@ export function closeTasks() {
 
 export function isTasksOpen() { return _open; }
 
+// Swipe-to-dismiss (ui.js) hides the sheet and fires `modal-dismissed` without
+// calling closeTasks(); clear the open flag so the next tap reopens (#3850).
+window.addEventListener('modal-dismissed', (e) => {
+  if (e.detail?.id === 'tasks-modal') closeTasks();
+});
+
 // ---- Task run notifications polling ----
 
 let _notifInterval = null;
