@@ -29,7 +29,8 @@ from src.youtube_handler import (
 logger = logging.getLogger(__name__)
 
 
-def _sync_upload_vision_to_gallery(file_info: Dict[str, Any], owner: Optional[str], text: str) -> None:
+def _sync_upload_vision_to_gallery(file_info: Dict[str, Any], owner: Optional[str], text: str,
+                                   source: Optional[str] = "", fallback: str = "") -> None:
     file_hash = (file_info or {}).get("hash")
     if not file_hash or not text:
         return
@@ -47,6 +48,10 @@ def _sync_upload_vision_to_gallery(file_info: Dict[str, Any], owner: Optional[st
             if not img:
                 return
             img.caption = text.strip()
+            if source is not None:
+                img.caption_source = source
+            elif not img.caption_source:
+                img.caption_source = fallback
             db.commit()
         except Exception:
             db.rollback()
@@ -247,7 +252,9 @@ class ChatHandler:
                                     _vtext = _vf.read().strip()
                                 if _vtext:
                                     enhanced_message += f"\n[User-corrected caption / OCR for this image — treat as authoritative]:\n{_vtext}"
-                                    _sync_upload_vision_to_gallery(file_info, owner, _vtext)
+                                    from src.caption_source import cache_fallback, read_cache_kind
+                                    _sync_upload_vision_to_gallery(file_info, owner, _vtext,
+                                                                   None, cache_fallback(read_cache_kind(_vcache), owner))
                                     _m = meta_by_id.get(att_id)
                                     if _m is not None:
                                         _m["vision"] = _vtext
@@ -267,7 +274,9 @@ class ChatHandler:
                                     cached_desc = _vf.read().strip()
                                 if cached_desc and not cached_desc.startswith("["):
                                     vl_desc = cached_desc
-                                    _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
+                                    from src.caption_source import cache_fallback, read_cache_kind
+                                    _sync_upload_vision_to_gallery(file_info, owner, vl_desc,
+                                                                   None, cache_fallback(read_cache_kind(_vcache), owner))
                             except Exception:
                                 vl_desc = None
                         if not vl_desc:
@@ -279,7 +288,10 @@ class ChatHandler:
                                     os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
                                     with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
-                                    _sync_upload_vision_to_gallery(file_info, owner, vl_desc)
+                                    from src.caption_source import VISION, vision_source, write_cache_kind
+                                    write_cache_kind(_vcache, VISION)
+                                    _sync_upload_vision_to_gallery(file_info, owner, vl_desc,
+                                                                   vision_source(vl_model))
                                 except Exception:
                                     pass
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n"

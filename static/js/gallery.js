@@ -144,6 +144,18 @@ function _updateTagCount() {
   const el = document.getElementById('gallery-tag-count');
   if (el) el.textContent = _total ? `${_totalTagged}/${_total} tagged` : '';
 }
+// Who wrote the caption, shown like a chat attachment's "Vision: …" label:
+// the vision model's name, or "User: <name>" for a hand-written one.
+function _captionSourceLabel(source, esc) {
+  const value = String(source || '');
+  const sep = value.indexOf(':');
+  if (sep < 0) return '';
+  const kind = value.slice(0, sep);
+  const who = value.slice(sep + 1).trim();
+  if (kind === 'user') return `<div class="attach-vision-model gallery-caption-source">User: ${esc(who || 'unknown')}</div>`;
+  if (kind === 'vision' && who) return `<div class="attach-vision-model gallery-caption-source">Vision: ${esc(who.split('/').pop())}</div>`;
+  return '';
+}
 let _search = '';
 // Stack of active tag filters. Multiple tags AND together — the user
 // builds this up by clicking tag chips or by hitting Enter in the
@@ -1678,7 +1690,7 @@ function _openDetail(img) {
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
-        ${img.caption ? `<div class="gallery-detail-section"><label>OCR Caption</label><div class="gallery-detail-prompt">${_esc(img.caption)}</div></div>` : ''}
+        ${img.caption ? `<div class="gallery-detail-section"><label>OCR Caption</label><div class="gallery-detail-prompt">${_esc(img.caption)}</div>${_captionSourceLabel(img.caption_source, _esc)}</div>` : ''}
         ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section gallery-detail-prompt-section"><label>Prompt</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div><div class="gallery-detail-mini-actions"><button class="gallery-detail-mini-btn" id="gallery-detail-copy-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button><button class="gallery-detail-mini-btn" id="gallery-detail-reuse-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Reuse in chat</button></div></div>` : ''}
         <div class="gallery-detail-meta-grid">
           <div class="gallery-detail-meta-card"><span>Date</span><strong>${date}</strong></div>
