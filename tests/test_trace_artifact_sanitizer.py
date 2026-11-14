@@ -242,3 +242,72 @@ def test_multiple_trace_archives_in_directory(tmp_path):
     with zipfile.ZipFile(z2, "r") as z:
         content = json.loads(z.read("0.trace").decode().strip())
         assert content["params"]["value"] == "[REDACTED]"
+
+
+def test_fail_closed_malformed_jsonl_record(tmp_path):
+    """Malformed JSONL lines in .trace archives fail closed and delete the archive."""
+    zp = str(tmp_path / "malformed_jsonl.zip")
+    with zipfile.ZipFile(zp, "w") as z:
+        z.writestr(
+            "0-trace.trace",
+            b'{"type": "action", "params": {"value": "secret123"}}\n'
+            b'this is invalid json {"password": "leak_raw_pass"}\n'
+        )
+    ok = sanitize_trace_archive(zp)
+    assert ok is False
+    assert not os.path.exists(zp)
+    assert not os.path.exists(zp + ".tmp")
+
+
+def test_fail_closed_malformed_jsonl_truncated(tmp_path):
+    """Truncated JSONL records in .network archives fail closed and delete the archive."""
+    zp = str(tmp_path / "truncated_jsonl.zip")
+    with zipfile.ZipFile(zp, "w") as z:
+        z.writestr(
+            "0-trace.network",
+            b'{"type": "request", "request": {"url": "https://example.com/api/auth", "headers": [{"name": "Authorization", "value": "Bearer secret_tok"'
+        )
+    ok = sanitize_trace_archive(zp)
+    assert ok is False
+    assert not os.path.exists(zp)
+    assert not os.path.exists(zp + ".tmp")
+
+
+def test_fail_closed_malformed_sensitive_body(tmp_path):
+    """Malformed sensitive request body in trace archives fails closed and deletes archive."""
+    zp = str(tmp_path / "malformed_sensitive_body.zip")
+    with zipfile.ZipFile(zp, "w") as z:
+        record = {
+            "type": "request",
+            "request": {
+                "url": "https://example.com/api/login",
+                "postData": '{"password": "super_secret_pw", "corrupt_trailing": ',
+            },
+        }
+        z.writestr("0-trace.network", json.dumps(record).encode() + b"\n")
+    ok = sanitize_trace_archive(zp)
+    assert ok is False
+    assert not os.path.exists(zp)
+    assert not os.path.exists(zp + ".tmp")
+
+
+def test_fail_closed_malformed_har_member(tmp_path):
+    """Malformed JSON in .har archives fails closed and deletes the archive."""
+    zp = str(tmp_path / "malformed_har.zip")
+    with zipfile.ZipFile(zp, "w") as z:
+        z.writestr("network.har", b'{"log": {"entries": [ malformed JSON content')
+    ok = sanitize_trace_archive(zp)
+    assert ok is False
+    assert not os.path.exists(zp)
+    assert not os.path.exists(zp + ".tmp")
+
+
+def test_fail_closed_invalid_utf8_jsonl_record(tmp_path):
+    """Non-UTF8 byte sequences in JSONL trace records fail closed and delete the archive."""
+    zp = str(tmp_path / "invalid_utf8.zip")
+    with zipfile.ZipFile(zp, "w") as z:
+        z.writestr("0-trace.trace", b"\xff\xfe\x00\x00 invalid utf8 raw bytes\n")
+    ok = sanitize_trace_archive(zp)
+    assert ok is False
+    assert not os.path.exists(zp)
+    assert not os.path.exists(zp + ".tmp")

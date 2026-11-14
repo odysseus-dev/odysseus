@@ -303,3 +303,52 @@ def test_teardown_rejects_unconfined_programmatic_paths():
     res = _run_teardown(options={"resultsDir": "/etc"})
     assert res.returncode == 1
     assert "Security rejection" in res.stderr
+
+
+def _disposable_ci_fixture(tmp_path):
+    data = tmp_path / "odysseus-photo-editor-e2e-fixture"
+    data.mkdir()
+    database = data / "app.db"
+    (data / ".disposable-ci-fixture.json").write_text(json.dumps({
+        "synthetic": True, "authenticated": True, "database": str(database),
+    }))
+    return {"CI": "true", "GITHUB_ACTIONS": "true",
+            "ODYSSEUS_E2E_DISPOSABLE_ARTIFACTS": "1",
+            "PHOTO_EDITOR_E2E_DATA_DIR": str(data), "PHOTO_EDITOR_E2E_DB_PATH": str(database),
+            "PHOTO_EDITOR_E2E_AUTH": "1", "ODYSSEUS_TEST_PYTHON": sys.executable}
+
+
+def test_disposable_ci_retains_only_sanitized_failure_artifacts(tmp_path):
+    results = tmp_path / "results"
+    results.mkdir()
+    trace = results / "trace.zip"
+    with zipfile.ZipFile(trace, "w") as archive:
+        archive.writestr("0-trace.trace", json.dumps({"type": "action", "name": "fill", "params": {"value": "synthetic-secret"}}) + "\n")
+    screenshot = results / "failure.png"
+    screenshot.write_bytes(b"synthetic screenshot")
+    response = _run_teardown(_disposable_ci_fixture(tmp_path), {"resultsDir": str(results)})
+    assert response.returncode == 0, response.stderr
+    with zipfile.ZipFile(trace) as archive:
+        assert json.loads(archive.read("0-trace.trace"))["params"]["value"] == "[REDACTED]"
+    assert screenshot.exists()
+
+
+@pytest.mark.parametrize("defect", ["missing-marker", "wrong-database", "unauthenticated", "sanitizer-failure"])
+def test_disposable_ci_artifact_failures_purge_closed(tmp_path, defect):
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "trace.zip").write_bytes(b"invalid sensitive archive")
+    (results / "failure.png").write_bytes(b"sensitive screenshot")
+    environment = _disposable_ci_fixture(tmp_path)
+    if defect == "missing-marker":
+        (Path(environment["PHOTO_EDITOR_E2E_DATA_DIR"]) / ".disposable-ci-fixture.json").unlink()
+    elif defect == "wrong-database":
+        environment["PHOTO_EDITOR_E2E_DB_PATH"] = str(tmp_path / "other.db")
+    elif defect == "unauthenticated":
+        environment["PHOTO_EDITOR_E2E_AUTH"] = "0"
+    else:
+        environment["ODYSSEUS_TEST_PYTHON"] = "/missing-python"
+    response = _run_teardown(environment, {"resultsDir": str(results)})
+    assert response.returncode == 0, response.stderr
+    assert not (results / "trace.zip").exists()
+    assert not (results / "failure.png").exists()

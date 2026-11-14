@@ -77,13 +77,14 @@ def sanitize_body_text(text: str) -> str:
 
     # 1. Try JSON
     trimmed = text.strip()
-    if (trimmed.startswith("{") and trimmed.endswith("}")) or (trimmed.startswith("[") and trimmed.endswith("]")):
+    if trimmed.startswith(("{", "[")):
         try:
             parsed = json.loads(trimmed)
             sanitized = sanitize_structured_obj(parsed)
             return json.dumps(sanitized, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as exc:
+            if SENSITIVE_KEY_PATTERN.search(trimmed) or any(p in trimmed.lower() for p in SENSITIVE_PARAM_NAMES):
+                raise ValueError(f"Malformed sensitive JSON request body: {exc}") from exc
 
     # 2. Try URL-encoded form data
     if "=" in trimmed and not trimmed.startswith("<"):
@@ -98,8 +99,13 @@ def sanitize_body_text(text: str) -> str:
                     else:
                         out_pairs.append((k, v))
                 return urllib.parse.urlencode(out_pairs)
-        except Exception:
-            pass
+        except Exception as exc:
+            if SENSITIVE_KEY_PATTERN.search(trimmed):
+                raise ValueError(f"Malformed sensitive form request body: {exc}") from exc
+
+    # If unparsed body text contains sensitive keys or tokens, fail closed
+    if SENSITIVE_KEY_PATTERN.search(trimmed) or any(p in trimmed.lower() for p in SENSITIVE_PARAM_NAMES):
+        raise ValueError("Malformed or unsupported sensitive request body in trace entry")
 
     return text
 
@@ -207,7 +213,11 @@ def sanitize_structured_obj(obj: Any) -> Any:
 
 
 def sanitize_jsonl_content(data: bytes) -> bytes:
-    """Sanitize newline-delimited JSON Lines (.trace, .network, .stacks)."""
+    """Sanitize newline-delimited JSON Lines (.trace, .network, .stacks).
+    
+    If any non-empty record cannot be decoded as valid UTF-8 or parsed as valid JSON,
+    or is malformed, raise ValueError fail-closed so the affected archive is permanently removed.
+    """
     lines = data.split(b"\n")
     out_lines = []
     for line in lines:
@@ -216,10 +226,8 @@ def sanitize_jsonl_content(data: bytes) -> bytes:
             continue
         try:
             parsed = json.loads(line.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            # Not valid JSON, keep as-is
-            out_lines.append(line)
-            continue
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
+            raise ValueError(f"Malformed or unsupported JSONL trace record: {err}")
         sanitized = sanitize_structured_obj(parsed)
         out_lines.append(json.dumps(sanitized, ensure_ascii=False).encode("utf-8"))
     return b"\n".join(out_lines)
@@ -275,11 +283,10 @@ def sanitize_trace_archive(zp: str) -> bool:
                     elif filename_lower.endswith((".json", ".har")):
                         try:
                             parsed = json.loads(content.decode("utf-8"))
-                            sanitized = sanitize_structured_obj(parsed)
-                            zout.writestr(item, json.dumps(sanitized, ensure_ascii=False).encode("utf-8"))
-                        except Exception:
-                            # If invalid JSON, treat as text line-by-line
-                            zout.writestr(item, sanitize_jsonl_content(content))
+                        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                            raise ValueError(f"Malformed JSON in archive member {item.filename}: {exc}") from exc
+                        sanitized = sanitize_structured_obj(parsed)
+                        zout.writestr(item, json.dumps(sanitized, ensure_ascii=False).encode("utf-8"))
                     else:
                         # Unknown binary or text member: exclude to fail closed
                         continue

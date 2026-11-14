@@ -1,0 +1,71 @@
+{
+  "native-ci": [
+    "tests/backgroundToolJobs.test.mjs",
+    "tests/chatEditorProgress.test.mjs",
+    "tests/chatImageDeletion.test.mjs",
+    "tests/chatPhotoEditorIntegrity.test.mjs",
+    "tests/chatProcessingHandoff.test.mjs",
+    "tests/copyChatHeader.test.mjs",
+    "tests/emailReplyStream.test.mjs",
+    "tests/galleryModelPickerSync.test.mjs",
+    "tests/generatedImageResult.test.mjs",
+    "tests/researchMobileButtons.test.mjs",
+    "tests/schemaThinkingProbe.test.mjs",
+    "tests/sidebarNewChat.test.mjs",
+    "tests/skillsApproval.test.mjs",
+    "tests/streamingRendererRaf.test.mjs",
+    "tests/toolFollowupOracle.test.mjs",
+    "tests/tool_followup_oracle.test.mjs"
+  ],
+  "browser-ci": [
+    "tests/emailReplyBrowser.test.mjs"
+  ],
+  "python-ci": {
+    "tests/historyResumeRendering.test.mjs": [
+      "tests/test_history_resume_rendering_js.py",
+      "tests/test_live_fallback_round_attribution.py"
+    ],
+    "tests/live_thinking_scheduler.test.mjs": [
+      "tests/test_live_thinking_scheduler_js.py"
+    ],
+    "tests/noteTestOracle.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesApplication.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesCharacterization.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesDraftAutosave.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesInfrastructure.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesRecurrence.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesReminders.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesWorkflows.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/selectedNotesContext.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/streaming/invariant.test.mjs": [
+      "tests/test_streaming_segmenter_js.py"
+    ],
+    "tests/streaming/segmenter.test.mjs": [
+      "tests/test_streaming_segmenter_js.py"
+    ],
+    "tests/turnRendering.test.mjs": [
+      "tests/test_turn_rendering_js.py"
+    ]
+  },
+  "architecture-ci": [
+    "tests/frontendArchitecture.test.mjs"
+  ]
+}
