@@ -237,7 +237,7 @@ def _keep_count_before_message(db_messages, before_msg_id: str | None) -> int | 
     return None
 
 
-def _effort_mode(model: str, raw_effort: Any) -> str:
+def _effort_mode(model: str, raw_effort: Any, base_url: Optional[str] = None) -> str:
     """Session ``thinking_mode`` for a picked effort: ``effort:<level>`` or ``off``.
 
     Validated like the chat routes do, so llama-swap advertised efforts persist
@@ -245,7 +245,7 @@ def _effort_mode(model: str, raw_effort: Any) -> str:
     """
     from src.chatgpt_subscription import validate_reasoning_effort
 
-    effort = validate_reasoning_effort(model, raw_effort)
+    effort = validate_reasoning_effort(model, raw_effort, base_url=base_url)
     return f"effort:{effort}" if effort else "off"
 
 
@@ -1092,12 +1092,13 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(404, "Session not found")
         mode = getattr(session, "thinking_mode", "off") or "off"
         raw_effort = body.get("reasoning_effort")
+        endpoint_url = getattr(session, "endpoint_url", None)
         if raw_effort is not None:
-            mode = _effort_mode(session.model, raw_effort)
+            mode = _effort_mode(session.model, raw_effort, base_url=endpoint_url)
         elif "thinking_mode" in body:
             raw_mode = str(body.get("thinking_mode") or "").strip().lower()
             if raw_mode.startswith("effort:"):
-                mode = _effort_mode(session.model, raw_mode[7:])
+                mode = _effort_mode(session.model, raw_mode[7:], base_url=endpoint_url)
             elif raw_mode in {"", "on", "off"}:
                 mode = raw_mode
                 from src.model_profiles import supports_user_thinking_toggle

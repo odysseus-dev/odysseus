@@ -426,6 +426,11 @@ def normalize_reasoning_control_mechanism(value: Any) -> str:
     return token if token in REASONING_CONTROL_MECHANISMS else ""
 
 
+def normalize_control(value: Any) -> str:
+    """Normalize a control claim: a deterministic control or a reasoning control mechanism."""
+    return normalize_deterministic_control(value) or normalize_reasoning_control_mechanism(value)
+
+
 def normalize_reasoning_control_value(value: Any) -> str:
     token = _clean_token(value)
     token = _REASONING_CONTROL_VALUE_ALIASES.get(token, token)
@@ -620,7 +625,7 @@ class DeterministicControl:
         evidence: Mapping[str, Any] | None = None,
         tested_at: Any = "",
     ) -> "DeterministicControl":
-        normalized_control = normalize_deterministic_control(control)
+        normalized_control = normalize_control(control)
         normalized_status = normalize_assertion_status(status)
         if not normalized_control:
             normalized_status = ASSERTION_UNKNOWN
@@ -797,6 +802,50 @@ def deterministic_controls_from_values(
         )
         for control in _normalize_tokens(values, normalize_deterministic_control)
     )
+
+
+def reasoning_effort_control(
+    levels: Any,
+    *,
+    field: str,
+    status: str = ASSERTION_CLAIMED,
+    source: str = SOURCE_PROVIDER_READER,
+    confidence: str = CONFIDENCE_PROVIDER_REPORTED,
+) -> DeterministicControl | None:
+    """Build a ``reasoning_effort`` control claim carrying its accepted levels.
+
+    ``levels`` keeps the provider's order (it is display order), lowercased and
+    de-duplicated. Returns ``None`` when no usable level remains.
+    """
+    values = tuple(
+        dict.fromkeys(
+            str(level).strip().lower()
+            for level in (levels if isinstance(levels, (list, tuple)) else ())
+            if isinstance(level, str) and level.strip()
+        )
+    )
+    if not values:
+        return None
+    return DeterministicControl.build(
+        control=REASONING_CONTROL_EFFORT,
+        status=status,
+        source=source,
+        confidence=confidence,
+        evidence={"field": field, "values": values},
+    )
+
+
+def reasoning_effort_levels(controls: Iterable[DeterministicControl]) -> tuple[str, ...]:
+    """Effort levels from a claimed or verified ``reasoning_effort`` control, else ``()``."""
+    for control in controls:
+        if control.control != REASONING_CONTROL_EFFORT:
+            continue
+        if control.status not in {ASSERTION_CLAIMED, ASSERTION_VERIFIED}:
+            continue
+        values = dict(control.evidence).get("values")
+        if isinstance(values, (list, tuple)):
+            return tuple(str(value) for value in values)
+    return ()
 
 
 @dataclass(frozen=True)
