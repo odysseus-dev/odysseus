@@ -1,6 +1,11 @@
 /** Notes HTTP port. Response interpretation stays with the owning workflow. */
-export function createNotesApi({ origin, request }) {
-  const json = (method, body) => ({ method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+export function createNotesApi({ origin, request, timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone }) {
+  const json = (method, body) => {
+    if (body?.due_date && !body.expected_reminder && !Object.hasOwn(body, 'reminder_timezone')) {
+      body = { ...body, reminder_timezone: timeZone() };
+    }
+    return { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  };
   async function saveNote(note) {
     const response = await request(note.id ? `${origin}/api/notes/${note.id}` : `${origin}/api/notes`, json(note.id ? 'PUT' : 'POST', note));
     if (!response.ok) throw new Error('Failed to save note');

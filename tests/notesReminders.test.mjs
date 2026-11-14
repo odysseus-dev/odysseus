@@ -5,11 +5,11 @@ import { createNotesReminders } from '../frontend/src/features/notes/application
 import { createNotesNotifications } from '../frontend/src/features/notes/infrastructure/notifications.js';
 import { createNotesPersistence, REMINDER_DISMISSED_AT_KEY } from '../frontend/src/features/notes/infrastructure/storage.js';
 
-function harness(notes = []) {
-  const now = Date.parse('2024-03-10T09:00'), app = createNotesState();
+function harness(notes = [], instant = Date.parse('2024-03-10T09:00')) {
+  const now = instant, app = createNotesState();
   app.replaceNotes(notes);
   const values = new Map(), timeouts = new Map(), intervals = new Map(), fired = [], shown = [], highlighted = [], patches = [];
-  let nextId = 0, response = Promise.resolve({ ok: true, json: async () => ({ synthesis: 'Synthesis' }) });
+  let nextId = 0, patchResult, response = Promise.resolve({ ok: true, json: async () => ({ synthesis: 'Synthesis' }) });
   const scheduler = {
     setTimeout: (fn, ms) => { const id = ++nextId; timeouts.set(id, { fn, ms }); return id; }, clearTimeout: id => timeouts.delete(id),
     setInterval: (fn, ms) => { const id = ++nextId; intervals.set(id, { fn, ms }); return id; }, clearInterval: id => intervals.delete(id),
@@ -19,10 +19,10 @@ function harness(notes = []) {
     app, clock: { now: () => now }, scheduler, persistence, dismissedKey: REMINDER_DISMISSED_AT_KEY,
     notifications: { show: (...args) => shown.push(args) }, fetchNotes: async () => {},
     hasItems: note => ['todo', 'goal', 'checklist'].includes(note.note_type), isNoteFullyDone: () => false,
-    api: { listNotes: async () => ({ ok: true, json: async () => ({ notes }) }), patchNote: async (...args) => patches.push(args), fireReminder: body => { fired.push(body); return response; } },
+    api: { listNotes: async () => ({ ok: true, json: async () => ({ notes }) }), patchNote: async (...args) => { patches.push(args); return patchResult; }, fireReminder: body => { fired.push(body); return response; } },
     effects: { badge: () => {}, highlight: id => highlighted.push(id) },
   });
-  return { now, app, reminders, timeouts, intervals, fired, shown, highlighted, patches, persistence, setResponse: value => { response = value; } };
+  return { now, app, reminders, timeouts, intervals, fired, shown, highlighted, patches, persistence, setResponse: value => { response = value; }, setPatchResult: value => { patchResult = value; } };
 }
 
 test('startup and loop are idempotent, and panel closure leaves background scheduling alive', async () => {
@@ -38,6 +38,64 @@ test('startup and loop are idempotent, and panel closure leaves background sched
   assert.equal(h.intervals.size, 0);
   h.reminders._startReminderLoop();
   assert.equal(h.intervals.size, 0);
+});
+
+test('a Berlin tab does not fire a New York wall-clock reminder five hours early', async () => {
+  const originalZone = process.env.TZ;
+  process.env.TZ = 'Europe/Berlin';
+  try {
+    const h = harness([{ id: 'ny', due_date: '2026-03-10T09:00', repeat: 'daily', reminder_timezone: 'America/New_York',
+      reminder_schedule: { due_date: '2026-03-10T09:00', reminder_timezone: 'America/New_York', due_at: '2026-03-10T13:00:00+00:00' } }], Date.parse('2026-03-10T08:00:00Z'));
+    h.reminders._checkReminders();
+    await new Promise(setImmediate);
+    assert.deepEqual(h.fired, []);
+    assert.deepEqual(h.patches, []);
+    assert.equal(h.reminders._countFiredReminders(), 0);
+  } finally {
+    if (originalZone === undefined) delete process.env.TZ; else process.env.TZ = originalZone;
+  }
+});
+
+test('zoned recurrence waits for server advancement and retries a failed primary without another local notice', async () => {
+  const note = { id: 'ny', due_date: '2026-03-10T09:00', repeat: 'daily', reminder_timezone: 'America/New_York',
+    reminder_schedule: { due_date: '2026-03-10T09:00', reminder_timezone: 'America/New_York', due_at: '2026-03-10T13:00:00Z' } };
+  const h = harness([note], Date.parse('2026-03-10T13:00:00Z'));
+  h.persistence._saveFiredReminders(new Set(['ny'])); // an older one-shot must not suppress the new recurrence
+  h.setResponse(Promise.resolve({ ok: true, json: async () => ({ channel: 'webhook', webhook_sent: false, browser_sent: true, schedule: note }) }));
+  h.reminders._checkReminders(); h.reminders._checkReminders();
+  await new Promise(setImmediate);
+  assert.equal(h.fired.length, 1);
+  assert.equal(h.app.state.notes[0].due_date, note.due_date);
+  const next = { ...note, due_date: '2026-03-11T09:00', reminder_schedule: { ...note.reminder_schedule, due_date: '2026-03-11T09:00', due_at: '2026-03-11T13:00:00Z' } };
+  h.setResponse(Promise.resolve({ ok: true, json: async () => ({ channel: 'webhook', webhook_sent: true, schedule: next }) }));
+  h.reminders._checkReminders();
+  await new Promise(setImmediate);
+  assert.equal(h.fired.length, 2);
+  assert.equal(h.shown.length, 1);
+  assert.deepEqual(h.patches, []);
+  assert.equal(h.app.state.notes[0].due_date, next.due_date);
+});
+
+test('stale zoned reminders ask the server to catch up without a browser notification', async () => {
+  const note = { id: 'ny', due_date: '2026-03-09T09:00', repeat: 'daily', reminder_timezone: 'America/New_York',
+    reminder_schedule: { due_date: '2026-03-09T09:00', reminder_timezone: 'America/New_York', due_at: '2026-03-09T13:00:00Z' } };
+  const h = harness([note], Date.parse('2026-03-10T08:00:00Z'));
+  const current = { ...note, due_date: '2026-03-10T09:00', reminder_schedule: { ...note.reminder_schedule, due_date: '2026-03-10T09:00', due_at: '2026-03-10T13:00:00Z' } };
+  h.setResponse(Promise.resolve({ ok: true, json: async () => ({ skipped: true, schedule: current }) }));
+  h.reminders._checkReminders();
+  await new Promise(setImmediate);
+  assert.equal(h.fired[0].advance_only, true);
+  assert.deepEqual(h.shown, []);
+  assert.deepEqual(h.patches, []);
+  assert.equal(h.app.state.notes[0].due_date, current.due_date);
+});
+
+test('an optimistic edit cannot reuse the UTC projection for its previous date', () => {
+  const h = harness([{ id: 'ny', due_date: '2026-03-11T09:00', repeat: 'daily', reminder_timezone: 'America/New_York',
+    reminder_schedule: { due_date: '2026-03-10T09:00', reminder_timezone: 'America/New_York', due_at: '2026-03-10T13:00:00Z' } }], Date.parse('2026-03-10T13:00:00Z'));
+  h.reminders._checkReminders();
+  assert.deepEqual(h.fired, []);
+  assert.deepEqual(h.patches, []);
 });
 
 test('fresh reminders dispatch once, stale reminders mark silently, recurring reminders advance', async () => {
@@ -58,6 +116,17 @@ test('fresh reminders dispatch once, stale reminders mark silently, recurring re
   assert.equal(h.app.state.notes[2].due_date, '2024-03-11T08:57');
   assert.deepEqual(h.highlighted, ['fresh']);
   assert.equal(h.shown[0][1], 'Synthesis');
+});
+
+test('legacy recurrence patches carry their source schedule and accept a newer server value', async () => {
+  const due = '2024-03-09T09:00';
+  const h = harness([{ id: 'recurring', due_date: due, repeat: 'daily', reminder_timezone: null }]);
+  h.setPatchResult({ id: 'recurring', due_date: '2025-01-01T12:00', repeat: 'weekly:0', reminder_timezone: 'Europe/Berlin' });
+  h.reminders._checkReminders();
+  await new Promise(setImmediate);
+  assert.deepEqual(h.patches[0][1].expected_reminder, { due_date: due, repeat: 'daily', reminder_timezone: null });
+  assert.equal(h.app.state.notes[0].due_date, '2025-01-01T12:00');
+  assert.equal(h.app.state.notes[0].repeat, 'weekly:0');
 });
 
 test('slow synthesis and rejected dispatch use the local fallback exactly once', async () => {

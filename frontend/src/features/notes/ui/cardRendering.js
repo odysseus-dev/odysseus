@@ -1,6 +1,6 @@
 /** Render note cards from application queries and read-only state. */
 import { _nextGoalStep, _goalProgress, _hasItems, _standardVisualVariant, _visibleNoteTags } from '../domain/noteRules.js';
-import { _hasTimeComponent, _formatRepeatLabel } from '../domain/recurrence.js';
+import { _hasTimeComponent, _formatRepeatLabel, _noteDueValue, _noteRepeatDate } from '../domain/recurrence.js';
 export function createCardRendering({
   COLORS,
   COLOR_HEX,
@@ -95,8 +95,9 @@ export function createCardRendering({
     for (const note of sorted) {
       if (state.editingId === note.id) continue; // skip : form is shown instead
       const borderColor = COLOR_HEX[note.color || ''] || 'var(--border)';
-      const dueFmt = _formatDueDate(note.due_date);
-      const overdue = _isDueOverdue(note.due_date);
+      const dueValue = _noteDueValue(note);
+      const dueFmt = _formatDueDate(dueValue);
+      const overdue = _isDueOverdue(dueValue);
 
       let contentHtml = '';
       if (_hasItems(note) && Array.isArray(note.items)) {
@@ -143,7 +144,7 @@ export function createCardRendering({
       const reminderTagHtml = note.due_date && _hasTimeComponent(note.due_date)
         ? `<div class="note-card-reminder${overdue ? ' overdue' : ''}">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-          <span>${_esc(_formatReminderTag(note.due_date))}${note.repeat && note.repeat !== 'none' ? ' · ' + _esc(_formatRepeatLabel(note.repeat, new Date(note.due_date))) : ''}</span>
+          <span>${_esc(_formatReminderTag(dueValue))}${note.repeat && note.repeat !== 'none' ? ' · ' + _esc(_formatRepeatLabel(note.repeat, _noteRepeatDate(note))) : ''}</span>
         </div>`
         : '';
       const noteTags = _visibleNoteTags(note);
