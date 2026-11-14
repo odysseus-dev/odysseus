@@ -95,3 +95,13 @@ def test_queued_placeholders_are_not_polled_as_sessions():
     assert "function _isQueuedDownloadPlaceholder(task)" in source
     assert "if (!el || !task || _isQueuedDownloadPlaceholder(task)) return;" in source
     assert "if (_isQueuedDownloadPlaceholder(task)) continue;" in source
+
+
+def test_cached_scan_exposes_size_bytes_for_the_ui():
+    """"0 MB" in Launch: the API formatted `size` but dropped `size_bytes`,
+    which is the field the frontend reads (`Number(m?.size_bytes || 0)`)."""
+    source = _read("routes/cookbook_routes.py")
+
+    assert '"size_bytes": m["size_bytes"],' in source
+    # The frontend must not have to parse the formatted string.
+    assert "Number(m?.size_bytes || 0)" in _read("static/js/cookbookServe.js")

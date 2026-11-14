@@ -1550,6 +1550,9 @@ def setup_cookbook_routes() -> APIRouter:
                 entry = {
                     "repo_id": m["repo_id"],
                     "size": size_str,
+                    # The UI reads size_bytes/size_gb; without this it falls back
+                    # to 0 and a real download renders as "0 MB" in Launch.
+                    "size_bytes": m["size_bytes"],
                     "nb_files": m["nb_files"],
                     "has_incomplete": m["has_incomplete"],
                     "status": "downloading" if m["has_incomplete"] else "ready",
