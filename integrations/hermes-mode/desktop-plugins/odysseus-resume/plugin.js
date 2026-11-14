@@ -201,6 +201,9 @@ function OverviewTab({ d }) {
     states.length ? h('div', { style: { display: 'flex', gap: '0.4rem', flexWrap: 'wrap' } }, ...states.map(([name, n]) => h(PanelPill, { key: name, tone: STATE_TONE[name] || 'muted', children: `${n} ${name}` }))) : null,
     open.length ? h('div', null, h(PanelSectionLabel, null, 'Open handoffs (Wiki Steward)'), ...open.slice(0, 4).map(x => h('div', { key: x.id, style: { padding: '0.35rem 0', borderBottom: LINE } }, x.summary))) : null,
     h('div', { style: { ...MUTED, fontSize: '0.78rem', lineHeight: 1.5, borderTop: LINE, paddingTop: '0.75rem' } },
+      h('strong', null, 'Four different things share a folder path: '),
+      'the project folder (a registration that groups conversations), a folder added as read-only context to one message, a conversation\u2019s working directory (where its tools run, recorded when it starts), and a write grant (what the agent may change; see Access). Choosing one never implies the others.'),
+    h('div', { style: { ...MUTED, fontSize: '0.78rem', lineHeight: 1.5 } },
       h('strong', null, 'Manage projects here or in the sidebar. '),
       'Use the Manage tab to rename, change folders, archive or add conversations. In the sidebar: Sidebar \u25B8 Sessions \u25B8 Filters \u25B8 Grouping \u25B8 Project turns on project groups; then + creates a project, a project\u2019s own menu renames, adds folders or archives it, ',
       'and a conversation\u2019s menu has Move to project. Moving a conversation changes its working folder (it does not move files or change write grants); do it only when the conversation is idle.'))
@@ -229,7 +232,13 @@ function GitTab({ d }) {
 function WikiTab({ d }) {
   const wiki = d.wiki_detail
   if (!wiki) return h(PanelEmpty, { icon: 'book', title: 'No Wiki Steward project is linked to this folder' })
+  const claims = wiki.claims || { counts: {}, items: [] }
   return h('div', { style: { display: 'grid', gap: '1rem' } },
+    h('div', null, h(PanelSectionLabel, null, `Knowledge${claims.items.length ? ` (${Object.entries(claims.counts).map(([k, n]) => `${n} ${k}`).join(', ')})` : ''}`),
+      claims.items.length ? claims.items.map(c => h('div', { key: c.id, style: { padding: '0.4rem 0', borderBottom: LINE } },
+        h(PanelPill, { tone: c.status === 'verified' ? 'good' : 'warn', children: c.status === 'verified' ? 'verified' : 'needs review' }), `  ${c.claim}`,
+        h('div', { style: { ...MUTED, fontSize: '0.7rem' } }, [c.id, c.subject, c.grade, c.verified_commit && `at ${c.verified_commit}`].filter(Boolean).join('  \u00b7  ')))) : h('div', { style: MUTED }, 'No knowledge claims recorded for this project.'),
+      h('div', { style: { ...MUTED, fontSize: '0.72rem', marginTop: '0.4rem' } }, 'Only verified claims are treated as facts in a new conversation; claims awaiting review are shown to the agent with a clear label. Review them from the Wiki Steward terminal.')),
     h('div', null, h(PanelSectionLabel, null, 'Handoffs'), (wiki.handoffs || []).length ? wiki.handoffs.map(x => h('div', { key: x.id, style: { padding: '0.4rem 0', borderBottom: LINE } }, h(PanelPill, { tone: x.status === 'open' ? 'warn' : 'muted', children: x.status }), `  ${x.summary || ''}`)) : h('div', { style: MUTED }, 'None')),
     h('div', null, h(PanelSectionLabel, null, 'Recent tasks'), (wiki.tasks || []).length ? wiki.tasks.map(t => h('div', { key: t.id, style: { padding: '0.4rem 0', borderBottom: LINE } }, h(PanelPill, { tone: STATE_TONE[t.state] || 'muted', children: t.state }), `  ${t.summary || ''}`)) : h('div', { style: MUTED }, 'None')))
 }
@@ -291,6 +300,30 @@ function Note({ note }) {
   return note ? h('div', { role: note.ok ? 'status' : 'alert', style: { fontSize: '0.8rem', padding: '0.4rem 0.6rem', borderRadius: '0.4rem', background: note.ok ? 'color-mix(in srgb, #3fb950 14%, transparent)' : 'color-mix(in srgb, #f85149 16%, transparent)' } }, note.text) : null
 }
 
+// A folder path with the machine's drives and a live check. The check is advice only: Hermes still decides what it accepts, and nothing here lists a
+// folder's contents, changes permissions or creates anything.
+function FolderField({ value, onChange, label, placeholder }) {
+  const [drives] = useRequest('drives', signal => getJson('/__odysseus/api/fs/drives', signal))
+  const trimmed = value.trim()
+  const [debounced, setDebounced] = useState('')
+  useEffect(() => { const t = window.setTimeout(() => setDebounced(trimmed), 350); return () => window.clearTimeout(t) }, [trimmed])
+  const [check] = useRequest(debounced && debounced === trimmed ? `check:${debounced}` : null, signal => getJson(`/__odysseus/api/fs/check?path=${encodeURIComponent(debounced)}`, signal))
+  const c = check.status === 'ready' ? check.data : null
+  const list = (drives.status === 'ready' && drives.data && drives.data.drives) || []
+  return h('div', { style: { display: 'grid', gap: '0.3rem' } },
+    h(Input, { value, placeholder, 'aria-label': label, onChange: e => onChange(e.target.value), spellCheck: false }),
+    list.length ? h('div', { style: { display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }, role: 'group', 'aria-label': 'Drives' },
+      h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, 'Drives:'),
+      ...list.filter(x => x.ready).map(x => h(Button, { key: x.path, size: 'xs', variant: 'ghost', title: `${x.label || 'Drive'} \u00b7 ${x.filesystem || 'unknown file system'} \u00b7 ${x.type}`,
+        onClick: () => onChange(isAbsolute(trimmed) && trimmed.slice(0, 2).toUpperCase() === x.path.slice(0, 2).toUpperCase() ? value : x.path), children: `${x.path.slice(0, 2)} ${x.filesystem || ''}`.trim() }))) : null,
+    trimmed && !isAbsolute(trimmed) ? h('div', { style: { color: 'var(--ui-text-warning, #b7791f)', fontSize: '0.72rem' } }, 'Enter a full path that starts with a drive letter, for example F:\\Odysseus.') : null,
+    c ? h('div', { style: { display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center', fontSize: '0.72rem' } },
+      h(PanelPill, { tone: c.valid ? 'good' : 'warn', children: c.valid ? (c.kind === 'git' ? `Git folder${c.git && c.git.branch ? ` \u00b7 ${c.git.branch}` : ''}` : 'Folder exists') : (c.kind === 'missing' ? 'Does not exist yet' : 'Not usable') }),
+      c.filesystem ? h(PanelPill, { tone: 'muted', children: `${c.drive || ''} ${c.filesystem}`.trim() }) : null,
+      c.permission ? h(PanelPill, { tone: c.permission.state === 'granted' ? 'good' : 'muted', children: permissionLabel(c.permission) }) : null,
+      c.problem ? h('span', { style: MUTED }, c.problem) : null) : null)
+}
+
 function NewProjectForm({ onCreated, onCancel, initialName = '', initialPath = '' }) {
   const [name, setName] = useState(initialName)
   const [path, setPath] = useState(initialPath)
@@ -312,7 +345,7 @@ function NewProjectForm({ onCreated, onCancel, initialName = '', initialPath = '
   }
   return h('form', { onSubmit: submit, style: { display: 'grid', gap: '0.4rem', padding: '0.5rem', border: LINE, borderRadius: '0.5rem' } },
     h(Input, { value: name, placeholder: 'Project name', 'aria-label': 'Project name', autoFocus: true, onChange: e => setName(e.target.value) }),
-    h(Input, { value: path, placeholder: 'Working folder (full path)', 'aria-label': 'Working folder', onChange: e => setPath(e.target.value) }),
+    h(FolderField, { value: path, onChange: setPath, label: 'Working folder', placeholder: 'Working folder (full path, e.g. F:\\Odysseus)' }),
     h('div', { style: { ...MUTED, fontSize: '0.72rem' } }, 'Creates a Hermes project. It does not change write permissions or move any conversation.'),
     h(Note, { note }),
     h('div', { style: { display: 'flex', gap: '0.4rem' } },
@@ -404,22 +437,29 @@ function ManageTab({ d, native, reloadNative, onChanged }) {
             f.is_primary ? h(PanelPill, { tone: 'good', children: 'primary' }) : h(Button, { size: 'xs', variant: 'ghost', disabled: busy, onClick: () => run(() => rpc('projects.set_primary', { id: p.id, path: f.path }), 'Primary folder changed.'), children: 'Make primary' }),
             h(Button, { size: 'xs', variant: 'ghost', disabled: busy || folders.length < 2, onClick: () => setConfirm({ kind: 'remove', project: p, path: f.path }), children: 'Remove' }))),
           h('div', { style: { display: 'flex', gap: '0.5rem', marginTop: '0.5rem' } },
-            h(Input, { value: newFolder, placeholder: 'Add a folder (full path)', 'aria-label': 'Add folder', onChange: e => setNewFolder(e.target.value) }),
+            h('div', { style: { flex: 1 } }, h(FolderField, { value: newFolder, onChange: setNewFolder, label: 'Add folder', placeholder: 'Add a folder (full path)' })),
             h(Button, { size: 'xs', disabled: busy || !newFolder.trim(), onClick: () => {
               const path = newFolder.trim()
               if (!isAbsolute(path)) return setNote({ ok: false, text: 'Enter the full folder path.' })
               void run(async () => { await rpc('projects.add_folder', { id: p.id, path }); setNewFolder('') }, 'Folder added. Existing conversations keep their own working folder.')
             }, children: 'Add folder' })),
-          h('div', { style: { ...MUTED, fontSize: '0.72rem', marginTop: '0.25rem' } }, 'Hermes accepts a folder that does not exist yet; adding or removing one never moves files or changes write permissions.')),
+          h('div', { style: { ...MUTED, fontSize: '0.72rem', marginTop: '0.25rem' } }, 'A project folder is a registration: it groups conversations. It is not a write grant, and adding or removing one never moves files or changes permissions. Hermes accepts a folder that does not exist yet.')),
         p.archived ? null : h(AddConversation, { d, project: p, onMoved: () => { void reloadNative(); onChanged(); setNote({ ok: true, text: 'Conversation moved. Its working folder is now this project\u2019s folder.' }) } }),
         p.archived ? null : h('div', { style: { display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' } },
           h(Button, { size: 'xs', variant: 'secondary', disabled: busy, onClick: () => {
             const path = p.primary_path || folders[0] && folders[0].path || ''
+            if (path && host.supportsNewChatCwd) {
+              host.newChat(undefined, { cwd: path })
+              host.notify && host.notify({ kind: 'info', message: `New conversation will work in ${path}.` })
+              return
+            }
             try { if (path && navigator.clipboard) void navigator.clipboard.writeText(path) } catch { /* best effort */ }
             host.newChat()
             host.notify && host.notify({ kind: 'info', message: path ? `New conversation started. Choose the workspace ${path} in the composer (path copied).` : 'New conversation started.' })
-          }, children: '+ New conversation' }),
-          h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, 'Opens a fresh draft. Hermes does not let plugins preset the workspace, so pick this folder in the composer\u2019s workspace chip; existing permissions apply.')),
+          }, children: host.supportsNewChatCwd ? '+ New conversation here' : '+ New conversation' }),
+          h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, host.supportsNewChatCwd
+            ? 'Starts a draft whose working folder is this project\u2019s primary folder, exactly as if you had picked it in the composer. It does not grant write access.'
+            : 'Opens a fresh draft. This Hermes Desktop cannot preset the folder, so pick it in the composer\u2019s workspace chip (the path is copied); existing permissions apply.')),
         h('div', { style: { borderTop: LINE, paddingTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' } },
           h(Button, { size: 'xs', variant: 'ghost', disabled: busy, onClick: () => p.archived ? run(() => rpc('projects.archive', { id: p.id, restore: true }), 'Restored.') : setConfirm({ kind: 'archive', project: p }), children: p.archived ? 'Restore project' : 'Archive project' }),
           h('span', { style: { ...MUTED, fontSize: '0.72rem' } }, 'Archiving hides the project in Hermes. Conversations, folders and files stay as they are.')))

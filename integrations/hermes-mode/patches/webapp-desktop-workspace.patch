@@ -1,0 +1,354 @@
+Hermes Desktop: start a chat in a chosen folder, and pick folders on Windows (drive list, typed absolute path).
+
+Why: the Webapp's "Add folders as context" / working-directory picker opened at "/" on a Windows backend with no drive selector or editable path, and a
+plugin could not start a chat in a given folder (host.newChat had no cwd), so project-bound chats needed the folder to be picked by hand.
+
+What: (1) requestFreshSession/newSessionInProfile/newSessionInAgent take an optional folder that the next fresh draft starts in, exactly as picking it in
+the composer would (explicit workspace target, so the backend records it as sessions.cwd); host.newChat(profile, { cwd }) passes it and
+host.supportsNewChatCwd lets a plugin feature-detect. Nothing changes for callers that pass no folder. (2) The remote folder picker gets a typed absolute
+path field (Enter to go), drive chips (drives found by listing each root; none on a POSIX backend) and a clear message for a relative path.
+
+Applied after webapp-route-guard.patch and webapp-mcp-recovery.patch (it modifies the files the route guard patch added). Tests: remote-picker-paths.test.ts
+(extended) and store/fresh-session-workspace.test.ts; tsc --noEmit clean for touched files. Upstream-able (hermes-agent apps/desktop).
+
+diff --git a/apps/desktop/src/app/contrib/wiring-effects.ts b/apps/desktop/src/app/contrib/wiring-effects.ts
+index 45ffc60..3dc8caa 100644
+--- a/apps/desktop/src/app/contrib/wiring-effects.ts
++++ b/apps/desktop/src/app/contrib/wiring-effects.ts
+@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
+ import { useEffect, useRef } from 'react'
+ import type { NavigateFunction } from 'react-router'
+ 
+-import { $freshSessionRequest, refreshActiveProfile } from '@/store/profile'
++import { $freshSessionRequest, $freshSessionWorkspace, refreshActiveProfile } from '@/store/profile'
+ 
+ import { resetProjectTreeState } from '../right-sidebar/files/use-project-tree'
+ import { SETTINGS_ROUTE } from '../routes'
+@@ -53,7 +53,7 @@ export function usePublishRestartPreviewServer(restartPreviewServer: RestartPrev
+ 
+ // A profile switch/create drops to a fresh new-session draft so the
+ // previously open session doesn't bleed across contexts. Skip initial value.
+-export function useFreshSessionRequest(startFreshSessionDraft: () => void) {
++export function useFreshSessionRequest(startFreshSessionDraft: (options?: { workspaceTarget: string }) => void) {
+   const freshSessionRequest = useStore($freshSessionRequest)
+   const lastFreshRef = useRef(freshSessionRequest)
+ 
+@@ -64,7 +64,10 @@ export function useFreshSessionRequest(startFreshSessionDraft: () => void) {
+     }
+ 
+     lastFreshRef.current = freshSessionRequest
+-    startFreshSessionDraft()
++    const workspace = $freshSessionWorkspace.get()
++
++    $freshSessionWorkspace.set(null)
++    startFreshSessionDraft(workspace ? { workspaceTarget: workspace } : undefined)
+   }, [freshSessionRequest, startFreshSessionDraft])
+ }
+ 
+diff --git a/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.test.ts b/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.test.ts
+index 1f497f0..b3b93bc 100644
+--- a/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.test.ts
++++ b/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from 'vitest'
+ 
+-import { childPath, clean, crumbsFor, isRoot, parentDir } from './remote-picker-paths'
++import { childPath, clean, crumbsFor, DRIVE_LETTERS, isAbsolutePath, isRoot, parentDir } from './remote-picker-paths'
+ 
+ describe('remote picker paths', () => {
+   it('moves up one segment on a Windows backend instead of trimming a character', () => {
+@@ -32,4 +32,19 @@ describe('remote picker paths', () => {
+     expect(crumbsFor('F:\\a\\b').map(crumb => crumb.path)).toEqual(['F:\\', 'F:\\a', 'F:\\a\\b'])
+     expect(crumbsFor('/a/b').map(crumb => crumb.path)).toEqual(['/', '/a', '/a/b'])
+   })
++
++  it('accepts only absolute typed paths and probes drive roots that clean() treats as roots', () => {
++    for (const ok of ['F:\\Odysseus', 'f:/work/app', 'F:', ' E:\\Project\\Sahib-Android ', '\\\\server\\share', '/home/me']) {
++      expect(isAbsolutePath(ok)).toBe(true)
++    }
++
++    for (const bad of ['', '   ', 'work\\app', 'app', './x', '..\\x', 'F']) {
++      expect(isAbsolutePath(bad)).toBe(false)
++    }
++
++    expect(DRIVE_LETTERS[0]).toBe('C:\\')
++    expect(DRIVE_LETTERS).not.toContain('A:\\')
++    expect(DRIVE_LETTERS.every(root => isRoot(root))).toBe(true)
++    expect(clean('F:\\Odysseus\\')).toBe('F:\\Odysseus')
++  })
+ })
+diff --git a/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.ts b/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.ts
+index af0fef8..27278f9 100644
+--- a/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.ts
++++ b/apps/desktop/src/app/right-sidebar/files/remote-picker-paths.ts
+@@ -16,6 +16,14 @@ export function clean(path: string) {
+   return stripped
+ }
+ 
++/** A path a backend can resolve without a working directory: `F:\\x`, `F:/x`, `\\\\server\\share` or `/x`. */
++export function isAbsolutePath(path: string) {
++  return /^(?:[A-Za-z]:[\\/]?|\\\\|\/)/.test(path.trim())
++}
++
++/** Drive-letter roots worth probing on a Windows backend (A: and B: are legacy floppies). */
++export const DRIVE_LETTERS = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter => `${letter}:\\`)
++
+ export function isRoot(path: string) {
+   const value = clean(path)
+ 
+diff --git a/apps/desktop/src/app/right-sidebar/files/remote-picker.tsx b/apps/desktop/src/app/right-sidebar/files/remote-picker.tsx
+index 67397a1..23c517e 100644
+--- a/apps/desktop/src/app/right-sidebar/files/remote-picker.tsx
++++ b/apps/desktop/src/app/right-sidebar/files/remote-picker.tsx
+@@ -11,7 +11,7 @@ import { displayPath, pathLeaf } from '@/lib/display-path'
+ import { isSubmitEnter } from '@/lib/ime'
+ import { cn } from '@/lib/utils'
+ 
+-import { childPath, clean, crumbsFor, isRoot, parentDir } from './remote-picker-paths'
++import { childPath, clean, crumbsFor, DRIVE_LETTERS, isAbsolutePath, isRoot, parentDir } from './remote-picker-paths'
+ 
+ function pathName(path: string) {
+   return pathLeaf(path) || path
+@@ -40,6 +40,10 @@ export function RemoteFolderPicker() {
+   const [newFolderName, setNewFolderName] = useState<string | null>(null)
+   const [newFolderError, setNewFolderError] = useState<string | null>(null)
+   const [creating, setCreating] = useState(false)
++  // Typed path and the drives a Windows backend answers for (none on a POSIX backend: every probe fails).
++  const [pathDraft, setPathDraft] = useState('')
++  const [pathError, setPathError] = useState<string | null>(null)
++  const [drives, setDrives] = useState<string[]>([])
+ 
+   useEffect(() => {
+     setDesktopFsRemotePicker({
+@@ -99,6 +103,47 @@ export function RemoteFolderPicker() {
+     }
+   }, [currentPath, pending])
+ 
++  useEffect(() => {
++    setPathDraft(displayPath(currentPath))
++    setPathError(null)
++  }, [currentPath])
++
++  useEffect(() => {
++    if (!pending) {
++      return
++    }
++
++    let active = true
++
++    void Promise.all(
++      DRIVE_LETTERS.map(root =>
++        readDesktopDir(root)
++          .then(result => (result.error ? null : root))
++          .catch(() => null)
++      )
++    ).then(found => {
++      if (active) {
++        setDrives(found.filter((root): root is string => Boolean(root)))
++      }
++    })
++
++    return () => {
++      active = false
++    }
++  }, [pending])
++
++  const goToTyped = () => {
++    const value = pathDraft.trim().replace(/^"(.*)"$/, '$1')
++
++    if (!isAbsolutePath(value)) {
++      setPathError(r.remotePickerNotAbsolute)
++
++      return
++    }
++
++    navigate(clean(value))
++  }
++
+   const crumbs = useMemo(() => crumbsFor(currentPath), [currentPath])
+ 
+   const cancelNewFolder = () => {
+@@ -164,6 +209,45 @@ export function RemoteFolderPicker() {
+         </div>
+ 
+         <div className="flex min-h-0 flex-1 flex-col">
++          <div className="shrink-0 border-b border-border/50 px-3 py-2">
++            <Input
++              aria-invalid={Boolean(pathError)}
++              aria-label={r.remotePickerPathLabel}
++              onChange={event => {
++                setPathDraft(event.target.value)
++                setPathError(null)
++              }}
++              onKeyDown={event => {
++                if (isSubmitEnter(event)) {
++                  event.preventDefault()
++                  goToTyped()
++                }
++              }}
++              placeholder={r.remotePickerPathPlaceholder}
++              size="sm"
++              spellCheck={false}
++              value={pathDraft}
++            />
++            {pathError && <FieldHint error>{pathError}</FieldHint>}
++            {drives.length > 0 && (
++              <div aria-label={r.remotePickerDrives} className="mt-2 flex flex-wrap items-center gap-1" role="group">
++                {drives.map(root => (
++                  <button
++                    className={cn(
++                      'rounded border border-border/60 px-1.5 py-0.5 text-xs hover:bg-muted',
++                      currentPath.toUpperCase().startsWith(root.slice(0, 2).toUpperCase()) && 'bg-muted text-foreground'
++                    )}
++                    key={root}
++                    onClick={() => navigate(root)}
++                    type="button"
++                  >
++                    {root.slice(0, 2)}
++                  </button>
++                ))}
++              </div>
++            )}
++          </div>
++
+           <div className="shrink-0 flex flex-wrap items-center gap-1 border-b border-border/50 px-3 py-2 text-xs text-muted-foreground">
+             {crumbs.map((crumb, index) => (
+               <button
+diff --git a/apps/desktop/src/i18n/en.ts b/apps/desktop/src/i18n/en.ts
+index beb8a2f..39f4c60 100644
+--- a/apps/desktop/src/i18n/en.ts
++++ b/apps/desktop/src/i18n/en.ts
+@@ -4264,6 +4264,10 @@ export const en: Translations = {
+     remotePickerDescription: 'Browse folders on the connected backend.',
+     remotePickerSelect: 'Select folder',
+     remotePickerNewFolder: 'New folder',
++    remotePickerPathLabel: 'Folder path',
++    remotePickerPathPlaceholder: 'Type or paste a full path, e.g. F:\\Odysseus, then press Enter',
++    remotePickerDrives: 'Drives',
++    remotePickerNotAbsolute: 'Enter a full path that starts with a drive letter (F:\\...) or a slash.',
+     remotePickerFolderName: 'Folder name',
+     remotePickerCreateFolder: 'Create folder',
+     remotePickerInvalidFolderName: 'Enter a single folder name, without slashes.',
+diff --git a/apps/desktop/src/i18n/types_right_sidebar.ts b/apps/desktop/src/i18n/types_right_sidebar.ts
+index 697a38c..71548e2 100644
+--- a/apps/desktop/src/i18n/types_right_sidebar.ts
++++ b/apps/desktop/src/i18n/types_right_sidebar.ts
+@@ -10,6 +10,10 @@ export interface RightSidebarTranslations {
+   remotePickerDescription: string
+   remotePickerSelect: string
+   remotePickerNewFolder: string
++  remotePickerPathLabel: string
++  remotePickerPathPlaceholder: string
++  remotePickerDrives: string
++  remotePickerNotAbsolute: string
+   remotePickerFolderName: string
+   remotePickerCreateFolder: string
+   remotePickerInvalidFolderName: string
+diff --git a/apps/desktop/src/sdk/index.ts b/apps/desktop/src/sdk/index.ts
+index d345108..416e2e4 100644
+--- a/apps/desktop/src/sdk/index.ts
++++ b/apps/desktop/src/sdk/index.ts
+@@ -313,6 +313,8 @@ export interface PluginOpenSessionOptions {
+ }
+ 
+ export interface PluginNewChatOptions {
++  /** Absolute folder the new chat starts in (an explicit workspace choice, exactly like picking it in the composer). Ignored for Bot Mode chats. */
++  cwd?: string
+   workspaceMode?: WorkspaceMode
+   workspaceOwnerKey?: string
+ }
+@@ -1237,6 +1239,9 @@ export const host = {
+     newSessionTarget: WorkspaceNewSessionTarget | null = null
+   ): boolean => publishWorkspaceScope(mode, ownerKey, newSessionTarget),
+ 
++  /** Feature flag: `newChat` honours `options.cwd`. Older desktops lack it, so a plugin falls back to telling the user which folder to pick. */
++  supportsNewChatCwd: true as const,
++
+   /** Start a fresh chat draft, optionally pointed at another profile (its
+    *  backend spins up in the background — same door the sidebar's per-profile
+    *  "+" uses). */
+@@ -1263,10 +1268,12 @@ export const host = {
+       return
+     }
+ 
++    const cwd = options.cwd?.trim() || undefined
++
+     if (profile && typeof profile !== 'string') {
+-      newSessionInAgent({ ...profile })
++      newSessionInAgent({ ...profile }, cwd)
+     } else {
+-      newSessionInProfile((profile ?? '').trim() || $activeGatewayProfile.get())
++      newSessionInProfile((profile ?? '').trim() || $activeGatewayProfile.get(), cwd)
+     }
+ 
+     window.location.hash = '#/'
+diff --git a/apps/desktop/src/store/fresh-session-workspace.test.ts b/apps/desktop/src/store/fresh-session-workspace.test.ts
+new file mode 100644
+index 0000000..7060546
+--- /dev/null
++++ b/apps/desktop/src/store/fresh-session-workspace.test.ts
+@@ -0,0 +1,20 @@
++import { describe, expect, it } from 'vitest'
++
++import { $freshSessionRequest, $freshSessionWorkspace, requestFreshSession } from './profile'
++
++describe('requestFreshSession workspace', () => {
++  it('carries a one-shot folder for the next fresh draft and clears it for every other caller', () => {
++    const before = $freshSessionRequest.get()
++
++    requestFreshSession(' F:\\Odysseus ')
++    expect($freshSessionWorkspace.get()).toBe('F:\\Odysseus')
++    expect($freshSessionRequest.get()).toBe(before + 1)
++
++    requestFreshSession()
++    expect($freshSessionWorkspace.get()).toBeNull()
++
++    requestFreshSession('   ')
++    expect($freshSessionWorkspace.get()).toBeNull()
++    expect($freshSessionRequest.get()).toBe(before + 3)
++  })
++})
+diff --git a/apps/desktop/src/store/profile.ts b/apps/desktop/src/store/profile.ts
+index c3b3d82..ba5fa03 100644
+--- a/apps/desktop/src/store/profile.ts
++++ b/apps/desktop/src/store/profile.ts
+@@ -451,7 +451,12 @@ export function resolveActiveSourceOwnerRoute(profile: string): AgentProfileRout
+ // resets to the intro draft, so we never strand the user in an orphaned view.
+ export const $freshSessionRequest = atom(0)
+ 
+-export function requestFreshSession(): void {
++/** Folder the NEXT fresh draft should start in (one shot: the consumer clears it). Set only by an explicit caller such as a plugin's
++ *  `host.newChat(profile, { cwd })`; every other path leaves it null and keeps today's behaviour. */
++export const $freshSessionWorkspace = atom<null | string>(null)
++
++export function requestFreshSession(workspace?: string): void {
++  $freshSessionWorkspace.set(workspace?.trim() || null)
+   $freshSessionRequest.set($freshSessionRequest.get() + 1)
+ }
+ 
+@@ -1107,10 +1112,10 @@ export function pinNewChatProfile(name: string): string {
+ // session list, where switching scope would throw away the browse state the user
+ // is in. Points new chats at the profile and opens its backend so the next
+ // message lands in the right place.
+-export function newSessionInProfile(name: string): void {
++export function newSessionInProfile(name: string, workspace?: string): void {
+   const target = pinNewChatProfile(name)
+   leaveForeignProjectScope(target)
+-  requestFreshSession()
++  requestFreshSession(workspace)
+   // #81094: surface the failed dial instead of failing silently.
+   void activateOnCurrentSource(target).catch((error: unknown) => {
+     if (!notifyRemoteOverrideAuthFailure(target, error)) {
+@@ -1142,10 +1147,10 @@ export function pinNewChatRoute(route: AgentProfileRoute): AgentProfileRoute {
+ /** Start a draft owned by a specific registry agent. Foreground activation is
+  * only a presentation step; the route stays attached to the draft for the
+  * eventual session.create request. */
+-export function newSessionInAgent(route: AgentProfileRoute): void {
++export function newSessionInAgent(route: AgentProfileRoute, workspace?: string): void {
+   const captured = pinNewChatRoute(route)
+   leaveForeignProjectScope(captured.profile, captured.connectionId)
+-  requestFreshSession()
++  requestFreshSession(workspace)
+   // #81094: surface the failed dial instead of failing silently.
+   void ensureGatewayAgent(captured.connectionId, captured.profile).catch((error: unknown) => {
+     notifyError(error, `Failed to open profile "${captured.profile}"`)

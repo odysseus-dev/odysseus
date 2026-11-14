@@ -52,6 +52,7 @@ BUILD_SCRIPT = 'apps/desktop/scripts/build-webapp.mjs'
 BUNDLE_RELATIVE = 'apps/desktop/dist-webapp'
 ROUTE_GUARD_PATCH = 'integrations/hermes-mode/patches/webapp-route-guard.patch'
 MCP_RECOVERY_PATCH = 'integrations/hermes-mode/patches/webapp-mcp-recovery.patch'
+DESKTOP_WORKSPACE_PATCH = 'integrations/hermes-mode/patches/webapp-desktop-workspace.patch'
 # What importing each runtime extra must make possible, proven against the committed environment before a release is 'ready'.
 RUNTIME_EXTRA_IMPORTS = {'mcp': 'mcp.client.stdio'}
 _EXTRA_NAME = re.compile(r'[a-z0-9][a-z0-9_-]*')
@@ -1215,15 +1216,25 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
+        return (*self.recovery_patches(), self.desktop_workspace_patch())
+
+    def recovery_patches(self):
+        """The route guard then the MCP recovery: the set releases carried before the desktop-workspace patch (kept for rollback)."""
         recovery = (self.application_root / MCP_RECOVERY_PATCH).resolve()
         if not recovery.is_file():
             raise ComponentError('The reviewed MCP-recovery patch is missing from this Odysseus installation.')
         return (self.route_guard_patch(), recovery)
 
+    def desktop_workspace_patch(self):
+        path = (self.application_root / DESKTOP_WORKSPACE_PATCH).resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed desktop-workspace patch is missing from this Odysseus installation.')
+        return path
+
     def applied_patches(self, agent):
-        """The reviewed patch set a managed source carries exactly: the current set, or the route guard alone (an earlier release kept side by
-        side for rollback). The current set when it matches neither, so a mismatch is reported against it."""
-        for patches in (self.webapp_patches(), self.route_guard_patch()):
+        """The reviewed patch set a managed source carries exactly: the current set, the route guard with the MCP recovery, or the route guard alone
+        (earlier releases kept side by side for rollback). The current set when it matches neither, so a mismatch is reported against it."""
+        for patches in (self.webapp_patches(), self.recovery_patches(), self.route_guard_patch()):
             if patch_state(agent, patches) == 'applied':
                 return patches
         return self.webapp_patches()
