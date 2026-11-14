@@ -147,7 +147,18 @@ export PATH="/app/.local/bin:$PATH"
 # Run first-time setup as the app user so data/ files get the right ownership.
 # setup.py is idempotent — skips auth.json / .env if they already exist.
 # || true so a setup failure never prevents the container from starting.
-"$GOSU_BIN" "$ODY_USER" "$PYTHON_BIN" /app/setup.py || true
+# ODYSSEUS_SKIP_RUN_HINT drops setup's native-install hint ("start uvicorn,
+# then open http://localhost:7000"): this entrypoint starts the server itself,
+# and 7000 is only the container-side port, so the hint below replaces it.
+ODYSSEUS_SKIP_RUN_HINT=1 "$GOSU_BIN" "$ODY_USER" "$PYTHON_BIN" /app/setup.py || true
+
+# Compose forwards the published host port (APP_PORT) as ODYSSEUS_PUBLISHED_PORT;
+# a plain `docker run` has no way to tell the container which port it chose.
+if [ -n "${ODYSSEUS_PUBLISHED_PORT:-}" ]; then
+    echo "Open http://localhost:${ODYSSEUS_PUBLISHED_PORT} once startup completes."
+else
+    echo "Open the host port published for container port 7000 once startup completes."
+fi
 
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
