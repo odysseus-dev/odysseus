@@ -35,7 +35,9 @@ def test_cpu_only_drops_gpu_only_flags():
 def test_diffusers_is_not_blocked_on_windows_dependencies_panel():
     text = SRC.read_text(encoding="utf-8")
 
-    assert "const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);" in text
+    # Platform availability is backend-driven now; diffusers must not be in a
+    # client-side block list.
+    assert "const _winUnsupported" not in text
     assert "new Set(['diffusers'" not in text
 
 

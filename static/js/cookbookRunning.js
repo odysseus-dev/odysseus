@@ -8,6 +8,11 @@ import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import {
+  isModelDownloadTask,
+  MODEL_DOWNLOAD_COMPLETED_EVENT,
+  modelDownloadCompletedDetail,
+} from './cookbookModelCache.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
@@ -879,6 +884,14 @@ function _isTombstoned(id) {
   return ts != null && (Date.now() - ts) <= _TOMBSTONE_TTL_MS;
 }
 
+// A queued download starts with a client-generated `queue-<id>` placeholder
+// while its launch POST is in flight. That is scheduling state, not a real
+// backend session, so no poller may treat it as one.
+function _isQueuedDownloadPlaceholder(task) {
+  return task?.type === 'download'
+    && String(task?.sessionId || '').startsWith('queue-');
+}
+
 function _redactStoredText(value) {
   return String(value || '')
     .replace(/hf_[A-Za-z0-9]{20,}/g, '[redacted-token]')
@@ -962,10 +975,14 @@ export function _addTask(sessionId, name, type, payload) {
 function _updateTask(sessionId, updates) {
   const tasks = _loadTasks();
   const task = tasks.find(t => t.sessionId === sessionId);
+  const completedModelDownload = isModelDownloadTask(task)
+    && !['done', 'completed'].includes(task.status || '')
+    && ['done', 'completed'].includes(updates.status || '');
   if (task) {
     Object.assign(task, updates);
     _saveTasks(tasks);
   }
+  if (completedModelDownload) _notifyModelDownloadCompleted(task);
   if ('status' in updates || '_unreachable' in updates) {
     _refreshServerDots();
   }
@@ -979,6 +996,13 @@ function _updateTask(sessionId, updates) {
       if (uptime) uptime.style.display = 'none';
     }
   }
+}
+
+function _notifyModelDownloadCompleted(task) {
+  if (!isModelDownloadTask(task) || typeof document === 'undefined') return;
+  document.dispatchEvent(new CustomEvent(MODEL_DOWNLOAD_COMPLETED_EVENT, {
+    detail: modelDownloadCompletedDetail(task),
+  }));
 }
 
 function _refreshDepsAfterInstall(task) {
@@ -3225,7 +3249,10 @@ export function _renderRunningTab() {
 // ── Reconnect task (polling loop) ──
 
 async function _reconnectTask(el, task) {
-  if (!el || !task) return;
+  // Starting a queued download keeps its queue-<id> placeholder while the
+  // launch POST is in flight. It has no tmux/process session to reconnect yet,
+  // so polling it reads a non-existent session and can flip the row to crashed.
+  if (!el || !task || _isQueuedDownloadPlaceholder(task)) return;
   const wrap = el.querySelector('.cookbook-output-wrap');
   if (!_isRunningTabVisible() || !wrap || wrap.classList.contains('cookbook-task-collapsed')) return;
   if (el._abort && !el._abort.signal?.aborted) return;
@@ -4335,6 +4362,7 @@ async function _pollBackgroundStatus() {
           const merged = [...localTasks];
           let added = 0;
           for (const t of serverTasks) {
+            if (_isQueuedDownloadPlaceholder(t)) continue;
             if (t && t.sessionId && !localIds.has(t.sessionId) && !_isTombstoned(t.sessionId)) {
               merged.push(t);
               added++;
@@ -4363,6 +4391,7 @@ async function _pollBackgroundStatus() {
       const localTasks = _loadTasks();
       let changed = false;
       const completedDeps = [];
+      const completedModelDownloads = [];
       const localIds = new Set(localTasks.map(t => t.sessionId).filter(Boolean));
       for (const live of tasks) {
         const sid = live?.session_id;
@@ -4371,7 +4400,7 @@ async function _pollBackgroundStatus() {
         const liveStatus = live.status === 'completed' ? 'done' : (live.status || 'running');
         const name = live.model || sid;
         const remoteHost = live.remote && live.remote !== 'local' ? live.remote : '';
-        localTasks.push(_redactTaskForStorage({
+        const adoptedTask = _redactTaskForStorage({
           id: sid,
           sessionId: sid,
           name,
@@ -4387,11 +4416,17 @@ async function _pollBackgroundStatus() {
           },
           remoteHost,
           _adoptedExternally: true,
-        }));
+        });
+        localTasks.push(adoptedTask);
+        if (['done', 'completed'].includes(liveStatus) && isModelDownloadTask(adoptedTask)) {
+          completedModelDownloads.push(adoptedTask);
+        }
         localIds.add(sid);
         changed = true;
       }
       for (const task of localTasks) {
+        // Queued placeholders are client scheduling state, not backend sessions.
+        if (_isQueuedDownloadPlaceholder(task)) continue;
         const live = statusById.get(task.sessionId);
         if (!live) continue;
         const updates = {};
@@ -4428,6 +4463,9 @@ async function _pollBackgroundStatus() {
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
+          if (['done', 'completed'].includes(nextStatus) && isModelDownloadTask(task)) {
+            completedModelDownloads.push(task);
+          }
         }
         if (serveReady && !task._serveReady) {
           updates._serveReady = true;
@@ -4467,6 +4505,7 @@ async function _pollBackgroundStatus() {
           _showDiagnosis(el, task._backendDiagnosis, task.output || '');
         }
         completedDeps.forEach(t => _refreshDepsAfterInstall(t));
+        completedModelDownloads.forEach(t => _notifyModelDownloadCompleted(t));
       }
     } catch (_) { /* non-fatal: background status should never break polling */ }
 

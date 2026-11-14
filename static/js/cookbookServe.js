@@ -16,6 +16,11 @@ import {
 } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
+import {
+  invalidateCachedModelScans,
+  MODEL_DOWNLOAD_COMPLETED_EVENT,
+  modelDownloadMatchesTarget,
+} from './cookbookModelCache.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
 // Shared state/functions injected by init()
@@ -70,6 +75,7 @@ const _CACHED_MODELS_SCAN_KEY = 'cookbook_cached_models_scan_v3_ltx_video';
 const _CACHED_MODELS_SCAN_TTL = 6 * 3600 * 1000;
 let _cachedModelsFetchId = 0;
 let _cachedModelsRequestController = null;
+let _modelDownloadListenerBound = false;
 
 function _syncServeStats() {
   const stats = document.getElementById('serve-stats');
@@ -157,6 +163,32 @@ function _writeCachedModelScan(sig, data) {
     }
     localStorage.setItem(_CACHED_MODELS_SCAN_KEY, JSON.stringify(all));
   } catch {}
+}
+
+function _invalidateCachedModelScan(host) {
+  try {
+    const all = JSON.parse(localStorage.getItem(_CACHED_MODELS_SCAN_KEY) || '{}');
+    const next = invalidateCachedModelScans(all, host);
+    localStorage.setItem(_CACHED_MODELS_SCAN_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+function _selectedCachedModelsTarget() {
+  const cacheServer = document.getElementById('hwfit-cache-server');
+  const value = cacheServer?.value || _envState.remoteServerKey || _envState.remoteHost || 'local';
+  const server = value === 'local' ? null : _serverByVal?.(value);
+  return {
+    host: server?.host || (value === 'local' ? '' : _envState.remoteHost || ''),
+    serverKey: value,
+  };
+}
+
+function _onModelDownloadCompleted(event) {
+  const detail = event?.detail || {};
+  _invalidateCachedModelScan(detail.host);
+  if (!document.getElementById('hwfit-cached-list')) return;
+  if (!modelDownloadMatchesTarget(detail, _selectedCachedModelsTarget())) return;
+  _fetchCachedModels(true).catch(() => {});
 }
 
 function _loadServeFavorites() {
@@ -4424,6 +4456,7 @@ export function _fetchCachedModels(fresh = false, opts = {}) {
   const key = [
     cacheServer?.value || 'local',
     _envState.remoteHost || '',
+    fresh ? 'fresh' : 'cached',
     opts.allowNetwork === false ? 'offline' : 'network',
   ].join('|');
   const existing = _cachedModelsInFlight.get(key);
@@ -4459,6 +4492,10 @@ function _presetsForModel(presets, repo) {
 
 export function initServe(shared) {
   _envState = shared._envState;
+  if (!_modelDownloadListenerBound) {
+    document.addEventListener(MODEL_DOWNLOAD_COMPLETED_EVENT, _onModelDownloadCompleted);
+    _modelDownloadListenerBound = true;
+  }
   _sshCmd = shared._sshCmd;
   _getPort = shared._getPort;
   _sshPrefix = shared._sshPrefix;
