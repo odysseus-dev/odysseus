@@ -105,3 +105,22 @@ def test_cached_scan_exposes_size_bytes_for_the_ui():
     assert '"size_bytes": m["size_bytes"],' in source
     # The frontend must not have to parse the formatted string.
     assert "Number(m?.size_bytes || 0)" in _read("static/js/cookbookServe.js")
+
+
+def test_authoritative_error_is_not_labelled_stopped():
+    """`DOWNLOAD_OK` + `Fetching 0 files` is an error server-side; the badge must
+    not read as a neutral "stopped"."""
+    source = _read("static/js/cookbookRunning.js")
+
+    assert "if (status === 'error' || status === 'crashed' || status === 'failed') return 'error';" in source
+    assert "if (status === 'error') return 'stopped';" not in source
+
+
+def test_unquantized_single_file_repo_is_offered():
+    """A repo with one unquantised GGUF must be downloadable without pasting a
+    deep file path."""
+    source = _read("static/js/cookbook.js")
+
+    assert "All GGUF files (${files.length})" in source
+    assert "const include = files.length === 1 ? files[0] : '*.gguf';" in source
+    assert "_hideGgufPicker('No GGUF quants found');" not in source

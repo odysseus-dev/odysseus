@@ -2823,8 +2823,19 @@ function _wireTabEvents(body) {
           byQuant.get(quant).push(name);
         });
         if (!byQuant.size) {
-          _hideGgufPicker('No GGUF quants found');
-          return false;
+          // No quant tokens in the filenames (e.g. a single
+          // `model.gguf`). That is still a valid downloadable model, so offer
+          // the files instead of refusing and forcing a deep-path paste.
+          if (!files.length) {
+            _hideGgufPicker('No GGUF files found');
+            return false;
+          }
+          // `include` comes from the HF file listing; esc() keeps it inert.
+          const include = files.length === 1 ? files[0] : '*.gguf';
+          dlGgufQuant.innerHTML = `<option value="${esc(include)}">All GGUF files (${files.length})</option>`;
+          dlGgufQuant.dataset.repo = repo;
+          dlGgufNote.textContent = include;
+          return true;
         }
         const quantRank = q => {
           const m = q.match(/^I?Q(\d)/i);

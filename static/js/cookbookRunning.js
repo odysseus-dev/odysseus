@@ -26,7 +26,10 @@ function _isFinishedDownload(status, type) {
 function _statusLabel(status, type) {
   if (status === 'running' && type === 'download') return 'downloading';
   if (_isFinishedDownload(status, type)) return 'finished';
-  if (status === 'error') return 'stopped';
+  // An authoritative backend error must read as an error, not a neutral
+  // "stopped" — this is what let a `DOWNLOAD_OK` + `Fetching 0 files` run look
+  // like a normal finish.
+  if (status === 'error' || status === 'crashed' || status === 'failed') return 'error';
   return status || '';
 }
 
