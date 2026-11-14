@@ -257,7 +257,7 @@ const selectionOperations = createSelectionOperations({
   fetchNotes: _fetchNotes,
   exitSelection: _exitSelectMode,
   sendContext: detail => window.dispatchEvent(new CustomEvent('odysseus:notes-context-selected', { detail })),
-  effects: { render: _renderNotes, styledConfirm: uiModule.styledConfirm, showToast: (...args) => uiModule.showToast(...args) }
+  effects: { render: () => { _renderNotes(); _updateBulkBar(); }, styledConfirm: uiModule.styledConfirm, showToast: (...args) => uiModule.showToast(...args), showError: (...args) => uiModule.showError(...args) }
 });
 const selection = createSelection({
   operations: selectionOperations,

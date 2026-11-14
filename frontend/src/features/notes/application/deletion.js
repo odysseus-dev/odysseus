@@ -27,10 +27,14 @@ export function createDeletion({
       ? await effects.styledConfirm(`Delete ${targets.length} past reminder${targets.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true })
       : effects.confirm(`Delete ${targets.length} past reminder${targets.length === 1 ? '' : 's'}?`);
     if (!ok) return;
-    await Promise.all(targets.map(n => _deleteNoteApi(n.id).catch(() => {})));
+    const results = await Promise.allSettled(targets.map(n => _deleteNoteApi(n.id)));
+    const succeeded = results.filter(result => result.status === 'fulfilled').length;
     await _fetchNotes();
     _renderNotes();
-    effects.showToast?.(`Cleared ${targets.length} past reminder${targets.length === 1 ? '' : 's'}`);
+    const failed = targets.length - succeeded;
+    const summary = `Cleared ${succeeded} past reminder${succeeded === 1 ? '' : 's'}`;
+    if (failed) effects.showError(`${succeeded ? `${summary}; failed` : 'Failed'} to delete ${failed} past reminder${failed === 1 ? '' : 's'}`);
+    else effects.showToast?.(summary);
   }
 
   async function deleteFromEditor(id) {
