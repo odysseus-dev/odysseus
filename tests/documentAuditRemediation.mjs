@@ -15,7 +15,7 @@ async function setup(t, routeHandler) {
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request();
-    requests.push({ path: new URL(request.url()).pathname, method: request.method(), body: request.postDataJSON() });
+    requests.push({ path: new URL(request.url()).pathname, method: request.method(), body: request.headers()['content-type']?.includes('application/json') ? request.postDataJSON() : null });
     if (await routeHandler?.(route, requests.at(-1))) return;
     await route.fulfill({ json: { version_count: 2 } });
   });
@@ -125,4 +125,46 @@ test('email: Markdown preview shortcut executes integrated callback', async t =>
   await page.evaluate(() => preview._setMarkdownPreviewActive(false));
   await page.keyboard.press('Control+Alt+m');
   assert.equal(await page.locator('#doc-md-preview').evaluate(el => el.style.display !== 'none'), true);
+});
+
+test('titles: source work retains A identity across navigation', async t => {
+  const { page, requests } = await setup(t);
+  await inject(page, 'a', 'initial', 'markdown', '');
+  await inject(page, 'b', 'B correct body', 'markdown', '');
+  await page.evaluate(() => editor.loadDocument('a'));
+  await edit(page, 'Title belonging to A');
+  await page.evaluate(() => editor.loadDocument('b'));
+  await page.waitForFunction(() => state.docs.get('a').title === 'Title belonging to A');
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+  assert(requests.some(request => request.path === '/api/document/a' && request.body?.title === 'Title belonging to A'));
+  assert(!requests.some(request => request.path === '/api/document/b' && request.body?.title));
+});
+
+test('titles: image work is cancelled at disposal and repeated mount remains usable', async t => {
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.path !== '/api/upload') return false;
+    await route.fulfill({ json: { files: [{ id: 'uploaded', name: 'image.png' }] } });
+    return true;
+  });
+  await page.clock.install();
+  await inject(page, 'a', 'initial', 'markdown', '');
+  await inject(page, 'b', 'B correct body', 'markdown', '');
+  await page.evaluate(() => editor.loadDocument('a'));
+  await edit(page, 'Image title from A');
+  await page.evaluate(async () => {
+    const images = await import('/static/js/document/ui/editor/markdownImages.js');
+    await images._uploadMarkdownImages([new File(['image'], 'image.png', { type: 'image/png' })]);
+    editor.closePanel('down');
+    await editor.loadDocument('b');
+  });
+  await page.clock.runFor(900);
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+  assert(!requests.some(request => request.method === 'PATCH' && request.body?.title));
+  assert.equal(await page.evaluate(async () => {
+    const source = await import('/static/js/document/ui/editor/sourceEditor.js');
+    return source._autoTitleDebounce;
+  }), null);
+  await edit(page, 'Valid title after reopen');
+  await page.clock.runFor(900);
+  await page.waitForFunction(() => state.docs.get('b').title === 'Valid title after reopen');
 });

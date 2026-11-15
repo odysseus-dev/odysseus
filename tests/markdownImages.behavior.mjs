@@ -24,7 +24,7 @@ const mockExports = {
   'imageOps.js': { _insertRichTextImages: files => calls.rich.push(files) },
   'richBodySync.js': { _emailRichbodyActive: () => state.emailRich },
   'sourceEditor.js': {
-    _autoTitleDebounce: null, _hlDebounce: null,
+    scheduleSourceEditorWork: (...args) => calls.titles.push(args),
     _refreshMarkdownPreviewIfVisible: (...args) => calls.previews.push(args),
     _replaceRange(ta, start, end, value) {
       ta.value = ta.value.slice(0, start) + value + ta.value.slice(end);
@@ -70,6 +70,7 @@ describe('markdownImages', () => {
   before(async () => { installDom(); api = await loadModule(); });
   beforeEach(() => {
     clearDom();
+    mount('doc-editor-pane', 'div', { isConnected: true, dataset: { activeDocumentId: 'doc-1' } });
     for (const key of Object.keys(calls)) calls[key].length = 0;
     state.language = 'markdown'; state.emailRich = false;
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ files: [{ id: 'up 1', name: 'map[1].png' }] }) });
@@ -86,6 +87,7 @@ describe('markdownImages', () => {
     assert.deepEqual(calls.autosave, [['doc-1', 800]]);
     assert.deepEqual(calls.toasts, ['Image inserted']);
     assert.equal(calls.previews.length, 1);
+    assert.deepEqual(calls.titles, [[ta.value, 'doc-1']]);
   });
 
   it('rejects missing or unsupported image selections before upload', async () => {

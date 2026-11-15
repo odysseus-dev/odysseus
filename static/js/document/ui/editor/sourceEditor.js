@@ -16,6 +16,7 @@ import {
   _looksLikeMarkdown
 } from '../../domain/documentKinds.js';
 import { applyFindMarks } from '../findReplace.js';
+import { autoTitleFromContent, updateLanguage } from '../documentActions.js';
 import {
   _isMarkdownPreviewVisible,
   _setMarkdownPreviewActive
@@ -430,46 +431,39 @@ export function _refreshMarkdownPreviewIfVisible(docId, content) {
     return true;
   }
 
-if (typeof globalThis !== 'undefined') {
-  globalThis._scheduleSourceEditorInput = (textarea, onAutoTitle) => {
-    clearTimeout(_hlDebounce);
-    _hlDebounce = setTimeout(syncHighlighting, 80);
-    clearTimeout(_autoDetectDebounce);
-    _autoDetectDebounce = setTimeout(attemptAutoDetect, AUTO_DETECT_DELAY);
-    clearTimeout(_autoTitleDebounce);
-    _autoTitleDebounce = setTimeout(() => onAutoTitle?.(textarea.value), 600);
-  };
-  globalThis._disposeLineNumberResizeObserver = (pane) => {
-    clearTimeout(_hlDebounce);
-    clearTimeout(_autoDetectDebounce);
-    clearTimeout(_autoTitleDebounce);
-    _hlDebounce = null;
-    _autoDetectDebounce = null;
-    _autoTitleDebounce = null;
-    if (!pane?.contains(_lineNumberObservedTextarea)) return;
-    _lineNumberResizeObserver?.disconnect();
-    _lineNumberResizeObserver = null;
-    _lineNumberObservedTextarea = null;
-    if (_lineNumberResizeRaf) cancelAnimationFrame(_lineNumberResizeRaf);
-    _lineNumberResizeRaf = null;
-  };
-}
-
 export function disposeSourceEditor(pane) {
+  clearTimeout(_hlDebounce);
+  clearTimeout(_autoDetectDebounce);
+  clearTimeout(_autoTitleDebounce);
+  _hlDebounce = null;
+  _autoDetectDebounce = null;
+  _autoTitleDebounce = null;
   if (pane?.contains(_lineNumberObservedTextarea)) {
     _lineNumberResizeObserver?.disconnect();
+    _lineNumberResizeObserver = null;
     _lineNumberObservedTextarea = null;
   }
   if (_lineNumberResizeRaf) cancelAnimationFrame(_lineNumberResizeRaf);
   _lineNumberResizeRaf = null;
 }
 
-export function scheduleSourceEditorWork(value) {
+export function scheduleSourceEditorWork(value, docId = activeDocId) {
+  const pane = document.getElementById('doc-editor-pane');
+  const doc = docs.get(docId);
+  const ownsPane = () => pane?.isConnected && pane.dataset.activeDocumentId === docId && activeDocId === docId;
   clearTimeout(_hlDebounce);
-  _hlDebounce = setTimeout(syncHighlighting, 80);
+  _hlDebounce = setTimeout(() => {
+    _hlDebounce = null;
+    if (ownsPane()) syncHighlighting();
+  }, 80);
   clearTimeout(_autoDetectDebounce);
-  _autoDetectDebounce = setTimeout(attemptAutoDetect, AUTO_DETECT_DELAY);
+  _autoDetectDebounce = setTimeout(() => {
+    _autoDetectDebounce = null;
+    if (ownsPane()) attemptAutoDetect();
+  }, AUTO_DETECT_DELAY);
   clearTimeout(_autoTitleDebounce);
-  _autoTitleDebounce = setTimeout(() => autoTitleFromContent(value), 600);
+  _autoTitleDebounce = setTimeout(() => {
+    _autoTitleDebounce = null;
+    if (docId && docs.get(docId) === doc) autoTitleFromContent(value, docId);
+  }, 600);
 }
-

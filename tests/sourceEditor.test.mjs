@@ -521,7 +521,7 @@ describe('Source Editor Subsystem', () => {
       assert.equal(doc.language, 'markdown');
     });
 
-    it('detects SVG markup heuristic and switches language', () => {
+    it('detects SVG markup heuristic and switches language', (t) => {
       const doc = {
         id: 'doc-svg',
         title: 'Graphic',
@@ -539,17 +539,23 @@ describe('Source Editor Subsystem', () => {
       elementsById.set('doc-editor-textarea', ta);
       elementsById.set('doc-language-select', langSelect);
 
-      let updateLanguageTriggered = false;
-      globalThis.updateLanguage = () => { updateLanguageTriggered = true; };
+      const requests = [];
+      t.mock.method(globalThis, 'fetch', async (url, options) => {
+        requests.push({ url, ...options });
+        return { ok: true };
+      });
 
       attemptAutoDetect();
       assert.equal(doc.language, 'svg');
       assert.equal(langSelect.value, 'svg');
-      assert.equal(updateLanguageTriggered, true);
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].url, `/api/document/${doc.id}`);
+      assert.equal(requests[0].method, 'PATCH');
+      assert.deepEqual(JSON.parse(requests[0].body), { language: doc.language });
       assert.ok(commandsCalled.includes('_syncHeaderActions'));
     });
 
-    it('detects programming language via hljs.highlightAuto when above relevance threshold', () => {
+    it('detects programming language via hljs.highlightAuto when above relevance threshold', (t) => {
       const doc = {
         id: 'doc-py',
         title: 'Script',
@@ -571,13 +577,19 @@ describe('Source Editor Subsystem', () => {
       elementsById.set('doc-editor-textarea', ta);
       elementsById.set('doc-language-select', langSelect);
 
-      let updateLanguageTriggered = false;
-      globalThis.updateLanguage = () => { updateLanguageTriggered = true; };
+      const requests = [];
+      t.mock.method(globalThis, 'fetch', async (url, options) => {
+        requests.push({ url, ...options });
+        return { ok: true };
+      });
 
       attemptAutoDetect();
       assert.equal(doc.language, 'python');
       assert.equal(langSelect.value, 'python');
-      assert.equal(updateLanguageTriggered, true);
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].url, `/api/document/${doc.id}`);
+      assert.equal(requests[0].method, 'PATCH');
+      assert.deepEqual(JSON.parse(requests[0].body), { language: doc.language });
     });
 
     it('ignores auto-detection when hljs relevance is below threshold', () => {

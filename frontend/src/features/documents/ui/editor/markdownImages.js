@@ -7,26 +7,10 @@
 import { API_BASE, activeDocId } from '../../application/documentState.js';
 import { _scheduleAutoSave } from '../../application/persistence.js';
 import { _isMarkdownImageFile, _isRichTextLang, _markdownImageAlt } from '../../domain/documentKinds.js';
-import { autoTitleFromContent } from '../documentActions.js';
 import { _activeDocLanguage, uiModule } from '../host.js';
 import { _insertRichTextImages } from '../richEditor/imageOps.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
-import { _autoTitleDebounce, _hlDebounce, _refreshMarkdownPreviewIfVisible, _replaceRange, syncHighlighting, updateLineNumbers } from './sourceEditor.js';
-
-let _syntaxHighlightTimer = null;
-let _autoTitleTimer = null;
-
-function scheduleSyntaxHighlight() {
-  clearTimeout(_hlDebounce);
-  clearTimeout(_syntaxHighlightTimer);
-  _syntaxHighlightTimer = setTimeout(syncHighlighting, 80);
-}
-
-function scheduleAutoTitle(ta) {
-  clearTimeout(_autoTitleDebounce);
-  clearTimeout(_autoTitleTimer);
-  _autoTitleTimer = setTimeout(() => autoTitleFromContent(ta.value), 600);
-}
+import { _refreshMarkdownPreviewIfVisible, _replaceRange, scheduleSourceEditorWork, updateLineNumbers } from './sourceEditor.js';
 
 function _scheduleMarkdownImageAutosave(ta) {
     updateLineNumbers(ta.value);
@@ -35,10 +19,7 @@ function _scheduleMarkdownImageAutosave(ta) {
       codeEl.textContent = ta.value + '\n';
       codeEl.style.minHeight = ta.scrollHeight + 'px';
     }
-    clearTimeout(_hlDebounce);
-    scheduleSyntaxHighlight();
-    clearTimeout(_autoTitleDebounce);
-    scheduleAutoTitle(ta);
+    scheduleSourceEditorWork(ta.value, activeDocId);
     _scheduleAutoSave(activeDocId, 800);
   }
 
@@ -84,6 +65,8 @@ export async function _uploadMarkdownImages(files) {
       return;
     }
 
+    const docId = activeDocId;
+    const pane = document.getElementById('doc-editor-pane');
     const fd = new FormData();
     images.forEach(file => fd.append('files', file));
     try {
@@ -97,6 +80,7 @@ export async function _uploadMarkdownImages(files) {
       if (!res.ok) throw new Error((data && (data.error || data.detail)) || `HTTP ${res.status}`);
       const uploaded = Array.isArray(data?.files) ? data.files : [];
       if (!uploaded.length) throw new Error('No uploaded files returned');
+      if (!pane?.isConnected || pane !== document.getElementById('doc-editor-pane') || pane.dataset.activeDocumentId !== docId || activeDocId !== docId) return;
       if (_isRichTextLang(language) || emailRichBody) _insertRichTextImages(uploaded);
       else _insertMarkdownImages(uploaded);
       if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
