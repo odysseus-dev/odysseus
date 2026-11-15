@@ -84,6 +84,16 @@ Focused check: `node --test tests/markdownImages.test.mjs` passed (4 executed be
 
 Verifier cumulative manifest result: 14 listed, 14 verified, 9 authorized rewrites, zero removal violations, simulation clean. Exact exports, import graph, layer legality, state ownership, and ports are clean. Overall verifier output still contains exactly 76 expected pre-integration duplicates.
 
+## Checkpoint 4: document flows
+
+Source: `frontend/src/features/documents/ui/documentFlows.js`
+
+Moved all 20 Appendix A declarations: `_autoCreateFromInput`, `_autoCreateSession`, `_autoCreating`, `_closeWithoutDeleting`, `_creatingDoc`, `_detachDocFromSession`, `_ensureDocPaneMounted`, `_moveDocToSession`, `_rememberActiveDoc`, `_visibleDocIdsForCurrentSession`, `closeTab`, `createDocument`, `deleteActiveDocument`, `ensureDocPanel`, `getChatDocumentId`, `injectFreshDoc`, `loadDocument`, `loadSessionDocs`, `moveActiveDocumentToCurrentChat`, and `moveActiveDocumentToNewChat`.
+
+Focused check: `node --test tests/documentFlows.test.mjs` passed (3 behavioral cases): successful load and switch, stale navigation response ignored, and 404 cleanup/error reporting. The VM harness stubs the command and UI boundaries; the tested navigation generation is the real flow implementation against a state mock.
+
+Cumulative extraction verifier: 34 listed, 34 verified, 51 Class 1/2 rewrites, 8 documented Class 4 human-review exceptions, simulation clean, zero removal violations. The eight exceptions are the expected PDF pane lifecycle hook substitutions in `_closeWithoutDeleting`, `_detachDocFromSession`, `deleteActiveDocument`, and `loadSessionDocs`: `_cancelPdfPaneSave`, `_syncPdfPaneToDoc`, and `_hasPendingPdfPaneSave` route through the existing PDF module boundary. They are reported, not silently ignored. State transitions use the authoritative state operations.
+
 ## Remaining modules
 
 Header overflow, markdown images, document flows, selection highlights (`stmt#11153`), toolbar, and tab bar (`stmt#206`) are still outstanding for this handoff. Continue in that order. Each group gets focused tests, a manifest update, verifier evidence, and a local commit.
