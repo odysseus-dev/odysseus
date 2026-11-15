@@ -8,10 +8,9 @@ import { API_BASE, activeDocId } from '../../application/documentState.js';
 import { _scheduleAutoSave } from '../../application/persistence.js';
 import { _isMarkdownImageFile, _isRichTextLang, _markdownImageAlt } from '../../domain/documentKinds.js';
 import { autoTitleFromContent } from '../documentActions.js';
-import { uiModule } from '../host.js';
+import { _activeDocLanguage, uiModule } from '../host.js';
 import { _insertRichTextImages } from '../richEditor/imageOps.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
-import { _activeDocLanguage } from '../status/documentStatus.js';
 import { _autoTitleDebounce, _hlDebounce, _refreshMarkdownPreviewIfVisible, _replaceRange, syncHighlighting, updateLineNumbers } from './sourceEditor.js';
 
 let _syntaxHighlightTimer = null;
@@ -115,6 +114,7 @@ export async function _handleMarkdownImageUpload(e) {
 
 
 if (typeof globalThis !== 'undefined') {
+  globalThis._uploadMarkdownImages = _uploadMarkdownImages;
   globalThis._scheduleMarkdownImageAutosave = _scheduleMarkdownImageAutosave;
   globalThis._insertMarkdownImages = _insertMarkdownImages;
 }

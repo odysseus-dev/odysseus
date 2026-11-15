@@ -11,6 +11,7 @@ import {
   AUTO_DETECT_MIN_CHARS,
   AUTO_DETECT_SAMPLE_SIZE,
   AUTO_DETECT_MIN_RELEVANCE,
+  AUTO_DETECT_DELAY,
   HLJS_TO_DROPDOWN,
   _looksLikeMarkdown
 } from '../../domain/documentKinds.js';
@@ -428,4 +429,29 @@ export function _refreshMarkdownPreviewIfVisible(docId, content) {
     _setMarkdownPreviewActive(true, { remember: false });
     return true;
   }
+
+if (typeof globalThis !== 'undefined') {
+  globalThis._scheduleSourceEditorInput = (textarea, onAutoTitle) => {
+    clearTimeout(_hlDebounce);
+    _hlDebounce = setTimeout(syncHighlighting, 80);
+    clearTimeout(_autoDetectDebounce);
+    _autoDetectDebounce = setTimeout(attemptAutoDetect, AUTO_DETECT_DELAY);
+    clearTimeout(_autoTitleDebounce);
+    _autoTitleDebounce = setTimeout(() => onAutoTitle?.(textarea.value), 600);
+  };
+  globalThis._disposeLineNumberResizeObserver = (pane) => {
+    clearTimeout(_hlDebounce);
+    clearTimeout(_autoDetectDebounce);
+    clearTimeout(_autoTitleDebounce);
+    _hlDebounce = null;
+    _autoDetectDebounce = null;
+    _autoTitleDebounce = null;
+    if (!pane?.contains(_lineNumberObservedTextarea)) return;
+    _lineNumberResizeObserver?.disconnect();
+    _lineNumberResizeObserver = null;
+    _lineNumberObservedTextarea = null;
+    if (_lineNumberResizeRaf) cancelAnimationFrame(_lineNumberResizeRaf);
+    _lineNumberResizeRaf = null;
+  };
+}
 

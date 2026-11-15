@@ -13,11 +13,8 @@ import { _autoCreateSession, closeTab, createDocument, deleteActiveDocument, mov
 import { syncHighlighting } from '../editor/sourceEditor.js';
 import { _sendSignedReply } from '../email/signedReply.js';
 import { showExportMenu } from '../exportDocx.js';
-import { toggleVersionHistory } from '../history/versionHistory.js';
-import { langIcon, sessionModule } from '../host.js';
-import { _wireSwipeDismiss } from '../panel/paneLayout.js';
+import { _setDocumentHistoryControlState, _syncEditorPlaceholder, _wireSwipeDismiss, langIcon, sessionModule, toggleVersionHistory } from '../host.js';
 import { toggleCsvPreview, toggleDocxPreview, toggleHtmlPreview, toggleMarkdownPreview } from '../previewModes.js';
-import { _setDocumentHistoryControlState, _syncEditorPlaceholder } from '../status/documentStatus.js';
 
 let _isEditingTabTitle = false;
 

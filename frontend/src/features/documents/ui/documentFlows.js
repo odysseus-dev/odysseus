@@ -13,11 +13,9 @@ import { _parseEmailHeader } from '../domain/emailMessage.js';
 import { autoTitleFromContent } from './documentActions.js';
 import { attemptAutoDetect, syncHighlighting } from './editor/sourceEditor.js';
 import { _clearEmailLocalDraft } from './email/localDraft.js';
-import { _closeVersionPanel } from './history/versionHistory.js';
-import { Modals, sessionModule, uiModule } from './host.js';
+import { _closeVersionPanel, _syncEditorPlaceholder, Modals, sessionModule, uiModule } from './host.js';
 import { _cancelPdfPaneSave, _cleanupPdfDocState, _hasPendingPdfPaneSave, _releasePdfPane, _schedulePdfPaneSave, _syncPdfPaneToDoc } from './pdfTools.js';
 import { _emailRichbodyActive, _richTextContentToHtml, _syncEmailRichbody } from './richEditor/richBodySync.js';
-import { _syncEditorPlaceholder } from './status/documentStatus.js';
 import { suspendSuggestions } from './suggestions.js';
 
 export function _rememberActiveDoc(docId) {
@@ -622,6 +620,12 @@ export function getChatDocumentId() {
 
 
 if (typeof globalThis !== 'undefined') {
+  globalThis._autoCreateFromInput = _autoCreateFromInput;
+  globalThis._autoCreateSession = _autoCreateSession;
+  globalThis._creatingDoc = _creatingDoc;
+  globalThis._detachDocFromSession = _detachDocFromSession;
+  globalThis._rememberActiveDoc = _rememberActiveDoc;
+  globalThis._visibleDocIdsForCurrentSession = _visibleDocIdsForCurrentSession;
   globalThis.ensureDocPanel = ensureDocPanel;
   globalThis.loadSessionDocs = loadSessionDocs;
   globalThis._moveDocToSession = _moveDocToSession;

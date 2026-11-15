@@ -8,7 +8,7 @@ import { activeDocId, docs } from '../../application/documentState.js';
 import { _isRichTextLang } from '../../domain/documentKinds.js';
 import { _ensureDocPaneMounted, loadDocument } from '../documentFlows.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
-import { _scheduleDocumentStats } from '../status/documentStatus.js';
+import { _scheduleDocumentStats } from '../host.js';
 
 export let _selections = [];
 
@@ -603,6 +603,10 @@ installSelectionResizeListener();
 
 
 if (typeof globalThis !== 'undefined') {
+  globalThis._disposeSelectionResizeObserver = () => {
+    _selResizeObserver?.disconnect();
+    _selResizeObserver = null;
+  };
   globalThis._richRootText = _richRootText;
   globalThis._richRangeFromOffsets = _richRangeFromOffsets;
   globalThis._ensureSelResizeObserver = _ensureSelResizeObserver;

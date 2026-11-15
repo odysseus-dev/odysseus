@@ -422,6 +422,34 @@
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
         }
       ]
+    },
+    {
+      "source": "features/documents/ui/documentActions.js",
+      "deployment": "js/document/ui/documentActions.js"
+    },
+    {
+      "source": "features/documents/ui/header/overflow.js",
+      "deployment": "js/document/ui/header/overflow.js"
+    },
+    {
+      "source": "features/documents/ui/editor/markdownImages.js",
+      "deployment": "js/document/ui/editor/markdownImages.js"
+    },
+    {
+      "source": "features/documents/ui/documentFlows.js",
+      "deployment": "js/document/ui/documentFlows.js"
+    },
+    {
+      "source": "features/documents/ui/selection/selectionHighlights.js",
+      "deployment": "js/document/ui/selection/selectionHighlights.js"
+    },
+    {
+      "source": "features/documents/ui/toolbar/toolbar.js",
+      "deployment": "js/document/ui/toolbar/toolbar.js"
+    },
+    {
+      "source": "features/documents/ui/tabs/tabBar.js",
+      "deployment": "js/document/ui/tabs/tabBar.js"
     }
   ]
 }

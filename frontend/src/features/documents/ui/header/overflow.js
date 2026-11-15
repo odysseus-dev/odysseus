@@ -149,6 +149,8 @@ function initActionOverflow() {
 
 
 if (typeof globalThis !== 'undefined') {
+  globalThis._DOC_RECENTS_KEY = _DOC_RECENTS_KEY;
+  globalThis._DOC_MAX_VISIBLE = _DOC_MAX_VISIBLE;
   globalThis._getDocRecent = _getDocRecent;
   globalThis._trackDocAction = _trackDocAction;
   globalThis.initActionOverflow = initActionOverflow;

@@ -20,10 +20,9 @@ const mockExports = {
     _markdownImageAlt: name => String(name || '').replace(/[\[\]]/g, ''),
   },
   'documentActions.js': { autoTitleFromContent: value => calls.titles.push(value) },
-  'host.js': { uiModule: ui },
+  'host.js': { uiModule: ui, _activeDocLanguage: () => state.language },
   'imageOps.js': { _insertRichTextImages: files => calls.rich.push(files) },
   'richBodySync.js': { _emailRichbodyActive: () => state.emailRich },
-  'documentStatus.js': { _activeDocLanguage: () => state.language },
   'sourceEditor.js': {
     _autoTitleDebounce: null, _hlDebounce: null,
     _refreshMarkdownPreviewIfVisible: (...args) => calls.previews.push(args),

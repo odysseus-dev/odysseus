@@ -21,7 +21,7 @@ async function load() {
    'documentKinds.js':{_isRichTextLang:lang=>lang==='richtext'},
    'documentFlows.js':{_ensureDocPaneMounted(){},loadDocument:async()=>true},
    'richBodySync.js':{_emailRichbodyActive:()=>null},
-   'documentStatus.js':{_scheduleDocumentStats(){}},
+   'host.js':{_scheduleDocumentStats(){}},
   };
   const exports=imports[name];
   const mod=new SyntheticModule(Object.keys(exports),function(){for(const [k,v] of Object.entries(exports))this.setExport(k,v);},{identifier:url});

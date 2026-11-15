@@ -6,8 +6,7 @@
 
 import { activeDocId, docs } from '../../application/documentState.js';
 import { saveDocument } from '../../application/persistence.js';
-import { sessionModule, spinnerModule, uiModule } from '../host.js';
-import { toggleFullscreen } from '../panel/paneLayout.js';
+import { sessionModule, spinnerModule, toggleFullscreen, uiModule } from '../host.js';
 import { _showMdDropdown } from '../richEditor/formatMenus.js';
 import { _saveFormatSelection, applyMdFormat } from '../richEditor/formatting.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';

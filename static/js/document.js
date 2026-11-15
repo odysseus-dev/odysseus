@@ -127,7 +127,7 @@ import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushA
 
 import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs } from './document/application/documentSession.js';
 
-import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from './document/ui/editor/sourceEditor.js';
+import { _handleMarkdownPreviewClickHint, _lineNumberContentEl, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from './document/ui/editor/sourceEditor.js';
 
 import { _emailHtmlToPlainText, _emailPlainTextToHtml, _emailRichbodyActive, _richTextContentToHtml, _sanitizedRichTextHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from './document/ui/richEditor/richBodySync.js';
 
@@ -157,6 +157,13 @@ import { _handleAttachUpload, _renderComposeAttachments, _showComposeAttachMenu,
 import { _sendSignedReply } from './document/ui/email/signedReply.js';
 import { _hideEmailFields, _maybeAutoCollapseEmailHeader, _setEmailHeaderCollapsed, _showEmailFields, _syncEmailHeaderSummary, _syncStreamingEmailFields } from './document/ui/email/composerFields.js';
 import './document/ui/email/emailDocuments.js';
+import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from './document/ui/documentActions.js';
+import './document/ui/header/overflow.js';
+import { _handleMarkdownImageUpload, _uploadMarkdownImages } from './document/ui/editor/markdownImages.js';
+import { _closeWithoutDeleting, _ensureDocPaneMounted, closeTab, createDocument, deleteActiveDocument, getChatDocumentId, injectFreshDoc, loadDocument, moveActiveDocumentToCurrentChat, moveActiveDocumentToNewChat } from './document/ui/documentFlows.js';
+import { _measurePos, _scheduleSelRerender, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from './document/ui/selection/selectionHighlights.js';
+import { _syncDocumentToolbarSeparators, initMdToolbar } from './document/ui/toolbar/toolbar.js';
+import { _closeDocTabMenu, _docTabMenu, _syncDocIndicator, renderTabs, showEmptyState } from './document/ui/tabs/tabBar.js';
 
 if (typeof globalThis !== 'undefined') {
   globalThis.markdownModule = markdownModule;
@@ -184,6 +191,13 @@ if (typeof globalThis !== 'undefined') {
   globalThis._scheduleDocumentHistoryControls = _scheduleDocumentHistoryControls;
   globalThis._scheduleDocumentStats = _scheduleDocumentStats;
   globalThis._refreshDocumentOutline = _refreshDocumentOutline;
+  globalThis._activeDocLanguage = _activeDocLanguage;
+  globalThis._closeVersionPanel = _closeVersionPanel;
+  globalThis._setDocumentHistoryControlState = _setDocumentHistoryControlState;
+  globalThis._syncEditorPlaceholder = _syncEditorPlaceholder;
+  globalThis._wireSwipeDismiss = _wireSwipeDismiss;
+  globalThis.toggleFullscreen = toggleFullscreen;
+  globalThis.toggleVersionHistory = toggleVersionHistory;
 
   // Selection & helper bridge
   globalThis.clearSelection = clearSelection;
@@ -227,18 +241,13 @@ if (typeof globalThis !== 'undefined') {
 
 let _hasMountedPanel = false;
 
-let _isEditingTabTitle = false;
+
 
 let _disposePdfTools = null;
 
 let _animationCancel = null;
 
-{
-    const s = document.createElement('style');
-    s.id = 'doc-tab-menu-styles';
-    s.textContent = `.doc-tab-menu-btn{background:none!important;border:none!important;outline:none!important;box-shadow:none!important;color:var(--fg);opacity:0.25;cursor:pointer;padding:2px 4px!important;height:auto!important;line-height:1;transition:opacity .15s;flex-shrink:0;-webkit-appearance:none;appearance:none}.doc-tab-menu-btn:focus,.doc-tab-menu-btn:active{outline:none!important;box-shadow:none!important;background:none!important}.doc-tab:hover .doc-tab-menu-btn{opacity:.5}.doc-tab-menu-btn:hover{opacity:1!important}.doc-tab-dropdown .dropdown-item-compact{padding:6px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;border-bottom:none;display:flex;align-items:center;gap:10px;font-size:11px}.doc-tab-dropdown .dropdown-item-compact:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}.doc-tab-dropdown .dropdown-item-compact .dropdown-icon{width:14px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0.5}.doc-tab-dropdown .dropdown-divider{height:1px;margin:3px 0;background:color-mix(in srgb,var(--border) 40%,transparent)}.doc-tab-action-delete{color:var(--red,#e06c75)!important}.doc-tab-action-delete .dropdown-icon{opacity:0.7!important}`;
-    document.head.appendChild(s);
-  }
+
 
 function _wireExportDocx() {
     initExportDocx({
@@ -682,11 +691,7 @@ function _openDocumentOutline() {
     requestAnimationFrame(() => (menu.querySelector('.doc-outline-item') || menu).focus());
   }
 
-function _rememberActiveDoc(docId) {
-    const doc = docs.get(docId);
-    const sessionId = doc?.sessionId || _lastSessionId || sessionModule?.getCurrentSessionId?.();
-    if (sessionId && docId) localStorage.setItem(_docActiveKey(sessionId), docId);
-  }
+
 
 export function prepareDocumentOpen(sessionId) {
     if (sessionId) _markDocVisibleState(sessionId, 'open');
@@ -734,34 +739,9 @@ export function init(apiBase) {
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
 
-function _syncDocIndicator() {
-    const btn = document.getElementById('overflow-doc-btn');
-    // Has docs = at least one non-empty doc in the map
-    const hasDocs = docs.size > 0;
-    if (btn) btn.classList.toggle('has-docs', hasDocs);
-    // Show/hide the toolbar doc indicator when docs exist
-    const indicator = document.getElementById('doc-indicator-btn');
-    if (indicator) indicator.classList.toggle('visible', hasDocs);
-    // Hide overflow menu item when indicator is shown outside
-    if (btn) btn.style.display = hasDocs ? 'none' : '';
-    // Update session list icon
-    const sid = sessionModule?.getCurrentSessionId();
-    if (sid && sessionModule.setSessionHasDocs) {
-      sessionModule.setSessionHasDocs(sid, hasDocs);
-    }
-  }
 
-function updateArrowVisibility(scrollArea, leftBtn, rightBtn) {
-    const atLeft = scrollArea.scrollLeft <= 0;
-    const atRight = scrollArea.scrollLeft + scrollArea.clientWidth >= scrollArea.scrollWidth - 1;
-    leftBtn.style.display = atLeft ? 'none' : '';
-    rightBtn.style.display = atRight ? 'none' : '';
-    // Toggle the edge-mask classes so the fade gradient drops to flat on the
-    // side that has nothing to scroll to. Without this the left/right fade
-    // reads as a permanent shadow even when no arrow is showing.
-    scrollArea.classList.toggle('is-at-left', atLeft);
-    scrollArea.classList.toggle('is-at-right', atRight);
-  }
+
+
 
 function _wireSwipeDismiss(el) {
     if (!el) return;
@@ -823,336 +803,13 @@ function _wireSwipeDismiss(el) {
     el.addEventListener('touchcancel', endSwipe, { passive: true });
   }
 
-function renderTabs() {
-    if (_isEditingTabTitle) return;  // Don't rebuild while editing a title
-    const tabBar = document.getElementById('doc-tab-bar');
-    if (!tabBar) return;
 
-    const focused = tabBar.contains(document.activeElement) ? document.activeElement : null;
-    const focusedDocId = focused?.closest('.doc-tab')?.dataset.docId;
-    const focusedControl = ['doc-tab-select', 'doc-tab-version', 'doc-tab-close'].find(name => focused?.classList.contains(name));
-    // Build tab HTML with scroll arrows
-    // When doc panel is on right (default), + goes on far left; on left, + goes inside scroll area
-    const paneEl = document.querySelector('.doc-editor-pane');
-    const isDocLeft = paneEl && paneEl.classList.contains('doc-left');
-    let html = '';
-    html += '<button class="doc-tab-arrow doc-tab-arrow-left" id="doc-tab-left" title="Scroll left">&#x2039;</button>';
-    html += '<div class="doc-tab-scroll" id="doc-tab-scroll" role="tablist" aria-label="Open documents">';
-    const curSession = sessionModule?.getCurrentSessionId() || '';
-    let _anyTab = false;
-    for (const [id, doc] of docs) {
-      // Only show tabs for the current session
-      if (doc.sessionId && curSession && doc.sessionId !== curSession) continue;
-      _anyTab = true;
-      const isActive = id === activeDocId;
-      const title = doc.title || 'Untitled';
-      const shortTitle = title.length > 24 ? title.slice(0, 22) + '...' : title;
-      const menuBtn = `<button class="doc-tab-menu-btn" data-doc-id="${id}" title="Document actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg></button>`;
-      const ver = doc.version || doc.version_count || 1;
-      const verChip = `<button type="button" class="doc-tab-version" data-doc-id="${_esc(id)}" title="Version history" aria-label="Version history for ${_esc(title)}, version ${ver}" tabindex="${isActive ? 0 : -1}">v${ver}</button>`;
-      // Language icon before the title — same family as the meta-line / picker
-      // icons. Hidden via :empty CSS when the doc has no useful language.
-      const lic = (doc.language && doc.language !== 'text')
-        ? langIcon(doc.language, 12, { style: 'opacity:0.65;flex-shrink:0;color:currentColor;margin-right:4px;' })
-        : '';
-      const langChip = `<span class="doc-tab-lang">${lic}</span>`;
-      html += `<div class="doc-tab${isActive ? ' active' : ''}" role="presentation" draggable="true" data-doc-id="${_esc(id)}" title="${_esc(title)}">
-        ${verChip}<button type="button" class="doc-tab-select" role="tab" id="doc-tab-${encodeURIComponent(id)}" data-doc-id="${_esc(id)}" aria-selected="${isActive}" aria-controls="doc-editor-surface" tabindex="${isActive ? 0 : -1}" aria-label="${_esc(title)}">${langChip}<span class="doc-tab-title">${_esc(shortTitle)}</span></button>
-        <button type="button" class="doc-tab-close" data-doc-id="${_esc(id)}" tabindex="${isActive ? 0 : -1}" aria-label="Close ${_esc(title)} (kept in Library)" title="Unlink from chat (kept in the Library)">&times;</button>
-      </div>`;
-    }
-    // Empty state (panel open, no doc yet): show a ghost "Untitled" tab so it's
-    // obvious you're in a fresh document rather than staring at a blank pane.
-    if (!_anyTab && isOpen && !activeDocId) {
-      html += `<div class="doc-tab active doc-tab-ghost" title="New document — start typing"><span class="doc-tab-title">Untitled</span></div>`;
-    }
-    html += `<button class="doc-tab-new" id="doc-tab-new-btn" title="New document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
-    html += '</div>';
-    html += '<button class="doc-tab-arrow doc-tab-arrow-right" id="doc-tab-right" title="Scroll right">&#x203A;</button>';
-    tabBar.innerHTML = html;
-    const surface = document.getElementById('doc-editor-surface');
-    if (surface && activeDocId) surface.setAttribute('aria-labelledby', `doc-tab-${encodeURIComponent(activeDocId)}`);
-    if (focused) {
-      const retained = focusedControl && tabBar.querySelector(`.doc-tab[data-doc-id="${CSS.escape(focusedDocId || '')}"] .${focusedControl}`);
-      const next = retained || tabBar.querySelector('.doc-tab.active .doc-tab-select') || document.getElementById('doc-tab-new-btn');
-      next?.focus({ preventScroll: true });
-    }
-    if (tabBar._keyboardHandler) tabBar.removeEventListener('keydown', tabBar._keyboardHandler);
-    tabBar._keyboardHandler = event => {
-      const selector = event.target.closest('.doc-tab-select');
-      if (!selector) return;
-      const selectors = Array.from(tabBar.querySelectorAll('.doc-tab-select'));
-      const index = selectors.indexOf(selector);
-      let nextIndex;
-      if (event.key === 'ArrowRight') nextIndex = (index + 1) % selectors.length;
-      else if (event.key === 'ArrowLeft') nextIndex = (index + selectors.length - 1) % selectors.length;
-      else if (event.key === 'Home') nextIndex = 0;
-      else if (event.key === 'End') nextIndex = selectors.length - 1;
-      else if (event.key === 'Delete') {
-        event.preventDefault();
-        event.stopPropagation();
-        closeTab(selector.dataset.docId);
-        return;
-      } else return;
-      event.preventDefault();
-      event.stopPropagation();
-      const id = selectors[nextIndex].dataset.docId;
-      switchToDoc(id);
-      document.getElementById(`doc-tab-${encodeURIComponent(id)}`)?.focus({ preventScroll: true });
-    };
-    tabBar.addEventListener('keydown', tabBar._keyboardHandler);
 
-    // Wire scroll arrows
-    const scrollArea = document.getElementById('doc-tab-scroll');
-    const leftBtn = document.getElementById('doc-tab-left');
-    const rightBtn = document.getElementById('doc-tab-right');
-    if (scrollArea && leftBtn && rightBtn) {
-      leftBtn.addEventListener('click', () => scrollArea.scrollBy({ left: -120, behavior: 'smooth' }));
-      rightBtn.addEventListener('click', () => scrollArea.scrollBy({ left: 120, behavior: 'smooth' }));
-      updateArrowVisibility(scrollArea, leftBtn, rightBtn);
-      scrollArea.addEventListener('scroll', () => updateArrowVisibility(scrollArea, leftBtn, rightBtn));
-    }
 
-    // Mobile: the tab bar doubles as a drag zone — swipe down to dismiss.
-    if (!tabBar._swipeWired) { tabBar._swipeWired = true; _wireSwipeDismiss(tabBar); }
 
-    // Bring the clicked tab fully into view — the scroll area has an 18px
-    // fade-mask at each edge plus the < / > arrow buttons; without this, the
-    // rightmost tab stays partially under the fade so the user can't see its
-    // close button or version chip.
-    const _scrollTabIntoView = (tab, behavior = 'smooth') => {
-      const sa = document.getElementById('doc-tab-scroll');
-      if (!sa || !tab) return;
-      const EDGE_PAD = 30;
-      const tabLeft = tab.offsetLeft;
-      const tabRight = tabLeft + tab.offsetWidth;
-      const visLeft = sa.scrollLeft + EDGE_PAD;
-      const visRight = sa.scrollLeft + sa.clientWidth - EDGE_PAD;
-      if (tabRight > visRight) {
-        sa.scrollTo({ left: sa.scrollLeft + tabRight - visRight, behavior });
-      } else if (tabLeft < visLeft) {
-        sa.scrollTo({ left: Math.max(0, sa.scrollLeft + tabLeft - visLeft), behavior });
-      }
-    };
-    tabBar._resizeObserver?.disconnect();
-    if (typeof ResizeObserver !== 'undefined' && scrollArea) {
-      tabBar._resizeObserver = new ResizeObserver(() => {
-        if (!scrollArea.isConnected) return;
-        updateArrowVisibility(scrollArea, leftBtn, rightBtn);
-        _scrollTabIntoView(tabBar.querySelector('.doc-tab.active'), 'auto');
-      });
-      tabBar._resizeObserver.observe(scrollArea);
-    }
-    // Wire tab clicks (delayed to allow dblclick on title)
-    let _tabClickTimer = null;
-    tabBar.querySelectorAll('.doc-tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
-        // Check if click was on or inside the close/play button
-        if (e.target.closest('.doc-tab-close') || e.target.closest('.doc-tab-play') || e.target.closest('.doc-tab-menu-btn') || e.target.closest('.doc-tab-version')) return;
-        if (_isEditingTabTitle) return;
-        // If clicking the title span, delay to allow dblclick
-        if (e.detail > 0 && e.target.classList.contains('doc-tab-title')) {
-          clearTimeout(_tabClickTimer);
-          _tabClickTimer = setTimeout(() => { switchToDoc(tab.dataset.docId); _scrollTabIntoView(tab); }, 250);
-        } else {
-          switchToDoc(tab.dataset.docId);
-          _scrollTabIntoView(tab);
-        }
-      });
-      tab.addEventListener('dblclick', (e) => {
-        clearTimeout(_tabClickTimer);
-        const titleSpan = tab.querySelector('.doc-tab-title');
-        if (!titleSpan) return;
-        e.stopPropagation();
-        const docId = tab.dataset.docId;
-        const doc = docs.get(docId);
-        if (!doc) return;
-        startTitleEdit(titleSpan, docId, doc);
-      });
-    });
 
-    // Wire close buttons — use delegation from tab bar for reliability
-    // Remove previous handler to prevent accumulation across renderTabs calls
-    if (tabBar._closeHandler) tabBar.removeEventListener('click', tabBar._closeHandler);
-    tabBar._closeHandler = (e) => {
-      const verBtn = e.target.closest('.doc-tab-version');
-      if (verBtn) {
-        e.stopPropagation();
-        const docId = verBtn.dataset.docId;
-        if (docId) { if (docId !== activeDocId) switchToDoc(docId); toggleVersionHistory({ focus: e.detail === 0 }); }
-        return;
-      }
-      const playBtn = e.target.closest('.doc-tab-play');
-      if (playBtn) {
-        e.stopPropagation();
-        const docId = playBtn.dataset.docId;
-        if (docId) {
-          if (docId !== activeDocId) switchToDoc(docId);
-          toggleHtmlPreview();
-        }
-        return;
-      }
-      const menuBtnEl = e.target.closest('.doc-tab-menu-btn');
-      if (menuBtnEl) {
-        e.stopPropagation();
-        const docId = menuBtnEl.dataset.docId;
-        if (docId) showDocTabMenu(menuBtnEl, docId);
-        return;
-      }
-      const closeBtn = e.target.closest('.doc-tab-close');
-      if (!closeBtn) return;
-      e.stopPropagation();
-      const docId = closeBtn.dataset.docId;
-      if (docId) closeTab(docId);
-    };
-    tabBar.addEventListener('click', tabBar._closeHandler);
 
-    // Wire drag-to-reorder
-    initTabDragReorder(tabBar);
 
-    // Wire new doc button
-    const newBtn = document.getElementById('doc-tab-new-btn');
-    if (newBtn) {
-      newBtn.addEventListener('click', async () => {
-        let sessionId = docs.get(activeDocId)?.sessionId
-          || _lastSessionId
-          || (sessionModule && sessionModule.getCurrentSessionId());
-        if (!sessionId) {
-          try {
-            sessionId = await _autoCreateSession();
-          } catch (e) {
-            console.error('Failed to auto-create session for document:', e);
-            return;
-          }
-        }
-        createDocument(sessionId);
-      });
-    }
-
-    // Scroll active tab into view after DOM is laid out
-    requestAnimationFrame(() => {
-      const at = document.getElementById('doc-tab-scroll')?.querySelector('.doc-tab.active');
-      _scrollTabIntoView(at, 'auto');
-    });
-  }
-
-function startTitleEdit(titleSpan, docId, doc) {
-    if (_isEditingTabTitle) return;
-    _isEditingTabTitle = true;
-
-    const fullTitle = doc.title || '';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'doc-tab-title-input';
-    input.value = fullTitle;
-
-    const selector = titleSpan.closest('.doc-tab-select');
-    if (selector) {
-      selector.hidden = true;
-      selector.after(input);
-    } else titleSpan.replaceWith(input);
-    input.focus();
-    input.select();
-
-    function commitEdit() {
-      if (!_isEditingTabTitle) return;
-      const newTitle = input.value.trim();
-      _isEditingTabTitle = false;
-      doc.title = newTitle;
-      if (docId === activeDocId) {
-        const titleInput = document.getElementById('doc-title-input');
-        if (titleInput) titleInput.value = newTitle;
-      }
-      updateTitle(docId, newTitle);
-      renderTabs();
-    }
-
-    function cancelEdit() {
-      _isEditingTabTitle = false;
-      renderTabs();
-    }
-
-    input.addEventListener('blur', commitEdit);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        input.removeEventListener('blur', commitEdit);
-        commitEdit();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        input.removeEventListener('blur', commitEdit);
-        cancelEdit();
-      }
-    });
-  }
-
-function initTabDragReorder(tabBar) {
-    let dragId = null;
-
-    tabBar.querySelectorAll('.doc-tab').forEach(tab => {
-      tab.addEventListener('dragstart', (e) => {
-        dragId = tab.dataset.docId;
-        tab.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-      });
-
-      tab.addEventListener('dragend', () => {
-        tab.classList.remove('dragging');
-        dragId = null;
-        tabBar.querySelectorAll('.doc-tab').forEach(t => t.classList.remove('drag-over'));
-      });
-
-      tab.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        if (tab.dataset.docId !== dragId) {
-          tab.classList.add('drag-over');
-        }
-      });
-
-      tab.addEventListener('dragleave', () => {
-        tab.classList.remove('drag-over');
-      });
-
-      tab.addEventListener('drop', (e) => {
-        e.preventDefault();
-        tab.classList.remove('drag-over');
-        const targetId = tab.dataset.docId;
-        if (!dragId || dragId === targetId) return;
-
-        // Reorder the docs Map: move dragId before targetId
-        const entries = [...docs.entries()];
-        const fromIdx = entries.findIndex(([k]) => k === dragId);
-        const toIdx = entries.findIndex(([k]) => k === targetId);
-        if (fromIdx === -1 || toIdx === -1) return;
-
-        const [moved] = entries.splice(fromIdx, 1);
-        entries.splice(toIdx, 0, moved);
-
-        clearDocuments();
-        for (const [k, v] of entries) registerDocument(v);
-
-        renderTabs();
-      });
-    });
-  }
-
-function showEmptyState() {
-    setActiveDocId(null);
-    _setDocumentHistoryControlState(false, false);
-    const textarea = document.getElementById('doc-editor-textarea');
-    const langSelect = document.getElementById('doc-language-select');
-    const badge = document.getElementById('doc-version-badge');
-
-    if (textarea) textarea.value = '';
-    _syncEditorPlaceholder();
-    if (textarea) textarea.disabled = false;
-    if (langSelect) langSelect.value = '';
-    if (badge) badge.textContent = '';
-    _hideLoadingOverlay();
-    syncHighlighting();
-    renderTabs();
-  }
 
 let _loadingSpinner = null;
 
@@ -1479,127 +1136,17 @@ function _activeDocLanguage() {
     return ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
   }
 
-function _scheduleMarkdownImageAutosave(ta) {
-    updateLineNumbers(ta.value);
-    const codeEl = document.getElementById('doc-editor-code');
-    if (codeEl && !codeEl.dataset.hasDiff) {
-      codeEl.textContent = ta.value + '\n';
-      codeEl.style.minHeight = ta.scrollHeight + 'px';
-    }
-    clearTimeout(_hlDebounce);
-    _hlDebounce = setTimeout(syncHighlighting, 80);
-    clearTimeout(_autoTitleDebounce);
-    _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
-    _scheduleAutoSave(activeDocId, 800);
-  }
 
-function _insertMarkdownImages(uploadedFiles) {
-    const ta = document.getElementById('doc-editor-textarea');
-    if (!ta) return;
-    const files = Array.isArray(uploadedFiles) ? uploadedFiles : [];
-    if (!files.length) return;
 
-    const start = ta.selectionStart || 0;
-    const end = ta.selectionEnd || start;
-    const before = ta.value.slice(0, start);
-    const after = ta.value.slice(end);
-    const lines = files.map(file => {
-      const id = encodeURIComponent(file.id || file.file_id || '');
-      const alt = _markdownImageAlt(file.name || file.filename);
-      return id ? `![${alt}](/api/upload/${id})` : '';
-    }).filter(Boolean);
-    if (!lines.length) return;
 
-    const prefix = before && !before.endsWith('\n') ? '\n' : '';
-    const suffix = after && !after.startsWith('\n') ? '\n' : '';
-    const insert = `${prefix}${lines.join('\n\n')}${suffix}`;
-    _replaceRange(ta, start, end, insert);
-    const caret = start + insert.length;
-    ta.selectionStart = caret;
-    ta.selectionEnd = caret;
-    ta.focus();
-    _scheduleMarkdownImageAutosave(ta);
-    _refreshMarkdownPreviewIfVisible(activeDocId, ta.value);
-  }
 
-async function _uploadMarkdownImages(files) {
-    const images = Array.from(files || []).filter(_isMarkdownImageFile);
-    if (!images.length) {
-      if (uiModule) uiModule.showError('Choose an image file');
-      return;
-    }
-    const language = _activeDocLanguage();
-    const emailRichBody = language === 'email' && _emailRichbodyActive();
-    if (language !== 'markdown' && !_isRichTextLang(language) && !emailRichBody) {
-      if (uiModule) uiModule.showError('Switch the document to Markdown or Rich Text before inserting images');
-      return;
-    }
 
-    const fd = new FormData();
-    images.forEach(file => fd.append('files', file));
-    try {
-      const res = await fetch(`${API_BASE}/api/upload`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: fd,
-      });
-      let data = null;
-      try { data = await res.json(); } catch (_) {}
-      if (!res.ok) throw new Error((data && (data.error || data.detail)) || `HTTP ${res.status}`);
-      const uploaded = Array.isArray(data?.files) ? data.files : [];
-      if (!uploaded.length) throw new Error('No uploaded files returned');
-      if (_isRichTextLang(language) || emailRichBody) _insertRichTextImages(uploaded);
-      else _insertMarkdownImages(uploaded);
-      if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
-    } catch (err) {
-      console.error('Failed to insert markdown image:', err);
-      if (uiModule) uiModule.showError('Failed to insert image');
-    }
-  }
 
-async function _handleMarkdownImageUpload(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    await _uploadMarkdownImages(files);
-  }
 
-function _visibleDocIdsForCurrentSession() {
-    const curSession = sessionModule?.getCurrentSessionId() || '';
-    const ids = [];
-    for (const [id, doc] of docs) {
-      if (doc.sessionId && curSession && doc.sessionId !== curSession) continue;
-      ids.push(id);
-    }
-    return ids;
-  }
 
-function _closeWithoutDeleting(deleteDoc = false) {
-    if (!activeDocId) return;
-    const closingId = activeDocId;
-    _cancelAutoSave(closingId);
-    _cancelPdfPaneSave(closingId);
-    if (deleteDoc) {
-      markDeleted(closingId);
-      _cleanupPdfDocState(closingId);
-      fetch(`${API_BASE}/api/document/${closingId}`, { method: 'DELETE' }).catch(() => {});
-    }
-    // Save the current state to the doc first so it persists in the library
-    saveCurrentToMap();
-    if (!deleteDoc) {
-      const doc = docs.get(closingId);
-      if (doc) {
-        _saveClosingDraft(closingId, doc);
-      }
-    }
-    removeDocument(closingId);
-    const remaining = Array.from(docs.keys());
-    if (remaining.length > 0) {
-      switchToDoc(remaining[0]);
-    } else {
-      closePanel();
-    }
-    renderTabs();
-  }
+
+
+
 
 function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } = {}) {
     if (!docs.has(docId)) return;
@@ -1790,94 +1337,15 @@ function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } =
 
   }
 
-function _detachDocFromSession(docId, { toast = false } = {}) {
-    const doc = docs.get(docId);
-    _cancelAutoSave(docId);
-    _cancelPdfPaneSave(docId);
-    _syncPdfPaneToDoc(docId, { markDirty: false });
-    const hasContent = doc && doc.content && doc.content.trim().length > 0;
-    if (hasContent) {
-      _saveClosingDraft(docId, doc);
-      if (toast && uiModule) uiModule.showToast('Document closed');
-    } else {
-      markDeleted(docId);
-      fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
-    }
-    _forgetActiveDoc(doc?.sessionId || _lastSessionId, docId);
-    removeDocument(docId);
-    _syncDocIndicator();
-  }
 
-async function closeTab(docId) {
-    // Save current editor content to map so the check below uses fresh data
-    saveCurrentToMap();
-    // Closing the tab is a quiet detach action. The document-close
-    // notification is reserved for closing the document surface itself;
-    // showing it here makes a tab close look like a full document close.
-    _detachDocFromSession(docId);
-    // Find next tab in the current session
-    const curSession = sessionModule?.getCurrentSessionId() || '';
-    let nextId = null;
-    for (const [id, d] of docs) {
-      if (!d.sessionId || !curSession || d.sessionId === curSession) {
-        nextId = id;
-        break;
-      }
-    }
-    if (!nextId) {
-      setActiveDocId(null);
-      closePanel();
-      (document.getElementById('message') || document.getElementById('doc-indicator-btn'))?.focus();
-      return;
-    }
-    if (activeDocId === docId) {
-      switchToDoc(nextId);
-    } else {
-      renderTabs();
-    }
-  }
 
-let _autoCreating = false;
 
-let _creatingDoc = false;
 
-async function _autoCreateFromInput(content) {
-    if (_autoCreating) return;
-    _autoCreating = true;
-    const generation = bumpNavigationGeneration();
-    try {
-      let sessionId = _lastSessionId
-        || (sessionModule && sessionModule.getCurrentSessionId());
-      if (!sessionId) {
-        sessionId = await _autoCreateSession();
-      }
-      const res = await fetch(`${API_BASE}/api/document`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ session_id: sessionId, title: '', content, language: 'richtext' }),
-      });
-      if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
-      const doc = await res.json();
-      if (!doc || !doc.id) throw new Error('Document create failed: missing id');
-      if (generation !== _documentNavigationGeneration) return;
-      content = document.getElementById('doc-editor-textarea')?.value ?? content;
-      addDocToTabs(doc, sessionId);
-      // Set the content into the map so switchToDoc preserves it
-      const d = docs.get(doc.id);
-      if (d) d.content = content;
-      switchToDoc(doc.id);
-      // Trigger auto-detect and auto-title
-      setTimeout(attemptAutoDetect, 100);
-      setTimeout(() => autoTitleFromContent(content, doc.id), 300);
-      // Auto-save
-      _scheduleAutoSave(doc.id, 2000);
-    } catch (e) {
-      console.error('Failed to auto-create document from input:', e);
-    } finally {
-      _autoCreating = false;
-    }
-  }
+
+
+
+
+
 
 function saveCurrentToMap() {
     if (_historyOwnsView(_versionHistory) && _versionHistory.previewing) return;
@@ -2012,17 +1480,9 @@ export function openPanel(options = {}) {
       divider._disposeResize?.();
       pane.querySelector('#doc-md-toolbar')?._resizeObserver?.disconnect();
       pane.querySelector('#doc-tab-bar')?._resizeObserver?.disconnect();
-      if (pane.contains(_lineNumberObservedTextarea)) {
-        _lineNumberResizeObserver?.disconnect();
-        _lineNumberObservedTextarea = null;
-      }
-      _selResizeObserver?.disconnect();
-      _selResizeObserver = null;
-      if (_lineNumberResizeRaf) cancelAnimationFrame(_lineNumberResizeRaf);
-      _lineNumberResizeRaf = null;
-      clearTimeout(_hlDebounce);
-      clearTimeout(_autoDetectDebounce);
-      clearTimeout(_autoTitleDebounce);
+      globalThis._disposeLineNumberResizeObserver?.(pane);
+      globalThis._disposeSelectionResizeObserver?.();
+      globalThis._disposeLineNumberResizeObserver?.(pane);
       clearTimeout(_emailLocalDraftDebounce);
     };
     if (options.restore) pane.classList.add('doc-pane-restoring');
@@ -3359,12 +2819,7 @@ export function openPanel(options = {}) {
         }
         updateLineNumbers(ta.value);
         // Debounce expensive operations (syntax highlighting, auto-detect, auto-save)
-        clearTimeout(_hlDebounce);
-        _hlDebounce = setTimeout(syncHighlighting, 80);
-        clearTimeout(_autoDetectDebounce);
-        _autoDetectDebounce = setTimeout(attemptAutoDetect, AUTO_DETECT_DELAY);
-        clearTimeout(_autoTitleDebounce);
-        _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
+        globalThis._scheduleSourceEditorInput?.(ta, autoTitleFromContent);
         _scheduleAutoSave(activeDocId, 2000);
         const doc = activeDocId && docs.get(activeDocId);
         if (doc && doc.language === 'email') _persistEmailLocalDraftSoon();
@@ -3562,599 +3017,35 @@ export function openPanel(options = {}) {
     }
   }
 
-const _DOCUMENT_TOOLBAR_GROUPS = [
-    {
-      name: 'display-size',
-      selectors: ['#doc-fontsize-btn'],
-    },
-    {
-      name: 'type',
-      selectors: [
-        '#doc-email-ai-reply-btn',
-        '#md-toolbar-sep-after-ai-reply',
-        '#doc-ai-writing-btn',
-        '[data-dd="heading"]',
-        '[data-dd="font"]',
-        '#md-toolbar-sep-after-heading',
-        '[data-dd="textsize"]',
-      ],
-    },
-    {
-      name: 'inline-basic',
-      selectors: [
-        '[data-md="bold"]',
-        '[data-md="italic"]',
-        '[data-md="underline"]',
-        '[data-md="strike"]',
-      ],
-    },
-    {
-      name: 'inline-color',
-      selectors: [
-        '[data-dd="color"]',
-        '[data-dd="highlight"]',
-        '#md-toolbar-sep-after-highlight',
-        '[data-md="removeformat"]',
-        '#md-toolbar-attach-btn',
-        '[data-md="link"]',
-        '#md-toolbar-inline-image-btn',
-      ],
-    },
-    {
-      name: 'alignment',
-      selectors: ['[data-dd="align"]'],
-    },
-    {
-      name: 'spacing',
-      selectors: ['[data-dd="spacing"]'],
-    },
-    {
-      name: 'paragraph',
-      selectors: [
-        '[data-dd="list"]',
-        '[data-dd="separator"]',
-        '[data-md="outdent"]',
-        '[data-md="indent"]',
-        '[data-md="quote"]',
-        '[data-dd="code"]',
-      ],
-    },
-    {
-      name: 'insert',
-      selectors: [
-        '[data-dd="image"]',
-        '[data-dd="table"]',
-        '[data-md="pagebreak"]',
-      ],
-    },
-    {
-      name: 'inline-rich',
-      selectors: ['[data-md="superscript"]', '[data-md="subscript"]'],
-    },
-    {
-      name: 'document',
-      selectors: [
-        '#doc-find-toolbar-btn',
-        '#doc-outline-toolbar-btn',
-        '#md-toolbar-emoji-slot',
-      ],
-    },
-    {
-      name: 'view',
-      selectors: ['#doc-diff-toggle-btn'],
-    },
-  ];
 
-const _AI_WRITING_ACTIONS = Object.freeze({
-    proofread: 'Fix spelling and grammar in the open document. Apply corrections directly using targeted edits. Preserve the meaning, voice, and formatting; do not rewrite for style. Keep already-correct sentences unchanged. Use each affected paragraph as an exact unique FIND anchor and change only the spelling or grammar errors in its replacement. Check every paragraph, including repeated errors. Do not just list corrections in chat.',
-    improve: 'Review the open document and create inline suggestions for clarity, wording, structure, and readability. Do not apply changes.',
-    concise: 'Make the open document more concise by proposing one concrete, shorter replacement per affected paragraph. Each REPLACE must actually shorten the prose, not merely correct spelling or grammar. Each FIND must quote the entire original paragraph exactly, including any HTML tags. Keep distinct paragraphs separate and preserve their facts and meaning. Create inline suggestions only; do not apply changes.',
-    style: 'Rewrite the open document to match my configured Writing Style setting. Preserve the meaning and create inline suggestions only; do not apply changes.',
-    sources: 'Check factual claims in the open document using web research. For each claim, verify it, suggest a source link/citation when valid, or clearly mark it as unverified when you cannot find reliable evidence. Create inline suggestions only; do not apply changes.',
-  });
 
-const _aiWritingButtonMarkup = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
 
-function _aiWritingSelectionText() {
-    const rich = _emailRichbodyActive();
-    const browserSelection = window.getSelection?.();
-    if (rich && browserSelection?.rangeCount && rich.contains(browserSelection.anchorNode)) {
-      const text = browserSelection.toString().trim();
-      if (text) return text;
-    }
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
-      const text = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd).trim();
-      if (text) return text;
-    }
-    return '';
-  }
 
-function _setAiWritingLoading(loading) {
-    const button = document.getElementById('doc-ai-writing-btn');
-    if (!button) return;
-    if (button._writingSpinner) {
-      button._writingSpinner.destroy?.();
-      button._writingSpinner = null;
-    }
-    button.disabled = !!loading;
-    button.classList.toggle('is-loading', !!loading);
-    button.innerHTML = _aiWritingButtonMarkup;
-    if (!loading) return;
-    const whirlpool = spinnerModule.createWhirlpool(13);
-    whirlpool.element.classList.add('doc-ai-writing-whirlpool');
-    whirlpool.element.style.cssText = 'width:13px;height:13px;margin:0;display:inline-flex;align-items:center;justify-content:center;';
-    button.replaceChildren(whirlpool.element, button.lastElementChild);
-    button._writingSpinner = whirlpool;
-  }
 
-function _closeAiWritingMenu() {
-    const menu = document.getElementById('doc-ai-writing-menu');
-    if (menu) {
-      menu._cleanup?.();
-      menu.remove();
-    }
-    document.getElementById('doc-ai-writing-btn')?.setAttribute('aria-expanded', 'false');
-  }
 
-function _showAiWritingMenu(button) {
-    _closeAiWritingMenu();
-    // Capture before the menu can take focus or alter the browser selection.
-    // This matters for both textarea ranges and contenteditable selections.
-    const selectedTextAtOpen = _aiWritingSelectionText();
-    const menu = document.createElement('div');
-    menu.id = 'doc-ai-writing-menu';
-    menu.className = 'doc-overflow-menu doc-ai-writing-menu open';
-    menu.setAttribute('role', 'menu');
-    menu.innerHTML = `
-      <div class="doc-ai-writing-menu-title"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><span>Writing tools</span></div>
-      <button type="button" class="doc-overflow-item" data-ai-writing-action="proofread" role="menuitem"><span class="doc-ai-writing-item-icon">Aa</span><span>Spelling &amp; grammar</span></button>
-      <button type="button" class="doc-overflow-item" data-ai-writing-action="improve" role="menuitem"><span class="doc-ai-writing-item-icon">✦</span><span>Suggest improvements</span></button>
-      <button type="button" class="doc-overflow-item" data-ai-writing-action="concise" role="menuitem"><span class="doc-ai-writing-item-icon">≡</span><span>Make more concise</span></button>
-      <button type="button" class="doc-overflow-item" data-ai-writing-action="style" role="menuitem"><span class="doc-ai-writing-item-icon">✎</span><span>Match my writing style</span></button>
-      <button type="button" class="doc-overflow-item" data-ai-writing-action="sources" role="menuitem"><span class="doc-ai-writing-item-icon">↗</span><span>Check sources</span></button>`;
-    document.body.appendChild(menu);
-    const rect = button.getBoundingClientRect();
-    const menuWidth = menu.offsetWidth || 210;
-    const menuHeight = menu.offsetHeight || 132;
-    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.left))}px`;
-    menu.style.top = `${Math.min(window.innerHeight - menuHeight - 8, rect.bottom + 5)}px`;
-    button.setAttribute('aria-expanded', 'true');
 
-    const dismiss = (event) => {
-      if (event && (menu.contains(event.target) || event.target === button)) return;
-      _closeAiWritingMenu();
-      document.removeEventListener('pointerdown', dismiss, true);
-      document.removeEventListener('keydown', onKeydown, true);
-    };
-    const onKeydown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        _closeAiWritingMenu();
-        document.removeEventListener('pointerdown', dismiss, true);
-        document.removeEventListener('keydown', onKeydown, true);
-        button.focus({ preventScroll: true });
-      }
-    };
-    menu._cleanup = () => {
-      document.removeEventListener('pointerdown', dismiss, true);
-      document.removeEventListener('keydown', onKeydown, true);
-    };
-    menu.querySelectorAll('[data-ai-writing-action]').forEach(item => {
-      item.addEventListener('mousedown', event => event.preventDefault());
-      item.addEventListener('click', async () => {
-        const action = item.dataset.aiWritingAction;
-        _closeAiWritingMenu();
-        const prompt = _AI_WRITING_ACTIONS[action];
-        if (!prompt) return;
-        let configuredStyle = '';
-        if (action === 'style') {
-          const activeDocument = activeDocId ? docs.get(activeDocId) : null;
-          const isEmailDocument = activeDocument?.language === 'email';
-          try {
-            const accountId = String(window.__odysseusActiveEmailAccount || '').trim();
-            const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
-            const generalResponse = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-            const generalData = await generalResponse.json().catch(() => ({}));
-            const generalStyle = String(generalData.document_writing_style || '').trim();
-            let emailStyle = '';
-            if (isEmailDocument) {
-              const emailResponse = await fetch(`/api/email/style${suffix}`, { credentials: 'same-origin' });
-              const emailData = await emailResponse.json().catch(() => ({}));
-              if (emailResponse.ok) emailStyle = String(emailData.style || '').trim();
-            }
-            configuredStyle = isEmailDocument
-              ? [
-                  generalStyle && `GENERAL WRITING STYLE:\n${generalStyle}`,
-                  emailStyle && `EMAIL CONVENTIONS:\n${emailStyle}`,
-                ].filter(Boolean).join('\n\n')
-              : generalStyle;
-            if (!generalResponse.ok || !configuredStyle) {
-              uiModule?.showToast?.('You haven\'t set up a writing style yet.', {
-                duration: 7000,
-                action: 'Set up in Settings',
-                actionHint: isEmailDocument ? 'Email → Writing Style' : 'AI Defaults → Writing Style',
-                onAction: () => window.adminModule?.open?.(isEmailDocument ? 'email' : 'ai'),
-              });
-              return;
-            }
-          } catch (_) {
-            uiModule?.showToast?.('You haven\'t set up a writing style yet.', {
-              duration: 7000,
-              action: 'Set up in Settings',
-              actionHint: isEmailDocument ? 'Email → Writing Style' : 'AI Defaults → Writing Style',
-              onAction: () => window.adminModule?.open?.(isEmailDocument ? 'email' : 'ai'),
-            });
-            return;
-          }
-        }
-        const selectedText = selectedTextAtOpen || _aiWritingSelectionText();
-        const styleContext = configuredStyle
-          ? `\n\nUse this configured writing style as the source of truth:\n---\n${configuredStyle.slice(0, 8000)}\n---`
-          : '';
-        const scopedPrompt = selectedText
-          ? `${prompt}${styleContext}\n\nImportant scope: work only on this selected passage and do not change or suggest changes elsewhere in the document. Use the exact matching text from the active document as the FIND target even if the editor stores formatting markup around it. Selected passage:\n---\n${selectedText.slice(0, 12000)}\n---`
-          : `${prompt}${styleContext}\n\nThere is no text selection, so work on the whole open document.`;
-        // Desktop reveals the chat beside the document before dispatching the
-        // writing request. On mobile the document is already a fixed sheet;
-        // toggling its fullscreen class here reflows the sheet as the prompt is
-        // sent and makes the whole screen visibly bounce.
-        if (window.innerWidth > 768 && document.querySelector('.doc-editor-pane.doc-fullscreen')) {
-          toggleFullscreen();
-        }
-        try { await saveDocument({ silent: true }); } catch (_) {}
-        const input = document.getElementById('message');
-        const send = document.querySelector('.send-btn');
-        if (!input || !send || !window.chatModule?.handleChatSubmit) {
-          uiModule?.showError?.('Chat is not ready for writing tools.');
-          return;
-        }
-        input.value = scopedPrompt;
-        window.chatModule.setHideUserBubble?.();
-        _setAiWritingLoading(true);
-        send.click();
-        const streamSessionId = sessionModule.getCurrentSessionId?.();
-        const loadingStartedAt = Date.now();
-        const waitForWritingStream = () => {
-          const active = !!window.chatModule?.hasActiveStream?.(streamSessionId);
-          const tooLong = Date.now() - loadingStartedAt > 10 * 60 * 1000;
-          if ((!active && Date.now() - loadingStartedAt > 500) || tooLong) _setAiWritingLoading(false);
-          else setTimeout(waitForWritingStream, 250);
-        };
-        setTimeout(waitForWritingStream, 250);
-      });
-    });
-    setTimeout(() => {
-      document.addEventListener('pointerdown', dismiss, true);
-      document.addEventListener('keydown', onKeydown, true);
-    }, 0);
-  }
 
-function _orderDocumentToolbar(itemsWrap) {
-    if (!itemsWrap) return;
-    const pdfItems = Array.from(itemsWrap.querySelectorAll(':scope > .md-toolbar-pdf-only'));
-    itemsWrap.querySelectorAll(':scope > .md-toolbar-sep:not(.md-toolbar-pdf-only):not(.md-toolbar-manual-sep)').forEach(separator => separator.remove());
 
-    _DOCUMENT_TOOLBAR_GROUPS.forEach((group, index) => {
-      group.selectors.forEach(selector => {
-        const item = itemsWrap.querySelector(`:scope > ${selector}`);
-        if (!item) return;
-        item.dataset.toolbarGroup = group.name;
-        itemsWrap.appendChild(item);
-      });
-      if (index === _DOCUMENT_TOOLBAR_GROUPS.length - 1) return;
-      const separator = document.createElement('span');
-      separator.className = 'md-toolbar-sep md-toolbar-edit-only';
-      separator.dataset.toolbarSeparator = `${group.name}-${_DOCUMENT_TOOLBAR_GROUPS[index + 1].name}`;
-      separator.setAttribute('aria-hidden', 'true');
-      itemsWrap.appendChild(separator);
-    });
 
-    pdfItems.forEach(item => itemsWrap.appendChild(item));
-  }
 
-function _syncDocumentToolbarSeparators(itemsWrap) {
-    if (!itemsWrap) return;
-    const isVisible = (el) => el && !el.hidden && el.style.display !== 'none';
-    itemsWrap.querySelectorAll(':scope > .md-toolbar-sep:not(.md-toolbar-pdf-only)').forEach((separator) => {
-      if (separator.classList.contains('md-toolbar-manual-sep')) {
-        let following = separator.nextElementSibling;
-        while (following && !isVisible(following)) following = following.nextElementSibling;
-        separator.style.display = isVisible(separator.previousElementSibling) && following ? '' : 'none';
-        return;
-      }
-      separator.style.display = isVisible(separator.previousElementSibling) &&
-        isVisible(separator.nextElementSibling) ? '' : 'none';
-    });
-  }
 
-function initMdToolbar() {
-    const toolbar = document.getElementById('doc-md-toolbar');
-    if (!toolbar) return;
 
-    let _mdDdActivationSerial = 0;
 
-    const itemsWrap = document.getElementById('md-toolbar-items');
-    const overflowWrapper = document.getElementById('md-toolbar-overflow-wrapper');
-    const overflowToggle = document.getElementById('md-toolbar-overflow-toggle');
-    const overflowMenu = document.getElementById('md-toolbar-overflow-menu');
-    const undoBtn = document.getElementById('md-toolbar-undo');
 
-    _orderDocumentToolbar(itemsWrap);
 
-    toolbar.querySelectorAll('.md-dd-toggle').forEach(button => {
-      button.setAttribute('aria-haspopup', 'menu');
-      button.setAttribute('aria-expanded', 'false');
-    });
 
-    toolbar.addEventListener('pointerdown', (e) => {
-      const dd = e.target.closest('.md-dd-toggle');
-      if (dd) dd._mdDdActivationToken = ++_mdDdActivationSerial;
-      _saveFormatSelection(e);
-    });
 
-    // Click handler for format buttons + the grouped dropdown toggles. The menu
-    // is appended to <body> (not nested in the toolbar) so the draggable panel's
-    // CSS transform doesn't reparent its fixed positioning or clip it.
-    // Keep the editor's focus + selection when a format button / dropdown
-    // toggle is pressed. Without this the button steals focus on press, which
-    // collapses the textarea selection (so B/I/S apply to nothing) and, on
-    // mobile, drops the keyboard — whose viewport resize then instantly closes
-    // any dropdown that just opened. Preventing the default mousedown keeps the
-    // textarea focused, so formatting hits the live selection and menus stay up.
-    toolbar.addEventListener('mousedown', (e) => {
-      if (_saveFormatSelection(e)) e.preventDefault();
-    });
 
-    toolbar.addEventListener('click', (e) => {
-      const aiWriting = e.target.closest('.doc-ai-writing-btn');
-      if (aiWriting) { e.preventDefault(); _showAiWritingMenu(aiWriting); return; }
-      const dd = e.target.closest('.md-dd-toggle');
-      if (dd) {
-        e.preventDefault();
-        // The contextual selection toolbar is useful until the main toolbar
-        // is used. Hide it here so the dropdown opened by the user's latest
-        // click cannot render underneath that older floating toolbar.
-        _hideRichSelectionToolbar();
-        _showMdDropdown(dd, null, dd._mdDdActivationToken);
-        return;
-      }
-      const btn = e.target.closest('[data-md]');
-      if (!btn) return;
-      e.preventDefault();
-      applyMdFormat(btn.dataset.md);
-    });
-    toolbar.addEventListener('keydown', (e) => {
-      const dd = e.target.closest?.('.md-dd-toggle');
-      if (!dd) return;
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== ' ') return;
-      e.preventDefault();
-      e.stopPropagation();
-      _showMdDropdown(dd, e.key === 'ArrowUp' ? -1 : 0, ++_mdDdActivationSerial);
-    });
 
-    // Undo button
-    if (undoBtn) {
-      undoBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        const ta = document.getElementById('doc-editor-textarea');
-        if (ta) { ta.focus(); document.execCommand('undo'); }
-      });
-    }
 
-    // Overflow collapse logic
-    let _mdMenuOpen = false;
-    // Horizontal-scroll affordance: the toolbar scrolls its icons; edge arrows
-    // appear when there's more off either side and smoothly scroll to that edge.
-    const scrollLeftBtn = document.getElementById('md-scroll-left');
-    const scrollRightBtn = document.getElementById('md-scroll-right');
-    function updateScrollArrows() {
-      if (!itemsWrap || !scrollLeftBtn || !scrollRightBtn) return;
-      const maxScroll = itemsWrap.scrollWidth - itemsWrap.clientWidth;
-      const overflowing = maxScroll > 2;
-      const showLeft = overflowing && itemsWrap.scrollLeft > 1;
-      const showRight = overflowing && itemsWrap.scrollLeft < maxScroll - 1;
-      toolbar.classList.toggle('has-left-scroll-arrow', showLeft);
-      toolbar.classList.toggle('has-right-scroll-arrow', showRight);
-      scrollLeftBtn.style.display = showLeft ? 'flex' : 'none';
-      scrollRightBtn.style.display = showRight ? 'flex' : 'none';
-    }
-    scrollLeftBtn?.addEventListener('click', () => itemsWrap.scrollTo({ left: 0, behavior: 'smooth' }));
-    scrollRightBtn?.addEventListener('click', () => itemsWrap.scrollTo({ left: itemsWrap.scrollWidth, behavior: 'smooth' }));
-    itemsWrap?.addEventListener('scroll', updateScrollArrows, { passive: true });
-    if (window.ResizeObserver && itemsWrap) {
-      toolbar._resizeObserver = new ResizeObserver(updateScrollArrows);
-      toolbar._resizeObserver.observe(itemsWrap);
-    }
 
-    function syncMdOverflow() {
-      if (overflowWrapper) overflowWrapper.style.display = 'none';
-      updateScrollArrows();
-    }
 
-    function closeMdMenu() {
-      _mdMenuOpen = false;
-      if (overflowMenu) overflowMenu.classList.remove('open');
-    }
 
-    if (overflowToggle) {
-      overflowToggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _mdMenuOpen = !_mdMenuOpen;
-        if (_mdMenuOpen) {
-          document.body.appendChild(overflowMenu);
-          const rect = overflowToggle.getBoundingClientRect();
-          overflowMenu.style.position = 'fixed';
-          overflowMenu.style.top = (rect.bottom + 2) + 'px';
-          overflowMenu.style.right = (window.innerWidth - rect.right) + 'px';
-          overflowMenu.style.left = 'auto';
-        } else {
-          overflowWrapper.appendChild(overflowMenu);
-        }
-        overflowMenu.classList.toggle('open', _mdMenuOpen);
-      });
-    }
-    const signal = toolbar.closest('#doc-editor-pane')?._lifetime?.signal;
-    document.addEventListener('click', () => {
-      if (_mdMenuOpen) { closeMdMenu(); overflowWrapper.appendChild(overflowMenu); }
-    }, { signal });
 
-    // Re-check overflow on resize
-    let _mdResizeTimer;
-    window.addEventListener('resize', () => {
-      clearTimeout(_mdResizeTimer);
-      _mdResizeTimer = setTimeout(syncMdOverflow, 100);
-    }, { signal });
-    signal?.addEventListener('abort', () => {
-      clearTimeout(_mdResizeTimer);
-      if (overflowMenu && !toolbar.contains(overflowMenu)) overflowMenu.remove();
-    }, { once: true });
 
-    // Show toolbar if language is already markdown
-    const lang = document.getElementById('doc-language-select')?.value;
-    if (lang === 'markdown') toolbar.style.display = '';
 
-    // Initial sync after layout
-    requestAnimationFrame(syncMdOverflow);
-    // Expose for external calls (e.g. after fullscreen toggle)
-    toolbar._syncOverflow = syncMdOverflow;
-  }
 
-const _DOC_RECENTS_KEY = 'odysseus-doc-actions-recent';
 
-const _DOC_MAX_VISIBLE = 2;
-
-function _getDocRecent() {
-    try { return JSON.parse(localStorage.getItem(_DOC_RECENTS_KEY) || '[]'); } catch { return []; }
-  }
-
-function _trackDocAction(id) {
-    let recent = _getDocRecent().filter(x => x !== id);
-    recent.unshift(id);
-    if (recent.length > 10) recent.length = 10;
-    localStorage.setItem(_DOC_RECENTS_KEY, JSON.stringify(recent));
-  }
-
-function initActionOverflow() {
-    const actionsEl = document.getElementById('doc-editor-actions');
-    const wrapper = document.getElementById('doc-overflow-wrapper');
-    const toggle = document.getElementById('doc-overflow-toggle');
-    const menu = document.getElementById('doc-overflow-menu');
-    if (!actionsEl || !wrapper || !toggle || !menu) return;
-
-    const allBtns = Array.from(actionsEl.querySelectorAll('.doc-collapsible-btn'));
-    let _menuOpen = false;
-
-    function syncOverflow() {
-      allBtns.forEach(b => { b.classList.remove('doc-collapsed'); });
-      menu.innerHTML = '';
-
-      // Filter to currently visible buttons
-      const available = allBtns.filter(b => b.style.display !== 'none');
-
-      // Sort by recent usage, defaults: copy, export, save
-      const recent = _getDocRecent();
-      const defaults = ['doc-copy-btn', 'doc-export-btn', 'doc-save-btn'];
-      const order = recent.length > 0 ? recent : defaults;
-
-      // Auto-pin: md preview when language is markdown
-      const lang = document.getElementById('doc-language-select')?.value;
-      const pinned = [];
-      if (lang === 'markdown') {
-        const mdBtn = available.find(b => b.id === 'doc-md-btn');
-        if (mdBtn) pinned.push(mdBtn);
-      }
-
-      const sorted = [...available].sort((a, b) => {
-        const ai = order.indexOf(a.id), bi = order.indexOf(b.id);
-        if (ai >= 0 && bi >= 0) return ai - bi;
-        if (ai >= 0) return -1;
-        if (bi >= 0) return 1;
-        return 0;
-      });
-
-      // Pinned + top N (deduplicated) — pinned count against the max
-      const visible = [...pinned];
-      for (const btn of sorted) {
-        if (visible.length >= _DOC_MAX_VISIBLE) break;
-        if (!visible.includes(btn)) visible.push(btn);
-      }
-      // Ensure we never exceed MAX_VISIBLE
-      while (visible.length > _DOC_MAX_VISIBLE) visible.pop();
-      const overflow = sorted.filter(b => !visible.includes(b));
-
-      // Show visible, hide overflow
-      overflow.forEach(b => b.classList.add('doc-collapsed'));
-
-      // Reorder DOM: visible buttons before wrapper
-      for (const btn of visible) {
-        actionsEl.insertBefore(btn, wrapper);
-      }
-
-      if (overflow.length > 0) {
-        wrapper.style.display = '';
-        overflow.forEach(btn => {
-          const item = document.createElement('button');
-          item.className = 'doc-overflow-item';
-          item.innerHTML = btn.innerHTML + '<span>' + (btn.title || '') + '</span>';
-          item.addEventListener('click', (e) => {
-            _trackDocAction(btn.id);
-            // Export button has its own submenu
-            if (btn.id === 'doc-export-btn') {
-              e.stopPropagation();
-              const savedRect = item.getBoundingClientRect();
-              closeMenu();
-              setTimeout(() => showExportMenu(null, savedRect), 50);
-              return;
-            }
-            closeMenu();
-            btn.click();
-            syncOverflow(); // re-sort with new recency
-          });
-          menu.appendChild(item);
-        });
-      } else {
-        wrapper.style.display = 'none';
-      }
-    }
-
-    function closeMenu() {
-      _menuOpen = false;
-      menu.classList.remove('open');
-    }
-
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      _menuOpen = !_menuOpen;
-      if (_menuOpen) {
-        // Move to body to escape overflow:hidden on doc-editor-pane
-        document.body.appendChild(menu);
-        const rect = toggle.getBoundingClientRect();
-        menu.style.position = 'fixed';
-        menu.style.top = (rect.bottom + 2) + 'px';
-        menu.style.right = (window.innerWidth - rect.right) + 'px';
-        menu.style.left = 'auto';
-      } else {
-        wrapper.appendChild(menu);
-      }
-      menu.classList.toggle('open', _menuOpen);
-    });
-    document.addEventListener('click', () => {
-      if (_menuOpen) { closeMenu(); wrapper.appendChild(menu); }
-    });
-
-    // Also track when visible buttons are clicked directly
-    allBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        _trackDocAction(btn.id);
-        // Defer re-sort so the click handler fires first
-        setTimeout(syncOverflow, 100);
-      });
-    });
-
-    requestAnimationFrame(syncOverflow);
-    _syncOverflow = syncOverflow;
-  }
 
 function initDividerDrag(divider, pane, isRight) {
     divider._disposeResize?.();
@@ -4358,966 +3249,74 @@ export async function newDocument() {
     await createDocument(sessionId);
   }
 
-export async function createDocument(sessionId) {
-    if (_creatingDoc) return;
-    _creatingDoc = true;
-    const generation = bumpNavigationGeneration();
-    // If the panel was in empty-state, the user may type into the editor
-    // during the create round-trip — preserve that text into the new doc
-    // instead of letting switchToDoc blank it.
-    const wasEmpty = !activeDocId;
-    try {
-      const res = await fetch(`${API_BASE}/api/document`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          session_id: sessionId,
-          title: '',
-          content: '',
-          language: 'richtext',
-        }),
-      });
-      if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
-      const doc = await res.json();
-      if (!doc || !doc.id) throw new Error('Document create failed: missing id');
-      if (generation !== _documentNavigationGeneration) return;
-      addDocToTabs(doc, sessionId);
-      if (!isOpen) openPanel();
-      // Re-enable editor if it was in empty state
-      let textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) {
-        textarea.disabled = false;
-        _syncEditorPlaceholder();
-      }
-      // Capture text typed during the round-trip (only when starting from the
-      // empty editor — don't steal another doc's content).
-      const typed = (wasEmpty && textarea && textarea.value.trim()) ? textarea.value : '';
-      switchToDoc(doc.id);
-      if (typed) {
-        textarea = document.getElementById('doc-editor-textarea');
-        if (textarea) textarea.value = typed;
-        const d = docs.get(doc.id);
-        if (d) d.content = typed;
-        const rich = _emailRichbodyActive();
-        if (rich && d && _isRichTextLang(d.language)) {
-          rich.innerHTML = _richTextContentToHtml(typed);
-          _syncEmailRichbody(rich);
-        }
-        syncHighlighting();
-        _scheduleAutoSave(doc.id, 800);
-      }
-      textarea = document.getElementById('doc-editor-textarea');
-      const focusTarget = _emailRichbodyActive() || textarea;
-      if (focusTarget) focusTarget.focus();
-    } catch (e) {
-      if (generation !== _documentNavigationGeneration) return;
-      console.error('Failed to create document:', e);
-      if (uiModule) uiModule.showError('Failed to create document');
-    } finally {
-      _creatingDoc = false;
-    }
-  }
 
-export function injectFreshDoc(doc) {
-    if (!doc || !doc.id) return;
-    const generation = bumpNavigationGeneration();
-    const sessionId = doc.session_id || _lastSessionId || null;
-    if (doc.language === 'email') {
-      doc._skipLocalDraftOnce = true;
-      try {
-        const fields = _parseEmailHeader(doc.current_content || doc.content || '');
-        _clearEmailLocalDraft(fields.sourceUid, fields.sourceFolder, fields.inReplyTo);
-      } catch (_) {}
-    }
-    addDocToTabs(doc, sessionId);
-    // Use _ensureDocPaneMounted (not `if (!isOpen) openPanel()`): when a draft
-    // is composed from the email modal, `isOpen` can be stale-true while the
-    // actual pane was torn down — a bare openPanel() early-returns and the doc
-    // mounts into a wrong/half-built pane (rendered as a narrow sidebar on
-    // mobile instead of its own full-screen window). This remounts it cleanly.
-    _ensureDocPaneMounted();
-    // Defer to the next frame so the panel DOM exists before switchToDoc
-    // populates it. Do not call switchToDoc synchronously here: it saves the
-    // previously active doc and can re-enter the email draft path while a reply
-    // document is still being injected.
-    return new Promise(resolve => requestAnimationFrame(() => {
-      if (generation === _documentNavigationGeneration && docs.has(doc.id)) switchToDoc(doc.id);
-      resolve();
-    }));
-  }
 
-function _ensureDocPaneMounted() {
-    // Loading a specific document is an explicit open action. A minimized
-    // registration can survive session switching on mobile, leaving the newly
-    // selected document represented only by its bottom dock tab even though
-    // the editor has mounted. Clear that stale dock state before deciding
-    // whether the existing pane can be reused.
-    if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
-      setMinimizedDocId(null);
-      Modals.unregister('doc-panel');
-    }
-    if (!isOpen || !document.getElementById('doc-editor-pane')) {
-      setPanelOpen(false);
-      openPanel();
-    } else {
-      _markDocVisibleState(_lastSessionId, 'open');
-    }
-  }
 
-export async function loadDocument(docId) {
-    const generation = bumpNavigationGeneration();
-    _minimizeNotesForDocumentOpen();
-    if (_closingDocs.has(docId)) {
-      registerDocument(_closingDocs.get(docId));
-      releaseClosingDraft(docId);
-    }
-    // If already in tabs, just switch
-    if (docs.has(docId)) {
-      _ensureDocPaneMounted();
-      switchToDoc(docId);
-      return true;
-    }
-    // Mount the editor before the network request so mobile gets immediate
-    // feedback instead of appearing unchanged while the document loads.
-    _ensureDocPaneMounted();
-    _showLoadingOverlay();
-    try {
-      const res = await fetch(`${API_BASE}/api/document/${docId}`);
-      if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
-      const doc = await res.json();
-      if (generation !== _documentNavigationGeneration) return false;
-      addDocToTabs(doc, doc.session_id);
-      switchToDoc(doc.id);
-      return true;
-    } catch (e) {
-      if (generation !== _documentNavigationGeneration) return false;
-      _hideLoadingOverlay();
-      console.error('Failed to load document:', e);
-      if (uiModule) {
-        const msg = e.message === 'Not found'
-          ? 'Document not found — try opening it from the Library.'
-          : 'Could not open document.';
-        uiModule.showError(msg);
-      }
-      return false;
-    }
-  }
+
+
+
+
 
 function _maybeOpenDocFromHash() {
     const m = (window.location.hash || '').match(/^#document-(.+)$/);
     if (m) loadDocument(m[1]);
   }
 
-export async function ensureDocPanel() {
-    let sessionId = _lastSessionId
-      || (sessionModule && sessionModule.getCurrentSessionId());
-    if (!sessionId) {
-      try {
-        sessionId = await _autoCreateSession();
-      } catch (e) {
-        console.error('Failed to auto-create session for document:', e);
-        openPanel();
-        return;
-      }
-    }
-    await loadSessionDocs(sessionId);
-  }
 
-async function _autoCreateSession({ adopt = true, forceNew = false } = {}) {
-    // Materialize pending chat first if one exists
-    if (!forceNew && sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
-      await sessionModule.materializePendingSession();
-      const id = sessionModule.getCurrentSessionId();
-      if (id) { setLastSessionId(id); return id; }
-    }
-    // Preserve the current model when creating a doc session
-    const curModel = sessionModule?.getCurrentModel ? sessionModule.getCurrentModel() : null;
-    const sessionsRaw = sessionModule?.getSessions?.();
-    const sessions = Array.isArray(sessionsRaw) ? sessionsRaw : [];
-    const match = curModel && sessions.find(s => s.model === curModel && s.endpoint_url);
-    const fd = new FormData();
-    fd.append('name', `Notes ${new Date().toLocaleTimeString()}`);
-    fd.append('skip_validation', 'true');
-    if (match) {
-      fd.append('endpoint_url', match.endpoint_url);
-      fd.append('model', match.model);
-      if (match.endpoint_id) fd.append('endpoint_id', match.endpoint_id);
-    }
-    const res = await fetch(`${API_BASE}/api/session`, {
-      method: 'POST',
-      body: fd,
-      credentials: 'same-origin',
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload.detail || `Session create failed: HTTP ${res.status}`);
-    const sessionId = payload.id;
-    if (!sessionId) throw new Error('Session create returned no session ID');
-    setLastSessionId(sessionId);
-    // Tell sessions module so chat uses the same session
-    if (adopt && sessionModule && sessionModule.setCurrentSessionId) {
-      sessionModule.setCurrentSessionId(sessionId);
-    }
-    if (sessionModule && sessionModule.loadSessions) sessionModule.loadSessions();
-    return sessionId;
-  }
 
-export async function loadSessionDocs(sessionId, opts = {}) {
-    suspendSuggestions();
-    const generation = bumpNavigationGeneration();
-    _closeVersionPanel();
-    setLastSessionId(sessionId);
-    const restoreMode = !!opts.restoreMode;
-    const shouldRestoreOpen = localStorage.getItem(_docOpenKey(sessionId)) === '1';
-    const shouldRestoreMinimized = localStorage.getItem(_docMinimizedKey(sessionId)) === '1';
 
-    // Save current editor content to map before tearing down
-    if (activeDocId && docs.has(activeDocId)) {
-      saveCurrentToMap();
-    }
 
-    // Flush any pending saves or dirty documents belonging to previous sessions
-    for (const [id, doc] of docs) {
-      if (doc.sessionId && doc.sessionId !== sessionId) {
-        if (_pendingAutoSaves.has(id) || ['dirty', 'error'].includes(doc._saveState) || _hasPendingPdfPaneSave(id)) {
-          _cancelAutoSave(id);
-          _cancelPdfPaneSave(id);
-          _saveClosingDraft(id, doc);
-        } else if (doc._saveState === 'saving') {
-          retainClosingDraft(id, doc);
-        } else {
-          _cancelAutoSave(id);
-          _cancelPdfPaneSave(id);
-        }
-      }
-    }
 
-    // Clear docs from other sessions so tabs are per-session,
-    // but keep session-less docs (e.g. email compose) - they are independent
-    for (const [id, doc] of [...docs]) {
-      if (doc.sessionId && doc.sessionId !== sessionId) removeDocument(id);
-    }
-    _releasePdfPane(activeDocId);
-    setActiveDocId(null);
 
-    // Show loading state while fetching
-    if (isOpen) _showLoadingOverlay();
 
-    try {
-      const res = await fetch(`${API_BASE}/api/documents/${sessionId}`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      if (!res.ok) throw new Error(`Session documents failed: HTTP ${res.status}`);
-      const allDocs = await res.json();
-      if (generation !== _documentNavigationGeneration) return;
-      _hideLoadingOverlay();
-      // Only load active docs
-      const activeDocs = allDocs.filter(d => d.is_active);
-      if (activeDocs.length === 0) {
-        // No docs yet — show empty editor, doc will be created when user types
-        if (!restoreMode || shouldRestoreOpen) {
-          if (!isOpen) openPanel();
-          showEmptyState();
-          renderTabs();
-        }
-        return;
-      }
-      for (const doc of activeDocs) {
-        // Always rehydrate from the canonical DB row. A cached tab shell can
-        // survive panel/session restoration with an empty or stale `content`
-        // field; skipping existing IDs then shows the document but not its
-        // body after refresh.
-        addDocToTabs(doc, sessionId);
-      }
-      _syncDocIndicator();
-      // Restore the exact document that was active in this conversation.
-      // Keeping only the panel-open bit made a hard refresh reopen the editor
-      // on activeDocs[0], silently severing follow-up edits from the document
-      // the user had actually been discussing.
-      const rememberedDocId = localStorage.getItem(_docActiveKey(sessionId));
-      const target = activeDocs.find(doc => doc.id === rememberedDocId) || activeDocs[0];
-      if (rememberedDocId && target.id !== rememberedDocId) {
-        localStorage.removeItem(_docActiveKey(sessionId));
-      }
-      if (restoreMode && !shouldRestoreOpen) {
-        // Coming back to a chat with documents should advertise the doc without
-        // stealing half the screen. Default to a docked chip; only reopen the
-        // full editor when this session explicitly persisted an open state.
-        setActiveDocId(target.id);
-        setMinimizedDocId(target.id);
-        _markDocVisibleState(sessionId, 'minimized');
-        _ensureDocChipRegistered();
-        if (isOpen) {
-          try { switchToDoc(target.id); } catch (e) { console.error('Minimize restored doc failed:', e); }
-          closePanel('down');
-        } else {
-          Modals.minimize('doc-panel');
-        }
-        return;
-      }
-      _markDocVisibleState(sessionId, 'open');
-      if (!isOpen) openPanel({ restore: restoreMode && shouldRestoreOpen });
-      switchToDoc(target.id);
-    } catch (e) {
-      if (generation !== _documentNavigationGeneration) return;
-      _hideLoadingOverlay();
-      console.error('Failed to load session documents:', e);
-      // Open empty panel on error too
-      if (!isOpen) openPanel();
-      showEmptyState();
-    }
-  }
 
-let _selections = [];
 
-const _richSelectionHighlightName = 'doc-ai-selections';
 
-function _richRootText(rich) {
-    if (!rich) return '';
-    const range = document.createRange();
-    range.selectNodeContents(rich);
-    return range.toString();
-  }
 
-function _richRangeFromOffsets(rich, start, end) {
-    if (!rich || start < 0 || end <= start) return null;
-    const walker = document.createTreeWalker(rich, NodeFilter.SHOW_TEXT);
-    let offset = 0;
-    let startNode = null, startOffset = 0, endNode = null, endOffset = 0;
-    let node;
-    while ((node = walker.nextNode())) {
-      const length = (node.nodeValue || '').length;
-      if (!startNode && start >= offset && start < offset + length) {
-        startNode = node;
-        startOffset = start - offset;
-      }
-      if (end > offset && end <= offset + length) {
-        endNode = node;
-        endOffset = end - offset;
-        break;
-      }
-      offset += length;
-    }
-    if (!startNode || !endNode) return null;
-    const range = document.createRange();
-    range.setStart(startNode, startOffset);
-    range.setEnd(endNode, endOffset);
-    return range;
-  }
 
-function updateRichSelectionState(rich) {
-    if (!rich || !rich.isConnected || rich.style.display === 'none') return;
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || selection.isCollapsed) return;
-    const range = selection.getRangeAt(0);
-    if (!rich.contains(range.commonAncestorContainer)) return;
 
-    const selectedText = range.toString();
-    if (!selectedText.trim()) return;
-    const prefix = document.createRange();
-    prefix.selectNodeContents(rich);
-    prefix.setEnd(range.startContainer, range.startOffset);
-    const start = prefix.toString().length;
-    const end = start + selectedText.length;
-    const fullText = _richRootText(rich);
-    const startLine = fullText.slice(0, start).split('\n').length;
-    const endLine = fullText.slice(0, end).split('\n').length;
-    const entry = { kind: 'rich', text: selectedText, startLine, endLine, start, end };
-    const overlapIdx = _selections.findIndex(s => s.kind === 'rich' && (
-      (start >= s.start && start <= s.end) || (end >= s.start && end <= s.end)
-      || (start <= s.start && end >= s.end)
-    ));
-    if (overlapIdx >= 0) _selections[overlapIdx] = entry;
-    else _selections.push(entry);
-    showSelectionBadge();
-    renderAllSelectionHighlights();
-  }
 
-let _selResizeScheduled = false;
 
-function _scheduleSelRerender() {
-    if (_selResizeScheduled || _selections.length === 0) return;
-    _selResizeScheduled = true;
-    requestAnimationFrame(() => {
-      _selResizeScheduled = false;
-      try { renderAllSelectionHighlights(); } catch (_) {}
-    });
-  }
 
-if (typeof window !== 'undefined') {
-    window.addEventListener('resize', _scheduleSelRerender);
-  }
 
-let _selResizeObserver = null;
 
-function _ensureSelResizeObserver() {
-    if (_selResizeObserver || typeof ResizeObserver === 'undefined') return;
-    const ta = document.getElementById('doc-editor-textarea');
-    if (!ta) return;
-    _selResizeObserver = new ResizeObserver(_scheduleSelRerender);
-    _selResizeObserver.observe(ta);
-  }
 
-function updateSelectionState() {
-    // The mirror measurement below uses the textarea's live computed metrics,
-    // so pinned selections remain valid with wrapped lines, larger font sizes,
-    // mobile widths, and non-fullscreen panes. Older code disabled selection
-    // whenever wrapping was detected; increasing the document font made that
-    // path fire constantly, so selecting text appeared to stop working.
-    _ensureSelResizeObserver();
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
 
-    if (start === end) {
-      // Simple click — don't clear, user might be clicking into chat
-      return;
-    }
 
-    const text = textarea.value;
-    const selectedText = text.substring(start, end);
-    const startLine = text.substring(0, start).split('\n').length;
-    const endLine = text.substring(0, end).split('\n').length;
 
-    // Check for overlap with existing selection — replace if overlapping
-    const overlapIdx = _selections.findIndex(s =>
-      (start >= s.start && start <= s.end) || (end >= s.start && end <= s.end) ||
-      (start <= s.start && end >= s.end)
-    );
-    const entry = { text: selectedText, startLine, endLine, start, end };
-    if (overlapIdx >= 0) {
-      _selections[overlapIdx] = entry;
-    } else {
-      _selections.push(entry);
-    }
 
-    showSelectionBadge();
-    renderAllSelectionHighlights();
-  }
 
-function showSelectionBadge() {
-    let badge = document.getElementById('doc-selection-badge');
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.id = 'doc-selection-badge';
-      badge.className = 'doc-selection-badge';
-      badge.title = 'Selected regions — type in chat to edit';
-      // Sits directly under the formatting toolbar so it reads as part
-      // of the toolbar row, not buried in the page header. Falls back
-      // to the editor header if the toolbar isn't on screen.
-      const toolbar = document.getElementById('doc-md-toolbar');
-      if (toolbar && toolbar.parentNode) {
-        toolbar.insertAdjacentElement('afterend', badge);
-      } else {
-        const header = document.querySelector('.doc-editor-header');
-        if (header) header.insertBefore(badge, header.firstChild);
-      }
-    }
-    if (_selections.length === 0) {
-      badge.style.display = 'none';
-      return;
-    }
-    const labels = _selections.map(s => s.kind === 'rich'
-      ? 'Text'
-      : (s.startLine === s.endLine ? `L${s.startLine}` : `L${s.startLine}-${s.endLine}`));
-    badge.replaceChildren();
-    if (_selections.length === 1) {
-      badge.append(document.createTextNode(`${labels[0]} selected`));
-    } else {
-      badge.append(document.createTextNode(`${_selections.length} selections`));
-      labels.forEach((selectionLabel, index) => {
-        const chip = document.createElement('span');
-        chip.className = 'doc-selection-chip';
-        chip.textContent = selectionLabel;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'doc-selection-chip-clear';
-        remove.title = `Remove ${selectionLabel} selection`;
-        remove.setAttribute('aria-label', `Remove ${selectionLabel} selection`);
-        remove.textContent = '×';
-        remove.addEventListener('click', (e) => {
-          e.stopPropagation();
-          clearSelectionAt(index);
-        });
-        chip.appendChild(remove);
-        badge.appendChild(chip);
-      });
-    }
-    const clearAll = document.createElement('button');
-    clearAll.className = 'doc-selection-clear doc-selection-chip-clear';
-    clearAll.title = 'Clear Selection';
-    clearAll.setAttribute('aria-label', 'Clear Selection');
-    clearAll.textContent = 'Clear Selection';
-    badge.appendChild(clearAll);
-    badge.style.display = '';
-    clearAll.addEventListener('click', (e) => {
-      e.stopPropagation();
-      clearSelection();
-    });
-  }
 
-function _isCodeDoc() {
-    const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
-    if (!lang) return false;
-    // Prose / preview types that should get character-precise highlights.
-    const prose = new Set(['markdown', 'md', 'text', 'txt', 'email', 'html', 'csv']);
-    return !prose.has(lang);
-  }
 
-function _measurePos(mirror, text, pos) {
-    mirror.innerHTML = '';
-    if (pos > 0) mirror.appendChild(document.createTextNode(text.substring(0, pos)));
-    const marker = document.createElement('span');
-    marker.textContent = '​';
-    mirror.appendChild(marker);
-    const r = marker.getBoundingClientRect();
-    const m = mirror.getBoundingClientRect();
-    return { x: r.left - m.left, y: r.top - m.top };
-  }
 
-function _validateSelections(text) {
-    if (_selections.length === 0) return;
-    const rich = _emailRichbodyActive();
-    const richText = rich ? _richRootText(rich) : '';
-    const survivors = [];
-    for (const s of _selections) {
-      const captured = s.text || '';
-      if (!captured) continue;
-      const source = s.kind === 'rich' ? richText : text;
-      if (s.kind === 'rich' && !rich) continue;
-      // Fast path: still at the same offsets.
-      if (source.substring(s.start, s.end) === captured) {
-        survivors.push(s);
-        continue;
-      }
-      // Re-anchor: find the captured text and pick the occurrence
-      // nearest to the old start so multi-match docs don't snap to the
-      // wrong one. indexOf scans are cheap for typical doc sizes.
-      let best = -1, bestDist = Infinity;
-      let from = 0;
-      while (true) {
-        const idx = source.indexOf(captured, from);
-        if (idx === -1) break;
-        const dist = Math.abs(idx - s.start);
-        if (dist < bestDist) { best = idx; bestDist = dist; }
-        from = idx + 1;
-      }
-      if (best === -1) continue;  // text gone entirely → drop
-      const newStart = best;
-      const newEnd = best + captured.length;
-      survivors.push({
-        ...s,
-        start: newStart,
-        end: newEnd,
-        startLine: source.substring(0, newStart).split('\n').length,
-        endLine: source.substring(0, newEnd).split('\n').length,
-      });
-    }
-    _selections = survivors;
-  }
 
-function renderAllSelectionHighlights() {
-    document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
-    // Delete the persistent CSS highlight before checking whether any
-    // selections remain; otherwise clearing the last selection leaves the
-    // painted range visible until the next render.
-    try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (!wrap) return;
-    // Remove old overlays
-    wrap.querySelectorAll('.doc-selection-overlay').forEach(el => el.remove());
 
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea || _selections.length === 0) return;
 
-    const text = textarea.value;
-    // Pre-render guard: re-anchor or drop selections whose text has
-    // shifted (undo, programmatic edits, etc.) so the overlays never
-    // draw on the wrong region.
-    _validateSelections(text);
-    const rich = _emailRichbodyActive();
-    const richRanges = rich
-      ? _selections.filter(s => s.kind === 'rich').map(s => _richRangeFromOffsets(rich, s.start, s.end)).filter(Boolean)
-      : [];
-    if (richRanges.length) {
-      try {
-        if (CSS.highlights && typeof Highlight === 'function') {
-          CSS.highlights.set(_richSelectionHighlightName, new Highlight(...richRanges));
-        }
-      } catch (_) {}
-      const richSelections = _selections.filter(s => s.kind === 'rich');
-      richRanges.forEach((range, rangeIndex) => {
-        const rects = Array.from(range.getClientRects());
-        const rect = rects[rects.length - 1];
-        if (!rect || (!rect.width && !rect.height)) return;
-        const clearBtn = document.createElement('button');
-        clearBtn.type = 'button';
-        clearBtn.className = 'doc-selection-rich-clear';
-        clearBtn.title = 'Remove this selection';
-        clearBtn.setAttribute('aria-label', 'Remove this selection');
-        clearBtn.textContent = '×';
-        clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
-        clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
-        const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
-        clearBtn.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          clearSelectionAt(selectionIndex);
-        });
-        document.body.appendChild(clearBtn);
-      });
-    }
-    const sourceSelections = _selections.filter(s => s.kind !== 'rich');
-    if (_selections.length === 0) { showSelectionBadge(); return; }
-    if (sourceSelections.length === 0) return;
-    const style = getComputedStyle(textarea);
-    const paddingTop = parseFloat(style.paddingTop) || 10;
-    const paddingLeft = parseFloat(style.paddingLeft) || 48;
-    const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
 
-    // Shared mirror for measurement — same box model as the textarea
-    // so any measurement we take lines up 1:1 with the rendered text.
-    let mirror = document.getElementById('doc-selection-mirror');
-    if (!mirror) {
-      mirror = document.createElement('div');
-      mirror.id = 'doc-selection-mirror';
-      // box-sizing:border-box is critical — without it the mirror's
-      // actual box width = (width prop) + horizontal padding, which is
-      // wider than the textarea's text-render area. Text wraps at a
-      // different column inside the mirror, so every measured y-offset
-      // drifts from where the real text sits. border-box makes
-      // mirror.box = textarea.clientWidth exactly.
-      mirror.style.cssText = 'position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;' +
-        'white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden;box-sizing:border-box;';
-      wrap.appendChild(mirror);
-    }
-    mirror.style.font = style.font;
-    mirror.style.padding = style.padding;
-    mirror.style.borderWidth = style.borderWidth;
-    mirror.style.borderStyle = 'solid';
-    mirror.style.borderColor = 'transparent';
-    mirror.style.width = textarea.clientWidth + 'px';
-    mirror.style.tabSize = style.tabSize;
-    mirror.style.letterSpacing = style.letterSpacing;
-    mirror.style.wordSpacing = style.wordSpacing;
-    mirror.style.textIndent = style.textIndent;
 
-    const codeDoc = _isCodeDoc();
-    const scrollTop = textarea.scrollTop;
 
-    for (const sel of sourceSelections) {
-      const selectionIndex = _selections.indexOf(sel);
-      if (codeDoc) {
-        // Line-based: span every line that contains any selected char.
-        const beforeStart = text.substring(0, sel.start);
-        const lastNewline = beforeStart.lastIndexOf('\n');
-        const startLineBegin = lastNewline + 1;
-        mirror.textContent = text.substring(0, startLineBegin);
-        const startTop = mirror.scrollHeight - paddingTop;
 
-        const afterEnd = text.indexOf('\n', sel.end);
-        const endLineEnd = afterEnd === -1 ? text.length : afterEnd;
-        mirror.textContent = text.substring(0, endLineEnd);
-        const endBottom = mirror.scrollHeight - paddingTop;
 
-        mirror.textContent = '';
 
-        const top = paddingTop + startTop - scrollTop;
-        const height = endBottom - startTop || lineHeight;
-        const overlay = document.createElement('div');
-        overlay.className = 'doc-selection-overlay';
-        overlay.style.top = top + 'px';
-        overlay.style.left = paddingLeft + 'px';
-        overlay.style.right = '0';
-        overlay.style.height = height + 'px';
-        const clearBtn = document.createElement('button');
-        clearBtn.type = 'button';
-        clearBtn.className = 'doc-selection-overlay-clear';
-        clearBtn.title = 'Remove this selection';
-        clearBtn.setAttribute('aria-label', 'Remove this selection');
-        clearBtn.textContent = '×';
-        clearBtn.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          clearSelectionAt(selectionIndex);
-        });
-        overlay.appendChild(clearBtn);
-        wrap.appendChild(overlay);
-      } else {
-        // Character-precise: measure the actual selection start/end via
-        // a marker span. Render one rect for single-line selections, or
-        // three rects (first partial, middle full, last partial) for
-        // multi-line selections.
-        const startPos = _measurePos(mirror, text, sel.start);
-        const endPos = _measurePos(mirror, text, sel.end);
-        mirror.innerHTML = '';
 
-        const addRect = (top, left, width, height, withClear = false) => {
-          const overlay = document.createElement('div');
-          overlay.className = 'doc-selection-overlay';
-          overlay.style.top = (paddingTop + top - scrollTop) + 'px';
-          overlay.style.left = (paddingLeft + left) + 'px';
-          if (width != null) overlay.style.width = width + 'px';
-          else overlay.style.right = '0';
-          overlay.style.height = height + 'px';
-          if (withClear) {
-            const clearBtn = document.createElement('button');
-            clearBtn.type = 'button';
-            clearBtn.className = 'doc-selection-overlay-clear';
-            clearBtn.title = 'Remove this selection';
-            clearBtn.setAttribute('aria-label', 'Remove this selection');
-            clearBtn.textContent = '×';
-            clearBtn.addEventListener('click', (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              clearSelectionAt(selectionIndex);
-            });
-            overlay.appendChild(clearBtn);
-          }
-          wrap.appendChild(overlay);
-        };
 
-        if (Math.abs(endPos.y - startPos.y) < 1) {
-          // Single visual line.
-          addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight, true);
-        } else {
-          // First line: from selection start to right edge.
-          addRect(startPos.y, startPos.x, null, lineHeight, true);
-          // Middle lines (if any): full-width band between the two.
-          const middleTop = startPos.y + lineHeight;
-          const middleHeight = endPos.y - middleTop;
-          if (middleHeight > 0) addRect(middleTop, 0, null, middleHeight);
-          // Last line: from left edge to selection end.
-          addRect(endPos.y, 0, endPos.x, lineHeight);
-        }
-      }
-    }
-  }
 
-function syncSelectionOverlay() {
-    if (_selections.length === 0) return;
-    renderAllSelectionHighlights();
-  }
 
-function clearSelection({ preserveCaret = false } = {}) {
-    _selections = [];
-    try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
-    document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
-    // A restored rich-text reference also creates a native browser range so
-    // the referenced text is visibly selected. Clear that range with the
-    // pinned selection; otherwise document stats keep reporting "selected"
-    // after the badge's X has cleared the actual AI-edit context.
-    const rich = _emailRichbodyActive();
-    const browserSelection = window.getSelection?.();
-    // Input already placed the caret after the edit. Clearing pinned AI
-    // context must not discard that live insertion point.
-    if (!preserveCaret && rich && browserSelection?.rangeCount
-        && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
-      browserSelection.removeAllRanges();
-    }
-    const badge = document.getElementById('doc-selection-badge');
-    if (badge) badge.style.display = 'none';
-    const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap) wrap.querySelectorAll('.doc-selection-overlay').forEach(el => el.remove());
-    _scheduleDocumentStats();
-  }
 
-function clearSelectionAt(index) {
-    if (index < 0 || index >= _selections.length) return;
-    const removed = _selections[index];
-    _selections.splice(index, 1);
-    if (removed?.kind === 'rich') {
-      const rich = _emailRichbodyActive();
-      const browserSelection = window.getSelection?.();
-      if (rich && browserSelection?.rangeCount
-          && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
-        browserSelection.removeAllRanges();
-      }
-    }
-    renderAllSelectionHighlights();
-    showSelectionBadge();
-    _scheduleDocumentStats();
-  }
 
-export function getSelectionContext() {
-    if (_selections.length === 0) return null;
-    // Re-anchor / drop stale selections before handing them to chat —
-    // shipping text from a stale offset would mean the AI sees content
-    // from a different region than what the user thinks they highlighted.
-    const _ta = document.getElementById('doc-editor-textarea');
-    if (_ta) _validateSelections(_ta.value);
-    if (_selections.length === 0) return null;
-    if (_selections.length === 1) {
-      const ctx = _selections[0];
-      clearSelection();
-      return ctx;
-    }
-    // Multiple selections — return array
-    const ctx = [..._selections];
-    clearSelection();
-    return ctx;
-  }
 
-export async function restoreSelectionReference(reference, options = {}) {
-    const requestedDocId = String(options.documentId || '').trim();
-    if (requestedDocId) await loadDocument(requestedDocId);
-    if (!activeDocId || !docs.has(activeDocId)) return false;
 
-    _ensureDocPaneMounted();
-    const doc = docs.get(activeDocId);
-    const rich = _isRichTextLang(doc.language) ? _emailRichbodyActive() : null;
-    const textarea = document.getElementById('doc-editor-textarea');
-    const source = rich ? _richRootText(rich) : (textarea?.value || doc.content || '');
-    const supplied = Array.isArray(options.selections)
-      ? options.selections
-      : (options.selections ? [options.selections] : []);
-    const restored = [];
 
-    for (const selection of supplied) {
-      const selectedText = String(selection?.text || '');
-      if (!selectedText) continue;
-      const start = source.indexOf(selectedText);
-      if (start < 0) continue;
-      const end = start + selectedText.length;
-      restored.push({
-        kind: rich ? 'rich' : undefined,
-        text: selectedText,
-        start,
-        end,
-        startLine: source.slice(0, start).split('\n').length,
-        endLine: source.slice(0, end).split('\n').length,
-      });
-    }
 
-    if (!restored.length) {
-      const lineMatches = Array.from(String(reference || '').matchAll(/(?:L|lines?)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi));
-      const lines = source.split('\n');
-      const lineStart = lineNumber => {
-        let offset = 0;
-        for (let index = 1; index < lineNumber && index <= lines.length; index++) {
-          offset += lines[index - 1].length + 1;
-        }
-        return offset;
-      };
-      for (const match of lineMatches) {
-        const startLine = Math.max(1, Math.min(lines.length, Number(match[1]) || 1));
-        const endLine = Math.max(startLine, Math.min(lines.length, Number(match[2]) || startLine));
-        const start = lineStart(startLine);
-        const end = lineStart(endLine) + (lines[endLine - 1] || '').length;
-        if (end <= start) continue;
-        restored.push({
-          kind: rich ? 'rich' : undefined,
-          text: source.slice(start, end),
-          start,
-          end,
-          startLine,
-          endLine,
-        });
-      }
-    }
-    if (!restored.length) return false;
 
-    _selections = restored;
-    showSelectionBadge();
-    renderAllSelectionHighlights();
-    const first = restored[0];
-    if (rich) {
-      const range = _richRangeFromOffsets(rich, first.start, first.end);
-      const browserSelection = window.getSelection?.();
-      if (range && browserSelection) {
-        browserSelection.removeAllRanges();
-        browserSelection.addRange(range);
-        range.startContainer.parentElement?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-      }
-      rich.focus({ preventScroll: true });
-    } else if (textarea) {
-      textarea.focus({ preventScroll: true });
-      textarea.setSelectionRange(first.start, first.end, 'forward');
-      const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 18;
-      textarea.scrollTop = Math.max(0, (first.startLine - 2) * lineHeight);
-      syncSelectionOverlay();
-    }
-    return true;
-  }
 
-function runDocument() {
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return;
 
-    const code = textarea.value;
-    const langSelect = document.getElementById('doc-language-select');
-    const lang = (langSelect ? langSelect.value : '').toLowerCase();
 
-    // Get or create the output panel below the editor
-    let outputPanel = document.getElementById('doc-run-output');
-    if (!outputPanel) {
-      outputPanel = document.createElement('div');
-      outputPanel.id = 'doc-run-output';
-      outputPanel.className = 'doc-run-output';
-      const editorWrap = document.getElementById('doc-editor-wrap');
-      if (editorWrap) editorWrap.after(outputPanel);
-    }
-    outputPanel.style.display = 'block';
-    outputPanel.innerHTML = '';
 
-    if (!code.trim()) {
-      outputPanel.innerHTML = '<pre class="doc-run-error">Nothing to run. Add some code first.</pre>';
-      return;
-    }
 
-    if (_isRenderLang(lang)) {
-      // HTML / SVG / XML — render inline in the sandboxed preview iframe.
-      outputPanel.style.display = 'none';
-      toggleHtmlPreview();
-      return;
-    }
 
-    if (!codeRunnerModule) {
-      outputPanel.innerHTML = '<pre class="doc-run-error">Code runner not loaded</pre>';
-      setTimeout(() => { if (outputPanel) outputPanel.style.display = 'none'; }, 5000);
-      return;
-    }
 
-    if (lang === 'bash' || lang === 'sh' || lang === 'shell' || lang === 'zsh') {
-      codeRunnerModule.runServer(code, outputPanel, 'bash');
-      return;
-    }
-
-    if (lang === 'python' || lang === 'py') {
-      codeRunnerModule.runServer(code, outputPanel, 'python');
-      return;
-    }
-
-    if (lang === 'javascript' || lang === 'js') {
-      codeRunnerModule.runJavaScript(code, outputPanel);
-      return;
-    }
-
-    outputPanel.innerHTML = '<pre class="doc-run-error">Unsupported language. Supported: bash, python, javascript, html</pre>';
-    setTimeout(() => { if (outputPanel) outputPanel.style.display = 'none'; }, 5000);
-  }
-
-async function copyDocument() {
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea || !textarea.value) return;
-    if (uiModule && uiModule.copyToClipboard) {
-      await uiModule.copyToClipboard(textarea.value);
-    } else {
-      try {
-        await navigator.clipboard.writeText(textarea.value);
-      } catch (e) { /* ignore */ }
-    }
-    if (uiModule) uiModule.showToast('Copied to clipboard');
-  }
-
-let _docTabMenu = null;
-
-function _closeDocTabMenu() {
-    if (_docTabMenu) { _docTabMenu.style.display = 'none'; }
-  }
 
 if (!window._documentInnerEscapeBound) {
     window._documentInnerEscapeBound = true;
@@ -5400,284 +3399,15 @@ if (!window._documentInnerEscapeBound) {
     }, true);
   }
 
-async function _moveDocToSession(docId, sessionId, { switchChat = false } = {}) {
-    const doc = docs.get(docId);
-    if (!doc || !sessionId) return false;
-    if (docId === activeDocId) {
-      try { await saveDocument({ silent: true }); } catch (_) {}
-    }
-    const res = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-    if (!res.ok) throw new Error(`Move failed: HTTP ${res.status}`);
-    const updated = await res.json();
-    doc.sessionId = updated.session_id || sessionId;
-    doc.title = updated.title ?? doc.title;
-    doc.language = updated.language ?? doc.language;
-    doc.content = updated.current_content ?? doc.content;
-    registerDocument(doc);
-    setLastSessionId(sessionId);
-    try { sessionModule?.setSessionHasDocs?.(sessionId, true); } catch (_) {}
-    if (switchChat && sessionModule?.selectSession) {
-      await sessionModule.selectSession(sessionId);
-      addDocToTabs(updated, sessionId);
-      switchToDoc(docId);
-      if (!isOpen) openPanel();
-    } else {
-      renderTabs();
-    }
-    _syncDocIndicator();
-    return true;
-  }
 
-async function moveActiveDocumentToCurrentChat({ quiet = false } = {}) {
-    if (!activeDocId) return;
-    let sessionId = sessionModule?.getCurrentSessionId?.() || '';
-    if (!sessionId) sessionId = await _autoCreateSession();
-    try {
-      await _moveDocToSession(activeDocId, sessionId);
-      if (!quiet) uiModule?.showToast?.('Document moved to current chat');
-    } catch (e) {
-      console.error('Failed to move document to current chat:', e);
-      uiModule?.showError?.('Could not move document to current chat');
-    }
-  }
 
-async function moveActiveDocumentToNewChat() {
-    if (!activeDocId) return;
-    try {
-      // Do not adopt the empty destination before the active document has
-      // saved and moved. Switching currentSessionId early made saveDocument
-      // operate against the wrong chat and aborted the move client-side.
-      const sessionId = await _autoCreateSession({ adopt: false, forceNew: true });
-      await _moveDocToSession(activeDocId, sessionId, { switchChat: true });
-      uiModule?.showToast?.('Document moved to new chat');
-    } catch (e) {
-      console.error('Failed to move document to new chat:', e);
-      uiModule?.showError?.('Could not move document to new chat');
-    }
-  }
 
-function showDocTabMenu(btnEl, docId) {
-    // Toggle off if already open for this doc
-    if (_docTabMenu && _docTabMenu.style.display === 'block' && _docTabMenu._docId === docId) {
-      _closeDocTabMenu();
-      return;
-    }
 
-    // Capture button position before any DOM changes
-    const _menuAnchorRect = btnEl.getBoundingClientRect();
 
-    // Switch to this doc if not already active
-    if (docId !== activeDocId) switchToDoc(docId);
 
-    const doc = docs.get(docId);
-    if (!doc) return;
 
-    // Create singleton menu container once
-    if (!_docTabMenu) {
-      _docTabMenu = document.createElement('div');
-      _docTabMenu.className = 'doc-tab-dropdown';
-      _docTabMenu.style.cssText = 'position:fixed;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;display:none;';
-      document.body.appendChild(_docTabMenu);
-      // Close on outside click
-      document.addEventListener('click', (e) => {
-        if (_docTabMenu && !_docTabMenu.contains(e.target) && !e.target.closest('.doc-tab-menu-btn')) {
-          _closeDocTabMenu();
-        }
-      });
-      document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || !_docTabMenu || _docTabMenu.style.display !== 'block') return;
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation?.();
-        _closeDocTabMenu();
-      }, true);
-    }
 
-    const lang = (doc.language || '').toLowerCase();
-    const canRun = _isRenderLang(lang) || ['javascript', 'js', 'python', 'py', 'bash', 'sh', 'shell', 'zsh'].includes(lang);
 
-    let previewIcon = '', previewLabel = '';
-    const _mdPreview = document.getElementById('doc-md-preview');
-    const _csvPreview = document.getElementById('doc-csv-preview');
-    const _htmlPreview = document.getElementById('doc-html-preview');
-    const _mdActive = _mdPreview && _mdPreview.style.display !== 'none';
-    const _csvActive = _csvPreview && _csvPreview.style.display !== 'none';
-    const _htmlActive = _htmlPreview && _htmlPreview.style.display !== 'none';
-    if (lang === 'markdown') { previewIcon = 'MD'; previewLabel = _mdActive ? 'Edit' : 'Preview'; }
-    else if (lang === 'csv') { previewIcon = '⊞'; previewLabel = _csvActive ? 'Edit' : 'Table View'; }
-    else if (_isRenderLang(lang)) { previewIcon = '▶'; previewLabel = _htmlActive ? 'Edit' : 'Run / Preview'; }
-    else if (_isDocxLang(lang)) { previewIcon = 'W'; previewLabel = 'Word Preview'; }
-
-    const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
-    const _saveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
-    const _copyIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-    const _runIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
-    const _previewIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-    const _deleteIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
-    const _moveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3"/><path d="M13 17h8"/><path d="m17 13 4 4-4 4"/><path d="M3 9v8a2 2 0 0 0 2 2h6"/></svg>';
-    const _newChatIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h9"/><path d="M19 3v6"/><path d="M16 6h6"/></svg>';
-
-    let items = '';
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="save">${_di(_saveIco)}<span>Save</span></div>`;
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="copy">${_di(_copyIco)}<span>Copy</span></div>`;
-    if (canRun) {
-      items += `<div class="dropdown-item-compact doc-tab-action" data-action="run">${_di(_runIco)}<span>Run</span></div>`;
-    }
-    if (previewLabel) {
-      items += `<div class="dropdown-item-compact doc-tab-action" data-action="preview"><span class="dropdown-icon">${previewIcon}</span><span>${previewLabel}</span></div>`;
-    }
-    const _downloadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="download">${_di(_downloadIco)}<span>Download</span></div>`;
-    items += `<div class="dropdown-divider"></div>`;
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="move-current">${_di(_moveIco)}<span>Move to current chat</span></div>`;
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="move-new">${_di(_newChatIco)}<span>Move to new chat</span></div>`;
-    // "Send signed reply" — only if this doc was opened from an email attachment
-    if (doc.sourceEmailUid && doc.sourceEmailFolder) {
-      const _sendBackIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
-      items += `<div class="dropdown-item-compact doc-tab-action" data-action="signed-reply">${_di(_sendBackIco)}<span>Send signed reply</span></div>`;
-    }
-    const _closeIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="close">${_di(_closeIco)}<span>Close</span></div>`;
-    items += `<div class="dropdown-divider"></div>`;
-    items += `<div class="dropdown-item-compact doc-tab-action doc-tab-action-delete" data-action="delete">${_di(_deleteIco)}<span>Delete</span></div>`;
-
-    _docTabMenu.innerHTML = items;
-    _docTabMenu.style.display = 'block';
-    _docTabMenu._docId = docId;
-
-    // Position: anchor to the tab bar bottom, aligned to button horizontally
-    const rect = _menuAnchorRect;
-    const tabBar = document.getElementById('doc-tab-bar');
-    const barBottom = tabBar ? tabBar.getBoundingClientRect().bottom : rect.bottom;
-    _docTabMenu.style.position = 'fixed';
-    _docTabMenu.style.zIndex = '1000';
-    _docTabMenu.style.left = rect.left + 'px';
-    _docTabMenu.style.top = (barBottom + 2) + 'px';
-
-    // Clamp to viewport edges
-    requestAnimationFrame(() => {
-      const menuRect = _docTabMenu.getBoundingClientRect();
-      if (menuRect.right > window.innerWidth - 8) {
-        _docTabMenu.style.left = (window.innerWidth - menuRect.width - 8) + 'px';
-      }
-      if (menuRect.left < 8) {
-        _docTabMenu.style.left = '8px';
-      }
-      if (menuRect.bottom > window.innerHeight - 8) {
-        _docTabMenu.style.top = (barBottom - menuRect.height - 4) + 'px';
-      }
-    });
-
-    // Wire action clicks
-    _docTabMenu.querySelectorAll('.doc-tab-action').forEach(item => {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const action = item.dataset.action;
-        _closeDocTabMenu();
-        switch (action) {
-          case 'save': saveDocument({ docId }); break;
-          case 'copy': copyDocument(); break;
-          case 'run': runDocument(); break;
-          case 'preview':
-            if (lang === 'markdown') toggleMarkdownPreview();
-            else if (lang === 'csv') toggleCsvPreview();
-            else if (_isRenderLang(lang)) toggleHtmlPreview();
-            else if (_isDocxLang(lang)) toggleDocxPreview();
-            break;
-          case 'download': {
-            const btn = document.getElementById('doc-fontsize-btn') || document.getElementById('doc-language-select');
-            showExportMenu(null, btn?.getBoundingClientRect());
-            break;
-          }
-          case 'move-current': moveActiveDocumentToCurrentChat(); break;
-          case 'move-new': moveActiveDocumentToNewChat(); break;
-          case 'signed-reply': _sendSignedReply(docId); break;
-          case 'close': closeTab(docId); break;
-          case 'delete': deleteActiveDocument(); break;
-        }
-      });
-    });
-  }
-
-async function deleteActiveDocument() {
-    if (!activeDocId) return;
-    const idToDelete = activeDocId;
-    if (_inFlightDeletes.has(idToDelete)) return _inFlightDeletes.get(idToDelete);
-
-    const deleteTask = (async () => {
-      let hadPendingAutoSave = false;
-      let pendingAutoSaveEntry = null;
-      let hadPendingPdfSave = false;
-      let wasDirty = false;
-      let confirmed = false;
-      try {
-        const doc = docs.get(idToDelete);
-        const name = doc ? doc.title : 'this document';
-        const ok = uiModule && uiModule.styledConfirm
-          ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })
-          : confirm(`Delete "${name}"?`);
-        if (!ok) return;
-        confirmed = true;
-
-        pendingAutoSaveEntry = _pendingAutoSaves.get(idToDelete) || null;
-        hadPendingAutoSave = Boolean(pendingAutoSaveEntry);
-        hadPendingPdfSave = _hasPendingPdfPaneSave(idToDelete);
-        wasDirty = (docs.get(idToDelete)?._saveState === 'dirty');
-        _cancelAutoSave(idToDelete);
-        _cancelPdfPaneSave(idToDelete);
-
-        const targetDoc = docs.get(idToDelete) || _closingDocs.get(idToDelete);
-        if (targetDoc?._saveQueueTail) {
-          await targetDoc._saveQueueTail.catch(() => {});
-        }
-        const res = await fetch(`${API_BASE}/api/document/${idToDelete}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error(`Delete failed: HTTP ${res.status}`);
-
-        markDeleted(idToDelete);
-        _cleanupPdfDocState(idToDelete);
-        // Remove tab
-        const tab = document.querySelector(`.doc-tab[data-doc-id="${idToDelete}"]`);
-        if (tab) tab.remove();
-        _forgetActiveDoc(targetDoc?.sessionId || _lastSessionId, idToDelete);
-        removeDocument(idToDelete);
-        releaseClosingDraft(idToDelete);
-        // Switch to another doc or close panel when deleting the currently viewed doc
-        if (activeDocId === idToDelete) {
-          const remaining = Array.from(docs.keys());
-          if (remaining.length > 0) {
-            switchToDoc(remaining[0]);
-          } else {
-            setActiveDocId(null);
-            closePanel();
-          }
-        } else {
-          renderTabs();
-          _syncDocIndicator();
-        }
-        if (uiModule) uiModule.showToast('Document deleted');
-      } catch (e) {
-        console.error('Failed to delete document:', e);
-        if (confirmed && docs.has(idToDelete) && !_deletedDocIds.has(idToDelete)) {
-          if (hadPendingPdfSave) {
-            _schedulePdfPaneSave(idToDelete);
-          } else if (hadPendingAutoSave || wasDirty) {
-            _scheduleAutoSave(idToDelete, 800, pendingAutoSaveEntry?.options || {});
-          }
-        }
-        if (uiModule) uiModule.showError('Failed to delete document');
-      } finally {
-        endDelete(idToDelete);
-      }
-    })();
-
-    beginDelete(idToDelete, deleteTask);
-    return deleteTask;
-  }
 
 function toggleFullscreen() {
     const pane = document.getElementById('doc-editor-pane');
@@ -6568,90 +4298,11 @@ async function restoreVersion(num) {
     }
   }
 
-async function updateTitle(overrideDocId, overrideTitle) {
-    const docId = overrideDocId || activeDocId;
-    if (!docId) return;
-    const title = overrideTitle || document.getElementById('doc-title-input')?.value;
-    if (!title) return;
-    try {
-      await fetch(`${API_BASE}/api/document/${docId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      });
-      if (docs.has(docId)) {
-        docs.get(docId).title = title;
-        renderTabs();
-      }
-    } catch (e) {
-      console.error('Failed to update title:', e);
-    }
-  }
 
-function autoTitleFromContent(content, docId) {
-    const id = docId || activeDocId;
-    if (!id) return;
-    const doc = docs.get(id);
-    if (!doc || (doc.title && doc.title !== '' && doc.title !== 'Untitled')) return;
 
-    const text = (content || '').trimStart();
-    if (!text) return;
 
-    let title = null;
 
-    // Markdown header: # Title
-    const mdMatch = text.match(/^#{1,3}\s+(.+)/m);
-    if (mdMatch) {
-      title = mdMatch[1].trim();
-    }
 
-    // HTML heading: <h1>Title</h1>
-    if (!title) {
-      const htmlMatch = text.match(/<h[1-3][^>]*>([^<]+)<\/h[1-3]>/i);
-      if (htmlMatch) title = htmlMatch[1].trim();
-    }
-
-    // First non-empty line as fallback (only if short enough to be a title)
-    if (!title) {
-      const firstLine = text.split('\n').find(l => l.trim().length > 0);
-      if (firstLine) {
-        const cleaned = firstLine.trim();
-        if (cleaned.length <= 60 && cleaned.length >= 2) {
-          title = cleaned;
-        }
-      }
-    }
-
-    if (!title) return;
-
-    // Clean up: strip trailing punctuation like : or ...
-    title = title.replace(/[:#*`]+$/g, '').trim();
-    if (title.length > 50) title = title.slice(0, 48) + '...';
-    if (!title) return;
-
-    updateTitle(id, title);
-    const titleInput = document.getElementById('doc-title-input');
-    if (titleInput && id === activeDocId) titleInput.value = title;
-  }
-
-async function updateLanguage() {
-    if (!activeDocId) return;
-    const select = document.getElementById('doc-language-select');
-    if (!select) return;
-    try {
-      await fetch(`${API_BASE}/api/document/${activeDocId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: select.value }),
-      });
-      if (docs.has(activeDocId)) {
-        docs.get(activeDocId).language = select.value;
-        renderTabs();
-      }
-    } catch (e) {
-      console.error('Failed to update language:', e);
-    }
-  }
 
 export function clearAll() {
     suspendSuggestions();
@@ -6668,30 +4319,7 @@ export function getCurrentDocId() {
     return activeDocId;
   }
 
-export function getChatDocumentId() {
-    // A minimized document remains the document linked to this conversation.
-    // On mobile, minimizing the sheet is the only way to reach the composer;
-    // treating that layout action as unlinking erased the document exactly
-    // when the user tried to say "edit this". A real tab close clears
-    // `_minimizedDocId` and removes the document from `docs`.
-    const pane = document.getElementById('doc-editor-pane');
-    const style = pane ? window.getComputedStyle(pane) : null;
-    const visiblyOpen = !!(
-      activeDocId
-      && pane?.isConnected
-      && !(Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel'))
-      && style?.display !== 'none'
-      && style?.visibility !== 'hidden'
-      && style?.opacity !== '0'
-    );
-    const minimizedId = (
-      Modals.isRegistered('doc-panel')
-      && Modals.isMinimized('doc-panel')
-      && _minimizedDocId
-    ) ? _minimizedDocId : null;
-    const id = visiblyOpen ? activeDocId : minimizedId;
-    return id && docs.has(id) ? id : null;
-  }
+
 
 try {
   bindDocumentCommands({
@@ -6744,6 +4372,10 @@ const _getActiveEmailComposerContext = (...args) => globalThis.getActiveEmailCom
 const _findEmailDocId = (...args) => globalThis.findEmailDocId?.(...args);
 const _focusEmailReplyBody = (...args) => globalThis.focusEmailReplyBody?.(...args);
 const _generateEmailReply = (...args) => globalThis.generateEmailReply?.(...args);
+const _ensureDocPanelFacade = (...args) => globalThis.ensureDocPanel?.(...args);
+const _loadSessionDocsFacade = (...args) => globalThis.loadSessionDocs?.(...args);
+const _getSelectionContextFacade = (...args) => globalThis.getSelectionContext?.(...args);
+const _restoreSelectionReferenceFacade = (...args) => globalThis.restoreSelectionReference?.(...args);
 
 export {
   _openEmailDraft as openEmailDraft,
@@ -6753,6 +4385,10 @@ export {
   _findEmailDocId as findEmailDocId,
   _focusEmailReplyBody as focusEmailReplyBody,
   _generateEmailReply as generateEmailReply,
+  _ensureDocPanelFacade as ensureDocPanel,
+  _loadSessionDocsFacade as loadSessionDocs,
+  _getSelectionContextFacade as getSelectionContext,
+  _restoreSelectionReferenceFacade as restoreSelectionReference,
 };
 
 const documentModule = {
@@ -6769,8 +4405,8 @@ const documentModule = {
   openEmailDraft: _openEmailDraft,
   generateEmailReply: _generateEmailReply,
   ensurePaneMounted: _ensureDocPaneMounted,
-  loadSessionDocs,
-  ensureDocPanel,
+  loadSessionDocs: _loadSessionDocsFacade,
+  ensureDocPanel: _ensureDocPanelFacade,
   saveDocument,
   handleDocUpdate,
   handleDocSuggestions,
@@ -6788,8 +4424,8 @@ const documentModule = {
   moveActiveDocumentToCurrentChat,
   moveActiveDocumentToNewChat,
   findEmailDocId: _findEmailDocId,
-  getSelectionContext,
-  restoreSelectionReference,
+  getSelectionContext: _getSelectionContextFacade,
+  restoreSelectionReference: _restoreSelectionReferenceFacade,
   clearSelection,
   clearAll,
   openLibrary,
@@ -6797,6 +4433,7 @@ const documentModule = {
   isLibraryOpen,
 };
 
+export { createDocument, injectFreshDoc, loadDocument, getChatDocumentId };
 export { handleDocSuggestions, isPanelOpen, saveDocument };
 
 export default documentModule;
