@@ -316,6 +316,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 status["action_trace"] = action_trace
         except Exception:
             pass
+        try:
+            get_dom_tel = getattr(research_handler, "get_domain_verification_telemetry", None)
+            if callable(get_dom_tel):
+                dom_tel = get_dom_tel(session_id)
+                if isinstance(dom_tel, dict):
+                    status["domain_verification"] = dom_tel
+        except Exception:
+            pass
         return status
 
     @router.post("/api/research/cancel/{session_id}")
@@ -345,8 +353,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         action_trace = research_handler.get_action_trace(session_id)
         category = research_handler.get_category(session_id)
         mode = research_handler.get_mode(session_id)
+        get_vs = getattr(research_handler, "get_verification_summary", None)
+        verification_summary = get_vs(session_id) if callable(get_vs) else None
+        get_dom_tel = getattr(research_handler, "get_domain_verification_telemetry", None)
+        domain_verification = get_dom_tel(session_id) if callable(get_dom_tel) else None
         research_handler.clear_result(session_id)
-        return {
+        payload = {
             "result": result,
             "sources": sources,
             "raw_findings": raw_findings,
@@ -358,6 +370,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             "category": category,
             "mode": mode,
         }
+        if isinstance(verification_summary, dict):
+            payload["verification_summary"] = verification_summary
+        if isinstance(domain_verification, dict):
+            payload["domain_verification"] = domain_verification
+        return payload
 
     def _assert_owns_research(session_id: str, user: str) -> None:
         """404-not-403 ownership gate for a research session's on-disk JSON.
@@ -541,6 +558,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[Literal["product", "comparison", "howto", "factcheck"]] = None
+        enable_domain_verifiers: bool = False
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -639,6 +657,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             extraction_timeout=body.extraction_timeout,
             extraction_concurrency=body.extraction_concurrency,
             owner=user,
+            enable_domain_verifiers=bool(body.enable_domain_verifiers),
             on_complete=(lambda sid, result, sources, findings: delivery.complete(sid, result, sources))
                 if body.origin_chat_id else None,
         )
@@ -722,7 +741,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             p = owned_disk_path
             if p is not None:
                 d = json.loads(p.read_text(encoding="utf-8"))
-                return {
+                disk_payload = {
                     "result": d.get("result", ""),
                     "sources": d.get("sources", []),
                     "raw_findings": d.get("raw_findings", []),
@@ -733,6 +752,15 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "action_trace": d.get("action_trace", []),
                     "category": d.get("category") or "",
                 }
+                vs = d.get("verification_summary")
+                if isinstance(vs, dict):
+                    disk_payload["verification_summary"] = vs
+                    extract_fn = getattr(research_handler, "_extract_domain_verification_telemetry", None)
+                    if callable(extract_fn):
+                        dom_tel = extract_fn(vs)
+                        if isinstance(dom_tel, dict):
+                            disk_payload["domain_verification"] = dom_tel
+                return disk_payload
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
         raw_findings = research_handler.get_raw_findings(session_id) or []
@@ -741,7 +769,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         source_coverage = research_handler.get_source_coverage(session_id)
         navigation_trace = research_handler.get_navigation_trace(session_id)
         action_trace = research_handler.get_action_trace(session_id)
-        return {
+        get_vs = getattr(research_handler, "get_verification_summary", None)
+        verification_summary = get_vs(session_id) if callable(get_vs) else None
+        get_dom_tel = getattr(research_handler, "get_domain_verification_telemetry", None)
+        domain_verification = get_dom_tel(session_id) if callable(get_dom_tel) else None
+        live_payload = {
             "result": result,
             "sources": sources,
             "raw_findings": raw_findings,
@@ -753,6 +785,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             "category": research_handler.get_category(session_id),
             "mode": research_handler.get_mode(session_id),
         }
+        if isinstance(verification_summary, dict):
+            live_payload["verification_summary"] = verification_summary
+        if isinstance(domain_verification, dict):
+            live_payload["domain_verification"] = domain_verification
+        return live_payload
 
     @router.post("/api/research/spinoff/{session_id}")
     async def research_spinoff(session_id: str, request: Request):

@@ -272,6 +272,7 @@ class ResearchHandler:
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         owner: str = "",
+        enable_domain_verifiers: bool = False,
     ) -> dict:
         """Start research as a background task. Returns task info dict.
 
@@ -321,6 +322,7 @@ class ResearchHandler:
             "mode": "research",
             # SECURITY: track ownership so all reads / saves can filter by user.
             "owner": owner or "",
+            "enable_domain_verifiers": bool(enable_domain_verifiers),
         }
         self._active_tasks[session_id] = entry
 
@@ -357,6 +359,7 @@ class ResearchHandler:
                         session_id=session_id,
                         extraction_timeout=extraction_timeout,
                         extraction_concurrency=extraction_concurrency,
+                        enable_domain_verifiers=bool(enable_domain_verifiers),
                     ),
                     timeout=hard_timeout,
                 )
@@ -635,6 +638,45 @@ class ResearchHandler:
         return []
 
     @staticmethod
+    def _extract_domain_verification_telemetry(verification_summary: Optional[dict]) -> Optional[dict]:
+        """Extract structured domain verifier telemetry when domain verifiers were active."""
+        if not isinstance(verification_summary, dict):
+            return None
+        claim_assessments = verification_summary.get("claim_assessments")
+        if claim_assessments is None:
+            return None
+        return {
+            "claim_assessments": list(claim_assessments) if isinstance(claim_assessments, list) else [],
+            "conflict_records": list(verification_summary.get("conflict_records") or []),
+            "missing_domain_plugin": bool(verification_summary.get("missing_domain_plugin", False)),
+            "missing_domain_domains": list(verification_summary.get("missing_domain_domains") or []),
+            "plugin_errors": list(verification_summary.get("plugin_errors") or []),
+            "routed_claims": list(verification_summary.get("routed_claims") or []),
+        }
+
+    def get_verification_summary(self, session_id: str) -> Optional[dict]:
+        """Get structured verification summary from in-memory or persisted session state."""
+        if session_id in self._active_tasks:
+            entry = self._active_tasks[session_id]
+            if isinstance(entry.get("verification_summary"), dict):
+                return entry["verification_summary"]
+            researcher = entry.get("researcher")
+            if researcher is not None:
+                vs = getattr(researcher, "verification_summary", None)
+                if isinstance(vs, dict):
+                    return vs
+        data = self._get_session_json(session_id)
+        if isinstance(data, dict):
+            vs = data.get("verification_summary")
+            if isinstance(vs, dict):
+                return vs
+        return None
+
+    def get_domain_verification_telemetry(self, session_id: str) -> Optional[dict]:
+        """Get domain verifier telemetry (claim_assessments, conflict_records, missing_domain_domains, plugin_errors)."""
+        return self._extract_domain_verification_telemetry(self.get_verification_summary(session_id))
+
+    @staticmethod
     def _source_metadata(f: dict) -> dict:
         meta = {}
         for key in ("retrieval", "source_kind", "source_reason"):
@@ -780,7 +822,8 @@ class ResearchHandler:
                 "analyzed_urls": analyzed_urls,
                 "source_state": source_state,
                 "source_coverage": source_coverage,
-                "verification_summary": getattr(researcher, "verification_summary", None) if researcher else None,
+                "verification_summary": entry.get("verification_summary") if isinstance(entry.get("verification_summary"), dict) else (getattr(researcher, "verification_summary", None) if researcher else None),
+                "enable_domain_verifiers": bool(entry.get("enable_domain_verifiers", False)),
                 "navigation_trace": navigation_trace,
                 "action_trace": action_trace,
                 "stats": entry.get("stats"),
@@ -1027,6 +1070,7 @@ class ResearchHandler:
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         session_id: str = "",
+        enable_domain_verifiers: bool = False,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -1110,6 +1154,7 @@ class ResearchHandler:
                 search_provider=search_provider,
                 category=category,
                 session_id=session_id,
+                enable_domain_verifiers=bool(enable_domain_verifiers),
             )
             if _task_entry is not None:
                 _task_entry["researcher"] = researcher
@@ -1135,6 +1180,7 @@ class ResearchHandler:
                 # Auto classification happens inside DeepResearcher. Keep the
                 # resolved format on the task so it survives every UI path.
                 _task_entry["category"] = researcher.category or category
+                _task_entry["verification_summary"] = getattr(researcher, "verification_summary", None)
 
             return self._format_research_report(query, report, stats, elapsed)
 
