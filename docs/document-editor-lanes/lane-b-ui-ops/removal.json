@@ -7,25 +7,40 @@
     "copyDocument",
     "runDocument",
     "updateLanguage",
-    "updateTitle"
+    "updateTitle",
+    "_DOC_RECENTS_KEY",
+    "_DOC_MAX_VISIBLE",
+    "_getDocRecent",
+    "_trackDocAction",
+    "initActionOverflow"
   ],
   "targetModules": {
     "autoTitleFromContent": "ui/documentActions",
     "copyDocument": "ui/documentActions",
     "runDocument": "ui/documentActions",
     "updateLanguage": "ui/documentActions",
-    "updateTitle": "ui/documentActions"
+    "updateTitle": "ui/documentActions",
+    "_DOC_RECENTS_KEY": "ui/header/overflow",
+    "_DOC_MAX_VISIBLE": "ui/header/overflow",
+    "_getDocRecent": "ui/header/overflow",
+    "_trackDocAction": "ui/header/overflow",
+    "initActionOverflow": "ui/header/overflow"
   },
   "destinationExports": [
     "autoTitleFromContent",
     "copyDocument",
     "runDocument",
     "updateLanguage",
-    "updateTitle"
+    "updateTitle",
+    "_DOC_RECENTS_KEY",
+    "_DOC_MAX_VISIBLE",
+    "_getDocRecent",
+    "_trackDocAction",
+    "initActionOverflow"
   ],
   "addedImports": [
     "import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from \"./document/ui/documentActions.js\";"
   ],
-  "description": "Lane B checkpoint 1: ui/documentActions. All five Appendix A declarations are exported. The integrator adds the named import to static/js/document.js and deletes the five declarations there. This lane does not edit the monolith.",
+  "description": "Lane B checkpoints 1 and 2: ui/documentActions and ui/header/overflow. The integrator adds the corresponding named imports to static/js/document.js and deletes the listed declarations there. This lane does not edit the monolith.",
   "intentionalNonVerbatimChanges": []
 }

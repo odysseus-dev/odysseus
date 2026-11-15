@@ -56,6 +56,24 @@ Checkpoint 1 verifier result, with only this module present:
 - Ledger failed only on 5 `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` entries. Those stay blocked until the integrator deletes the declarations from `static/js/document.js`.
 - Ports still report `actualObserverCount: 0` against an expected count of 1. The ports gate passed. That observer gap is pre-existing and is not a documentActions defect.
 
+## Checkpoint 2: header overflow
+
+Source: `frontend/src/features/documents/ui/header/overflow.js`
+
+Moved declarations: `_DOC_RECENTS_KEY`, `_DOC_MAX_VISIBLE`, `_getDocRecent`, `_trackDocAction`, and `initActionOverflow` (5 items, all Appendix A exports). The existing page-scope `_syncOverflow` callback is retained with an explicit `globalThis._syncOverflow` assignment. The monolith used an implicit global assignment; explicit assignment is required in strict ES modules. The repository has no direct reads of the bare `_syncOverflow` name. Markdown toolbar overflow callbacks are separate properties on the toolbar element.
+
+Focused test:
+
+```bash
+node --test tests/documentOverflow.test.mjs
+```
+
+Passed: 1 runner test, behavior suite executed with pass=1, fail=0. It verifies initialization, default visibility, recency-based reorder, callback compatibility, and opening the menu.
+
+Verifier, using the cumulative manifest: Appendix A exports clean; import graph clean with 0 cycles; layer and state ownership clean; ports clean; removal simulation clean. The manifest reports 10 declarations listed, 9 verified moved, 5 rewrites applied, and `Removal Status: VIOLATIONS`; the reason is not yet isolated. The full ledger reports 77 duplicate-across-monolith-and-module findings because all moved declarations remain in integration-owned `static/js/document.js`. This is expected before integration. Do not describe the overall verifier as passing.
+
+Local checkpoint commit: recorded after the test and verifier run.
+
 ## Remaining modules
 
 Header overflow, markdown images, document flows, selection highlights (`stmt#11153`), toolbar, and tab bar (`stmt#206`) are still outstanding for this handoff. Continue in that order. Each group gets focused tests, a manifest update, verifier evidence, and a local commit.
