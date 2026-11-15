@@ -1,5 +1,20 @@
 # Document Editor integration ledger
 
+## Lane A checkpoint
+
+Scope: integrate `lane/docs-lane-a-app-ai` into `refactor/document-editor-decomposition`.
+Development head: `e87326f893ae3ae0ae89923080bca938043ad5ae`.
+Integrated commits: `400aeb97`, `162566c3`, `2fcadd38`, `e87326f8`.
+
+- Integrated all 43 assigned declarations across `documentUpdate`, `versionHistory`, `liveStream`, and `documentStatus`.
+- Removed the 43 original declarations from `static/js/document.js`; imported the maintained modules and retained the stream/update named API through stable forwarding bindings.
+- Published all four modules under the mirrored `static/js/document/ui/` paths and added them to the service-worker precache. Cache key advanced to `odysseus-v1144-pr40-editor-precache`.
+- Extraction verifier: 565 total, 408 moved, 157 unmoved, zero duplicate, zero missing; Lane A removal 43/43, 26 approved rewrites, zero exceptions, clean simulation. Exact exports, 46-module import graph (178 edges, zero cycles), state ownership, command and hook inventories pass. The observer inventory remains 0/1 and is permitted by the verifier's existing optional observer contract.
+- Focused Lane A JavaScript behavior suites: 4 passed, 0 failed, 0 skipped.
+- Public module API and persistence lifecycle regressions: 19 passed, 0 failed.
+- Frontend architecture checker passed (89 maintained modules); publication check passed with zero stale files; `git diff --check` passed.
+- Remaining 157 items are exactly Lane C's 149 assigned items and the integration owner's 8 composition/facade items.
+
 ## Lane B checkpoint
 
 Scope: integrate `lane/docs-lane-b-ui-ops` into `refactor/document-editor-decomposition`.

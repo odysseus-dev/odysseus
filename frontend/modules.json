@@ -450,6 +450,22 @@
     {
       "source": "features/documents/ui/tabs/tabBar.js",
       "deployment": "js/document/ui/tabs/tabBar.js"
+    },
+    {
+      "source": "features/documents/ui/aiUpdates/documentUpdate.js",
+      "deployment": "js/document/ui/aiUpdates/documentUpdate.js"
+    },
+    {
+      "source": "features/documents/ui/aiUpdates/liveStream.js",
+      "deployment": "js/document/ui/aiUpdates/liveStream.js"
+    },
+    {
+      "source": "features/documents/ui/history/versionHistory.js",
+      "deployment": "js/document/ui/history/versionHistory.js"
+    },
+    {
+      "source": "features/documents/ui/status/documentStatus.js",
+      "deployment": "js/document/ui/status/documentStatus.js"
     }
   ]
 }
