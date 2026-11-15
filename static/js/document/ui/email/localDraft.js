@@ -7,6 +7,15 @@ import {
 } from "../../domain/emailMessage.js";
 
 const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
+const pendingLocalDraftWrites = new Map();
+
+function cancelLocalDraftWrite(key) {
+    const pending = pendingLocalDraftWrites.get(key);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingLocalDraftWrites.delete(key);
+    if (_emailLocalDraftDebounce === pending.timer) _emailLocalDraftDebounce = null;
+  }
 
 export function _clearCurrentEmailLocalDraft() {
     _clearEmailLocalDraft(
@@ -19,6 +28,7 @@ export function _clearCurrentEmailLocalDraft() {
 export function _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo) {
     const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);
     if (!key) return;
+    cancelLocalDraftWrite(key);
     try { localStorage.removeItem(key); } catch (_) {}
   }
 
@@ -106,18 +116,25 @@ function writeEmailLocalDraft(snapshot) {
   }
 
 export function _persistEmailLocalDraftNow() {
-    clearTimeout(_emailLocalDraftDebounce);
-    _emailLocalDraftDebounce = null;
-    writeEmailLocalDraft(captureEmailLocalDraft());
+    const snapshot = captureEmailLocalDraft();
+    if (!snapshot) return;
+    cancelLocalDraftWrite(snapshot.key);
+    writeEmailLocalDraft(snapshot);
   }
 
 export function _persistEmailLocalDraftSoon() {
-    clearTimeout(_emailLocalDraftDebounce);
     const snapshot = captureEmailLocalDraft();
-    _emailLocalDraftDebounce = setTimeout(() => {
-      _emailLocalDraftDebounce = null;
+    if (!snapshot) return;
+    cancelLocalDraftWrite(snapshot.key);
+    const pending = { snapshot, timer: null };
+    pending.timer = setTimeout(() => {
+      if (pendingLocalDraftWrites.get(snapshot.key) !== pending) return;
+      pendingLocalDraftWrites.delete(snapshot.key);
+      if (_emailLocalDraftDebounce === pending.timer) _emailLocalDraftDebounce = null;
       writeEmailLocalDraft(snapshot);
     }, 800);
+    pendingLocalDraftWrites.set(snapshot.key, pending);
+    _emailLocalDraftDebounce = pending.timer;
   }
 
 export function _sanitizeOutgoingEmailBody(raw) {

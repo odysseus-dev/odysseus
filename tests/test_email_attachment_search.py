@@ -1,6 +1,6 @@
 import sqlite3
 from email.message import EmailMessage
-from tests.helpers.document_source import document_source
+from tests.helpers.document_source import document_source, function_body
 from tests.helpers.js_modules import email_library_source
 
 
@@ -101,10 +101,7 @@ def test_attachment_open_spins_icon_only():
 
 
 def test_move_document_creates_destination_before_adopting_it():
-    document = document_source()
-    start = document.index("async function moveActiveDocumentToNewChat()")
-    end = document.index("\n  function showDocTabMenu", start)
-    handler = document[start:end]
+    handler = function_body("moveActiveDocumentToNewChat")
 
     assert "_autoCreateSession({ adopt: false, forceNew: true })" in handler
     assert "await _moveDocToSession(activeDocId, sessionId, { switchChat: true })" in handler

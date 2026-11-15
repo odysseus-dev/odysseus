@@ -17,27 +17,27 @@
     },
     "_persistEmailLocalDraftNow": {
       "file": "ui/email/localDraft.js",
-      "rationale": "Capture and persist an owner-produced draft snapshot while clearing the pending debounce.",
+      "rationale": "Keep local storage snapshots and debounce cancellation owned by their storage key so rapid independent drafts and pane disposal cannot discard one another.",
+      "targetFunctionSha256": "504a8eec8d012ab9125cc66efad041f1889cbb84f85dcc38a5ef6d925855e064",
       "replacements": [
         {
-          "from": "    const doc = activeDocId && docs.get(activeDocId);\n    if (!doc || doc.language !== 'email') return;\n    const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';\n    const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';\n    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value || '';\n    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);\n    if (!key) return;\n    const rich = document.getElementById('doc-email-richbody');\n    const textarea = document.getElementById('doc-editor-textarea');\n    const body = (rich && rich.style.display !== 'none') ? rich.innerHTML : (textarea?.value || '');\n    const payload = {\n      to: document.getElementById('doc-email-to')?.value || '',\n      cc: document.getElementById('doc-email-cc')?.value || '',\n      bcc: document.getElementById('doc-email-bcc')?.value || '',\n      subject: document.getElementById('doc-email-subject')?.value || '',\n      inReplyTo,\n      references: document.getElementById('doc-email-references')?.value || '',\n      sourceUid,\n      sourceFolder,\n      body,\n      updatedAt: Date.now(),\n    };\n    try { localStorage.setItem(key, JSON.stringify(payload)); } catch (_) {}\n",
-          "to": "    clearTimeout(_emailLocalDraftDebounce);\n    _emailLocalDraftDebounce = null;\n    writeEmailLocalDraft(captureEmailLocalDraft());\n",
-          "rationale": "Capture and persist an owner-produced draft snapshot while clearing the pending debounce."
+          "from": "function _persistEmailLocalDraftNow() {\n    const doc = activeDocId && docs.get(activeDocId);\n    if (!doc || doc.language !== 'email') return;\n    const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';\n    const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';\n    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value || '';\n    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);\n    if (!key) return;\n    const rich = document.getElementById('doc-email-richbody');\n    const textarea = document.getElementById('doc-editor-textarea');\n    const body = (rich && rich.style.display !== 'none') ? rich.innerHTML : (textarea?.value || '');\n    const payload = {\n      to: document.getElementById('doc-email-to')?.value || '',\n      cc: document.getElementById('doc-email-cc')?.value || '',\n      bcc: document.getElementById('doc-email-bcc')?.value || '',\n      subject: document.getElementById('doc-email-subject')?.value || '',\n      inReplyTo,\n      references: document.getElementById('doc-email-references')?.value || '',\n      sourceUid,\n      sourceFolder,\n      body,\n      updatedAt: Date.now(),\n    };\n    try { localStorage.setItem(key, JSON.stringify(payload)); } catch (_) {}\n  }",
+          "to": "function _persistEmailLocalDraftNow() {\n    const snapshot = captureEmailLocalDraft();\n    if (!snapshot) return;\n    cancelLocalDraftWrite(snapshot.key);\n    writeEmailLocalDraft(snapshot);\n  }",
+          "rationale": "Keep local storage snapshots and debounce cancellation owned by their storage key so rapid independent drafts and pane disposal cannot discard one another."
         }
-      ],
-      "targetFunctionSha256": "09bc9f1b0ef69ad54334b990072d043a485d636fe2e92e41d990d06f1074c1c1"
+      ]
     },
     "_persistEmailLocalDraftSoon": {
       "file": "ui/email/localDraft.js",
-      "rationale": "Capture draft content when scheduling so later document changes cannot redirect a pending write.",
+      "rationale": "Keep local storage snapshots and debounce cancellation owned by their storage key so rapid independent drafts and pane disposal cannot discard one another.",
+      "targetFunctionSha256": "af601afb53cd5291cb789a54235362b89189622beacbf8925e6dc3a295472be6",
       "replacements": [
         {
-          "from": "    _emailLocalDraftDebounce = setTimeout(_persistEmailLocalDraftNow, 800);\n",
-          "to": "    const snapshot = captureEmailLocalDraft();\n    _emailLocalDraftDebounce = setTimeout(() => {\n      _emailLocalDraftDebounce = null;\n      writeEmailLocalDraft(snapshot);\n    }, 800);\n",
-          "rationale": "Capture draft content when scheduling so later document changes cannot redirect a pending write."
+          "from": "function _persistEmailLocalDraftSoon() {\n    clearTimeout(_emailLocalDraftDebounce);\n    _emailLocalDraftDebounce = setTimeout(_persistEmailLocalDraftNow, 800);\n  }",
+          "to": "function _persistEmailLocalDraftSoon() {\n    const snapshot = captureEmailLocalDraft();\n    if (!snapshot) return;\n    cancelLocalDraftWrite(snapshot.key);\n    const pending = { snapshot, timer: null };\n    pending.timer = setTimeout(() => {\n      if (pendingLocalDraftWrites.get(snapshot.key) !== pending) return;\n      pendingLocalDraftWrites.delete(snapshot.key);\n      if (_emailLocalDraftDebounce === pending.timer) _emailLocalDraftDebounce = null;\n      writeEmailLocalDraft(snapshot);\n    }, 800);\n    pendingLocalDraftWrites.set(snapshot.key, pending);\n    _emailLocalDraftDebounce = pending.timer;\n  }",
+          "rationale": "Keep local storage snapshots and debounce cancellation owned by their storage key so rapid independent drafts and pane disposal cannot discard one another."
         }
-      ],
-      "targetFunctionSha256": "7c7c604dfcad2759832778e973975d996da9b037294a8859e39f2ad65d4715c1"
+      ]
     },
     "_showEmailFields": {
       "file": "ui/email/composerFields.js",
@@ -522,6 +522,18 @@
         }
       ],
       "targetFunctionSha256": "fea4b667b7add5b558abd88f7de0cff3716ad6d398ea3372db6b4cbb4efb0a40"
+    },
+    "_clearEmailLocalDraft": {
+      "file": "ui/email/localDraft.js",
+      "rationale": "Explicit draft clearing cancels only that storage key so a captured pending snapshot cannot recreate a sent or cleared draft.",
+      "targetFunctionSha256": "719c743dc67cbf31181d200f1f83c9f3344e945cea27dc42181ed3ff8b59130b",
+      "replacements": [
+        {
+          "from": "function _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo) {\n    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);\n    if (!key) return;\n    try { localStorage.removeItem(key); } catch (_) {}\n  }",
+          "to": "function _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo) {\n    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);\n    if (!key) return;\n    cancelLocalDraftWrite(key);\n    try { localStorage.removeItem(key); } catch (_) {}\n  }",
+          "rationale": "Explicit draft clearing cancels only that storage key so a captured pending snapshot cannot recreate a sent or cleared draft."
+        }
+      ]
     }
   },
   "openPanelStatementRewrites": [
@@ -533,11 +545,16 @@
           "from": "disposeSourceEditor(pane);\n      disposeSelectionHighlights();",
           "to": "disposeSourceEditor(pane);\n      _clearRichImageSelection();\n      disposeSelectionHighlights();",
           "rationale": "Add image selection owner cleanup before the remaining selection observer cleanup."
+        },
+        {
+          "from": "clearTimeout(_emailLocalDraftDebounce);",
+          "to": "",
+          "rationale": "Captured local draft writes belong to the draft storage owner and survive disposal of an unrelated pane."
         }
       ],
       "targetFunctionFile": "ui/panel/panelLifecycle.js",
       "targetFunctionName": "openPanel",
-      "targetFunctionSha256": "639fac9378df7525ea414b158f2bdee086d083dae4ad40ca2c0ed1721b3d3077"
+      "targetFunctionSha256": "506a57066da1b057f5ab613e73bce92a91fcb51985c43d149d7c028e8825a2e9"
     },
     {
       "id": "openPanel#7122",

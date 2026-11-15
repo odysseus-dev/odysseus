@@ -166,13 +166,14 @@ test('titles: image work is cancelled at disposal and repeated mount remains usa
   await page.waitForFunction(() => state.docs.get('b').title === 'Valid title after reopen');
 });
 
-for (const lifecycle of ['mounted', 'minimized', 'navigation', 'detached', 'successful deletion']) {
+for (const lifecycle of ['mounted', 'minimized', 'navigation', 'detached', 'session', 'successful deletion']) {
   test(`pdf rollback: ${lifecycle} retains edits with document-level persistence`, async t => {
     let releaseDelete;
     let deleteStarted;
     const gate = new Promise(resolve => { releaseDelete = resolve; });
     const started = new Promise(resolve => { deleteStarted = resolve; });
     const { page, requests } = await setup(t, async (route, request) => {
+      if (request.path === '/api/documents/new') { await route.fulfill({ json: [] }); return true; }
       if (request.path.endsWith('/render-pages')) {
         await route.fulfill({ json: { pages: [{ page: 1, width: 600, height: 800, fields: [{ name: 'Name', type: 'text', rect_px: [40, 40, 220, 80], value: 'Ada' }] }] } });
         return true;
@@ -200,6 +201,10 @@ for (const lifecycle of ['mounted', 'minimized', 'navigation', 'detached', 'succ
     await started;
     if (lifecycle === 'navigation') await page.evaluate(() => editor.loadDocument('b'));
     if (lifecycle === 'detached') await page.evaluate(() => flows.closeTab('pdf-a'));
+    if (lifecycle === 'session') await page.evaluate(() => {
+      state.docs.get('pdf-a').sessionId = 'old';
+      return editor.loadSessionDocs('new');
+    });
     if (lifecycle === 'minimized' || lifecycle === 'successful deletion') {
       await page.evaluate(() => editor.closePanel('down'));
       await page.clock.runFor(250);
@@ -483,4 +488,70 @@ test('images: upload completion cannot insert into another document', async t =>
   assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'B original');
   assert.equal(await page.evaluate(() => state.docs.get('a').content), 'A original');
   assert.equal(await page.evaluate(() => state.docs.get('b').content), 'B original');
+});
+
+test('lifecycle: rich text, email and PDF remounts release global listeners', async t => {
+  const { page } = await setup(t, async (route, request) => {
+    if (!request.path.endsWith('/render-pages')) return false;
+    await route.fulfill({ json: { pages: [{ page: 1, width: 600, height: 800, fields: [] }] } }); return true;
+  });
+  await page.clock.install();
+  await inject(page, 'rich', '<p>Rich body</p>', 'richtext');
+  await inject(page, 'email', 'To: to@example.com\nSubject: Email\n---\nBody', 'email');
+  await inject(page, 'pdf', '<!-- pdf_form_source upload_id="source" -->\n- Name:** Ada <!-- field=Name type=text -->\n');
+  const cycle = async () => {
+    for (const id of ['rich', 'email', 'pdf']) {
+      await page.evaluate(async id => {
+        editor.init('');
+        await editor.loadDocument(id);
+        if (id === 'pdf') await (await import('/static/js/document/ui/pdfTools.js'))._setPdfViewActive(true);
+        editor.closePanel('down');
+      }, id);
+      await page.clock.runFor(250);
+      assert.equal(await page.locator('#doc-editor-pane').count(), 0);
+    }
+    // spinner.js permits a 2000 ms grace for loading rows removed before
+    // their first connected frame. Drain that bounded owner cleanup with the
+    // controlled clock before comparing quiescent listener counts.
+    await page.clock.runFor(2100);
+  };
+  const cdp = await page.context().newCDPSession(page);
+  const counts = async () => (await cdp.send('Runtime.evaluate', {
+    expression: 'Object.fromEntries([document, window, window.visualViewport].filter(Boolean).map((target,index) => [index,Object.fromEntries(Object.entries(getEventListeners(target)).map(([type,list]) => [type,list.length]))]))',
+    includeCommandLineAPI: true, returnByValue: true,
+  })).result.value;
+  await cycle();
+  const before = await counts();
+  await cycle();
+  await cycle();
+  assert.deepEqual(await counts(), before, 'repeated initialization and pane disposal preserve listener counts');
+});
+
+test('email: rapid drafts retain independent local snapshots', async t => {
+  const { page } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'b', 'To: b@example.com\nSubject: B\nX-Source-UID: 43\n---\nB body', 'email');
+  await inject(page, 'a', 'To: a@example.com\nSubject: A\nX-Source-UID: 42\n---\nA body', 'email');
+  await page.locator('#doc-email-subject').fill('A latest subject');
+  await page.evaluate(() => editor.loadDocument('b'));
+  await page.locator('#doc-email-subject').fill('B latest subject');
+  await page.clock.runFor(1000);
+  const subjects = await page.evaluate(() => ['42', '43'].map(uid => JSON.parse(localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent(`INBOX|${uid}|`)))?.subject));
+  assert.deepEqual(subjects, ['A latest subject', 'B latest subject']);
+});
+
+test('email: explicit draft clearing cancels its captured storage write', async t => {
+  const { page } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'a', 'To: a@example.com\nSubject: A\nX-Source-UID: 42\n---\nA body', 'email');
+  await page.locator('#doc-email-subject').fill('Pending subject');
+  await page.evaluate(async () => {
+    const drafts = await import('/static/js/document/ui/email/localDraft.js');
+    const persistence = await import('/static/js/document/application/persistence.js');
+    drafts._clearEmailLocalDraft('42', 'INBOX', '');
+    state.markDeleted('a'); persistence._cancelAutoSave('a');
+    state.removeDocument('a'); state.setActiveDocId(null);
+  });
+  await page.clock.runFor(1000);
+  assert.equal(await page.evaluate(() => localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|42|'))), null);
 });

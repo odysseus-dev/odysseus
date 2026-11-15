@@ -11,7 +11,7 @@ import { _autoCreateSession, _detachDocFromSession, createDocument } from '../do
 
 import { _autoDetectDebounce, _autoTitleDebounce, _hlDebounce } from '../editor/sourceEditor.js';
 
-import { _emailLocalDraftDebounce, _persistEmailLocalDraftNow } from '../email/localDraft.js';
+import { _persistEmailLocalDraftNow } from '../email/localDraft.js';
 
 import { _closeVersionPanel } from '../history/versionHistory.js';
 
@@ -182,7 +182,6 @@ pane._dispose = () => {
       clearTimeout(_hlDebounce);
       clearTimeout(_autoDetectDebounce);
       clearTimeout(_autoTitleDebounce);
-      clearTimeout(_emailLocalDraftDebounce);
     };
 
 if (options.restore) pane.classList.add('doc-pane-restoring');
