@@ -39,7 +39,7 @@ def session(sid, model, msgs, anchor_prompt=None, summaries=0, **row):
 
 
 def snap(sid):
-    su._WINDOW_CACHE.clear()
+    su._WINDOW_CACHE.clear(); su._WINDOW_PENDING.clear()
     return su.snapshot_usage(authority, SimpleNamespace(session_id=sid), None)
 
 
@@ -88,7 +88,7 @@ usage_row("cost_free", "meituan/longcat-2.5:free", "nous", "", 13, 97563, 9738, 
 usage_row("cost_free", "gpt-6.1-sol", "openai-codex", "", 2, 800, 40, 0, 0, 0.0, 0.0, "included", "none", "subscription_included")
 with mock.patch.object(mm, "get_model_context_length", fake_resolver):
     for k in ("cost_sub", "cost_api", "cost_free"):
-        su._WINDOW_CACHE.clear(); out[k] = su.snapshot_usage(authority, SimpleNamespace(session_id=k), None)
+        su._WINDOW_CACHE.clear(); su._WINDOW_PENDING.clear(); out[k] = su.snapshot_usage(authority, SimpleNamespace(session_id=k), None)
         Usage(**out[k])
 compressor = SimpleNamespace(threshold_tokens=500_000, threshold_percent=0.5, _config_context_length=None, last_prompt_tokens=100, last_real_prompt_tokens=100)
 agent = SimpleNamespace(context_compressor=compressor, compression_enabled=True)

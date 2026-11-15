@@ -120,6 +120,9 @@ BASELINE = os.environ.get('HERMES_BASELINE_SRC')
 
 def _run(script, src, home):
     env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+    iso = Path(home) / 'userhome'                       # never the real user profile: no real credential store can be reached
+    iso.mkdir(parents=True, exist_ok=True)
+    env.update(USERPROFILE=str(iso), HOME=str(iso), APPDATA=str(iso / 'AppData' / 'Roaming'), LOCALAPPDATA=str(iso / 'AppData' / 'Local'))
     proc = subprocess.run([PY, '-B', str(HERE / script), src, str(home)], capture_output=True, text=True, env=env, timeout=240)
     text = proc.stdout + proc.stderr
     assert '@@' in text, text[-1500:]
@@ -151,4 +154,11 @@ def test_account_usage_rpc_logic(tmp_path):
     assert o['no_refetch_within_cadence'] and o['manual_throttled'] and o['manual_allowed'] and o['default_call_nonblocking']
     failed = o['failed_refresh']
     assert failed['state'] == 'stale' and failed['windows'] == [31.0, 62.5] and failed['retry_in_s'] > 0 and 'last good reading' in failed['reason']
+    assert o['unsupported_configured'] == {'deepseek': ['unsupported', False], 'xai': ['unsupported', False]} and o['current_provider'] == 'deepseek'
+    assert o['outage_is_not_signed_out'][0] == 'unavailable' and 'failed' in o['outage_is_not_signed_out'][1]      # an outage is not a missing sign-in
+    assert o['classify'] == {'authError': 'not_signed_in', 'pool': 'not_signed_in', 'http401': 'auth_rejected', 'outage': 'The usage check failed (RuntimeError).'}
+    assert o['codex_zero_used'][0][0][:2] == ['Session', 0.0] and o['codex_zero_used'][0][1][:2] == ['Weekly', 99.0]      # the parser passes a provider 0 through as 0
+    assert [w[0] for w in o['codex_weekly_only'][0]] == ['Weekly'] and o['codex_missing_used'][0] == []                  # a window with no figure is omitted, never shown as 0%
+    assert o['codex_fraction_not_scaled'][0][0][1] == 1.0
+    assert o['openrouter_mock']['windows'][0][1] == 60.0 and o['openrouter_mock']['details'][0] == 'Credits balance: $4.25' and o['openrouter_mock_has_key'] is False
     assert o['old_is_stale'] == 'stale' and o['model_scope'] == 'model'

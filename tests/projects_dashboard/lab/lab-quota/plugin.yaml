@@ -1,0 +1,7 @@
+name: lab-quota
+kind: model-provider
+version: 0.0.1
+manifest_version: 2
+description: Staging-only provider whose account usage is read from lab-quota.json (never shipped)
+author: odysseus-staging
+license: MIT

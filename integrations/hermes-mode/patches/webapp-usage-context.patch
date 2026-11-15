@@ -173,11 +173,93 @@ index 0000000000..a81a7fba19
 +    </div>
 +  )
 +}
+diff --git a/apps/desktop/src/app/chat/composer/control-center-utils.test.ts b/apps/desktop/src/app/chat/composer/control-center-utils.test.ts
+index 3408430300..518e1805fb 100644
+--- a/apps/desktop/src/app/chat/composer/control-center-utils.test.ts
++++ b/apps/desktop/src/app/chat/composer/control-center-utils.test.ts
+@@ -1,41 +1,49 @@
+-import { describe, expect, it } from 'vitest'
++import { describe, expect, it, vi } from 'vitest'
+ 
+-import type { UsageStats } from '@/types/hermes'
++import { contextFacts, contextGaugeView } from './control-center-utils'
+ 
+-import { contextGaugeView, pathLeaf } from './control-center-utils'
++const reported = { calls: 1, context_estimated: false, context_max: 1_048_576, context_percent: 2, context_source: 'provider_usage', context_used: 16_632, input: 1, model: 'longcat', output: 1, total: 2 }
+ 
+-const usage = (extra: Partial<UsageStats>): UsageStats => ({ calls: 1, input: 1, output: 1, total: 2, ...extra })
++describe('context facts for the popover', () => {
++  it('shows a provider reading as reported and an estimate as estimated', () => {
++    expect(contextGaugeView(reported)).toMatchObject({ label: '2%', state: 'reported' })
++    expect(contextFacts(reported, { ...reported, context_input_source: 'provider_anchor', context_window_source: 'model_metadata' } as never)).toMatchObject({ estimated: false, inputSource: 'Provider-reported', known: true, windowSource: "From the model's metadata" })
++    const est = { ...reported, context_estimated: true, context_source: 'local_estimate' }
++    expect(contextFacts(est, { ...est, context_input_source: 'transcript_estimate' } as never)).toMatchObject({ estimated: true, inputSource: 'Estimated from the transcript' })
++  })
+ 
+-describe('contextGaugeView', () => {
+-  it('reads unavailable instead of inventing a number', () => {
+-    expect(contextGaugeView(null).state).toBe('unavailable')
+-    expect(contextGaugeView(usage({})).percent).toBeNull()
+-    expect(contextGaugeView(usage({ context_max: 0, context_used: 5 })).state).toBe('unavailable')
+-    expect(contextGaugeView(usage({ context_max: 1000 })).state).toBe('unavailable')
++  it('never invents a window: unknown window keeps the ring unavailable and says why', () => {
++    const facts = contextFacts({ calls: 0, input: 0, output: 0, total: 0 }, { calls: 0, context_known_tokens: 5000, context_unavailable_reason: 'window_unknown', context_window_source: 'unknown', input: 0, output: 0, total: 0 } as never)
++    expect(facts.known).toBe(false)
++    expect(facts.unavailable).toContain('5k')
++    expect(facts.windowSource).toBe('Not known')
+   })
+ 
+-  it('marks a provider-measured reading and an estimate differently', () => {
+-    const measured = contextGaugeView(usage({ context_max: 200_000, context_percent: 6, context_used: 12_000 }))
+-    expect(measured).toMatchObject({ label: '6%', percent: 6, state: 'reported' })
+-    expect(measured.tooltip).toContain('reported by the provider')
++  it('explains a missing reading and does not show another conversation\'s numbers when nothing is known', () => {
++    const facts = contextFacts(null, { calls: 0, context_unavailable_reason: 'no_provider_reading', input: 0, output: 0, total: 0 } as never)
++    expect(facts).toMatchObject({ known: false, inputSource: 'Not available', used: 0 })
++    expect(facts.unavailable).toContain('next reply')
++  })
+ 
+-    const guess = contextGaugeView(usage({ context_estimated: true, context_max: 200_000, context_percent: 6, context_used: 12_000 }))
+-    expect(guess).toMatchObject({ label: '~6%', state: 'estimated' })
+-    expect(guess.tooltip).toContain('estimated')
++  it('reports compression facts only when the gateway sent them', () => {
++    expect(contextFacts(reported, null).compression).toMatchObject({ count: null, enabled: null, last: null, threshold: null })
++    const facts = contextFacts(reported, { ...reported, compression_cooldown_until: 2_000_000_000, compression_enabled: true, compression_error: 'summary model unavailable', compression_threshold_percent: 50, compression_threshold_source: 'compressor', compression_threshold_tokens: 524_288, compressions: 2, last_compaction_at: 1_700_000_000 } as never)
++    expect(facts.compression).toMatchObject({ count: 2, enabled: true, error: 'summary model unavailable', threshold: '50% = 524.3k tokens' })
+   })
+ 
+-  it('clamps and derives the percent when the backend omits it', () => {
+-    expect(contextGaugeView(usage({ context_max: 100, context_used: 250 })).percent).toBe(100)
+-    expect(contextGaugeView(usage({ context_max: 100, context_used: 25 })).percent).toBe(25)
++  it('labels each cost kind and never turns an unpriced figure into $0', () => {
++    const facts = contextFacts(reported, { ...reported, cost_breakdown: [{ kind: 'subscription_equivalent', label: '~$2.10', sources: ['provider_cost_api'], usd: 2.1 }, { kind: 'unpriced', label: 'Unpriced', sources: [], usd: null }] } as never)
++    expect(facts.costs.map(c => [c.kind, c.label])).toEqual([['subscription_equivalent', '~$2.10'], ['unpriced', 'Unpriced']])
++  })
++
++  it('flags a model change instead of presenting the old window as current', () => {
++    expect(contextFacts(reported, null, 'another-model').note).toContain('model changed')
++    expect(contextFacts(reported, null, 'longcat').note).toBeNull()
+   })
+-})
+ 
+-describe('pathLeaf', () => {
+-  it('handles Windows and POSIX paths, long paths and drive roots', () => {
+-    expect(pathLeaf('F:\\Odysseus')).toBe('Odysseus')
+-    expect(pathLeaf('F:/Odysseus/')).toBe('Odysseus')
+-    expect(pathLeaf('E:\\Perso\\Job search\\Jobup-Tauri-Phase1')).toBe('Jobup-Tauri-Phase1')
+-    expect(pathLeaf('F:\\')).toBe('F:\\')
+-    expect(pathLeaf('')).toBe('')
++  it('age labels are relative', () => {
++    vi.setSystemTime(new Date(1_700_000_000_000 + 7_200_000))
++    expect(contextFacts(reported, { ...reported, last_compaction_at: 1_700_000_000 } as never).compression.last).toBe(1_700_000_000)
++    vi.useRealTimers()
+   })
+ })
 diff --git a/apps/desktop/src/app/chat/composer/control-center-utils.ts b/apps/desktop/src/app/chat/composer/control-center-utils.ts
-index 611d31358e..b5a2134fbf 100644
+index 611d31358e..b850416e7b 100644
 --- a/apps/desktop/src/app/chat/composer/control-center-utils.ts
 +++ b/apps/desktop/src/app/chat/composer/control-center-utils.ts
-@@ -10,6 +10,100 @@ export interface ContextGaugeView {
+@@ -10,6 +10,101 @@ export interface ContextGaugeView {
    tooltip: string
  }
  
@@ -261,15 +343,16 @@ index 611d31358e..b5a2134fbf 100644
 +      threshold: threshold ? `${percent ? `${percent}% = ` : ''}${compact(threshold)} tokens` : percent ? `${percent}% of the window` : null,
 +      thresholdSource: detail?.compression_threshold_source === 'compressor' ? "This model's active compressor" : 'Your configured compression threshold'
 +    },
-+    costs: (detail?.cost_breakdown ?? []).map(row => ({ kind: row.kind, label: row.label, sources: (row.sources ?? []).join(', ') || 'no price source' })),
++    costs: (detail?.cost_breakdown ?? []).map(row => ({ kind: row.kind, label: row.kind === 'included' ? 'No API charge' : row.kind === 'unpriced' ? 'Unpriced' : row.label, sources: (row.sources ?? []).join(', ') || 'no price source' })),
 +    estimated,
 +    inputSource: source ? (INPUT_SOURCE[source] ?? source) : 'Not available',
 +    known,
 +    max,
 +    note: staleModel ? 'The model changed; these figures update after the next reply.' : (detail?.context_note ? 'The stored reading no longer matched the transcript, so part of this is estimated.' : null),
 +    percent: known ? Math.max(0, Math.min(100, Math.round(gauge?.context_percent ?? (used / max) * 100))) : 0,
++    used,
 +    unavailable: detail?.context_known_tokens
-+      ? `About ${compact(detail.context_known_tokens)} tokens are in use, but ${UNAVAILABLE.window_unknown}`
++      ? `About ${compact(detail.context_known_tokens)} tokens are in use. ${UNAVAILABLE.window_unknown}`
 +      : (UNAVAILABLE[reason] ?? 'Context usage is not available for this conversation yet. It appears after the next reply.'),
 +    windowSource: windowKnown ? (windowSource === 'config' ? 'Set in your config' : windowSource === 'model_metadata' ? "From the model's metadata" : 'Not known') : 'Not known'
 +  }
@@ -1281,7 +1364,7 @@ index fb0d36e11b..278610eef1 100644
          "additionalProperties": false,
          "description": "``_serialize_usage_bar``: one bar, magnitudes pre-formatted; ``pct_used`` only for ``plan``.",
 diff --git a/gateway/session_usage.py b/gateway/session_usage.py
-index 0d7ae09fe0..fa6dd63861 100644
+index 0d7ae09fe0..ed392e2632 100644
 --- a/gateway/session_usage.py
 +++ b/gateway/session_usage.py
 @@ -10,6 +10,8 @@ from __future__ import annotations
@@ -1293,7 +1376,7 @@ index 0d7ae09fe0..fa6dd63861 100644
  import time
  
  _COUNTERS = (("input_tokens", "session_input_tokens"), ("output_tokens", "session_output_tokens"),
-@@ -222,9 +224,255 @@ def snapshot_usage(authority, ref, agent) -> dict | None:
+@@ -222,9 +224,269 @@ def snapshot_usage(authority, ref, agent) -> dict | None:
      if agent is not None and getattr(agent, "session_api_calls", 0):
          result = usage_stats(agent)
          result["compression_count"] = carried_compression_count(authority.sessions.get(ref.session_id), agent)
@@ -1315,6 +1398,8 @@ index 0d7ae09fe0..fa6dd63861 100644
 +_WINDOW_LOCK = threading.Lock()
 +_WINDOW_CACHE: dict[tuple, tuple[float, int | None]] = {}
 +_WINDOW_UNKNOWN_TTL_S = 600.0
++_WINDOW_WAIT_S = 4.0          # a resume never waits longer than this for a catalog lookup; the lookup keeps running and the next read finds it
++_WINDOW_PENDING: set = set()
 +_ESTIMATE_MAX_MESSAGES = 5000
 +
 +
@@ -1345,17 +1430,29 @@ index 0d7ae09fe0..fa6dd63861 100644
 +        hit = _WINDOW_CACHE.get(key)
 +    if hit is not None and (hit[1] is not None or now - hit[0] < _WINDOW_UNKNOWN_TTL_S):
 +        return hit[1]
-+    window = None
-+    with contextlib.suppress(Exception):
-+        from agent.context_default_record import was_context_defaulted
-+        from agent.model_metadata import get_model_context_length
-+        length = int(get_model_context_length(model, base_url=base_url, provider=provider))
-+        window = None if length <= 0 or was_context_defaulted(length, model, base_url) else length
++    def resolve() -> None:
++        window = None
++        with contextlib.suppress(Exception):
++            from agent.context_default_record import was_context_defaulted
++            from agent.model_metadata import get_model_context_length
++            length = int(get_model_context_length(model, base_url=base_url, provider=provider))
++            window = None if length <= 0 or was_context_defaulted(length, model, base_url) else length
++        with _WINDOW_LOCK:
++            if len(_WINDOW_CACHE) > 256:
++                _WINDOW_CACHE.clear()
++            _WINDOW_CACHE[key] = (time.monotonic(), window)
++            _WINDOW_PENDING.discard(key)
++
 +    with _WINDOW_LOCK:
-+        if len(_WINDOW_CACHE) > 256:
-+            _WINDOW_CACHE.clear()
-+        _WINDOW_CACHE[key] = (now, window)
-+    return window
++        start = key not in _WINDOW_PENDING
++        _WINDOW_PENDING.add(key)
++    worker = threading.Thread(target=resolve, name="hermes-window-lookup", daemon=True) if start else None
++    if worker is not None:
++        worker.start()
++        worker.join(_WINDOW_WAIT_S)
++    with _WINDOW_LOCK:
++        hit = _WINDOW_CACHE.get(key)
++    return hit[1] if hit is not None else None
 +
 +
 +def _anchored_input(db, session_id: str) -> dict:
@@ -1553,10 +1650,10 @@ index 0d7ae09fe0..fa6dd63861 100644
  async def stats(connection, ref, params):
 diff --git a/gateway/usage_accounts.py b/gateway/usage_accounts.py
 new file mode 100644
-index 0000000000..cc0fa602e3
+index 0000000000..9e21bdbadf
 --- /dev/null
 +++ b/gateway/usage_accounts.py
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,246 @@
 +"""Account-level allowances for the Desktop's AI Usage page: a sanitized view over ``agent.account_usage``.
 +
 +Nothing here talks to a provider on its own. Every figure comes from ``agent.account_usage.fetch_account_usage`` (the same call ``/usage`` makes),
@@ -1572,6 +1669,7 @@ index 0000000000..cc0fa602e3
 +from __future__ import annotations
 +
 +import contextlib
++import logging
 +import threading
 +import time
 +from datetime import datetime, timezone
@@ -1620,7 +1718,7 @@ index 0000000000..cc0fa602e3
 +        slug = str(slug or "").strip().lower()
 +        if slug and slug not in seen:
 +            seen.append(slug)
-+    return [slug for slug in seen if slug in PRIORITY or _can_report(slug)]
++    return seen
 +
 +
 +def _can_report(slug: str) -> bool:
@@ -1643,15 +1741,37 @@ index 0000000000..cc0fa602e3
 +    return build_nous_credits_snapshot(account) if account is not None and getattr(account, "logged_in", False) else None
 +
 +
++def _call_fetcher(slug: str):
++    """The provider's own fetcher, exactly as ``agent.account_usage.fetch_account_usage`` selects it, but with failures VISIBLE: that function
++    swallows every exception into ``None``, which would make an outage look like a missing sign-in."""
++    from agent import account_usage as au
++    fetcher = au._USAGE_FETCHERS.get(slug)
++    if fetcher is not None:
++        return fetcher(None, None)
++    from providers import get_provider_profile
++    profile = get_provider_profile(slug)
++    return au._call_plugin_usage_hook(profile, None, None) if profile else None
++
++
 +def _fetch(slug: str):
-+    if slug == "nous":
-+        snapshot = _nous_snapshot()
-+        if snapshot is not None and snapshot.windows:
-+            from agent.account_usage_cache import remember_account_usage
-+            remember_account_usage("nous", snapshot)
-+        return snapshot
-+    from agent.account_usage import fetch_account_usage
-+    return fetch_account_usage(slug)
++    started = time.monotonic()
++    snapshot = _nous_snapshot() if slug == "nous" else _call_fetcher(slug)
++    from agent.account_usage_cache import remember_account_usage
++    remember_account_usage(slug, snapshot, started_monotonic=started)   # keeps the last snapshot WITH windows; a failed read never replaces it
++    return snapshot
++
++
++def _classify_failure(exc: Exception) -> str:
++    """``not_signed_in`` / ``auth_rejected`` for credential problems, so they read as "sign in", not as an outage; anything else is an outage."""
++    name = type(exc).__name__
++    text = str(exc).lower()
++    if name == "AuthError" or ("credential" in text and ("no available" in text or "not found" in text or "missing" in text or "no " in text)) \
++            or "not logged in" in text or "login required" in text:
++        return "not_signed_in"
++    status = getattr(getattr(exc, "response", None), "status_code", None)
++    if status in (401, 403):
++        return "auth_rejected"
++    return "The usage check failed (%s)." % name
 +
 +
 +def _run_refresh(slug: str) -> None:
@@ -1668,7 +1788,8 @@ index 0000000000..cc0fa602e3
 +        else:
 +            ok = True
 +    except Exception as exc:  # a provider failure must never reach the caller as an exception
-+        reason = "The usage check failed (%s)." % type(exc).__name__
++        reason = _classify_failure(exc)
++        logging.getLogger(__name__).warning('account usage check failed for %s: %s', slug, type(exc).__name__, exc_info=True)
 +    with _lock:
 +        entry = _state.setdefault(slug, {"failures": 0})
 +        entry.update(tried=now, ok=ok, reason=reason, inflight=False)
@@ -1753,12 +1874,14 @@ index 0000000000..cc0fa602e3
 +        note = None
 +        if stale:
 +            note = "The latest refresh failed; showing the last good reading." if failed else "This reading is older than 15 minutes."
-+            if failed and reason and reason != "not_signed_in":
++            if failed and reason and reason not in ("not_signed_in", "auth_rejected"):
 +                note += " " + reason
 +        return {**base, "state": "stale" if stale else "ok", "windows": _windows(snapshot), "details": [str(d)[:200] for d in snapshot.details],
 +                "plan": snapshot.plan, "source": snapshot.source, "fetched_at": _iso(snapshot.fetched_at), "age_s": age, "reason": note}
 +    if reason == "not_signed_in":
 +        return {**base, "state": "auth_required", "reason": "Not signed in to this provider in Hermes."}
++    if reason == "auth_rejected":
++        return {**base, "state": "auth_required", "reason": "The provider rejected the stored sign-in. Sign in again in Hermes."}
 +    if reason:
 +        return {**base, "state": "unavailable", "reason": reason}
 +    return {**base, "state": "unavailable", "reason": "Not checked yet." if entry.get("tried") is None else "No usage figures were returned."}

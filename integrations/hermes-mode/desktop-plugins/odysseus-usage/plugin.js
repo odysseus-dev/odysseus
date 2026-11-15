@@ -68,25 +68,41 @@ function useSettings() {
   return [value, patch => saveSettings({ ...loadSettings(), ...patch })]
 }
 
-function useAccounts(active = true) {
+function useGatewayOpen() {
+  const state = host.state && host.state.gateway
+  const [open, setOpen] = useState(() => !state || typeof state.get !== 'function' || state.get() === 'open')
+  useEffect(() => {
+    if (!state || typeof state.subscribe !== 'function') return undefined
+    const check = () => setOpen(state.get() === 'open')
+    const off = state.subscribe(check)
+    check()
+    return typeof off === 'function' ? off : undefined
+  }, [state])
+  return open
+}
+
+function useAccounts(active = true, pinned = []) {
+  const connected = useGatewayOpen()
   const [state, setState] = useState({ status: 'loading', data: null, error: null })
   const alive = useRef(true)
+  const pinnedRef = useRef(pinned)
+  pinnedRef.current = pinned
   useEffect(() => () => { alive.current = false }, [])
-  const load = useCallback(async (refresh, pinned) => {
+  const load = useCallback(async refresh => {
     try {
-      const data = await host.request('usage.accounts', { ...(refresh ? { refresh } : {}), pinned: pinned || [] })
+      const data = await host.request('usage.accounts', { ...(refresh ? { refresh } : {}), pinned: pinnedRef.current })
       if (alive.current) setState({ status: 'ready', data, error: null })
     } catch (error) {
       if (alive.current) setState(prev => ({ status: 'error', data: prev.data, error }))
     }
   }, [])
   useEffect(() => {
-    if (!active) return undefined
+    if (!active || !connected) return undefined
     void load()
     const settle = window.setTimeout(() => { if (!document.hidden) void load() }, 4000)  // providers refresh in the background: pick the results up once
     const timer = window.setInterval(() => { if (!document.hidden) void load() }, POLL_MS)
     return () => { window.clearTimeout(settle); window.clearInterval(timer) }
-  }, [active, load])
+  }, [active, connected, load])
   return [state, load]
 }
 
@@ -127,7 +143,7 @@ function Providers({ accounts, reload, settings, setSettings }) {
   const [busy, setBusy] = useState(null)
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 30000); return () => window.clearInterval(t) }, [])
-  const refresh = async slug => { setBusy(slug); try { await reload(slug, settings.pinned) } finally { setBusy(null) } }
+  const refresh = async slug => { setBusy(slug); try { await reload(slug) } finally { setBusy(null) } }
   const togglePin = slug => setSettings({ pinned: settings.pinned.includes(slug) ? settings.pinned.filter(x => x !== slug) : [...settings.pinned, slug] })
   if (accounts.status === 'loading') return h('div', { style: { display: 'grid', gap: '0.5rem' } }, h(Skeleton, { style: { height: '5rem' } }), h(Skeleton, { style: { height: '5rem' } }))
   if (!accounts.data) return h(PanelEmpty, { icon: 'warning', title: 'Account usage could not be read', description: (accounts.error && accounts.error.message) || 'The gateway did not answer.' })
@@ -193,7 +209,7 @@ function Costs({ costs, reload }) {
 
 function UsagePage() {
   const [settings, setSettings] = useSettings()
-  const [accounts, reload] = useAccounts(true)
+  const [accounts, reload] = useAccounts(true, settings.pinned)
   const [costs, reloadCosts] = useCosts()
   const rootRef = useRef(null)
   const [narrow, setNarrow] = useState(false)
@@ -205,7 +221,7 @@ function UsagePage() {
     return () => observer.disconnect()
   }, [])
   const pinnedKey = useMemo(() => settings.pinned.join(','), [settings.pinned])
-  useEffect(() => { void reload(undefined, settings.pinned) }, [pinnedKey, reload])
+  useEffect(() => { void reload() }, [pinnedKey, reload])
   const heading = (text, hint) => h('div', { style: { margin: '0.2rem 0 0.4rem' } }, h('h3', { style: { fontSize: '0.9rem', fontWeight: 600, margin: 0 } }, text), hint ? h('div', { style: { ...MUTED, fontSize: '0.7rem' } }, hint) : null)
   return h('div', { ref: rootRef, 'data-slot': 'odysseus-usage-page', style: { display: 'grid', gap: '1.2rem', minWidth: 0, maxWidth: '100%', padding: narrow ? '0' : '0 0.25rem' } },
     h('div', null, heading('Provider allowances', 'What each provider says you have left. Checked through Hermes; your credentials never reach this page.'),
@@ -220,7 +236,7 @@ function UsagePage() {
 
 function StatusItem() {
   const [settings] = useSettings()
-  const [accounts] = useAccounts(settings.statusbar)
+  const [accounts] = useAccounts(settings.statusbar, settings.pinned)
   if (!settings.statusbar || !accounts.data) return null
   const want = new Set(settings.pinned)
   if (accounts.data.current_provider) want.add(accounts.data.current_provider)
