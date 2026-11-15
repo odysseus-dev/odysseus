@@ -3,7 +3,9 @@
 They need the Hermes runtime (``plugins.web._common`` and ``tools.url_safety``), so run them with that interpreter and the pinned source on
 ``PYTHONPATH``; without it the module is skipped.
 """
+import gzip
 import importlib.util
+import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,12 +28,16 @@ PAGE = b'''<html><head><title>Loader notes</title><style>.x{}</style></head><bod
 y = 2</pre><script>alert("no")</script><footer>(c) nobody</footer></body></html>'''
 
 
+SEEN = []
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
     def do_GET(self):
         path = self.path
+        SEEN.append(dict(self.headers))
         if path == '/ok':
             self.reply(200, 'text/html; charset=utf-8', PAGE)
         elif path == '/text':
@@ -48,6 +54,16 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, 'application/octet-stream', b'\x00\x01')
         elif path == '/big':
             self.reply(200, 'text/html', b'<p>' + b'a' * 2_100_000 + b'</p>')
+        elif path == '/bomb':
+            body = gzip.compress(b'<p>' + b'a' * 6_000_000 + b'</p>')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif path == '/long':
+            self.reply(200, 'text/html', b'<p>' + b'word ' * 100_000 + b'\x00</p>')
         elif path == '/empty':
             self.reply(200, 'text/html', b'<html><body><script>1</script></body></html>')
         else:
@@ -81,7 +97,22 @@ class LocalExtractTests(unittest.TestCase):
         return self.module.LocalExtractProvider()
 
     def allow(self, *fragments):
-        return mock.patch.object(self.module, '_is_public_url', lambda url: any(fragment in url for fragment in fragments))
+        """Let the test server (loopback) through: the pre-flight check by path, Hermes' connect-time guard by its own opt-in."""
+        class Both:
+            def __enter__(inner):
+                inner.stack = [mock.patch.object(self.module, '_is_public_url', lambda url: any(fragment in url for fragment in fragments)),
+                               mock.patch.dict(os.environ, {'HERMES_ALLOW_PRIVATE_URLS': '1'})]
+                for item in inner.stack:
+                    item.__enter__()
+                import tools.url_safety as safety
+                safety._reset_allow_private_cache()
+
+            def __exit__(inner, *args):
+                for item in reversed(inner.stack):
+                    item.__exit__(*args)
+                import tools.url_safety as safety
+                safety._reset_allow_private_cache()
+        return Both()
 
     def test_readable_text_without_scripts_navigation_or_footer(self):
         with self.allow('/ok'):
@@ -121,6 +152,44 @@ class LocalExtractTests(unittest.TestCase):
         self.assertIn('larger than 2 MB', results[3]['error'])
         self.assertIn('no readable text', results[4]['error'])
         self.assertNotIn('error', results[5])
+
+    def test_the_connect_time_guard_refuses_loopback_even_if_the_preflight_check_is_fooled(self):
+        """The DNS-rebinding case: a pre-flight check that says public, then a connection to a private address."""
+        with mock.patch.object(self.module, '_is_public_url', lambda url: True):
+            [page] = self.provider().extract([self.base + '/ok'])
+        self.assertTrue(page['error'])
+        self.assertEqual(page['content'], '')
+        self.assertNotIn('Loader notes', str(page))
+
+    def test_the_website_policy_is_honoured(self):
+        with self.allow('/ok'), mock.patch.object(self.module, '_policy_blocked', lambda url: 'host is on the blocklist'):
+            [page] = self.provider().extract([self.base + '/ok'])
+        self.assertIn('website policy', page['error'])
+
+    def test_no_cookies_credentials_or_proxy_are_sent_or_used(self):
+        env = {'HTTP_PROXY': 'http://127.0.0.1:9', 'HTTPS_PROXY': 'http://127.0.0.1:9', 'ALL_PROXY': 'http://127.0.0.1:9'}
+        SEEN.clear()
+        with self.allow('/ok'), mock.patch.dict(os.environ, env):
+            first, second = self.provider().extract([self.base + '/ok', self.base + '/ok'])
+        self.assertNotIn('error', first)
+        self.assertNotIn('error', second)
+        self.assertEqual(len(SEEN), 2)
+        for headers in SEEN:
+            lowered = {key.lower() for key in headers}
+            self.assertFalse(lowered & {'cookie', 'authorization', 'proxy-authorization', 'x-api-key'}, lowered)
+            self.assertIn('Hermes-local-extract', headers['User-Agent'])
+
+    def test_a_small_download_that_expands_past_the_cap_is_refused(self):
+        with self.allow('/bomb'):
+            [page] = self.provider().extract([self.base + '/bomb'])
+        self.assertIn('larger than 2 MB', page['error'])
+
+    def test_output_is_bounded_and_control_characters_are_removed(self):
+        with self.allow('/long'):
+            [page] = self.provider().extract([self.base + '/long'])
+        self.assertLessEqual(len(page['content']), 200_000 + 20)
+        self.assertTrue(page['content'].endswith('[truncated]'))
+        self.assertNotIn('\x00', page['content'])
 
     def test_non_http_schemes_are_refused(self):
         [page] = self.provider().extract(['file:///C:/Windows/win.ini'])
