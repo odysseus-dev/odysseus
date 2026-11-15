@@ -816,6 +816,163 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('fi')
 
 
+
+def _append_sglang_linux_preflight_lines(runner_lines: list[str]) -> None:
+    """Append Linux SGLang readiness lines reporting Python, version, GPU, and sgl_kernel health."""
+    runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+    runner_lines.append('ODYSSEUS_SGLANG_CMD_PY="$(python3 - "$ODYSSEUS_SERVE_CMD" <<\'PY\'')
+    runner_lines.append('import shlex, sys')
+    runner_lines.append('parts = shlex.split(sys.argv[1])')
+    runner_lines.append('py = "python3"')
+    runner_lines.append('for part in parts:')
+    runner_lines.append('    if part.endswith("/bin/python") or part.endswith("/bin/python3") or "/bin/python3." in part:')
+    runner_lines.append('        py = part')
+    runner_lines.append('        break')
+    runner_lines.append('print(py)')
+    runner_lines.append('PY')
+    runner_lines.append(')"')
+    runner_lines.append('if ! "$ODYSSEUS_SGLANG_CMD_PY" -c "import sglang" &>/dev/null; then')
+    runner_lines.append('  if ! command -v sglang &>/dev/null; then')
+    runner_lines.append('    echo "ERROR: SGLang is not installed."')
+    runner_lines.append('  else')
+    runner_lines.append('    echo "ERROR: SGLang is installed but failed to import in the launch Python."')
+    runner_lines.append('  fi')
+    runner_lines.append('  ODYSSEUS_SGLANG_IMPORT_ERROR="$("$ODYSSEUS_SGLANG_CMD_PY" -c "import sglang" 2>&1)"')
+    runner_lines.append('  printf "%s\n" "$ODYSSEUS_SGLANG_IMPORT_ERROR"')
+    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('else')
+    runner_lines.append('  echo "[odysseus] SGLang Python: $ODYSSEUS_SGLANG_CMD_PY"')
+    runner_lines.append('  ODYSSEUS_SGLANG_INFO="$("$ODYSSEUS_SGLANG_CMD_PY" -c "import sglang; print(getattr(sglang, \'__version__\', \'unknown\'))" 2>/dev/null || echo unknown)"')
+    runner_lines.append('  echo "[odysseus] SGLang version: $ODYSSEUS_SGLANG_INFO"')
+    runner_lines.append('  ODYSSEUS_SGLANG_KERNEL_ERR="$("$ODYSSEUS_SGLANG_CMD_PY" -c "import sgl_kernel" 2>&1 || true)"')
+    runner_lines.append('  if printf "%s" "$ODYSSEUS_SGLANG_KERNEL_ERR" | grep -Eiq "common_ops|libnuma|libnvrtc|ImportError|OSError"; then')
+    runner_lines.append('    echo "ERROR: SGLang native sgl_kernel check failed:"')
+    runner_lines.append('    printf "%s\n" "$ODYSSEUS_SGLANG_KERNEL_ERR"')
+    runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('  fi')
+    runner_lines.append('fi')
+
+
+def build_sglang_install_recipe(
+    *,
+    platform: str = "linux",
+    backend: str = "cuda",
+    method: str = "uv",
+    python_bin: str = "python3",
+) -> dict[str, object]:
+    """Build an OS/hardware/deployment-aware SGLang installation recipe."""
+    plat = (platform or "linux").strip().lower()
+    back = (backend or "cuda").strip().lower()
+    dep = (method or "uv").strip().lower()
+
+    if plat == "darwin":
+        return {
+            "supported": False,
+            "platform": plat,
+            "backend": back,
+            "method": dep,
+            "reason": "SGLang does not support macOS / Apple Metal; use mlx_lm.server or llama.cpp instead.",
+            "recommended_alternative": "mlx_lm.server",
+            "commands": [],
+        }
+    if plat == "windows":
+        return {
+            "supported": False,
+            "platform": plat,
+            "backend": back,
+            "method": dep,
+            "reason": "SGLang requires Linux (or WSL2); native Windows should use llama.cpp or Ollama.",
+            "recommended_alternative": "llama-server",
+            "commands": [],
+        }
+
+    if dep == "docker":
+        image = (
+            "lmsysorg/sglang:latest-rocm"
+            if back == "rocm"
+            else "lmsysorg/sglang:latest"
+        )
+        gpu_flag = (
+            "--device=/dev/kfd --device=/dev/dri --group-add video"
+            if back == "rocm"
+            else "--gpus all"
+        )
+        return {
+            "supported": True,
+            "platform": plat,
+            "backend": back,
+            "method": "docker",
+            "image": image,
+            "commands": [
+                f"docker pull {image}",
+                f"docker run --rm -it {gpu_flag} --shm-size 16g -p 30000:30000 -v ~/.cache/huggingface:/root/.cache/huggingface {image}",
+            ],
+            "os_packages": [],
+        }
+
+    os_packages = ["libnuma-dev", "python3-dev", "build-essential"]
+    if back == "rocm":
+        pkg_spec = "sglang[srt_hip]"
+        cmds = (
+            [f"uv pip install --upgrade pip && uv pip install '{pkg_spec}'"]
+            if dep == "uv"
+            else [f"{python_bin} -m pip install --upgrade pip && {python_bin} -m pip install '{pkg_spec}'"]
+        )
+    else:
+        pkg_spec = "sglang[all]"
+        cmds = (
+            [f"uv pip install --upgrade pip && uv pip install '{pkg_spec}' --torch-backend auto"]
+            if dep == "uv"
+            else [f"{python_bin} -m pip install --upgrade pip && {python_bin} -m pip install '{pkg_spec}'"]
+        )
+
+    return {
+        "supported": True,
+        "platform": plat,
+        "backend": back,
+        "method": "uv" if dep == "uv" else "pip",
+        "package": pkg_spec,
+        "os_packages": os_packages,
+        "commands": cmds,
+    }
+
+
+def build_sglang_serve_command(
+    model_path: str,
+    *,
+    python_bin: str = "python3",
+    host: str = "127.0.0.1",
+    port: int = 30000,
+    tp_size: int = 1,
+    context_length: int | None = None,
+    quantization: str | None = None,
+    mem_fraction_static: float | None = None,
+) -> str:
+    """Construct a safe, normalized `python3 -m sglang.launch_server` invocation."""
+    parts = [
+        python_bin or "python3",
+        "-m",
+        "sglang.launch_server",
+        "--model-path",
+        str(model_path),
+        "--host",
+        str(host or "127.0.0.1"),
+        "--port",
+        str(int(port or 30000)),
+    ]
+    tp = max(1, int(tp_size or 1))
+    if tp > 1:
+        parts.extend(["--tp-size", str(tp)])
+    if context_length and int(context_length) > 0:
+        parts.extend(["--context-length", str(int(context_length))])
+    q = (quantization or "").strip().lower()
+    if q in {"fp8", "awq", "gptq", "w8a8_int8", "w8a8_fp8"}:
+        parts.extend(["--quantization", q])
+    if mem_fraction_static is not None and 0.1 <= float(mem_fraction_static) <= 0.98:
+        parts.extend(["--mem-fraction-static", f"{float(mem_fraction_static):.2f}"])
+    return " ".join(shlex.quote(p) for p in parts)
+
+
 def _append_vllm_linux_preflight_lines(runner_lines: list[str]) -> None:
     """Append Linux vLLM readiness lines that identify the runtime being used."""
     # Keep the user install bin visible for Odysseus-managed `pip install --user`

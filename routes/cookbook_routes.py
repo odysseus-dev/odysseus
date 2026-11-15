@@ -56,7 +56,8 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_windows_bash_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     load_stored_hf_token,
-    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _append_vllm_linux_preflight_lines, _append_sglang_linux_preflight_lines,
+    build_sglang_install_recipe, build_sglang_serve_command, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
@@ -2037,29 +2038,8 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  echo "[odysseus] Patched vLLM internal swap_space default to 0 for this runtime."')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
-                runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append(f"ODYSSEUS_SERVE_CMD='{_bash_squote(req.cmd)}'")
-                runner_lines.append('ODYSSEUS_SGLANG_CMD_PY="$(python3 - "$ODYSSEUS_SERVE_CMD" <<\'PY\'')
-                runner_lines.append('import shlex, sys')
-                runner_lines.append('parts = shlex.split(sys.argv[1])')
-                runner_lines.append('py = "python3"')
-                runner_lines.append('for i, part in enumerate(parts):')
-                runner_lines.append('    if part.endswith("/bin/python") or part.endswith("/bin/python3") or "/bin/python3." in part:')
-                runner_lines.append('        py = part')
-                runner_lines.append('        break')
-                runner_lines.append('print(py)')
-                runner_lines.append('PY')
-                runner_lines.append(')"')
-                runner_lines.append('if ! "$ODYSSEUS_SGLANG_CMD_PY" -c "import sglang" &>/dev/null; then')
-                runner_lines.append('  if ! command -v sglang &>/dev/null; then')
-                runner_lines.append('    echo "ERROR: SGLang is not installed."')
-                runner_lines.append('  else')
-                runner_lines.append('    echo "ERROR: SGLang is installed but failed to import in the launch Python."')
-                runner_lines.append('  fi')
-                runner_lines.append('  ODYSSEUS_SGLANG_IMPORT_ERROR="$("$ODYSSEUS_SGLANG_CMD_PY" -c "import sglang" 2>&1)"')
-                runner_lines.append('  printf "%s\\n" "$ODYSSEUS_SGLANG_IMPORT_ERROR"')
-                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
-                runner_lines.append('fi')
+                _append_sglang_linux_preflight_lines(runner_lines)
             elif "mlx_lm.server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
                 runner_lines.append(f"ODYSSEUS_SERVE_CMD='{_bash_squote(req.cmd)}'")
@@ -4225,5 +4205,32 @@ def setup_cookbook_routes() -> APIRouter:
             })
 
         return {"tasks": results}
+
+
+    @router.get("/sglang/plan", dependencies=[Depends(require_admin)])
+    def get_sglang_plan(
+        model_path: str = "",
+        platform: str = "linux",
+        backend: str = "cuda",
+        method: str = "uv",
+        tp_size: int = 1,
+        context_length: int = 0,
+        quantization: str = "",
+        port: int = 30000,
+    ):
+        """Return OS/hardware/deployment-tailored SGLang install recipe and serve command."""
+        recipe = build_sglang_install_recipe(platform=platform, backend=backend, method=method)
+        serve_cmd = (
+            build_sglang_serve_command(
+                model_path,
+                port=port,
+                tp_size=tp_size,
+                context_length=context_length or None,
+                quantization=quantization or None,
+            )
+            if (model_path or "").strip() and recipe.get("supported")
+            else ""
+        )
+        return {"recipe": recipe, "serve_command": serve_cmd}
 
     return router
