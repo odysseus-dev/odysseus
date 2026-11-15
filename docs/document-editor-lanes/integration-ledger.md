@@ -46,6 +46,26 @@ No blocking PDF data-loss defect was found in these paths. Browser tests cover p
 
 The optional `setImageSelectionObserver` port has zero registered observers and no contract violation. It is distinct from `_selResizeObserver`, which selection highlights creates when needed and disconnects during panel disposal. Lane B published modules are registered in `frontend/modules.json` and `static/sw.js`; the untracked `history/versionHistory.js` and `status/documentStatus.js` files were stale outputs without maintained sources or publication entries and were removed.
 
-### Remaining integration dependencies
+## Lane C checkpoint
 
-Lanes A and C and the final facade/composition review remain. Host compatibility callbacks currently bridge to integration-owned functions in the composition root; reconcile them with Lane A's maintained status module during Lane A integration. Lane C integration waits for its completed handoff. The full 565-item decomposition is not yet complete.
+Scope: integrate `lane/docs-lane-c-panel-lifecycle` into `refactor/document-editor-decomposition`.
+Development branch baseline: `f3a05c10c998e4efff14ac6498b01bd50138ad6e`. Its worktree contained a shared extraction overlay spanning all lanes and no Lane C commits. The final maintained implementation was reviewed and integrated from the authoritative worktree, then the development overlay was preserved before cleanup.
+
+- Integrated all 149 assigned items across nine modules: 26 declarations, 3 top-level statements, and 120 `openPanel()` statements.
+- The Lane C removal manifest verifies 149/149 items, 365 authorized rewrites, two documented human-review exceptions, and a clean removal simulation.
+- Panel lifecycle initialization, repeated open/close, minimize/restore, document navigation, mobile dock, editor initialization, email wiring, Escape layering, and disposal remain coordinated by explicit module interfaces.
+- Source editor debounce work and selection observer cleanup are owned by their modules. Autosave no longer mutates imported source-editor timer bindings.
+- Replaced the recursive `generateEmailReply` global bridge with the owned `aiReply` export. Email send workflow now imports its required collaborators directly.
+- Rich-text dropdown activation tokens are issued by `formatMenus`, the state owner. The integration overflow callback remains module-owned and no longer creates a global mutable alias.
+- Registered and published all nine modules. Maintained/published parity is clean; service-worker cache key is `odysseus-v1145-editor-precache`.
+- Canonical verifier against baseline `087e6c8837969339e9e7823dd84a4d717d536cea`: PASS, 565 total, 557 moved, 8 planned composition-root items, zero missing or duplicate items, zero violations. Exact exports: 46 modules, zero violations. Import graph: 55 modules, 320 edges, zero cycles or layer violations. State ownership: 48 files, zero violations. Ports: 12 commands, 6 hooks, zero registered optional observers, zero violations.
+- JavaScript document suites: 114 passed, zero failed or skipped. Full document Python/browser-backed regression group: 401 passed, zero failed, one pre-existing SQLAlchemy deprecation warning. Verifier negative and positive controls: 25/25 passed.
+- Frontend architecture checker passed (98 maintained modules); publication check passed with zero changed modules; `git diff --check` passed.
+
+## Composition root and final accounting
+
+`static/js/document.js` now imports the extracted modules, binds public commands, initializes the module wiring in order, and provides the compatibility facade. The eight planned index items remain: `init`, `_maybeOpenDocFromHash`, `clearAll`, `getCurrentDocId`, `documentModule`, and three facade publication statements. The facade preserves 30 named exports and 39 default API properties, verified against the source contract and API tests. No duplicate implementation was retained for the extracted Lane A, B, or C modules.
+
+The verifier support was corrected to load the pinned 565-item baseline from Git when the optional baseline worktree is absent. Its full test suite now passes 25/25, including positive extraction, negative mutation, ownership, dependency, persistence-hook, and openPanel-range controls. Lane C's two human-review exceptions are the documented statement rewrites for `openPanel#6237` and `openPanel#7564`; both are represented in the removal manifest and exercised by lifecycle regressions.
+
+The final audit package records exact commands and results, all verifier exceptions, repository revisions, limitations, and two independent audit briefs. No independent audit has yet been performed.

@@ -15,6 +15,10 @@ export let _mdDdActivationSerial = 0;
 
 let _mdDdLastActivation = { kind: '', token: 0, time: 0 };
 
+export function nextMdDropdownActivationToken() {
+    return ++_mdDdActivationSerial;
+  }
+
 function _richColorMenuItems(kind) {
     const prefix = kind === 'color' ? 'forecolor' : 'highlight';
     const reset = kind === 'color'
@@ -103,7 +107,7 @@ export function _richDropdownCurrentActions(kind, rich, selectedImage, selectedC
 export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = null) {
     const kind = toggleBtn.dataset.dd;
     const now = Date.now();
-    const token = activationToken || toggleBtn._mdDdActivationToken || ++_mdDdActivationSerial;
+    const token = activationToken || toggleBtn._mdDdActivationToken || nextMdDropdownActivationToken();
     toggleBtn._mdDdActivationToken = token;
     const duplicateActivation = _mdDdLastActivation.kind === kind
       && _mdDdLastActivation.token === token

@@ -1,6 +1,8 @@
 import { API_BASE, activeDocId, docs } from "../../application/documentState.js";
 
 import { _setEmailBodyText, _splitEmailReplyQuote } from "./emailBody.js";
+import { _emailRichbodyActive } from "../richEditor/richBodySync.js";
+import { readEmailReplyResponse, sessionModule, uiModule } from "../host.js";
 
 const _AI_REPLY_CONTEXT_STORE_PREFIX = 'odysseus:email-ai-reply-context:v1:';
 
@@ -286,7 +288,7 @@ export function _showDocAiReplyChoice(btn) {
     });
   }
 
-async function generateEmailReply(opts = {}) {
+export async function generateEmailReply(opts = {}) {
     return _aiReply(opts);
   }
 

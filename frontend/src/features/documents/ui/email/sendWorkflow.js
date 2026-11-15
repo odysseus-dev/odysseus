@@ -6,6 +6,9 @@ import { _accountCanSend, _ATTACH_RE } from "../../domain/emailMessage.js";
 import { _emailBodyToHtml, _emailReplyOwnText } from "./emailBody.js";
 
 import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _sanitizeOutgoingEmailBody } from "./localDraft.js";
+import { _emailRichbodyActive, _syncEmailRichbody } from "../richEditor/richBodySync.js";
+import { _closeWithoutDeleting } from "../documentFlows.js";
+import { closeLibrary, isLibraryOpen, spinnerModule, uiModule } from "../host.js";
 
 function _bodyMentionsAttachment(text) {
     if (!text) return false;

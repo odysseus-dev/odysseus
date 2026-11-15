@@ -6,10 +6,7 @@
 
 import { showExportMenu } from '../exportDocx.js';
 
-// Preserve the legacy script's global identifier binding so the assignment in
-// initActionOverflow remains valid in this strict ES module. The callback is
-// still installed only when initialization runs.
-if (!('_syncOverflow' in globalThis)) globalThis._syncOverflow = undefined;
+export let _syncOverflow = null;
 
 const _DOC_RECENTS_KEY = 'odysseus-doc-actions-recent';
 

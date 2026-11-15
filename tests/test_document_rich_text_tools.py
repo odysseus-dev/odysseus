@@ -363,9 +363,7 @@ def test_rich_text_exports_include_structural_styles():
 
 
 def test_header_history_controls_persist_rich_text_changes():
-    history = DOC_JS.split("// Undo button in header", 1)[1].split(
-        "// Diff toggle button", 1
-    )[0]
+    history = function_body("bindHeaderActionsSecondary")
 
     assert "doc-undo-btn" in history
     assert "doc-redo-btn" in history
@@ -438,15 +436,16 @@ def test_source_find_replace_uses_literal_matching_and_shared_undo_path():
 
 
 def test_visible_rich_text_selection_feeds_ai_editing_context():
-    selection_section = DOC_JS.split("// ---- Selection-based AI editing ----", 1)[1].split(
-        "// ── Inline Suggestion Comments", 1
-    )[0]
+    selection_section = function_body("updateRichSelectionState")
+    range_helpers = function_body("_richRangeFromOffsets")
+    validation_helpers = function_body("_validateSelections")
+    render_helpers = function_body("renderAllSelectionHighlights")
 
     assert "function updateRichSelectionState(rich)" in selection_section
     assert "kind: 'rich'" in selection_section
-    assert "function _richRangeFromOffsets" in selection_section
-    assert "CSS.highlights.set(_richSelectionHighlightName" in selection_section
-    assert "const source = s.kind === 'rich' ? richText : text;" in selection_section
+    assert "function _richRangeFromOffsets" in range_helpers
+    assert "CSS.highlights.set(_richSelectionHighlightName" in render_helpers
+    assert "const source = s.kind === 'rich' ? richText : text;" in validation_helpers
     assert "rich.addEventListener('mouseup'" in DOC_JS
 
 

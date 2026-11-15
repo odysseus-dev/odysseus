@@ -88,6 +88,11 @@ export function _scheduleSelRerender() {
 
 export let _selResizeObserver = null;
 
+export function disposeSelectionHighlights() {
+  _selResizeObserver?.disconnect();
+  _selResizeObserver = null;
+}
+
 function _ensureSelResizeObserver() {
     if (_selResizeObserver || typeof ResizeObserver === 'undefined') return;
     const ta = document.getElementById('doc-editor-textarea');

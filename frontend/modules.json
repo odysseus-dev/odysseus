@@ -466,6 +466,48 @@
     {
       "source": "features/documents/ui/status/documentStatus.js",
       "deployment": "js/document/ui/status/documentStatus.js"
+    },
+    {
+      "source": "features/documents/ui/panel/paneTemplate.js",
+      "deployment": "js/document/ui/panel/paneTemplate.js"
+    },
+    {
+      "source": "features/documents/ui/panel/paneLayout.js",
+      "deployment": "js/document/ui/panel/paneLayout.js"
+    },
+    {
+      "source": "features/documents/ui/panel/documentPresenter.js",
+      "deployment": "js/document/ui/panel/documentPresenter.js"
+    },
+    {
+      "source": "features/documents/ui/header/headerActions.js",
+      "deployment": "js/document/ui/header/headerActions.js"
+    },
+    {
+      "source": "features/documents/ui/header/languagePicker.js",
+      "deployment": "js/document/ui/header/languagePicker.js"
+    },
+    {
+      "source": "features/documents/ui/email/composerWiring.js",
+      "deployment": "js/document/ui/email/composerWiring.js"
+    },
+    {
+      "source": "features/documents/ui/editor/sourceEditorBinding.js",
+      "deployment": "js/document/ui/editor/sourceEditorBinding.js"
+    },
+    {
+      "source": "features/documents/ui/moduleWiring.js",
+      "deployment": "js/document/ui/moduleWiring.js"
+    },
+    {
+      "source": "features/documents/ui/panel/panelLifecycle.js",
+      "deployment": "js/document/ui/panel/panelLifecycle.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/notes.js?v=20260911notesselectioncancel1",
+          "reason": "Preserve the existing notes-panel module URL identity while invoking the legacy notes panel from document lifecycle."
+        }
+      ]
     }
   ]
 }

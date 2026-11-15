@@ -1,6 +1,6 @@
 """Characterization tests for content mutations and query-string test isolation.
 
-Verifies the 17 document content mutation sites across document editor source
+Verifies the editor's 23 content mutation sites across document editor source
 files and validates that test files importing document.js query variants maintain
 page-level isolation.
 """
@@ -14,71 +14,78 @@ from tests.helpers.document_source import document_source_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Verified ledger of the 17 content mutation sites in the document editor entry file
+# Verified ledger of content mutation sites across the complete implementation.
 EXPECTED_MUTATION_FUNCTIONS = {
     "_syncEmailRichbody": 2,
-    "switchToDoc": 1,
     "_autoCreateFromInput": 1,
-    "saveCurrentToMap": 3,
-    "openPanel": 2,
     "createDocument": 1,
-    "replaceEmailReplyBody": 1,
-    "ensureEmailDraftEnvelope": 1,
     "_moveDocToSession": 1,
+    "ensureEmailDraftEnvelope": 1,
+    "replaceEmailReplyBody": 1,
+    "bindLanguagePicker": 2,
+    "restoreVersion": 1,
+    "switchToDoc": 1,
+    "saveCurrentToMap": 3,
+    "_persistPdfDocument": 1,
+    "_undoPdfPaneAction": 2,
+    "_syncPdfPaneToDoc": 1,
+    "_convertDocxToRichText": 1,
+    "_applySuggestions": 1,
     "streamDocDelta": 1,
     "handleDocUpdate": 2,
-    "restoreVersion": 1,
 }
 
 
 def test_seventeen_document_content_mutation_sites():
-    """Verify that document editor source contains exactly 17 content mutation sites across 8 modules."""
+    """Verify all content mutation sites and their owning functions across modules."""
     script = r"""
     const acorn = require('/home/alteixeira20/Projects/Odysseus/dev/lab/node_modules/acorn');
     const fs = require('fs');
 
-    const entryPath = process.argv[1];
+    const sourcePaths = process.argv.slice(1);
     const sites = [];
 
-    const src = fs.readFileSync(entryPath, 'utf8');
-    const ast = acorn.parse(src, { ecmaVersion: 'latest', sourceType: 'module', locations: true });
+    for (const entryPath of sourcePaths) {
+      const src = fs.readFileSync(entryPath, 'utf8');
+      const ast = acorn.parse(src, { ecmaVersion: 'latest', sourceType: 'module', locations: true });
 
-    const fns = [];
-    for (const n of ast.body) {
-      let d = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
-      if (d && d.type === 'FunctionDeclaration') {
-        fns.push([n.loc.start.line, n.loc.end.line, d.id.name]);
-      }
-    }
-
-    function walk(n) {
-      if (!n || typeof n.type !== 'string') return;
-      if (n.type === 'AssignmentExpression') {
-        const t = n.left;
-        if (t.type === 'MemberExpression' && !t.computed && t.property.name === 'content') {
-          const o = t.object;
-          const on = o.type === 'Identifier' ? o.name : (o.type === 'MemberExpression' ? '.' + o.property.name : o.type);
-          if (/doc|Doc|target|local|cached|prev|d$|existing|current|entry/.test(on) || on === 'this') {
-            const line = n.loc.start.line;
-            const fn = (fns.find(f => line >= f[0] && line <= f[1]) || [])[2] || '(top)';
-            sites.push({ file: entryPath, line, fn, object: on });
-          }
+      const fns = [];
+      for (const n of ast.body) {
+        let d = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
+        if (d && d.type === 'FunctionDeclaration') {
+          fns.push([n.loc.start.line, n.loc.end.line, d.id.name]);
         }
       }
-      for (const k of Object.keys(n)) {
-        if (k === 'loc') continue;
-        const c = n[k];
-        if (Array.isArray(c)) c.forEach(x => x && walk(x));
-        else if (c && typeof c.type === 'string') walk(c);
+
+      function walk(n) {
+        if (!n || typeof n.type !== 'string') return;
+        if (n.type === 'AssignmentExpression') {
+          const t = n.left;
+          if (t.type === 'MemberExpression' && !t.computed && t.property.name === 'content') {
+            const o = t.object;
+            const on = o.type === 'Identifier' ? o.name : (o.type === 'MemberExpression' ? '.' + o.property.name : o.type);
+            if (/doc|Doc|target|local|cached|prev|d$|existing|current|entry/.test(on) || on === 'this') {
+              const line = n.loc.start.line;
+              const fn = (fns.find(f => line >= f[0] && line <= f[1]) || [])[2] || '(top)';
+              sites.push({ file: entryPath, line, fn, object: on });
+            }
+          }
+        }
+        for (const k of Object.keys(n)) {
+          if (k === 'loc') continue;
+          const c = n[k];
+          if (Array.isArray(c)) c.forEach(x => x && walk(x));
+          else if (c && typeof c.type === 'string') walk(c);
+        }
       }
+      walk(ast);
     }
-    walk(ast);
 
     console.log(JSON.stringify(sites));
     """
-    entry_path = str(document_source_paths()[0])
+    source_paths = [str(path) for path in document_source_paths()]
     result = subprocess.run(
-        ["node", "-e", script, entry_path],
+        ["node", "-e", script, *source_paths],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -87,7 +94,7 @@ def test_seventeen_document_content_mutation_sites():
     assert result.returncode == 0, result.stderr
     sites = json.loads(result.stdout)
 
-    assert len(sites) == 17, f"Expected exactly 17 content mutation sites, got {len(sites)}"
+    assert len(sites) == 23, f"Expected exactly 23 content mutation sites across editor modules, got {len(sites)}"
 
     counts = {}
     for site in sites:

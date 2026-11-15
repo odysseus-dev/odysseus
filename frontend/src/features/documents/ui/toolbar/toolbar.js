@@ -7,14 +7,13 @@
 import { activeDocId, docs } from '../../application/documentState.js';
 import { saveDocument } from '../../application/persistence.js';
 import { sessionModule, spinnerModule, toggleFullscreen, uiModule } from '../host.js';
-import { _showMdDropdown } from '../richEditor/formatMenus.js';
+import { _showMdDropdown, nextMdDropdownActivationToken } from '../richEditor/formatMenus.js';
 import { _saveFormatSelection, applyMdFormat } from '../richEditor/formatting.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
 import { _hideRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
 
 function ownerDropdownActivationToken() {
-  // Null asks formatMenus to issue and own the activation serial.
-  return null;
+  return nextMdDropdownActivationToken();
 }
 
 const _DOCUMENT_TOOLBAR_GROUPS = [

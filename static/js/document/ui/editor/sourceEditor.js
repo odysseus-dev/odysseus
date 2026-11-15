@@ -455,3 +455,21 @@ if (typeof globalThis !== 'undefined') {
   };
 }
 
+export function disposeSourceEditor(pane) {
+  if (pane?.contains(_lineNumberObservedTextarea)) {
+    _lineNumberResizeObserver?.disconnect();
+    _lineNumberObservedTextarea = null;
+  }
+  if (_lineNumberResizeRaf) cancelAnimationFrame(_lineNumberResizeRaf);
+  _lineNumberResizeRaf = null;
+}
+
+export function scheduleSourceEditorWork(value) {
+  clearTimeout(_hlDebounce);
+  _hlDebounce = setTimeout(syncHighlighting, 80);
+  clearTimeout(_autoDetectDebounce);
+  _autoDetectDebounce = setTimeout(attemptAutoDetect, AUTO_DETECT_DELAY);
+  clearTimeout(_autoTitleDebounce);
+  _autoTitleDebounce = setTimeout(() => autoTitleFromContent(value), 600);
+}
+
