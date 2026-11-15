@@ -23,14 +23,14 @@ State as of 2026-11-15. "Verified" means checked by a test or a live run recorde
 |---|---|
 | §E5 approval dialog | cwd and resolved paths (not on the wire); no workspace scope (not enforceable) |
 | §E3 long-research card | no event fields; summary line only |
-| P0-E security configuration | approvals `smart`, terminal backend `local`, ask-policy off by decision. Not set: `memory.write_approval`, `skills.write_approval`, deny-rule review, MCP `sampling.enabled: false` for `alyn`. `rea` and `hermes-security` enabled in the default profile. All need your decision. |
+| P0-E security configuration (assessed read-only; proposals in `docs/p0-config-and-search-assessment.md`) | approvals `smart`, terminal backend `local`, ask-policy off by decision. Not set: `memory.write_approval`, `skills.write_approval`, deny-rule review, MCP `sampling.enabled: false` for `alyn`. `rea` and `hermes-security` enabled in the default profile. All need your decision. |
 | Workspace selector, Ctrl+K palette, pinned sessions (§E4/E6) | not audited this round; upstream Desktop provides some of it |
 | Plan mode | no read-only "Plan" profile |
 | Test and review workflow (§9) | hermes-security plugin enabled; no per-stack test skills recorded |
 | Checkpoints / undo | feature exists upstream, unset here |
 
 ## Missing
-- SearXNG as the Hermes search backend and a separate extraction backend (`web:` empty; `web_extract` currently fails). Separate later task per v2.2 sequencing.
+- SearXNG wired into Hermes and a working extraction backend. Root cause found and a local extract backend staged (`odysseus-local-extract`, 7 tests); not installed or enabled. See `docs/p0-config-and-search-assessment.md`.
 - Researcher/Builder/Reviewer profiles with `output_schema` reviewer verdicts (§8).
 - Docker/WSL2 isolation pilot for Builder/automation (§D3 track 2). `docs/hermes-windows-isolation.md` is design only.
 - Read-only knowledge automation: nightly proposer, `status/BRIEF.md` cap, regenerated `environment/` pages (§G).
