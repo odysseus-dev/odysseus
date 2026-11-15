@@ -149,6 +149,117 @@ def _run_reference_safe_cleanup(upload_handler) -> int:
         referenced_upload_hashes=referenced_hashes,
     )
 
+
+def audit_upload_storage_integrity(
+    upload_dir: str | Path,
+    referenced_ids: set[str],
+    referenced_hashes: set[str] | None = None,
+) -> dict:
+    """Audit on-disk upload payloads, sidecars, and DB references without mutating files."""
+    root = Path(upload_dir)
+    ref_hashes = referenced_hashes or set()
+    sidecar_dirs = {".meta", ".vision", ".thumbs"}
+
+    disk_files: dict[str, Path] = {}
+    total_payload_bytes = 0
+    metadata_bytes = 0
+    sidecar_bytes = 0
+
+    if root.is_dir():
+        for entry in sorted(root.iterdir()):
+            if entry.name in sidecar_dirs:
+                if entry.is_dir():
+                    for sub in entry.rglob("*"):
+                        if sub.is_file() and not sub.is_symlink():
+                            try:
+                                sz = sub.stat().st_size
+                                if entry.name == ".meta":
+                                    metadata_bytes += sz
+                                else:
+                                    sidecar_bytes += sz
+                            except OSError:
+                                pass
+                continue
+            if entry.is_file() and not entry.is_symlink():
+                file_id = entry.stem if "." in entry.name else entry.name
+                disk_files[file_id] = entry
+                try:
+                    total_payload_bytes += entry.stat().st_size
+                except OSError:
+                    pass
+
+    meta_dir = root / ".meta"
+    meta_ids: set[str] = set()
+    meta_by_id: dict[str, dict] = {}
+    if meta_dir.is_dir():
+        for mf in sorted(meta_dir.glob("*.json")):
+            fid = mf.stem
+            meta_ids.add(fid)
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    meta_by_id[fid] = data
+            except Exception:
+                pass
+
+    referenced_present = 0
+    unreferenced_ids: list[str] = []
+    unreferenced_bytes = 0
+    missing_metadata_ids: list[str] = []
+
+    for fid, fpath in sorted(disk_files.items()):
+        meta = meta_by_id.get(fid)
+        if meta is None and fid not in meta_ids:
+            missing_metadata_ids.append(fid)
+        fhash = str((meta or {}).get("hash") or "")
+        is_ref = (fid in referenced_ids) or (bool(fhash) and fhash in ref_hashes)
+        if is_ref:
+            referenced_present += 1
+        else:
+            unreferenced_ids.append(fid)
+            try:
+                unreferenced_bytes += fpath.stat().st_size
+            except OSError:
+                pass
+
+    dangling_metadata_ids = sorted(fid for fid in meta_ids if fid not in disk_files)
+    dangling_referenced_ids = sorted(fid for fid in referenced_ids if fid not in disk_files)
+
+    warnings: list[str] = []
+    if dangling_referenced_ids:
+        warnings.append(f"{len(dangling_referenced_ids)} referenced upload ID(s) are missing from disk.")
+    if unreferenced_bytes > 0:
+        warnings.append(f"{len(unreferenced_ids)} unreferenced upload(s) occupy {unreferenced_bytes} bytes.")
+    if missing_metadata_ids:
+        warnings.append(f"{len(missing_metadata_ids)} upload file(s) lack .meta sidecar records.")
+    if dangling_metadata_ids:
+        warnings.append(f"{len(dangling_metadata_ids)} orphan .meta file(s) have no matching payload file.")
+
+    return {
+        "ok": len(dangling_referenced_ids) == 0 and len(dangling_metadata_ids) == 0,
+        "upload_dir": str(root),
+        "counts": {
+            "disk_files": len(disk_files),
+            "referenced_present": referenced_present,
+            "unreferenced_files": len(unreferenced_ids),
+            "missing_metadata": len(missing_metadata_ids),
+            "dangling_metadata": len(dangling_metadata_ids),
+            "dangling_references": len(dangling_referenced_ids),
+        },
+        "bytes": {
+            "payload_total": total_payload_bytes,
+            "unreferenced_reclaimable": unreferenced_bytes,
+            "metadata_sidecars": metadata_bytes,
+            "sidecar_cache": sidecar_bytes,
+        },
+        "unreferenced_ids": unreferenced_ids[:100],
+        "missing_metadata_ids": missing_metadata_ids[:100],
+        "dangling_metadata_ids": dangling_metadata_ids[:100],
+        "dangling_referenced_ids": dangling_referenced_ids[:100],
+        "warnings": warnings,
+    }
+
+
 def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
 
@@ -452,6 +563,18 @@ def setup_upload_routes(upload_handler):
         except Exception as e:
             logger.error(f"Failed to get upload stats: {e}")
             raise HTTPException(500, "Failed to get upload statistics")
+
+
+    @router.get("/integrity")
+    async def upload_integrity(request: Request):
+        """Audit upload payload growth, sidecar consistency, and DB attachment references."""
+        require_admin(request)
+        try:
+            ref_ids, ref_hashes = _collect_persisted_upload_references()
+        except Exception as e:
+            logger.error("Upload integrity scan failed while reading DB references: %s", e)
+            raise HTTPException(503, "Could not complete upload reference scan safely")
+        return audit_upload_storage_integrity(upload_handler.UPLOAD_DIR, ref_ids, ref_hashes)
 
     @router.api_route("/{file_id}", methods=["GET", "HEAD"])
     async def download_file(request: Request, file_id: str, thumb: int = 0):
