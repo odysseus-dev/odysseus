@@ -1,0 +1,51 @@
+All fixtures created successfully under /home/alteixeira20/Projects/Odysseus/audit-artifacts/tools/document-extraction-verifier/fixtures
+======================================================================
+  RUNNING DOCUMENT EXTRACTION VERIFIER COMPREHENSIVE TEST SUITE
+======================================================================
+
+--- 1. Baseline & Integration Revision Accounting (Objectives 1 & 2) ---
+  [PASS 1] Pinned baseline catalog 087e6c88 clean (565 items: 436 declarations, 9 statements, 120 openPanel) (unmoved: 565)
+  [PASS 2] Integration based on 087e6c88 clean (557 moved, 8 composition-root items) (ports clean, violations: 0)
+
+--- 2. Core Extraction & Negative Controls ---
+  [PASS 3] Pure-function extraction (_isDocxLang -> domain/documentKinds) (single successor verified)
+  [PASS 4] Rejection of altered function body (UNAUTHORIZED_AST_MUTATION detected)
+  [PASS 5] Rejection of extra export not in Appendix A (EXTRA_EXPORT detected)
+  [PASS 6] Rejection of direct state write outside documentState (UNAUTHORIZED_STATE_WRITE detected)
+
+--- 3. Observer Count & Enforcement (Objective 3) ---
+  [PASS 7] Rejection of unauthorized observer interface (PORT_INVENTORY_EXCEEDED for observers)
+
+--- 4. Collection Mutation Ownership Checks (Objective 4) ---
+  [PASS 8] Rejection of _inFlightDeletes mutation calls (set/delete/clear) (UNAUTHORIZED_COLLECTION_MUTATION)
+  [PASS 9] Rejection of docs collection mutation via local alias (alias mutation caught)
+  [PASS 10] Rejection of _closingDocs mutation calls (set/delete/clear) (UNAUTHORIZED_COLLECTION_MUTATION)
+  [PASS 11] Rejection of _deletedDocIds mutation calls (add/delete/clear) (UNAUTHORIZED_COLLECTION_MUTATION)
+  [PASS 12] Acceptance of harmless local variables shadowing state bindings (no false positive state violations)
+
+--- 5. Objective 5 Scenario A: State Transitions ---
+  [PASS 13] Approved named state transition substitution accepted (approved transition permitted)
+  [PASS 14] Unapproved direct state assignment rejected (UNAUTHORIZED_STATE_WRITE detected)
+
+--- 6. Objective 5 Scenario B: Cross-Module Dependencies ---
+  [PASS 15] Legal cross-module dependency (ui -> domain) accepted (acyclic and layer-legal)
+  [PASS 16] Forbidden layer dependency (domain -> ui) rejected (LAYER_VIOLATION detected)
+  [PASS 17] Duplicate declaration across multiple modules rejected (DUPLICATE_ACROSS_MODULES detected)
+
+--- 7. Objective 5 Scenario C: Persistence Hooks ---
+  [PASS 18] Approved persistence hook substitution recognized (Class 4 exception) (exceptions: 1)
+  [PASS 19] Unapproved persistence body mutation rejected (UNAUTHORIZED_AST_MUTATION detected)
+
+--- 8. Objective 5 Scenario D: openPanel Statement Extractions ---
+  [PASS 20] Statement wrapping recognized in target module (Class 5 rewrite) (moved statements: 1)
+  [PASS 21] Missing statement range rejected (MISSING_FROM_CODEBASE detected)
+
+--- 9. Objective 5 Scenario E: Port Boundaries ---
+  [PASS 22] Approved port boundaries accepted (12 commands, 6 hooks, 1 observer) (0 port violations)
+  [PASS 23] Unauthorized command in documentCommands.js rejected (PORT_INVENTORY_EXCEEDED for commands)
+  [PASS 24] Unauthorized persistence hook referenced rejected (PORT_INVENTORY_EXCEEDED for hooks)
+  [PASS 25] Unauthorized observer interface rejected (PORT_INVENTORY_EXCEEDED for observers)
+
+======================================================================
+COMPREHENSIVE TEST SUITE RESULTS: 25/25 passed
+======================================================================

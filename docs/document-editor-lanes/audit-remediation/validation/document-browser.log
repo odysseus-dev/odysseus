@@ -1,0 +1,38 @@
+✔ ownership: rapid minimize/reopen preserves cached snapshots and outgoing PUT (2833.109804ms)
+✔ email: real envelope input, clearing recipients, local restoration and autosave (3143.901149ms)
+✔ email: Markdown preview shortcut executes integrated callback (734.101275ms)
+✔ titles: source work retains A identity across navigation (1359.432211ms)
+✔ titles: image work is cancelled at disposal and repeated mount remains usable (957.830124ms)
+✔ pdf rollback: mounted retains edits with document-level persistence (1751.83014ms)
+✔ pdf rollback: minimized retains edits with document-level persistence (1978.022436ms)
+✔ pdf rollback: navigation retains edits with document-level persistence (1821.767092ms)
+✔ pdf rollback: detached retains edits with document-level persistence (1786.710326ms)
+✔ pdf rollback: session retains edits with document-level persistence (1752.464535ms)
+✔ pdf rollback: successful deletion retains edits with document-level persistence (1910.374851ms)
+✔ facade: all six public email methods invoke stable implementations (718.579645ms)
+✔ language: selector transitions persist metadata and delayed responses preserve identity (892.068453ms)
+✔ compare: actual header action displays both versions in diff mode (727.618731ms)
+✔ panel: default divider collapse closes and can reopen repeatedly (1316.760253ms)
+✔ autodetect: shipped highlighting library persists SVG metadata (704.871109ms)
+✔ mobile: grabber click and synthetic touch dismissal preserve dock and reopen (2208.667288ms)
+✔ selection compatibility: writes delegate to selection owner (647.895856ms)
+✔ images: real rich image selection owns toolbar positioning and disposal (938.880004ms)
+✔ AI ownership: new, streamed and finalized panes preserve subsequent manual drafts (701.013356ms)
+✔ attachments: forwarded staging completion persists its initiating email (828.740551ms)
+✔ email: mark-unread completion cannot discard a newly active document (709.978294ms)
+✔ format: form-backed PDF selector preserves underlying language metadata (716.503697ms)
+✔ email: an older save response cannot acknowledge a later envelope revision (729.775923ms)
+✔ images: upload completion cannot insert into another document (774.569426ms)
+✔ lifecycle: rich text, email and PDF remounts release global listeners (5806.391851ms)
+✔ email: rapid drafts retain independent local snapshots (879.013468ms)
+✔ email: explicit draft clearing cancels its captured storage write (827.7533ms)
+✔ email: delayed initial focus cannot redirect recipient typing into the body (749.228223ms)
+✔ compare: deferred accepted-change preview cannot change another document (845.677299ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 43913.169635

@@ -1,0 +1,118 @@
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 20%]
+........................................................................ [ 27%]
+........................................................................ [ 34%]
+........................................................................ [ 41%]
+........................................................................ [ 48%]
+.....................................................s.s...s............ [ 55%]
+........................................................................ [ 62%]
+........................................................................ [ 69%]
+........................................................................ [ 76%]
+........................................................................ [ 83%]
+........................................................................ [ 90%]
+........................................................................ [ 97%]
+.........................                                                [100%]
+=============================== warnings summary ===============================
+core/database.py:20
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/core/database.py:20: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+tests/test_email_account_default_serialization.py::test_concurrent_legacy_seed_is_one_locked_transaction
+tests/test_email_account_default_serialization.py::test_concurrent_legacy_seed_is_one_locked_transaction
+  /home/alteixeira20/.venvs/odysseus-pr-6495/lib/python3.14/site-packages/sqlalchemy/engine/default.py:1192: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+tests/test_email_attachment_search.py::test_attachment_cache_backfill_preserves_message_id
+tests/test_email_attachment_search.py::test_attachment_cache_backfill_preserves_message_id
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:1409: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    datetime.utcnow().isoformat() + "Z",
+
+tests/test_email_attachment_search.py::test_attachment_cache_backfill_preserves_message_id
+tests/test_email_attachment_search.py::test_attachment_cache_backfill_preserves_message_id
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:1428: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    datetime.utcnow().isoformat() + "Z",
+
+tests/test_email_list_stale_while_revalidate.py::test_inflight_refresh_cannot_restore_old_index_flags_after_mark_read
+tests/test_email_list_stale_while_revalidate.py::test_mark_read_keeps_other_owners_default_mailbox_unread
+tests/test_email_list_stale_while_revalidate.py::test_mark_read_keeps_other_owners_default_mailbox_unread
+tests/test_email_owner_scope.py::test_email_index_helpers_roundtrip_and_update_flags
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:1180: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow().isoformat() + "Z"
+
+tests/test_email_list_stale_while_revalidate.py::test_inflight_refresh_cannot_restore_old_index_flags_after_mark_read
+tests/test_email_list_stale_while_revalidate.py::test_mark_read_keeps_other_owners_default_mailbox_unread
+tests/test_email_owner_scope.py::test_email_index_helpers_roundtrip_and_update_flags
+tests/test_email_owner_scope.py::test_email_index_helpers_roundtrip_and_update_flags
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:1258: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    (" ".join(sorted(parts)), datetime.utcnow().isoformat() + "Z", owner or "", _account_cache_key(account_id, owner), folder, str(uid)),
+
+tests/test_email_list_stale_while_revalidate.py::test_inflight_refresh_cannot_restore_old_index_flags_after_mark_read
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:2811: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "updated_at": datetime.utcnow().isoformat() + "Z",
+
+tests/test_email_owner_scope.py::test_sender_signature_read_lookup_is_owner_scoped
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:1318: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow().isoformat() + "Z"
+
+tests/test_email_owner_scope.py::test_scheduled_email_routes_are_owner_scoped
+tests/test_email_owner_scope.py::test_scheduled_email_routes_are_owner_scoped
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:5980: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    datetime.utcnow().isoformat(),
+
+tests/test_email_owner_scope.py::test_pending_agent_draft_routes_do_not_expose_ownerless_rows
+tests/test_email_owner_scope.py::test_pending_agent_draft_routes_block_cross_owner_actions
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:6071: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    (datetime.utcnow().isoformat(), sid, owner or ""),
+
+tests/test_email_owner_scope.py::test_scheduled_poller_resolves_config_with_row_owner
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_pollers.py:1593: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now_iso = datetime.utcnow().isoformat()
+
+tests/test_email_owner_scope.py::test_scheduled_poller_resolves_config_with_row_owner
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_pollers.py:1647: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+
+tests/test_email_polly_imap_leak.py::test_auto_summarize_pass_logs_out_imap_on_select_failure
+tests/test_email_summary_llm.py::test_scheduled_email_summary_uses_shared_helper_and_caches
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_pollers.py:673: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    since = (datetime.utcnow() - _td(days=max(1, days_back))).strftime("%d-%b-%Y")
+
+tests/test_email_summary_llm.py::test_manual_email_summary_uses_shared_helper_and_caches
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_routes.py:6683: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    subject, sender, content, model, datetime.utcnow().isoformat(),
+
+tests/test_email_summary_llm.py::test_scheduled_email_summary_uses_shared_helper_and_caches
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/routes/email/email_pollers.py:990: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
+
+tests/test_email_urgency_checkpoint.py: 33 warnings
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/src/builtin_actions.py:2632: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    AGE_CUTOFF = _dt.utcnow() - _td(days=7)
+
+tests/test_email_urgency_checkpoint.py: 21 warnings
+  /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/src/builtin_actions.py:3199: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    _dt2.utcnow().isoformat()),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 15 durations =============================
+15.00s call     tests/test_document_rich_toolbar_menus.py::test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens
+6.73s call     tests/test_frontend_build.py::test_isolated_python_distribution_runs_without_source_or_node
+4.44s call     tests/test_document_pdf_remediation.py::test_document_pdf_remediation_browser
+4.32s call     tests/test_document_save_shortcut.py::test_ctrl_s_saves_rich_text_immediately_once_and_updates_status
+3.71s call     tests/test_document_persistence_lifecycle.py::test_deletion_http_500_then_save_and_retry
+3.68s call     tests/test_document_rich_image_caption.py::test_mobile_image_caption_survives_resize_history_and_empty_removal
+3.53s call     tests/test_document_persistence_lifecycle.py::test_scenario_3_close_inactive_document_preserves_active_edits
+3.43s call     tests/test_document_persistence_lifecycle.py::test_pending_save_during_deletion_outcomes
+3.32s call     tests/test_document_persistence_lifecycle.py::test_scenario_8_document_deletion_cancels_autosave_and_avoids_orphans
+3.15s call     tests/test_document_panel_remediation.py::test_document_tabs_and_panel_lifecycle
+3.04s call     tests/test_document_persistence_lifecycle.py::test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch
+2.89s call     tests/test_document_persistence_lifecycle.py::test_pdf_pane_autosave_across_session_switch_and_revision_serialization
+2.87s call     tests/test_document_rich_keyboard_shortcuts.py::test_rich_document_shortcuts_work_at_desktop_and_mobile_widths
+2.78s call     tests/test_document_persistence_lifecycle.py::test_pdf_pane_annotation_undo_and_export_preserved
+2.62s call     tests/test_email_library_module_graph_js.py::test_no_module_uses_a_package_name_it_never_bound
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_email_attachment_text.py:19: could not import 'fitz': No module named 'fitz'
+SKIPPED [1] tests/test_email_attachment_text.py:41: could not import 'openpyxl': No module named 'openpyxl'
+SKIPPED [1] tests/test_email_attachment_text.py:110: Opt-in Ajax fixture test
+1030 passed, 3 skipped, 81 warnings in 253.25s (0:04:13)

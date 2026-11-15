@@ -1,0 +1,284 @@
+(node:326702) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ documentActions extracted behavior (5494.405766ms)
+(node:326709) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ Document Editor Email Workflows
+  ▶ 1. Draft Management & Storage Compatibility
+    ✔ persists active draft to local storage with versioned prefix (6.556285ms)
+    ✔ merges stored local draft into email fields and preserves server values (4.213061ms)
+    ✔ clears draft by sourceUid and cleans up storage (1.654699ms)
+    ✔ clears current active email draft via DOM inputs (6.313044ms)
+    ✔ discards expired drafts older than 45 days TTL (2.256059ms)
+    ✔ sanitizes outgoing email body and strips base64 wrappers (1.846913ms)
+  ✔ 1. Draft Management & Storage Compatibility (27.568439ms)
+  ▶ 2. Message Formatting & Quote Conversion
+    ✔ splits quote blocks from reply text (3.19461ms)
+    ✔ extracts own response text omitting quoted thread (0.951154ms)
+    ✔ converts plain reply and quote to sanitized HTML structure (7.545511ms)
+    ✔ sets email body text and synchronizes editor DOM (7.781529ms)
+  ✔ 2. Message Formatting & Quote Conversion (22.191591ms)
+  ▶ 3. Repeated Send Prevention & Send Lifecycle
+    ✔ prevents duplicate send while first request is in-flight (32.754475ms)
+    ✔ recovers gracefully from send error and retains draft in docs map (4.989914ms)
+    ✔ cleans up sent document, invokes view commands, and transitions state on success (7.643187ms)
+  ✔ 3. Repeated Send Prevention & Send Lifecycle (46.284308ms)
+  ▶ 4. Attachment Ownership and Staging
+    ✔ scopes attachments strictly to active document without leakage (0.98565ms)
+    ✔ renders attachment chips into container (5.434097ms)
+  ✔ 4. Attachment Ownership and Staging (6.911299ms)
+  ▶ 5. Out-of-Order Async Handling & Document Switching
+    ✔ discards stale responses when document switches during email operation (5.869823ms)
+  ✔ 5. Out-of-Order Async Handling & Document Switching (6.21588ms)
+  ▶ 6. Composer Fields Accordion and Summary
+    ✔ synchronizes email header summary from to and subject (1.235313ms)
+    ✔ sets header collapsed and auto-collapses when conditions are met (1.218161ms)
+  ✔ 6. Composer Fields Accordion and Summary (3.153201ms)
+  ▶ 7. Streaming State Ownership and Animation Frame Lifecycle
+    ✔ authoritatively owns streaming bindings and cancels RAF on immediate render (2.17222ms)
+    ✔ cancels RAF frame and resets stream targets when switching documents (30.301593ms)
+    ✔ integrates _isRichTextLang helper for rich text detection (3.834232ms)
+  ✔ 7. Streaming State Ownership and Animation Frame Lifecycle (38.356321ms)
+✔ Document Editor Email Workflows (157.624597ms)
+(node:326719) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ documentFlows extracted behavior (974.825028ms)
+(node:326732) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ live stream extracted behavior (1301.579014ms)
+(node:326744) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ header overflow extracted behavior (920.383047ms)
+(node:326751) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+Failed to save document: Error: Document save failed: HTTP 500
+    at saveDocument (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/frontend/src/features/documents/application/persistence.js:290:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async TestContext.<anonymous> (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/tests/documentPersistence.test.mjs:227:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Promise.all (index 0)
+    at async Suite.run (node:internal/test_runner/test:1905:7)
+    at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7)
+Failed to save document: Error: Network offline
+    at globalThis.fetch (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/tests/documentPersistence.test.mjs:239:15)
+    at saveDocument (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/frontend/src/features/documents/application/persistence.js:270:23)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async TestContext.<anonymous> (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/tests/documentPersistence.test.mjs:245:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7)
+Failed to save document: Error: Document save failed: HTTP 500
+    at saveDocument (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/frontend/src/features/documents/application/persistence.js:290:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async TestContext.<anonymous> (file:///home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation/tests/documentPersistence.test.mjs:477:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7)
+▶ Document Persistence Engine
+  ▶ Successful Save Operations
+    ✔ saves the active document and increments its version (10.718109ms)
+    ✔ suppresses toast notifications when silent is true (2.62063ms)
+    ✔ displays new version saved toast when forceVersion is true (1.016868ms)
+    ✔ updates doc-version-badge element when present in DOM (1.699884ms)
+  ✔ Successful Save Operations (19.745682ms)
+  ▶ Failed Save Recovery and Draft Integrity
+    ✔ sets saveState to error and preserves local draft on HTTP 500 (3.927379ms)
+    ✔ preserves draft and transitions to error on network failure (1.321686ms)
+    ✔ sets error and returns false on silent email 404 (1.519322ms)
+  ✔ Failed Save Recovery and Draft Integrity (9.018575ms)
+  ▶ Per-Document Write Serialization
+    ✔ serializes concurrent saves for the same document in order (2.058234ms)
+    ✔ captures authoritative draft at queue-turn time, not admission time (1.531304ms)
+    ✔ executes concurrent saves for separate documents independently (2.17206ms)
+  ✔ Per-Document Write Serialization (6.429485ms)
+  ▶ In-Flight Edits and Revision Check
+    ✔ leaves saveState as dirty if user edits document while save is in flight (1.512119ms)
+  ✔ In-Flight Edits and Revision Check (1.778644ms)
+  ▶ Closing Draft Retention and Recovery
+    ✔ retains closing document draft in _closingDocs until save succeeds (1.656862ms)
+    ✔ preserves closing draft in _closingDocs if background save fails (1.926374ms)
+    ✔ preserves newer detached record if an earlier save completion settles late (0.553801ms)
+  ✔ Closing Draft Retention and Recovery (5.650838ms)
+  ▶ Document Deletion and Tombstone Invariants
+    ✔ aborts save immediately if document is marked deleted before write (0.720287ms)
+    ✔ awaits in-flight deletion before evaluating save (76.333352ms)
+    ✔ ignores late HTTP response if document was deleted while save was in flight (0.799136ms)
+  ✔ Document Deletion and Tombstone Invariants (82.987553ms)
+  ▶ Navigation Generation Protection
+    ✔ captures DOM content via saveCurrentToMap only when panel is open and activeDoc matches (1.748907ms)
+    ✔ preserves navigation generation consistency across async yields (0.440756ms)
+  ✔ Navigation Generation Protection (2.511704ms)
+  ▶ Autosave Scheduling and Debounce Timers
+    ✔ schedules autosave with debounce and executes after delay (22.25964ms)
+    ✔ cancels pending autosave on _cancelAutoSave (71.433518ms)
+    ✔ immediately flushes pending autosave via _flushAutoSave (3.60607ms)
+    ✔ flushes dirty document even if debounce timer was not queued (2.285946ms)
+  ✔ Autosave Scheduling and Debounce Timers (100.338933ms)
+  ▶ Version Restoration Serialization
+    ✔ executes serialized writes through saveDocument.runSerializedWrite (17.100003ms)
+    ✔ awaits queue tail settlement with awaitWrites (16.599795ms)
+  ✔ Version Restoration Serialization (34.47533ms)
+  ▶ PDF and View Integration Hooks
+    ✔ invokes PDF cancellation and sync hooks prior to network PUT (0.984487ms)
+    ✔ skips PDF sync and current DOM capture when skipPdfSync is true (0.690129ms)
+    ✔ flushes autosave when _hasPendingPdfPaneSave hook reports true (0.667536ms)
+    ✔ resolves document id from getChatDocumentId hook when docId is omitted (0.63227ms)
+  ✔ PDF and View Integration Hooks (3.679629ms)
+✔ Document Persistence Engine (270.587735ms)
+(node:326753) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ resolves declarations, destructuring, parameters and browser globals (26.58276ms)
+✔ reports unresolved reads and does not treat object keys as references (4.581109ms)
+✔ reports imported writes while respecting nested shadowing (5.478211ms)
+✔ recognizes compound, update, destructuring and loop writes (3.48507ms)
+✔ handles export aliases, shorthand keys, computed pattern keys and typeof imports (4.410616ms)
+✔ loop bindings are scoped to the loop and imported iteration targets are writes (2.111444ms)
+✔ unused imports are reported by binding use, respecting shadowing (1.702318ms)
+✔ namespace export aliases are export names, not lexical reads (1.533699ms)
+✔ validates relative maintained exports and published static targets (49.895296ms)
+✔ compatibility exceptions require a per-file rationale and typeof probe (3.657548ms)
+✔ maintained document graph has no unresolved names or imported writes (4495.47051ms)
+✔ namespace properties are read-only while imported objects retain mutable properties (0.809245ms)
+(node:326756) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ amendment metadata pins the audited and canonical baselines (12.893635ms)
+✔ manifest composition appends only exact amendment replacements (1.48149ms)
+✔ export reconciliation preserves non-export canonical failures and rejects extra exports (73.809535ms)
+✔ recorded hashes reject changed corrected functions and exports (42.901412ms)
+✔ canonical function rewrite comparison rejects any unrecorded body change (40.124163ms)
+✔ top-level reconciliation requires an exact comparison and preserves other body failures (1.387732ms)
+(node:326769) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ Document Editor Rich-Text Subsystem
+  ▶ Content Sanitization and Transformation (richBodySync)
+    ✔ _emailPlainTextToHtml escapes text and replaces newlines with <br> (10.090579ms)
+    ✔ _emailHtmlToPlainText strips HTML tags and extracts text (5.52566ms)
+    ✔ _richTextContentToHtml detects raw HTML and leaves it intact (7.61349ms)
+    ✔ _emailRichbodyActive inspects rich editor display status (5.249927ms)
+  ✔ Content Sanitization and Transformation (richBodySync) (32.475516ms)
+  ▶ HTML Paste Sanitization (richOperations)
+    ✔ _cleanRichTextPasteHtml preserves valid formatting and strips script tags (7.435402ms)
+    ✔ _cleanRichTextPasteHtml removes data-editor tokens (4.430844ms)
+    ✔ _cleanRichTextPasteHtml preserves allowed checklist elements (1.309193ms)
+  ✔ HTML Paste Sanitization (richOperations) (19.365651ms)
+  ▶ Checklist and Heading Behavior (richOperations)
+    ✔ _normalizeRichChecklists ensures correct attributes on items (4.301208ms)
+    ✔ _handleRichChecklistEnter splits or exits empty checklist items (5.204301ms)
+    ✔ _handleRichHeadingEnter detects Enter on heading elements (1.37074ms)
+  ✔ Checklist and Heading Behavior (richOperations) (11.763342ms)
+  ▶ Inline Code Toggle and Normalization (richOperations)
+    ✔ _normalizeRichInlineCode handles elements safely (0.958348ms)
+    ✔ _toggleRichInlineCode safely handles missing selection (2.527674ms)
+  ✔ Inline Code Toggle and Normalization (richOperations) (6.661696ms)
+  ▶ Image Operations and Figures (imageOps)
+    ✔ _selectRichImage sets active image and data-editor-image-selected (3.517813ms)
+    ✔ _deleteRichImage removes image from container (1.157746ms)
+    ✔ _normalizeRichTextImages updates legacy figures to modern caption structure (5.70994ms)
+  ✔ Image Operations and Figures (imageOps) (12.417693ms)
+  ▶ Rich Text Links and URLs (links)
+    ✔ _richLinkAtRange returns null for null or empty ranges (0.537549ms)
+    ✔ _applyRichImageAction applies size and align modifications (7.072084ms)
+  ✔ Rich Text Links and URLs (links) (8.036272ms)
+  ▶ Formatting Commands and Color Utilities (formatting)
+    ✔ _normalizedRichMenuColor formats hex and rgb values (11.922994ms)
+    ✔ _richMenuColorHex formats color values to hex (4.010948ms)
+    ✔ _currentBlockTag identifies block elements in container (0.697353ms)
+    ✔ _richSelectionHasFormatting safely handles collapsed selection (0.32157ms)
+  ✔ Formatting Commands and Color Utilities (formatting) (23.442463ms)
+  ▶ Slash Menu and Input Rules (slashMenu)
+    ✔ _richSlashContext identifies query when typing / at cursor (0.455153ms)
+    ✔ _applyRichBlockInputRule recognizes markdown shortcuts (2.517685ms)
+    ✔ _chooseRichSlashCommand recognizes command actions (0.367096ms)
+  ✔ Slash Menu and Input Rules (slashMenu) (3.645524ms)
+  ▶ Toolbar Visibility and Cleanup (selectionToolbar, imageMenus, formatMenus)
+    ✔ _hideRichSelectionToolbar disposes active toolbar without errors (0.271805ms)
+    ✔ _scheduleRichSelectionToolbar schedules frame without leaking resources (4.039532ms)
+    ✔ _showRichImageSourceMenu cleans up previous source menus (5.123137ms)
+    ✔ _richDropdownCurrentActions handles empty DOM state gracefully (3.81218ms)
+  ✔ Toolbar Visibility and Cleanup (selectionToolbar, imageMenus, formatMenus) (13.776821ms)
+  ▶ Selection Preservation and Formatting Execution (formatting)
+    ✔ _saveFormatSelection records and preserves textarea selection (7.329551ms)
+    ✔ _applyRichLineSpacing applies line-height styling to blocks (4.61837ms)
+  ✔ Selection Preservation and Formatting Execution (formatting) (14.691796ms)
+  ▶ Document Switching and Lifecycle Cleanup
+    ✔ clears active image selection and hides toolbars on document transition (0.83858ms)
+  ✔ Document Switching and Lifecycle Cleanup (1.730462ms)
+✔ Document Editor Rich-Text Subsystem (157.489808ms)
+(node:326781) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ Document Session Module
+  ▶ Storage Keys
+    ✔ generates expected storage key strings (6.879628ms)
+    ✔ formats storage keys for various session IDs (1.532346ms)
+  ✔ Storage Keys (14.323518ms)
+  ▶ Storage Visibility Lifecycle (_markDocVisibleState)
+    ✔ marks session as open by setting open key to 1 and removing minimized key (4.745842ms)
+    ✔ marks session as minimized by setting minimized key to 1 and removing open key (7.62951ms)
+    ✔ marks session as closed by removing both open and minimized keys (4.271221ms)
+    ✔ removes both keys when state is any other non-open non-minimized value (3.945484ms)
+    ✔ safely ignores missing or empty sessionId without throwing or mutating storage (3.682985ms)
+  ✔ Storage Visibility Lifecycle (_markDocVisibleState) (29.118659ms)
+  ▶ Active Document Forgetting (_forgetActiveDoc)
+    ✔ removes active doc key if stored value matches docId (0.769971ms)
+    ✔ does nothing if stored value differs from docId (4.335403ms)
+    ✔ does nothing if key does not exist in storage (0.494708ms)
+    ✔ safely ignores missing or empty sessionId (0.345375ms)
+  ✔ Active Document Forgetting (_forgetActiveDoc) (6.662166ms)
+  ▶ Document Tab Adoption (addDocToTabs)
+    ▶ Draft Adoption (dirty, saving, error)
+      ✔ preserves existing object identity and content when _saveState is "dirty" in docs (6.324415ms)
+      ✔ re-registers and releases closing draft when _saveState is "dirty" in _closingDocs (0.560714ms)
+      ✔ preserves existing object identity and content when _saveState is "saving" in docs (0.288397ms)
+      ✔ re-registers and releases closing draft when _saveState is "saving" in _closingDocs (4.394926ms)
+      ✔ preserves existing object identity and content when _saveState is "error" in docs (0.408014ms)
+      ✔ re-registers and releases closing draft when _saveState is "error" in _closingDocs (0.276504ms)
+    ✔ Draft Adoption (dirty, saving, error) (12.911409ms)
+    ▶ Clean or New Document Adoption
+      ✔ registers new document into docs map with all expected fields (0.707772ms)
+      ✔ updates existing clean document retaining object identity and preserving _composeAtts (0.614916ms)
+      ✔ defaults missing or empty attributes gracefully (0.542669ms)
+      ✔ prioritizes current_content over content (0.557107ms)
+      ✔ prioritizes passed sessionId parameter over doc.session_id (0.454763ms)
+      ✔ sets userSetLanguage to false when language is empty or undefined (1.870347ms)
+    ✔ Clean or New Document Adoption (10.030084ms)
+  ✔ Document Tab Adoption (addDocToTabs) (23.304481ms)
+  ▶ State Ownership and Isolation
+    ✔ uses the shared docs Map instance from documentState.js (6.65884ms)
+  ✔ State Ownership and Isolation (6.986581ms)
+✔ Document Session Module (82.764819ms)
+(node:326788) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ document status extracted behavior (2019.522925ms)
+(node:326797) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ document tab bar extracted behavior (572.861201ms)
+(node:326812) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ document toolbar extracted behavior (838.15574ms)
+(node:326818) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ documentUpdate extracted behavior (770.613356ms)
+(node:326835) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./")); register("./tests/helpers/document_email_host_loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ version history extracted behavior (929.662948ms)
+ℹ tests 132
+ℹ suites 39
+ℹ pass 132
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5918.57085
