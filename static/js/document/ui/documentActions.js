@@ -96,11 +96,13 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
     const requestSeq = (doc._titleRequestSeq = (doc._titleRequestSeq || 0) + 1);
 
     try {
+      const payload = { title };
+      if (isAutoTitle) payload.if_untitled = true;
       const res = await fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ title }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const currentDoc = docs.get(docId);
@@ -122,6 +124,7 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
       }
     } catch (e) {
       if (e?.name === 'AbortError') return;
+      if (isAutoTitle && e?.message?.includes('409')) return;
       console.error('Failed to update title:', e);
     } finally {
       if (doc._titleAbortController === controller) {

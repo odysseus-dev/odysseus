@@ -987,12 +987,14 @@ test('NB-F1: stale automatic-title response cannot overwrite newer manual title 
   const { page, requests } = await setup(t, async (route, request) => {
     if (request.method === 'PATCH' && request.path === '/api/document/doc-title-a') {
       if (request.body?.title === 'Auto Title A') {
+        assert.equal(request.body?.if_untitled, true);
         autoPatchCount++;
         await heldAutoPatch;
         await route.fulfill({ json: { status: 'ok', title: 'Auto Title A' } });
         return true;
       }
       if (request.body?.title === 'Manual Title A') {
+        assert.equal(request.body?.if_untitled, undefined);
         manualPatchCount++;
         await route.fulfill({ json: { status: 'ok', title: 'Manual Title A' } });
         return true;
@@ -1201,6 +1203,10 @@ test('NB-F3: scheduled email completion closes only originating email across nav
         await route.fulfill({ json: { success: true } });
         return true;
       }
+      if (request.body?.subject === 'Sched Reply') {
+        await route.fulfill({ json: { success: true } });
+        return true;
+      }
       if (request.body?.subject === 'Sched Fail') {
         await route.fulfill({ json: { success: false, error: 'Schedule rejected' } });
         return true;
@@ -1217,9 +1223,24 @@ test('NB-F3: scheduled email completion closes only originating email across nav
 
   const emailSchedAContent = 'To: test@example.com\nSubject: Sched A\n---\nSched A body';
   await inject(page, 'email-sched-a', emailSchedAContent, 'email', 'Sched A');
-  await inject(page, 'doc-stay-b', '# Stay Open\nDoc B body', 'markdown', 'Doc Stay B');
+  await inject(page, 'email-reply-b', 'To: recip-b@example.com\nSubject: Reply B\n---\nReply B body', 'email', 'Doc Reply B');
 
-  // 1. Open schedule modal for email A
+  // Seed localStorage for reply draft B
+  const draftBKey = 'odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|uid-reply-b-999|<msg-b-orig@example.com>');
+  const draftBData = {
+    to: 'recip-b@example.com',
+    subject: 'Reply B',
+    sourceUid: 'uid-reply-b-999',
+    sourceFolder: 'INBOX',
+    inReplyTo: '<msg-b-orig@example.com>',
+    body: 'Pre-existing draft body for reply B',
+    updatedAt: Date.now(),
+  };
+  await page.evaluate(({ key, payload }) => {
+    localStorage.setItem(key, JSON.stringify(payload));
+  }, { key: draftBKey, payload: draftBData });
+
+  // 1. Open schedule modal for fresh composition email A (no sourceUid)
   await page.evaluate(() => editor.loadDocument('email-sched-a'));
   await page.evaluate(async () => {
     const { _scheduleSend } = await import('/static/js/document/ui/email/sendWorkflow.js');
@@ -1234,33 +1255,79 @@ test('NB-F3: scheduled email completion closes only originating email across nav
   await page.waitForFunction(() => Boolean(document.querySelector('.schedule-send-modal')));
 
   // Navigate to document B while scheduling is in flight
-  await page.evaluate(() => editor.loadDocument('doc-stay-b'));
-  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-stay-b');
+  // Populate email-reply-b inputs in the DOM (including sourceUid)
+  await page.evaluate(() => {
+    editor.loadDocument('email-reply-b');
+    const uidInput = document.getElementById('doc-email-source-uid');
+    if (uidInput) uidInput.value = 'uid-reply-b-999';
+    const folderInput = document.getElementById('doc-email-source-folder');
+    if (folderInput) folderInput.value = 'INBOX';
+    const replyInput = document.getElementById('doc-email-in-reply-to');
+    if (replyInput) replyInput.value = '<msg-b-orig@example.com>';
+  });
+  assert.equal(await page.evaluate(() => state.activeDocId), 'email-reply-b');
   assert.equal(await page.evaluate(() => state.isOpen), true);
 
-  // 3. Schedule request succeeds
+  // 3. Schedule request for A succeeds
   releaseScheduleA();
   await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
 
   // 4. Verify document B remains open and active!
   assert.equal(await page.evaluate(() => state.isOpen), true);
-  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-stay-b');
+  assert.equal(await page.evaluate(() => state.activeDocId), 'email-reply-b');
   assert.equal(await page.locator('#doc-editor-pane').isVisible(), true);
-  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Doc Stay B');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Doc Reply B');
+
+  // CRITICAL NB-F3-Edge ASSERTION:
+  // Document B's reply draft in localStorage MUST REMAIN INTACT!
+  const bDraftInStorage = await page.evaluate(k => localStorage.getItem(k), draftBKey);
+  assert.notEqual(bDraftInStorage, null, 'Document B local reply draft must not be cleared when fresh compose A is scheduled');
+  const parsedBDraft = JSON.parse(bDraftInStorage);
+  assert.equal(parsedBDraft.body, 'Pre-existing draft body for reply B');
 
   // 5. Verify email A is closed/removed from tabs and documents map
   assert.equal(await page.evaluate(() => state.docs.has('email-sched-a')), false);
   const tabA = await page.evaluate(() => document.querySelector('.doc-tab[data-doc-id="email-sched-a"]'));
   assert.equal(tabA, null);
-  const tabB = await page.evaluate(() => document.querySelector('.doc-tab[data-doc-id="doc-stay-b"]'));
+  const tabB = await page.evaluate(() => document.querySelector('.doc-tab[data-doc-id="email-reply-b"]'));
   assert.notEqual(tabB, null);
 
-  // Verify DELETE request was sent for email-sched-a, NOT for doc-stay-b
+  // Verify DELETE request was sent for email-sched-a, NOT for email-reply-b
   const deletes = requests.filter(r => r.method === 'DELETE');
   assert(deletes.some(r => r.path === '/api/document/email-sched-a'));
-  assert(!deletes.some(r => r.path === '/api/document/doc-stay-b'));
+  assert(!deletes.some(r => r.path === '/api/document/email-reply-b'));
 
-  // 6. Schedule without navigation (normal path):
+  // 6. Schedule an actual reply (where sourceUid is set):
+  // Should clear its OWN local draft on successful schedule!
+  const draftReplyKey = 'odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|uid-r-111|<msg-r@example.com>');
+  await page.evaluate(k => {
+    localStorage.setItem(k, JSON.stringify({ body: 'Reply draft to clear' }));
+  }, draftReplyKey);
+
+  await inject(page, 'email-sched-reply', 'To: r@example.com\nSubject: Sched Reply\n---\nReply body', 'email', 'Sched Reply');
+  await page.evaluate(() => {
+    editor.loadDocument('email-sched-reply');
+    const uidInput = document.getElementById('doc-email-source-uid');
+    if (uidInput) uidInput.value = 'uid-r-111';
+    const folderInput = document.getElementById('doc-email-source-folder');
+    if (folderInput) folderInput.value = 'INBOX';
+    const replyInput = document.getElementById('doc-email-in-reply-to');
+    if (replyInput) replyInput.value = '<msg-r@example.com>';
+  });
+  await page.evaluate(async () => {
+    const { _scheduleSend } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    _scheduleSend();
+  });
+  await page.locator('.schedule-send-modal').waitFor({ state: 'visible' });
+  await page.locator('#sched-confirm').click();
+  await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+  // Cleanly closed
+  assert.equal(await page.evaluate(() => state.docs.has('email-sched-reply')), false);
+  // And its own draft was cleared from localStorage
+  const replyDraftInStorage = await page.evaluate(k => localStorage.getItem(k), draftReplyKey);
+  assert.equal(replyDraftInStorage, null, 'Originating reply local draft should be cleared upon successful scheduling');
+
+  // 7. Schedule without navigation (normal path):
   await inject(page, 'email-sched-norm', 'To: norm@example.com\nSubject: Sched Normal\n---\nNorm body', 'email', 'Sched Normal');
   await page.evaluate(() => editor.loadDocument('email-sched-norm'));
   await page.evaluate(async () => {
@@ -1270,11 +1337,11 @@ test('NB-F3: scheduled email completion closes only originating email across nav
   await page.locator('.schedule-send-modal').waitFor({ state: 'visible' });
   await page.locator('#sched-confirm').click();
   await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
-  // Cleanly closed and transitioned to doc-stay-b
+  // Cleanly closed and transitioned to email-reply-b
   assert.equal(await page.evaluate(() => state.docs.has('email-sched-norm')), false);
-  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-stay-b');
+  assert.equal(await page.evaluate(() => state.activeDocId), 'email-reply-b');
 
-  // 7. Failed schedule request:
+  // 8. Failed schedule request:
   await inject(page, 'email-sched-fail', 'To: fail@example.com\nSubject: Sched Fail\n---\nFail body', 'email', 'Sched Fail');
   await page.evaluate(() => editor.loadDocument('email-sched-fail'));
   await page.evaluate(async () => {

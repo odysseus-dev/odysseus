@@ -7,7 +7,7 @@ import { _accountCanSend, _ATTACH_RE } from "../../domain/emailMessage.js";
 
 import { _emailBodyToHtml, _emailReplyOwnText } from "./emailBody.js";
 
-import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _sanitizeOutgoingEmailBody } from "./localDraft.js";
+import { _clearEmailLocalDraft, _sanitizeOutgoingEmailBody } from "./localDraft.js";
 import { _emailRichbodyActive, _syncEmailRichbody } from "../richEditor/richBodySync.js";
 import { _closeWithoutDeleting } from "../documentFlows.js";
 import { closeLibrary, isLibraryOpen, spinnerModule, uiModule } from "../host.js";
@@ -350,8 +350,6 @@ export async function _scheduleSend(anchorEl = null) {
           if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
           if (sourceUid) {
             _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo || '');
-          } else {
-            _clearCurrentEmailLocalDraft();
           }
           cleanup();
           // Close only the originating email document
