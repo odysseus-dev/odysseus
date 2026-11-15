@@ -44,7 +44,7 @@ from src.host_docker_access import (
 )
 from routes.cookbook_output import (
     error_aware_output_tail, classify_dead_download,
-    HF_CACHE_COMPLETE_PROBE, HF_CACHE_INCOMPLETE_PROBE,
+    HF_CACHE_COMPLETE_PROBE, HF_CACHE_INCOMPLETE_PROBE, HF_CACHE_MATCH_PROBE,
 )
 from routes.cookbook.endpoint_registration import (
     _auto_register_image_endpoint, _auto_register_llm_endpoint,
@@ -4164,6 +4164,33 @@ def setup_cookbook_routes() -> APIRouter:
             except Exception:
                 return False
 
+        def _download_cache_matches(repo_id, include, remote_host, ssh_port, cache_root):
+            """Like `_download_cache_complete`, but requires a cached file
+            matching the task's requested include/quant pattern.
+
+            Without the pattern, a repo holding one unrelated already-cached
+            file would satisfy the check and turn a failed quant/pattern
+            download into a reported success.
+            """
+            if not repo_id or "/" not in repo_id:
+                return False
+            pat = str(include or "").strip()
+            if not pat:
+                return _download_cache_complete(repo_id, remote_host, ssh_port, cache_root)
+            cmd = [_local_probe_python(), "-c", HF_CACHE_MATCH_PROBE, repo_id, cache_root or "", pat]
+            try:
+                if remote_host:
+                    ssh_base = ["ssh"]
+                    if ssh_port and ssh_port != "22":
+                        ssh_base.extend(["-p", str(ssh_port)])
+                    shell_cmd = " ".join(shlex.quote(x) for x in cmd)
+                    proc = subprocess.run(ssh_base + [remote_host, shell_cmd], timeout=12, capture_output=True)
+                else:
+                    proc = subprocess.run(cmd, timeout=12, capture_output=True)
+                return proc.returncode == 0
+            except Exception:
+                return False
+
         def _download_cache_incomplete(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_root: str = "") -> bool:
             """Best-effort check for resumable HF partial blobs.
 
@@ -4456,10 +4483,13 @@ def setup_cookbook_routes() -> APIRouter:
                     if status == "error" and download_zero_files:
                         # "Fetching 0 files" is ambiguous on its own: HF prints
                         # it both when nothing matched and when every file was
-                        # already cached. Only call it a failure when nothing
-                        # usable actually landed in the cache.
-                        if _download_cache_complete(
-                            _payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or ""
+                        # already cached. Only call it a failure when the
+                        # requested quant/pattern is genuinely absent from the
+                        # cache — an unrelated cached file must not satisfy it.
+                        if _download_cache_matches(
+                            _payload.get("repo_id") or model,
+                            _payload.get("include") or "",
+                            remote, str(_tport or ""), _payload.get("local_dir") or ""
                         ):
                             status = "completed"
                             download_zero_files = False
@@ -4490,10 +4520,12 @@ def setup_cookbook_routes() -> APIRouter:
                 elif task_type == "download" and download_has_ok:
                     if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
                         # Ambiguous on its own — HF also prints this when every
-                        # file was already cached. Verify the cache before
-                        # calling it a failure.
-                        if _download_cache_complete(
-                            _payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or ""
+                        # file was already cached. Verify the requested
+                        # quant/pattern is actually present before succeeding.
+                        if _download_cache_matches(
+                            _payload.get("repo_id") or model,
+                            _payload.get("include") or "",
+                            remote, str(_tport or ""), _payload.get("local_dir") or ""
                         ):
                             status = "completed"
                         else:
@@ -4547,6 +4579,16 @@ def setup_cookbook_routes() -> APIRouter:
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
             output_tail = error_aware_output_tail(full_snapshot, status)
+
+            # Persist a corrected terminal outcome. The classification above is
+            # authoritative, but without writing it back the state file keeps
+            # the stale value forever and a browser POST can keep re-sending
+            # it. `_set_task_status` is the existing locked, atomic writer.
+            if _persisted_terminal and status != _task_status:
+                try:
+                    _set_task_status(session_id, status)
+                except Exception:
+                    pass
 
             results.append({
                 "session_id": session_id,

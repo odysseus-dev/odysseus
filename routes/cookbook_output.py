@@ -42,6 +42,27 @@ HF_CACHE_COMPLETE_PROBE = (
     "sys.exit(0 if ok and not inc else 1)"
 )
 
+# Cache verification tied to what was actually requested. HF_CACHE_COMPLETE_
+# PROBE only asks "does this repo have any snapshot"; a repo that already holds
+# one unrelated file would answer yes and launder a failed quant/pattern
+# download into a success. This variant also requires a file matching the
+# task's include/quant glob.
+HF_CACHE_MATCH_PROBE = (
+    "import os,sys,fnmatch\n" + HF_PARTIAL_BLOB_HELPER +
+    "repo=sys.argv[1];"
+    "root=os.path.expanduser(sys.argv[2]) if len(sys.argv)>2 and sys.argv[2] else '';"
+    "pat=(sys.argv[3] if len(sys.argv)>3 else '').strip();"
+    "base=os.path.join(root,'hub') if root else (os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub'));"
+    "d=os.path.join(base,'models--'+repo.replace('/','--'));"
+    "snap=os.path.join(d,'snapshots');"
+    "hits=[];"
+    "hits=[os.path.join(r,f) for r,_,fs in os.walk(snap) for f in fs if (not pat) or fnmatch.fnmatch(f, pat) or fnmatch.fnmatch(os.path.relpath(os.path.join(r,f), snap), pat)] if os.path.isdir(snap) else [];"
+    "inc=False;"
+    "blobs=os.path.join(d,'blobs');"
+    "inc=os.path.isdir(blobs) and any(is_partial_blob(os.path.join(blobs,x)) for x in os.listdir(blobs));"
+    "sys.exit(0 if hits and not inc else 1)"
+)
+
 HF_CACHE_INCOMPLETE_PROBE = (
     "import os,sys\n" + HF_PARTIAL_BLOB_HELPER +
     "repo=sys.argv[1];"

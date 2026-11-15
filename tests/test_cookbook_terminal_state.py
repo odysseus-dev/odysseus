@@ -211,3 +211,38 @@ def test_cache_probe_distinguishes_shell_from_populated_cache(tmp_path):
     # The probe appends /hub to the cache root itself.
     assert probe("acme/empty-shell", tmp_path) == 1
     assert probe("acme/real", tmp_path) == 0
+
+
+def test_match_probe_requires_the_requested_pattern(tmp_path):
+    """An unrelated already-cached file must not satisfy verification."""
+    import subprocess as sp
+    import sys
+
+    from routes.cookbook_output import HF_CACHE_MATCH_PROBE
+
+    def probe(repo, root, pat):
+        return sp.run(
+            [sys.executable, "-c", HF_CACHE_MATCH_PROBE, repo, str(root), pat],
+            capture_output=True, text=True,
+        ).returncode
+
+    repo = tmp_path / "hub" / "models--acme--multi"
+    snap = repo / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "model-Q8_0.gguf").write_bytes(b"\0" * 1024)
+
+    # Requested quant is present -> verified.
+    assert probe("acme/multi", tmp_path, "*Q8_0*") == 0
+    # A different quant is absent -> must fail even though the repo has a file.
+    assert probe("acme/multi", tmp_path, "*Q4_K_M*") == 1
+    # Empty pattern falls back to "repo has anything".
+    assert probe("acme/multi", tmp_path, "") == 0
+
+
+def test_corrected_terminal_outcome_is_persisted():
+    """The state file must not keep a stale `done` that the backend reports as
+    an error; otherwise a browser POST keeps re-sending the false success."""
+    source = _read("routes/cookbook_routes.py")
+
+    assert "if _persisted_terminal and status != _task_status:" in source
+    assert "_set_task_status(session_id, status)" in source
