@@ -1,9 +1,11 @@
 # Lane C panel lifecycle handoff
 
-## Scope and implementation
+## Scope and integration
 
 Lane C owns 149 baseline items: 26 declarations, 3 top-level statements, and
-120 `openPanel()` statements. The integration extracts them into:
+120 statements from `openPanel()`. The implementation is integrated into the
+authoritative `refactor/document-editor-decomposition` branch at
+`e2bba752e549f31528610e369e7b40b42881b148` across nine modules:
 
 - `ui/panel/paneTemplate.js`
 - `ui/panel/paneLayout.js`
@@ -15,29 +17,42 @@ Lane C owns 149 baseline items: 26 declarations, 3 top-level statements, and
 - `ui/editor/sourceEditorBinding.js`
 - `ui/moduleWiring.js`
 
-Source editor debounce scheduling and selection observer cleanup remain owned
-by their respective source editor and selection modules. `panelLifecycle` now
-orchestrates pane creation, component wiring, repeated open/close behavior,
-minimize and restore, Escape layering, and teardown.
+The root imports and orders module wiring, exposes the existing facade, and
+preserves the original public command and API shape. Source-editor timers and
+selection observers are disposed by the modules that own them. Module imports
+are registered in `frontend/modules.json`, mirrored under `static/js/document/`,
+and included in the service-worker cache.
 
-## Integration evidence
+## Verification
 
-- Extraction verifier: 149/149 Lane C items, clean removal simulation.
-- Full extraction ledger: 565/565 accounted for, zero missing or duplicate
-  items.
-- Import graph: 55 modules, zero cycles.
-- State ownership: 48 files checked, zero violations.
-- Frontend architecture checker: passed.
-- Focused browser lifecycle and rich editor regressions are recorded in the
-  final integration audit package.
+- Canonical verifier: all 565 items accounted for, 557 moved, 8 planned
+  composition-root items retained, no missing or duplicate items, no
+  violations. Lane C: 149/149, 365 authorized rewrites, two Class 4 PDF
+  persistence hook substitutions requiring human review, clean simulation.
+  The `openPanel#6237` and `openPanel#7564` wrappers are separately authorized
+  Class 5 rewrites.
+- Exact Appendix A exports: 46 modules, no violations.
+- Import graph: 55 modules, 320 edges, no cycles or layer violations.
+- State ownership: 48 files, no violations. Bounded ports: 12 commands, 6
+  hooks, zero registered optional observers, no violations.
+- Document JavaScript behavior suites: 114 passed, zero failures or skips.
+- Document Python/browser-backed suite: 401 passed, zero failures.
+- Verifier positive and negative controls: 25/25 passed.
+- Frontend architecture check and maintained-to-published parity: passed.
 
-The current integration checkpoint is recorded in
-[`../integration-ledger.md`](../integration-ledger.md). The full validation
-results and exact commands are in the final audit package.
+The complete command log, verifier output, approved exceptions, known limits,
+and independent review briefs are in
+[`../final-audit-package/README.md`](../final-audit-package/README.md).
 
-## Development worktree note
+## Development worktree disposition
 
-The Lane C development worktree contains the shared pre-integration extraction
-overlay used to build the authoritative integration. The integration branch is
-the source of truth for the final combined result; do not cherry-pick the
-development overlay wholesale over Lanes A or B.
+The original Lane C branch was still at baseline
+`f3a05c10c998e4efff14ac6498b01bd50138ad6e`. Its uncommitted contents were a
+shared extraction overlay across Lanes A, B, and C, not an isolated Lane C
+commit series. No concurrent writer was active. The full tracked and untracked
+overlay was preserved in stash
+`c80d6798462b97a5f8d2b7bf1ea0d38bc781e77f` with message
+`document editor lane C shared extraction overlay preserved after integration`.
+The Lane C worktree branch was aligned to
+`177cd0369b8354d483cd0a8fc0ba8fdc8d79f401` and is clean. The stash is retained
+for recovery; the integrated branch is authoritative.
