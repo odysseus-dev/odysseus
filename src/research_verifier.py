@@ -278,6 +278,75 @@ def _finding_texts(findings: Iterable[Dict[str, Any]]) -> List[Dict[str, str]]:
     return out
 
 
+
+_DOMAIN_FOLLOWUP_GAP_VERDICTS = frozenset({
+    "CONTESTED",
+    "INSUFFICIENT_EVIDENCE",
+    "UNSUPPORTED",
+    "CONFLICTING_EVIDENGE",
+    "CONFLICTING_EVIDENCE",
+})
+
+_DOMAIN_FOLLOWUP_TEMPLATES: Dict[str, str] = {
+    "financial": '"{core}" SEC filing 10-K 10-Q official financial report',
+    "legal": '"{core}" statute effective date court ruling official text',
+    "medical": '"{core}" peer reviewed randomized controlled trial clinical guideline',
+    "technical": '"{core}" official specification documentation benchmark',
+    "general": '"{core}" primary source official verification',
+}
+
+
+def _build_domain_followup_queries(
+    claim_assessments: Optional[List[Dict[str, Any]]],
+    existing_queries: Optional[List[str]] = None,
+    *,
+    sanitizer: Optional[Any] = None,
+    max_total: int = 4,
+) -> List[str]:
+    """Synthesize bounded, sanitized, deduplicated follow-up queries from domain gaps."""
+    out: List[str] = [str(q).strip() for q in (existing_queries or []) if str(q).strip()]
+    seen: Set[str] = {q.lower() for q in out}
+    if not claim_assessments or len(out) >= max_total:
+        return out[:max_total]
+
+    for item in claim_assessments:
+        if len(out) >= max_total:
+            break
+        if not isinstance(item, dict):
+            continue
+        verdict = str(item.get("claim_assessment", "")).strip().upper()
+        if verdict not in _DOMAIN_FOLLOWUP_GAP_VERDICTS:
+            continue
+
+        raw_claim = str(item.get("claim_text", "")).strip()
+        if not raw_claim:
+            continue
+        sanitized = str(sanitizer(raw_claim)) if callable(sanitizer) else raw_claim
+        if "[REDACTED" in sanitized:
+            continue
+
+        cleaned = re.sub('[\\[\\]()"\'*#>]', ' ', sanitized)
+        cleaned = " ".join(cleaned.split())
+        words = cleaned.split()
+        if len(words) < 2:
+            continue
+        core = " ".join(words[:10])
+        if len(core) > 90:
+            core = core[:90].rsplit(" ", 1)[0].strip()
+        if len(core.split()) < 2:
+            continue
+
+        domain = str(item.get("domain", "general")).strip().lower()
+        template = _DOMAIN_FOLLOWUP_TEMPLATES.get(domain, _DOMAIN_FOLLOWUP_TEMPLATES["general"])
+        candidate = template.format(core=core).strip()
+        key = candidate.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(candidate)
+
+    return out[:max_total]
+
+
 def verify_report_evidence(
     report: str,
     findings: List[Dict[str, Any]],
@@ -370,7 +439,7 @@ def verify_report_evidence(
         return vr
 
     # Lazy import only when enable_domain_verifiers=True (preserves DR-4.2 cold-start isolation)
-    from src.research_sources import assess_source_authority, build_provenance_graph
+    from src.research_sources import assess_source_authority, build_provenance_graph, sanitize_text_full
     from src.verifiers.base import build_default_registry, run_registry_verification
 
     assessments = [assess_source_authority(f, is_verified_fetched_url=True) for f in (findings or [])]
@@ -395,4 +464,10 @@ def verify_report_evidence(
     vr.missing_domain_plugin = reg_out["missing_domain_plugin"]
     vr.missing_domain_domains = list(reg_out.get("missing_domain_domains", ()))
     vr.routed_claims = list(reg_out.get("routed_claims", ()))
+    vr.followup_queries = _build_domain_followup_queries(
+        vr.claim_assessments,
+        vr.followup_queries,
+        sanitizer=sanitize_text_full,
+        max_total=4,
+    )
     return vr
