@@ -98,3 +98,65 @@ def test_providers_bounded_with_many_slow_endpoints(monkeypatch):
     assert elapsed < 4, f"not bounded with many endpoints: {elapsed:.1f}s"
     assert out["status"] == sh.DOWN
     assert all(e["error"] == "timeout" for e in out["meta"]["endpoints"])
+
+
+def test_providers_invalid_or_missing_base_url_fails_fast_without_probing():
+    called = []
+
+    def probe(base, key, timeout):
+        called.append(base)
+        return ["m1"]
+
+    eps = [
+        {"name": "empty", "base_url": "   ", "api_key": "sk-1"},
+        {"name": "bad-scheme", "base_url": "ftp://local:8000/v1", "api_key": "sk-2"},
+        {"name": "no-host", "base_url": "http://", "api_key": "sk-3"},
+    ]
+    out = sh.providers_health(eps, probe=probe)
+    assert called == []
+    assert out["status"] == sh.DOWN
+    for entry in out["meta"]["endpoints"]:
+        assert entry["ok"] is False
+        assert entry["error"] == "invalid_url"
+        assert entry["latency_ms"] == 0
+    assert "sk-1" not in repr(out) and "sk-2" not in repr(out) and "sk-3" not in repr(out)
+
+
+def test_providers_records_latency_ms_and_classifies_http_auth_errors():
+    def probe(base, key, timeout):
+        if "unauth" in base:
+            raise ValueError(f"401 Unauthorized for {key}")
+        return ["llama-3"]
+
+    eps = [
+        {"name": "ok-ep", "base_url": "http://ok-ep:8000/v1", "api_key": "k1"},
+        {"name": "unauth-ep", "base_url": "http://unauth-ep:8000/v1", "api_key": "super-secret"},
+    ]
+    out = sh.providers_health(eps, probe=probe)
+    assert out["status"] == sh.DEGRADED
+    by = {e["name"]: e for e in out["meta"]["endpoints"]}
+    assert by["ok-ep"]["ok"] is True
+    assert isinstance(by["ok-ep"]["latency_ms"], int) and by["ok-ep"]["latency_ms"] >= 0
+    assert by["unauth-ep"]["ok"] is False
+    assert by["unauth-ep"]["error"] in {"auth_or_protocol_error", "error"}
+    assert "super-secret" not in repr(out)
+
+
+@pytest.mark.asyncio
+async def test_collect_service_health_reports_degraded_when_endpoint_inventory_fails(monkeypatch):
+    monkeypatch.setattr(
+        sh,
+        "_gather_inputs",
+        lambda: {
+            "settings": {},
+            "integrations": [],
+            "accounts": [],
+            "endpoints": [],
+            "failed": {"endpoints": "error"},
+        },
+    )
+    report = await sh.collect_service_health(rag_manager=None, memory_vector=None)
+    by_svc = {s["name"]: s for s in report["services"]}
+    assert by_svc["providers"]["status"] == sh.DEGRADED
+    assert by_svc["providers"]["meta"]["error"] == sh.CONFIG_SOURCE_ERROR
+    assert report["overall"] in {sh.DEGRADED, sh.DOWN}
