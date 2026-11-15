@@ -428,6 +428,202 @@ def _native_quant(model):
     return native_quant
 
 
+
+_OFFICIAL_RELIABILITY_ORGS = frozenset({
+    "apple", "allenai", "black-forest-labs", "cohere", "deepseek-ai",
+    "google", "ibm", "lightricks", "meta-llama", "microsoft", "mistralai",
+    "nvidia", "openai", "qwen", "stabilityai", "tencent", "tiiuae",
+    "upstage", "zai-org",
+})
+_TRUSTED_QUANT_ORGS = frozenset({
+    "bartowski", "unsloth", "lmstudio-community", "mlx-community",
+    "hugging-quants", "neuralmagic", "redhatai", "bullerwins",
+})
+
+_QUANT_FIDELITY_SCORE = {
+    "F32": 100, "F16": 100, "BF16": 100, "FP8": 98, "FP8-Mixed": 98,
+    "W8A8": 96, "W8A16": 96, "INT8": 95, "Q8_0": 95, "QAT-INT8": 96,
+    "QAT-INT4": 93, "FP4-MoE-Mixed": 92, "mlx-8bit": 94,
+    "Q6_K": 90, "mlx-6bit": 89,
+    "Q5_K_M": 86, "mlx-5bit": 85,
+    "AWQ-8bit": 92, "GPTQ-Int8": 92,
+    "AWQ-4bit": 84, "GPTQ-Int4": 84, "NVFP4": 85, "MXFP4": 85, "FP4": 84,
+    "W4A16": 83, "INT4": 82, "NF4": 82, "mlx-4bit": 84,
+    "Q4_K_M": 80, "Q4_0": 78,
+    "Q3_K_M": 65, "mlx-3bit": 65,
+    "Q2_K": 48,
+}
+
+
+def _infer_model_modalities(model):
+    """Return normalized list of supported modalities (e.g. ['text'], ['text', 'image'])."""
+    found = ["text"]
+    raw_mods = model.get("modalities") or model.get("capabilities") or []
+    if isinstance(raw_mods, str):
+        raw_mods = [raw_mods]
+    tokens = " ".join(
+        str(x or "") for x in (
+            list(raw_mods)
+            + [
+                model.get("pipeline_tag"),
+                model.get("use_case"),
+                model.get("architecture"),
+                model.get("name"),
+            ]
+        )
+    ).lower()
+
+    if any(k in tokens for k in ("vision", "image", "vlm", "vl-", "-vl", "multimodal", "pixtral", "llava", "internvl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "gemma-3", "gemma-4")):
+        if "image" not in found:
+            found.append("image")
+    if any(k in tokens for k in ("audio", "speech", "whisper", "tts", "stt", "voice", "omni")):
+        if "audio" not in found:
+            found.append("audio")
+    if any(k in tokens for k in ("video", "omni")):
+        if "video" not in found:
+            found.append("video")
+    return found
+
+
+def _matches_multimodal_requirement(modalities, requirement):
+    """Check whether model modalities satisfy a requested multimodal filter."""
+    req = (requirement or "").strip().lower()
+    if not req or req in {"any", "all", "text"}:
+        return True
+    mods = {m.lower() for m in (modalities or [])}
+    if req in {"multimodal", "mm"}:
+        return len(mods) > 1
+    if req in {"vision", "image", "vlm"}:
+        return "image" in mods
+    if req in {"audio", "speech", "voice"}:
+        return "audio" in mods
+    if req == "video":
+        return "video" in mods
+    parts = [p.strip() for p in re.split(r"[,+]", req) if p.strip()]
+    return all(
+        ("image" in mods if p in {"vision", "image"} else p in mods)
+        for p in parts
+    )
+
+
+def _resolve_backend_support(model, system, quant, run_mode):
+    """Determine supported local serving runtimes and backend compatibility score."""
+    backend = (system.get("backend") or "cpu_x86").lower()
+    platform_name = (system.get("platform") or "").lower()
+    apple_silicon = backend in ("mps", "metal", "apple")
+    is_windows = platform_name == "windows"
+    is_mlx = _is_mlx_model(model, quant)
+    has_gguf = bool(model.get("is_gguf") or model.get("gguf_sources"))
+    preq = is_prequantized(model)
+    q_up = (quant or "").upper()
+    is_gguf_quant = q_up.startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ"))
+
+    supported = []
+    if is_mlx:
+        if apple_silicon:
+            supported.append("mlx")
+    elif apple_silicon:
+        if has_gguf or is_gguf_quant:
+            supported.extend(["llamacpp", "ollama"])
+    elif is_windows:
+        if has_gguf or is_gguf_quant:
+            supported.extend(["llamacpp", "ollama"])
+    else:
+        if has_gguf or is_gguf_quant:
+            supported.extend(["llamacpp", "ollama"])
+        if not is_gguf_quant and backend in ("cuda", "rocm"):
+            supported.extend(["vllm", "sglang"])
+        elif not preq and backend == "cuda":
+            supported.extend(["vllm", "sglang"])
+
+    if not supported and not is_mlx:
+        supported = ["llamacpp"]
+
+    recommended = supported[0] if supported else "llamacpp"
+    score = 85.0
+    if run_mode == "gpu":
+        score += 15.0
+    elif run_mode == "cpu_offload":
+        score -= 10.0
+    elif run_mode == "no_fit":
+        score -= 45.0
+    if len(supported) >= 2:
+        score += 5.0
+    return supported, recommended, max(0.0, min(100.0, score))
+
+
+def _architecture_score(model):
+    """Normalized 0-100 architecture score reflecting modern efficiency & MoE design."""
+    score = 72.0 + _architecture_bonus(model) * 2.5
+    if model.get("is_moe"):
+        score += 4.0
+    return max(0.0, min(100.0, score))
+
+
+def _quantization_score(quant):
+    """Normalized 0-100 quantization fidelity score."""
+    if not quant:
+        return 80.0
+    if quant in _QUANT_FIDELITY_SCORE:
+        return float(_QUANT_FIDELITY_SCORE[quant])
+    bits = _quant_bits(quant)
+    if bits >= 16:
+        return 100.0
+    if bits >= 8:
+        return 94.0
+    if bits >= 6:
+        return 89.0
+    if bits >= 5:
+        return 85.0
+    if bits >= 4:
+        return 81.0
+    if bits == 3:
+        return 65.0
+    if bits == 2:
+        return 48.0
+    return 78.0
+
+
+def _reliability_score(model, quant, run_mode, supported_backends):
+    """Expected serving reliability score (0-100) and tier label."""
+    score = 68.0
+    model_id = str(model.get("id") or model.get("name") or "")
+    namespace = model_id.split("/", 1)[0].strip().lower() if "/" in model_id else ""
+    if namespace in _OFFICIAL_RELIABILITY_ORGS:
+        score += 14.0
+    elif namespace in _TRUSTED_QUANT_ORGS:
+        score += 9.0
+
+    if model.get("gguf_sources") or model.get("is_gguf") or is_prequantized(model):
+        score += 6.0
+
+    downloads = model.get("downloads") or 0
+    if isinstance(downloads, (int, float)) and downloads > 0:
+        if downloads >= 100_000:
+            score += 6.0
+        elif downloads >= 10_000:
+            score += 3.0
+
+    if run_mode == "gpu":
+        score += 6.0
+    elif run_mode == "cpu_offload":
+        score -= 8.0
+    elif run_mode == "no_fit":
+        score -= 35.0
+
+    if not supported_backends:
+        score -= 15.0
+
+    final = max(0.0, min(100.0, score))
+    if final >= 85.0:
+        tier = "high"
+    elif final >= 65.0:
+        tier = "medium"
+    else:
+        tier = "low"
+    return round(final, 1), tier
+
+
 def analyze_model(model, system, target_quant=None, scoring_use_case=None, target_context=None):
     pb = params_b(model)
     if pb <= 0:
@@ -522,13 +718,23 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         # filtered out before the user could see what would fit. The
         # client already knows how to render too_tight (red row).
         oversized_required = estimate_memory_gb(model, quant_to_try, ctx)
+        modalities = _infer_model_modalities(model)
+        supported_backends, recommended_backend, backend_score = _resolve_backend_support(model, system, quant_to_try, "no_fit")
+        rel_score, rel_tier = _reliability_score(model, quant_to_try, "no_fit", supported_backends)
         return {
             "name": model.get("name"),
             "provider": model.get("provider"),
+            "architecture": model.get("architecture") or "",
             "parameter_count": model.get("parameter_count"),
             "params_b": round(pb, 1),
             "is_moe": is_moe,
             "use_case": model_use_case,
+            "modalities": modalities,
+            "supports_vision": "image" in modalities,
+            "supports_audio": "audio" in modalities,
+            "supported_backends": supported_backends,
+            "recommended_backend": recommended_backend,
+            "reliability_tier": rel_tier,
             "fit_level": "too_tight",
             "run_mode": "no_fit",
             "quant": quant_to_try,
@@ -536,7 +742,17 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "required_gb": round(oversized_required, 1),
             "speed_tps": 0,
             "score": 0,
-            "scores": {"quality": 0, "speed": 0, "fit": 0, "context": 0},
+            "scores": {
+                "quality": 0,
+                "speed": 0,
+                "fit": 0,
+                "context": 0,
+                "architecture": round(_architecture_score(model), 1),
+                "quantization": round(_quantization_score(quant_to_try), 1),
+                "backend": round(backend_score, 1),
+                "multimodal": 100.0 if len(modalities) > 1 else 60.0,
+                "reliability": rel_score,
+            },
             "gguf_sources": model.get("gguf_sources", []),
             "context_length": model_ctx,
             "target_context": target_context or None,
@@ -593,17 +809,33 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     s_score = _speed_score(tps, score_use_case)
     f_score = _fit_score(required_gb, budget)
     c_score = _context_score(fit_ctx, score_use_case)
+    arch_score = _architecture_score(model)
+    quant_score = _quantization_score(quant)
+    modalities = _infer_model_modalities(model)
+    supported_backends, recommended_backend, backend_score = _resolve_backend_support(model, system, quant, run_mode)
+    rel_score, rel_tier = _reliability_score(model, quant, run_mode, supported_backends)
+    mm_score = 100.0 if (score_use_case == "multimodal" and len(modalities) > 1) else (85.0 if len(modalities) > 1 else 65.0)
 
     wq, ws, wf, wc = USE_CASE_WEIGHTS.get(score_use_case, (0.45, 0.30, 0.15, 0.10))
-    composite = q_score * wq + s_score * ws + f_score * wf + c_score * wc
+    base_composite = q_score * wq + s_score * ws + f_score * wf + c_score * wc
+    # Incorporate expected reliability and backend readiness (10% weight) while
+    # preserving 90% of the calibrated hardware-fit/quality/speed composite.
+    composite = base_composite * 0.90 + (rel_score * 0.65 + backend_score * 0.35) * 0.10
 
     return {
         "name": model.get("name"),
         "provider": model.get("provider"),
+        "architecture": model.get("architecture") or "",
         "parameter_count": model.get("parameter_count"),
         "params_b": round(pb, 1),
         "is_moe": is_moe,
         "use_case": model_use_case,
+        "modalities": modalities,
+        "supports_vision": "image" in modalities,
+        "supports_audio": "audio" in modalities,
+        "supported_backends": supported_backends,
+        "recommended_backend": recommended_backend,
+        "reliability_tier": rel_tier,
         "fit_level": fit_level,
         "run_mode": run_mode,
         "quant": quant,
@@ -616,6 +848,11 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "speed": round(s_score, 1),
             "fit": round(f_score, 1),
             "context": round(c_score, 1),
+            "architecture": round(arch_score, 1),
+            "quantization": round(quant_score, 1),
+            "backend": round(backend_score, 1),
+            "multimodal": round(mm_score, 1),
+            "reliability": rel_score,
         },
         "gguf_sources": model.get("gguf_sources", []),
         "context_length": model_ctx,
@@ -668,6 +905,9 @@ SORT_KEYS = {
     # string sort is chronological. Missing dates sort last (empty < any date,
     # and we sort reverse=True for newest, so "" lands at the bottom).
     "newest": lambda r: r.get("release_date") or "",
+    "reliability": lambda r: ((r.get("scores") or {}).get("reliability", 0), r["score"]),
+    "architecture": lambda r: ((r.get("scores") or {}).get("architecture", 0), r["score"]),
+    "quantization": lambda r: ((r.get("scores") or {}).get("quantization", 0), r["score"]),
 }
 
 
@@ -705,7 +945,7 @@ def _matches_search(model, search):
     return True
 
 
-def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
+def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False, backend=None, multimodal=None):
     """Rank all models against detected hardware. Returns sorted list of fit results.
 
     fit_only: when True, drop rows whose fit_level is "too_tight" (model doesn't
@@ -852,6 +1092,15 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         if use_case:
             model_uc = infer_use_case(m)
             if use_case != model_uc and use_case != "general":
+                continue
+
+        if backend:
+            want_backend = backend.strip().lower()
+            if want_backend and want_backend not in [b.lower() for b in (result.get("supported_backends") or [])]:
+                continue
+
+        if multimodal:
+            if not _matches_multimodal_requirement(result.get("modalities"), multimodal):
                 continue
 
         results.append(result)
