@@ -229,6 +229,10 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
   }
 
 export function saveCurrentToMap() {
+    // The active ID can still identify the previous document while a new pane
+    // is mounting. Only its populated owner may supply a draft snapshot.
+    const pane = document.getElementById('doc-editor-pane');
+    if (!pane || pane.dataset.activeDocumentId !== activeDocId) return;
     if (_historyOwnsView(_versionHistory) && _versionHistory.previewing) return;
     if (!activeDocId || !docs.has(activeDocId)) return;
     const doc = docs.get(activeDocId);
