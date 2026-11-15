@@ -10,7 +10,7 @@
 - Email send workflow referenced missing collaborators. Its in-flight guard could reset after a dispatched request threw, allowing duplicate sends. Required interfaces are now explicit imports and duplicate-send coverage passes.
 - Rich-text dropdown repeat activation reused stale activation state. `formatMenus` now issues owner tokens; pointer and keyboard repeat tests pass.
 - Security regression tests searched for helpers only in the monolith after those helpers moved. The browser harness now extracts the actual maintained function bodies using Acorn, and its isolated test passes.
-- The verifier regression harness fell back to the current integration source when its optional baseline worktree was absent. It now loads the pinned 087e6c88 source from Git, generates fixtures deterministically, and its full 25-case suite passes.
+- The verifier regression harness fell back to the current integration source when its optional baseline worktree was absent and could reuse stale generated fixtures. It now loads the pinned 087e6c88 source from Git, clears and regenerates fixtures for each run, and passes 25/25 from both the canonical tool directory and the audit-package snapshot.
 
 ## Residual architectural concerns
 
