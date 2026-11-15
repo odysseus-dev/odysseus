@@ -13,6 +13,183 @@ from core.middleware import require_admin
 logger = logging.getLogger(__name__)
 
 
+
+def audit_administrative_security(
+    *,
+    auth_is_disabled: bool,
+    admin_user_count: int,
+    total_user_count: int,
+    api_tokens: list[dict],
+    mcp_servers: list[dict],
+    webhooks: list[dict],
+    admin_only_task_actions: list[str],
+    shell_tool_enabled: bool,
+) -> Dict[str, Any]:
+    """Evaluate privileged capabilities, token posture, and sensitive integration boundaries."""
+    findings: list[dict] = []
+
+    if auth_is_disabled:
+        findings.append({
+            "severity": "high",
+            "code": "auth_disabled",
+            "message": "Authentication is disabled (AUTH_ENABLED=false); administrative endpoints do not require login.",
+            "remediation": "Enable AUTH_ENABLED=true whenever Odysseus is reachable beyond localhost.",
+        })
+    elif admin_user_count == 0:
+        findings.append({
+            "severity": "high",
+            "code": "no_admin_account",
+            "message": "Authentication is enabled but zero admin accounts exist.",
+            "remediation": "Bootstrap or promote an administrator account so privileged management remains accessible.",
+        })
+
+    active_tokens = [t for t in api_tokens if not t.get("revoked")]
+    non_expiring_tokens = [t for t in active_tokens if not t.get("expires_at")]
+    wildcard_tokens = [
+        t for t in active_tokens
+        if "*" in (t.get("scopes") or []) or "admin" in (t.get("scopes") or [])
+    ]
+
+    if non_expiring_tokens:
+        findings.append({
+            "severity": "medium",
+            "code": "non_expiring_api_tokens",
+            "message": f"{len(non_expiring_tokens)} active API token(s) have no expiration timestamp.",
+            "remediation": "Set explicit expires_at lifetimes on delegated API tokens and rotate long-lived keys.",
+        })
+    if wildcard_tokens:
+        findings.append({
+            "severity": "medium",
+            "code": "broad_scope_api_tokens",
+            "message": f"{len(wildcard_tokens)} active API token(s) carry wildcard or admin scopes.",
+            "remediation": "Scope delegated API tokens strictly to required domains (e.g., chat, documents:read).",
+        })
+
+    enabled_mcp = [m for m in mcp_servers if m.get("enabled", True)]
+    stdio_mcp = [m for m in enabled_mcp if (m.get("transport") or "stdio").lower() == "stdio"]
+    if stdio_mcp:
+        findings.append({
+            "severity": "info",
+            "code": "stdio_mcp_servers_active",
+            "message": f"{len(stdio_mcp)} enabled MCP server(s) execute local subprocesses over stdio.",
+            "remediation": "Ensure stdio MCP server commands and arguments are admin-reviewed and confined.",
+        })
+
+    enabled_webhooks = [w for w in webhooks if w.get("enabled", True)]
+    unsigned_webhooks = [w for w in enabled_webhooks if not (w.get("secret") or "").strip()]
+    if unsigned_webhooks:
+        findings.append({
+            "severity": "medium",
+            "code": "unsigned_webhooks",
+            "message": f"{len(unsigned_webhooks)} enabled webhook(s) do not configure an HMAC signing secret.",
+            "remediation": "Configure a signing secret on outbound/inbound webhooks to prevent spoofed triggers.",
+        })
+
+    high_count = sum(1 for f in findings if f["severity"] == "high")
+    medium_count = sum(1 for f in findings if f["severity"] == "medium")
+
+    return {
+        "ok": high_count == 0,
+        "summary": {
+            "high_findings": high_count,
+            "medium_findings": medium_count,
+            "total_findings": len(findings),
+        },
+        "boundaries": {
+            "auth": {
+                "auth_enabled": not auth_is_disabled,
+                "total_users": total_user_count,
+                "admin_users": admin_user_count,
+            },
+            "delegated_tokens": {
+                "active_count": len(active_tokens),
+                "non_expiring_count": len(non_expiring_tokens),
+                "broad_scope_count": len(wildcard_tokens),
+            },
+            "privileged_execution": {
+                "shell_tool_enabled": bool(shell_tool_enabled),
+                "admin_only_task_actions": sorted(admin_only_task_actions),
+            },
+            "integrations": {
+                "mcp_enabled_count": len(enabled_mcp),
+                "mcp_stdio_count": len(stdio_mcp),
+                "webhooks_enabled_count": len(enabled_webhooks),
+                "webhooks_unsigned_count": len(unsigned_webhooks),
+            },
+        },
+        "findings": findings,
+    }
+
+
+def collect_administrative_security_audit() -> Dict[str, Any]:
+    """Gather live auth, token, task-policy, MCP, and webhook posture from persistent storage."""
+    from src.owner_identity import auth_disabled
+    from src.task_action_policy import ADMIN_ONLY_TASK_ACTIONS
+
+    auth_is_disabled = bool(auth_disabled())
+    admin_users = 0
+    total_users = 0
+    api_tokens: list[dict] = []
+    mcp_servers: list[dict] = []
+    webhooks: list[dict] = []
+
+    try:
+        from core.database import SessionLocal, User, ApiToken
+        db = SessionLocal()
+        try:
+            users = db.query(User).all()
+            total_users = len(users)
+            admin_users = sum(1 for u in users if getattr(u, "is_admin", False))
+            for tok in db.query(ApiToken).all():
+                raw_scopes = getattr(tok, "scopes", None) or []
+                if isinstance(raw_scopes, str):
+                    import json as _json
+                    try:
+                        raw_scopes = _json.loads(raw_scopes)
+                    except Exception:
+                        raw_scopes = [raw_scopes]
+                api_tokens.append({
+                    "id": getattr(tok, "id", None),
+                    "revoked": bool(getattr(tok, "revoked_at", None)),
+                    "expires_at": getattr(tok, "expires_at", None),
+                    "scopes": list(raw_scopes) if isinstance(raw_scopes, (list, tuple, set)) else [],
+                })
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("Security audit DB inspection skipped: %s", e)
+
+    try:
+        import json as _json
+        for fname, target in (("mcp_servers.json", mcp_servers), ("webhooks.json", webhooks)):
+            fpath = os.path.join(DATA_DIR, fname)
+            if os.path.isfile(fpath):
+                loaded = _json.loads(open(fpath, encoding="utf-8").read())
+                if isinstance(loaded, list):
+                    target.extend(item for item in loaded if isinstance(item, dict))
+                elif isinstance(loaded, dict):
+                    items = loaded.get("servers") or loaded.get("webhooks") or list(loaded.values())
+                    if isinstance(items, list):
+                        target.extend(item for item in items if isinstance(item, dict))
+    except Exception as e:
+        logger.debug("Security audit integration file inspection skipped: %s", e)
+
+    shell_enabled = os.getenv("ENABLE_SHELL_TOOL", "").strip().lower() in {"1", "true", "yes"} or (
+        os.getenv("SHELL_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    )
+
+    return audit_administrative_security(
+        auth_is_disabled=auth_is_disabled,
+        admin_user_count=admin_users,
+        total_user_count=total_users,
+        api_tokens=api_tokens,
+        mcp_servers=mcp_servers,
+        webhooks=webhooks,
+        admin_only_task_actions=list(ADMIN_ONLY_TASK_ACTIONS),
+        shell_tool_enabled=shell_enabled,
+    )
+
+
 def setup_diagnostics_routes(
     rag_manager,
     rag_available: bool,
@@ -28,6 +205,13 @@ def setup_diagnostics_routes(
         require_admin(request)
         from src.service_health import collect_service_health
         return await collect_service_health(rag_manager, memory_vector)
+
+
+    @router.get("/api/diagnostics/security-audit")
+    async def get_security_audit(request: Request) -> Dict[str, Any]:
+        """Audit privileged capabilities, token lifetimes, and sensitive integration boundaries."""
+        require_admin(request)
+        return collect_administrative_security_audit()
 
     @router.get("/api/diagnostics/logs")
     async def get_diagnostics_logs(request: Request, limit: int = 200) -> Dict[str, Any]:
