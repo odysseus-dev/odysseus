@@ -86,7 +86,12 @@ export function _wireDiffViewer() {
       onAcceptChanges: () => {
         const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
         if (lang === 'markdown') {
-          requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
+          const docId = activeDocId;
+          const pane = document.getElementById('doc-editor-pane');
+          requestAnimationFrame(() => {
+            if (activeDocId !== docId || !pane?.isConnected || pane.dataset.activeDocumentId !== docId) return;
+            _setMarkdownPreviewActive(true, { remember: true });
+          });
         }
       },
     });

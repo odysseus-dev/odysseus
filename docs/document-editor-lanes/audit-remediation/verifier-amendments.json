@@ -534,6 +534,18 @@
           "rationale": "Explicit draft clearing cancels only that storage key so a captured pending snapshot cannot recreate a sent or cleared draft."
         }
       ]
+    },
+    "_wireDiffViewer": {
+      "file": "ui/moduleWiring.js",
+      "rationale": "Diff acceptance owns its deferred preview activation; navigation cannot change another document preview preference.",
+      "targetFunctionSha256": "2a92acc0d9a509566bf4e1e419f5847ef00783a7bc0d3eef9b256dc8980813a2",
+      "replacements": [
+        {
+          "from": "        if (lang === 'markdown') {\n          requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));\n        }",
+          "to": "        if (lang === 'markdown') {\n          const docId = activeDocId;\n          const pane = document.getElementById('doc-editor-pane');\n          requestAnimationFrame(() => {\n            if (activeDocId !== docId || !pane?.isConnected || pane.dataset.activeDocumentId !== docId) return;\n            _setMarkdownPreviewActive(true, { remember: true });\n          });\n        }",
+          "rationale": "Capture the accepting document and connected pane before scheduling preview activation."
+        }
+      ]
     }
   },
   "openPanelStatementRewrites": [

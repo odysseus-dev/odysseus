@@ -566,3 +566,28 @@ test('email: delayed initial focus cannot redirect recipient typing into the bod
   await page.keyboard.type('recipient@example.com');
   assert.equal(await page.locator('#doc-email-richbody').textContent(), 'Body');
 });
+
+test('compare: deferred accepted-change preview cannot change another document', async t => {
+  const { page } = await setup(t);
+  await inject(page, 'b', 'print("B original")', 'python');
+  await inject(page, 'a', 'old Markdown');
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await page.evaluate(async () => {
+    editor.default.enterDiffMode('old Markdown', 'new Markdown');
+    document.getElementById('doc-diff-accept-all-btn').click();
+    await editor.loadDocument('b');
+  });
+  await page.clock.runFor(40);
+  assert.equal(await page.evaluate(() => state.docs.get('b')._markdownPreviewActive === true), false);
+  assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'print("B original")');
+  assert.equal(await page.locator('#doc-editor-wrap').isVisible(), true);
+  await page.evaluate(async () => {
+    await editor.loadDocument('a');
+    editor.default.enterDiffMode('new Markdown', 'accepted Markdown');
+    document.getElementById('doc-diff-accept-all-btn').click();
+  });
+  await page.clock.runFor(40);
+  assert.equal(await page.evaluate(() => state.docs.get('a')._markdownPreviewActive), true);
+  assert.equal(await page.evaluate(() => state.docs.get('b')._markdownPreviewActive === true), false);
+});
