@@ -1,0 +1,270 @@
+diff --git a/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx b/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx
+index a607c073..57601185 100644
+--- a/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx
++++ b/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx
+@@ -88,6 +88,16 @@ describe('PendingApprovalStack', () => {
+     expect(screen.getByRole('button', { name: /Reject/ })).toBeTruthy()
+   })
+ 
++  it('states plainly that approval is not a sandbox and does not grant folder access', () => {
++    setRequest()
++    const { container } = render(<PendingApprovalStack />)
++
++    const note = container.querySelector('[data-slot="tool-approval-scope-note"]')
++
++    expect(note?.textContent).toContain('not a sandbox')
++    expect(note?.textContent).toContain('do not grant folder access')
++  })
++
+   it('renders the description instead of a synthetic plugin-rule placeholder', () => {
+     // A pre_tool_call plugin returning {"action": "approve"} escalates through
+     // the same gate with a synthetic display target; the real command lives in
+diff --git a/apps/desktop/src/components/assistant-ui/tool/approval.tsx b/apps/desktop/src/components/assistant-ui/tool/approval.tsx
+index 679258bb..a5128b83 100644
+--- a/apps/desktop/src/components/assistant-ui/tool/approval.tsx
++++ b/apps/desktop/src/components/assistant-ui/tool/approval.tsx
+@@ -228,6 +228,11 @@ export function ApprovalQueue({
+   )
+ }
+ 
++// Command approvals are a human confirmation, not a boundary: the approved command or tool runs with the
++// user's full permissions, and "this session" / "always" remember the command, not a folder.
++const APPROVAL_SCOPE_NOTE =
++  'Approval is a confirmation, not a sandbox: an approved command or tool runs with your full Windows permissions. “This session” and “Always” remember the command; they do not grant folder access.'
++
+ interface ApprovalCardProps {
+   request: ApprovalRequest
+   total: number
+@@ -348,6 +353,9 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+           {details}
+         </pre>
+       )}
++      <p className="m-0 px-2.5 pb-1 text-[0.6875rem] leading-snug text-(--ui-text-tertiary)" data-slot="tool-approval-scope-note">
++        {APPROVAL_SCOPE_NOTE}
++      </p>
+       <div className="flex items-center justify-end gap-1.5 px-2 pb-2 pt-1" data-slot="tool-approval-actions">
+         <Button data-approval-deny="" disabled={busy} onClick={() => void respond('deny')} size="sm" variant="text">
+           {submitting === 'deny' ? <Loader2 className="size-3 animate-spin" /> : copy.reject}
+diff --git a/apps/desktop/src/components/assistant-ui/tool/fallback.tsx b/apps/desktop/src/components/assistant-ui/tool/fallback.tsx
+index e3a7584d..3ffd202c 100644
+--- a/apps/desktop/src/components/assistant-ui/tool/fallback.tsx
++++ b/apps/desktop/src/components/assistant-ui/tool/fallback.tsx
+@@ -22,7 +22,8 @@ import { AnsiText } from '@/components/assistant-ui/ansi-text'
+ import { MarkdownImage } from '@/components/assistant-ui/markdown-text'
+ import { SET_THEME_TOOL, setThemeCall } from '@/components/assistant-ui/theme-picker/args'
+ import { TimelineTimestamp } from '@/components/assistant-ui/thread/timeline-timestamp'
+-import { useElapsedSeconds } from '@/components/chat/activity-timer'
++import { TURN_QUIET_S } from '@/components/assistant-ui/thread/turn-activity'
++import { formatElapsed, useElapsedSeconds } from '@/components/chat/activity-timer'
+ import { ActivityTimerText } from '@/components/chat/activity-timer-text'
+ import { CompactMarkdown } from '@/components/chat/compact-markdown'
+ import { FileDiffPanel } from '@/components/chat/diff-lines'
+@@ -75,6 +76,7 @@ import {
+   looksRedundant,
+   type SearchResultRow,
+   selectMessageRunning,
++  toolCallFailed,
+   toolCopyPayload,
+   toolEntryDisclosureId,
+   type ToolPart,
+@@ -875,6 +877,26 @@ export function splitRunItems(toolNames: readonly string[]): RunItem[] {
+ // The one grey line that stands in for a run of tool calls — "Explored 3
+ // files, ran 5 commands". Live, it narrates in the present tense above the
+ // ticker by default; its toggle can reveal the activity before it settles.
++// How long a settled run took, shown only when it was long enough to matter
++// (the same 2 s quiet threshold the live activity indicator uses).
++function RunDuration({ completedAt, live, startedAt }: { completedAt?: number; live: boolean; startedAt?: number }) {
++  if (live || startedAt === undefined || completedAt === undefined) {
++    return null
++  }
++
++  const seconds = Math.round(completedAt - startedAt)
++
++  if (!Number.isFinite(seconds) || seconds < TURN_QUIET_S) {
++    return null
++  }
++
++  return (
++    <span className={cn(SCAFFOLD_META_CLASS, 'mr-1.5')} data-slot="tool-run-duration">
++      {formatElapsed(seconds)}
++    </span>
++  )
++}
++
+ function ToolRunHeader({
+   completedAt,
+   live,
+@@ -895,7 +917,12 @@ function ToolRunHeader({
+       <ScaffoldRow
+         onToggle={onToggle}
+         open={open}
+-        trailing={<TimelineTimestamp completedAt={completedAt} timestamp={startedAt} />}
++        trailing={
++          <>
++            <RunDuration completedAt={completedAt} live={live} startedAt={startedAt} />
++            <TimelineTimestamp completedAt={completedAt} timestamp={startedAt} />
++          </>
++        }
+       >
+         <FadeText className={cn(SCAFFOLD_LABEL_CLASS, 'truncate')}>
+           {live ? <span className="shimmer">{summary}</span> : summary}
+@@ -907,6 +934,8 @@ function ToolRunHeader({
+ 
+ interface ToolRunState {
+   approvalActivity: boolean
++  /** Positions (within the run) of calls that reported failure; they stay on screen when the run is folded. */
++  failedIndexes: readonly number[]
+   completedAt?: number
+   count: number
+   /** Disclosure id of each row in the run, so the run can tell when one is open. */
+@@ -980,6 +1009,7 @@ function useToolRun(startIndex: number, endIndex: number): ToolRunState {
+           count: tools.length,
+           approvalActivity: tools.length > 0 && tools.every(isApprovalActivity),
+           entryIds: tools.map(tool => toolEntryDisclosureId(state.message.id, tool)),
++          failedIndexes: tools.flatMap((tool, index) => (toolCallFailed(tool) ? [index] : [])),
+           key: `${state.message.id}:${tools[0]?.toolCallId ?? ''}`,
+           live,
+           startedAt: timelineTools.reduce<number | undefined>(
+@@ -1021,7 +1051,7 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
+ }) => {
+   const messageRunning = useAuiState(selectMessageRunning)
+ 
+-  const { completedAt, count, entryIds, key, live, startedAt, summary, approvalActivity } = useToolRun(
++  const { completedAt, count, entryIds, failedIndexes, key, live, startedAt, summary, approvalActivity } = useToolRun(
+     startIndex,
+     endIndex
+   )
+@@ -1038,6 +1068,12 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
+   const collapsed = representedByApproval && !rowOpen && !persistedOpen
+   const reduced = useReducedMotion()
+ 
++  const failedRows = useMemo(() => {
++    const rows = Children.toArray(children)
++
++    return failedIndexes.flatMap(index => (rows[index] ? [rows[index]] : []))
++  }, [children, failedIndexes])
++
+   // The original runtime stays mounted while its summary owns the activity.
+   // Reveal its footprint gradually when the last approval clears, instead of
+   // inserting all represented rows in the outgoing card's first exit frame.
+@@ -1066,6 +1102,12 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
+         )}
+         {count > 1 && live && !expanded && <ToolRunTicker>{children}</ToolRunTicker>}
+         {expanded && <div className="grid min-w-0 max-w-full gap-(--tool-row-gap)">{children}</div>}
++        {!expanded && !live && !representedByApproval && failedRows.length > 0 && (
++          // A folded run still shows what went wrong: errors are never hidden behind a summary.
++          <div className="grid min-w-0 max-w-full gap-(--tool-row-gap)" data-tool-failures="">
++            {failedRows}
++          </div>
++        )}
+       </motion.div>
+     </ToolRunDisclosureContext.Provider>
+   )
+diff --git a/apps/desktop/src/components/assistant-ui/tool/tool-group.test.tsx b/apps/desktop/src/components/assistant-ui/tool/tool-group.test.tsx
+index 162db886..6374db5f 100644
+--- a/apps/desktop/src/components/assistant-ui/tool/tool-group.test.tsx
++++ b/apps/desktop/src/components/assistant-ui/tool/tool-group.test.tsx
+@@ -174,6 +174,42 @@ function settledRunMessage(): ThreadMessage {
+   } as unknown as ThreadMessage
+ }
+ 
++// Two settled activity calls, one of which failed, taking 14 s end to end.
++function failedRunMessage(): ThreadMessage {
++  const base = createdAt.getTime() / 1000
++
++  return {
++    id: 'assistant-failed-run',
++    role: 'assistant',
++    content: [
++      {
++        type: 'tool-call',
++        toolCallId: 'read-f1',
++        toolName: 'read_file',
++        args: { path: '/repo/src/ok.tsx' },
++        argsText: JSON.stringify({ path: '/repo/src/ok.tsx' }),
++        timestamp: base + 30,
++        completedAt: base + 31,
++        result: { content: 'export const Ok = () => null' }
++      },
++      {
++        type: 'tool-call',
++        toolCallId: 'term-f1',
++        toolName: 'terminal',
++        args: { command: 'pytest -x' },
++        argsText: JSON.stringify({ command: 'pytest -x' }),
++        timestamp: base + 32,
++        completedAt: base + 44,
++        isError: true,
++        result: { error: 'pytest exploded: collection failed' }
++      }
++    ],
++    status: { type: 'complete', reason: 'stop' },
++    createdAt,
++    metadata: { unstable_state: null, unstable_annotations: [], unstable_data: [], steps: [], custom: {} }
++  } as unknown as ThreadMessage
++}
++
+ // Activity, an edit, then more activity — all adjacent, so assistant-ui hands
+ // the whole stretch over as one group. The edit is the deliverable and has to
+ // survive that as its own card.
+@@ -626,3 +662,60 @@ describe('tool lifecycle timestamps', () => {
+     )
+   })
+ })
++
++describe('folded run with a failure', () => {
++  it('keeps the failed call on screen while the successful ones fold away', async () => {
++    const { container } = render(<GroupHarness message={failedRunMessage()} />)
++
++    await waitFor(() => expect(container.querySelector('[data-tool-summary]')).toBeTruthy())
++    expect(container.querySelector('[data-tool-failures]')).toBeTruthy()
++    expect(container.querySelectorAll('[data-tool-failures] [data-tool-row]')).toHaveLength(1)
++    expect(container.querySelector('[data-tool-failures]')?.textContent).not.toContain('ok.tsx')
++  })
++
++  it('does not duplicate rows once the run is expanded', async () => {
++    const { container } = render(<GroupHarness message={failedRunMessage()} />)
++
++    const summary = await waitFor(() => {
++      const node = container.querySelector('[data-tool-summary] button')
++
++      if (!node) {
++        throw new Error('no summary yet')
++      }
++
++      return node
++    })
++
++    fireEvent.click(summary)
++    await waitFor(() => expect(container.querySelectorAll('[data-tool-row]')).toHaveLength(2))
++    expect(container.querySelector('[data-tool-failures]')).toBeNull()
++  })
++
++  it('shows no failure strip for a clean run', async () => {
++    const { container } = render(<GroupHarness message={settledRunMessage()} />)
++
++    await waitFor(() => expect(container.querySelector('[data-tool-summary]')).toBeTruthy())
++    expect(container.querySelector('[data-tool-failures]')).toBeNull()
++  })
++})
++
++describe('settled run duration', () => {
++  it('shows how long the run took once it is longer than the quiet threshold', async () => {
++    const { container } = render(<GroupHarness message={failedRunMessage()} />)
++
++    await waitFor(() => expect(container.querySelector('[data-slot="tool-run-duration"]')).toBeTruthy())
++    expect(container.querySelector('[data-slot="tool-run-duration"]')?.textContent).toBe('14s')
++  })
++
++  it('omits the duration for a run shorter than the quiet threshold', async () => {
++    const message = settledRunMessage() as unknown as { content: { completedAt: number; timestamp: number }[] }
++
++    message.content[1].timestamp = message.content[0].timestamp + 0.5
++    message.content[1].completedAt = message.content[0].timestamp + 1
++
++    const { container } = render(<GroupHarness message={message as unknown as ThreadMessage} />)
++
++    await waitFor(() => expect(container.querySelector('[data-tool-summary]')).toBeTruthy())
++    expect(container.querySelector('[data-slot="tool-run-duration"]')).toBeNull()
++  })
++})
