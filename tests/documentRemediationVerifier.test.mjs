@@ -112,3 +112,41 @@ test('top-level reconciliation requires an exact comparison and preserves other 
   assert.equal(verified.passed, false);
   assert.equal(verified.statementAmendments[0].resolvedCanonicalDiagnostics.length, 1);
 });
+
+test('submodule amendments require hash-pinned exports and valid parents', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remediation-submodules-'));
+  try {
+    const subFile = path.join(dir, 'frontend/src/features/documents/ui/pdf/geometry.js');
+    fs.mkdirSync(path.dirname(subFile), { recursive: true });
+    const ex = 'export function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }';
+    fs.writeFileSync(subFile, `${ex}\n`);
+    const amendment = baseAmendments();
+    amendment.submodules = {
+      'ui/pdf/geometry': {
+        parent: 'ui/pdfTools',
+        rationale: 'Separate pure PDF math helpers.',
+        exports: [{ name: 'clamp', rationale: 'Coordinate clamp helper.', declarationSha256: sha(ex) }],
+      },
+    };
+    assert.deepEqual(validateAmendmentMetadata(amendment, baseRemoval()), []);
+    assert.deepEqual(validateRecordedSource(dir, amendment), []);
+
+    fs.writeFileSync(subFile, 'export function clamp(v, lo, hi) { return v; }\n');
+    assert.ok(validateRecordedSource(dir, amendment).some(e => e.includes('submodule export hash changed: ui/pdf/geometry:clamp')));
+
+    const badMeta = baseAmendments();
+    badMeta.submodules = { 'ui/pdf/geometry': { parent: '', rationale: '', exports: [] } };
+    assert.ok(validateAmendmentMetadata(badMeta, baseRemoval()).some(e => e.includes('submodule amendment ui/pdf/geometry')));
+
+    if (hasExternalVerifier) {
+      const { checkExports } = await import(pathToFileURL(path.join(verifierRoot, 'lib/exports.mjs')).href);
+      const featuresDir = path.join(dir, 'frontend/src/features/documents');
+      const unrecorded = checkExports({ featuresDir, appendixA: {} });
+      assert.equal(unrecorded.violations[0].type, 'UNRECOGNIZED_MODULE');
+      const approved = checkExports({ featuresDir, appendixA: { 'ui/pdf/geometry': { exports: ['clamp'] } } });
+      assert.deepEqual(approved.violations, []);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

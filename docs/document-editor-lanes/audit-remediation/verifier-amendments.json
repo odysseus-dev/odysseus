@@ -626,6 +626,76 @@
           "rationale": "Pass isAutoTitle flag to updateTitle and guard title input against overwriting manual entries."
         }
       ]
+    },
+    "_sendEmail": {
+      "file": "ui/email/sendWorkflow.js",
+      "rationale": "Route emailLibrary dynamic loading through ui/host bridge instead of hardcoding static URL inside sendWorkflow.",
+      "targetFunctionSha256": "af353b354b249f402f8d9f5dd8e60f96feef0975105dd884c24f0af7d0c8f0b6",
+      "replacements": [
+        {
+          "from": "        // email library needs an explicit fresh load to show it immediately.\n        import('./emailLibrary.js?v=20260915trashmove2')",
+          "to": "        // email library needs an explicit fresh load to show it immediately.\n        loadEmailLibrary()",
+          "rationale": "Use loadEmailLibrary() host bridge helper for post-send library refresh."
+        },
+        {
+          "from": "            onAction: async () => {\n        import('./emailLibrary.js?v=20260915trashmove2')",
+          "to": "            onAction: async () => {\n              loadEmailLibrary()",
+          "rationale": "Use loadEmailLibrary() host bridge helper for toast View Message action."
+        }
+      ]
+    },
+    "saveDocument": {
+      "file": "application/persistence.js",
+      "rationale": "Route version badge updates in saveDocument through the _ports._renderVersionBadge boundary.",
+      "targetFunctionSha256": "333aa5e478fb83208aadc4c0762e0cb4ea23ddfa1c0315533311cc3171ded53a",
+      "replacements": [
+        {
+          "from": "      const badge = document.getElementById('doc-version-badge');\n      if (badge && activeDocId === savingDocId) {\n        const _v = doc.version_count || 1;\n        badge.textContent = `v${_v}`;\n        badge.style.display = _v > 1 ? '' : 'none';\n      }",
+          "to": "      _ports._renderVersionBadge(savingDocId, doc.version_count || 1);",
+          "rationale": "Delegate version badge UI rendering through _ports rather than direct DOM access in application persistence."
+        }
+      ]
+    },
+    "_promptImageAlt": {
+      "file": "ui/richEditor/links.js",
+      "rationale": "Delegate image alt modal construction to shared _promptImageField helper.",
+      "targetFunctionSha256": "a42c848839dd23207eb52b1a83eeddfd0088d45e68da663bd5574106b0dbba82",
+      "replacements": [
+        {
+          "from": "function _promptImageAlt(defaultAlt = '') {\n    return new Promise(resolve => {\n      const overlay = document.createElement('div');\n      overlay.id = 'doc-image-alt-prompt-overlay';\n      overlay.className = 'modal';\n      overlay.style.zIndex = String(topPortalZ());\n      overlay.innerHTML =\n        '<div class=\"modal-content styled-confirm-box styled-prompt-box\">' +\n          '<div class=\"modal-header\"><h4>Image description</h4></div>' +\n          '<div class=\"modal-body\">' +\n            '<input type=\"text\" id=\"doc-image-alt-input\" class=\"styled-prompt-input\" placeholder=\"Describe the image\" maxlength=\"500\" />' +\n          '</div>' +\n          '<div class=\"modal-footer\">' +\n            '<button id=\"doc-image-alt-cancel\" class=\"confirm-btn confirm-btn-secondary\">Cancel</button>' +\n            '<button id=\"doc-image-alt-ok\" class=\"confirm-btn confirm-btn-primary\">Save</button>' +\n          '</div>' +\n        '</div>';\n      document.body.appendChild(overlay);\n      const input = overlay.querySelector('#doc-image-alt-input');\n      input.value = defaultAlt || '';\n      function done(result) {\n        overlay.remove();\n        document.removeEventListener('keydown', onKey, true);\n        resolve(result);\n      }\n      function submit() { done((input.value || '').trim()); }\n      function onKey(e) {\n        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }\n      }\n      overlay.querySelector('#doc-image-alt-ok').addEventListener('click', submit);\n      overlay.querySelector('#doc-image-alt-cancel').addEventListener('click', () => done(null));\n      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });\n      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });\n      document.addEventListener('keydown', onKey, true);\n      requestAnimationFrame(() => { input.focus(); input.select(); });\n    });\n  }",
+          "to": "function _promptImageAlt(defaultAlt = '') {\n    return _promptImageField({\n      overlayId: 'doc-image-alt-prompt-overlay',\n      title: 'Image description',\n      inputId: 'doc-image-alt-input',\n      placeholder: 'Describe the image',\n      cancelId: 'doc-image-alt-cancel',\n      okId: 'doc-image-alt-ok',\n    }, defaultAlt);\n  }",
+          "rationale": "Share modal prompt construction across image alt and caption prompts."
+        }
+      ]
+    },
+    "_promptImageCaption": {
+      "file": "ui/richEditor/links.js",
+      "rationale": "Delegate image caption modal construction to shared _promptImageField helper.",
+      "targetFunctionSha256": "58d5c3eb5ece01ea5133ac01dbe56bd6129873379749f49a27d45b80035eb9a5",
+      "replacements": [
+        {
+          "from": "function _promptImageCaption(defaultCaption = '') {\n    return new Promise(resolve => {\n      const overlay = document.createElement('div');\n      overlay.id = 'doc-image-caption-prompt-overlay';\n      overlay.className = 'modal';\n      overlay.style.zIndex = String(topPortalZ());\n      overlay.innerHTML =\n        '<div class=\"modal-content styled-confirm-box styled-prompt-box\">' +\n          '<div class=\"modal-header\"><h4>Image caption</h4></div>' +\n          '<div class=\"modal-body\">' +\n            '<input type=\"text\" id=\"doc-image-caption-input\" class=\"styled-prompt-input\" placeholder=\"Caption shown below the image\" maxlength=\"500\" />' +\n          '</div>' +\n          '<div class=\"modal-footer\">' +\n            '<button id=\"doc-image-caption-cancel\" class=\"confirm-btn confirm-btn-secondary\">Cancel</button>' +\n            '<button id=\"doc-image-caption-ok\" class=\"confirm-btn confirm-btn-primary\">Save</button>' +\n          '</div>' +\n        '</div>';\n      document.body.appendChild(overlay);\n      const input = overlay.querySelector('#doc-image-caption-input');\n      input.value = defaultCaption || '';\n      function done(result) {\n        overlay.remove();\n        document.removeEventListener('keydown', onKey, true);\n        resolve(result);\n      }\n      function submit() { done((input.value || '').trim()); }\n      function onKey(e) {\n        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }\n      }\n      overlay.querySelector('#doc-image-caption-ok').addEventListener('click', submit);\n      overlay.querySelector('#doc-image-caption-cancel').addEventListener('click', () => done(null));\n      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });\n      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });\n      document.addEventListener('keydown', onKey, true);\n      requestAnimationFrame(() => { input.focus(); input.select(); });\n    });\n  }",
+          "to": "function _promptImageCaption(defaultCaption = '') {\n    return _promptImageField({\n      overlayId: 'doc-image-caption-prompt-overlay',\n      title: 'Image caption',\n      inputId: 'doc-image-caption-input',\n      placeholder: 'Caption shown below the image',\n      cancelId: 'doc-image-caption-cancel',\n      okId: 'doc-image-caption-ok',\n    }, defaultCaption);\n  }",
+          "rationale": "Share modal prompt construction across image alt and caption prompts."
+        }
+      ]
+    },
+    "_showAiWritingMenu": {
+      "file": "ui/toolbar/toolbar.js",
+      "rationale": "Tie AI writing menu dismissal listeners and stream polling timer to pane _lifetime.signal abort cleanup.",
+      "targetFunctionSha256": "dbd2a980a0cdc017f06700794dd927df3944bcb24697838467ac8fb4997ffb72",
+      "replacements": [
+        {
+          "from": "    const dismiss = (event) => {\n      if (event && (menu.contains(event.target) || event.target === button)) return;\n      _closeAiWritingMenu();\n      document.removeEventListener('pointerdown', dismiss, true);\n      document.removeEventListener('keydown', onKeydown, true);\n    };\n    const onKeydown = (event) => {\n      if (event.key === 'Escape') {\n        event.preventDefault();\n        _closeAiWritingMenu();\n        document.removeEventListener('pointerdown', dismiss, true);\n        document.removeEventListener('keydown', onKeydown, true);\n        button.focus({ preventScroll: true });\n      }\n    };\n    menu._cleanup = () => {\n      document.removeEventListener('pointerdown', dismiss, true);\n      document.removeEventListener('keydown', onKeydown, true);\n    };",
+          "to": "    const lifetimeSignal = button.closest('#doc-editor-pane')?._lifetime?.signal || null;\n    let listenerTimerId = null;\n    const onPaneAbort = () => _closeAiWritingMenu();\n    const dismiss = (event) => {\n      if (event && (menu.contains(event.target) || event.target === button)) return;\n      _closeAiWritingMenu();\n    };\n    const onKeydown = (event) => {\n      if (event.key === 'Escape') {\n        event.preventDefault();\n        _closeAiWritingMenu();\n        button.focus({ preventScroll: true });\n      }\n    };\n    menu._cleanup = () => {\n      if (listenerTimerId !== null) {\n        clearTimeout(listenerTimerId);\n        listenerTimerId = null;\n      }\n      lifetimeSignal?.removeEventListener('abort', onPaneAbort);\n      document.removeEventListener('pointerdown', dismiss, true);\n      document.removeEventListener('keydown', onKeydown, true);\n    };\n    lifetimeSignal?.addEventListener('abort', onPaneAbort, { once: true });",
+          "rationale": "Bind capture listener cleanup and deferred registration cancellation to pane lifetime signal."
+        },
+        {
+          "from": "        _setAiWritingLoading(true);\n        send.click();\n        const streamSessionId = sessionModule.getCurrentSessionId?.();\n        const loadingStartedAt = Date.now();\n        const waitForWritingStream = () => {\n          const active = !!window.chatModule?.hasActiveStream?.(streamSessionId);\n          const tooLong = Date.now() - loadingStartedAt > 10 * 60 * 1000;\n          if ((!active && Date.now() - loadingStartedAt > 500) || tooLong) _setAiWritingLoading(false);\n          else setTimeout(waitForWritingStream, 250);\n        };\n        setTimeout(waitForWritingStream, 250);\n      });\n    });\n    setTimeout(() => {\n      document.addEventListener('pointerdown', dismiss, true);\n      document.addEventListener('keydown', onKeydown, true);\n    }, 0);",
+          "to": "        _clearAiWritingStreamWait();\n        _setAiWritingLoading(true);\n        send.click();\n        const streamSessionId = sessionModule.getCurrentSessionId?.();\n        const loadingStartedAt = Date.now();\n        const streamSignal = button.closest('#doc-editor-pane')?._lifetime?.signal || lifetimeSignal;\n        if (streamSignal && !streamSignal.aborted) {\n          const onStreamAbort = () => {\n            _clearAiWritingStreamWait();\n            _setAiWritingLoading(false);\n          };\n          streamSignal.addEventListener('abort', onStreamAbort, { once: true });\n          _aiWritingStreamAbortCleanup = () => streamSignal.removeEventListener('abort', onStreamAbort);\n        }\n        const waitForWritingStream = () => {\n          _aiWritingStreamTimer = null;\n          if (streamSignal?.aborted) {\n            _clearAiWritingStreamWait();\n            _setAiWritingLoading(false);\n            return;\n          }\n          const active = !!window.chatModule?.hasActiveStream?.(streamSessionId);\n          const tooLong = Date.now() - loadingStartedAt > 10 * 60 * 1000;\n          if ((!active && Date.now() - loadingStartedAt > 500) || tooLong) {\n            _clearAiWritingStreamWait();\n            _setAiWritingLoading(false);\n          } else {\n            _aiWritingStreamTimer = setTimeout(waitForWritingStream, 250);\n          }\n        };\n        _aiWritingStreamTimer = setTimeout(waitForWritingStream, 250);\n      });\n    });\n    listenerTimerId = setTimeout(() => {\n      listenerTimerId = null;\n      if (!menu.isConnected || lifetimeSignal?.aborted) return;\n      document.addEventListener('pointerdown', dismiss, true);\n      document.addEventListener('keydown', onKeydown, true);\n    }, 0);",
+          "rationale": "Cancel active writing stream poll timer and clear deferred listener registration on panel abort or menu close."
+        }
+      ]
     }
   },
   "openPanelStatementRewrites": [
@@ -660,7 +730,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7161",
@@ -674,7 +744,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7171",
@@ -688,7 +758,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7187",
@@ -702,7 +772,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7205",
@@ -716,7 +786,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7277",
@@ -730,7 +800,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7287",
@@ -744,7 +814,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "openPanel#7349",
@@ -758,7 +828,7 @@
       ],
       "targetFunctionFile": "ui/email/composerWiring.js",
       "targetFunctionName": "bindComposerWiring",
-      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c"
     },
     {
       "id": "stmt#11782",
@@ -790,6 +860,62 @@
           "from": "if (diffToggleBtn) diffToggleBtn.addEventListener('click', async () => {\n      if (_diffModeActive) {\n        exitDiffMode(true);\n        return;\n      }\n      if (!activeDocId) return;\n      const ta = document.getElementById('doc-editor-textarea');\n      if (!ta) return;\n      const current = ta.value;\n\n      // Fetch version history and compare against previous version\n      try {\n        const res = await fetch(`${API_BASE}/api/document/${activeDocId}/versions`);\n        if (!res.ok) throw new Error('Failed');\n        const versions = await res.json();\n        if (versions.length < 2) {\n          if (uiModule) uiModule.showToast('No previous version to compare');\n          return;\n        }\n        // versions are sorted desc — [0] is latest, [1] is previous\n        const prevContent = versions[1].content || '';\n        if (prevContent === current) {\n          if (uiModule) uiModule.showToast('No changes from previous version');\n          return;\n        }\n        enterDiffMode(prevContent, current);\n      } catch {\n        if (uiModule) uiModule.showError('Failed to load version history');\n      }\n    });",
           "to": "if (diffToggleBtn) {\n      let _compareRequestSeq = 0;\n      diffToggleBtn.addEventListener('click', async () => {\n      const requestSeq = ++_compareRequestSeq;\n      if (_diffModeActive) {\n        exitDiffMode(true);\n        return;\n      }\n      const docId = activeDocId;\n      if (!docId) return;\n      const doc = docs.get(docId);\n      const ownerPane = pane || document.getElementById('doc-editor-pane');\n      const ta = document.getElementById('doc-editor-textarea');\n      if (!doc || !ownerPane || !ta) return;\n      const generation = _documentNavigationGeneration;\n      const current = ta.value;\n      const isCompareOwnerValid = () => (\n        requestSeq === _compareRequestSeq &&\n        isOpen &&\n        _documentNavigationGeneration === generation &&\n        activeDocId === docId &&\n        docs.get(docId) === doc &&\n        ownerPane.isConnected &&\n        ownerPane === document.getElementById('doc-editor-pane') &&\n        ownerPane.dataset.activeDocumentId === docId\n      );\n\n      // Fetch version history and compare against previous version\n      let versions;\n      try {\n        const res = await fetch(`${API_BASE}/api/document/${docId}/versions`);\n        if (!res.ok) throw new Error(`HTTP ${res.status}`);\n        versions = await res.json();\n      } catch (err) {\n        if (!isCompareOwnerValid()) return;\n        console.error('Failed to load version history:', err);\n        if (uiModule) uiModule.showError('Failed to load version history');\n        return;\n      }\n\n      if (!isCompareOwnerValid()) return;\n      if (!Array.isArray(versions) || versions.length < 2) {\n        if (uiModule) uiModule.showToast('No previous version to compare');\n        return;\n      }\n      // versions are sorted desc — [0] is latest, [1] is previous\n      const prevContent = versions[1].content || '';\n      if (prevContent === current) {\n        if (uiModule) uiModule.showToast('No changes from previous version');\n        return;\n      }\n      try {\n        enterDiffMode(prevContent, current);\n      } catch (err) {\n        console.error('Failed to initialize diff mode:', err);\n        if (uiModule) uiModule.showError('Failed to compare versions');\n        throw err;\n      }\n    });\n    }",
           "rationale": "Guard delayed compare-changes activation with initiating document, record, pane, and navigation generation."
+        }
+      ]
+    },
+    {
+      "id": "openPanel#7240",
+      "rationale": "Guard optional #doc-email-more-menu element lookup before mutating style.",
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c",
+      "replacements": [
+        {
+          "from": "document.getElementById('doc-email-more-menu').style.display = 'none';\n      _saveDraft();",
+          "to": "const moreMenu = document.getElementById('doc-email-more-menu');\n      if (moreMenu) moreMenu.style.display = 'none';\n      _saveDraft();",
+          "rationale": "Check that #doc-email-more-menu exists before setting display."
+        }
+      ]
+    },
+    {
+      "id": "openPanel#7245",
+      "rationale": "Guard optional #doc-email-more-menu element lookup before mutating style.",
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c",
+      "replacements": [
+        {
+          "from": "document.getElementById('doc-email-more-menu').style.display = 'none';\n      _markUnreadAndClose();",
+          "to": "const moreMenu = document.getElementById('doc-email-more-menu');\n      if (moreMenu) moreMenu.style.display = 'none';\n      _markUnreadAndClose();",
+          "rationale": "Check that #doc-email-more-menu exists before setting display."
+        }
+      ]
+    },
+    {
+      "id": "openPanel#7249",
+      "rationale": "Guard optional #doc-email-more-menu element lookup before mutating style.",
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c",
+      "replacements": [
+        {
+          "from": "const anchor = document.getElementById('doc-email-send-caret') || e.currentTarget;\n      document.getElementById('doc-email-more-menu').style.display = 'none';\n      _scheduleSend(anchor);",
+          "to": "const anchor = document.getElementById('doc-email-send-caret') || e.currentTarget;\n      const moreMenu = document.getElementById('doc-email-more-menu');\n      if (moreMenu) moreMenu.style.display = 'none';\n      _scheduleSend(anchor);",
+          "rationale": "Check that #doc-email-more-menu exists before setting display."
+        }
+      ]
+    },
+    {
+      "id": "openPanel#7337",
+      "rationale": "Guard optional #doc-email-show-cc element lookup before mutating style.",
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "96f07c078f9ce7222c012bc0662786e88ab19cfed23d10fdf62496c197db9c9c",
+      "replacements": [
+        {
+          "from": "      document.getElementById('doc-email-show-cc').style.display = 'none';",
+          "to": "      const showCcBtn = document.getElementById('doc-email-show-cc');\n      if (showCcBtn) showCcBtn.style.display = 'none';",
+          "rationale": "Check that #doc-email-show-cc exists before setting display."
         }
       ]
     }
@@ -896,5 +1022,286 @@
         "declarationSha256": "9053b3e23113aafb19c85dba7bc020db5853a295ed0b62661f543bc1435cbe41"
       }
     ]
+  },
+  "submodules": {
+    "ui/importFromDevice": {
+      "parent": "ui/exportDocx",
+      "rationale": "Extract local device file import workflow out of exportDocx into its own UI module.",
+      "exports": [
+        {
+          "name": "initImportFromDevice",
+          "rationale": "Public device-import entrypoint extracted from exportDocx.",
+          "declarationSha256": "5530cac7f89df61047e841397c93476b7c4e13b8f1a6a8318ef993e789415142"
+        },
+        {
+          "name": "_importFromDevice",
+          "rationale": "Public device-import entrypoint extracted from exportDocx.",
+          "declarationSha256": "c8f10e5111a864b6ffa86358997ca60eec4e917bbacace7bcd6454aa456c24ff"
+        }
+      ]
+    },
+    "ui/pdf/geometry": {
+      "parent": "ui/pdfTools",
+      "rationale": "Separate pure PDF coordinate conversions and drag/resize geometry calculations from PDF UI orchestration.",
+      "exports": [
+        {
+          "name": "clamp",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "440175031ac730ead3824d3e028122a78d75dc0270b5fc15fec0da678b30b628"
+        },
+        {
+          "name": "pxToPct",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "7af519e2c989d1c8ed6e20fd50faec1cf3757380ece5ab3a3d80c4ddfe1c430c"
+        },
+        {
+          "name": "pctToPx",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "247fdb0eb3ea7fd4f58882327dd8692a8625e8509d8dfd87b22b112269d1d73e"
+        },
+        {
+          "name": "calculateFontSizeCqh",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "7d75a5ed6fb5870dbec7c0f7f30ea456aa01bf8dd0a02b946b21c435e6ec4971"
+        },
+        {
+          "name": "calculateFieldRectPct",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "4550ae7093600677471ac1299f57e180b603797b94944ab36e44e38eaa1c6256"
+        },
+        {
+          "name": "calculateAnnotationPlacement",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "7cfed5ac0ddd299ffd0d3577a82324ff1942c4c3dd847cdb0151568a65aac0ef"
+        },
+        {
+          "name": "calculateDragMove",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "2086db4c02585d0c0dae4e9721a4d3808b0f5d1063a65d6bb1ff3c684cc916b2"
+        },
+        {
+          "name": "calculateResize",
+          "rationale": "Pure PDF coordinate/geometry helper extracted from pdfTools.",
+          "declarationSha256": "21086edaaa61da8d58f31597d451bcd8bb911ac94ad3ac1cbad5b7ecccc2c0b4"
+        }
+      ]
+    },
+    "ui/pdf/annotations": {
+      "parent": "ui/pdfTools",
+      "rationale": "Separate PDF form/markdown annotation parsing and serialization helpers from PDF UI orchestration.",
+      "exports": [
+        {
+          "name": "_isFormBackedDoc",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "eae46ab2405495377c4a2d9dd0a1660b60f968213de5720dc753b7b19a55d29a"
+        },
+        {
+          "name": "_annotationRegexGlobal",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "b893472f74e7aff75a93075a02469155ecf0dc2d892c348cd0fe4b28f8799aa9"
+        },
+        {
+          "name": "_escapeAnnotationValue",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "bf16117cc6e787679463d3707494132ae0061d8f755b3e55c5328a35dd8bf663"
+        },
+        {
+          "name": "_unescapeAnnotationValue",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "0e296efa934e5cb7374446033b11d4a67a04668a076b83d30c70da80e2711202"
+        },
+        {
+          "name": "_parseAnnotations",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "640fece83aa92f2dda92db8f86525718a402bda260c645efd6c2f77ef6305cb7"
+        },
+        {
+          "name": "_annotationLine",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "8b498b24371bdb70e16e90218fee894344a2ebdc56fefeaac8b43a8c7383aca3"
+        },
+        {
+          "name": "_writeAnnotations",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "c1e680204603e08d03d8fa0d34371bf20c80989f384db7280adf14fff7c67381"
+        },
+        {
+          "name": "_newAnnotationId",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "a0839c1254ff8cd61013383005411e21692818ed29df345b7425c7f51c494ecc"
+        },
+        {
+          "name": "_encodeFieldName",
+          "rationale": "PDF annotation codec helper extracted from pdfTools.",
+          "declarationSha256": "d377e86573c0e0940de134ad9b543e6373d9ae412daa2547794a2bc543b577a1"
+        }
+      ]
+    },
+    "ui/pdf/persistence": {
+      "parent": "ui/pdfTools",
+      "rationale": "Separate per-document PDF annotation/form state maps, undo stack, and autosave timer ownership from PDF overlay rendering.",
+      "exports": [
+        {
+          "name": "_pdfViewState",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "d74484422f5c6a8b7cb4dca814b69eb0e1f0fda6f210e75226ab4b05dddbd6d3"
+        },
+        {
+          "name": "_pdfPaneFieldsByDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "0b3a655871ae3e2b181dad0c07b0c715992da9560de8299ff2b0831d27696537"
+        },
+        {
+          "name": "_pdfPaneAnnotationsByDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "51fc07fa38239ccd039deffd190e592481243e2dc92b5666d971160d2271a864"
+        },
+        {
+          "name": "_pdfUndoStackByDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "703513379c125dcf330ce07eabb08223752d3c8ae3e3a9c7ece807797c48e5a2"
+        },
+        {
+          "name": "_pdfPaneSaveTimers",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "6ec84ce068eed19566bc028ee93a3419db6e2aa3384ab5e9b3acde17e4f9b41f"
+        },
+        {
+          "name": "_pdfRenderGenerationByDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "c79f8d4cd4f2090f35689fdc89c2627a0a27e2038f973da660ad3270854e4c1b"
+        },
+        {
+          "name": "_pdfViewTransitionByDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "03870e8e774d5d8bc45b15fb48686c47fab2e24a19054ec99aedaf8cec4638aa"
+        },
+        {
+          "name": "_pdfLastLineHeight",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "91b7a7bbb1ea83e4e6f73cce99c2b5f4de83619c81930e9a6ca98ba38eedcaec"
+        },
+        {
+          "name": "_pdfLastFontSize",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "7efdf4eece42a6e1f47190a2a19eb14342486142264212f045af69623d61cfe3"
+        },
+        {
+          "name": "_sigCache",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "4b4025d6d5ce2f3c9647aa3f305fa6aaf9a0788417a1f221c32cf4fcb48a2ebd"
+        },
+        {
+          "name": "_pdfMountedDocId",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "3d6d407eef8af7d0191dc538d40addd148e267b7d9eac130dcc906e11656e526"
+        },
+        {
+          "name": "_pdfPaneSaveTimer",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "0750a5ad435ce06c27f01ded9bfea1b520a58438d189e03046020ca830617d59"
+        },
+        {
+          "name": "setPdfMountedDocId",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "82649aa6025d58850ce13d18f562fa255b170bfaed812e39c5ff44991c5709b5"
+        },
+        {
+          "name": "configurePdfRuntimeDeps",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "eee5b39cc9b08b6b31cd6d8e711fbfbeeac1b8b81a4ffba53a66eeb88541221c"
+        },
+        {
+          "name": "getPdfRuntimeDeps",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "edf14ed9f69ac0902dfc6201117f1c3df87a0632464b1ed9814c5d45b30129df"
+        },
+        {
+          "name": "_getApiBase",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "c00cf4b7c07835ca86b2813972fe7b34f3057f816d0a0709aadea907a76732fe"
+        },
+        {
+          "name": "_getActiveDocId",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "d52c74c8baf1a7cc2ca008254eb044c6262543e6425bfc81c56fa3d1ec4d7a28"
+        },
+        {
+          "name": "_getDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "2bc632d6dce0c4874c2b63590313eaeb4f9ca0c410ed3b921cb119d29c53a201"
+        },
+        {
+          "name": "_persistPdfDocument",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "0f1f1ca121e3aa5b66d5891fb80f9e524a7a0a5d80be531cd4f391bf24fbb7d1"
+        },
+        {
+          "name": "_pdfMarkdownFromLive",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "80367a32cd5a8894478c22066e366ee6599ceaa622626872846a9ed829a8affc"
+        },
+        {
+          "name": "_pushPdfUndoSnapshot",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "d1538ee30158810ee9ef18909ddc387f80c0d053a752058e61520447fab8cee3"
+        },
+        {
+          "name": "_cancelPdfPaneSave",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "90447d6b8189c3f1db1eab6cf3edb6b3ef61f6319f6690288cde6a0a1a620bdd"
+        },
+        {
+          "name": "_hasPendingPdfPaneSave",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "6dcb1522cf2bc44990d04e2683d71e2e27cdd8da976b05704f1935add7f38213"
+        },
+        {
+          "name": "_releasePdfPane",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "895fc5ccebfa315d3cba139675f8c753bd6abec0e5aeceb37e5498958ee710d5"
+        },
+        {
+          "name": "_cleanupPdfDocState",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "e0335acfb463b450107f1ce0f562d257116507f1f45f6893478d5517637905ae"
+        },
+        {
+          "name": "_setPdfSaveStatus",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "7156ccc5cc3e7db8bacc56d1548824beda492a76a0c4fcf68127db9531ab867a"
+        },
+        {
+          "name": "_composePdfPaneMarkdown",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "f493834b4558af4dce34979b969e87f26b428017d86329f83e6c8bbaf8d10da4"
+        },
+        {
+          "name": "_syncPdfPaneToDoc",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "1c344108cf822163e6c156935e2398fb7f8498e60464fa3864095b326a3371a8"
+        },
+        {
+          "name": "_schedulePdfPaneSave",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "27de03ce7b861c65cf4ec79eac98891f638665abeec8eb126d1afe10b6dea2b1"
+        },
+        {
+          "name": "_flushPdfPaneSave",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "3eb79ea3429c6397c91eb7663b6e5974fc9aade144a5146fdf85d058f65e7216"
+        },
+        {
+          "name": "_savePdfPaneToMarkdown",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "e1a9fee30cfc875ec0d519d9cc8c275da4ca333efe290c45a8bef972f0cc36cf"
+        },
+        {
+          "name": "_saveActiveDocBeforeExport",
+          "rationale": "Per-document PDF persistence and state helper extracted from pdfTools.",
+          "declarationSha256": "c41f10f1cbf50fd40f7a2d049009ddb563796b5fe8e252425df9e9f4e1d8ae79"
+        }
+      ]
+    }
   }
 }

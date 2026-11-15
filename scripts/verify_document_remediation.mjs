@@ -10,6 +10,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
 const verifierRoot = process.env.DOCUMENT_EXTRACTION_VERIFIER_ROOT || path.resolve(repoRoot, '../../audit-artifacts/tools/document-extraction-verifier');
 const canonicalImport = path.join(verifierRoot, 'lib/index.mjs');
+const canonicalConfig = path.join(verifierRoot, 'lib/config.mjs');
 const canonicalExports = path.join(verifierRoot, 'lib/exports.mjs');
 const amendmentPath = path.join(repoRoot, 'docs/document-editor-lanes/audit-remediation/verifier-amendments.json');
 const removalPath = path.join(repoRoot, 'docs/document-editor-lanes/lane-c-panel-lifecycle/removal.json');
@@ -30,6 +31,22 @@ export function validateAmendmentMetadata(amendments, removalManifest) {
   if(!amendments.exports || typeof amendments.exports!=='object' || Array.isArray(amendments.exports)) errors.push('amendments exports must be a module keyed object');
   if(!amendments.functionBodyRewrites || typeof amendments.functionBodyRewrites!=='object' || Array.isArray(amendments.functionBodyRewrites)) errors.push('functionBodyRewrites must be a symbol keyed object');
   if(!Array.isArray(amendments.openPanelStatementRewrites)) errors.push('openPanelStatementRewrites must be an array');
+  if(amendments.submodules!==undefined) {
+    if(!amendments.submodules || typeof amendments.submodules!=='object' || Array.isArray(amendments.submodules)) {
+      errors.push('amendments submodules must be a module keyed object');
+    } else {
+      for(const [submodule,entry] of Object.entries(amendments.submodules)) {
+        if(!entry || typeof entry!=='object' || Array.isArray(entry) || !entry.parent || !entry.rationale?.trim() || !Array.isArray(entry.exports) || !entry.exports.length) {
+          errors.push(`submodule amendment ${submodule} needs parent, rationale and non-empty exports`);
+        }
+        for(const e of Array.isArray(entry?.exports)?entry.exports:[]) {
+          if(!e.name || !e.rationale?.trim() || !/^[a-f0-9]{64}$/.test(e.declarationSha256||'')) {
+            errors.push(`submodule export amendment ${submodule}:${e.name||'<unnamed>'} needs a name, rationale and declarationSha256`);
+          }
+        }
+      }
+    }
+  }
   for(const [module,entries] of Object.entries(amendments.exports||{})) {
     if(!Array.isArray(entries)) errors.push(`export amendment for ${module} must be an array`);
     for(const e of Array.isArray(entries)?entries:[]) {
@@ -110,6 +127,12 @@ export function validateRecordedSource(root, amendments) {
     try { if(sha256(functionRaw(fs.readFileSync(full,'utf8'),e.targetFunctionFile,e.targetFunctionName))!==e.targetFunctionSha256) errors.push(`corrected function hash changed: ${e.targetFunctionFile}:${e.targetFunctionName}`); }
     catch(error) { errors.push(error.message); }
   }
+  for(const [submodule,entry] of Object.entries(amendments.submodules||{})) {
+    const full=path.join(root,'frontend/src/features/documents',`${submodule}.js`);
+    for(const e of Array.isArray(entry?.exports)?entry.exports:[]) try {
+      if(sha256(exportDeclarationRaw(fs.readFileSync(full,'utf8'),submodule,e.name))!==e.declarationSha256) errors.push(`submodule export hash changed: ${submodule}:${e.name}`);
+    } catch(error) { errors.push(error.message); }
+  }
   return errors;
 }
 
@@ -162,6 +185,7 @@ export async function verifyDocumentRemediation({root=repoRoot, amendmentFile=am
   if(sha256(fs.readFileSync(baselineFile,'utf8'))!==BASELINE_SHA256) errors.push('canonical 087e6c88 baseline fixture hash changed');
   if(errors.length) return {passed:false,amendments:{path:path.relative(root,amendmentFile),errors},allViolations:errors.map(message=>({type:'INVALID_AMENDMENT',message}))};
   const {verifyExtraction}=await import(pathToFileURL(canonicalImport).href);
+  const {PRE_EXISTING_MODULES}=await import(pathToFileURL(canonicalConfig).href);
   const {checkExports}=await import(pathToFileURL(canonicalExports).href);
   const appendixPath=path.join(verifierRoot,'data/appendix-A.json');
   const appendix=JSON.parse(fs.readFileSync(appendixPath,'utf8'));
@@ -169,6 +193,11 @@ export async function verifyDocumentRemediation({root=repoRoot, amendmentFile=am
   for(const [module,entries] of Object.entries(amendments.exports||{})) {
     if(!amendedAppendix[module]) throw new Error(`export amendment module ${module} is absent from Appendix A`);
     amendedAppendix[module].exports=[...new Set([...amendedAppendix[module].exports,...entries.map(e=>e.name)])].sort();
+  }
+  for(const [submodule,entry] of Object.entries(amendments.submodules||{})) {
+    if(!appendix[entry.parent] && !PRE_EXISTING_MODULES.has(entry.parent)) throw new Error(`submodule parent ${entry.parent} for ${submodule} is absent from Appendix A`);
+    if(amendedAppendix[submodule]) throw new Error(`submodule ${submodule} collides with an existing Appendix A module`);
+    amendedAppendix[submodule]={exports:[...new Set(entry.exports.map(e=>e.name))].sort()};
   }
   const manifestData=composeRemovalManifest(activeRemoval,amendments);
   const result=await verifyExtraction({worktreeDir:root,baselineSourcePath:path.join(verifierRoot,'fixtures/baseline-087e6c88.js'),baselineRef:BASELINE_REF,manifestData});
@@ -188,7 +217,7 @@ export async function verifyDocumentRemediation({root=repoRoot, amendmentFile=am
       reconcileTopLevelStatement(result, entry, comparison);
     }
   }
-  result.amendments={path:path.relative(root,amendmentFile),auditedRevision:amendments.auditedRevision,accountingBaseline:amendments.accountingBaseline,functionBodies:Object.fromEntries(Object.entries(amendments.functionBodyRewrites||{}).map(([symbol,e])=>[symbol,{file:e.file,rationale:e.rationale,targetFunctionSha256:e.targetFunctionSha256}])),openPanelStatements:(amendments.openPanelStatementRewrites||[]).map(e=>({id:e.id,rationale:e.rationale,targetFunctionFile:e.targetFunctionFile,targetFunctionName:e.targetFunctionName,targetFunctionSha256:e.targetFunctionSha256})),exports:Object.fromEntries(Object.entries(amendments.exports||{}).map(([m,es])=>[m,es.map(e=>({name:e.name,rationale:e.rationale,declarationSha256:e.declarationSha256}))]))};
+  result.amendments={path:path.relative(root,amendmentFile),auditedRevision:amendments.auditedRevision,accountingBaseline:amendments.accountingBaseline,functionBodies:Object.fromEntries(Object.entries(amendments.functionBodyRewrites||{}).map(([symbol,e])=>[symbol,{file:e.file,rationale:e.rationale,targetFunctionSha256:e.targetFunctionSha256}])),openPanelStatements:(amendments.openPanelStatementRewrites||[]).map(e=>({id:e.id,rationale:e.rationale,targetFunctionFile:e.targetFunctionFile,targetFunctionName:e.targetFunctionName,targetFunctionSha256:e.targetFunctionSha256})),exports:Object.fromEntries(Object.entries(amendments.exports||{}).map(([m,es])=>[m,es.map(e=>({name:e.name,rationale:e.rationale,declarationSha256:e.declarationSha256}))])),submodules:Object.fromEntries(Object.entries(amendments.submodules||{}).map(([m,entry])=>[m,{parent:entry.parent,rationale:entry.rationale,exports:entry.exports.map(e=>({name:e.name,rationale:e.rationale,declarationSha256:e.declarationSha256}))}]))};
   return result;
 }
 

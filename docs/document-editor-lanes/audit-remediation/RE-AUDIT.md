@@ -37,21 +37,18 @@ Node resolves Playwright and Acorn from the established local dependency install
 
 ```sh
 node --experimental-loader ./tests/helpers/document_email_host_loader.mjs --test tests/document*.test.mjs
-python3 docs/document-editor-lanes/audit-remediation/validation/static-browser-runner.py node --test tests/documentAuditRemediation.mjs
 node scripts/check_document_references.mjs
 node scripts/verify_document_remediation.mjs
 node scripts/check_frontend.mjs
 python3 scripts/build_frontend.py --check
-node scripts/check_document_references.mjs
 node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs tests/documentRemediationVerifier.test.mjs tests/markdownImages.test.mjs tests/selectionHighlights.test.mjs
-python3 docs/document-editor-lanes/audit-remediation/validation/static-browser-runner.py node --test tests/documentAuditRemediation.mjs
-PYTHONDONTWRITEBYTECODE=1 /tmp/document-editor-remediation-venv/bin/python -m pytest -p no:cacheprovider -q tests/test_document_references.py tests/test_document_source_test_hygiene.py tests/test_frontend_module_graph.py tests/test_document_active_restore.py tests/test_document_rich_text_tools.py tests/test_document_module_api.py tests/test_document_state_contract.py tests/test_document_session_contract.py tests/test_document_rich_editor_contract.py tests/test_document_source_editor.py tests/test_document_email_workflows.py tests/test_document_title_conditional_patch.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -p no:cacheprovider -q tests/test_document_audit_remediation.py tests/test_document_chat_send_remediation.py tests/test_document_references.py tests/test_document_source_test_hygiene.py tests/test_frontend_module_graph.py tests/test_document_active_restore.py tests/test_document_rich_text_tools.py tests/test_document_module_api.py tests/test_document_state_contract.py tests/test_document_session_contract.py tests/test_document_rich_editor_contract.py tests/test_document_source_editor.py tests/test_document_email_workflows.py tests/test_document_title_conditional_patch.py
 git diff --check 032d98575f5a7492e2377089cbc68f148753dd64..HEAD
 ```
 
-`tests/test_document_audit_remediation.py` (invoked directly via `static-browser-runner.py node --test tests/documentAuditRemediation.mjs`) starts the established ephemeral static server and runs all 48 Chromium behavioral cases (including R01, R02, NB2 publication set, NB8, and NB-F1 through NB-F3 regressions). `tests/test_document_references.py` exercises `scripts/check_document_references.mjs`, `tests/documentReferences.test.mjs`, and portable `tests/documentRemediationVerifier.test.mjs` modes.
+`tests/test_document_audit_remediation.py` and `tests/test_document_chat_send_remediation.py` start the established pytest ephemeral static server (`ODYSSEUS_TEST_STATIC_ORIGIN`) and execute the Chromium behavioral suites under `tests/documentAuditRemediation.mjs` and `tests/documentChatSendRemediation.mjs`. `tests/test_document_references.py` exercises `scripts/check_document_references.mjs`, `tests/documentReferences.test.mjs`, and portable `tests/documentRemediationVerifier.test.mjs` modes.
 
-If the temporary Python environment is absent, create a new private venv, install `playwright==1.62.0`, and reference the existing repository dependency directory from that private environment only. Use the installed Chromium executable when needed. Do not modify global or repository venv configuration to reproduce this report. The original environment source was `/home/alteixeira20/.venvs/odysseus-pr-6495/lib/python3.14/site-packages`; all other runtime files were under temporary directories.
+If Playwright or pytest dependencies are run outside the active repository venv, install matching versions in a private environment without altering global or repository venv configuration. Use the installed Chromium executable when needed.
 
 Canonical controls remain external and unchanged:
 
@@ -64,7 +61,7 @@ The adapter defaults to that canonical tool relative to the worktree collection.
 
 ## Limits and next actions
 
-The isolated document HTTP smoke used a new loopback app and temporary database/auth/data; its process was stopped. Its exact runner is retained at `validation/isolated-smoke-runner.py`; run it with the private Python environment after checking its checkout paths. It creates fresh random credentials and never prints them. Other release-smoke areas were not run. Real email providers, AI providers, physical devices, Firefox/WebKit, offline cache upgrade and maintainer manual QA remain unverified.
+The isolated document HTTP smoke used a temporary loopback app and temporary database/auth/data (process stopped and temporary runner removed during PR cleanup). Other release-smoke areas were not run. Real email providers, AI providers, physical devices, Firefox/WebKit, offline cache upgrade and maintainer manual QA remain unverified.
 
 A photo-editor cut test fails identically against untouched 032d9857 assets. Its isolated baseline failure and current failure are recorded separately. It is outside the Document Editor remediation and was not changed or skipped.
 
