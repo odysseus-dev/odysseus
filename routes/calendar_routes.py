@@ -1376,10 +1376,13 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 # If start was tz-aware but end was naive (or vice-versa),
                 # trust whichever flag is True — they should match.
                 _is_utc = _is_utc or _end_utc
-            elif data.all_day:
-                dtend = dtstart + timedelta(days=1)
             else:
-                dtend = dtstart + timedelta(hours=1)
+                try:
+                    dtend = dtstart + (
+                        timedelta(days=1) if data.all_day else timedelta(hours=1)
+                    )
+                except OverflowError as exc:
+                    raise HTTPException(400, "Invalid dtstart") from exc
 
             ev = CalendarEvent(
                 uid=uid,

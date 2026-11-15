@@ -110,3 +110,23 @@ def test_valid_create_and_update_keep_supported_formats(api, start, end, all_day
     assert saved["summary"] == "Updated"
     assert saved["dtstart"] == expected_start
     assert saved["dtend"] == expected_end
+
+
+@pytest.mark.parametrize("start,all_day", [
+    ("9999-12-31T23:30:00", False),
+    ("9999-12-31", True),
+])
+def test_implicit_end_overflow_is_400_and_rolls_back(api, start, all_day):
+    """A valid start cannot imply an end past datetime.max."""
+    client, factory = api
+    response = client.post("/api/calendar/events", json={
+        "summary": "Out-of-range default end",
+        "dtstart": start,
+        "all_day": all_day,
+    })
+
+    assert response.status_code == 400, response.text
+    assert response.json() == {"detail": "Invalid dtstart"}
+    with factory() as db:
+        assert db.query(cdb.CalendarCal).count() == 0
+        assert db.query(cdb.CalendarEvent).count() == 0
