@@ -28,6 +28,8 @@ Read both original reports at the absolute paths and checksums in README.md. Rea
 6. Inspect image observer ownership, writable selection compatibility, stream reset and repeated rich text/email/PDF panel lifetimes. No importer may assign an imported binding.
 7. Review the 16 internal owner-export additions and the removal of host/global bridges. Root named exports remain 30 and the default object remains 39 properties.
 8. Review the validation adapter as code. It must reject any unrecorded body/export/state change. The old canonical manifest is frozen and is expected to reject behavioral fixes. The amended run uses the original canonical engine, exact replacements and hashes; top-level statement reconciliation uses the same engine comparator and retains its original diagnostic evidence.
+9. Verify atomic conditional title updates in `routes/document/document_routes.py` (`patch_document`) and `routes/document/document_helpers.py` (`DocumentPatch`) when `if_untitled: true` is requested by auto-title in `ui/documentActions.js`.
+10. Verify scheduled email completion in `ui/email/sendWorkflow.js` (`_scheduleSend`) clears local draft only for originating emails with `sourceUid` via `_clearEmailLocalDraft`, avoiding unsafe DOM fallback draft clearing across navigation.
 
 ## Reproducible checks
 
@@ -43,7 +45,7 @@ python3 scripts/build_frontend.py --check
 node scripts/check_document_references.mjs
 node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs tests/documentRemediationVerifier.test.mjs tests/markdownImages.test.mjs tests/selectionHighlights.test.mjs
 python3 docs/document-editor-lanes/audit-remediation/validation/static-browser-runner.py node --test tests/documentAuditRemediation.mjs
-PYTHONDONTWRITEBYTECODE=1 /tmp/document-editor-remediation-venv/bin/python -m pytest -p no:cacheprovider -q tests/test_document_references.py tests/test_document_source_test_hygiene.py tests/test_frontend_module_graph.py tests/test_document_active_restore.py tests/test_document_rich_text_tools.py tests/test_document_module_api.py tests/test_document_state_contract.py tests/test_document_session_contract.py tests/test_document_rich_editor_contract.py tests/test_document_source_editor.py tests/test_document_email_workflows.py
+PYTHONDONTWRITEBYTECODE=1 /tmp/document-editor-remediation-venv/bin/python -m pytest -p no:cacheprovider -q tests/test_document_references.py tests/test_document_source_test_hygiene.py tests/test_frontend_module_graph.py tests/test_document_active_restore.py tests/test_document_rich_text_tools.py tests/test_document_module_api.py tests/test_document_state_contract.py tests/test_document_session_contract.py tests/test_document_rich_editor_contract.py tests/test_document_source_editor.py tests/test_document_email_workflows.py tests/test_document_title_conditional_patch.py
 git diff --check 032d98575f5a7492e2377089cbc68f148753dd64..HEAD
 ```
 
