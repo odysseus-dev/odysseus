@@ -75,26 +75,26 @@ function _promptLink({ text = '', url = '', editing = false } = {}) {
     });
   }
 
-function _promptImageAlt(defaultAlt = '') {
+function _promptImageField({ overlayId, title, inputId, placeholder, cancelId, okId }, defaultValue = '') {
     return new Promise(resolve => {
       const overlay = document.createElement('div');
-      overlay.id = 'doc-image-alt-prompt-overlay';
+      overlay.id = overlayId;
       overlay.className = 'modal';
       overlay.style.zIndex = String(topPortalZ());
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box styled-prompt-box">' +
-          '<div class="modal-header"><h4>Image description</h4></div>' +
+          `<div class="modal-header"><h4>${title}</h4></div>` +
           '<div class="modal-body">' +
-            '<input type="text" id="doc-image-alt-input" class="styled-prompt-input" placeholder="Describe the image" maxlength="500" />' +
+            `<input type="text" id="${inputId}" class="styled-prompt-input" placeholder="${placeholder}" maxlength="500" />` +
           '</div>' +
           '<div class="modal-footer">' +
-            '<button id="doc-image-alt-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button id="doc-image-alt-ok" class="confirm-btn confirm-btn-primary">Save</button>' +
+            `<button id="${cancelId}" class="confirm-btn confirm-btn-secondary">Cancel</button>` +
+            `<button id="${okId}" class="confirm-btn confirm-btn-primary">Save</button>` +
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);
-      const input = overlay.querySelector('#doc-image-alt-input');
-      input.value = defaultAlt || '';
+      const input = overlay.querySelector(`#${inputId}`);
+      input.value = defaultValue || '';
       function done(result) {
         overlay.remove();
         document.removeEventListener('keydown', onKey, true);
@@ -104,8 +104,8 @@ function _promptImageAlt(defaultAlt = '') {
       function onKey(e) {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
       }
-      overlay.querySelector('#doc-image-alt-ok').addEventListener('click', submit);
-      overlay.querySelector('#doc-image-alt-cancel').addEventListener('click', () => done(null));
+      overlay.querySelector(`#${okId}`).addEventListener('click', submit);
+      overlay.querySelector(`#${cancelId}`).addEventListener('click', () => done(null));
       overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
       document.addEventListener('keydown', onKey, true);
@@ -113,42 +113,26 @@ function _promptImageAlt(defaultAlt = '') {
     });
   }
 
+function _promptImageAlt(defaultAlt = '') {
+    return _promptImageField({
+      overlayId: 'doc-image-alt-prompt-overlay',
+      title: 'Image description',
+      inputId: 'doc-image-alt-input',
+      placeholder: 'Describe the image',
+      cancelId: 'doc-image-alt-cancel',
+      okId: 'doc-image-alt-ok',
+    }, defaultAlt);
+  }
+
 function _promptImageCaption(defaultCaption = '') {
-    return new Promise(resolve => {
-      const overlay = document.createElement('div');
-      overlay.id = 'doc-image-caption-prompt-overlay';
-      overlay.className = 'modal';
-      overlay.style.zIndex = String(topPortalZ());
-      overlay.innerHTML =
-        '<div class="modal-content styled-confirm-box styled-prompt-box">' +
-          '<div class="modal-header"><h4>Image caption</h4></div>' +
-          '<div class="modal-body">' +
-            '<input type="text" id="doc-image-caption-input" class="styled-prompt-input" placeholder="Caption shown below the image" maxlength="500" />' +
-          '</div>' +
-          '<div class="modal-footer">' +
-            '<button id="doc-image-caption-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button id="doc-image-caption-ok" class="confirm-btn confirm-btn-primary">Save</button>' +
-          '</div>' +
-        '</div>';
-      document.body.appendChild(overlay);
-      const input = overlay.querySelector('#doc-image-caption-input');
-      input.value = defaultCaption || '';
-      function done(result) {
-        overlay.remove();
-        document.removeEventListener('keydown', onKey, true);
-        resolve(result);
-      }
-      function submit() { done((input.value || '').trim()); }
-      function onKey(e) {
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
-      }
-      overlay.querySelector('#doc-image-caption-ok').addEventListener('click', submit);
-      overlay.querySelector('#doc-image-caption-cancel').addEventListener('click', () => done(null));
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-      document.addEventListener('keydown', onKey, true);
-      requestAnimationFrame(() => { input.focus(); input.select(); });
-    });
+    return _promptImageField({
+      overlayId: 'doc-image-caption-prompt-overlay',
+      title: 'Image caption',
+      inputId: 'doc-image-caption-input',
+      placeholder: 'Caption shown below the image',
+      cancelId: 'doc-image-caption-cancel',
+      okId: 'doc-image-caption-ok',
+    }, defaultCaption);
   }
 
 export async function _editRichImageAlt(rich) {

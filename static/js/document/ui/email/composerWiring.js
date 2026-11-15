@@ -169,17 +169,20 @@ if (!pageBindings.has('_docStickyTypingBound')) {
       }, true);
     }
 document.getElementById('doc-email-draft-btn')?.addEventListener('click', () => {
-      document.getElementById('doc-email-more-menu').style.display = 'none';
+      const moreMenu = document.getElementById('doc-email-more-menu');
+      if (moreMenu) moreMenu.style.display = 'none';
       _saveDraft();
     });
 document.getElementById('doc-email-discard-btn')?.addEventListener('click', _discardEmail);
 document.getElementById('doc-email-unread-btn')?.addEventListener('click', () => {
-      document.getElementById('doc-email-more-menu').style.display = 'none';
+      const moreMenu = document.getElementById('doc-email-more-menu');
+      if (moreMenu) moreMenu.style.display = 'none';
       _markUnreadAndClose();
     });
 document.getElementById('doc-email-schedule-btn')?.addEventListener('click', (e) => {
       const anchor = document.getElementById('doc-email-send-caret') || e.currentTarget;
-      document.getElementById('doc-email-more-menu').style.display = 'none';
+      const moreMenu = document.getElementById('doc-email-more-menu');
+      if (moreMenu) moreMenu.style.display = 'none';
       _scheduleSend(anchor);
     });
 document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', (ev) => {
@@ -265,7 +268,8 @@ document.getElementById('doc-email-show-cc')?.addEventListener('click', () => {
       const bccRow = document.getElementById('doc-email-bcc-row');
       if (ccRow) ccRow.style.display = '';
       if (bccRow) bccRow.style.display = '';
-      document.getElementById('doc-email-show-cc').style.display = 'none';
+      const showCcBtn = document.getElementById('doc-email-show-cc');
+      if (showCcBtn) showCcBtn.style.display = 'none';
       _syncEmailHeaderSummary();
     });
 document.querySelectorAll('[data-cc-close]').forEach(closeBtn => {

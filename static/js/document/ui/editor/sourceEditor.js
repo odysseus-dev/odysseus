@@ -21,12 +21,7 @@ import {
   _isMarkdownPreviewVisible,
   _setMarkdownPreviewActive
 } from '../previewModes.js';
-const uiModule = {
-  showToast(...args) {
-    const m = (typeof window !== 'undefined' ? window.uiModule : null) || (typeof globalThis !== 'undefined' ? globalThis.uiModule : null);
-    if (m && typeof m.showToast === 'function') return m.showToast(...args);
-  }
-};
+import { uiModule } from '../host.js';
 
 export let _hlDebounce = null;
 

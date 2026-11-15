@@ -4,6 +4,19 @@
  * Extracted from document.js for modularity, clean maintenance, and isolated testing.
  */
 
+import { _escHtml, _isDocxLang, _isRichTextLang } from '../domain/documentKinds.js';
+import { _importFromDevice } from './importFromDevice.js';
+import { _isFormBackedDoc } from './pdf/annotations.js';
+
+const EXPORT_EXTENSION_BY_LANG = Object.freeze({
+  javascript: '.js', python: '.py', html: '.html', svg: '.svg', xml: '.xml', css: '.css',
+  richtext: '.html',
+  markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
+  sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
+  typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
+  toml: '.toml', ini: '.ini', csv: '.csv',
+});
+
 let _deps = {};
 
 export function initExportDocx(options = {}) {
@@ -95,28 +108,6 @@ const _bindMenuDismiss = (menu, onClose, shouldDismiss) => {
     cleanup();
     onClose();
   };
-};
-
-const _isRichTextLang = (l) => {
-  return ['richtext', 'rich-text'].includes(String(l || '').toLowerCase());
-};
-
-const _isDocxLang = (l) => {
-  return String(l || '').toLowerCase() === 'docx';
-};
-
-const _isFormBackedDoc = (content) => {
-  const c = content || '';
-  return /<!--\s*pdf_form_source\s+upload_id="[^"]+"/.test(c)
-      || /<!--\s*pdf_source\s+upload_id="[^"]+"/.test(c);
-};
-
-const _esc = (s) => {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 };
 
 const _richTextToHtmlString = (html) => {
@@ -236,7 +227,7 @@ export function buildHtmlExportMarkup(doc, options = {}) {
   }
   const title = (options && options.title) || (targetDoc && targetDoc.title) || 'document';
   const richStyles = _isRichTextLang(lang) ? `<style>${_richTextExportCss()}</style>` : '';
-  return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>${_esc(title)}</title>${richStyles}</head><body style="max-width:800px;margin:40px auto;font-family:sans-serif;line-height:1.6;padding:0 20px;background:#fff;color:#000;">\n${body}\n</body></html>`;
+  return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>${_escHtml(title)}</title>${richStyles}</head><body style="max-width:800px;margin:40px auto;font-family:sans-serif;line-height:1.6;padding:0 20px;background:#fff;color:#000;">\n${body}\n</body></html>`;
 }
 
 export function exportAsHtml(doc) {
@@ -485,104 +476,6 @@ export async function convertOriginalToPdfForSigning() {
   }
 }
 
-// ── Import from Device ──
-
-export function _importFromDevice() {
-  const EXT_TO_LANG = {
-    '.py':'python','.js':'javascript','.ts':'typescript','.html':'html','.htm':'html',
-    '.css':'css','.md':'markdown','.json':'json','.yml':'yaml','.yaml':'yaml',
-    '.sh':'bash','.bash':'bash','.sql':'sql','.rs':'rust','.go':'go',
-    '.java':'java','.c':'c','.cpp':'cpp','.h':'c','.hpp':'cpp',
-    '.rb':'ruby','.php':'php','.xml':'xml','.toml':'toml','.ini':'ini',
-    '.txt':'','.log':'','.csv':'csv','.tsv':'csv','.jsx':'javascript','.tsx':'typescript',
-  };
-  const fi = document.createElement('input');
-  fi.type = 'file';
-  fi.style.display = 'none';
-  fi.addEventListener('change', async () => {
-    const file = fi.files?.[0];
-    if (!file) return;
-    const name = file.name;
-    const dotIdx = name.lastIndexOf('.');
-    const ext = dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
-    const baseTitle = dotIdx > 0 ? name.slice(0, dotIdx) : name;
-    const isSpreadsheet = ['.xlsx','.xls','.ods'].includes(ext);
-    const isPdf = ext === '.pdf';
-    const isDocx = ext === '.docx';
-    const ui = _getUiModule();
-    const apiBase = _getApiBase();
-    const sessionMod = _getSessionModule();
-    const lastSid = _getLastSessionId();
-    // Spreadsheets need the library per-sheet split, defer to it.
-    if (isSpreadsheet) {
-      if (_deps.openLibrary) _deps.openLibrary();
-      requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('doclib-import-file-btn')?.click()));
-      return;
-    }
-    try {
-      let docId = null;
-      if (isPdf) {
-        const fd = new FormData();
-        fd.append('file', file);
-        const sid = (sessionMod?.getCurrentSessionId?.()) || lastSid || '';
-        if (sid) fd.append('session_id', sid);
-        const r = await fetch(`${apiBase}/api/documents/import-pdf`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        if (!r.ok) throw new Error('PDF import failed');
-        const j = await r.json();
-        docId = j.doc_id || j.id;
-      } else if (isDocx) {
-        const fd = new FormData();
-        fd.append('file', file);
-        const sid = (sessionMod?.getCurrentSessionId?.()) || lastSid || '';
-        if (sid) fd.append('session_id', sid);
-        const r = await fetch(`${apiBase}/api/documents/import-docx`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.detail || 'DOCX import failed');
-        docId = j.id || j.doc_id;
-      } else {
-        const content = await new Promise((res, rej) => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result || '');
-          reader.onerror = () => rej(reader.error);
-          reader.readAsText(file);
-        });
-        const lang = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
-        const sid = (sessionMod?.getCurrentSessionId?.()) || lastSid || '';
-        const body = { title: baseTitle, language: lang, content };
-        if (sid) body.session_id = sid;
-        const r = await fetch(`${apiBase}/api/document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify(body),
-        });
-        if (!r.ok) throw new Error('Import failed');
-        const j = await r.json();
-        docId = j.id || j.doc_id;
-      }
-      if (docId) {
-        try {
-          const dr = await fetch(`${apiBase}/api/document/${docId}`, { credentials: 'same-origin' });
-          const full = dr.ok ? await dr.json() : { id: docId, title: baseTitle };
-          const sid = (sessionMod?.getCurrentSessionId?.()) || lastSid || '';
-          if (_deps.addDocToTabs) _deps.addDocToTabs(full, full.session_id || sid);
-          if (_deps.switchToDoc) _deps.switchToDoc(full.id || docId);
-        } catch (_) {
-          if (_deps.addDocToTabs) _deps.addDocToTabs({ id: docId, title: baseTitle }, lastSid || '');
-          if (_deps.switchToDoc) _deps.switchToDoc(docId);
-        }
-      }
-    } catch (err) {
-      if (ui?.showError) ui.showError('Import failed: ' + (err.message || err));
-    } finally {
-      fi.value = '';
-      fi.remove();
-    }
-  });
-  document.body.appendChild(fi);
-  fi.click();
-}
-
 // ── Generic Document Export ──
 
 export function exportDocument(format, options = {}) {
@@ -607,15 +500,7 @@ export function exportDocument(format, options = {}) {
 
   const lang = formatStr || (options && options.language) || _getLanguage() || (targetDoc && targetDoc.language) || '';
 
-  const extMap = {
-    javascript: '.js', python: '.py', html: '.html', svg: '.svg', xml: '.xml', css: '.css',
-    richtext: '.html',
-    markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
-    sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
-    typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
-    xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
-  };
-  const ext = (options && options.extension) || extMap[lang] || '.txt';
+  const ext = (options && options.extension) || EXPORT_EXTENSION_BY_LANG[lang] || '.txt';
   const baseName = (options && options.filename) || _getExportBaseName(targetDoc);
   const mime = lang === 'csv' ? 'text/csv' : lang === 'json' ? 'application/json' : _isRichTextLang(lang) ? 'text/html' : 'text/plain';
 
@@ -653,15 +538,7 @@ export function showExportMenu(anchor, anchorRect) {
   if (!rect) return;
 
   const lang = _getLanguage();
-  const extMap = {
-    javascript: '.js', python: '.py', html: '.html', css: '.css',
-    richtext: '.html',
-    markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
-    sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
-    typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
-    xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
-  };
-  const ext = extMap[lang] || '.txt';
+  const ext = EXPORT_EXTENSION_BY_LANG[lang] || '.txt';
   const codeLanguages = new Set([
     'python', 'javascript', 'typescript', 'bash', 'sh', 'shell', 'php',
     'ruby', 'sql', 'java', 'go', 'rust', 'c', 'cpp', 'c++', 'csharp', 'c#',

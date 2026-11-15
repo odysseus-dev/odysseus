@@ -224,8 +224,24 @@
       "deployment": "js/document/ui/exportDocx.js"
     },
     {
+      "source": "features/documents/ui/importFromDevice.js",
+      "deployment": "js/document/ui/importFromDevice.js"
+    },
+    {
       "source": "features/documents/ui/previewModes.js",
       "deployment": "js/document/ui/previewModes.js"
+    },
+    {
+      "source": "features/documents/ui/pdf/annotations.js",
+      "deployment": "js/document/ui/pdf/annotations.js"
+    },
+    {
+      "source": "features/documents/ui/pdf/geometry.js",
+      "deployment": "js/document/ui/pdf/geometry.js"
+    },
+    {
+      "source": "features/documents/ui/pdf/persistence.js",
+      "deployment": "js/document/ui/pdf/persistence.js"
     },
     {
       "source": "features/documents/ui/pdfTools.js",
@@ -313,13 +329,7 @@
     },
     {
       "source": "features/documents/ui/email/sendWorkflow.js",
-      "deployment": "js/document/ui/email/sendWorkflow.js",
-      "legacyImports": [
-        {
-          "specifier": "/static/js/emailLibrary.js?v=20260915trashmove2",
-          "reason": "Email library dynamic refresh and open actions."
-        }
-      ]
+      "deployment": "js/document/ui/email/sendWorkflow.js"
     },
     {
       "source": "features/documents/ui/email/signedReply.js",
@@ -420,6 +430,10 @@
         {
           "specifier": "/static/js/colorPicker.js?v=20260910eyedropper1",
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/emailLibrary.js?v=20260915trashmove2",
+          "reason": "Legacy host bridge dynamically loading emailLibrary with exact query string identity."
         }
       ]
     },

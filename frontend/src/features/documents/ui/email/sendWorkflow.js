@@ -10,7 +10,7 @@ import { _emailBodyToHtml, _emailReplyOwnText } from "./emailBody.js";
 import { _clearEmailLocalDraft, _sanitizeOutgoingEmailBody } from "./localDraft.js";
 import { _emailRichbodyActive, _syncEmailRichbody } from "../richEditor/richBodySync.js";
 import { _closeWithoutDeleting } from "../documentFlows.js";
-import { closeLibrary, isLibraryOpen, spinnerModule, uiModule } from "../host.js";
+import { closeLibrary, isLibraryOpen, loadEmailLibrary, spinnerModule, uiModule } from "../host.js";
 
 function _bodyMentionsAttachment(text) {
     if (!text) return false;
@@ -486,7 +486,7 @@ export async function _sendEmail() {
         _clearMissingAttachmentWarnings();
         // The send endpoint appends the message to Sent, but an already-open
         // email library needs an explicit fresh load to show it immediately.
-        import('/static/js/emailLibrary.js?v=20260915trashmove2').then(mod => {
+        loadEmailLibrary().then(mod => {
           const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
           if (refresh) return refresh();
           return undefined;
@@ -498,7 +498,7 @@ export async function _sendEmail() {
             toastClass: 'toast-message-sent',
             action: 'View Message',
             onAction: async () => {
-        import('/static/js/emailLibrary.js?v=20260915trashmove2').then(async mod => {
+              loadEmailLibrary().then(async mod => {
                 const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
                 const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
                 if (open) open({

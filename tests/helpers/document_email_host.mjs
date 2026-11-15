@@ -41,3 +41,8 @@ export const _setDocumentHistoryControlState = (...args) => globalThis._setDocum
 export const _wireSwipeDismiss = (...args) => globalThis._wireSwipeDismiss?.(...args);
 export const toggleFullscreen = (...args) => globalThis.toggleFullscreen?.(...args);
 export const toggleVersionHistory = (...args) => globalThis.toggleVersionHistory?.(...args);
+export const loadEmailLibrary = (...args) => (
+  typeof globalThis.loadEmailLibrary === 'function'
+    ? globalThis.loadEmailLibrary(...args)
+    : Promise.resolve({})
+);

@@ -30,3 +30,7 @@ export { topPortalZ } from '/static/js/toolWindowZOrder.js';
 export { getDocumentStats } from '/static/js/documentStats.js?v=20260831richtexttools91';
 export { parseMarkdownOutline } from '/static/js/documentOutline.js?v=20260831richtexttools91';
 export { attachColorPicker } from '/static/js/colorPicker.js?v=20260910eyedropper1';
+
+export function loadEmailLibrary() {
+  return import('/static/js/emailLibrary.js?v=20260915trashmove2');
+}

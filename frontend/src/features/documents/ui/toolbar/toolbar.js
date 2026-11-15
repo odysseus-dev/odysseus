@@ -125,6 +125,20 @@ function _aiWritingSelectionText() {
     return '';
   }
 
+let _aiWritingStreamTimer = null;
+let _aiWritingStreamAbortCleanup = null;
+
+function _clearAiWritingStreamWait() {
+  if (_aiWritingStreamTimer !== null) {
+    clearTimeout(_aiWritingStreamTimer);
+    _aiWritingStreamTimer = null;
+  }
+  if (_aiWritingStreamAbortCleanup) {
+    _aiWritingStreamAbortCleanup();
+    _aiWritingStreamAbortCleanup = null;
+  }
+}
+
 function _setAiWritingLoading(loading) {
     const button = document.getElementById('doc-ai-writing-btn');
     if (!button) return;
@@ -176,25 +190,30 @@ function _showAiWritingMenu(button) {
     menu.style.top = `${Math.min(window.innerHeight - menuHeight - 8, rect.bottom + 5)}px`;
     button.setAttribute('aria-expanded', 'true');
 
+    const lifetimeSignal = button.closest('#doc-editor-pane')?._lifetime?.signal || null;
+    let listenerTimerId = null;
+    const onPaneAbort = () => _closeAiWritingMenu();
     const dismiss = (event) => {
       if (event && (menu.contains(event.target) || event.target === button)) return;
       _closeAiWritingMenu();
-      document.removeEventListener('pointerdown', dismiss, true);
-      document.removeEventListener('keydown', onKeydown, true);
     };
     const onKeydown = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
         _closeAiWritingMenu();
-        document.removeEventListener('pointerdown', dismiss, true);
-        document.removeEventListener('keydown', onKeydown, true);
         button.focus({ preventScroll: true });
       }
     };
     menu._cleanup = () => {
+      if (listenerTimerId !== null) {
+        clearTimeout(listenerTimerId);
+        listenerTimerId = null;
+      }
+      lifetimeSignal?.removeEventListener('abort', onPaneAbort);
       document.removeEventListener('pointerdown', dismiss, true);
       document.removeEventListener('keydown', onKeydown, true);
     };
+    lifetimeSignal?.addEventListener('abort', onPaneAbort, { once: true });
     menu.querySelectorAll('[data-ai-writing-action]').forEach(item => {
       item.addEventListener('mousedown', event => event.preventDefault());
       item.addEventListener('click', async () => {
@@ -266,20 +285,42 @@ function _showAiWritingMenu(button) {
         }
         input.value = scopedPrompt;
         window.chatModule.setHideUserBubble?.();
+        _clearAiWritingStreamWait();
         _setAiWritingLoading(true);
         send.click();
         const streamSessionId = sessionModule.getCurrentSessionId?.();
         const loadingStartedAt = Date.now();
+        const streamSignal = button.closest('#doc-editor-pane')?._lifetime?.signal || lifetimeSignal;
+        if (streamSignal && !streamSignal.aborted) {
+          const onStreamAbort = () => {
+            _clearAiWritingStreamWait();
+            _setAiWritingLoading(false);
+          };
+          streamSignal.addEventListener('abort', onStreamAbort, { once: true });
+          _aiWritingStreamAbortCleanup = () => streamSignal.removeEventListener('abort', onStreamAbort);
+        }
         const waitForWritingStream = () => {
+          _aiWritingStreamTimer = null;
+          if (streamSignal?.aborted) {
+            _clearAiWritingStreamWait();
+            _setAiWritingLoading(false);
+            return;
+          }
           const active = !!window.chatModule?.hasActiveStream?.(streamSessionId);
           const tooLong = Date.now() - loadingStartedAt > 10 * 60 * 1000;
-          if ((!active && Date.now() - loadingStartedAt > 500) || tooLong) _setAiWritingLoading(false);
-          else setTimeout(waitForWritingStream, 250);
+          if ((!active && Date.now() - loadingStartedAt > 500) || tooLong) {
+            _clearAiWritingStreamWait();
+            _setAiWritingLoading(false);
+          } else {
+            _aiWritingStreamTimer = setTimeout(waitForWritingStream, 250);
+          }
         };
-        setTimeout(waitForWritingStream, 250);
+        _aiWritingStreamTimer = setTimeout(waitForWritingStream, 250);
       });
     });
-    setTimeout(() => {
+    listenerTimerId = setTimeout(() => {
+      listenerTimerId = null;
+      if (!menu.isConnected || lifetimeSignal?.aborted) return;
       document.addEventListener('pointerdown', dismiss, true);
       document.addEventListener('keydown', onKeydown, true);
     }, 0);

@@ -351,3 +351,43 @@ def test_docx_dynamic_import_and_error_recovery():
     assert res["scriptCountAfterSuccess"] == 2
     assert res["successResolved"] is True
     assert res["scriptCountAfterThird"] == 2
+
+
+def test_import_from_device_extracted_module_and_export_extensions():
+    """Verify the extracted importFromDevice module and exportDocx extension mapping."""
+    script = r"""
+      import { _importFromDevice, initImportFromDevice } from './static/js/document/ui/importFromDevice.js';
+      import { exportDocument } from './static/js/document/ui/exportDocx.js';
+
+      const downloads = [];
+      globalThis.document = {
+        getElementById: () => null,
+        createElement: (tag) => {
+          if (tag !== 'a') return {};
+          return {
+            href: '',
+            download: '',
+            click() { downloads.push(this.download); },
+          };
+        },
+      };
+      globalThis.URL = {
+        createObjectURL: () => 'blob:test',
+        revokeObjectURL: () => {},
+      };
+
+      exportDocument(null, { doc: { title: 'Script', language: 'python' }, content: 'print(1)' });
+      exportDocument(null, { doc: { title: 'Chart', language: 'svg' }, content: '<svg/>' });
+      exportDocument(null, { doc: { title: 'Config', language: 'xml' }, content: '<cfg/>' });
+
+      console.log(JSON.stringify({
+        hasImport: typeof _importFromDevice === 'function',
+        hasInit: typeof initImportFromDevice === 'function',
+        downloads,
+      }));
+    """
+    res = _run_node_module(script)
+
+    assert res["hasImport"] is True
+    assert res["hasInit"] is True
+    assert res["downloads"] == ["Script.py", "Chart.svg", "Config.xml"]

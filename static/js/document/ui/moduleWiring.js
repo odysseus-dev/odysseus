@@ -27,6 +27,7 @@ import { bindMenuDismiss, dismissOrRemove, markdownModule, openLibrary, sessionM
 import { openPanel, renderTabs, saveCurrentToMap, switchToDoc, _syncHeaderActions } from '../application/documentCommands.js';
 
 import { initExportDocx } from './exportDocx.js';
+import { initImportFromDevice } from './importFromDevice.js';
 import { _downloadFilledPdf, _saveActiveDocBeforeExport, initPdfTools } from './pdfTools.js';
 import { initPreviewModes, _convertDocxToRichText, _setMarkdownPreviewActive, _themedRenderSrcdoc, isHtmlPreviewActive } from './previewModes.js';
 import { _diffModeActive, exitDiffMode, initDiffViewer } from './diffViewer.js';
@@ -150,6 +151,15 @@ export function _wireFindReplace() {
 
 export function activateModuleWiring() {
 _wireExportDocx();
+initImportFromDevice({
+  getApiBase: () => API_BASE,
+  getUiModule: () => uiModule,
+  getSessionModule: () => sessionModule,
+  getLastSessionId: () => _lastSessionId,
+  openLibrary,
+  addDocToTabs,
+  switchToDoc,
+});
 _wirePreviewModes();
 }
 

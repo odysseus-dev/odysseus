@@ -32,7 +32,8 @@ import { _isFormBackedDoc, _pdfViewState, _renderPdfPane } from '../pdfTools.js'
 import { _undoPdfPaneAction } from '../pdfTools.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { toggleCsvPreview, toggleDocxPreview, toggleHtmlPreview, toggleMarkdownPreview, toggleRichTextPreview } from '../previewModes.js';
-import { _importFromDevice, showExportMenu } from '../exportDocx.js';
+import { showExportMenu } from '../exportDocx.js';
+import { _importFromDevice } from '../importFromDevice.js';
 
 import { openLibrary, uiModule } from '../host.js';
 
