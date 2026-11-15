@@ -3,6 +3,18 @@
   "auditedRevision": "032d98575f5a7492e2377089cbc68f148753dd64",
   "accountingBaseline": "087e6c8837969339e9e7823dd84a4d717d536cea",
   "functionBodyRewrites": {
+    "_syncHeaderActions": {
+      "file": "ui/header/headerActions.js",
+      "rationale": "Release transient PDF view listeners, drop mode, and measure mirror while preserving #doc-pdf-save-pill when hiding #doc-pdf-view on document switches.",
+      "replacements": [
+        {
+          "from": "          delete pdfPane.dataset.renderedDocId;\n          pdfPane.style.display = 'none';\n          pdfPane.innerHTML = '';\n",
+          "to": "          _hidePdfViewPane(pdfPane);\n",
+          "rationale": "Route PDF pane hiding through _hidePdfViewPane so transient PDF UI resources are torn down when leaving PDF mode."
+        }
+      ],
+      "targetFunctionSha256": "7a59d5d1fdbffb704b94495c4b05e5910beacdb6f9e7df06ffada9c888ea0832"
+    },
     "_emailFieldsWithLocalDraft": {
       "file": "ui/email/localDraft.js",
       "rationale": "Preserve user-cleared CC and BCC fields when restoring local drafts.",

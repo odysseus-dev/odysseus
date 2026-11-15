@@ -1105,6 +1105,20 @@ async function _refreshPdfPreviewIframe() {
   _renderPdfPane(activeId);
 }
 
+function _hidePdfViewPane(pane = typeof document !== 'undefined' ? document.getElementById('doc-pdf-view') : null) {
+  _setPdfDropMode(null);
+  _unwirePdfPaneProximity();
+  _unwirePdfAnnotationMenuDismiss();
+  _clearPdfMeasureMirror();
+  _pdfActivePointerCleanup?.();
+  if (!pane) return;
+  delete pane.dataset.renderedDocId;
+  pane.style.display = 'none';
+  const savedPill = document.getElementById('doc-pdf-save-pill');
+  pane.innerHTML = '';
+  if (savedPill) pane.appendChild(savedPill);
+}
+
 async function _setPdfViewActive(active) {
   if (typeof document === 'undefined') return;
   const pane = document.getElementById('doc-pdf-view');
@@ -1124,15 +1138,7 @@ async function _setPdfViewActive(active) {
     await _flushPdfPaneSave(activeId);
     if (_pdfViewTransitionByDoc.get(activeId) !== transition || _getActiveDocId() !== activeId) return;
     _pdfViewState.set(activeId, false);
-    _unwirePdfPaneProximity();
-    _unwirePdfAnnotationMenuDismiss();
-    _clearPdfMeasureMirror();
-    _pdfActivePointerCleanup?.();
-    delete pane.dataset.renderedDocId;
-    pane.style.display = 'none';
-    const savedPill = document.getElementById('doc-pdf-save-pill');
-    pane.innerHTML = '';
-    if (savedPill) pane.appendChild(savedPill);
+    _hidePdfViewPane(pane);
     _pdfPaneFieldsByDoc.delete(activeId);
     _pdfPaneAnnotationsByDoc.delete(activeId);
     _pdfRenderGenerationByDoc.set(activeId, (_pdfRenderGenerationByDoc.get(activeId) || 0) + 1);
@@ -1184,10 +1190,7 @@ function initPdfTools(options = {}) {
     if (_pdfToolsUnbind !== unbind) return;
     _pdfToolsUnbind = null;
     _pdfToolsDispose = null;
-    _unwirePdfAnnotationMenuDismiss();
-    _unwirePdfPaneProximity();
-    _clearPdfMeasureMirror();
-    _pdfActivePointerCleanup?.();
+    _hidePdfViewPane();
     const docId = _pdfMountedDocId;
     if (docId) {
       _releasePdfPane(docId);
@@ -1250,6 +1253,7 @@ export {
   _setPdfSaveStatus,
   _savePdfPaneToMarkdown,
   _refreshPdfPreviewIframe,
+  _hidePdfViewPane,
   _setPdfViewActive,
   clamp,
   pxToPct,

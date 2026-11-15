@@ -1437,3 +1437,207 @@ test('pdf lifecycle: reopen preserves proximity controls, clears mirror nodes, a
   assert.equal(isolation.aCleared, true, 'disposing pdf-a must clear pdf-a state');
   assert.equal(isolation.mirrorsAfterCleanup, 0, 'disposing active PDF doc must clear mirror element');
 });
+
+test('pdf lifecycle: switching to markdown releases transient PDF resources without accumulation', async t => {
+  const { page } = await setup(t, async (route, request) => {
+    if (!request.path.endsWith('/render-pages')) return false;
+    await route.fulfill({
+      json: {
+        pages: [{
+          page: 1,
+          width: 600,
+          height: 800,
+          image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M/wHwAF/gL+AvzZ8QAAAABJRU5ErkJggg==',
+          fields: [],
+        }],
+      },
+    });
+    return true;
+  });
+
+  await page.evaluate(() => {
+    const active = { docPointerdown: 0, docKeydown: 0, paneMousemove: 0, paneMouseleave: 0 };
+    const tracked = new WeakMap();
+    const origAdd = EventTarget.prototype.addEventListener;
+    const origRemove = EventTarget.prototype.removeEventListener;
+    const counterKey = (target, type) => {
+      if (target === document && type === 'pointerdown') return 'docPointerdown';
+      if (target === document && type === 'keydown') return 'docKeydown';
+      if (target instanceof Element && target.id === 'doc-pdf-view' && type === 'mousemove') return 'paneMousemove';
+      if (target instanceof Element && target.id === 'doc-pdf-view' && type === 'mouseleave') return 'paneMouseleave';
+      return null;
+    };
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      const key = counterKey(this, type);
+      if (key && listener && !(typeof options === 'object' && options?.signal?.aborted)) {
+        let byTarget = tracked.get(this);
+        if (!byTarget) { byTarget = new Map(); tracked.set(this, byTarget); }
+        const capture = Boolean(typeof options === 'boolean' ? options : options?.capture);
+        const entryKey = `${type}:${capture}`;
+        let set = byTarget.get(entryKey);
+        if (!set) { set = new Set(); byTarget.set(entryKey, set); }
+        if (!set.has(listener)) {
+          set.add(listener);
+          active[key]++;
+          if (typeof options === 'object' && options?.signal) {
+            options.signal.addEventListener('abort', () => {
+              if (set.delete(listener)) active[key]--;
+            }, { once: true });
+          }
+        }
+      }
+      return origAdd.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      const key = counterKey(this, type);
+      if (key && listener) {
+        const capture = Boolean(typeof options === 'boolean' ? options : options?.capture);
+        const set = tracked.get(this)?.get(`${type}:${capture}`);
+        if (set?.delete(listener)) active[key]--;
+      }
+      return origRemove.call(this, type, listener, options);
+    };
+    window.__pdfNavTracker = active;
+  });
+
+  const pdfA = '<!-- pdf_source upload_id="nav-doc-a" -->\n\n## Annotations\n\n- Alpha <!-- annotation id=ann-nav page=1 x=20.00 y=20.00 w=25.00 h=6.00 kind=text lh=1.50 fs=14.0 -->\n';
+  await inject(page, 'pdf-nav-a', pdfA);
+  await inject(page, 'md-nav-b', '# Markdown B\nInitial body');
+
+  const verifyPdfActiveAndMirror = async expectedText => {
+    await page.waitForSelector('.pdf-annotation-wrap');
+    await page.waitForFunction(() => {
+      const ed = document.getElementById('doc-editor-pane');
+      const pdfPane = document.getElementById('doc-pdf-view');
+      return ed && getComputedStyle(ed).opacity === '1'
+        && pdfPane && pdfPane.style.display !== 'none'
+        && document.body.querySelectorAll('.pdf-annotation-measure').length === 1;
+    });
+    const box = await page.locator('.pdf-annotation-wrap').first().boundingBox();
+    await page.mouse.move(1, 1);
+    await page.mouse.move(Math.max(1, box.x - 12), box.y + box.height / 2);
+    await page.waitForTimeout(60);
+    const controlsVisible = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.pdf-annotation-menu-btn'))
+        .filter(btn => btn.style.display !== 'none').length
+    );
+    assert(controlsVisible >= 1, 'proximity hover must reveal PDF annotation controls');
+    if (expectedText !== undefined) {
+      assert.equal(await page.locator('.pdf-annotation-wrap textarea').first().inputValue(), expectedText);
+    }
+    await page.locator('.pdf-annotation-menu-btn').first().click();
+    assert.equal(
+      await page.evaluate(() => document.querySelector('.pdf-annotation-text-menu')?.style.display !== 'none'),
+      true,
+      'annotation text menu button must open menu'
+    );
+    await page.mouse.click(box.x + box.width + 40, box.y + 5);
+    assert.equal(
+      await page.evaluate(() => document.querySelector('.pdf-annotation-text-menu')?.style.display),
+      'none',
+      'document pointerdown outside menu must dismiss menu'
+    );
+  };
+
+  // Step 1: Open PDF A, activate controls, trigger mirror measurement, and edit annotation
+  await page.evaluate(() => editor.loadDocument('pdf-nav-a'));
+  await verifyPdfActiveAndMirror('Alpha');
+  const ta = page.locator('.pdf-annotation-wrap textarea').first();
+  await ta.fill('Alpha edited');
+  await page.locator('#doc-pdf-add-text-btn').click();
+  assert.equal(
+    await page.evaluate(() => document.getElementById('doc-pdf-view')?.style.cursor),
+    'crosshair',
+    'activating text drop mode must set crosshair cursor'
+  );
+
+  // Step 2: Switch to Markdown B without closing the panel and verify PDF resources are released
+  await page.evaluate(() => { window.__initialPdfNavPane = document.getElementById('doc-editor-pane'); });
+  await page.evaluate(() => editor.loadDocument('md-nav-b'));
+  await page.waitForFunction(() => {
+    const pdfPane = document.getElementById('doc-pdf-view');
+    const wrap = document.getElementById('doc-editor-wrap');
+    return pdfPane && pdfPane.style.display === 'none' && wrap && wrap.style.display !== 'none';
+  });
+
+  const afterFirstSwitch = await page.evaluate(async () => {
+    const pdfTools = await import('/static/js/document/ui/pdfTools.js');
+    const pdfPane = document.getElementById('doc-pdf-view');
+    return {
+      samePane: document.getElementById('doc-editor-pane') === window.__initialPdfNavPane,
+      mirrorCount: document.body.querySelectorAll('.pdf-annotation-measure').length,
+      proximityWired: pdfTools._pdfPaneProximityWired,
+      menuDismissWired: pdfTools._pdfAnnotationMenuDismissWired,
+      pdfCursor: pdfPane?.style.cursor || '',
+      pdfSavePillCount: pdfPane?.querySelectorAll('#doc-pdf-save-pill').length || 0,
+      pdfChildCount: pdfPane?.children.length || 0,
+      pdfViewStateA: pdfTools._pdfViewState.get('pdf-nav-a'),
+      tracker: { ...window.__pdfNavTracker },
+    };
+  });
+  assert.equal(afterFirstSwitch.samePane, true, 'switching documents must keep the same panel mounted');
+  assert.equal(afterFirstSwitch.mirrorCount, 0, 'leaving PDF mode must remove .pdf-annotation-measure');
+  assert.equal(afterFirstSwitch.proximityWired, false, 'leaving PDF mode must unwire pane proximity listeners');
+  assert.equal(afterFirstSwitch.menuDismissWired, false, 'leaving PDF mode must unwire document menu-dismiss listeners');
+  assert.equal(afterFirstSwitch.pdfCursor, '', 'leaving PDF mode must clear PDF drop mode cursor');
+  assert.equal(afterFirstSwitch.pdfSavePillCount, 1, 'leaving PDF mode must preserve #doc-pdf-save-pill');
+  assert.equal(afterFirstSwitch.pdfChildCount, 1, 'leaving PDF mode must clear rendered PDF pages');
+  assert.notEqual(afterFirstSwitch.pdfViewStateA, false, 'document switch must preserve PDF A view mode state');
+
+  // Verify Markdown B remains interactive and isolated from PDF A
+  await page.locator('#doc-editor-textarea').fill('# Markdown B\nEdited while PDF hidden');
+  const bState = await page.evaluate(() => ({
+    bContent: state.docs.get('md-nav-b')?.content,
+    aContent: state.docs.get('pdf-nav-a')?.content,
+  }));
+  assert.equal(bState.bContent, '# Markdown B\nEdited while PDF hidden');
+  assert.match(bState.aContent || '', /Alpha edited/);
+
+  const mdBaselineTracker = afterFirstSwitch.tracker;
+
+  // Steps 3-4: Switch back to PDF A and repeat transitions verifying zero listener or DOM accumulation
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await page.evaluate(() => editor.loadDocument('pdf-nav-a'));
+    await verifyPdfActiveAndMirror('Alpha edited');
+    const onPdf = await page.evaluate(async () => {
+      const pdfTools = await import('/static/js/document/ui/pdfTools.js');
+      return {
+        mirrorCount: document.body.querySelectorAll('.pdf-annotation-measure').length,
+        proximityWired: pdfTools._pdfPaneProximityWired,
+        menuDismissWired: pdfTools._pdfAnnotationMenuDismissWired,
+        savePillCount: document.querySelectorAll('#doc-pdf-save-pill').length,
+        tracker: { ...window.__pdfNavTracker },
+      };
+    });
+    assert.equal(onPdf.mirrorCount, 1, `cycle ${cycle}: PDF A must have exactly 1 measurement mirror`);
+    assert.equal(onPdf.proximityWired, true, `cycle ${cycle}: PDF A must rewire proximity listeners`);
+    assert.equal(onPdf.menuDismissWired, true, `cycle ${cycle}: PDF A must rewire menu-dismiss listeners`);
+    assert.equal(onPdf.savePillCount, 1, `cycle ${cycle}: #doc-pdf-save-pill must remain unique`);
+    assert.equal(onPdf.tracker.docPointerdown - mdBaselineTracker.docPointerdown, 1, `cycle ${cycle}: no document pointerdown accumulation`);
+    assert.equal(onPdf.tracker.docKeydown - mdBaselineTracker.docKeydown, 1, `cycle ${cycle}: no document keydown accumulation`);
+    assert.equal(onPdf.tracker.paneMousemove - mdBaselineTracker.paneMousemove, 1, `cycle ${cycle}: no pane mousemove accumulation`);
+    assert.equal(onPdf.tracker.paneMouseleave - mdBaselineTracker.paneMouseleave, 1, `cycle ${cycle}: no pane mouseleave accumulation`);
+
+    await page.evaluate(() => editor.loadDocument('md-nav-b'));
+    await page.waitForFunction(() => {
+      const pdfPane = document.getElementById('doc-pdf-view');
+      const wrap = document.getElementById('doc-editor-wrap');
+      return pdfPane && pdfPane.style.display === 'none' && wrap && wrap.style.display !== 'none';
+    });
+    const backOnMd = await page.evaluate(async () => {
+      const pdfTools = await import('/static/js/document/ui/pdfTools.js');
+      return {
+        mirrorCount: document.body.querySelectorAll('.pdf-annotation-measure').length,
+        proximityWired: pdfTools._pdfPaneProximityWired,
+        menuDismissWired: pdfTools._pdfAnnotationMenuDismissWired,
+        bVal: document.getElementById('doc-editor-textarea')?.value,
+        tracker: { ...window.__pdfNavTracker },
+      };
+    });
+    assert.equal(backOnMd.mirrorCount, 0, `cycle ${cycle}: switching back to Markdown B must clear mirror`);
+    assert.equal(backOnMd.proximityWired, false, `cycle ${cycle}: switching back to Markdown B must clear proximity`);
+    assert.equal(backOnMd.menuDismissWired, false, `cycle ${cycle}: switching back to Markdown B must clear menu-dismiss`);
+    assert.equal(backOnMd.bVal, '# Markdown B\nEdited while PDF hidden', `cycle ${cycle}: Markdown B draft preserved`);
+    assert.deepEqual(backOnMd.tracker, mdBaselineTracker, `cycle ${cycle}: all transient PDF listeners returned to baseline`);
+  }
+});

@@ -28,7 +28,7 @@ import { _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupport
 
 import { _syncDocumentToolbarSeparators } from '../toolbar/toolbar.js';
 
-import { _isFormBackedDoc, _pdfViewState, _renderPdfPane } from '../pdfTools.js';
+import { _hidePdfViewPane, _isFormBackedDoc, _pdfViewState, _renderPdfPane } from '../pdfTools.js';
 import { _undoPdfPaneAction } from '../pdfTools.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { toggleCsvPreview, toggleDocxPreview, toggleHtmlPreview, toggleMarkdownPreview, toggleRichTextPreview } from '../previewModes.js';
@@ -112,9 +112,7 @@ export function _syncHeaderActions() {
           }
           _syncDocumentHistoryControlsNow();
         } else if (pdfPane.style.display !== 'none') {
-          delete pdfPane.dataset.renderedDocId;
-          pdfPane.style.display = 'none';
-          pdfPane.innerHTML = '';
+          _hidePdfViewPane(pdfPane);
           const wrap = document.getElementById('doc-editor-wrap');
           if (wrap) wrap.style.display = '';
           _scheduleDocumentHistoryControls();
