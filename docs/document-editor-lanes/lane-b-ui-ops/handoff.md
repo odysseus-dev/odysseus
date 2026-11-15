@@ -125,3 +125,11 @@ Header overflow, markdown images, document flows, selection highlights (`stmt#11
 ## Authority
 
 The next agent may edit Lane B source, tests, and `docs/document-editor-lanes/lane-b-ui-ops/` inside this worktree. Commits stay local. Pushes, merges, and edits to shared integration files or other lanes require a new authorization.
+
+## Final Lane B validation
+
+- Focused JavaScript suite: `node --test tests/documentActions.test.mjs tests/documentOverflow.test.mjs tests/markdownImages.test.mjs tests/documentFlows.test.mjs tests/selectionHighlights.test.mjs tests/documentToolbar.test.mjs tests/documentTabBar.test.mjs` passed: 7 runners, 7 passed, 0 failed, 0 skipped. Each runner executed its behavior suite.
+- Requested Python regressions, using `/home/alteixeira20/.venvs/odysseus-pr-6495/bin/python`: 30 passed, 1 failed. The failure is `test_mobile_explicit_load_restores_full_editor_from_bottom_dock` in `tests/test_doc_library_open_orphaned.py`; browser execution errors in integration-owned `static/js/document.js:2017` with `Assignment to constant variable` during `pane._dispose`. This is outside Lane B's allowed files. The other 30 Python cases passed.
+- `python3 -m pytest` with the system interpreter could not collect because that interpreter resolves a local `starlette` module instead of the installed package. The recorded repository virtualenv was then used successfully for the regression run above.
+- Final verifier: removal manifest 76/76 verified, 73 authorized rewrites, 8 reported PDF lifecycle hook exceptions, simulation clean, zero removal violations. Appendix A exports, import graph (0 cycles), layers, state ownership, and ports are clean. Overall verifier is FAIL solely for exactly 76 expected `DUPLICATE_ACROSS_DOCUMENT_AND_MODULE` findings before integration.
+- Lane B commits are local and the worktree is clean. No integration-owned files were modified.
