@@ -111,8 +111,9 @@ class ComponentCase(unittest.TestCase):
         self.write_lock(self.sha)
         guard = self.app / 'integrations/hermes-mode/patches'
         guard.mkdir(parents=True)
-        shutil.copy(ROOT / 'integrations/hermes-mode/patches/webapp-route-guard.patch', guard / 'webapp-route-guard.patch')
-        shutil.copy(ROOT / 'integrations/hermes-mode/patches/webapp-mcp-recovery.patch', guard / 'webapp-mcp-recovery.patch')
+        # Every reviewed patch is resolved by name before a release is built, so the fixture ships the whole set (the checkout below is faked).
+        for reviewed in sorted((ROOT / 'integrations/hermes-mode/patches').glob('webapp-*.patch')):
+            shutil.copy(reviewed, guard / reviewed.name)
         plugin = self.app / 'integrations/hermes-mode/desktop-plugins/odysseus-return'
         plugin.mkdir(parents=True)
         shutil.copy(ROOT / 'integrations/hermes-mode/desktop-plugins/odysseus-return/plugin.js', plugin / 'plugin.js')
@@ -160,6 +161,8 @@ class ComponentCase(unittest.TestCase):
         env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull}
         subprocess.run([GIT, 'clone', '-q', '--no-checkout', str(self.repo), str(target)], check=True, capture_output=True, env=env)
         git(target, 'checkout', '-q', '--detach', pin.revision)
+        # The update-protection patch ships this marker in a real release; the fake upstream cannot carry the patch.
+        (Path(target) / '.odysseus-managed.json').write_text('{"managed_by": "odysseus"}', encoding='utf-8')
 
     def adopted_tree(self):
         """A user-owned Hermes: a checkout at the pin, a home with config and a sentinel."""
