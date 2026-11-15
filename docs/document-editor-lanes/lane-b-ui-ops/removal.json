@@ -12,7 +12,11 @@
     "_DOC_MAX_VISIBLE",
     "_getDocRecent",
     "_trackDocAction",
-    "initActionOverflow"
+    "initActionOverflow",
+    "_handleMarkdownImageUpload",
+    "_insertMarkdownImages",
+    "_scheduleMarkdownImageAutosave",
+    "_uploadMarkdownImages"
   ],
   "targetModules": {
     "autoTitleFromContent": "ui/documentActions",
@@ -24,7 +28,11 @@
     "_DOC_MAX_VISIBLE": "ui/header/overflow",
     "_getDocRecent": "ui/header/overflow",
     "_trackDocAction": "ui/header/overflow",
-    "initActionOverflow": "ui/header/overflow"
+    "initActionOverflow": "ui/header/overflow",
+    "_handleMarkdownImageUpload": "ui/editor/markdownImages",
+    "_insertMarkdownImages": "ui/editor/markdownImages",
+    "_scheduleMarkdownImageAutosave": "ui/editor/markdownImages",
+    "_uploadMarkdownImages": "ui/editor/markdownImages"
   },
   "destinationExports": [
     "autoTitleFromContent",
@@ -36,11 +44,15 @@
     "_DOC_MAX_VISIBLE",
     "_getDocRecent",
     "_trackDocAction",
-    "initActionOverflow"
+    "initActionOverflow",
+    "_handleMarkdownImageUpload",
+    "_insertMarkdownImages",
+    "_scheduleMarkdownImageAutosave",
+    "_uploadMarkdownImages"
   ],
   "addedImports": [
     "import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from \"./document/ui/documentActions.js\";"
   ],
-  "description": "Lane B checkpoints 1 and 2: ui/documentActions and ui/header/overflow. The integrator adds the corresponding named imports to static/js/document.js and deletes the listed declarations there. This lane does not edit the monolith.",
+  "description": "Lane B checkpoints: documentActions, header overflow, and markdown image insertion. The integrator adds corresponding imports to static/js/document.js and removes listed declarations there.",
   "intentionalNonVerbatimChanges": []
 }

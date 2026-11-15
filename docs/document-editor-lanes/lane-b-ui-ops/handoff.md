@@ -74,6 +74,16 @@ Verifier, using the cumulative manifest: Appendix A exports clean; import graph 
 
 Local checkpoint commit: recorded after the test and verifier run.
 
+## Checkpoint 3: markdown images
+
+Source: `frontend/src/features/documents/ui/editor/markdownImages.js`
+
+Moved declarations: `_handleMarkdownImageUpload`, `_insertMarkdownImages`, `_scheduleMarkdownImageAutosave`, and `_uploadMarkdownImages` (4 declarations, exact Appendix A exports). Imported debounce bindings are read only and passed to `clearTimeout`; the module does not assign imported ES module bindings. Upload and autosave ownership remain with their existing UI and persistence interfaces.
+
+Focused check: `node --test tests/markdownImages.test.mjs` passed (4 executed behavioral cases). Coverage includes Markdown insertion and encoded upload IDs, caret/focus, preview refresh and autosave scheduling, invalid language and missing images, failed/empty upload responses, and Rich Text routing. Direct Node imports traverse the browser host's `/static/js/ui.js` URL, so the suite uses the repository's existing `SourceTextModule` pattern with dependency stubs.
+
+Verifier cumulative manifest result: 14 listed, 14 verified, 9 authorized rewrites, zero removal violations, simulation clean. Exact exports, import graph, layer legality, state ownership, and ports are clean. Overall verifier output still contains exactly 76 expected pre-integration duplicates.
+
 ## Remaining modules
 
 Header overflow, markdown images, document flows, selection highlights (`stmt#11153`), toolbar, and tab bar (`stmt#206`) are still outstanding for this handoff. Continue in that order. Each group gets focused tests, a manifest update, verifier evidence, and a local commit.
