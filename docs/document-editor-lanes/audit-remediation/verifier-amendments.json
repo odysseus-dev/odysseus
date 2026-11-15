@@ -41,16 +41,16 @@
     },
     "_showEmailFields": {
       "file": "ui/email/composerFields.js",
-      "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes.",
+      "rationale": "Reset stream state through its owner and guard delayed focus against stale panes and newer user focus choices.",
       "replacements": [
         {
           "from": "      setTimeout(() => {\n",
-          "to": "      setTimeout(() => {\n        if (!_rich.isConnected || activeDocId !== openedDocId) return;\n",
+          "to": "      setTimeout(() => {\n        if (!_rich.isConnected || activeDocId !== openedDocId) return;\n        const focus = document.activeElement;\n        if (focus !== focusAtOpen || focus?.closest('#doc-email-fields') || focus === _rich || _rich.contains(focus)) return;\n",
           "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes."
         },
         {
           "from": "      _wireEmailRichbody(_rich);\n",
-          "to": "      _wireEmailRichbody(_rich);\n      const openedDocId = activeDocId;\n",
+          "to": "      _wireEmailRichbody(_rich);\n      const openedDocId = activeDocId;\n      const focusAtOpen = document.activeElement;\n",
           "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes."
         },
         {
@@ -59,7 +59,7 @@
           "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes."
         }
       ],
-      "targetFunctionSha256": "e2d0652946d694b2f558664777fd7b0e04d4a08b85781e536385c50efc192062"
+      "targetFunctionSha256": "1127ca2f1a4fad00855444ef4ff2f159730eb66578c76a1d21c0f6ebe1ee97f3"
     },
     "_uploadComposeFiles": {
       "file": "ui/email/attachments.js",

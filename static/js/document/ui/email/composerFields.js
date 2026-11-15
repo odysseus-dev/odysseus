@@ -272,8 +272,11 @@ export function _showEmailFields(doc, { applyLocalDraft = true, forceHeaderField
       _rich.innerHTML = _emailBodyToHtml(fields.body);
       _wireEmailRichbody(_rich);
       const openedDocId = activeDocId;
+      const focusAtOpen = document.activeElement;
       setTimeout(() => {
         if (!_rich.isConnected || activeDocId !== openedDocId) return;
+        const focus = document.activeElement;
+        if (focus !== focusAtOpen || focus?.closest('#doc-email-fields') || focus === _rich || _rich.contains(focus)) return;
         try {
           const _isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
           if (!_isTouch) _focusEmailBodyEnd();

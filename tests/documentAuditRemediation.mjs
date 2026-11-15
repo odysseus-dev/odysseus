@@ -555,3 +555,14 @@ test('email: explicit draft clearing cancels its captured storage write', async 
   await page.clock.runFor(1000);
   assert.equal(await page.evaluate(() => localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|42|'))), null);
 });
+
+test('email: delayed initial focus cannot redirect recipient typing into the body', async t => {
+  const { page } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'email', 'To: old@example.com\nSubject: Subject\n---\nBody', 'email');
+  await page.locator('#doc-email-to').focus();
+  await page.clock.runFor(60);
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'doc-email-to');
+  await page.keyboard.type('recipient@example.com');
+  assert.equal(await page.locator('#doc-email-richbody').textContent(), 'Body');
+});
