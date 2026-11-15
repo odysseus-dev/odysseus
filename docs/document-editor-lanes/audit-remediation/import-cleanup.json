@@ -1,0 +1,67 @@
+[
+  {
+    "file": "static/js/document.js",
+    "removed": 281,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/panel/documentPresenter.js",
+    "removed": 145,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/header/headerActions.js",
+    "removed": 123,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/panel/panelLifecycle.js",
+    "removed": 123,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/editor/sourceEditorBinding.js",
+    "removed": 120,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/header/languagePicker.js",
+    "removed": 114,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/email/composerWiring.js",
+    "removed": 111,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/moduleWiring.js",
+    "removed": 105,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/panel/paneTemplate.js",
+    "removed": 22,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/documentFlows.js",
+    "removed": 1,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/panel/paneLayout.js",
+    "removed": 34,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/richEditor/richBodyWiring.js",
+    "removed": 1,
+    "remainingUnused": []
+  },
+  {
+    "file": "frontend/src/features/documents/ui/richEditor/selectionToolbar.js",
+    "removed": 1,
+    "remainingUnused": []
+  }
+]

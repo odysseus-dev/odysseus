@@ -59,6 +59,7 @@ test('ownership: rapid minimize/reopen preserves cached snapshots and outgoing P
   for (let iteration = 0; iteration < 4; iteration++) {
     await page.evaluate(() => editor.loadDocument('a'));
     await edit(page, `A latest ${iteration}`);
+    assert.equal(await page.evaluate(() => state.docs.get('a')._saveState), 'dirty');
     await page.evaluate(async () => { editor.closePanel('down'); await editor.loadDocument('b'); });
     const snapshot = await page.evaluate(() => ({
       a: { content: state.docs.get('a').content, title: state.docs.get('a').title, language: state.docs.get('a').language },
@@ -85,11 +86,7 @@ test('email: real envelope input, clearing recipients, local restoration and aut
   });
   await inject(page, 'email', original, 'email');
   for (const [field, value] of [['to', 'new@example.com'], ['cc', 'cc@example.com'], ['bcc', 'bcc@example.com'], ['subject', 'New subject']]) {
-    await page.evaluate(({ field, value }) => {
-      const input = document.getElementById(`doc-email-${field}`);
-      input.value = value;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }, { field, value });
+    await page.locator(`#doc-email-${field}`).fill(value);
   }
   assert.equal(await page.evaluate(() => state.docs.get('email')._saveState), 'dirty');
   await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
@@ -266,7 +263,7 @@ test('language: selector transitions persist metadata and delayed responses pres
   await page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/document/a'));
   assert.equal(await page.evaluate(() => state.docs.get('a').language), 'python');
   assert.equal(await page.evaluate(() => state.docs.get('b').language), 'markdown');
-  for (const language of ['richtext', 'markdown', 'html', 'csv', 'email', 'markdown']) {
+  for (const language of ['richtext', 'markdown', 'docx', 'markdown', 'html', 'csv', 'email', 'markdown']) {
     await page.locator('#doc-language-select').selectOption(language);
     await page.waitForFunction(language => state.docs.get('b').language === language, language);
   }
@@ -353,4 +350,137 @@ test('images: real rich image selection owns toolbar positioning and disposal', 
   await page.evaluate(() => editor.closePanel('down'));
   await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
   assert.equal(await page.locator('.doc-rich-image-toolbar').count(), 0);
+});
+
+test('AI ownership: new, streamed and finalized panes preserve subsequent manual drafts', async t => {
+  const { page, requests } = await setup(t);
+  await page.evaluate(() => editor.handleDocUpdate({ doc_id: 'ai', title: 'AI document', language: 'markdown', content: 'AI created body', version: 1 }));
+  assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'AI created body');
+  await edit(page, 'Manual draft after AI creation');
+  await page.evaluate(() => editor.saveDocument({ docId: 'ai', silent: true }));
+  assert.equal(requests.filter(request => request.path === '/api/document/ai' && request.method === 'PUT').at(-1).body.content, 'Manual draft after AI creation');
+  await page.evaluate(() => {
+    editor.streamDocOpen('Stream document', 'markdown');
+    editor.streamDocDelta('Stream body');
+    editor.handleDocUpdate({ doc_id: 'final', title: 'Stream document', language: 'markdown', content: 'Stream body', version: 1 });
+  });
+  assert.equal(await page.locator('#doc-editor-pane').getAttribute('data-active-document-id'), 'final');
+  await edit(page, 'Manual draft after finalization');
+  await page.evaluate(() => editor.saveDocument({ docId: 'final', silent: true }));
+  assert.equal(requests.filter(request => request.path === '/api/document/final' && request.method === 'PUT').at(-1).body.content, 'Manual draft after finalization');
+});
+
+test('attachments: forwarded staging completion persists its initiating email', async t => {
+  let release;
+  let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (!request.path.includes('/compose-from-attachment/')) return false;
+    started(); await gate;
+    await route.fulfill({ json: { success: true, token: 'attachment-a', filename: 'file.txt', size: 4 } });
+    return true;
+  });
+  await page.clock.install();
+  await inject(page, 'b', 'To: b@example.com\nSubject: B\n---\nB body', 'email');
+  await inject(page, 'a', 'To: a@example.com\nSubject: A\n---\nA body', 'email');
+  await page.evaluate(async () => {
+    const attachments = await import('/static/js/document/ui/email/attachments.js');
+    window.staging = attachments._stageForwardedSourceAttachments({ forwardAttachments: true, sourceUid: '42', sourceFolder: 'INBOX', attachments: [{ index: 0, filename: 'file.txt' }] });
+  });
+  await pending;
+  await page.evaluate(() => editor.loadDocument('b'));
+  release(); await page.evaluate(() => window.staging);
+  await page.clock.runFor(1000);
+  await page.waitForFunction(() => state.docs.get('a')._saveState === 'saved');
+  assert.deepEqual(await page.evaluate(() => ({ a: state.docs.get('a')._composeAtts.map(a => a.token), b: state.docs.get('b')._composeAtts || [] })), { a: ['attachment-a'], b: [] });
+  assert(requests.some(request => request.method === 'PUT' && request.path === '/api/document/a'));
+  assert(!requests.some(request => request.method === 'PUT' && request.path === '/api/document/b'));
+});
+
+test('email: mark-unread completion cannot discard a newly active document', async t => {
+  let release;
+  let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (!request.path.includes('/mark-unread/')) return false;
+    started(); await gate; await route.fulfill({ json: {} }); return true;
+  });
+  await inject(page, 'b', 'B body');
+  await inject(page, 'a', 'To: a@example.com\nSubject: A\nX-Source-UID: 42\n---\nA body', 'email');
+  await page.evaluate(async () => {
+    const workflow = await import('/static/js/document/ui/email/sendWorkflow.js');
+    window.markingUnread = workflow._markUnreadAndClose();
+  });
+  await pending;
+  await page.evaluate(() => editor.loadDocument('b'));
+  release(); await page.evaluate(() => window.markingUnread);
+  assert.equal(await page.evaluate(() => state.docs.has('b') && state.activeDocId === 'b'), true);
+  assert(!requests.some(request => request.method === 'DELETE' && request.path === '/api/document/b'));
+});
+
+test('format: form-backed PDF selector preserves underlying language metadata', async t => {
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (!request.path.endsWith('/render-pages')) return false;
+    await route.fulfill({ json: { pages: [{ page: 1, width: 600, height: 800, fields: [] }] } }); return true;
+  });
+  await inject(page, 'form', '<!-- pdf_form_source upload_id="source" -->\n- Name:** Ada <!-- field=Name type=text -->\n');
+  await page.locator('#doc-language-select').selectOption('pdf');
+  await page.waitForFunction(() => document.getElementById('doc-pdf-view')?.dataset.renderedDocId === 'form');
+  await page.locator('#doc-language-select').selectOption('markdown');
+  assert.equal(await page.evaluate(() => state.docs.get('form').language), 'markdown');
+  assert(!requests.some(request => request.method === 'PATCH' && request.body?.language === 'pdf'));
+});
+
+test('email: an older save response cannot acknowledge a later envelope revision', async t => {
+  let release;
+  let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  let first = true;
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method !== 'PUT' || !first) return false;
+    first = false; started(); await gate;
+    await route.fulfill({ json: { version_count: 2 } }); return true;
+  });
+  await page.clock.install();
+  await inject(page, 'email', 'To: old@example.com\nSubject: Old subject\n---\nBody', 'email');
+  await page.locator('#doc-email-to').fill('new@example.com');
+  await page.clock.runFor(850);
+  await pending;
+  await page.locator('#doc-email-subject').fill('Later subject');
+  release();
+  await page.evaluate(() => state.docs.get('email')._saveQueueTail);
+  assert.equal(await page.evaluate(() => state.docs.get('email')._saveState), 'dirty');
+  await page.clock.runFor(850);
+  await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
+  const puts = requests.filter(request => request.method === 'PUT');
+  assert.equal(puts.length, 2);
+  assert.match(puts[0].body.content, /Subject: Old subject/);
+  assert.match(puts[1].body.content, /Subject: Later subject/);
+});
+
+test('images: upload completion cannot insert into another document', async t => {
+  let release;
+  let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  const { page } = await setup(t, async (route, request) => {
+    if (request.path !== '/api/upload') return false;
+    started(); await gate;
+    await route.fulfill({ json: { files: [{ id: 'uploaded', name: 'a.png' }] } }); return true;
+  });
+  await inject(page, 'b', 'B original');
+  await inject(page, 'a', 'A original');
+  await page.evaluate(async () => {
+    const images = await import('/static/js/document/ui/editor/markdownImages.js');
+    window.uploading = images._uploadMarkdownImages([new File(['image'], 'a.png', { type: 'image/png' })]);
+  });
+  await pending;
+  await page.evaluate(() => editor.loadDocument('b'));
+  release(); await page.evaluate(() => window.uploading);
+  assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'B original');
+  assert.equal(await page.evaluate(() => state.docs.get('a').content), 'A original');
+  assert.equal(await page.evaluate(() => state.docs.get('b').content), 'B original');
 });

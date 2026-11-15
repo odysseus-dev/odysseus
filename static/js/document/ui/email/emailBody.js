@@ -306,7 +306,7 @@ function _stripEmailReplyQuoteText(text) {
     return { body: split.body, stripped: split.stripped };
   }
 
-function focusEmailReplyBody() {
+export function focusEmailReplyBody() {
     if (window.innerWidth > 768) return false;
     const rich = _emailRichbodyActive();
     if (!rich) return false;
@@ -325,8 +325,3 @@ function focusEmailReplyBody() {
     rich.scrollTop = 0;
     return true;
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.focusEmailReplyBody = focusEmailReplyBody;
-}
-

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_document_rich_editor_subsystem():
     result = subprocess.run(
-        ["node", "--test", "tests/documentRichEditor.test.mjs"],
+        ["node", "--experimental-loader", "./tests/helpers/document_email_host_loader.mjs", "--test", "tests/documentRichEditor.test.mjs"],
         cwd=ROOT,
         env=os.environ.copy(),
         capture_output=True,

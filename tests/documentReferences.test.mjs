@@ -62,7 +62,7 @@ test('validates relative maintained exports and published static targets', () =>
     fs.writeFileSync(path.join(docs, 'entry.js'), `import { value } from './dependency.js';\nimport { absent } from '/static/js/published.js';\nexport { missing } from './dependency.js';`);
     fs.writeFileSync(path.join(docs, 'dependency.js'), `export const value = 1;`);
     fs.writeFileSync(path.join(root, 'static/js/published.js'), `export const present = 1;`);
-    fs.writeFileSync(path.join(root, 'static/js/document.js'), `export {};`);
+    fs.writeFileSync(path.join(root, 'static', 'js', 'document.js'), `export {};`);
     assert.deepEqual(validateDocumentImports(root).map(e => [e.type, e.name]), [['missing-export', 'absent'], ['missing-reexport', 'missing']]);
     fs.writeFileSync(path.join(docs, 'entry.js'), `import { value } from './dependency.js';\nimport * as namespace from '/static/js/published.js';`);
     assert.deepEqual(validateDocumentImports(root), []);
@@ -78,4 +78,10 @@ test('compatibility exceptions require a per-file rationale and typeof probe', (
 
 test('maintained document graph has no unresolved names or imported writes', () => {
   assert.deepEqual(checkDocumentReferences(path.resolve('')), []);
+  assert.deepEqual(validateDocumentImports(path.resolve('')), []);
+});
+
+test('namespace properties are read-only while imported objects retain mutable properties', () => {
+  const result = analyzeDocumentReferences("import * as ns from './owner.js'; import { object } from './owner.js'; ns.value = 2; object.value = 2; ns.object.value = 3;");
+  assert.deepEqual(result.importedWrites.map(write => write.name), ['ns']);
 });

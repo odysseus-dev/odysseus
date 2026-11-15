@@ -192,4 +192,3 @@ export function _deleteRichImage(rich, image) {
     _clearRichImageSelection();
     rich.focus();
   }
-

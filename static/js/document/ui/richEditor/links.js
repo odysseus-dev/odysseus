@@ -361,4 +361,3 @@ export async function _wysiwygInsertLink(rich) {
     _scheduleEmailRichbodySave();
     rich._syncActive?.();
   }
-

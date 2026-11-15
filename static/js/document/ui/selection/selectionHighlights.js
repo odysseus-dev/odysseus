@@ -8,7 +8,7 @@ import { activeDocId, docs } from '../../application/documentState.js';
 import { _isRichTextLang } from '../../domain/documentKinds.js';
 import { _ensureDocPaneMounted, loadDocument } from '../documentFlows.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
-import { _scheduleDocumentStats } from '../host.js';
+import { _scheduleDocumentStats } from '../status/documentStatus.js';
 
 export let _selections = [];
 
@@ -488,7 +488,7 @@ function clearSelectionAt(index) {
     _scheduleDocumentStats();
   }
 
-function getSelectionContext() {
+export function getSelectionContext() {
     if (_selections.length === 0) return null;
     // Re-anchor / drop stale selections before handing them to chat —
     // shipping text from a stale offset would mean the AI sees content
@@ -507,7 +507,7 @@ function getSelectionContext() {
     return ctx;
   }
 
-async function restoreSelectionReference(reference, options = {}) {
+export async function restoreSelectionReference(reference, options = {}) {
     const requestedDocId = String(options.documentId || '').trim();
     if (requestedDocId) await loadDocument(requestedDocId);
     if (!activeDocId || !docs.has(activeDocId)) return false;
@@ -608,23 +608,3 @@ function installSelectionResizeListener() {
 }
 
 installSelectionResizeListener();
-
-
-
-if (typeof globalThis !== 'undefined') {
-  globalThis._disposeSelectionResizeObserver = () => {
-    _selResizeObserver?.disconnect();
-    _selResizeObserver = null;
-  };
-  globalThis._richRootText = _richRootText;
-  globalThis._richRangeFromOffsets = _richRangeFromOffsets;
-  globalThis._ensureSelResizeObserver = _ensureSelResizeObserver;
-  globalThis.showSelectionBadge = showSelectionBadge;
-  globalThis._isCodeDoc = _isCodeDoc;
-  globalThis._validateSelections = _validateSelections;
-  globalThis.renderAllSelectionHighlights = renderAllSelectionHighlights;
-  globalThis.clearSelectionAt = clearSelectionAt;
-  globalThis.getSelectionContext = getSelectionContext;
-  globalThis.restoreSelectionReference = restoreSelectionReference;
-  globalThis.installSelectionResizeListener = installSelectionResizeListener;
-}

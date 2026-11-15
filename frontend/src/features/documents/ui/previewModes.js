@@ -108,7 +108,6 @@ const _syncRichEmptyImport = (el) => {
 };
 
 
-
 const _renderTabs = () => {
   if (_deps.renderTabs) return _deps.renderTabs();
   if (typeof renderTabs === 'function') return renderTabs();

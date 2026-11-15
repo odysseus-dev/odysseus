@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { SourceTextModule, SyntheticModule } from 'node:vm';
 import { installDom, mount, createElement } from './documentLaneDom.mjs';
 
 const { body } = installDom();
@@ -29,16 +33,31 @@ actions.appendChild(copy);
 actions.appendChild(exportButton);
 actions.appendChild(save);
 
-globalThis._syncOverflow = undefined;
-const overflowModule = await import('../frontend/src/features/documents/ui/header/overflow.js');
+delete globalThis._syncOverflow;
+const entryPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../frontend/src/features/documents/ui/header/overflow.js');
+const source = fs.readFileSync(entryPath, 'utf8');
+const entrySource = source + '\nexport { initActionOverflow };';
+const entryUrl = pathToFileURL(entryPath).href;
+const entry = new SourceTextModule(entrySource, { identifier: entryUrl });
+await entry.link(async (specifier) => {
+  assert.equal(specifier, '../exportDocx.js', 'overflow should only depend on the export menu owner');
+  const dependencyUrl = pathToFileURL(path.resolve(path.dirname(entryPath), specifier)).href;
+  const dependency = new SyntheticModule(['showExportMenu'], function () {
+    this.setExport('showExportMenu', () => {});
+  }, { identifier: dependencyUrl });
+  await dependency.link(() => { throw new Error('Unexpected export menu dependency'); });
+  return dependency;
+});
+await entry.evaluate();
+const overflowModule = entry.namespace;
 
 test('overflow initializes, tracks recency, and preserves the sync callback contract', () => {
-  assert.equal(globalThis._syncOverflow, undefined);
-  globalThis.initActionOverflow();
+  assert.equal(Object.hasOwn(globalThis, '_syncOverflow'), false);
+  overflowModule.initActionOverflow();
   assert.equal(frames.length, 1);
   frames.shift()();
   assert.equal(overflowModule._syncOverflow instanceof Function, true);
-  assert.equal(globalThis._syncOverflow, undefined);
+  assert.equal(Object.hasOwn(globalThis, '_syncOverflow'), false);
   const installedSync = overflowModule._syncOverflow;
   assert.equal(wrapper.style.display, '');
   assert.equal(copy.classList.contains('doc-collapsed'), false);

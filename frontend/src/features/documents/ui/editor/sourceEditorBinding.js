@@ -1,39 +1,35 @@
 // ui/editor/sourceEditorBinding.js
 
-import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
+import { activeDocId, docs, isPanelOpen } from '../../application/documentState.js';
 
-import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _resetPersistenceHooksForTesting, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, awaitWrites, bindPersistenceHooks, runSerializedWrite, saveDocument } from '../../application/persistence.js';
+import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _markDocumentDirty, _scheduleAutoSave, saveDocument } from '../../application/persistence.js';
 
-import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from '../../domain/documentKinds.js';
+import { _isMarkdownImageFile } from '../../domain/documentKinds.js';
 
-import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from '../documentActions.js';
+import { _autoCreateFromInput, _creatingDoc, deleteActiveDocument } from '../documentFlows.js';
 
-import { _autoCreateFromInput, _autoCreateSession, _closeWithoutDeleting, _creatingDoc, _detachDocFromSession, _ensureDocPaneMounted, _rememberActiveDoc, _visibleDocIdsForCurrentSession, closeTab, createDocument, deleteActiveDocument, getChatDocumentId, injectFreshDoc, loadDocument, moveActiveDocumentToCurrentChat, moveActiveDocumentToNewChat } from '../documentFlows.js';
+import { _uploadMarkdownImages } from './markdownImages.js';
 
-import { _handleMarkdownImageUpload, _uploadMarkdownImages } from './markdownImages.js';
+import { scheduleSourceEditorWork, syncGutterScroll, updateLineNumbers } from './sourceEditor.js';
 
-import { _handleMarkdownPreviewClickHint, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, scheduleSourceEditorWork, syncGutterScroll, updateLineNumbers } from './sourceEditor.js';
+import { _uploadComposeFiles } from '../email/attachments.js';
 
-import { _handleAttachUpload, _renderComposeAttachments, _showComposeAttachMenu, _stageForwardedSourceAttachments, _uploadComposeFiles } from '../email/attachments.js';
+import { _persistEmailLocalDraftSoon } from '../email/localDraft.js';
 
-import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _emailFieldsWithLocalDraft, _emailLocalDraftDebounce, _persistEmailLocalDraftNow, _persistEmailLocalDraftSoon, _sanitizeOutgoingEmailBody } from '../email/localDraft.js';
+import { _wireDiffViewer, _wireFindReplace, _wirePdfTools, _wireSuggestions } from '../moduleWiring.js';
 
-import { _disposePdfTools, _wireDiffViewer, _wireFindReplace, _wirePdfTools, _wireSuggestions } from '../moduleWiring.js';
+import { applyMdFormat } from '../richEditor/formatting.js';
 
-import { _currentBlockTag, _normalizedRichMenuColor, _richMenuColorHex, _richSelectionHasFormatting, _saveFormatSelection, applyMdFormat } from '../richEditor/formatting.js';
+import { _selections, clearSelection, syncSelectionOverlay, updateSelectionState } from '../selection/selectionHighlights.js';
 
-import { _measurePos, _scheduleSelRerender, _selResizeObserver, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from '../selection/selectionHighlights.js';
+import { _activeDocLanguage, _openDocumentOutline, _refreshDocumentOutline, _scheduleDocumentHistoryControls, _scheduleDocumentStats } from '../status/documentStatus.js';
 
-import { _activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder } from '../status/documentStatus.js';
-
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
+import { uiModule } from '../host.js';
 
 import { closePanel, saveCurrentToMap } from '../../application/documentCommands.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { _openFindBar, onFindTextareaScroll } from '../findReplace.js';
 import { initRichTables } from '../richTables.js';
-
-
 
 export function bindSourceEditor({ pane, paneLifetime }) {
 const ta = document.getElementById('doc-editor-textarea');

@@ -6,9 +6,9 @@ import { API_BASE, activeDocId, docs } from "../../application/documentState.js"
 
 import { _escHtml, _isRichTextLang } from "../../domain/documentKinds.js";
 
-function _afterOdysseusAttachmentsAdded(count, label) {
-    _renderComposeAttachments();
-    _scheduleAutoSave(activeDocId, 800);
+function _afterOdysseusAttachmentsAdded(count, label, docId = activeDocId) {
+    if (activeDocId === docId) _renderComposeAttachments();
+    _scheduleAutoSave(docId, 800);
     if (uiModule) uiModule.showToast(count > 1 ? `Attached ${count} items` : `Attached ${label || 'item'}`);
   }
 
@@ -22,10 +22,11 @@ function _attachMenuOutsideClick(e) {
   }
 
 async function _attachOdysseusItem(kind, id, label, opts = {}) {
+    const docId = activeDocId;
     try {
-      const data = await _stageOdysseusAttachment(kind, id);
+      const data = await _stageOdysseusAttachment(kind, id, docId);
       if (!data) return;
-      _afterOdysseusAttachmentsAdded(1, label || data.filename);
+      _afterOdysseusAttachmentsAdded(1, label || data.filename, docId);
       if (!opts.keepOpen) _closeOdysseusAttachMenu();
     } catch (err) {
       console.error('Failed to attach Odysseus item:', err);
@@ -34,6 +35,7 @@ async function _attachOdysseusItem(kind, id, label, opts = {}) {
   }
 
 async function _attachSelectedOdysseusItems(menu) {
+    const docId = activeDocId;
     const rows = _selectedOdysseusAttachRows(menu);
     if (!rows.length) return;
     const btn = menu.querySelector('.email-odysseus-attach-selected');
@@ -52,15 +54,15 @@ async function _attachSelectedOdysseusItems(menu) {
           : window.confirm(`Attach ${items.length} files as one zip?`);
       }
       if (zip) {
-        await _stageOdysseusZip(items);
+        await _stageOdysseusZip(items, docId);
         added = 1;
       } else {
         for (const item of items) {
-          await _stageOdysseusAttachment(item.kind, item.id);
+          await _stageOdysseusAttachment(item.kind, item.id, docId);
           added += 1;
         }
       }
-      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined);
+      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined, docId);
       _closeOdysseusAttachMenu();
     } catch (err) {
       console.error('Failed to attach selected Odysseus items:', err);
@@ -291,7 +293,8 @@ export function _showComposeAttachMenu(anchor) {
   }
 
 export async function _stageForwardedSourceAttachments(fields) {
-    const doc = docs.get(activeDocId);
+    const docId = activeDocId;
+    const doc = docs.get(docId);
     if (!doc || doc.language !== 'email') return;
     if (!fields?.forwardAttachments || !fields.sourceUid || !Array.isArray(fields.attachments) || fields.attachments.length === 0) return;
     const sourceKey = `${fields.sourceFolder || 'INBOX'}:${fields.sourceUid}:${fields.attachments.map(a => a.index).join(',')}`;
@@ -311,6 +314,7 @@ export async function _stageForwardedSourceAttachments(fields) {
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'failed');
+        if (docs.get(docId) !== doc) return;
         doc._composeAtts.push({
           token: data.token,
           filename: data.filename || att.filename,
@@ -325,13 +329,13 @@ export async function _stageForwardedSourceAttachments(fields) {
       }
     }
     if (added) {
-      _renderComposeAttachments();
-      _scheduleAutoSave(activeDocId, 800);
+      if (activeDocId === docId) _renderComposeAttachments();
+      _scheduleAutoSave(docId, 800);
     }
   }
 
-async function _stageOdysseusAttachment(kind, id) {
-    const doc = docs.get(activeDocId);
+async function _stageOdysseusAttachment(kind, id, docId = activeDocId) {
+    const doc = docs.get(docId);
     if (!doc || doc.language !== 'email') return null;
     if (!doc._composeAtts) doc._composeAtts = [];
     const res = await fetch(`${API_BASE}/api/email/compose-from-odysseus`, {
@@ -343,6 +347,7 @@ async function _stageOdysseusAttachment(kind, id) {
     let data = null;
     try { data = await res.json(); } catch (_) {}
     if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+    if (docs.get(docId) !== doc) return null;
     doc._composeAtts.push({
       token: data.token,
       filename: data.filename,
@@ -351,8 +356,8 @@ async function _stageOdysseusAttachment(kind, id) {
     return data;
   }
 
-async function _stageOdysseusZip(items) {
-    const doc = docs.get(activeDocId);
+async function _stageOdysseusZip(items, docId = activeDocId) {
+    const doc = docs.get(docId);
     if (!doc || doc.language !== 'email') return null;
     if (!doc._composeAtts) doc._composeAtts = [];
     const res = await fetch(`${API_BASE}/api/email/compose-from-odysseus-zip`, {
@@ -364,6 +369,7 @@ async function _stageOdysseusZip(items) {
     let data = null;
     try { data = await res.json(); } catch (_) {}
     if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+    if (docs.get(docId) !== doc) return null;
     doc._composeAtts.push({
       token: data.token,
       filename: data.filename,
@@ -385,7 +391,8 @@ function _syncOdysseusAttachSelection(menu) {
 export async function _uploadComposeFiles(files) {
     const list = Array.from(files || []);
     if (list.length === 0) return;
-    const doc = docs.get(activeDocId);
+    const docId = activeDocId;
+    const doc = docs.get(docId);
     if (!doc) return;
     if (doc.language !== 'email') return;
     if (!doc._composeAtts) doc._composeAtts = [];
@@ -399,6 +406,7 @@ export async function _uploadComposeFiles(files) {
           body: fd,
         });
         const data = await res.json();
+        if (docs.get(docId) !== doc) return;
         if (data.success) {
           doc._composeAtts.push({
             token: data.token,
@@ -412,5 +420,5 @@ export async function _uploadComposeFiles(files) {
         if (uiModule) uiModule.showError(`Failed to upload ${file.name}`);
       }
     }
-    _renderComposeAttachments();
+    if (activeDocId === docId) _renderComposeAttachments();
   }

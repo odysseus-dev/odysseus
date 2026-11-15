@@ -1,0 +1,770 @@
+{
+  "schemaVersion": 1,
+  "auditedRevision": "032d98575f5a7492e2377089cbc68f148753dd64",
+  "accountingBaseline": "087e6c8837969339e9e7823dd84a4d717d536cea",
+  "functionBodyRewrites": {
+    "_emailFieldsWithLocalDraft": {
+      "file": "ui/email/localDraft.js",
+      "rationale": "Preserve user-cleared CC and BCC fields when restoring local drafts.",
+      "replacements": [
+        {
+          "from": "      cc: keepRealField(draft.cc, fields.cc),\n      bcc: keepRealField(draft.bcc, fields.bcc),\n",
+          "to": "      cc: draft.cc == null ? fields.cc : String(draft.cc),\n      bcc: draft.bcc == null ? fields.bcc : String(draft.bcc),\n",
+          "rationale": "Preserve user-cleared CC and BCC fields when restoring local drafts."
+        }
+      ],
+      "targetFunctionSha256": "4ab67a65ec6f150b86cf9dd1cb518ec24e58950c5290f4065d253f367e9c7d65"
+    },
+    "_persistEmailLocalDraftNow": {
+      "file": "ui/email/localDraft.js",
+      "rationale": "Capture and persist an owner-produced draft snapshot while clearing the pending debounce.",
+      "replacements": [
+        {
+          "from": "    const doc = activeDocId && docs.get(activeDocId);\n    if (!doc || doc.language !== 'email') return;\n    const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';\n    const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';\n    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value || '';\n    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);\n    if (!key) return;\n    const rich = document.getElementById('doc-email-richbody');\n    const textarea = document.getElementById('doc-editor-textarea');\n    const body = (rich && rich.style.display !== 'none') ? rich.innerHTML : (textarea?.value || '');\n    const payload = {\n      to: document.getElementById('doc-email-to')?.value || '',\n      cc: document.getElementById('doc-email-cc')?.value || '',\n      bcc: document.getElementById('doc-email-bcc')?.value || '',\n      subject: document.getElementById('doc-email-subject')?.value || '',\n      inReplyTo,\n      references: document.getElementById('doc-email-references')?.value || '',\n      sourceUid,\n      sourceFolder,\n      body,\n      updatedAt: Date.now(),\n    };\n    try { localStorage.setItem(key, JSON.stringify(payload)); } catch (_) {}\n",
+          "to": "    clearTimeout(_emailLocalDraftDebounce);\n    _emailLocalDraftDebounce = null;\n    writeEmailLocalDraft(captureEmailLocalDraft());\n",
+          "rationale": "Capture and persist an owner-produced draft snapshot while clearing the pending debounce."
+        }
+      ],
+      "targetFunctionSha256": "09bc9f1b0ef69ad54334b990072d043a485d636fe2e92e41d990d06f1074c1c1"
+    },
+    "_persistEmailLocalDraftSoon": {
+      "file": "ui/email/localDraft.js",
+      "rationale": "Capture draft content when scheduling so later document changes cannot redirect a pending write.",
+      "replacements": [
+        {
+          "from": "    _emailLocalDraftDebounce = setTimeout(_persistEmailLocalDraftNow, 800);\n",
+          "to": "    const snapshot = captureEmailLocalDraft();\n    _emailLocalDraftDebounce = setTimeout(() => {\n      _emailLocalDraftDebounce = null;\n      writeEmailLocalDraft(snapshot);\n    }, 800);\n",
+          "rationale": "Capture draft content when scheduling so later document changes cannot redirect a pending write."
+        }
+      ],
+      "targetFunctionSha256": "7c7c604dfcad2759832778e973975d996da9b037294a8859e39f2ad65d4715c1"
+    },
+    "_showEmailFields": {
+      "file": "ui/email/composerFields.js",
+      "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes.",
+      "replacements": [
+        {
+          "from": "      setTimeout(() => {\n",
+          "to": "      setTimeout(() => {\n        if (!_rich.isConnected || activeDocId !== openedDocId) return;\n",
+          "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes."
+        },
+        {
+          "from": "      _wireEmailRichbody(_rich);\n",
+          "to": "      _wireEmailRichbody(_rich);\n      const openedDocId = activeDocId;\n",
+          "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes."
+        },
+        {
+          "from": "      if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);\n      _emailStreamAnimFrame = null;\n      _emailStreamRenderedBody = fields.body || '';\n      _emailStreamTargetBody = fields.body || '';\n",
+          "to": "      resetEmailStreamState(fields.body || '');\n",
+          "rationale": "Reset stream state through its owner and guard delayed focus against stale email panes."
+        }
+      ],
+      "targetFunctionSha256": "e2d0652946d694b2f558664777fd7b0e04d4a08b85781e536385c50efc192062"
+    },
+    "_uploadComposeFiles": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Apply upload results and attachment rendering only to the captured document identity.",
+      "replacements": [
+        {
+          "from": "    _renderComposeAttachments();\n",
+          "to": "    if (activeDocId === docId) _renderComposeAttachments();\n",
+          "rationale": "Apply upload results and attachment rendering only to the captured document identity."
+        },
+        {
+          "from": "        const data = await res.json();\n",
+          "to": "        const data = await res.json();\n        if (docs.get(docId) !== doc) return;\n",
+          "rationale": "Apply upload results and attachment rendering only to the captured document identity."
+        },
+        {
+          "from": "    const doc = docs.get(activeDocId);\n",
+          "to": "    const docId = activeDocId;\n    const doc = docs.get(docId);\n",
+          "rationale": "Apply upload results and attachment rendering only to the captured document identity."
+        }
+      ],
+      "targetFunctionSha256": "f3d53ae85ba58226477dbcfd93edf81e6fd51a9a2ddff8d99c23d73bb3b5a600"
+    },
+    "_stageForwardedSourceAttachments": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Keep forwarded attachment results and autosave scoped to the captured document.",
+      "replacements": [
+        {
+          "from": "      _renderComposeAttachments();\n      _scheduleAutoSave(activeDocId, 800);\n",
+          "to": "      if (activeDocId === docId) _renderComposeAttachments();\n      _scheduleAutoSave(docId, 800);\n",
+          "rationale": "Keep forwarded attachment results and autosave scoped to the captured document."
+        },
+        {
+          "from": "        if (!data.success) throw new Error(data.error || 'failed');\n",
+          "to": "        if (!data.success) throw new Error(data.error || 'failed');\n        if (docs.get(docId) !== doc) return;\n",
+          "rationale": "Keep forwarded attachment results and autosave scoped to the captured document."
+        },
+        {
+          "from": "    const doc = docs.get(activeDocId);\n",
+          "to": "    const docId = activeDocId;\n    const doc = docs.get(docId);\n",
+          "rationale": "Keep forwarded attachment results and autosave scoped to the captured document."
+        }
+      ],
+      "targetFunctionSha256": "18ac0a8b1841325c5b0ed3855ef7bb08bfedb8f1068403b531dec5e04e99c3a7"
+    },
+    "_stageOdysseusAttachment": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Accept the owner document explicitly and discard a response after its record is replaced.",
+      "replacements": [
+        {
+          "from": "    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);\n",
+          "to": "    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);\n    if (docs.get(docId) !== doc) return null;\n",
+          "rationale": "Accept the owner document explicitly and discard a response after its record is replaced."
+        },
+        {
+          "from": "async function _stageOdysseusAttachment(kind, id) {\n    const doc = docs.get(activeDocId);\n",
+          "to": "async function _stageOdysseusAttachment(kind, id, docId = activeDocId) {\n    const doc = docs.get(docId);\n",
+          "rationale": "Accept the owner document explicitly and discard a response after its record is replaced."
+        }
+      ],
+      "targetFunctionSha256": "03a1cc248dbd95d597ef357f494a7374fe7f8602c55b333e1d6fdba46ce1da11"
+    },
+    "_stageOdysseusZip": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Accept the owner document explicitly and discard a response after its record is replaced.",
+      "replacements": [
+        {
+          "from": "    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);\n",
+          "to": "    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);\n    if (docs.get(docId) !== doc) return null;\n",
+          "rationale": "Accept the owner document explicitly and discard a response after its record is replaced."
+        },
+        {
+          "from": "async function _stageOdysseusZip(items) {\n    const doc = docs.get(activeDocId);\n",
+          "to": "async function _stageOdysseusZip(items, docId = activeDocId) {\n    const doc = docs.get(docId);\n",
+          "rationale": "Accept the owner document explicitly and discard a response after its record is replaced."
+        }
+      ],
+      "targetFunctionSha256": "73fdfa32db48b9bea2196addb976ba696a5152c9a8c24ef2721cbe1e4da4cc04"
+    },
+    "_afterOdysseusAttachmentsAdded": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Render only for the still active owner while scheduling autosave for the captured document.",
+      "replacements": [
+        {
+          "from": "function _afterOdysseusAttachmentsAdded(count, label) {\n    _renderComposeAttachments();\n    _scheduleAutoSave(activeDocId, 800);\n",
+          "to": "function _afterOdysseusAttachmentsAdded(count, label, docId = activeDocId) {\n    if (activeDocId === docId) _renderComposeAttachments();\n    _scheduleAutoSave(docId, 800);\n",
+          "rationale": "Render only for the still active owner while scheduling autosave for the captured document."
+        }
+      ],
+      "targetFunctionSha256": "417dfcab64d1c889164a971b7ff9d4bd5470ed899a4c25caaa6632f91b3bcd0e"
+    },
+    "_attachOdysseusItem": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Carry the captured document identity through asynchronous attachment staging.",
+      "replacements": [
+        {
+          "from": "      _afterOdysseusAttachmentsAdded(1, label || data.filename);\n",
+          "to": "      _afterOdysseusAttachmentsAdded(1, label || data.filename, docId);\n",
+          "rationale": "Carry the captured document identity through asynchronous attachment staging."
+        },
+        {
+          "from": "      const data = await _stageOdysseusAttachment(kind, id);\n",
+          "to": "      const data = await _stageOdysseusAttachment(kind, id, docId);\n",
+          "rationale": "Carry the captured document identity through asynchronous attachment staging."
+        },
+        {
+          "from": "async function _attachOdysseusItem(kind, id, label, opts = {}) {\n",
+          "to": "async function _attachOdysseusItem(kind, id, label, opts = {}) {\n    const docId = activeDocId;\n",
+          "rationale": "Carry the captured document identity through asynchronous attachment staging."
+        }
+      ],
+      "targetFunctionSha256": "79a0dd3788f44f7547f89062aa9695c85b9c2be01ebfce50e0310d532513699a"
+    },
+    "_attachSelectedOdysseusItems": {
+      "file": "ui/email/attachments.js",
+      "rationale": "Carry the captured document identity through asynchronous selected attachment staging.",
+      "replacements": [
+        {
+          "from": "      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined);\n",
+          "to": "      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined, docId);\n",
+          "rationale": "Carry the captured document identity through asynchronous selected attachment staging."
+        },
+        {
+          "from": "          await _stageOdysseusAttachment(item.kind, item.id);\n",
+          "to": "          await _stageOdysseusAttachment(item.kind, item.id, docId);\n",
+          "rationale": "Carry the captured document identity through asynchronous selected attachment staging."
+        },
+        {
+          "from": "        await _stageOdysseusZip(items);\n",
+          "to": "        await _stageOdysseusZip(items, docId);\n",
+          "rationale": "Carry the captured document identity through asynchronous selected attachment staging."
+        },
+        {
+          "from": "async function _attachSelectedOdysseusItems(menu) {\n",
+          "to": "async function _attachSelectedOdysseusItems(menu) {\n    const docId = activeDocId;\n",
+          "rationale": "Carry the captured document identity through asynchronous selected attachment staging."
+        }
+      ],
+      "targetFunctionSha256": "3b1fbca496f1b32b289a7d87e96a2ee78ba1f2a9717c052cd9974cc8d1f0d543"
+    },
+    "_ensureRichImageToolbar": {
+      "file": "ui/richEditor/imageMenus.js",
+      "rationale": "Reposition the existing toolbar on reuse and publish its position callback for the image selection observer.",
+      "replacements": [
+        {
+          "from": "    };\n",
+          "to": "    };\n    toolbar._position = position;\n",
+          "rationale": "Reposition the existing toolbar on reuse and publish its position callback for the image selection observer."
+        },
+        {
+          "from": "    if (_richImageToolbar?.isConnected) return _richImageToolbar;\n",
+          "to": "    if (_richImageToolbar?.isConnected) {\n      requestAnimationFrame(_richImageToolbar._position);\n      return _richImageToolbar;\n    }\n",
+          "rationale": "Reposition the existing toolbar on reuse and publish its position callback for the image selection observer."
+        }
+      ],
+      "targetFunctionSha256": "f97dce20ac3d14c9191b8fc00390395e9f6c73411f5f9c231484c93b99d57a0e"
+    },
+    "_scheduleMarkdownImageAutosave": {
+      "file": "ui/editor/markdownImages.js",
+      "rationale": "Delegate shared source editor timer state to its owning module.",
+      "replacements": [
+        {
+          "from": "    clearTimeout(_hlDebounce);\n    _hlDebounce = setTimeout(syncHighlighting, 80);\n    clearTimeout(_autoTitleDebounce);\n    _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);\n",
+          "to": "    scheduleSourceEditorWork(ta.value, activeDocId);\n",
+          "rationale": "Delegate shared source editor timer state to its owning module."
+        }
+      ],
+      "targetFunctionSha256": "75154db216859a6ee84a5496e12bb5dea329aa32d9a9dea1a1e882a293477a43"
+    },
+    "_clearRichImageSelection": {
+      "file": "ui/richEditor/imageOps.js",
+      "rationale": "Delegate toolbar cleanup and active image state to their explicit owners.",
+      "replacements": [
+        {
+          "from": "    _activeRichImage = null;\n",
+          "to": "    setActiveRichImage(null);\n",
+          "rationale": "Delegate toolbar cleanup and active image state to their explicit owners."
+        },
+        {
+          "from": "    _hideRichImageToolbar();\n",
+          "to": "    imageSelectionObserver?.(null, null);\n",
+          "rationale": "Delegate toolbar cleanup and active image state to their explicit owners."
+        }
+      ],
+      "targetFunctionSha256": "f31d7bbdad1da0f6df9e0a6897b52f26eaf5b5d26cd7c8da00cf82038fd877a3"
+    },
+    "_selectRichImage": {
+      "file": "ui/richEditor/imageOps.js",
+      "rationale": "Delegate active image state and toolbar positioning through the owner observer.",
+      "replacements": [
+        {
+          "from": "    _ensureRichImageToolbar(rich);\n    requestAnimationFrame(() => {\n      if (!_richImageToolbar?.isConnected || !_activeRichImage?.isConnected) return;\n      const rect = _activeRichImage.getBoundingClientRect();\n      const width = _richImageToolbar.offsetWidth || 58;\n      _richImageToolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;\n      _richImageToolbar.style.top = `${Math.max(8, rect.top - _richImageToolbar.offsetHeight - 6)}px`;\n    });\n",
+          "to": "    imageSelectionObserver?.(rich, image);\n",
+          "rationale": "Delegate active image state and toolbar positioning through the owner observer."
+        },
+        {
+          "from": "    _activeRichImage = image;\n",
+          "to": "    setActiveRichImage(image);\n",
+          "rationale": "Delegate active image state and toolbar positioning through the owner observer."
+        }
+      ],
+      "targetFunctionSha256": "9935a79cfcbb0ea8dfb48b9287e7f00e09e98f7129038b7c9b8e0ceacec4753f"
+    },
+    "_uploadMarkdownImages": {
+      "file": "ui/editor/markdownImages.js",
+      "rationale": "Bind upload completion to the captured pane and document so stale responses cannot modify a new editor.",
+      "replacements": [
+        {
+          "from": "      if (!uploaded.length) throw new Error('No uploaded files returned');\n",
+          "to": "      if (!uploaded.length) throw new Error('No uploaded files returned');\n      if (!pane?.isConnected || pane !== document.getElementById('doc-editor-pane') || pane.dataset.activeDocumentId !== docId || activeDocId !== docId) return;\n",
+          "rationale": "Bind upload completion to the captured pane and document so stale responses cannot modify a new editor."
+        },
+        {
+          "from": "    }\n\n",
+          "to": "    }\n\n    const docId = activeDocId;\n    const pane = document.getElementById('doc-editor-pane');\n",
+          "rationale": "Bind upload completion to the captured pane and document so stale responses cannot modify a new editor."
+        }
+      ],
+      "targetFunctionSha256": "6b1d28751d26513f8213996022dac0fa0f0feeac845af18ff336b48c9a346899"
+    },
+    "_markUnreadAndClose": {
+      "file": "ui/email/sendWorkflow.js",
+      "rationale": "Close the email only if the original document remains the active owner after the request.",
+      "replacements": [
+        {
+          "from": "    _discardEmail();\n",
+          "to": "    if (activeDocId === docId && docs.get(docId) === doc) _discardEmail();\n",
+          "rationale": "Close the email only if the original document remains the active owner after the request."
+        },
+        {
+          "from": "async function _markUnreadAndClose() {\n",
+          "to": "async function _markUnreadAndClose() {\n    const docId = activeDocId;\n    const doc = docs.get(docId);\n",
+          "rationale": "Close the email only if the original document remains the active owner after the request."
+        }
+      ],
+      "targetFunctionSha256": "27d0909b2263b40d54db7a602121e951ecbf78b1d671809c536f9fb17d640b08"
+    },
+    "saveCurrentToMap": {
+      "file": "ui/panel/documentPresenter.js",
+      "rationale": "Capture editor state only when the current pane declares ownership of the active document.",
+      "replacements": [
+        {
+          "from": "function saveCurrentToMap() {\n",
+          "to": "function saveCurrentToMap() {\n    // The active ID can still identify the previous document while a new pane\n    // is mounting. Only its populated owner may supply a draft snapshot.\n    const pane = document.getElementById('doc-editor-pane');\n    if (!pane || pane.dataset.activeDocumentId !== activeDocId) return;\n",
+          "rationale": "Capture editor state only when the current pane declares ownership of the active document."
+        }
+      ],
+      "targetFunctionSha256": "af30790b40ed5583f90f98b9fb067d1d103cf0d0e9fce04c602f022dfe2abac5"
+    },
+    "openEmailDraft": {
+      "file": "ui/email/emailDocuments.js",
+      "rationale": "Await document injection so opening a draft completes after its owner operation.",
+      "replacements": [
+        {
+          "from": "    injectFreshDoc(doc);\n",
+          "to": "    await injectFreshDoc(doc);\n",
+          "rationale": "Await document injection so opening a draft completes after its owner operation."
+        }
+      ],
+      "targetFunctionSha256": "938b0f11e5404b018407ce6459beaae804c2ee37169ef854937c2ac6470718f2"
+    },
+    "replaceEmailReplyBody": {
+      "file": "ui/email/emailDocuments.js",
+      "rationale": "Mark the captured document dirty after replacing its reply body.",
+      "replacements": [
+        {
+          "from": "      if (textarea) _setEmailBodyText(textarea, body);\n    }\n",
+          "to": "      if (textarea) _setEmailBodyText(textarea, body);\n    }\n    _markDocumentDirty(docId);\n",
+          "rationale": "Mark the captured document dirty after replacing its reply body."
+        }
+      ],
+      "targetFunctionSha256": "c3cc6180c839a1923bf712b9327fc41c7b84b432fe65ef677778ae1fcef96f2e"
+    },
+    "ensureEmailDraftEnvelope": {
+      "file": "ui/email/emailDocuments.js",
+      "rationale": "Mark the captured document dirty after ensuring its draft envelope.",
+      "replacements": [
+        {
+          "from": "      _showEmailFields(doc, { applyLocalDraft: false });\n    }\n",
+          "to": "      _showEmailFields(doc, { applyLocalDraft: false });\n    }\n    _markDocumentDirty(docId);\n",
+          "rationale": "Mark the captured document dirty after ensuring its draft envelope."
+        }
+      ],
+      "targetFunctionSha256": "d491d9699fbe72ebbce7dfe3b07b725368c851dda10a9c58261c763bd12589ad"
+    },
+    "deleteActiveDocument": {
+      "file": "ui/documentFlows.js",
+      "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure.",
+      "replacements": [
+        {
+          "from": "    _inFlightDeletes.set(idToDelete, deleteTask);\n",
+          "to": "    beginDelete(idToDelete, deleteTask);\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        },
+        {
+          "from": "        _inFlightDeletes.delete(idToDelete);\n",
+          "to": "        endDelete(idToDelete);\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        },
+        {
+          "from": "        if (confirmed && docs.has(idToDelete) && !_deletedDocIds.has(idToDelete)) {\n          if (hadPendingPdfSave) {\n            _schedulePdfPaneSave(idToDelete);\n          } else if (hadPendingAutoSave || wasDirty) {\n",
+          "to": "        const draft = docs.get(idToDelete) || _closingDocs.get(idToDelete);\n        if (confirmed && draft && !_deletedDocIds.has(idToDelete)) {\n          if (hadPendingPdfSave || hadPendingAutoSave || wasDirty || draft._saveState === 'dirty' || draft._saveState === 'error') {\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        },
+        {
+          "from": "            activeDocId = null;\n",
+          "to": "            setActiveDocId(null);\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        },
+        {
+          "from": "        docs.delete(idToDelete);\n        _closingDocs.delete(idToDelete);\n",
+          "to": "        removeDocument(idToDelete);\n        releaseClosingDraft(idToDelete);\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        },
+        {
+          "from": "        _deletedDocIds.add(idToDelete);\n",
+          "to": "        markDeleted(idToDelete);\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        },
+        {
+          "from": "        wasDirty = (docs.get(idToDelete)?._saveState === 'dirty');\n",
+          "to": "        // Preserve the draft before stopping view timers. Rollback must also\n        // work after navigation or disposal removes every PDF control.\n        _syncPdfPaneToDoc(idToDelete, { markDirty: false });\n        if (activeDocId === idToDelete) saveCurrentToMap();\n        wasDirty = ((docs.get(idToDelete) || _closingDocs.get(idToDelete))?._saveState === 'dirty');\n",
+          "rationale": "Route document, deletion and in-flight state changes through documentState owner operations while retaining draft recovery on failure."
+        }
+      ],
+      "targetFunctionSha256": "73adeac1cb51526c3e81393acccd418109290660e6ba0b8e4a05c56c771a32b3"
+    },
+    "streamDocOpen": {
+      "file": "ui/aiUpdates/liveStream.js",
+      "rationale": "Use documentState owner operations for navigation and registration, then stamp the active pane identity.",
+      "replacements": [
+        {
+          "from": "      textarea.value = '';\n    }\n",
+          "to": "      textarea.value = '';\n    }\n    const pane = document.getElementById('doc-editor-pane');\n    if (pane) pane.dataset.activeDocumentId = docId;\n",
+          "rationale": "Use documentState owner operations for navigation and registration, then stamp the active pane identity."
+        },
+        {
+          "from": "    activeDocId = docId;\n",
+          "to": "    setActiveDocId(docId);\n",
+          "rationale": "Use documentState owner operations for navigation and registration, then stamp the active pane identity."
+        },
+        {
+          "from": "      docs.set(docId, {\n",
+          "to": "      registerDocument({\n",
+          "rationale": "Use documentState owner operations for navigation and registration, then stamp the active pane identity."
+        },
+        {
+          "from": "    ++_documentNavigationGeneration;\n",
+          "to": "    bumpNavigationGeneration();\n",
+          "rationale": "Use documentState owner operations for navigation and registration, then stamp the active pane identity."
+        }
+      ],
+      "targetFunctionSha256": "28361f74477000de09258750fa0a75341ce30c462b7526139d002fe2eaad49ee"
+    },
+    "handleDocUpdate": {
+      "file": "ui/aiUpdates/documentUpdate.js",
+      "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document.",
+      "replacements": [
+        {
+          "from": "      requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));\n",
+          "to": "      requestAnimationFrame(() => { if (ownsPane()) _setMarkdownPreviewActive(true, { remember: true }); });\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    } else if (finalLangLower === 'csv') {\n      requestAnimationFrame(() => {\n",
+          "to": "    } else if (finalLangLower === 'csv') {\n      requestAnimationFrame(() => {\n        if (!ownsPane()) return;\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "        if (activeDocId !== docId || !isOpen) return;\n",
+          "to": "        if (!ownsPane() || !isOpen) return;\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "      setTimeout(attemptAutoDetect, 100);\n",
+          "to": "      setTimeout(() => { if (ownsPane()) attemptAutoDetect(); }, 100);\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "        _refreshMarkdownPreviewIfVisible(docId, newContent);\n      }\n    }\n\n",
+          "to": "        _refreshMarkdownPreviewIfVisible(docId, newContent);\n      }\n    }\n\n    const pane = document.getElementById('doc-editor-pane');\n    if (pane) pane.dataset.activeDocumentId = docId;\n    const ownsPane = () => pane?.isConnected && pane === document.getElementById('doc-editor-pane') && pane.dataset.activeDocumentId === docId && activeDocId === docId;\n\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    if (docLang && langSelect) langSelect.value = docLang;\n    if (!docLang) attemptAutoDetect();\n",
+          "to": "    if (langSelect) langSelect.value = docLang || 'markdown';\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    if (data.title && titleInput) titleInput.value = data.title;\n",
+          "to": "    if (titleInput) titleInput.value = docs.get(docId)?.title || '';\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    activeDocId = docId;\n",
+          "to": "    setActiveDocId(docId);\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    if (!isOpen) openPanel();\n",
+          "to": "    if (!isOpen) openPanel();\n    textarea = document.getElementById('doc-editor-textarea');\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "      docs.set(docId, {\n",
+          "to": "      registerDocument({\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    const textarea = document.getElementById('doc-editor-textarea');\n",
+          "to": "    let textarea = document.getElementById('doc-editor-textarea');\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "      if (activeDocId === streamingId) activeDocId = docId;\n",
+          "to": "      if (activeDocId === streamingId) setActiveDocId(docId);\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "      docs.set(docId, tempDoc);\n",
+          "to": "      registerDocument(tempDoc);\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "      docs.delete(streamingId);\n",
+          "to": "      removeDocument(streamingId);\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        },
+        {
+          "from": "    ++_documentNavigationGeneration;\n",
+          "to": "    bumpNavigationGeneration();\n",
+          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+        }
+      ],
+      "targetFunctionSha256": "2a4492e0bbad6d3c48958e98e337af3fcf09e7fd4f6576d9509c6e684392cfcd"
+    },
+    "updateLanguage": {
+      "file": "ui/documentActions.js",
+      "rationale": "Bind the language update request to a captured document and value, and reject failed or stale completions.",
+      "replacements": [
+        {
+          "from": "      if (docs.has(activeDocId)) {\n        docs.get(activeDocId).language = select.value;\n        renderTabs();\n      }\n",
+          "to": "      if (!res.ok) throw new Error(`Language update failed: HTTP ${res.status}`);\n      // The request retains its original identity and value. A response cannot\n      // overwrite a later selection or a newly active document.\n      if (docs.get(docId) === doc && doc.language === language) renderTabs();\n",
+          "rationale": "Bind the language update request to a captured document and value, and reject failed or stale completions."
+        },
+        {
+          "from": "        body: JSON.stringify({ language: select.value }),\n",
+          "to": "        body: JSON.stringify({ language }),\n",
+          "rationale": "Bind the language update request to a captured document and value, and reject failed or stale completions."
+        },
+        {
+          "from": "      await fetch(`${API_BASE}/api/document/${activeDocId}`, {\n",
+          "to": "      const res = await fetch(`${API_BASE}/api/document/${docId}`, {\n",
+          "rationale": "Bind the language update request to a captured document and value, and reject failed or stale completions."
+        },
+        {
+          "from": "async function updateLanguage() {\n    if (!activeDocId) return;\n    const select = document.getElementById('doc-language-select');\n    if (!select) return;\n",
+          "to": "async function updateLanguage(docId = activeDocId, language = document.getElementById('doc-language-select')?.value) {\n    if (!docId || language == null) return;\n    const doc = docs.get(docId);\n    if (!doc) return;\n    doc.language = language;\n",
+          "rationale": "Bind the language update request to a captured document and value, and reject failed or stale completions."
+        }
+      ],
+      "targetFunctionSha256": "fea4b667b7add5b558abd88f7de0cff3716ad6d398ea3372db6b4cbb4efb0a40"
+    }
+  },
+  "openPanelStatementRewrites": [
+    {
+      "id": "openPanel#6237",
+      "rationale": "Run rich image selection cleanup through its owner during pane disposal.",
+      "replacements": [
+        {
+          "from": "disposeSourceEditor(pane);\n      disposeSelectionHighlights();",
+          "to": "disposeSourceEditor(pane);\n      _clearRichImageSelection();\n      disposeSelectionHighlights();",
+          "rationale": "Add image selection owner cleanup before the remaining selection observer cleanup."
+        }
+      ],
+      "targetFunctionFile": "ui/panel/panelLifecycle.js",
+      "targetFunctionName": "openPanel",
+      "targetFunctionSha256": "639fac9378df7525ea414b158f2bdee086d083dae4ad40ca2c0ed1721b3d3077"
+    },
+    {
+      "id": "openPanel#7122",
+      "rationale": "Keep page binding sentinels private to the composer wiring module.",
+      "replacements": [
+        {
+          "from": "if (!window._emailSendDelegatedBoundV3) {\n      window._emailSendDelegatedBoundV3 = true;",
+          "to": "if (!pageBindings.has('_emailSendDelegatedBoundV3')) {\n      pageBindings.add('_emailSendDelegatedBoundV3');",
+          "rationale": "Replace the mirrored window sentinel with the module-owned binding set."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7161",
+      "rationale": "Keep page binding sentinels private to the composer wiring module.",
+      "replacements": [
+        {
+          "from": "if (!window._emailCaretDelegatedBoundV1) {\n      window._emailCaretDelegatedBoundV1 = true;",
+          "to": "if (!pageBindings.has('_emailCaretDelegatedBoundV1')) {\n      pageBindings.add('_emailCaretDelegatedBoundV1');",
+          "rationale": "Replace the mirrored window sentinel with the module-owned binding set."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7171",
+      "rationale": "Keep page binding sentinels private to the composer wiring module.",
+      "replacements": [
+        {
+          "from": "if (!window._emailCtrlEnterBound) {\n      window._emailCtrlEnterBound = true;",
+          "to": "if (!pageBindings.has('_emailCtrlEnterBound')) {\n      pageBindings.add('_emailCtrlEnterBound');",
+          "rationale": "Replace the mirrored window sentinel with the module-owned binding set."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7187",
+      "rationale": "Keep page binding sentinels private to the composer wiring module.",
+      "replacements": [
+        {
+          "from": "if (!window._docMdToggleBound) {\n      window._docMdToggleBound = true;",
+          "to": "if (!pageBindings.has('_docMdToggleBound')) {\n      pageBindings.add('_docMdToggleBound');",
+          "rationale": "Replace the mirrored window sentinel with the module-owned binding set."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7205",
+      "rationale": "Keep page binding sentinels private to the composer wiring module.",
+      "replacements": [
+        {
+          "from": "if (!window._docStickyTypingBound) {\n      window._docStickyTypingBound = true;",
+          "to": "if (!pageBindings.has('_docStickyTypingBound')) {\n      pageBindings.add('_docStickyTypingBound');",
+          "rationale": "Replace the mirrored window sentinel with the module-owned binding set."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7277",
+      "rationale": "Mark email field edits dirty before scheduling their owner autosave.",
+      "replacements": [
+        {
+          "from": "        saveCurrentToMap();",
+          "to": "        saveCurrentToMap();\n        _markDocumentDirty(activeDocId);",
+          "rationale": "Record the edit through the persistence owner before scheduling autosave."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7287",
+      "rationale": "Keep page binding sentinels private to the composer wiring module.",
+      "replacements": [
+        {
+          "from": "if (window.visualViewport && !window._docEmailViewportCollapseBound) {\n      window._docEmailViewportCollapseBound = true;",
+          "to": "if (window.visualViewport && !pageBindings.has('_docEmailViewportCollapseBound')) {\n      pageBindings.add('_docEmailViewportCollapseBound');",
+          "rationale": "Replace the mirrored window sentinel with the module-owned binding set."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "openPanel#7349",
+      "rationale": "Mark cleared CC/BCC field edits dirty before scheduling their owner autosave.",
+      "replacements": [
+        {
+          "from": "        saveCurrentToMap();",
+          "to": "        saveCurrentToMap();\n        _markDocumentDirty(activeDocId);",
+          "rationale": "Record the edit through the persistence owner before scheduling autosave."
+        }
+      ],
+      "targetFunctionFile": "ui/email/composerWiring.js",
+      "targetFunctionName": "bindComposerWiring",
+      "targetFunctionSha256": "a114da3a45854bc6ec08045933b768c5bd11d45bd0fda7d6a8aa648b1b696355"
+    },
+    {
+      "id": "stmt#11782",
+      "rationale": "Keep the existing idempotent Escape handler registration in its owning module without publishing a temporary global sentinel.",
+      "targetFunctionFile": "ui/panel/panelLifecycle.js",
+      "targetFunctionName": "installEscapeLayering",
+      "targetFunctionSha256": "09e90a9cc04a401b2bfdd8274ed30a84f83571dcd28287292c9beefcb3085cff",
+      "replacements": [
+        {
+          "from": "!window._documentInnerEscapeBound",
+          "to": "!escapeLayeringInstalled",
+          "rationale": "Read the page lifetime sentinel from its module owner."
+        },
+        {
+          "from": "window._documentInnerEscapeBound = true;",
+          "to": "escapeLayeringInstalled = true;",
+          "rationale": "Write the sentinel only in its owning module."
+        }
+      ]
+    }
+  ],
+  "exports": {
+    "ui/email/emailDocuments": [
+      {
+        "name": "ensureEmailDraftEnvelope",
+        "rationale": "Keep the draft envelope operation available to its maintained module callers.",
+        "declarationSha256": "ad9ad14a241d2194fe310581a2581df3f452b4e66ed2904b237363e307dfa4e4"
+      },
+      {
+        "name": "findEmailDocId",
+        "rationale": "Keep the document lookup operation available to its maintained module callers.",
+        "declarationSha256": "ea95a64b68524f8fe892af7c72cae4ca90481a8d824df983c4e77e6f3956d38c"
+      },
+      {
+        "name": "getActiveEmailComposerContext",
+        "rationale": "Keep the composer context operation available to its maintained module callers.",
+        "declarationSha256": "018695c2d7e15e4d4ececf5c6d0e15112ccf43b5e17a7a84b132863355e57af6"
+      },
+      {
+        "name": "openEmailDraft",
+        "rationale": "Keep the draft opening operation available to its maintained module callers.",
+        "declarationSha256": "5b23c2b8838db519b5ad158696e1877c11fb43a84195123fd330df458513a1dc"
+      },
+      {
+        "name": "replaceEmailReplyBody",
+        "rationale": "Keep the reply replacement operation available to its maintained module callers.",
+        "declarationSha256": "2bd8eb8f103c68d982ef30b47ee6c3a13746d4231e42749148ef799e9151d902"
+      }
+    ],
+    "ui/email/emailBody": [
+      {
+        "name": "focusEmailReplyBody",
+        "rationale": "Keep the email body focus operation available to its maintained module callers.",
+        "declarationSha256": "065b1f83c1482de9b48e2c603b08d988970f11cfda7f6030b799d4931cac318d"
+      },
+      {
+        "name": "resetEmailStreamState",
+        "rationale": "Keep stream state reset under the email body module owner.",
+        "declarationSha256": "b3e7a8c8951291e36ed5f095f665c7922a5ee3fef7bd16911c0e78bf02696453"
+      }
+    ],
+    "ui/documentFlows": [
+      {
+        "name": "ensureDocPanel",
+        "rationale": "Keep panel assurance available to its maintained module callers.",
+        "declarationSha256": "bb7a2239d166085bb29966f49fcfcfec5a22b6629b2b567544a435745c3221fa"
+      },
+      {
+        "name": "loadSessionDocs",
+        "rationale": "Keep session document loading available to its maintained module callers.",
+        "declarationSha256": "f3af41bc2701aa74d7e7520f6e792e51da84e1c45c68e43248a4d52a9e4726fa"
+      }
+    ],
+    "ui/selection/selectionHighlights": [
+      {
+        "name": "getSelectionContext",
+        "rationale": "Keep selection context access behind the selection owner.",
+        "declarationSha256": "f26106db786a44b6fa723f1127331c9fb3b1f5c617f9c92a6d37424856446e33"
+      },
+      {
+        "name": "restoreSelectionReference",
+        "rationale": "Keep selection restoration behind the selection owner.",
+        "declarationSha256": "a5a070671a0da1c0453089dbc2aca34cda1732af5b165c924800d20848f2eddd"
+      },
+      {
+        "name": "replaceSelections",
+        "rationale": "Keep selection replacement behind the selection owner.",
+        "declarationSha256": "3398630b43d3d6643900af8a3e913dbfc744c4d7828343033a79a47f75f4f0a7"
+      }
+    ],
+    "ui/aiUpdates/documentUpdate": [
+      {
+        "name": "handleDocUpdate",
+        "rationale": "Expose the maintained document update entry point.",
+        "declarationSha256": "1ff4803b0ac3231907c103f15014edc058571ec17f305ea7d39e40b1cac68f23"
+      }
+    ],
+    "ui/aiUpdates/liveStream": [
+      {
+        "name": "streamDocOpen",
+        "rationale": "Expose the maintained document stream open entry point.",
+        "declarationSha256": "95ab20efe357918340f555a1fbf23400240910e8055a9afc089eaf71c03aa2df"
+      },
+      {
+        "name": "streamDocDelta",
+        "rationale": "Expose the maintained document stream delta entry point.",
+        "declarationSha256": "249dbb9767dfe0a251e8bb04d2e2739a4e8711690365b366736c0abcb8f82440"
+      }
+    ],
+    "ui/richEditor/imageOps": [
+      {
+        "name": "setImageSelectionObserver",
+        "rationale": "Keep toolbar observation registered through the image operation owner.",
+        "declarationSha256": "9053b3e23113aafb19c85dba7bc020db5853a295ed0b62661f543bc1435cbe41"
+      }
+    ]
+  }
+}

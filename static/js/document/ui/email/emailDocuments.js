@@ -10,7 +10,7 @@ import { _setEmailBodyText, _splitEmailReplyQuote, _emailBodyToHtml, _emailReply
 
 import { _showEmailFields } from "./composerFields.js";
 
-async function ensureEmailDraftEnvelope(docId, freshContent) {
+export async function ensureEmailDraftEnvelope(docId, freshContent) {
     const doc = docs.get(docId);
     if (!doc || doc.language !== 'email') return false;
     const current = _parseEmailHeader(doc.content || '');
@@ -74,7 +74,7 @@ async function ensureEmailDraftEnvelope(docId, freshContent) {
     return true;
   }
 
-function findEmailDocId(uid, folder) {
+export function findEmailDocId(uid, folder) {
     if (uid == null) return null;
     const wantUid = String(uid);
     const wantFolder = (folder || '').trim();
@@ -89,7 +89,7 @@ function findEmailDocId(uid, folder) {
     return null;
   }
 
-function getActiveEmailComposerContext() {
+export function getActiveEmailComposerContext() {
     const docId = getChatDocumentId();
     if (!docId) return null;
     const doc = docs.get(docId);
@@ -105,7 +105,7 @@ function getActiveEmailComposerContext() {
     };
   }
 
-async function openEmailDraft(data = {}) {
+export async function openEmailDraft(data = {}) {
     let sessionId = _lastSessionId || (sessionModule && sessionModule.getCurrentSessionId());
     if (!sessionId) {
       try { sessionId = await _autoCreateSession(); } catch (_) {}
@@ -142,7 +142,7 @@ async function openEmailDraft(data = {}) {
     return doc.id;
   }
 
-async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
+export async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
     const doc = docs.get(docId);
     if (!doc) return;
     const fields = _parseEmailHeader(doc.content || '');
@@ -184,12 +184,3 @@ async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
     _markDocumentDirty(docId);
     _scheduleAutoSave(docId, 800);
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.openEmailDraft = openEmailDraft;
-  globalThis.replaceEmailReplyBody = replaceEmailReplyBody;
-  globalThis.ensureEmailDraftEnvelope = ensureEmailDraftEnvelope;
-  globalThis.getActiveEmailComposerContext = getActiveEmailComposerContext;
-  globalThis.findEmailDocId = findEmailDocId;
-}
-

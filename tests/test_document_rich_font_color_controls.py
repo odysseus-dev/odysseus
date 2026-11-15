@@ -16,7 +16,7 @@ STYLE = app_css()
 
 
 def test_font_and_color_controls_use_shared_components():
-    assert re.search(r"import \{ attachColorPicker \} from './colorPicker\.js\?v=[A-Za-z0-9_-]+';", DOC_JS)
+    assert re.search(r"export \{ attachColorPicker \} from '/static/js/colorPicker\.js\?v=[A-Za-z0-9_-]+';", DOC_JS)
     assert 'data-dd="textsize" title="Font size" aria-label="Font size"' in DOC_JS
     for size, pixels in {1: 10, 2: 13, 3: 16, 4: 18, 5: 24, 6: 32, 7: 48}.items():
         assert f"{size}: {pixels}" in DOC_JS
@@ -141,7 +141,8 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
           slider.value = '5';
           slider.dispatchEvent(new Event('input', { bubbles: true }));
         });
-        await page.waitForTimeout(60);
+        await page.waitForFunction(() => document.querySelector('.rich-font-size-icon')?.textContent === '24'
+          && document.querySelector('.rich-toolbar-slider-value')?.value === '24');
         const sizeState = await page.evaluate(() => ({
           html: document.querySelector('#doc-email-richbody p').innerHTML,
           icon: document.querySelector('.rich-font-size-icon').textContent,

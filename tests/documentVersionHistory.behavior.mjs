@@ -172,7 +172,8 @@ async function loadVersionHistory() {
   }
 
   const entryUrl = pathToFileURL(entryPath).href;
-  const entry = new SourceTextModule(fs.readFileSync(entryPath, 'utf8'), {
+  const entrySource = fs.readFileSync(entryPath, 'utf8') + '\nexport { previewVersion, restoreVersion };';
+  const entry = new SourceTextModule(entrySource, {
     identifier: entryUrl,
     initializeImportMeta(meta) { meta.url = entryUrl; },
   });
@@ -275,7 +276,7 @@ describe('versionHistory', () => {
     globalThis.fetch = () => new Promise(resolve => {
       release = () => resolve({ ok: true, json: async () => ({ content: 'late preview' }) });
     });
-    const pending = globalThis.previewVersion(2);
+    const pending = env.api.previewVersion(2);
     env.api._closeVersionPanel();
     release();
     await pending;
@@ -295,7 +296,7 @@ describe('versionHistory', () => {
       assert.equal(opts.method, 'POST');
       return { ok: true, json: async () => ({ version_count: 4, current_content: 'restored', content: 'restored' }) };
     };
-    await globalThis.restoreVersion(2);
+    await env.api.restoreVersion(2);
     const doc = env.state.docs.get('doc-1');
     assert.equal(doc.content, 'restored');
     assert.equal(doc.version, 4);
@@ -315,7 +316,7 @@ describe('versionHistory', () => {
       doc.content = 'typed during restore';
       return { ok: true, json: async () => ({ version_count: 5, current_content: 'server', content: 'server' }) };
     };
-    await globalThis.restoreVersion(2);
+    await env.api.restoreVersion(2);
     assert.equal(doc.content, 'typed during restore');
     assert.deepEqual(calls.saveState[0], ['dirty', 'doc-1']);
     assert.equal(calls.scheduleSave.length, 1);
@@ -329,7 +330,7 @@ describe('versionHistory', () => {
     assert.match(dom.list.innerHTML, /Failed to load versions/);
 
     globalThis.fetch = async () => { throw new Error('offline'); };
-    await globalThis.previewVersion(1);
+    await env.api.previewVersion(1);
     assert.deepEqual(calls.errors, ['Failed to preview version']);
   });
 });

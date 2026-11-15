@@ -394,7 +394,8 @@ async function loadDocumentStatus() {
   }
 
   const entryUrl = pathToFileURL(entryPath).href;
-  const entry = new SourceTextModule(fs.readFileSync(entryPath, 'utf8'), {
+  const entrySource = fs.readFileSync(entryPath, 'utf8') + '\nexport { _normalizeRichStatsText, _documentStatsSource, _flashOutlineTarget, _jumpToDocumentOutlineEntry, _renderDocumentOutlineMenu };';
+  const entry = new SourceTextModule(entrySource, {
     identifier: entryUrl,
     initializeImportMeta(meta) { meta.url = entryUrl; },
   });
@@ -568,10 +569,10 @@ describe('documentStatus', () => {
       getRangeAt() { return { commonAncestorContainer: dom.rich }; },
       toString() { return 'picked'; },
     };
-    const source = globalThis._documentStatsSource();
+    const source = env.api._documentStatsSource();
     assert.equal(source.selected, true);
     assert.equal(source.text, 'picked');
-    assert.equal(globalThis._normalizeRichStatsText('a\u00a0b\n\n\n'), 'a b');
+    assert.equal(env.api._normalizeRichStatsText('a\u00a0b\n\n\n'), 'a b');
   });
 
   it('reads the active document language', () => {
@@ -674,7 +675,7 @@ describe('documentStatus', () => {
     dom.rich.isConnected = true;
     dom.rich.appendChild(heading);
     calls.selection = { removeAllRanges() { this.cleared = true; }, addRange() { this.added = true; } };
-    globalThis._jumpToDocumentOutlineEntry({ node: heading, mode: 'richtext' });
+    env.api._jumpToDocumentOutlineEntry({ node: heading, mode: 'richtext' });
     assert.deepEqual(heading.scrolled, { behavior: 'smooth', block: 'center' });
     assert.equal(heading.classList.contains('doc-outline-target'), true);
     assert.equal(calls.selection.added, true);
@@ -685,13 +686,13 @@ describe('documentStatus', () => {
       scheduled.push({ callback, delay });
       return scheduled.length;
     };
-    globalThis._flashOutlineTarget(heading);
+    env.api._flashOutlineTarget(heading);
     assert.equal(scheduled[0].delay, 1100);
     scheduled[0].callback();
     assert.equal(heading.classList.contains('doc-outline-target'), false);
     globalThis.setTimeout = originalSetTimeout;
 
-    globalThis._jumpToDocumentOutlineEntry({ node: { isConnected: false }, start: 2, end: 5, line: 4 });
+    env.api._jumpToDocumentOutlineEntry({ node: { isConnected: false }, start: 2, end: 5, line: 4 });
     assert.equal(dom.textarea.selectionStart, 2);
     assert.equal(dom.textarea.selectionEnd, 5);
     assert.equal(dom.textarea.scrollTop, 20);
@@ -735,8 +736,7 @@ describe('documentStatus', () => {
       '_syncDocumentHistoryControlsNow',
       '_syncEditorPlaceholder',
     ]);
-    assert.equal(env.api._normalizeRichStatsText, undefined);
-    assert.equal(env.api._renderDocumentOutlineMenu, undefined);
-    assert.equal(typeof globalThis._renderDocumentOutlineMenu, 'function');
+    assert.equal(typeof env.api._normalizeRichStatsText, 'function');
+    assert.equal(typeof env.api._renderDocumentOutlineMenu, 'function');
   });
 });

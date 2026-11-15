@@ -8,7 +8,7 @@ import { installDom } from './documentLaneDom.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entryPath = path.join(root, 'frontend/src/features/documents/ui/selection/selectionHighlights.js');
-const source = fs.readFileSync(entryPath, 'utf8') + '\nglobalThis.__setSelectionFixture = value => { _selections = value; };';
+const source = fs.readFileSync(entryPath, 'utf8') + '\nexport { installSelectionResizeListener, _validateSelections };';
 const listeners = [];
 let api;
 async function load() {
@@ -21,7 +21,7 @@ async function load() {
    'documentKinds.js':{_isRichTextLang:lang=>lang==='richtext'},
    'documentFlows.js':{_ensureDocPaneMounted(){},loadDocument:async()=>true},
    'richBodySync.js':{_emailRichbodyActive:()=>null},
-   'host.js':{_scheduleDocumentStats(){}},
+   'documentStatus.js':{_scheduleDocumentStats(){}},
   };
   const exports=imports[name];
   const mod=new SyntheticModule(Object.keys(exports),function(){for(const [k,v] of Object.entries(exports))this.setExport(k,v);},{identifier:url});
@@ -40,15 +40,15 @@ describe('selectionHighlights lifecycle and reanchoring',()=>{
  });
  it('installs one page resize listener and returns an idempotent disposer',()=>{
   assert.equal(listeners.filter(x=>x.type==='resize').length,1);
-  const dispose=globalThis.installSelectionResizeListener();
-  assert.equal(globalThis.installSelectionResizeListener(),dispose);
+  const dispose=api.installSelectionResizeListener();
+  assert.equal(api.installSelectionResizeListener(),dispose);
   assert.equal(listeners.filter(x=>x.type==='resize').length,1);
   dispose(); dispose();
   assert.equal(listeners.filter(x=>x.type==='resize').length,0);
  });
  it('reanchors stale offsets to the nearest exact text occurrence and drops removed text',()=>{
-  globalThis.__setSelectionFixture([{text:'target',start:16,end:22,startLine:2,endLine:2},{text:'gone',start:0,end:4}]);
-  globalThis._validateSelections('target\nfar target\n');
+  api.replaceSelections([{text:'target',start:16,end:22,startLine:2,endLine:2},{text:'gone',start:0,end:4}]);
+  api._validateSelections('target\nfar target\n');
   assert.equal(api._selections.length,1);
   assert.deepEqual({start:api._selections[0].start,end:api._selections[0].end,startLine:api._selections[0].startLine}, {start:11,end:17,startLine:2});
  });

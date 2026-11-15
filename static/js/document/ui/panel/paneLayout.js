@@ -1,11 +1,7 @@
 import { closePanel } from '../../application/documentCommands.js';
 // ui/panel/paneLayout.js
 
-import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';
-
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
-
-
+import { syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';
 
 export function _wireSwipeDismiss(el) {
     if (!el) return;

@@ -27,16 +27,24 @@ try {
 
   if (scenario === 'import-time-effects') {
     // M7: Verify effects before import, at import, after init, and after open
+    await page.evaluate(() => {
+      window.__captureKeydownRegistrations = 0;
+      const add = window.addEventListener;
+      window.addEventListener = function (type, handler, options) {
+        if (type === 'keydown' && (options === true || options?.capture)) window.__captureKeydownRegistrations++;
+        return add.call(this, type, handler, options);
+      };
+    });
     const beforeImport = await page.evaluate(() => ({
       hasGlobal: window.documentModule !== undefined,
       styleCount: document.querySelectorAll('#doc-tab-menu-styles').length,
       hasPane: Boolean(document.getElementById('doc-editor-pane')),
-      escapeBound: window._documentInnerEscapeBound,
+      captureKeydowns: window.__captureKeydownRegistrations,
     }));
     assert.equal(beforeImport.hasGlobal, false, 'No global module before import');
     assert.equal(beforeImport.styleCount, 0, 'No tab menu styles before import');
     assert.equal(beforeImport.hasPane, false, 'No pane before import');
-    assert.equal(beforeImport.escapeBound, undefined, 'No escape bound before import');
+    assert.equal(beforeImport.captureKeydowns, 0, 'No capture keydown registrations before import');
 
     const atImport = await page.evaluate(async () => {
       const mod = await import('/static/js/document.js?v=import-time-check-1');
@@ -44,13 +52,13 @@ try {
         isWindowSameAsDefault: window.documentModule === mod.default,
         styleCount: document.querySelectorAll('#doc-tab-menu-styles').length,
         hasPane: Boolean(document.getElementById('doc-editor-pane')),
-        escapeBound: window._documentInnerEscapeBound,
+        captureKeydowns: window.__captureKeydownRegistrations,
       };
     });
     assert.equal(atImport.isWindowSameAsDefault, true, 'window.documentModule equals default export');
     assert.equal(atImport.styleCount, 1, 'Exactly one style#doc-tab-menu-styles injected at evaluation');
     assert.equal(atImport.hasPane, false, 'No premature doc-editor-pane mounted on import');
-    assert.equal(atImport.escapeBound, true, 'Escape handler armed at module evaluation');
+    assert(atImport.captureKeydowns > 0, 'Capture keydown handlers register at module evaluation');
 
     // After init, pane is still not mounted
     await page.evaluate(() => {
@@ -67,6 +75,10 @@ try {
     });
     const afterOpenHasPane = await page.evaluate(() => Boolean(document.getElementById('doc-editor-pane')));
     assert.equal(afterOpenHasPane, true, 'doc-editor-pane mounted on first openPanel');
+    await page.evaluate(() => { globalThis._selections = [{ start: 0, end: 3, text: 'sam' }]; });
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => globalThis._selections.length), 0, 'Imported Escape layering clears the inner selection');
+    assert.equal(await page.evaluate(() => editor.isPanelOpen()), true, 'Inner Escape preserves the mounted pane');
 
   } else if (scenario === 'multi-instance-check') {
     // Characterize evaluating the facade under multiple query strings in a single page

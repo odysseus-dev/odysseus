@@ -6,7 +6,8 @@
 
 import { activeDocId, docs } from '../../application/documentState.js';
 import { saveDocument } from '../../application/persistence.js';
-import { sessionModule, spinnerModule, toggleFullscreen, uiModule } from '../host.js';
+import { sessionModule, spinnerModule, uiModule } from '../host.js';
+import { toggleFullscreen } from '../panel/paneLayout.js';
 import { _showMdDropdown, nextMdDropdownActivationToken } from '../richEditor/formatMenus.js';
 import { _saveFormatSelection, applyMdFormat } from '../richEditor/formatting.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
@@ -471,12 +472,3 @@ export function initMdToolbar() {
     // Expose for external calls (e.g. after fullscreen toggle)
     toolbar._syncOverflow = syncMdOverflow;
   }
-
-
-if (typeof globalThis !== 'undefined') {
-  globalThis._aiWritingSelectionText = _aiWritingSelectionText;
-  globalThis._setAiWritingLoading = _setAiWritingLoading;
-  globalThis._closeAiWritingMenu = _closeAiWritingMenu;
-  globalThis._showAiWritingMenu = _showAiWritingMenu;
-  globalThis._orderDocumentToolbar = _orderDocumentToolbar;
-}

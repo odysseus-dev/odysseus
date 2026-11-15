@@ -502,9 +502,6 @@ export let _activeRichImage = null;
 
 export function setActiveRichImage(image) {
   _activeRichImage = image;
-  if (typeof globalThis !== 'undefined') {
-    globalThis._activeRichImage = image;
-  }
 }
 
 export function _selectedRichImage(rich) {
@@ -515,4 +512,3 @@ export function _selectedRichImage(rich) {
     const image = element?.closest?.('img.richtext-image, figure.richtext-image img');
     return image && rich.contains(image) ? image : null;
   }
-

@@ -1,43 +1,39 @@
 // ui/panel/documentPresenter.js
 
-import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
+import { API_BASE, activeDocId, bumpNavigationGeneration, docs, markDeleted, removeDocument, setActiveDocId } from '../../application/documentState.js';
 import { _hideLoadingOverlay, _syncDocIndicator, _syncHeaderActions, renderTabs } from '../../application/documentCommands.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { _setDocxPreviewActive, _setMarkdownPreviewActive, exitHtmlPreview, setHtmlPreviewActive, toggleCsvPreview } from '../previewModes.js';
 import { _isFormBackedDoc, _releasePdfPane, _syncPdfPaneToDoc } from '../pdfTools.js';
 import { _restoreSuggestionsFromStorage } from '../suggestions.js';
 
-import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _resetPersistenceHooksForTesting, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, awaitWrites, bindPersistenceHooks, runSerializedWrite, saveDocument } from '../../application/persistence.js';
+import { _cancelAutoSave, _flushAutoSave } from '../../application/persistence.js';
 
-import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from '../../domain/documentKinds.js';
+import { _isDocxLang, _isRichTextLang } from '../../domain/documentKinds.js';
 
-import { _ATTACH_RE, _accountCanSend, _buildEmailContent, _buildEmailContentFromFields, _decodeBase64EmailWrapper, _emailQuoteMarkerMatch, _looksLikeWrappedEmailContent, _parseEmailHeader } from '../../domain/emailMessage.js';
+import { _buildEmailContent } from '../../domain/emailMessage.js';
 
-import { _autoCreateFromInput, _autoCreateSession, _closeWithoutDeleting, _creatingDoc, _detachDocFromSession, _ensureDocPaneMounted, _rememberActiveDoc, _visibleDocIdsForCurrentSession, closeTab, createDocument, deleteActiveDocument, getChatDocumentId, injectFreshDoc, loadDocument, moveActiveDocumentToCurrentChat, moveActiveDocumentToNewChat } from '../documentFlows.js';
+import { _rememberActiveDoc } from '../documentFlows.js';
 
-import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';
+import { attemptAutoDetect, syncHighlighting } from '../editor/sourceEditor.js';
 
-import { _hideEmailFields, _maybeAutoCollapseEmailHeader, _setEmailHeaderCollapsed, _showEmailFields, _syncEmailHeaderSummary, _syncStreamingEmailFields } from '../email/composerFields.js';
+import { _hideEmailFields, _showEmailFields } from '../email/composerFields.js';
 
-import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _emailFieldsWithLocalDraft, _emailLocalDraftDebounce, _persistEmailLocalDraftNow, _persistEmailLocalDraftSoon, _sanitizeOutgoingEmailBody } from '../email/localDraft.js';
+import { _persistEmailLocalDraftSoon } from '../email/localDraft.js';
 
-import { _closeVersionPanel, _historyOwnsView, _versionHistory, toggleVersionHistory } from '../history/versionHistory.js';
+import { _closeVersionPanel, _historyOwnsView, _versionHistory } from '../history/versionHistory.js';
 
-import { _emailHtmlToPlainText, _emailPlainTextToHtml, _emailRichbodyActive, _richTextContentToHtml, _sanitizedRichTextHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
+import { _sanitizedRichTextHtml, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
 
-import { _showRichTextEditor, _wireEmailRichbody } from '../richEditor/richBodyWiring.js';
+import { _showRichTextEditor } from '../richEditor/richBodyWiring.js';
 
-import { _followRichSelectionToolbarLayout, _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
+import { _hideRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
 
-import { _applyRichBlockInputRule, _chooseRichSlashCommand, _hideRichSlashMenu, _renderRichSlashMenu, _richSlashActiveIndex, _richSlashContext, _richSlashMenu, _syncRichSlashMenu, setRichSlashActiveIndex } from '../richEditor/slashMenu.js';
+import { _hideRichSlashMenu } from '../richEditor/slashMenu.js';
 
-import { _measurePos, _scheduleSelRerender, _selResizeObserver, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from '../selection/selectionHighlights.js';
+import { clearSelection } from '../selection/selectionHighlights.js';
 
-import { _activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder } from '../status/documentStatus.js';
-
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
-
-
+import { _closeDocumentOutline, _renderDocumentSaveState, _scheduleDocumentStats, _setDocumentHistoryControlState } from '../status/documentStatus.js';
 
 export function switchToDoc(docId, { captureCurrent = true, preserveHistory = false } = {}) {
     if (!docs.has(docId)) return;

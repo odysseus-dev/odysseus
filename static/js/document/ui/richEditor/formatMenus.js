@@ -547,4 +547,3 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
       requestAnimationFrame(() => entries[index]?.focus());
     }
   }
-

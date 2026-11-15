@@ -123,4 +123,3 @@ export function _emailRichbodyActive() {
     const r = document.getElementById('doc-email-richbody');
     return r && r.style.display !== 'none' ? r : null;
   }
-

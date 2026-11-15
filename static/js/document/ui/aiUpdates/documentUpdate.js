@@ -179,7 +179,7 @@ async function animateDocChange(oldText, newText) {
     }
   }
 
-function handleDocUpdate(data) {
+export function handleDocUpdate(data) {
     suspendSuggestions();
     bumpNavigationGeneration();
     _closeVersionPanel();
@@ -264,7 +264,7 @@ function handleDocUpdate(data) {
     }
 
     // Capture old content before updating the map
-    const textarea = document.getElementById('doc-editor-textarea');
+    let textarea = document.getElementById('doc-editor-textarea');
     const oldContent = (docId === activeDocId && textarea) ? textarea.value : '';
     const isExistingDoc = docs.has(docId);
     if (isExistingDoc) {
@@ -321,6 +321,7 @@ function handleDocUpdate(data) {
     if (!data.title) autoTitleFromContent(newContent, docId);
 
     if (!isOpen) openPanel();
+    textarea = document.getElementById('doc-editor-textarea');
 
     // Force doc button visible (overrides appearance settings & toolbar collapse)
     const toggleBtn = document.getElementById('overflow-doc-btn');
@@ -345,11 +346,10 @@ function handleDocUpdate(data) {
       _syncEditorPlaceholder();
     }
     if (badge) badge.textContent = `v${data.version || 1}`;
-    if (data.title && titleInput) titleInput.value = data.title;
+    if (titleInput) titleInput.value = docs.get(docId)?.title || '';
     // Set language from data, or fall back to what the doc already has (e.g. from streaming)
     const docLang = data.language || (docs.has(docId) && docs.get(docId).language) || '';
-    if (docLang && langSelect) langSelect.value = docLang;
-    if (!docLang) attemptAutoDetect();
+    if (langSelect) langSelect.value = docLang || 'markdown';
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
     const isRichTextUpdate = _isRichTextLang(docLang);
     const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
@@ -385,6 +385,10 @@ function handleDocUpdate(data) {
       }
     }
 
+    const pane = document.getElementById('doc-editor-pane');
+    if (pane) pane.dataset.activeDocumentId = docId;
+    const ownsPane = () => pane?.isConnected && pane === document.getElementById('doc-editor-pane') && pane.dataset.activeDocumentId === docId && activeDocId === docId;
+
     // Flash the editor wrap to indicate content was updated
     const wrap = document.getElementById('doc-editor-wrap');
     if (wrap) {
@@ -404,7 +408,7 @@ function handleDocUpdate(data) {
       _showEmailFields(updatedDoc, { applyLocalDraft: false });
     }
     if (updatedDoc && !updatedDoc.userSetLanguage && !updatedDoc.language) {
-      setTimeout(attemptAutoDetect, 100);
+      setTimeout(() => { if (ownsPane()) attemptAutoDetect(); }, 100);
     }
 
     // Show/hide format-specific buttons and auto-toggle previews
@@ -416,7 +420,7 @@ function handleDocUpdate(data) {
     const finalLangLower = (finalLang || '').toLowerCase();
     if (finalLangLower === 'svg') {
       requestAnimationFrame(() => {
-        if (activeDocId !== docId || !isOpen) return;
+        if (!ownsPane() || !isOpen) return;
         // Idempotent: doc_update and the tool-output fallback may both arrive.
         // SVG uses the existing sandboxed preview, never the server code runner.
         if (!_htmlPreviewActive) toggleHtmlPreview();
@@ -427,11 +431,12 @@ function handleDocUpdate(data) {
       });
     } else if (finalLangLower === 'csv') {
       requestAnimationFrame(() => {
+        if (!ownsPane()) return;
         const csvPreview = document.getElementById('doc-csv-preview');
         if (csvPreview && csvPreview.style.display === 'none') toggleCsvPreview();
       });
     } else if (streamingId && finalLangLower === 'markdown') {
-      requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));
+      requestAnimationFrame(() => { if (ownsPane()) _setMarkdownPreviewActive(true, { remember: true }); });
     }
 
     _restoreSuggestionsFromStorage(docId);
@@ -449,9 +454,3 @@ function handleDocUpdate(data) {
       }
     }
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.lineDiff = lineDiff;
-  globalThis.animateDocChange = animateDocChange;
-  globalThis.handleDocUpdate = handleDocUpdate;
-}

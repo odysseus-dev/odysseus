@@ -1,39 +1,37 @@
 import { _clearRichImageSelection } from '../richEditor/imageOps.js';
 // ui/panel/panelLifecycle.js
 
-import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs } from '../../application/documentSession.js';
+import { _markDocVisibleState } from '../../application/documentSession.js';
 
-import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
+import { _lastSessionId, _minimizedDocId, activeDocId, bumpNavigationGeneration, docs, isOpen, setActiveDocId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
 
-import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _resetPersistenceHooksForTesting, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, awaitWrites, bindPersistenceHooks, runSerializedWrite, saveDocument } from '../../application/persistence.js';
+import { _flushAutoSave } from '../../application/persistence.js';
 
-import { _autoCreateFromInput, _autoCreateSession, _closeWithoutDeleting, _creatingDoc, _detachDocFromSession, _ensureDocPaneMounted, _rememberActiveDoc, _visibleDocIdsForCurrentSession, closeTab, createDocument, deleteActiveDocument, getChatDocumentId, injectFreshDoc, loadDocument, moveActiveDocumentToCurrentChat, moveActiveDocumentToNewChat } from '../documentFlows.js';
+import { _autoCreateSession, _detachDocFromSession, createDocument } from '../documentFlows.js';
 
-import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';
+import { _autoDetectDebounce, _autoTitleDebounce, _hlDebounce } from '../editor/sourceEditor.js';
 
-import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _emailFieldsWithLocalDraft, _emailLocalDraftDebounce, _persistEmailLocalDraftNow, _persistEmailLocalDraftSoon, _sanitizeOutgoingEmailBody } from '../email/localDraft.js';
+import { _emailLocalDraftDebounce, _persistEmailLocalDraftNow } from '../email/localDraft.js';
 
-import { _closeVersionPanel, _historyOwnsView, _versionHistory, toggleVersionHistory } from '../history/versionHistory.js';
+import { _closeVersionPanel } from '../history/versionHistory.js';
 
-import { _wireDiffViewer, _wireFindReplace, _wirePdfTools, _wireSuggestions } from '../moduleWiring.js';
+import { initDividerDrag } from './paneLayout.js';
 
-import { _dismissDocKb, _wireSwipeDismiss, initDividerDrag, toggleFullscreen } from './paneLayout.js';
+import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
 
-import { _emailHtmlToPlainText, _emailPlainTextToHtml, _emailRichbodyActive, _richTextContentToHtml, _sanitizedRichTextHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
+import { _hideRichSelectionToolbar, _richSelectionToolbar } from '../richEditor/selectionToolbar.js';
 
-import { _followRichSelectionToolbarLayout, _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
+import { _hideRichSlashMenu, _richSlashMenu } from '../richEditor/slashMenu.js';
 
-import { _applyRichBlockInputRule, _chooseRichSlashCommand, _hideRichSlashMenu, _renderRichSlashMenu, _richSlashActiveIndex, _richSlashContext, _richSlashMenu, _syncRichSlashMenu, setRichSlashActiveIndex } from '../richEditor/slashMenu.js';
+import { _selections, clearSelection } from '../selection/selectionHighlights.js';
 
-import { _measurePos, _scheduleSelRerender, _selResizeObserver, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from '../selection/selectionHighlights.js';
+import { _closeDocumentOutline, _renderDocumentStats } from '../status/documentStatus.js';
 
-import { _activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder } from '../status/documentStatus.js';
+import { _closeDocTabMenu, _docTabMenu, renderTabs, showEmptyState } from '../tabs/tabBar.js';
 
-import { _closeDocTabMenu, _docTabMenu, _syncDocIndicator, renderTabs, showEmptyState } from '../tabs/tabBar.js';
+import { initMdToolbar } from '../toolbar/toolbar.js';
 
-import { _syncDocumentToolbarSeparators, initMdToolbar } from '../toolbar/toolbar.js';
-
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
+import { Modals, bindMenuDismiss, dismissOrRemove, dismissTopMenu, sessionModule, spinnerModule, topPortalZ } from '../host.js';
 
 import { bindPaneLayoutPointerSupport, bindPaneLayoutControls } from './paneLayout.js';
 
@@ -56,8 +54,6 @@ import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { _hasPendingPdfPaneSave } from '../pdfTools.js';
 import { saveCurrentToMap, switchToDoc } from './documentPresenter.js';
 import { suspendSuggestions } from '../suggestions.js';
-
-
 
 let _hasMountedPanel = false;
 
@@ -524,9 +520,11 @@ export async function newDocument() {
     await createDocument(sessionId);
   }
 
+let escapeLayeringInstalled = false;
+
 export function installEscapeLayering() {
-if (!window._documentInnerEscapeBound) {
-    window._documentInnerEscapeBound = true;
+if (!escapeLayeringInstalled) {
+    escapeLayeringInstalled = true;
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !isOpen) return;
 

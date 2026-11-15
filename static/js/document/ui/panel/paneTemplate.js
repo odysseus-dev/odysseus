@@ -1,9 +1,5 @@
 // ui/panel/paneTemplate.js
 
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
-
-
-
 export function mountPaneTemplate({ pane }) {
 pane.innerHTML = `
       <input type="hidden" id="doc-title-input" value="" />

@@ -68,7 +68,7 @@ function _syncStreamDocChrome(doc) {
     _syncHeaderActions();
   }
 
-function streamDocOpen(title, language) {
+export function streamDocOpen(title, language) {
     bumpNavigationGeneration();
     _closeVersionPanel();
     // Discard any pending AI-edit diff before this stream changes the active
@@ -157,6 +157,8 @@ function streamDocOpen(title, language) {
       _syncEditorPlaceholder();
       textarea.value = '';
     }
+    const pane = document.getElementById('doc-editor-pane');
+    if (pane) pane.dataset.activeDocumentId = docId;
     // Show streaming indicator
     const indicator = document.getElementById('doc-stream-indicator');
     if (indicator) indicator.style.display = '';
@@ -256,7 +258,7 @@ function _animateDocEdit(textarea, newContent) {
 
 let _streamHlDebounce = null;
 
-function streamDocDelta(content) {
+export function streamDocDelta(content) {
     if (!_streamDocId) return;
     const doc = docs.get(_streamDocId);
     if (doc) doc.content = content;
@@ -310,11 +312,3 @@ export function streamDocFinalize() {
     attemptAutoDetect();
     return oldId;
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.streamDocOpen = streamDocOpen;
-  globalThis.streamDocDelta = streamDocDelta;
-  globalThis.streamDocFinalize = streamDocFinalize;
-  globalThis._animateDocEdit = _animateDocEdit;
-  globalThis._syncStreamDocChrome = _syncStreamDocChrome;
-}

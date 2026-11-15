@@ -3,23 +3,23 @@
 import { saveCurrentToMap, _syncHeaderActions } from '../../application/documentCommands.js';
 import { toggleMarkdownPreview } from '../previewModes.js';
 
-import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
+import { activeDocId, docs, isOpen } from '../../application/documentState.js';
 
-import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _resetPersistenceHooksForTesting, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, awaitWrites, bindPersistenceHooks, runSerializedWrite, saveDocument } from '../../application/persistence.js';
+import { _markDocumentDirty, _scheduleAutoSave } from '../../application/persistence.js';
 
-import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from '../../domain/documentKinds.js';
+import { _isRichTextLang } from '../../domain/documentKinds.js';
 
-import { _handleMarkdownImageUpload, _uploadMarkdownImages } from '../editor/markdownImages.js';
+import { _handleMarkdownImageUpload } from '../editor/markdownImages.js';
 
 import { _showDocAiReplyChoice } from './aiReply.js';
 
-import { _handleAttachUpload, _renderComposeAttachments, _showComposeAttachMenu, _stageForwardedSourceAttachments, _uploadComposeFiles } from './attachments.js';
+import { _handleAttachUpload, _showComposeAttachMenu } from './attachments.js';
 
-import { _hideEmailFields, _maybeAutoCollapseEmailHeader, _setEmailHeaderCollapsed, _showEmailFields, _syncEmailHeaderSummary, _syncStreamingEmailFields } from './composerFields.js';
+import { _maybeAutoCollapseEmailHeader, _setEmailHeaderCollapsed, _syncEmailHeaderSummary } from './composerFields.js';
 
-import { _captureEmailBodyFocusState, _emailBodyToHtml, _emailReplyOwnText, _emailStreamAnimFrame, _emailStreamRenderedBody, _emailStreamTargetBody, _focusEmailBodyEnd, _renderStreamingEmailBody, _restoreEmailBodyFocusState, _setEmailBodyText, _splitEmailReplyQuote } from './emailBody.js';
+import { _captureEmailBodyFocusState, _restoreEmailBodyFocusState } from './emailBody.js';
 
-import { _clearCurrentEmailLocalDraft, _clearEmailLocalDraft, _emailFieldsWithLocalDraft, _emailLocalDraftDebounce, _persistEmailLocalDraftNow, _persistEmailLocalDraftSoon, _sanitizeOutgoingEmailBody } from './localDraft.js';
+import { _persistEmailLocalDraftSoon } from './localDraft.js';
 
 import { _wireRecipientAutocomplete } from './recipients.js';
 
@@ -27,13 +27,13 @@ import { _discardEmail, _markUnreadAndClose, _saveDraft, _scheduleSend, _sendEma
 
 import { _showRichImageSourceMenu } from '../richEditor/imageMenus.js';
 
-import { _emailHtmlToPlainText, _emailPlainTextToHtml, _emailRichbodyActive, _richTextContentToHtml, _sanitizedRichTextHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
+import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
 
-import { _activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder } from '../status/documentStatus.js';
+import { _activeDocLanguage } from '../status/documentStatus.js';
 
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
+import { emojiPicker } from '../host.js';
 
-
+const pageBindings = new Set();
 
 export function bindComposerWiring({ pane, paneLifetime }) {
 const emojiSlot = document.getElementById('md-toolbar-emoji-slot');
@@ -62,8 +62,8 @@ const handleSendIntent = (e) => {
       _sendEmail();
     };
 window.odysseusEmailSendIntent = handleSendIntent;
-if (!window._emailSendDelegatedBoundV3) {
-      window._emailSendDelegatedBoundV3 = true;
+if (!pageBindings.has('_emailSendDelegatedBoundV3')) {
+      pageBindings.add('_emailSendDelegatedBoundV3');
       ['pointerdown', 'mousedown', 'pointerup', 'click'].forEach((type) => {
         window.addEventListener(type, handleSendIntent, true);
         document.addEventListener(type, handleSendIntent, true);
@@ -100,15 +100,15 @@ const handleCaretIntent = (e) => {
       toggleSendMenu(caret);
     };
 window.odysseusEmailCaretIntent = handleCaretIntent;
-if (!window._emailCaretDelegatedBoundV1) {
-      window._emailCaretDelegatedBoundV1 = true;
+if (!pageBindings.has('_emailCaretDelegatedBoundV1')) {
+      pageBindings.add('_emailCaretDelegatedBoundV1');
       ['pointerdown', 'mousedown', 'click'].forEach((type) => {
         window.addEventListener(type, handleCaretIntent, true);
         document.addEventListener(type, handleCaretIntent, true);
       });
     }
-if (!window._emailCtrlEnterBound) {
-      window._emailCtrlEnterBound = true;
+if (!pageBindings.has('_emailCtrlEnterBound')) {
+      pageBindings.add('_emailCtrlEnterBound');
       document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
           const doc = activeDocId && docs.get(activeDocId);
@@ -119,8 +119,8 @@ if (!window._emailCtrlEnterBound) {
         }
       });
     }
-if (!window._docMdToggleBound) {
-      window._docMdToggleBound = true;
+if (!pageBindings.has('_docMdToggleBound')) {
+      pageBindings.add('_docMdToggleBound');
       document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
           if (!isOpen) return;
@@ -133,8 +133,8 @@ if (!window._docMdToggleBound) {
         }
       });
     }
-if (!window._docStickyTypingBound) {
-      window._docStickyTypingBound = true;
+if (!pageBindings.has('_docStickyTypingBound')) {
+      pageBindings.add('_docStickyTypingBound');
       window.addEventListener('keydown', (e) => {
         if (!isOpen || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
         const textarea = document.getElementById('doc-editor-textarea');
@@ -215,8 +215,8 @@ if (collapseBtn && !collapseBtn._emailCollapseWired) {
       document.getElementById(id)?.addEventListener('focus', () => _setEmailHeaderCollapsed(false, { manual: false }));
     });
 document.getElementById('doc-email-richbody')?.addEventListener('focus', _maybeAutoCollapseEmailHeader);
-if (window.visualViewport && !window._docEmailViewportCollapseBound) {
-      window._docEmailViewportCollapseBound = true;
+if (window.visualViewport && !pageBindings.has('_docEmailViewportCollapseBound')) {
+      pageBindings.add('_docEmailViewportCollapseBound');
       window.visualViewport.addEventListener('resize', _maybeAutoCollapseEmailHeader);
     }
 document.getElementById('doc-email-send-caret')?.addEventListener('click', handleCaretIntent);

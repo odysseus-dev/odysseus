@@ -7,7 +7,7 @@ import { topPortalZ } from '../host.js';
 
 import { _richSelectionHasFormatting, applyMdFormat } from './formatting.js';
 import { _showRichImageSourceMenu } from './imageMenus.js';
-import { _richImageInsertRange, setRichImageInsertRange } from './imageOps.js';
+import { setRichImageInsertRange } from './imageOps.js';
 import { _richLinkAtRange } from './links.js';
 
 export let _richSelectionToolbar = null;
@@ -234,4 +234,3 @@ export function _followRichSelectionToolbarLayout(rich, duration = 360) {
     };
     _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
   }
-

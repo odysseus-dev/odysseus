@@ -81,6 +81,8 @@ async function _getEmailAccountsCached() {
   }
 
 export async function _markUnreadAndClose() {
+    const docId = activeDocId;
+    const doc = docs.get(docId);
     const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';
     const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';
     if (sourceUid) {
@@ -88,7 +90,7 @@ export async function _markUnreadAndClose() {
         await fetch(`${API_BASE}/api/email/mark-unread/${sourceUid}?folder=${encodeURIComponent(sourceFolder)}`, { method: 'POST' });
       } catch (e) { console.error('Failed to mark unread:', e); }
     }
-    _discardEmail();
+    if (activeDocId === docId && docs.get(docId) === doc) _discardEmail();
   }
 
 async function _resolveComposeSendAccountId() {

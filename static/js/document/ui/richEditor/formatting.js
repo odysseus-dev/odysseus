@@ -678,4 +678,3 @@ export function _saveFormatSelection(event) {
     }
     return true;
   }
-

@@ -264,4 +264,3 @@ export function _syncRichSlashMenu(rich) {
     }
     _renderRichSlashMenu(rich, context);
   }
-

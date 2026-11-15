@@ -348,11 +348,3 @@ export function _activeDocLanguage() {
     const doc = activeDocId && docs.get(activeDocId);
     return ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis._normalizeRichStatsText = _normalizeRichStatsText;
-  globalThis._documentStatsSource = _documentStatsSource;
-  globalThis._flashOutlineTarget = _flashOutlineTarget;
-  globalThis._jumpToDocumentOutlineEntry = _jumpToDocumentOutlineEntry;
-  globalThis._renderDocumentOutlineMenu = _renderDocumentOutlineMenu;
-}

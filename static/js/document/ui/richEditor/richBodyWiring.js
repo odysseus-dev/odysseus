@@ -14,7 +14,7 @@ import { _isMarkdownImageFile, _isRichTextLang } from '../../domain/documentKind
 import { _RICH_FONT_SIZE_PX } from '../../domain/richTextRules.js';
 import { _richDropdownCurrentActions } from './formatMenus.js';
 import { _currentBlockTag, applyMdFormat } from './formatting.js';
-import { _clearRichImageSelection, _normalizeRichTextImages, _richImageInsertRange, _selectRichImage, setRichImageInsertRange } from './imageOps.js';
+import { _clearRichImageSelection, _normalizeRichTextImages, _selectRichImage, setRichImageInsertRange } from './imageOps.js';
 import { _applyRichImageAction, _richLinkAtRange } from './links.js';
 import { _richTextContentToHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from './richBodySync.js';
 import { _activeRichImage, _cleanRichTextPasteHtml, _handleRichChecklistEnter, _handleRichHeadingEnter, _insertSmartRichPasteLink, _normalizeRichChecklists, _normalizeRichInlineCode, _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage, _setRichChecklistItemChecked, setRichInlineCodeTypingArmed } from './richOperations.js';
@@ -411,4 +411,3 @@ export function _showRichTextEditor(doc) {
     _syncRichEmptyImport(rich);
     if (textarea) textarea.spellcheck = true;
   }
-

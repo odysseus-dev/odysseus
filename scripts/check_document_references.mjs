@@ -47,7 +47,12 @@ export function analyzeDocumentReferences(source, filename = '<source>') {
   const targetRefs = (n, mode = 'read', scope = root) => {
     if (!n) return;
     if (n.type === 'Identifier') { scopeAt.set(n, scope); refs.push({ node: n, mode }); return; }
-    if (n.type === 'MemberExpression') { visit(n.object, n, 'object', scope); if (n.computed) visit(n.property, n, 'property', scope); return; }
+    if (n.type === 'MemberExpression') {
+      visit(n.object, n, 'object', scope);
+      if (mode !== 'read' && isId(n.object)) refs.push({ node: n.object, mode: 'namespace-write' });
+      if (n.computed) visit(n.property, n, 'property', scope);
+      return;
+    }
     if (n.type === 'RestElement') return targetRefs(n.argument, mode, scope);
     if (n.type === 'AssignmentPattern') { targetRefs(n.left, mode, scope); visit(n.right, null, '', scope); return; }
     if (n.type === 'ArrayPattern') { n.elements.forEach(x => targetRefs(x, mode, scope)); return; }
@@ -121,8 +126,12 @@ export function analyzeDocumentReferences(source, filename = '<source>') {
   function resolve(name, s) { for (let p=s; p; p=p.parent) if (p.names.has(name)) return p.names.get(name); return null; }
   for (const ref of refs) {
     const name=ref.node.name, binding=resolve(name,scopeAt.get(ref.node)||root), line=ref.node.loc.start.line;
-    if (binding?.kind === 'import') { if (ref.mode !== 'typeof') binding.record.uses++; if (ref.mode !== 'read' && ref.mode !== 'typeof') importedWrites.push({ name,line,mode:ref.mode }); }
-    if (!binding && !globals.has(name) && !ignored.has(name) && ref.mode !== 'typeof') diagnostics.push({ file:filename,line,name,type:'unresolved' });
+    if (binding?.kind === 'import') {
+      if (ref.mode !== 'typeof') binding.record.uses++;
+      const namespaceWrite = ref.mode === 'namespace-write';
+      if (namespaceWrite ? binding.record.name === '*' : ref.mode !== 'read' && ref.mode !== 'typeof') importedWrites.push({ name,line,mode:ref.mode });
+    }
+    if (ref.mode !== 'namespace-write' && !binding && !globals.has(name) && !ignored.has(name) && ref.mode !== 'typeof') diagnostics.push({ file:filename,line,name,type:'unresolved' });
   }
   const compatibilityAllowances = [];
   for (const line of source.split(/\r?\n/)) {

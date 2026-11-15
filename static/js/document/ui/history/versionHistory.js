@@ -212,9 +212,3 @@ async function restoreVersion(num) {
       if (['dirty', 'error'].includes(doc._saveState)) _scheduleAutoSave(state.docId, 800);
     }
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.loadVersionHistory = loadVersionHistory;
-  globalThis.previewVersion = previewVersion;
-  globalThis.restoreVersion = restoreVersion;
-}

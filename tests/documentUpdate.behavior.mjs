@@ -1,8 +1,8 @@
 // tests/documentUpdate.behavior.mjs
 /**
  * Focused behavior tests for ui/aiUpdates/documentUpdate.
- * The module has no Appendix A exports, so the suite evaluates the real
- * source with a linker and calls the globalThis bridge the integrator uses.
+ * The suite evaluates the real source with a linker and invokes the public
+ * owner export plus private helpers exposed only through a test-only export.
  * Run through tests/documentUpdate.test.mjs, which enables vm modules.
  */
 
@@ -97,6 +97,7 @@ function installDom() {
   editorArea.appendChild(textarea);
   const ids = [
     'doc-editor-wrap',
+    'doc-editor-pane',
     'overflow-doc-btn',
     'doc-indicator-btn',
     'doc-version-badge',
@@ -107,6 +108,7 @@ function installDom() {
     'doc-csv-preview',
   ];
   for (const id of ids) elements.set(id, makeElement(id));
+  elements.get('doc-editor-pane').isConnected = true;
   elements.set('doc-editor-textarea', textarea);
   elements.set('doc-editor-area', editorArea);
   elements.get('doc-csv-preview').style.display = 'none';
@@ -329,7 +331,8 @@ async function loadDocumentUpdate() {
 
   const entryUrl = pathToFileURL(entryPath).href;
   const src = fs.readFileSync(entryPath, 'utf8');
-  const entry = new SourceTextModule(src, {
+  const entrySource = src + '\nexport { lineDiff, animateDocChange };';
+  const entry = new SourceTextModule(entrySource, {
     identifier: entryUrl,
     initializeImportMeta(meta) { meta.url = entryUrl; },
   });
@@ -340,6 +343,7 @@ async function loadDocumentUpdate() {
   const stateUrl = pathToFileURL(path.join(featuresDir, 'application/documentState.js')).href;
   const commandUrl = pathToFileURL(path.join(featuresDir, 'application/documentCommands.js')).href;
   return {
+    api: entry.namespace,
     state: cache.get(stateUrl).namespace,
     commands: cache.get(commandUrl).namespace,
   };
@@ -402,34 +406,34 @@ describe('documentUpdate', () => {
   });
 
   it('maps diffLines entries and refuses diffs over the cell limit', () => {
-    assert.deepEqual(globalThis.lineDiff('alpha\nbeta', 'alpha\ngamma'), [
+    assert.deepEqual(env.api.lineDiff('alpha\nbeta', 'alpha\ngamma'), [
       { type: 'same', text: 'alpha' },
       { type: 'del', text: 'beta' },
       { type: 'add', text: 'gamma' },
     ]);
-    assert.deepEqual(globalThis.lineDiff('only', 'only'), [
+    assert.deepEqual(env.api.lineDiff('only', 'only'), [
       { type: 'same', text: 'only' },
     ]);
-    assert.equal(globalThis.lineDiff(`${'x\n'.repeat(800)}`, `${'y\n'.repeat(800)}`), null);
+    assert.equal(env.api.lineDiff(`${'x\n'.repeat(800)}`, `${'y\n'.repeat(800)}`), null);
   });
 
   it('skips animation when the textarea is missing, the text is unchanged, or the diff is too large', async () => {
     dom.elements.delete('doc-editor-textarea');
-    assert.equal(await globalThis.animateDocChange('a', 'b'), false);
+    assert.equal(await env.api.animateDocChange('a', 'b'), false);
     dom.elements.set('doc-editor-textarea', dom.textarea);
 
-    assert.equal(await globalThis.animateDocChange('same', 'same'), true);
+    assert.equal(await env.api.animateDocChange('same', 'same'), true);
     assert.equal(dom.textarea.value, '');
     assert.equal(calls.syncHl, 0);
 
-    assert.equal(await globalThis.animateDocChange(`${'x\n'.repeat(800)}`, `${'y\n'.repeat(800)}`), false);
+    assert.equal(await env.api.animateDocChange(`${'x\n'.repeat(800)}`, `${'y\n'.repeat(800)}`), false);
     assert.equal(dom.textarea.readOnly, false);
   });
 
   it('shows a line diff and then applies the saved text', async () => {
     mock.timers.enable({ apis: ['setTimeout'] });
     try {
-      const pending = globalThis.animateDocChange('alpha', 'beta');
+      const pending = env.api.animateDocChange('alpha', 'beta');
       const overlay = dom.editorArea.children.find(child => child.className === 'doc-diff-overlay');
       assert.ok(overlay);
       assert.match(overlay.children[0].innerHTML, /−1/);
@@ -453,8 +457,8 @@ describe('documentUpdate', () => {
   it('cancels an in-flight animation before a no-op change returns', async () => {
     mock.timers.enable({ apis: ['setTimeout'] });
     try {
-      const pending = globalThis.animateDocChange('alpha', 'beta');
-      assert.equal(await globalThis.animateDocChange('beta', 'beta'), true);
+      const pending = env.api.animateDocChange('alpha', 'beta');
+      assert.equal(await env.api.animateDocChange('beta', 'beta'), true);
       await mock.timers.tick(2500);
       assert.equal(await pending, false);
       assert.equal(dom.textarea.value, '');
@@ -467,7 +471,7 @@ describe('documentUpdate', () => {
   it('creates a document, opens a closed panel, and bumps navigation once', () => {
     env.state.setPanelOpen(false);
     const before = env.state._documentNavigationGeneration;
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'doc-1',
       content: 'Hello\nworld',
       version: 2,
@@ -510,7 +514,7 @@ describe('documentUpdate', () => {
       version: 1,
       sessionId: 'sess-1',
     });
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'server-new',
       content: '# Draft',
       version: 1,
@@ -545,7 +549,7 @@ describe('documentUpdate', () => {
       subject: 'test',
       body: 'Updated reply',
     });
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'server-other',
       content: incoming,
       version: 5,
@@ -572,7 +576,7 @@ describe('documentUpdate', () => {
       version: 1,
       sessionId: 'sess-1',
     });
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'mail-2',
       content: emailContent({ uid: 'uid-2', subject: 'test', body: 'two' }),
       version: 1,
@@ -595,7 +599,7 @@ describe('documentUpdate', () => {
       sessionId: 'sess-1',
     });
     env.state.setActiveDocId('_streaming_1');
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'real-9',
       content: 'finished',
       version: 3,
@@ -621,7 +625,7 @@ describe('documentUpdate', () => {
     env.state.setActiveDocId('current');
     calls.diffModeActive = true;
     publishLiveBindings();
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'next',
       content: 'fresh',
       version: 1,
@@ -636,7 +640,7 @@ describe('documentUpdate', () => {
     calls.diffModeActive = true;
     publishLiveBindings();
     env.state.setActiveDocId('next');
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'next',
       content: 'fresh-2',
       version: 2,
@@ -657,7 +661,7 @@ describe('documentUpdate', () => {
     });
     env.state.setActiveDocId('doc-1');
     dom.textarea.value = 'before';
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'doc-1',
       content: 'after',
       version: 2,
@@ -685,7 +689,7 @@ describe('documentUpdate', () => {
       sessionId: 'sess-1',
     });
     env.state.setActiveDocId('rich-1');
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'rich-1',
       content: '<p>new</p>',
       version: 2,
@@ -698,7 +702,7 @@ describe('documentUpdate', () => {
 
     calls.htmlPreviewActive = false;
     publishLiveBindings();
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'svg-1',
       content: '<svg></svg>',
       version: 1,
@@ -712,7 +716,7 @@ describe('documentUpdate', () => {
     calls.htmlPreviewActive = true;
     publishLiveBindings();
     const beforeToggle = calls.toggleHtml;
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'svg-1',
       content: '<svg id="b"></svg>',
       version: 2,
@@ -724,7 +728,7 @@ describe('documentUpdate', () => {
     assert.deepEqual(calls.themed.at(-1), ['<svg id="b"></svg>', 'svg']);
     assert.equal(dom.elements.get('doc-html-preview').srcdoc, 'srcdoc');
 
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'csv-1',
       content: 'a,b',
       version: 1,
@@ -735,7 +739,7 @@ describe('documentUpdate', () => {
     assert.equal(calls.toggleCsv, 1);
 
     calls.streamResult = 'stream-doc';
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'md-stream',
       content: '# Live',
       version: 1,
@@ -749,7 +753,7 @@ describe('documentUpdate', () => {
   it('refreshes a visible form-backed preview for the active document', () => {
     calls.formBacked = true;
     pdfViewState.set('pdf-1', true);
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'pdf-1',
       content: '<!-- pdf -->',
       version: 1,
@@ -760,7 +764,7 @@ describe('documentUpdate', () => {
 
     calls.refreshPdf = 0;
     pdfViewState.set('pdf-1', false);
-    globalThis.handleDocUpdate({
+    env.api.handleDocUpdate({
       doc_id: 'pdf-1',
       content: '<!-- pdf 2 -->',
       version: 2,
@@ -771,12 +775,13 @@ describe('documentUpdate', () => {
   });
 });
 
-test('documentUpdate module declares the four Appendix A names without extra exports', () => {
+test('documentUpdate exposes its public owner handler and test-seam private helpers', () => {
   const src = fs.readFileSync(entryPath, 'utf8');
   assert.match(src, /let _animationCancel = null/);
   assert.match(src, /function lineDiff\(oldText, newText\)/);
   assert.match(src, /async function animateDocChange\(oldText, newText\)/);
-  assert.match(src, /function handleDocUpdate\(data\)/);
-  assert.equal(src.includes('export function handleDocUpdate'), false);
-  assert.equal(src.includes('export {'), false);
+  assert.match(src, /export function handleDocUpdate\(data\)/);
+  assert.equal(typeof env.api.handleDocUpdate, 'function');
+  assert.equal(typeof env.api.lineDiff, 'function');
+  assert.equal(typeof env.api.animateDocChange, 'function');
 });

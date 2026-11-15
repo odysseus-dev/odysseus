@@ -2,41 +2,39 @@ import { closePanel } from '../../application/documentCommands.js';
 import { enterDiffMode } from '../diffViewer.js';
 // ui/header/headerActions.js
 
-import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
+import { API_BASE, activeDocId, docs } from '../../application/documentState.js';
 
-import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _resetPersistenceHooksForTesting, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, awaitWrites, bindPersistenceHooks, runSerializedWrite, saveDocument } from '../../application/persistence.js';
+import { saveDocument } from '../../application/persistence.js';
 
-import { AUTO_DETECT_DELAY, AUTO_DETECT_MIN_CHARS, AUTO_DETECT_MIN_RELEVANCE, AUTO_DETECT_SAMPLE_SIZE, HLJS_TO_DROPDOWN, _DOC_SAVE_STATE, _buildDiffSummary, _esc, _escHtml, _hasViewToggle, _isDocxLang, _isMarkdownImageFile, _isRenderLang, _isRichTextLang, _looksLikeMarkdown, _markdownImageAlt } from '../../domain/documentKinds.js';
+import { _hasViewToggle, _isDocxLang, _isRenderLang, _isRichTextLang } from '../../domain/documentKinds.js';
 
-import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from '../documentActions.js';
+import { copyDocument, runDocument } from '../documentActions.js';
 
-import { _autoCreateFromInput, _autoCreateSession, _closeWithoutDeleting, _creatingDoc, _detachDocFromSession, _ensureDocPaneMounted, _rememberActiveDoc, _visibleDocIdsForCurrentSession, closeTab, createDocument, deleteActiveDocument, getChatDocumentId, injectFreshDoc, loadDocument, moveActiveDocumentToCurrentChat, moveActiveDocumentToNewChat } from '../documentFlows.js';
+import { closeTab } from '../documentFlows.js';
 
-import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';
+import { _handleMarkdownPreviewClickHint, syncHighlighting } from '../editor/sourceEditor.js';
 
 import { _sendSignedReply } from '../email/signedReply.js';
 
-import { _closeVersionPanel, _historyOwnsView, _versionHistory, toggleVersionHistory } from '../history/versionHistory.js';
+import { _closeVersionPanel, toggleVersionHistory } from '../history/versionHistory.js';
 
-import { _dismissDocKb, _wireSwipeDismiss, initDividerDrag, toggleFullscreen } from '../panel/paneLayout.js';
+import { _dismissDocKb, _wireSwipeDismiss } from '../panel/paneLayout.js';
 
-import { _emailHtmlToPlainText, _emailPlainTextToHtml, _emailRichbodyActive, _richTextContentToHtml, _sanitizedRichTextHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
+import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from '../richEditor/richBodySync.js';
 
-import { _measurePos, _scheduleSelRerender, _selResizeObserver, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from '../selection/selectionHighlights.js';
+import { _scheduleSelRerender } from '../selection/selectionHighlights.js';
 
-import { _activeDocLanguage, _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _openDocumentOutline, _refreshDocumentOutline, _renderDocumentSaveState, _renderDocumentStats, _scheduleDocumentHistoryControls, _scheduleDocumentStats, _setDocumentHistoryControlState, _syncDocumentHistoryControlsNow, _syncEditorPlaceholder } from '../status/documentStatus.js';
+import { _closeDocumentOutline, _documentOutlineEntries, _documentOutlineSupported, _scheduleDocumentHistoryControls, _syncDocumentHistoryControlsNow } from '../status/documentStatus.js';
 
-import { _syncDocumentToolbarSeparators, initMdToolbar } from '../toolbar/toolbar.js';
-import { _syncOverflow } from './overflow.js';
+import { _syncDocumentToolbarSeparators } from '../toolbar/toolbar.js';
+
 import { _isFormBackedDoc, _pdfViewState, _renderPdfPane } from '../pdfTools.js';
 import { _undoPdfPaneAction } from '../pdfTools.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { toggleCsvPreview, toggleDocxPreview, toggleHtmlPreview, toggleMarkdownPreview, toggleRichTextPreview } from '../previewModes.js';
 import { _importFromDevice, showExportMenu } from '../exportDocx.js';
 
-import { Modals, attachColorPicker, bindMenuDismiss, closeLibrary, codeRunnerModule, dismissOrRemove, dismissTopMenu, documentLibrary, emojiPicker, getDocumentStats, initLibrary, isLibraryOpen, langIcon, markdownModule, openLibrary, parseMarkdownOutline, readEmailReplyResponse, sessionModule, signatureModule, spinnerModule, topPortalZ, uiModule } from '../host.js';
-
-
+import { openLibrary, uiModule } from '../host.js';
 
 function _syncHeaderBarVisibility() {
     const hdr = document.getElementById('doc-editor-actions');

@@ -30,14 +30,3 @@ export { topPortalZ } from '/static/js/toolWindowZOrder.js';
 export { getDocumentStats } from '/static/js/documentStats.js?v=20260831richtexttools91';
 export { parseMarkdownOutline } from '/static/js/documentOutline.js?v=20260831richtexttools91';
 export { attachColorPicker } from '/static/js/colorPicker.js?v=20260910eyedropper1';
-
-// Composition-root callbacks for document modules still owned by the
-// integration branch while adjacent extraction lanes are pending.
-export const _activeDocLanguage = (...args) => globalThis._activeDocLanguage?.(...args);
-export const _closeVersionPanel = (...args) => globalThis._closeVersionPanel?.(...args);
-export const _scheduleDocumentStats = (...args) => globalThis._scheduleDocumentStats?.(...args);
-export const _setDocumentHistoryControlState = (...args) => globalThis._setDocumentHistoryControlState?.(...args);
-export const _syncEditorPlaceholder = (...args) => globalThis._syncEditorPlaceholder?.(...args);
-export const _wireSwipeDismiss = (...args) => globalThis._wireSwipeDismiss?.(...args);
-export const toggleFullscreen = (...args) => globalThis.toggleFullscreen?.(...args);
-export const toggleVersionHistory = (...args) => globalThis.toggleVersionHistory?.(...args);

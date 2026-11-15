@@ -119,6 +119,8 @@ function installDom() {
   elements.clear();
   const toolbar = makeElement('doc-md-toolbar');
   toolbar._syncOverflow = () => { calls.overflow += 1; };
+  const pane = makeElement('doc-editor-pane');
+  pane.isConnected = true;
   const title = makeElement('doc-title-input');
   const lang = makeElement('doc-language-select');
   const toggle = makeElement('overflow-doc-btn');
@@ -130,7 +132,7 @@ function installDom() {
   const code = makeElement('doc-editor-code');
   const codeParent = makeElement('doc-editor-code-parent');
   code.parentElement = codeParent;
-  for (const el of [toolbar, title, lang, toggle, indicatorBtn, badge, textarea, stream, code]) {
+  for (const el of [pane, toolbar, title, lang, toggle, indicatorBtn, badge, textarea, stream, code]) {
     elements.set(el.id, el);
   }
   globalThis.document = {
@@ -146,7 +148,7 @@ function installDom() {
   globalThis.cancelAnimationFrame = (id) => {
     if (frames.delete(id)) calls.cancelledFrames += 1;
   };
-  return { toolbar, title, lang, toggle, indicatorBtn, badge, textarea, stream, code, codeParent };
+  return { pane, toolbar, title, lang, toggle, indicatorBtn, badge, textarea, stream, code, codeParent };
 }
 
 function drainFrames(limit = 40) {
@@ -279,7 +281,8 @@ async function loadLiveStream() {
   }
 
   const entryUrl = pathToFileURL(entryPath).href;
-  const entry = new SourceTextModule(fs.readFileSync(entryPath, 'utf8'), {
+  const entrySource = fs.readFileSync(entryPath, 'utf8') + '\nexport { _syncStreamDocChrome, _animateDocEdit };';
+  const entry = new SourceTextModule(entrySource, {
     identifier: entryUrl,
     initializeImportMeta(meta) { meta.url = entryUrl; },
   });
@@ -322,7 +325,7 @@ describe('liveStream', () => {
   });
 
   beforeEach(() => {
-    globalThis.streamDocFinalize();
+    env.api.streamDocFinalize();
     frames.clear();
     env.state.clearDocuments();
     env.state.setActiveDocId(null);
@@ -347,11 +350,12 @@ describe('liveStream', () => {
 
   it('opens a new streaming document and shows editor chrome', () => {
     const generation = env.state._documentNavigationGeneration;
-    globalThis.streamDocOpen('Draft', 'markdown');
+    env.api.streamDocOpen('Draft', 'markdown');
     drainFrames();
     const doc = streamingDoc();
     assert.ok(doc);
     assert.equal(env.state.activeDocId, doc.id);
+    assert.equal(dom.pane.dataset.activeDocumentId, doc.id);
     assert.equal(doc.title, 'Draft');
     assert.equal(doc.language, 'markdown');
     assert.equal(doc.content, '');
@@ -383,16 +387,16 @@ describe('liveStream', () => {
     assert.equal(dom.indicatorBtn.classList.contains('visible'), true);
     assert.equal(dom.toolbar.style.display, '');
     assert.equal(dom.toolbar.dataset.mode, 'md');
-    assert.equal(env.api.streamDocFinalize, globalThis.streamDocFinalize);
+    assert.equal(typeof env.api.streamDocFinalize, 'function');
   });
 
   it('reuses an in-progress stream instead of creating a second document', () => {
-    globalThis.streamDocOpen('Draft', 'markdown');
+    env.api.streamDocOpen('Draft', 'markdown');
     drainFrames();
     const first = streamingDoc();
     resetCalls();
     publishLiveBindings();
-    globalThis.streamDocOpen('Renamed', 'python');
+    env.api.streamDocOpen('Renamed', 'python');
     drainFrames();
     assert.equal(streamingDoc().id, first.id);
     assert.equal(env.state.docs.size, 1);
@@ -407,12 +411,12 @@ describe('liveStream', () => {
   });
 
   it('updates a background stream without taking over the active document', () => {
-    globalThis.streamDocOpen('Draft', 'markdown');
+    env.api.streamDocOpen('Draft', 'markdown');
     const first = streamingDoc();
     env.state.registerDocument({ id: 'other', title: 'Other', language: 'markdown', content: 'x', version: 1, sessionId: 'sess-1' });
     env.state.setActiveDocId('other');
     resetCalls();
-    globalThis.streamDocOpen('Renamed', 'markdown');
+    env.api.streamDocOpen('Renamed', 'markdown');
     assert.equal(env.state.activeDocId, 'other');
     assert.equal(first.title, 'Renamed');
     assert.equal(dom.title.value, 'Draft');
@@ -426,7 +430,7 @@ describe('liveStream', () => {
     env.state.registerDocument({ id: 'notes', title: 'Notes', language: 'markdown', content: 'kept', version: 3, sessionId: 'sess-1' });
     env.state.registerDocument({ id: 'other', title: 'Other', language: 'markdown', content: 'typed', version: 1, sessionId: 'sess-1' });
     env.state.setActiveDocId('other');
-    globalThis.streamDocOpen('Notes', 'markdown');
+    env.api.streamDocOpen('Notes', 'markdown');
     drainFrames();
     assert.equal(streamingDoc(), null);
     assert.equal(env.state.activeDocId, 'notes');
@@ -441,7 +445,7 @@ describe('liveStream', () => {
 
   it('does not reuse the same title from another session', () => {
     env.state.registerDocument({ id: 'foreign', title: 'Notes', language: 'markdown', content: 'other', version: 1, sessionId: 'sess-2' });
-    globalThis.streamDocOpen('Notes', 'markdown');
+    env.api.streamDocOpen('Notes', 'markdown');
     const created = streamingDoc();
     assert.ok(created);
     assert.notEqual(created.id, 'foreign');
@@ -452,7 +456,7 @@ describe('liveStream', () => {
     env.state.setPanelOpen(true);
     env.state.registerDocument({ id: 'notes', title: 'Notes', language: 'markdown', content: 'kept', version: 1, sessionId: 'sess-1' });
     env.state.setActiveDocId('notes');
-    globalThis.streamDocOpen('Notes', 'markdown');
+    env.api.streamDocOpen('Notes', 'markdown');
     assert.equal(env.state.activeDocId, 'notes');
     assert.equal(calls.saveCurrent, 0);
     assert.deepEqual(calls.flush, []);
@@ -464,14 +468,14 @@ describe('liveStream', () => {
     env.state.setActiveDocId('current');
     calls.diffModeActive = true;
     publishLiveBindings();
-    globalThis.streamDocOpen('Fresh', 'markdown');
+    env.api.streamDocOpen('Fresh', 'markdown');
     assert.deepEqual(calls.exitDiff, [[true]]);
     assert.deepEqual(calls.activeAtExitDiff, ['current']);
     assert.equal(env.state.activeDocId, streamingDoc().id);
   });
 
   it('shows email fields while streaming an email', () => {
-    globalThis.streamDocOpen('Reply', 'email');
+    env.api.streamDocOpen('Reply', 'email');
     const doc = streamingDoc();
     assert.equal(calls.hideEmail, 0);
     assert.equal(calls.showEmail.length, 1);
@@ -480,10 +484,10 @@ describe('liveStream', () => {
   });
 
   it('applies streamed text, scrolls, and debounces highlighting', async () => {
-    globalThis.streamDocOpen('Draft', 'markdown');
+    env.api.streamDocOpen('Draft', 'markdown');
     const doc = streamingDoc();
     resetCalls();
-    globalThis.streamDocDelta('hello');
+    env.api.streamDocDelta('hello');
     assert.equal(doc.content, 'hello');
     assert.equal(dom.textarea.value, 'hello');
     assert.equal(dom.textarea.scrollTop, dom.textarea.scrollHeight);
@@ -496,21 +500,21 @@ describe('liveStream', () => {
   });
 
   it('keeps a background stream in the map without painting the textarea', () => {
-    globalThis.streamDocOpen('Draft', 'markdown');
+    env.api.streamDocOpen('Draft', 'markdown');
     const doc = streamingDoc();
     env.state.setActiveDocId('away');
     resetCalls();
-    globalThis.streamDocDelta('hidden');
+    env.api.streamDocDelta('hidden');
     assert.equal(doc.content, 'hidden');
     assert.equal(dom.textarea.value, '');
     assert.equal(calls.lineNumbers.length, 0);
   });
 
   it('updates email fields without writing the source textarea', () => {
-    globalThis.streamDocOpen('Reply', 'email');
+    env.api.streamDocOpen('Reply', 'email');
     const doc = streamingDoc();
     resetCalls();
-    globalThis.streamDocDelta('To: a@b.c\n---\nHello');
+    env.api.streamDocDelta('To: a@b.c\n---\nHello');
     assert.equal(doc.content, 'To: a@b.c\n---\nHello');
     assert.equal(dom.textarea.value, '');
     assert.equal(calls.syncStreamingEmail.length, 1);
@@ -519,24 +523,24 @@ describe('liveStream', () => {
   });
 
   it('does nothing when a delta arrives before a stream starts', () => {
-    globalThis.streamDocDelta('orphan');
+    env.api.streamDocDelta('orphan');
     assert.equal(env.state.docs.size, 0);
     assert.equal(dom.textarea.value, 'stale');
     assert.equal(calls.syncHl, 0);
   });
 
   it('finalizes the stream, drops the debounced highlight, and renders an email body', async () => {
-    globalThis.streamDocOpen('Reply', 'markdown');
+    env.api.streamDocOpen('Reply', 'markdown');
     const doc = streamingDoc();
     resetCalls();
-    globalThis.streamDocDelta('partial');
+    env.api.streamDocDelta('partial');
     assert.equal(calls.syncHl, 0);
     doc.language = 'email';
     doc.content = 'To: a@b.c\nSubject: Hi\n---\nHello body';
     const cursor = elements.get('doc-stream-cursor');
-    const finished = globalThis.streamDocFinalize();
+    const finished = env.api.streamDocFinalize();
     assert.equal(finished, doc.id);
-    assert.equal(globalThis.streamDocFinalize(), null);
+    assert.equal(env.api.streamDocFinalize(), null);
     assert.equal(calls.renderEmailBody.length, 1);
     assert.equal(calls.renderEmailBody[0][0], 'Hello body');
     assert.deepEqual(calls.renderEmailBody[0][1], { immediate: true });
@@ -546,14 +550,14 @@ describe('liveStream', () => {
     assert.equal(calls.autoDetect, 1);
     await wait(250);
     assert.equal(calls.syncHl, 1);
-    globalThis.streamDocDelta('later');
+    env.api.streamDocDelta('later');
     assert.equal(doc.content, 'To: a@b.c\nSubject: Hi\n---\nHello body');
   });
 
   it('animates a regional edit through deletion and insertion', () => {
     dom.textarea.value = 'abcdef';
     dom.stream.style.display = 'none';
-    globalThis._animateDocEdit(dom.textarea, 'abXYZ');
+    env.api._animateDocEdit(dom.textarea, 'abXYZ');
     const steps = drainFrames();
     assert.ok(steps >= 4);
     assert.equal(dom.textarea.value, 'abXYZ');
@@ -566,9 +570,9 @@ describe('liveStream', () => {
 
   it('cancels an in-flight edit animation when a new one starts', () => {
     dom.textarea.value = 'one';
-    globalThis._animateDocEdit(dom.textarea, 'two');
+    env.api._animateDocEdit(dom.textarea, 'two');
     assert.equal(frames.size, 1);
-    globalThis._animateDocEdit(dom.textarea, 'three');
+    env.api._animateDocEdit(dom.textarea, 'three');
     assert.equal(calls.cancelledFrames, 1);
     assert.equal(frames.size, 1);
     drainFrames();
@@ -576,34 +580,33 @@ describe('liveStream', () => {
   });
 
   it('sets toolbar mode for markdown, pdf, code, and plain documents', () => {
-    globalThis._syncStreamDocChrome(null);
+    env.api._syncStreamDocChrome(null);
     assert.equal(calls.syncHeader, 0);
 
-    globalThis._syncStreamDocChrome({ language: 'markdown', content: '' });
+    env.api._syncStreamDocChrome({ language: 'markdown', content: '' });
     drainFrames();
     assert.equal(dom.toolbar.style.display, '');
     assert.equal(dom.toolbar.dataset.mode, 'md');
     assert.equal(calls.overflow, 1);
     assert.equal(calls.syncHeader, 1);
 
-    globalThis._syncStreamDocChrome({ language: 'text', content: '%PDF-1.7' });
+    env.api._syncStreamDocChrome({ language: 'text', content: '%PDF-1.7' });
     assert.equal(dom.toolbar.dataset.mode, 'pdf');
 
-    globalThis._syncStreamDocChrome({ language: 'python', content: 'print(1)' });
+    env.api._syncStreamDocChrome({ language: 'python', content: 'print(1)' });
     assert.equal(dom.toolbar.dataset.mode, 'code');
 
-    globalThis._syncStreamDocChrome({ language: 'text', content: 'plain' });
+    env.api._syncStreamDocChrome({ language: 'text', content: 'plain' });
     assert.equal(dom.toolbar.style.display, 'none');
     assert.equal(dom.toolbar.dataset.mode, '');
   });
 
   it('keeps only the Appendix A export', () => {
     const source = fs.readFileSync(entryPath, 'utf8');
-    assert.match(source, /export function streamDocFinalize\(/);
-    assert.doesNotMatch(source, /export function streamDocOpen/);
-    assert.doesNotMatch(source, /export function streamDocDelta/);
-    assert.doesNotMatch(source, /export \{/);
+    const ownerExports = [...source.matchAll(/^export function (\w+)/gm)].map(match => match[1]).sort();
+    assert.deepEqual(ownerExports, ['streamDocDelta', 'streamDocFinalize', 'streamDocOpen']);
     assert.equal(typeof env.api.streamDocFinalize, 'function');
-    assert.equal(env.api.streamDocOpen, undefined);
+    assert.equal(typeof env.api.streamDocOpen, 'function');
+    assert.equal(typeof env.api.streamDocDelta, 'function');
   });
 });

@@ -7,7 +7,8 @@
 import { API_BASE, activeDocId } from '../../application/documentState.js';
 import { _scheduleAutoSave } from '../../application/persistence.js';
 import { _isMarkdownImageFile, _isRichTextLang, _markdownImageAlt } from '../../domain/documentKinds.js';
-import { _activeDocLanguage, uiModule } from '../host.js';
+import { uiModule } from '../host.js';
+import { _activeDocLanguage } from '../status/documentStatus.js';
 import { _insertRichTextImages } from '../richEditor/imageOps.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
 import { _refreshMarkdownPreviewIfVisible, _replaceRange, scheduleSourceEditorWork, updateLineNumbers } from './sourceEditor.js';
@@ -95,10 +96,3 @@ export async function _handleMarkdownImageUpload(e) {
     e.target.value = '';
     await _uploadMarkdownImages(files);
   }
-
-
-if (typeof globalThis !== 'undefined') {
-  globalThis._uploadMarkdownImages = _uploadMarkdownImages;
-  globalThis._scheduleMarkdownImageAutosave = _scheduleMarkdownImageAutosave;
-  globalThis._insertMarkdownImages = _insertMarkdownImages;
-}

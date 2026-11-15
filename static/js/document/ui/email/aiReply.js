@@ -292,8 +292,3 @@ export function _showDocAiReplyChoice(btn) {
 export async function generateEmailReply(opts = {}) {
     return _aiReply(opts);
   }
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.generateEmailReply = generateEmailReply;
-}
-
