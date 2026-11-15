@@ -554,13 +554,18 @@
     },
     "updateTitle": {
       "file": "ui/documentActions.js",
-      "rationale": "Verify PATCH status, preserve document record identity, and synchronize an empty or Untitled active title input after async completion.",
-      "targetFunctionSha256": "6a52909a162f6fe8d64938fff58768fce47e9aa42b1e9b8af2eec0edce36ed95",
+      "rationale": "Sequence title updates, abort in-flight requests, and guard against stale auto-title overwrites of manual titles.",
+      "targetFunctionSha256": "b715743be308f5616dc025227cb9a9c1efad7fc4afcb9b81ff4c387983057e05",
       "replacements": [
         {
-          "from": "    const title = overrideTitle || document.getElementById('doc-title-input')?.value;\n    if (!title) return;\n    try {\n      await fetch(`${API_BASE}/api/document/${docId}`, {\n        method: 'PATCH',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ title }),\n      });\n      if (docs.has(docId)) {\n        docs.get(docId).title = title;\n        renderTabs();\n      }\n    } catch (e) {",
-          "to": "    const doc = docs.get(docId);\n    const title = overrideTitle || document.getElementById('doc-title-input')?.value;\n    if (!title) return;\n    try {\n      const res = await fetch(`${API_BASE}/api/document/${docId}`, {\n        method: 'PATCH',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ title }),\n      });\n      if (!res.ok) throw new Error(`HTTP ${res.status}`);\n      const currentDoc = docs.get(docId);\n      if (currentDoc && (!doc || currentDoc === doc)) {\n        currentDoc.title = title;\n        const titleInput = document.getElementById('doc-title-input');\n        const pane = document.getElementById('doc-editor-pane');\n        const activeTitle = (titleInput?.value || '').trim();\n        if (titleInput && docId === activeDocId\n            && (!pane || pane.dataset.activeDocumentId === docId)\n            && document.activeElement !== titleInput\n            && (!activeTitle || activeTitle === 'Untitled')) {\n          titleInput.value = title;\n        }\n        renderTabs();\n      }\n    } catch (e) {",
-          "rationale": "Retain document identity across await and keep active title UI consistent without clobbering unrelated tabs."
+          "from": "async function updateTitle(overrideDocId, overrideTitle) {\n    const docId = overrideDocId || activeDocId;\n    if (!docId) return;\n    const title = overrideTitle || document.getElementById('doc-title-input')?.value;\n    if (!title) return;\n    try {\n      await fetch(`${API_BASE}/api/document/${docId}`, {\n        method: 'PATCH',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ title }),\n      });\n      if (docs.has(docId)) {\n        docs.get(docId).title = title;\n        renderTabs();\n      }\n    } catch (e) {",
+          "to": "async function updateTitle(overrideDocId, overrideTitle, options = {}) {\n    const isAutoTitle = Boolean(options && options.isAutoTitle);\n    const docId = overrideDocId || activeDocId;\n    if (!docId) return;\n    const doc = docs.get(docId);\n    if (!doc) return;\n    const title = overrideTitle || document.getElementById('doc-title-input')?.value;\n    if (!title) return;\n    if (isAutoTitle && doc.title && doc.title !== 'Untitled' && doc.title !== title) return;\n\n    doc._titleAbortController?.abort();\n    const controller = new AbortController();\n    doc._titleAbortController = controller;\n    const requestSeq = (doc._titleRequestSeq = (doc._titleRequestSeq || 0) + 1);\n\n    try {\n      const res = await fetch(`${API_BASE}/api/document/${docId}`, {\n        method: 'PATCH',\n        headers: { 'Content-Type': 'application/json' },\n        signal: controller.signal,\n        body: JSON.stringify({ title }),\n      });\n      if (!res.ok) throw new Error(`HTTP ${res.status}`);\n      const currentDoc = docs.get(docId);\n      if (currentDoc && currentDoc === doc && doc._titleRequestSeq === requestSeq) {\n        if (isAutoTitle && currentDoc.title && currentDoc.title !== 'Untitled' && currentDoc.title !== title) {\n          return;\n        }\n        currentDoc.title = title;\n        const titleInput = document.getElementById('doc-title-input');\n        const pane = document.getElementById('doc-editor-pane');\n        const activeTitle = (titleInput?.value || '').trim();\n        if (titleInput && docId === activeDocId\n            && (!pane || pane.dataset.activeDocumentId === docId)\n            && document.activeElement !== titleInput\n            && (!activeTitle || activeTitle === 'Untitled' || !isAutoTitle)) {\n          titleInput.value = title;\n        }\n        renderTabs();\n      }\n    } catch (e) {",
+          "rationale": "Sequence title updates, abort in-flight requests, and guard against stale auto-title overwrites of manual titles."
+        },
+        {
+          "from": "    } catch (e) {\n      console.error('Failed to update title:', e);\n    }\n  }",
+          "to": "    } catch (e) {\n      if (e?.name === 'AbortError') return;\n      console.error('Failed to update title:', e);\n    } finally {\n      if (doc._titleAbortController === controller) {\n        doc._titleAbortController = null;\n      }\n    }\n  }",
+          "rationale": "Handle AbortError silently and clean up completed title controller."
         }
       ]
     },
@@ -573,6 +578,52 @@
           "from": "      const doc = activeDocId && docs.get(activeDocId);\n      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()) {\n        clearTimeout(rich._autoTitleTimer);\n        rich._autoTitleTimer = setTimeout(() => autoTitleFromContent(rich.innerText || ''), 500);\n      }",
           "to": "      const docId = activeDocId;\n      const doc = docId && docs.get(docId);\n      const pane = rich.closest('#doc-editor-pane');\n      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()\n          && rich.isConnected && (!pane || (pane.isConnected && pane.dataset.activeDocumentId === docId))) {\n        scheduleAutoTitle(rich.innerText || '', docId, 500);\n      }",
           "rationale": "Capture rich-text content and document identity synchronously and cancel on pane disposal."
+        }
+      ]
+    },
+    "_saveDraft": {
+      "file": "ui/email/sendWorkflow.js",
+      "rationale": "Capture initiating document identity and scope draft metadata and attachments strictly to the captured document record.",
+      "targetFunctionSha256": "b38cbc3da0f257d3c2c69371ef0e516e3d1e462bbcef17328fd9a5ed47034130",
+      "replacements": [
+        {
+          "from": "async function _saveDraft() {\n    const to = document.getElementById('doc-email-to')?.value?.trim();\n",
+          "to": "async function _saveDraft() {\n    const docId = activeDocId;\n    if (!docId) return;\n    const doc = docs.get(docId);\n    if (!doc || doc.language !== 'email') return;\n    const to = document.getElementById('doc-email-to')?.value?.trim();\n",
+          "rationale": "Capture initiating document identity and verify email document before starting draft save."
+        },
+        {
+          "from": "          attachments: (docs.get(activeDocId)?._composeAtts || []).map(a => a.token),\n          draft_uid: docs.get(activeDocId)?._emailDraftUid || null,\n          draft_folder: docs.get(activeDocId)?._emailDraftFolder || null,\n        }),\n      });\n      const data = await res.json();\n      if (data.success) {\n        const savedDoc = docs.get(activeDocId);\n        if (savedDoc) {\n          savedDoc._emailDraftUid = data.draft_uid || null;\n          savedDoc._emailDraftFolder = data.draft_folder || null;\n        }\n",
+          "to": "          attachments: (doc._composeAtts || []).map(a => a.token),\n          draft_uid: doc._emailDraftUid || null,\n          draft_folder: doc._emailDraftFolder || null,\n        }),\n      });\n      const data = await res.json();\n      if (data.success) {\n        const savedDoc = docs.get(docId);\n        if (savedDoc && savedDoc === doc) {\n          savedDoc._emailDraftUid = data.draft_uid || null;\n          savedDoc._emailDraftFolder = data.draft_folder || null;\n        }\n",
+          "rationale": "Scope draft attachments and metadata updates strictly to the captured document record."
+        }
+      ]
+    },
+    "_scheduleSend": {
+      "file": "ui/email/sendWorkflow.js",
+      "rationale": "Capture initiating email document identity, scope draft cleanup and document deletion strictly to the originating email record, and prevent closing active documents on navigation.",
+      "targetFunctionSha256": "126fe1ccf445a8a97a8c5b005cbf8079ef3193dcaf2f168e3c5d8f44c6446fec",
+      "replacements": [
+        {
+          "from": "async function _scheduleSend(anchorEl = null) {\n    const to = document.getElementById('doc-email-to')?.value?.trim();\n    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';\n    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';\n    const subject = document.getElementById('doc-email-subject')?.value?.trim();\n    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();\n    const references = document.getElementById('doc-email-references')?.value?.trim();\n    const _rich = _emailRichbodyActive();\n    if (_rich) _syncEmailRichbody(_rich);\n    const rawBody = (_rich\n      ? (_rich.innerText || _rich.textContent || '')\n      : (document.getElementById('doc-editor-textarea')?.value || '')\n    ).trim();\n    const body = _sanitizeOutgoingEmailBody(rawBody);\n    const doc = docs.get(activeDocId);\n    const attachments = (doc?._composeAtts || []).map(a => a.token);\n",
+          "to": "async function _scheduleSend(anchorEl = null) {\n    const sendDocId = activeDocId;\n    if (!sendDocId) return;\n    const doc = docs.get(sendDocId);\n    if (!doc || doc.language !== 'email') return;\n    const to = document.getElementById('doc-email-to')?.value?.trim();\n    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';\n    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';\n    const subject = document.getElementById('doc-email-subject')?.value?.trim();\n    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();\n    const references = document.getElementById('doc-email-references')?.value?.trim();\n    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim();\n    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';\n    const _rich = _emailRichbodyActive();\n    if (_rich) _syncEmailRichbody(_rich);\n    const rawBody = (_rich\n      ? (_rich.innerText || _rich.textContent || '')\n      : (document.getElementById('doc-editor-textarea')?.value || '')\n    ).trim();\n    const body = _sanitizeOutgoingEmailBody(rawBody);\n    const attachments = (doc._composeAtts || []).map(a => a.token);\n",
+          "rationale": "Capture initiating document identity, source reply metadata, and verified document record before opening schedule modal."
+        },
+        {
+          "from": "          _clearCurrentEmailLocalDraft();\n          cleanup();\n          // Close the document\n          _closeWithoutDeleting(true);\n",
+          "to": "          if (sourceUid) {\n            _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo || '');\n          } else {\n            _clearCurrentEmailLocalDraft();\n          }\n          cleanup();\n          // Close only the originating email document\n          if (sendDocId && docs.get(sendDocId) === doc) {\n            markDeleted(sendDocId);\n            _cancelAutoSave(sendDocId);\n            fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});\n            const wasActiveSentDoc = isOpen && activeDocId === sendDocId;\n            removeDocument(sendDocId);\n            if (wasActiveSentDoc) {\n              setActiveDocId(null);\n              const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));\n              if (nextId) switchToDoc(nextId);\n              else closePanel();\n            } else {\n              renderTabs();\n            }\n            _syncDocIndicator();\n          }\n",
+          "rationale": "Scope draft clearing and document closure strictly to the captured email document identity without affecting newly active documents."
+        }
+      ]
+    },
+    "autoTitleFromContent": {
+      "file": "ui/documentActions.js",
+      "rationale": "Pass isAutoTitle flag to updateTitle and guard title input against overwriting manual entries.",
+      "targetFunctionSha256": "50f14802f580433af6c5673dd2a840d06add3b7f028b0ff25a997c11fb31f69b",
+      "replacements": [
+        {
+          "from": "    updateTitle(id, title);\n    const titleInput = document.getElementById('doc-title-input');\n    if (titleInput && id === activeDocId) titleInput.value = title;\n  }",
+          "to": "    updateTitle(id, title, { isAutoTitle: true });\n    const titleInput = document.getElementById('doc-title-input');\n    const activeTitle = (titleInput?.value || '').trim();\n    if (titleInput && id === activeDocId && (!activeTitle || activeTitle === 'Untitled') && document.activeElement !== titleInput) {\n      titleInput.value = title;\n    }\n  }",
+          "rationale": "Pass isAutoTitle flag to updateTitle and guard title input against overwriting manual entries."
         }
       ]
     }
@@ -729,7 +780,6 @@
       ]
     },
     {
-      "id": "openPanel#7527",
       "id": "openPanel#7527",
       "rationale": "Validate captured document, pane, and navigation generation before applying async version-history comparison results, and separate fetch errors from diff initialization errors.",
       "targetFunctionFile": "ui/header/headerActions.js",

@@ -80,21 +80,34 @@ export async function copyDocument() {
     if (uiModule) uiModule.showToast('Copied to clipboard');
   }
 
-export async function updateTitle(overrideDocId, overrideTitle) {
+export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
+    const isAutoTitle = Boolean(options && options.isAutoTitle);
     const docId = overrideDocId || activeDocId;
     if (!docId) return;
     const doc = docs.get(docId);
+    if (!doc) return;
     const title = overrideTitle || document.getElementById('doc-title-input')?.value;
     if (!title) return;
+    if (isAutoTitle && doc.title && doc.title !== 'Untitled' && doc.title !== title) return;
+
+    doc._titleAbortController?.abort();
+    const controller = new AbortController();
+    doc._titleAbortController = controller;
+    const requestSeq = (doc._titleRequestSeq = (doc._titleRequestSeq || 0) + 1);
+
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({ title }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const currentDoc = docs.get(docId);
-      if (currentDoc && (!doc || currentDoc === doc)) {
+      if (currentDoc && currentDoc === doc && doc._titleRequestSeq === requestSeq) {
+        if (isAutoTitle && currentDoc.title && currentDoc.title !== 'Untitled' && currentDoc.title !== title) {
+          return;
+        }
         currentDoc.title = title;
         const titleInput = document.getElementById('doc-title-input');
         const pane = document.getElementById('doc-editor-pane');
@@ -102,13 +115,18 @@ export async function updateTitle(overrideDocId, overrideTitle) {
         if (titleInput && docId === activeDocId
             && (!pane || pane.dataset.activeDocumentId === docId)
             && document.activeElement !== titleInput
-            && (!activeTitle || activeTitle === 'Untitled')) {
+            && (!activeTitle || activeTitle === 'Untitled' || !isAutoTitle)) {
           titleInput.value = title;
         }
         renderTabs();
       }
     } catch (e) {
+      if (e?.name === 'AbortError') return;
       console.error('Failed to update title:', e);
+    } finally {
+      if (doc._titleAbortController === controller) {
+        doc._titleAbortController = null;
+      }
     }
   }
 
@@ -153,9 +171,12 @@ export function autoTitleFromContent(content, docId) {
     if (title.length > 50) title = title.slice(0, 48) + '...';
     if (!title) return;
 
-    updateTitle(id, title);
+    updateTitle(id, title, { isAutoTitle: true });
     const titleInput = document.getElementById('doc-title-input');
-    if (titleInput && id === activeDocId) titleInput.value = title;
+    const activeTitle = (titleInput?.value || '').trim();
+    if (titleInput && id === activeDocId && (!activeTitle || activeTitle === 'Untitled') && document.activeElement !== titleInput) {
+      titleInput.value = title;
+    }
   }
 
 export async function updateLanguage(docId = activeDocId, language = document.getElementById('doc-language-select')?.value) {

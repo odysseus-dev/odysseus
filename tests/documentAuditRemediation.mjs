@@ -978,3 +978,313 @@ test('facade: importing and running document module publishes only the documente
     'uiModule',
   ]);
 });
+
+test('NB-F1: stale automatic-title response cannot overwrite newer manual title or corrupt tabs', async t => {
+  let releaseAutoPatch;
+  const heldAutoPatch = new Promise(resolve => { releaseAutoPatch = resolve; });
+  let autoPatchCount = 0;
+  let manualPatchCount = 0;
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method === 'PATCH' && request.path === '/api/document/doc-title-a') {
+      if (request.body?.title === 'Auto Title A') {
+        autoPatchCount++;
+        await heldAutoPatch;
+        await route.fulfill({ json: { status: 'ok', title: 'Auto Title A' } });
+        return true;
+      }
+      if (request.body?.title === 'Manual Title A') {
+        manualPatchCount++;
+        await route.fulfill({ json: { status: 'ok', title: 'Manual Title A' } });
+        return true;
+      }
+      if (request.body?.title === 'Manual Second' || request.body?.title === 'Manual Final') {
+        await route.fulfill({ json: { status: 'ok', title: request.body?.title } });
+        return true;
+      }
+    }
+    if (request.method === 'PATCH' && request.path === '/api/document/doc-nav-b') {
+      await route.fulfill({ json: { status: 'ok', title: request.body?.title } });
+      return true;
+    }
+    if (request.method === 'PATCH' && request.path === '/api/document/doc-fail-c') {
+      await route.fulfill({ status: 500, json: { error: 'Server error' } });
+      return true;
+    }
+    return false;
+  });
+
+  // 1. Inject doc A with Untitled title
+  await inject(page, 'doc-title-a', '# Auto Title A\nSome body', 'markdown', 'Untitled');
+  await page.evaluate(async () => {
+    const { autoTitleFromContent } = await import('/static/js/document/ui/documentActions.js');
+    autoTitleFromContent('# Auto Title A\nSome body', 'doc-title-a');
+  });
+
+  // Verify auto title PATCH is sent and in flight
+  await page.waitForFunction(() => state.docs.get('doc-title-a')._titleRequestSeq === 1);
+  assert.equal(autoPatchCount, 1);
+
+  // 2. User manually edits the title while auto title is in flight
+  await page.evaluate(async () => {
+    const { updateTitle } = await import('/static/js/document/ui/documentActions.js');
+    state.docs.get('doc-title-a').title = 'Manual Title A';
+    document.getElementById('doc-title-input').value = 'Manual Title A';
+    await updateTitle('doc-title-a', 'Manual Title A');
+  });
+
+  // Verify manual title update completed
+  assert.equal(manualPatchCount, 1);
+  assert.equal(await page.evaluate(() => state.docs.get('doc-title-a').title), 'Manual Title A');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Manual Title A');
+
+  // 3. Older automatic-title response arrives afterward
+  releaseAutoPatch();
+  await page.evaluate(() => new Promise(r => setTimeout(r, 50)));
+
+  // 4. Assert: document record, title input, tab label, and persisted title remain manual
+  assert.equal(await page.evaluate(() => state.docs.get('doc-title-a').title), 'Manual Title A');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Manual Title A');
+  const tabA = await page.evaluate(() => document.querySelector('.doc-tab[data-doc-id="doc-title-a"] .doc-tab-title')?.textContent || '');
+  assert.equal(tabA, 'Manual Title A');
+
+  // 5. Document navigation during request:
+  await inject(page, 'doc-nav-b', '# Auto Nav B\nContent', 'markdown', 'Untitled');
+  await page.evaluate(async () => {
+    const { autoTitleFromContent } = await import('/static/js/document/ui/documentActions.js');
+    autoTitleFromContent('# Auto Nav B\nContent', 'doc-nav-b');
+    // Navigate back to doc-title-a
+    await editor.loadDocument('doc-title-a');
+  });
+  await page.waitForFunction(() => state.docs.get('doc-nav-b')?.title === 'Auto Nav B');
+  // Doc A remains unaffected
+  assert.equal(await page.evaluate(() => state.docs.get('doc-title-a').title), 'Manual Title A');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Manual Title A');
+
+  // 6. Failed automatic title PATCH:
+  await inject(page, 'doc-fail-c', '# Fail Doc\nContent', 'markdown', 'Untitled');
+  await page.evaluate(async () => {
+    const { autoTitleFromContent } = await import('/static/js/document/ui/documentActions.js');
+    autoTitleFromContent('# Fail Doc\nContent', 'doc-fail-c');
+  });
+  await page.evaluate(() => new Promise(r => setTimeout(r, 50)));
+  // Untitled is preserved cleanly without thrown error
+  assert.equal(await page.evaluate(() => state.docs.get('doc-fail-c').title), 'Untitled');
+
+  // 7. Repeated manual title edits sequencing:
+  await page.evaluate(async () => {
+    await editor.loadDocument('doc-title-a');
+    const { updateTitle } = await import('/static/js/document/ui/documentActions.js');
+    await updateTitle('doc-title-a', 'Manual Second');
+    await updateTitle('doc-title-a', 'Manual Final');
+  });
+  assert.equal(await page.evaluate(() => state.docs.get('doc-title-a').title), 'Manual Final');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Manual Final');
+});
+
+test('NB-F2: email draft response targets only originating document across navigation, deletion and repeated saves', async t => {
+  let releaseDraftA;
+  const heldDraftA = new Promise(resolve => { releaseDraftA = resolve; });
+  let draftRequests = [];
+  const { page } = await setup(t, async (route, request) => {
+    if (request.method === 'POST' && request.path === '/api/email/draft') {
+      draftRequests.push(request.body);
+      if (request.body?.subject === 'Email A Subject') {
+        await heldDraftA;
+        await route.fulfill({ json: { success: true, draft_uid: 'uid-draft-a-99', draft_folder: 'Drafts' } });
+        return true;
+      }
+      if (request.body?.subject === 'Email Del Subject') {
+        await new Promise(r => setTimeout(r, 80));
+        await route.fulfill({ json: { success: true, draft_uid: 'uid-draft-del-1', draft_folder: 'Drafts' } });
+        return true;
+      }
+      if (request.body?.subject === 'Email Normal Subject') {
+        await route.fulfill({ json: { success: true, draft_uid: 'uid-normal-101', draft_folder: 'Drafts' } });
+        return true;
+      }
+      if (request.body?.subject === 'Email Fail Subject') {
+        await route.fulfill({ json: { success: false, error: 'Mailbox full' } });
+        return true;
+      }
+      await route.fulfill({ json: { success: true, draft_uid: 'uid-gen-1', draft_folder: 'Drafts' } });
+      return true;
+    }
+    return false;
+  });
+
+  const emailAContent = 'To: recip@example.com\nSubject: Email A Subject\n---\nHello from Email A';
+
+  await inject(page, 'email-a', emailAContent, 'email', 'Email A Subject');
+  await inject(page, 'doc-b', '# Doc B\nText', 'markdown', 'Doc B');
+
+  // Load email A and start saving draft
+  await page.evaluate(() => editor.loadDocument('email-a'));
+  await page.evaluate(async () => {
+    const { _saveDraft } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    _saveDraft();
+  });
+
+  // Verify draft request was dispatched
+  await page.waitForFunction(() => Boolean(document.getElementById('doc-email-draft-btn')?.disabled));
+
+  // Navigate away to doc-b while email A draft save is pending
+  await page.evaluate(() => editor.loadDocument('doc-b'));
+  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-b');
+
+  // Release email A draft response
+  releaseDraftA();
+  await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+
+  // Assert: Doc B received NO draft UID or folder metadata!
+  const docBMeta = await page.evaluate(() => ({
+    uid: state.docs.get('doc-b')._emailDraftUid,
+    folder: state.docs.get('doc-b')._emailDraftFolder,
+  }));
+  assert.equal(docBMeta.uid, undefined);
+  assert.equal(docBMeta.folder, undefined);
+
+  // Assert: Email A received the correct draft UID and folder metadata
+  const docAMeta = await page.evaluate(() => ({
+    uid: state.docs.get('email-a')._emailDraftUid,
+    folder: state.docs.get('email-a')._emailDraftFolder,
+  }));
+  assert.equal(docAMeta.uid, 'uid-draft-a-99');
+  assert.equal(docAMeta.folder, 'Drafts');
+
+  // Originating document deletion while draft save is pending:
+  await inject(page, 'email-del', 'To: x@example.com\nSubject: Email Del Subject\n---\nDel test', 'email', 'Del');
+  await page.evaluate(() => editor.loadDocument('email-del'));
+  await page.evaluate(async () => {
+    const { _saveDraft } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    _saveDraft();
+    state.markDeleted('email-del');
+    state.removeDocument('email-del');
+    await editor.loadDocument('doc-b');
+  });
+  await page.evaluate(() => new Promise(r => setTimeout(r, 120)));
+  // Doc B remains completely untouched
+  assert.equal(await page.evaluate(() => state.docs.get('doc-b')._emailDraftUid), undefined);
+
+  // Normal save without navigation:
+  await inject(page, 'email-norm', 'To: n@example.com\nSubject: Email Normal Subject\n---\nNormal', 'email', 'Norm');
+  await page.evaluate(() => editor.loadDocument('email-norm'));
+  await page.evaluate(async () => {
+    const { _saveDraft } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    await _saveDraft();
+  });
+  assert.equal(await page.evaluate(() => state.docs.get('email-norm')._emailDraftUid), 'uid-normal-101');
+  assert.equal(await page.evaluate(() => state.docs.get('email-norm')._emailDraftFolder), 'Drafts');
+
+  // Failed draft save does not corrupt metadata:
+  await inject(page, 'email-fail', 'To: f@example.com\nSubject: Email Fail Subject\n---\nFail', 'email', 'Fail');
+  await page.evaluate(() => editor.loadDocument('email-fail'));
+  await page.evaluate(async () => {
+    const { _saveDraft } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    await _saveDraft();
+  });
+  assert.equal(await page.evaluate(() => state.docs.get('email-fail')._emailDraftUid), undefined);
+});
+
+test('NB-F3: scheduled email completion closes only originating email across navigation, deletion and failure', async t => {
+  let releaseScheduleA;
+  const heldScheduleA = new Promise(resolve => { releaseScheduleA = resolve; });
+  let scheduleRequests = [];
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method === 'POST' && request.path === '/api/email/schedule') {
+      scheduleRequests.push(request.body);
+      if (request.body?.subject === 'Sched A') {
+        await heldScheduleA;
+        await route.fulfill({ json: { success: true } });
+        return true;
+      }
+      if (request.body?.subject === 'Sched Normal') {
+        await route.fulfill({ json: { success: true } });
+        return true;
+      }
+      if (request.body?.subject === 'Sched Fail') {
+        await route.fulfill({ json: { success: false, error: 'Schedule rejected' } });
+        return true;
+      }
+      await route.fulfill({ json: { success: true } });
+      return true;
+    }
+    if (request.method === 'DELETE' && request.path.startsWith('/api/document/')) {
+      await route.fulfill({ json: { success: true } });
+      return true;
+    }
+    return false;
+  });
+
+  const emailSchedAContent = 'To: test@example.com\nSubject: Sched A\n---\nSched A body';
+  await inject(page, 'email-sched-a', emailSchedAContent, 'email', 'Sched A');
+  await inject(page, 'doc-stay-b', '# Stay Open\nDoc B body', 'markdown', 'Doc Stay B');
+
+  // 1. Open schedule modal for email A
+  await page.evaluate(() => editor.loadDocument('email-sched-a'));
+  await page.evaluate(async () => {
+    const { _scheduleSend } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    _scheduleSend();
+  });
+
+  // Verify modal is displayed
+  await page.locator('.schedule-send-modal').waitFor({ state: 'visible' });
+
+  // 2. Click confirm schedule, initiating the held fetch
+  await page.locator('#sched-confirm').click();
+  await page.waitForFunction(() => Boolean(document.querySelector('.schedule-send-modal')));
+
+  // Navigate to document B while scheduling is in flight
+  await page.evaluate(() => editor.loadDocument('doc-stay-b'));
+  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-stay-b');
+  assert.equal(await page.evaluate(() => state.isOpen), true);
+
+  // 3. Schedule request succeeds
+  releaseScheduleA();
+  await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+
+  // 4. Verify document B remains open and active!
+  assert.equal(await page.evaluate(() => state.isOpen), true);
+  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-stay-b');
+  assert.equal(await page.locator('#doc-editor-pane').isVisible(), true);
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Doc Stay B');
+
+  // 5. Verify email A is closed/removed from tabs and documents map
+  assert.equal(await page.evaluate(() => state.docs.has('email-sched-a')), false);
+  const tabA = await page.evaluate(() => document.querySelector('.doc-tab[data-doc-id="email-sched-a"]'));
+  assert.equal(tabA, null);
+  const tabB = await page.evaluate(() => document.querySelector('.doc-tab[data-doc-id="doc-stay-b"]'));
+  assert.notEqual(tabB, null);
+
+  // Verify DELETE request was sent for email-sched-a, NOT for doc-stay-b
+  const deletes = requests.filter(r => r.method === 'DELETE');
+  assert(deletes.some(r => r.path === '/api/document/email-sched-a'));
+  assert(!deletes.some(r => r.path === '/api/document/doc-stay-b'));
+
+  // 6. Schedule without navigation (normal path):
+  await inject(page, 'email-sched-norm', 'To: norm@example.com\nSubject: Sched Normal\n---\nNorm body', 'email', 'Sched Normal');
+  await page.evaluate(() => editor.loadDocument('email-sched-norm'));
+  await page.evaluate(async () => {
+    const { _scheduleSend } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    _scheduleSend();
+  });
+  await page.locator('.schedule-send-modal').waitFor({ state: 'visible' });
+  await page.locator('#sched-confirm').click();
+  await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+  // Cleanly closed and transitioned to doc-stay-b
+  assert.equal(await page.evaluate(() => state.docs.has('email-sched-norm')), false);
+  assert.equal(await page.evaluate(() => state.activeDocId), 'doc-stay-b');
+
+  // 7. Failed schedule request:
+  await inject(page, 'email-sched-fail', 'To: fail@example.com\nSubject: Sched Fail\n---\nFail body', 'email', 'Sched Fail');
+  await page.evaluate(() => editor.loadDocument('email-sched-fail'));
+  await page.evaluate(async () => {
+    const { _scheduleSend } = await import('/static/js/document/ui/email/sendWorkflow.js');
+    _scheduleSend();
+  });
+  await page.locator('.schedule-send-modal').waitFor({ state: 'visible' });
+  await page.locator('#sched-confirm').click();
+  await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+  // Document remains open and intact on failure
+  assert.equal(await page.evaluate(() => state.docs.has('email-sched-fail')), true);
+  assert.equal(await page.evaluate(() => state.activeDocId), 'email-sched-fail');
+});

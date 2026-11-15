@@ -104,6 +104,10 @@ async function _resolveComposeSendAccountId() {
   }
 
 export async function _saveDraft() {
+    const docId = activeDocId;
+    if (!docId) return;
+    const doc = docs.get(docId);
+    if (!doc || doc.language !== 'email') return;
     const to = document.getElementById('doc-email-to')?.value?.trim();
     const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
     const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
@@ -136,15 +140,15 @@ export async function _saveDraft() {
           in_reply_to: inReplyTo || null,
           references: references || null,
           account_id: window.__odysseusActiveEmailAccount || null,
-          attachments: (docs.get(activeDocId)?._composeAtts || []).map(a => a.token),
-          draft_uid: docs.get(activeDocId)?._emailDraftUid || null,
-          draft_folder: docs.get(activeDocId)?._emailDraftFolder || null,
+          attachments: (doc._composeAtts || []).map(a => a.token),
+          draft_uid: doc._emailDraftUid || null,
+          draft_folder: doc._emailDraftFolder || null,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        const savedDoc = docs.get(activeDocId);
-        if (savedDoc) {
+        const savedDoc = docs.get(docId);
+        if (savedDoc && savedDoc === doc) {
           savedDoc._emailDraftUid = data.draft_uid || null;
           savedDoc._emailDraftFolder = data.draft_folder || null;
         }
@@ -206,12 +210,18 @@ async function _saveEmailDraftForRecovery({
   }
 
 export async function _scheduleSend(anchorEl = null) {
+    const sendDocId = activeDocId;
+    if (!sendDocId) return;
+    const doc = docs.get(sendDocId);
+    if (!doc || doc.language !== 'email') return;
     const to = document.getElementById('doc-email-to')?.value?.trim();
     const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
     const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
+    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim();
+    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
     const _rich = _emailRichbodyActive();
     if (_rich) _syncEmailRichbody(_rich);
     const rawBody = (_rich
@@ -219,8 +229,7 @@ export async function _scheduleSend(anchorEl = null) {
       : (document.getElementById('doc-editor-textarea')?.value || '')
     ).trim();
     const body = _sanitizeOutgoingEmailBody(rawBody);
-    const doc = docs.get(activeDocId);
-    const attachments = (doc?._composeAtts || []).map(a => a.token);
+    const attachments = (doc._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
@@ -339,10 +348,29 @@ export async function _scheduleSend(anchorEl = null) {
         if (data.success) {
           _clearMissingAttachmentWarnings();
           if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
-          _clearCurrentEmailLocalDraft();
+          if (sourceUid) {
+            _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo || '');
+          } else {
+            _clearCurrentEmailLocalDraft();
+          }
           cleanup();
-          // Close the document
-          _closeWithoutDeleting(true);
+          // Close only the originating email document
+          if (sendDocId && docs.get(sendDocId) === doc) {
+            markDeleted(sendDocId);
+            _cancelAutoSave(sendDocId);
+            fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
+            const wasActiveSentDoc = isOpen && activeDocId === sendDocId;
+            removeDocument(sendDocId);
+            if (wasActiveSentDoc) {
+              setActiveDocId(null);
+              const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));
+              if (nextId) switchToDoc(nextId);
+              else closePanel();
+            } else {
+              renderTabs();
+            }
+            _syncDocIndicator();
+          }
         } else {
           if (uiModule) uiModule.showError(data.error || 'Failed to schedule');
         }
