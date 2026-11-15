@@ -1,5 +1,1287 @@
+diff --git a/agent/account_usage.py b/agent/account_usage.py
+index 6f648870d7..560b93bd82 100644
+--- a/agent/account_usage.py
++++ b/agent/account_usage.py
+@@ -844,10 +844,11 @@ def redeem_codex_reset_credit(
+ def _fetch_anthropic_account_usage(
+     base_url: Optional[str] = None, api_key: Optional[str] = None
+ ) -> Optional[AccountUsageSnapshot]:
+-    # An explicit api_key (live agent / per-credential pool read) must not be shadowed by
+-    # the ambient OAuth singleton: fetch_account_usage(base_url, api_key) promises to
+-    # report THAT credential's usage. An API key answers the OAuth usage endpoint with
+-    # 401, so only an OAuth-shaped token reaches the fetch.
++    # Odysseus: this fetcher calls Anthropic's OAuth usage endpoint while presenting itself as Claude Code
++    # (``User-Agent: claude-code/2.1.0``). That is another client's identity, so it is disabled; Claude usage comes from the
++    # Claude Code provider's own hook or is reported as unavailable. No token is read and nothing is sent.
++    return _snapshot("anthropic", "unsupported", [], [],
++                     unavailable_reason="Claude usage unavailable — no supported usage source configured.")
+     explicit = str(api_key or "").strip()
+     token = explicit or (resolve_anthropic_token() or "").strip()
+     if not token:
+diff --git a/apps/desktop/src/app/chat/composer/context-popover.tsx b/apps/desktop/src/app/chat/composer/context-popover.tsx
+new file mode 100644
+index 0000000000..a81a7fba19
+--- /dev/null
++++ b/apps/desktop/src/app/chat/composer/context-popover.tsx
+@@ -0,0 +1,149 @@
++import { useStore } from '@nanostores/react'
++import { useEffect, useRef, useState } from 'react'
++import { useNavigate } from 'react-router'
++
++import { Button } from '@/components/ui/button'
++import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
++import { pluginSettingsHref } from '@/contrib/settings-pages'
++import { cn } from '@/lib/utils'
++import { requestGatewayForActiveRoute } from '@/store/active-route-request'
++import { $composerContextGauge } from '@/store/composer-control-center'
++import { $currentModel } from '@/store/session'
++import type { UsageStats } from '@/types/hermes'
++
++import { compactTokens, contextFacts, COST_KIND_LABEL, type ContextFacts, ageLabel } from './control-center-utils'
++
++interface Props {
++  children: React.ReactNode
++  profile?: null | string
++  sessionId?: null | string
++}
++
++const CACHE_MS = 15_000
++const detailCache = new Map<string, { at: number; usage: UsageStats }>()
++
++/** What the ring opens: where the numbers came from, compression and the cost of THIS conversation. The ring's own figure is read from the
++ *  shared gauge; the compression and cost facts are asked of the gateway once per open (cached 15 s), so nothing polls. */
++export function ContextPopover({ children, profile, sessionId }: Props) {
++  const gauge = useStore($composerContextGauge)
++  const model = useStore($currentModel)
++  const navigate = useNavigate()
++  const [open, setOpen] = useState(false)
++  const [detail, setDetail] = useState<null | { sessionId: string; usage: UsageStats }>(null)
++  const [failed, setFailed] = useState(false)
++  const latest = useRef(sessionId)
++  latest.current = sessionId
++
++  useEffect(() => {
++    if (!open || !sessionId) {
++      return
++    }
++
++    const hit = detailCache.get(sessionId)
++
++    if (hit && Date.now() - hit.at < CACHE_MS) {
++      setDetail({ sessionId, usage: hit.usage })
++
++      return
++    }
++
++    setFailed(false)
++    requestGatewayForActiveRoute<{ usage?: UsageStats }>(profile || 'default', 'session.info', { session_id: sessionId })
++      .then(info => {
++        if (info?.usage) {
++          detailCache.set(sessionId, { at: Date.now(), usage: info.usage })
++
++          if (latest.current === sessionId) {
++            setDetail({ sessionId, usage: info.usage })
++          }
++        }
++      })
++      .catch(() => latest.current === sessionId && setFailed(true))
++  }, [open, profile, sessionId])
++
++  // Never show another conversation's numbers: detail is honoured only for the session it was fetched for.
++  const facts = contextFacts(gauge, detail && detail.sessionId === sessionId ? detail.usage : null, model)
++
++  return (
++    <Popover onOpenChange={setOpen} open={open}>
++      <PopoverTrigger asChild>{children}</PopoverTrigger>
++      <PopoverContent align="end" className="w-80 max-w-[calc(100vw-1.5rem)] p-3 text-[0.75rem]" data-slot="composer-context-popover" side="top">
++        <Facts failed={failed} facts={facts} />
++        <div className="mt-2 flex justify-end">
++          <Button
++            onClick={() => {
++              setOpen(false)
++              navigate(pluginSettingsHref('odysseus-usage'))
++            }}
++            size="xs"
++            variant="ghost"
++          >
++            AI Usage and costs
++          </Button>
++        </div>
++      </PopoverContent>
++    </Popover>
++  )
++}
++
++function Row({ label, value, hint }: { hint?: string; label: string; value: React.ReactNode }) {
++  return (
++    <div className="flex items-baseline justify-between gap-3 py-0.5">
++      <span className="shrink-0 text-(--ui-text-tertiary)">{label}</span>
++      <span className="min-w-0 text-right text-(--ui-text-primary)" title={hint}>
++        {value}
++      </span>
++    </div>
++  )
++}
++
++function Facts({ facts, failed }: { facts: ContextFacts; failed: boolean }) {
++  return (
++    <div className="grid gap-2" data-slot="context-facts">
++      <div>
++        <p className="font-medium text-(--ui-text-primary)">Context window</p>
++        {facts.known ? (
++          <>
++            <Row
++              label="Used"
++              value={`${facts.estimated ? '~' : ''}${compactTokens(facts.used)} / ${compactTokens(facts.max)} (${facts.estimated ? '~' : ''}${facts.percent}%)`}
++            />
++            <Row label="Remaining" value={`${facts.estimated ? '~' : ''}${compactTokens(facts.max - facts.used)} (${100 - facts.percent}%)`} />
++          </>
++        ) : (
++          <p className="py-0.5 text-(--ui-text-secondary)">{facts.unavailable}</p>
++        )}
++        <Row label="Input tokens" value={facts.inputSource} />
++        <Row label="Window size" value={facts.windowSource} />
++        {facts.note && <p className="pt-1 text-(--ui-text-tertiary)">{facts.note}</p>}
++      </div>
++
++      <div>
++        <p className="font-medium text-(--ui-text-primary)">Automatic compression</p>
++        <Row label="Status" value={facts.compression.enabled === null ? 'Not reported' : facts.compression.enabled ? 'On' : 'Off'} />
++        {facts.compression.threshold && <Row hint={facts.compression.thresholdSource} label="Starts at" value={facts.compression.threshold} />}
++        <Row label="Compactions" value={facts.compression.count === null ? 'Not reported' : String(facts.compression.count)} />
++        {facts.compression.last !== null && <Row label="Last" value={ageLabel(facts.compression.last)} />}
++        {facts.compression.error && <p className="pt-1 text-(--dt-destructive,#c0392b)">Last error: {facts.compression.error}</p>}
++        {facts.compression.cooldown !== null && <p className="pt-1 text-(--ui-text-secondary)">Paused after an error until {new Date(facts.compression.cooldown * 1000).toLocaleTimeString()}.</p>}
++      </div>
++
++      <div>
++        <p className="font-medium text-(--ui-text-primary)">This conversation&rsquo;s cost</p>
++        {facts.costs.length === 0 ? (
++          <p className="py-0.5 text-(--ui-text-secondary)">{failed ? 'Cost details could not be loaded.' : 'No priced usage recorded yet.'}</p>
++        ) : (
++          facts.costs.map(cost => (
++            <Row
++              hint={cost.sources}
++              key={cost.kind}
++              label={COST_KIND_LABEL[cost.kind] ?? cost.kind}
++              value={<span className={cn(cost.kind === 'unpriced' && 'text-(--ui-text-secondary)')}>{cost.label}</span>}
++            />
++          ))
++        )}
++        <p className="pt-1 text-(--ui-text-tertiary)">Only an amount labelled &ldquo;Billed&rdquo; was charged. API-equivalent values are not charges.</p>
++      </div>
++    </div>
++  )
++}
+diff --git a/apps/desktop/src/app/chat/composer/control-center-utils.ts b/apps/desktop/src/app/chat/composer/control-center-utils.ts
+index 611d31358e..b5a2134fbf 100644
+--- a/apps/desktop/src/app/chat/composer/control-center-utils.ts
++++ b/apps/desktop/src/app/chat/composer/control-center-utils.ts
+@@ -10,6 +10,100 @@ export interface ContextGaugeView {
+   tooltip: string
+ }
+ 
++export const compactTokens = (n: number): string => compact(n)
++
++export const COST_KIND_LABEL: Record<string, string> = {
++  billed: 'Billed by provider',
++  estimated_api: 'Estimated API cost',
++  subscription_equivalent: 'API-equivalent (not charged)',
++  included: 'Included / free',
++  unpriced: 'Price unknown'
++}
++
++export function ageLabel(epochSeconds: number): string {
++  const s = Math.max(0, Math.round(Date.now() / 1000 - epochSeconds))
++
++  return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129_600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86_400)} d ago`
++}
++
++const INPUT_SOURCE: Record<string, string> = {
++  provider_anchor: 'Provider-reported',
++  provider_anchor_plus_estimate: 'Provider reading + estimate for newer messages',
++  provider_usage: 'Provider-reported',
++  local_estimate: 'Estimated locally',
++  transcript_estimate: 'Estimated from the transcript'
++}
++
++const UNAVAILABLE: Record<string, string> = {
++  no_provider_reading: 'No provider reading is stored for this conversation yet. It appears after the next reply.',
++  transcript_changed: 'The stored reading no longer matches the transcript. It updates after the next reply.',
++  window_unknown: "This model's context window is not known, so no percentage is shown.",
++  empty: 'This conversation has no messages yet.',
++  unreadable: 'The stored conversation could not be read.'
++}
++
++export interface ContextFacts {
++  compression: {
++    cooldown: null | number
++    count: null | number
++    enabled: boolean | null
++    error: null | string
++    last: null | number
++    threshold: null | string
++    thresholdSource: string
++  }
++  costs: { kind: string; label: string; sources: string }[]
++  estimated: boolean
++  inputSource: string
++  known: boolean
++  max: number
++  note: null | string
++  percent: number
++  unavailable: string
++  used: number
++  windowSource: string
++}
++
++/** The popover's facts. `gauge` is the live ring figure; `detail` is the gateway's `session.info` usage for THIS conversation (compression,
++ *  cost, and where each figure came from). A window is never invented: without one the ring reads unavailable and the known token count is shown. */
++export function contextFacts(gauge: null | undefined | UsageStats, detail: null | undefined | UsageStats, currentModel = ''): ContextFacts {
++  const view = contextGaugeView(gauge)
++  const known = view.state !== 'unavailable' && Boolean(gauge?.context_max)
++  const used = known ? (gauge?.context_used ?? 0) : 0
++  const max = known ? (gauge?.context_max ?? 0) : 0
++  const estimated = known ? Boolean(gauge?.context_estimated) : false
++  const source = detail?.context_input_source ?? (known ? (estimated ? 'local_estimate' : 'provider_usage') : '')
++  const reason = detail?.context_unavailable_reason ?? ''
++  const staleModel = Boolean(currentModel && gauge?.model && gauge.model !== currentModel)
++  const windowKnown = known || Boolean(detail?.context_max_known)
++  const windowSource = detail?.context_window_source ?? (known ? 'model_metadata' : 'unknown')
++  const threshold = detail?.compression_threshold_tokens
++  const percent = detail?.compression_threshold_percent
++
++  return {
++    compression: {
++      cooldown: detail?.compression_cooldown_until ?? null,
++      count: detail?.compressions ?? gauge?.compressions ?? null,
++      enabled: detail?.compression_enabled ?? null,
++      error: detail?.compression_error ?? null,
++      last: detail?.last_compaction_at ?? null,
++      threshold: threshold ? `${percent ? `${percent}% = ` : ''}${compact(threshold)} tokens` : percent ? `${percent}% of the window` : null,
++      thresholdSource: detail?.compression_threshold_source === 'compressor' ? "This model's active compressor" : 'Your configured compression threshold'
++    },
++    costs: (detail?.cost_breakdown ?? []).map(row => ({ kind: row.kind, label: row.label, sources: (row.sources ?? []).join(', ') || 'no price source' })),
++    estimated,
++    inputSource: source ? (INPUT_SOURCE[source] ?? source) : 'Not available',
++    known,
++    max,
++    note: staleModel ? 'The model changed; these figures update after the next reply.' : (detail?.context_note ? 'The stored reading no longer matched the transcript, so part of this is estimated.' : null),
++    percent: known ? Math.max(0, Math.min(100, Math.round(gauge?.context_percent ?? (used / max) * 100))) : 0,
++    unavailable: detail?.context_known_tokens
++      ? `About ${compact(detail.context_known_tokens)} tokens are in use, but ${UNAVAILABLE.window_unknown}`
++      : (UNAVAILABLE[reason] ?? 'Context usage is not available for this conversation yet. It appears after the next reply.'),
++    windowSource: windowKnown ? (windowSource === 'config' ? 'Set in your config' : windowSource === 'model_metadata' ? "From the model's metadata" : 'Not known') : 'Not known'
++  }
++}
++
+ const compact = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 100) / 10}k` : String(Math.round(n)))
+ 
+ /** What the composer's context ring shows. A figure is only shown when the backend sent a context window; a backend estimate is
+diff --git a/apps/desktop/src/app/chat/composer/control-center.tsx b/apps/desktop/src/app/chat/composer/control-center.tsx
+index d175e219fb..21dcbada43 100644
+--- a/apps/desktop/src/app/chat/composer/control-center.tsx
++++ b/apps/desktop/src/app/chat/composer/control-center.tsx
+@@ -34,6 +34,7 @@ import {
+ import { $activeGatewayProfile } from '@/store/profile'
+ import { $currentBranch } from '@/store/session'
+ 
++import { ContextPopover } from './context-popover'
+ import { contextGaugeView, pathLeaf } from './control-center-utils'
+ 
+ const CHIP =
+@@ -238,7 +239,7 @@ export function ComposerContextChips({ busy, compact, cwd, profile, sessionId }:
+ 
+ /** Context usage ring. Provider-measured values are plain, a backend estimate is marked "~", and without a context window the
+  *  ring says "unavailable" instead of showing a guessed number. */
+-export function ComposerContextRing() {
++export function ComposerContextRing({ profile, sessionId }: { profile?: null | string; sessionId?: null | string }) {
+   const usage = useStore($composerContextGauge)
+   const view = contextGaugeView(usage)
+   const radius = 8
+@@ -246,13 +247,14 @@ export function ComposerContextRing() {
+   const dash = view.percent === null ? 0 : (view.percent / 100) * circumference
+ 
+   return (
+-    <Tip label={view.tooltip}>
+-      <span
+-        aria-label={view.tooltip}
+-        className={cn('relative inline-flex size-6 shrink-0 items-center justify-center', view.state === 'unavailable' && 'opacity-50')}
++    <ContextPopover profile={profile} sessionId={sessionId}>
++      <button
++        aria-label={`${view.tooltip}. Open context details`}
++        className={cn('relative inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-(--ui-control-active-background)', view.state === 'unavailable' && 'opacity-50')}
+         data-slot="composer-context-ring"
+         data-state={view.state}
+-        role="img"
++        title={view.tooltip}
++        type="button"
+       >
+         <svg aria-hidden="true" className="size-5 -rotate-90" viewBox="0 0 20 20">
+           <circle cx="10" cy="10" fill="none" r={radius} stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+@@ -269,7 +271,7 @@ export function ComposerContextRing() {
+             />
+           )}
+         </svg>
+-      </span>
+-    </Tip>
++      </button>
++    </ContextPopover>
+   )
+ }
+diff --git a/apps/desktop/src/app/chat/composer/index.tsx b/apps/desktop/src/app/chat/composer/index.tsx
+index 6a7e034c00..d7269d5744 100644
+--- a/apps/desktop/src/app/chat/composer/index.tsx
++++ b/apps/desktop/src/app/chat/composer/index.tsx
+@@ -1520,7 +1520,7 @@ export function ChatBar({
+                       start, detached from the cluster (#116332). */}
+                     <div className="flex min-w-0 items-center justify-end gap-(--composer-control-gap) [grid-area:controls]">
+                       <ContribSlot area={COMPOSER_AREAS.actions} />
+-                      {!guidedChat && !botChat && <ComposerContextRing />}
++                      {!guidedChat && !botChat && <ComposerContextRing profile={profile} sessionId={sessionId} />}
+                       {controls}
+                     </div>
+                   </div>
+diff --git a/apps/desktop/src/types/hermes.ts b/apps/desktop/src/types/hermes.ts
+index 40036d02a5..dc5ca66061 100644
+--- a/apps/desktop/src/types/hermes.ts
++++ b/apps/desktop/src/types/hermes.ts
+@@ -942,6 +942,22 @@ export interface UsageStats {
+   context_estimated?: boolean
+   context_source?: string
+   context_used?: number
++  /** Odysseus: where the figures came from and what compression is doing (gateway/session_usage.py). */
++  compression_cooldown_until?: number
++  compression_enabled?: boolean
++  compression_error?: string
++  compression_threshold_percent?: number
++  compression_threshold_source?: string
++  compression_threshold_tokens?: number
++  context_input_source?: string
++  context_known_tokens?: number
++  context_max_known?: number
++  context_note?: string
++  context_unavailable_reason?: string
++  context_window_source?: string
++  cost_breakdown?: { kind: string; label: string; sources?: string[]; usd?: null | number }[]
++  last_compaction_at?: number
++  model?: string
+   cost_usd?: number
+   input: number
+   output: number
+diff --git a/apps/shared/src/gateway-contract.generated.ts b/apps/shared/src/gateway-contract.generated.ts
+index 8a84977ce2..929d165ddb 100644
+--- a/apps/shared/src/gateway-contract.generated.ts
++++ b/apps/shared/src/gateway-contract.generated.ts
+@@ -607,6 +607,21 @@ export interface Usage {
+   cost_usd?: number | null
+   cost_status?: string | null
+   plan_gauge?: PlanGauge | null
++  context_input_source?: string | null
++  context_window_source?: string | null
++  context_known_tokens?: number | null
++  context_max_known?: number | null
++  context_unavailable_reason?: string | null
++  context_note?: string | null
++  compression_enabled?: boolean | null
++  compression_threshold_percent?: number | null
++  compression_threshold_tokens?: number | null
++  compression_threshold_source?: string | null
++  last_compaction_at?: number | null
++  compression_error?: string | null
++  compression_cooldown_until?: number | null
++  cost_breakdown?: CostBreakdownRow[] | null
++  cost_pricing_version?: string | null
+   [key: string]: unknown
+ }
+ /** ``gateway/session_usage.py::plan_gauge``: a window plan's allowance for the status bar. */
+@@ -616,6 +631,21 @@ export interface PlanGauge {
+   used_bp: number
+   resets_at_ms?: number | null
+ }
++/** ``gateway/session_usage.py::session_cost_breakdown``: one KIND of cost figure; kinds are never summed together. ``usd`` is None for ``included`` and ``unpriced`` (shown as such, never as $0.00). */
++export interface CostBreakdownRow {
++  kind: string
++  usd?: number | null
++  label: string
++  calls?: number
++  aux_calls?: number
++  input?: number
++  output?: number
++  cache_read?: number
++  cache_write?: number
++  reasoning?: number
++  models?: string[]
++  sources?: string[]
++}
+ export interface McpServerStatus {
+   name?: string
+   status?: string | null
+@@ -3602,6 +3632,21 @@ export interface SessionUsageResult {
+   cost_usd?: number | null
+   cost_status?: string | null
+   plan_gauge?: PlanGauge | null
++  context_input_source?: string | null
++  context_window_source?: string | null
++  context_known_tokens?: number | null
++  context_max_known?: number | null
++  context_unavailable_reason?: string | null
++  context_note?: string | null
++  compression_enabled?: boolean | null
++  compression_threshold_percent?: number | null
++  compression_threshold_tokens?: number | null
++  compression_threshold_source?: string | null
++  last_compaction_at?: number | null
++  compression_error?: string | null
++  compression_cooldown_until?: number | null
++  cost_breakdown?: CostBreakdownRow[] | null
++  cost_pricing_version?: string | null
+   credits_lines?: string[] | null
+   credits_usage_window?: boolean | null
+   [key: string]: unknown
+@@ -4681,6 +4726,43 @@ export interface PluginCatalogLookupEntry {
+   subdir: string
+   tier?: string
+ }
++export interface UsageAccountsParams {
++  profile?: string | null
++  refresh?: string | null
++  pinned?: string[]
++}
++export interface UsageAccountsResult {
++  generated_at: number
++  scope: string
++  current_provider?: string | null
++  providers: UsageAccountProvider[]
++}
++export interface UsageAccountProvider {
++  provider: string
++  label: string
++  state: UsageAccountState
++  scope?: string
++  windows?: UsageAccountWindow[]
++  details?: string[]
++  reason?: string | null
++  source?: string | null
++  plan?: string | null
++  fetched_at?: string | null
++  age_s?: number | null
++  can_refresh?: boolean
++  refreshing?: boolean
++  retry_in_s?: number
++}
++export type UsageAccountState = 'ok' | 'stale' | 'unavailable' | 'auth_required' | 'unsupported'
++/** One allowance window. ``used_percent`` is None when the provider reports a window without a figure. */
++export interface UsageAccountWindow {
++  label: string
++  used_percent?: number | null
++  remaining_percent?: number | null
++  resets_at?: string | null
++  scope?: string
++  detail?: string | null
++}
+ export interface GroupsAttachmentUploadParams {
+   profile?: string | null
+   room_id: string
+@@ -6757,6 +6839,8 @@ export interface RpcMethods {
+   'tools.show': { params: _SessionScoped; result: ToolsShowResult }
+   /** Toolset summaries (no tool names) for the desktop Toolsets tab. */
+   'toolsets.list': { params: _SessionScoped; result: ToolsetsListResult }
++  /** Account-level provider allowances (sanitized; credentials stay in the gateway). Due providers refresh in the background; `refresh` forces one provider (throttled). Never runs model inference. */
++  'usage.accounts': { params: UsageAccountsParams; result: UsageAccountsResult }
+   /** Two-bar dollar usage view shared by /usage, /topup and /subscription; fail-open to unavailable. */
+   'usage.bars': { params: ProfileParams; result: UsageModel }
+   /** Add a login / payment / address item to the local vault. */
+@@ -7041,6 +7125,7 @@ export const RPC_METHODS = [
+   'tools.list',
+   'tools.show',
+   'toolsets.list',
++  'usage.accounts',
+   'usage.bars',
+   'vault.add',
+   'vault.list',
+diff --git a/apps/shared/src/gateway-contract.openrpc.json b/apps/shared/src/gateway-contract.openrpc.json
+index fb0d36e11b..278610eef1 100644
+--- a/apps/shared/src/gateway-contract.openrpc.json
++++ b/apps/shared/src/gateway-contract.openrpc.json
+@@ -4380,6 +4380,24 @@
+         }
+       }
+     },
++    {
++      "name": "usage.accounts",
++      "summary": "Account-level provider allowances (sanitized; credentials stay in the gateway). Due providers refresh in the background; `refresh` forces one provider (throttled). Never runs model inference.",
++      "params": [
++        {
++          "name": "params",
++          "schema": {
++            "$ref": "#/components/schemas/UsageAccountsParams"
++          }
++        }
++      ],
++      "result": {
++        "name": "result",
++        "schema": {
++          "$ref": "#/components/schemas/UsageAccountsResult"
++        }
++      }
++    },
+     {
+       "name": "usage.bars",
+       "summary": "Two-bar dollar usage view shared by /usage, /topup and /subscription; fail-open to unavailable.",
+@@ -15986,6 +16004,89 @@
+         "title": "CorrectionStatus",
+         "type": "string"
+       },
++      "CostBreakdownRow": {
++        "additionalProperties": false,
++        "description": "``gateway/session_usage.py::session_cost_breakdown``: one KIND of cost figure; kinds are never summed together.\n``usd`` is None for ``included`` and ``unpriced`` (shown as such, never as $0.00).",
++        "properties": {
++          "kind": {
++            "title": "Kind",
++            "type": "string"
++          },
++          "usd": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Usd"
++          },
++          "label": {
++            "title": "Label",
++            "type": "string"
++          },
++          "calls": {
++            "default": 0,
++            "title": "Calls",
++            "type": "integer"
++          },
++          "aux_calls": {
++            "default": 0,
++            "title": "Aux Calls",
++            "type": "integer"
++          },
++          "input": {
++            "default": 0,
++            "title": "Input",
++            "type": "integer"
++          },
++          "output": {
++            "default": 0,
++            "title": "Output",
++            "type": "integer"
++          },
++          "cache_read": {
++            "default": 0,
++            "title": "Cache Read",
++            "type": "integer"
++          },
++          "cache_write": {
++            "default": 0,
++            "title": "Cache Write",
++            "type": "integer"
++          },
++          "reasoning": {
++            "default": 0,
++            "title": "Reasoning",
++            "type": "integer"
++          },
++          "models": {
++            "default": [],
++            "items": {
++              "type": "string"
++            },
++            "title": "Models",
++            "type": "array"
++          },
++          "sources": {
++            "default": [],
++            "items": {
++              "type": "string"
++            },
++            "title": "Sources",
++            "type": "array"
++          }
++        },
++        "required": [
++          "kind",
++          "label"
++        ],
++        "title": "CostBreakdownRow",
++        "type": "object"
++      },
+       "CronAction": {
+         "enum": [
+           "list",
+@@ -40933,6 +41034,189 @@
+             ],
+             "default": null
+           },
++          "context_input_source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Input Source"
++          },
++          "context_window_source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Window Source"
++          },
++          "context_known_tokens": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Known Tokens"
++          },
++          "context_max_known": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Max Known"
++          },
++          "context_unavailable_reason": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Unavailable Reason"
++          },
++          "context_note": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Note"
++          },
++          "compression_enabled": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Enabled"
++          },
++          "compression_threshold_percent": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Threshold Percent"
++          },
++          "compression_threshold_tokens": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Threshold Tokens"
++          },
++          "compression_threshold_source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Threshold Source"
++          },
++          "last_compaction_at": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Last Compaction At"
++          },
++          "compression_error": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Error"
++          },
++          "compression_cooldown_until": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Cooldown Until"
++          },
++          "cost_breakdown": {
++            "anyOf": [
++              {
++                "items": {
++                  "$ref": "#/components/schemas/CostBreakdownRow"
++                },
++                "type": "array"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Cost Breakdown"
++          },
++          "cost_pricing_version": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Cost Pricing Version"
++          },
+           "credits_lines": {
+             "anyOf": [
+               {
+@@ -47055,11 +47339,470 @@
+               }
+             ],
+             "default": null
++          },
++          "context_input_source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Input Source"
++          },
++          "context_window_source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Window Source"
++          },
++          "context_known_tokens": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Known Tokens"
++          },
++          "context_max_known": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Max Known"
++          },
++          "context_unavailable_reason": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Unavailable Reason"
++          },
++          "context_note": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Note"
++          },
++          "compression_enabled": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Enabled"
++          },
++          "compression_threshold_percent": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Threshold Percent"
++          },
++          "compression_threshold_tokens": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Threshold Tokens"
++          },
++          "compression_threshold_source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Threshold Source"
++          },
++          "last_compaction_at": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Last Compaction At"
++          },
++          "compression_error": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Error"
++          },
++          "compression_cooldown_until": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Compression Cooldown Until"
++          },
++          "cost_breakdown": {
++            "anyOf": [
++              {
++                "items": {
++                  "$ref": "#/components/schemas/CostBreakdownRow"
++                },
++                "type": "array"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Cost Breakdown"
++          },
++          "cost_pricing_version": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Cost Pricing Version"
+           }
+         },
+         "title": "Usage",
+         "type": "object"
+       },
++      "UsageAccountProvider": {
++        "additionalProperties": false,
++        "properties": {
++          "provider": {
++            "title": "Provider",
++            "type": "string"
++          },
++          "label": {
++            "title": "Label",
++            "type": "string"
++          },
++          "state": {
++            "$ref": "#/components/schemas/UsageAccountState"
++          },
++          "scope": {
++            "default": "account",
++            "title": "Scope",
++            "type": "string"
++          },
++          "windows": {
++            "default": [],
++            "items": {
++              "$ref": "#/components/schemas/UsageAccountWindow"
++            },
++            "title": "Windows",
++            "type": "array"
++          },
++          "details": {
++            "default": [],
++            "items": {
++              "type": "string"
++            },
++            "title": "Details",
++            "type": "array"
++          },
++          "reason": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Reason"
++          },
++          "source": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Source"
++          },
++          "plan": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Plan"
++          },
++          "fetched_at": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Fetched At"
++          },
++          "age_s": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Age S"
++          },
++          "can_refresh": {
++            "default": false,
++            "title": "Can Refresh",
++            "type": "boolean"
++          },
++          "refreshing": {
++            "default": false,
++            "title": "Refreshing",
++            "type": "boolean"
++          },
++          "retry_in_s": {
++            "default": 0,
++            "title": "Retry In S",
++            "type": "integer"
++          }
++        },
++        "required": [
++          "provider",
++          "label",
++          "state"
++        ],
++        "title": "UsageAccountProvider",
++        "type": "object"
++      },
++      "UsageAccountState": {
++        "enum": [
++          "ok",
++          "stale",
++          "unavailable",
++          "auth_required",
++          "unsupported"
++        ],
++        "title": "UsageAccountState",
++        "type": "string"
++      },
++      "UsageAccountWindow": {
++        "additionalProperties": false,
++        "description": "One allowance window. ``used_percent`` is None when the provider reports a window without a figure.",
++        "properties": {
++          "label": {
++            "title": "Label",
++            "type": "string"
++          },
++          "used_percent": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Used Percent"
++          },
++          "remaining_percent": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Remaining Percent"
++          },
++          "resets_at": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Resets At"
++          },
++          "scope": {
++            "default": "account",
++            "title": "Scope",
++            "type": "string"
++          },
++          "detail": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Detail"
++          }
++        },
++        "required": [
++          "label"
++        ],
++        "title": "UsageAccountWindow",
++        "type": "object"
++      },
++      "UsageAccountsParams": {
++        "additionalProperties": false,
++        "properties": {
++          "profile": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Profile"
++          },
++          "refresh": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Refresh"
++          },
++          "pinned": {
++            "default": [],
++            "items": {
++              "type": "string"
++            },
++            "title": "Pinned",
++            "type": "array"
++          }
++        },
++        "title": "UsageAccountsParams",
++        "type": "object"
++      },
++      "UsageAccountsResult": {
++        "additionalProperties": false,
++        "properties": {
++          "generated_at": {
++            "title": "Generated At",
++            "type": "number"
++          },
++          "scope": {
++            "title": "Scope",
++            "type": "string"
++          },
++          "current_provider": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Current Provider"
++          },
++          "providers": {
++            "items": {
++              "$ref": "#/components/schemas/UsageAccountProvider"
++            },
++            "title": "Providers",
++            "type": "array"
++          }
++        },
++        "required": [
++          "generated_at",
++          "scope",
++          "providers"
++        ],
++        "title": "UsageAccountsResult",
++        "type": "object"
++      },
+       "UsageBar": {
+         "additionalProperties": false,
+         "description": "``_serialize_usage_bar``: one bar, magnitudes pre-formatted; ``pct_used`` only for ``plan``.",
 diff --git a/gateway/session_usage.py b/gateway/session_usage.py
-index 0d7ae09fe0..afd74d57b8 100644
+index 0d7ae09fe0..fa6dd63861 100644
 --- a/gateway/session_usage.py
 +++ b/gateway/session_usage.py
 @@ -10,6 +10,8 @@ from __future__ import annotations
@@ -202,7 +1484,7 @@ index 0d7ae09fe0..afd74d57b8 100644
 +    groups: dict[str, dict] = {}
 +    for row in rows:
 +        kind = cost_class(row["cost_status"], row["billing_provider"], row["billing_mode"])
-+        group = groups.setdefault(kind, {"class": kind, "usd": Decimal(0), "calls": 0, "aux_calls": 0, "input": 0, "output": 0,
++        group = groups.setdefault(kind, {"kind": kind, "usd": Decimal(0), "calls": 0, "aux_calls": 0, "input": 0, "output": 0,
 +                                         "cache_read": 0, "cache_write": 0, "reasoning": 0, "models": [], "sources": []})
 +        calls = int(row["api_call_count"] or 0)
 +        group["calls"] += calls
@@ -269,3 +1551,398 @@ index 0d7ae09fe0..afd74d57b8 100644
  
  
  async def stats(connection, ref, params):
+diff --git a/gateway/usage_accounts.py b/gateway/usage_accounts.py
+new file mode 100644
+index 0000000000..cc0fa602e3
+--- /dev/null
++++ b/gateway/usage_accounts.py
+@@ -0,0 +1,220 @@
++"""Account-level allowances for the Desktop's AI Usage page: a sanitized view over ``agent.account_usage``.
++
++Nothing here talks to a provider on its own. Every figure comes from ``agent.account_usage.fetch_account_usage`` (the same call ``/usage`` makes),
++whose results Hermes already keeps in ``agent.account_usage_cache``: the last snapshot WITH windows survives a failed refresh and counts as stale
++after ``SNAPSHOT_STALE_AFTER_S``. This module adds only (a) a per-provider refresh throttle with failure backoff, (b) the reason a refresh failed,
++which the cache does not keep, and (c) the wire shape. Credentials, tokens and raw provider bodies never leave this process: windows, a short
++display name and plain-text details are the whole output.
++
++The built-in Anthropic fetcher is not offered here: it identifies itself to Anthropic as another client. Claude is reported through the
++Claude Code provider's own ``fetch_account_usage`` hook (Claude Code answering its own ``get_usage``, zero inference) or as "unsupported".
++Account allowances are NOT per-session token counts and are never derived from them.
++"""
++from __future__ import annotations
++
++import contextlib
++import threading
++import time
++from datetime import datetime, timezone
++
++# Shown first, in this order; other providers that can report usage follow.
++CLAUDE_PLUGIN = "claude-subscription-directsdk-experimental"
++PRIORITY = ("openai-codex", CLAUDE_PLUGIN, "anthropic", "openrouter", "nous")
++NO_CLAUDE_SOURCE = "Claude usage unavailable — no supported usage source configured."
++SCOPE = ("Account-level allowance as reported by the provider. It can include use from other apps and devices, "
++         "and is not computed from this Hermes installation's token counts.")
++MIN_REFRESH_S = 20.0          # a manual Refresh inside this window is answered from the cache
++BACKOFF_STEPS_S = (60.0, 300.0, 900.0)
++REFRESH_AFTER_S = 120.0       # same cadence Hermes' own picker uses
++
++_lock = threading.Lock()
++_state: dict[str, dict] = {}   # slug -> {tried, ok, reason, failures, inflight}
++
++
++def _display_name(slug: str) -> str:
++    with contextlib.suppress(Exception):
++        from providers import get_provider_profile
++        profile = get_provider_profile(slug)
++        if profile is not None and getattr(profile, "display_name", None):
++            return str(profile.display_name)
++    return {"openai-codex": "ChatGPT / Codex", "openrouter": "OpenRouter", "nous": "Nous Portal", "anthropic": "Anthropic API"}.get(slug, slug)
++
++
++def _pool_slugs() -> list[str]:
++    with contextlib.suppress(Exception):
++        from hermes_cli.auth import read_credential_pool
++        return [str(slug) for slug, entries in read_credential_pool().items() if entries]
++    return []
++
++
++def _current_provider() -> str:
++    with contextlib.suppress(Exception):
++        from hermes_cli.config import load_config_readonly
++        model = (load_config_readonly() or {}).get("model") or {}
++        return str(model.get("provider") or "").strip().lower() if isinstance(model, dict) else ""
++    return ""
++
++
++def provider_slugs(extra=()) -> list[str]:
++    seen: list[str] = []
++    for slug in (*PRIORITY, _current_provider(), *_pool_slugs(), *extra):
++        slug = str(slug or "").strip().lower()
++        if slug and slug not in seen:
++            seen.append(slug)
++    return [slug for slug in seen if slug in PRIORITY or _can_report(slug)]
++
++
++def _can_report(slug: str) -> bool:
++    if slug == "anthropic":
++        return False  # excluded on purpose, see module docstring
++    if slug == "nous":
++        return True
++    with contextlib.suppress(Exception):
++        from agent.account_usage_cache import has_account_usage
++        return bool(has_account_usage(slug))
++    return False
++
++
++def _nous_snapshot():
++    """Portal credits through Hermes' own builder; None unless a portal account is signed in (the free tier has none)."""
++    from agent.account_usage import _fetch_portal_account, _nous_logged_in, build_nous_credits_snapshot
++    if not _nous_logged_in():
++        return None
++    account = _fetch_portal_account(10.0)
++    return build_nous_credits_snapshot(account) if account is not None and getattr(account, "logged_in", False) else None
++
++
++def _fetch(slug: str):
++    if slug == "nous":
++        snapshot = _nous_snapshot()
++        if snapshot is not None and snapshot.windows:
++            from agent.account_usage_cache import remember_account_usage
++            remember_account_usage("nous", snapshot)
++        return snapshot
++    from agent.account_usage import fetch_account_usage
++    return fetch_account_usage(slug)
++
++
++def _run_refresh(slug: str) -> None:
++    now = time.monotonic()
++    ok, reason = False, None
++    try:
++        snapshot = _fetch(slug)
++        if snapshot is None:
++            reason = "not_signed_in"
++        elif snapshot.unavailable_reason:
++            reason = str(snapshot.unavailable_reason)[:240]
++        elif not (snapshot.windows or snapshot.details):
++            reason = "The provider returned no usage figures."
++        else:
++            ok = True
++    except Exception as exc:  # a provider failure must never reach the caller as an exception
++        reason = "The usage check failed (%s)." % type(exc).__name__
++    with _lock:
++        entry = _state.setdefault(slug, {"failures": 0})
++        entry.update(tried=now, ok=ok, reason=reason, inflight=False)
++        entry["failures"] = 0 if ok else min(entry.get("failures", 0) + 1, len(BACKOFF_STEPS_S))
++
++
++def _wait_s(entry: dict) -> float:
++    failures = entry.get("failures", 0)
++    return BACKOFF_STEPS_S[min(failures, len(BACKOFF_STEPS_S)) - 1] if failures else REFRESH_AFTER_S
++
++
++def _due(slug: str, now: float, manual: bool) -> bool:
++    entry = _state.get(slug)
++    if entry is None:
++        return True
++    if entry.get("inflight"):
++        return False
++    return now - entry.get("tried", 0.0) >= (MIN_REFRESH_S if manual else _wait_s(entry))
++
++
++def request_refresh(slug: str, *, manual: bool = False, wait: bool = False) -> bool:
++    """Start a refresh if one is due. ``wait`` blocks (bounded by the fetchers' own timeouts) for a manual Refresh."""
++    now = time.monotonic()
++    if not _can_report(slug):
++        return False
++    with _lock:
++        if not _due(slug, now, manual):
++            return False
++        _state.setdefault(slug, {"failures": 0})["inflight"] = True
++    if wait:
++        _run_refresh(slug)
++    else:
++        threading.Thread(target=_run_refresh, args=(slug,), name="hermes-usage-accounts", daemon=True).start()
++    return True
++
++
++def _iso(value):
++    if value is None:
++        return None
++    with contextlib.suppress(Exception):
++        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
++    return None
++
++
++def _windows(snapshot) -> list[dict]:
++    rows = []
++    for w in getattr(snapshot, "windows", ()) or ():
++        used = w.used_percent
++        valid = isinstance(used, (int, float)) and used == used
++        used = max(0.0, min(100.0, float(used))) if valid else None
++        rows.append({"label": str(w.label), "used_percent": used, "remaining_percent": None if used is None else round(100.0 - used, 1),
++                     "resets_at": _iso(w.reset_at), "scope": str(getattr(w, "scope", "account") or "account"),
++                     "detail": str(w.detail)[:200] if w.detail else None})
++    return rows
++
++
++def provider_view(slug: str, now: float | None = None) -> dict:
++    """One provider's row. ``state``: ok | stale | unavailable | auth_required | unsupported."""
++    now = time.monotonic() if now is None else now
++    base = {"provider": slug, "label": _display_name(slug), "scope": "account", "windows": [], "details": [], "reason": None,
++            "source": None, "plan": None, "fetched_at": None, "age_s": None, "can_refresh": False, "refreshing": False, "retry_in_s": 0}
++    if slug == "anthropic":
++        return {**base, "label": "Claude (Anthropic API)", "state": "unsupported", "reason": NO_CLAUDE_SOURCE}
++    if not _can_report(slug):
++        return {**base, "state": "unsupported", "reason": NO_CLAUDE_SOURCE if slug == CLAUDE_PLUGIN else
++                "This provider does not expose an account usage endpoint Hermes can read."}
++    from agent.account_usage_cache import cached_account_usage, snapshot_is_stale
++    snapshot = cached_account_usage(slug)
++    with _lock:
++        entry = dict(_state.get(slug) or {})
++    base["can_refresh"] = True
++    base["refreshing"] = bool(entry.get("inflight"))
++    if entry.get("tried") is not None:
++        base["retry_in_s"] = max(0, int(_wait_s(entry) - (now - entry["tried"])))
++    reason = entry.get("reason")
++    failed = entry.get("ok") is False and entry.get("tried") is not None
++    if snapshot is not None and (snapshot.windows or snapshot.details):
++        age = None
++        with contextlib.suppress(Exception):
++            age = max(0.0, (datetime.now(timezone.utc) - snapshot.fetched_at.astimezone(timezone.utc)).total_seconds())
++        stale = snapshot_is_stale(snapshot) or failed
++        note = None
++        if stale:
++            note = "The latest refresh failed; showing the last good reading." if failed else "This reading is older than 15 minutes."
++            if failed and reason and reason != "not_signed_in":
++                note += " " + reason
++        return {**base, "state": "stale" if stale else "ok", "windows": _windows(snapshot), "details": [str(d)[:200] for d in snapshot.details],
++                "plan": snapshot.plan, "source": snapshot.source, "fetched_at": _iso(snapshot.fetched_at), "age_s": age, "reason": note}
++    if reason == "not_signed_in":
++        return {**base, "state": "auth_required", "reason": "Not signed in to this provider in Hermes."}
++    if reason:
++        return {**base, "state": "unavailable", "reason": reason}
++    return {**base, "state": "unavailable", "reason": "Not checked yet." if entry.get("tried") is None else "No usage figures were returned."}
++
++
++def accounts_view(*, refresh: str | None = None, pinned=(), wait: bool = True) -> dict:
++    """The ``usage.accounts`` result. Providers that are due refresh in the background (never blocking the reply); ``refresh`` names one the
++    user asked for, answered after at most that fetcher's own timeout."""
++    slugs = provider_slugs(pinned)
++    manual = str(refresh or "").strip().lower()
++    for slug in slugs:
++        if slug != manual:
++            request_refresh(slug)
++    if manual:
++        request_refresh(manual, manual=True, wait=wait)
++    now = time.monotonic()
++    return {"generated_at": time.time(), "scope": SCOPE, "current_provider": _current_provider() or None,
++            "providers": [provider_view(slug, now) for slug in slugs]}
+diff --git a/tui_gateway/contracts/__init__.py b/tui_gateway/contracts/__init__.py
+index 4bbb34cbc3..2b88332fb1 100644
+--- a/tui_gateway/contracts/__init__.py
++++ b/tui_gateway/contracts/__init__.py
+@@ -20,6 +20,7 @@ from . import (
+     sessions,
+     tools_commands,
+     tools_mcp_plugins,
++    usage_accounts,
+ )
+ from . import canonical
+ from .base import JsonValue, Params, Payload, Result, WireEnum
+diff --git a/tui_gateway/contracts/common.py b/tui_gateway/contracts/common.py
+index 3a6aaad890..40c17fcbbf 100644
+--- a/tui_gateway/contracts/common.py
++++ b/tui_gateway/contracts/common.py
+@@ -25,6 +25,24 @@ class PlanGauge(Result):
+     resets_at_ms: int | None = None
+ 
+ 
++class CostBreakdownRow(Result):
++    """``gateway/session_usage.py::session_cost_breakdown``: one KIND of cost figure; kinds are never summed together.
++    ``usd`` is None for ``included`` and ``unpriced`` (shown as such, never as $0.00)."""
++
++    kind: str
++    usd: float | None = None
++    label: str
++    calls: int = 0
++    aux_calls: int = 0
++    input: int = 0
++    output: int = 0
++    cache_read: int = 0
++    cache_write: int = 0
++    reasoning: int = 0
++    models: list[str] = []
++    sources: list[str] = []
++
++
+ class Usage(OpenModel):
+     """``tui_gateway/server.py::_get_usage`` + ``agent/context_breakdown.py::context_usage_fields``."""
+ 
+@@ -52,6 +70,22 @@ class Usage(OpenModel):
+     cost_usd: float | None = None
+     cost_status: str | None = None
+     plan_gauge: PlanGauge | None = None
++    # Odysseus: stored-conversation context and compaction facts (gateway/session_usage.py::restored_usage / live_usage_extras).
++    context_input_source: str | None = None
++    context_window_source: str | None = None
++    context_known_tokens: int | None = None
++    context_max_known: int | None = None
++    context_unavailable_reason: str | None = None
++    context_note: str | None = None
++    compression_enabled: bool | None = None
++    compression_threshold_percent: int | None = None
++    compression_threshold_tokens: int | None = None
++    compression_threshold_source: str | None = None
++    last_compaction_at: float | None = None
++    compression_error: str | None = None
++    compression_cooldown_until: float | None = None
++    cost_breakdown: list[CostBreakdownRow] | None = None
++    cost_pricing_version: str | None = None
+ 
+ 
+ class ProjectRef(Result):
+diff --git a/tui_gateway/contracts/usage_accounts.py b/tui_gateway/contracts/usage_accounts.py
+new file mode 100644
+index 0000000000..fbe5e90018
+--- /dev/null
++++ b/tui_gateway/contracts/usage_accounts.py
+@@ -0,0 +1,61 @@
++"""Contract: ``usage.accounts`` (account-level provider allowances; handler in ``tui_gateway/methods_session.py``, logic in
++``gateway/usage_accounts.py``) and the cost rows carried by ``Usage.cost_breakdown``."""
++
++from __future__ import annotations
++
++from .base import Params, Result, WireEnum
++from .registry import method
++
++
++class UsageAccountState(WireEnum):
++    ok = "ok"
++    stale = "stale"
++    unavailable = "unavailable"
++    auth_required = "auth_required"
++    unsupported = "unsupported"
++
++
++class UsageAccountWindow(Result):
++    """One allowance window. ``used_percent`` is None when the provider reports a window without a figure."""
++
++    label: str
++    used_percent: float | None = None
++    remaining_percent: float | None = None
++    resets_at: str | None = None
++    scope: str = "account"
++    detail: str | None = None
++
++
++class UsageAccountProvider(Result):
++    provider: str
++    label: str
++    state: UsageAccountState
++    scope: str = "account"
++    windows: list[UsageAccountWindow] = []
++    details: list[str] = []
++    reason: str | None = None
++    source: str | None = None
++    plan: str | None = None
++    fetched_at: str | None = None
++    age_s: float | None = None
++    can_refresh: bool = False
++    refreshing: bool = False
++    retry_in_s: int = 0
++
++
++class UsageAccountsParams(Params):
++    profile: str | None = None
++    refresh: str | None = None
++    pinned: list[str] = []
++
++
++class UsageAccountsResult(Result):
++    generated_at: float
++    scope: str
++    current_provider: str | None = None
++    providers: list[UsageAccountProvider]
++
++
++method("usage.accounts", params=UsageAccountsParams, result=UsageAccountsResult,
++       doc="Account-level provider allowances (sanitized; credentials stay in the gateway). Due providers refresh in the background; "
++           "`refresh` forces one provider (throttled). Never runs model inference.")
+diff --git a/tui_gateway/methods_session.py b/tui_gateway/methods_session.py
+index 5e2cc76d63..a9d622a29b 100644
+--- a/tui_gateway/methods_session.py
++++ b/tui_gateway/methods_session.py
+@@ -1849,6 +1849,20 @@ _billing_view("subscription.state", "agent.subscription_view", "build_subscripti
+               {"ok": True, "logged_in": False, "error": "could not load subscription state"})
+ 
+ 
++@method("usage.accounts")
++@_profile_scoped
++def _(rid, params: dict) -> dict:
++    """Account-level allowances for the AI Usage page. Sanitized by ``gateway/usage_accounts.py``: no credential or raw provider body is returned,
++    due providers refresh in the background (Hermes' own 120 s cadence + failure backoff) and ``refresh`` forces one, throttled. No inference."""
++    try:
++        from gateway.usage_accounts import accounts_view
++        pinned = [str(p) for p in (params.get("pinned") or []) if isinstance(p, str)][:12]
++        refresh = params.get("refresh")
++        return _ok(rid, accounts_view(refresh=refresh if isinstance(refresh, str) else None, pinned=pinned))
++    except Exception:
++        return _err(rid, 5031, "account usage could not be read")
++
++
+ @method("subscription.preview")
+ @_profile_scoped
+ def _(rid, params: dict) -> dict:
+diff --git a/tui_gateway/server.py b/tui_gateway/server.py
+index c3cc3d2cd6..1d3e35b81e 100644
+--- a/tui_gateway/server.py
++++ b/tui_gateway/server.py
+@@ -186,7 +186,7 @@ _DETAIL_MODES = frozenset({"hidden", "collapsed", "expanded"})
+ _LONG_HANDLERS = frozenset({
+     "session.foreign.list", "session.foreign.preview", "session.foreign.import",
+     "billing.state", "subscription.state", "subscription.preview", "subscription.change",
+-    "subscription.resume", "subscription.upgrade", "usage.bars", "session.usage", "billing.step_up",
++    "subscription.resume", "subscription.upgrade", "usage.bars", "usage.accounts", "session.usage", "billing.step_up",
+     "browser.manage", "cli.exec", "complete.path", "complete.slash", "llm.oneshot", "model.options",
+     "pet.cells", "pet.gallery", "pet.generate", "pet.hatch", "pet.info", "pet.select", "pet.thumb",
+     "image.render", "learning.frames", "plugins.manage", "plugins.catalog.lookup", "reload.mcp", "mcp.servers.test",

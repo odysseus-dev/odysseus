@@ -35,6 +35,7 @@ from src.hermes_component import (ComponentError, SourcePin, atomic_bytes, atomi
 ORIGINS = ('managed', 'adopted')
 PLUGIN_NAME = 'odysseus-return'
 RESUME_PLUGIN_NAME = 'odysseus-resume'
+USAGE_PLUGIN_NAME = 'odysseus-usage'
 KNOWN_PREVIOUS_RESUME_SHA256 = (            # earlier shipped copies of the resume plugin that may be upgraded in place (first deployment: CRLF and LF forms)
     '71c3a1ff23b12020c0de2f3d5fa097f67d61d4f0a1f73a35e0a864b46b5727e4',
     '596d5f44b76d532148bcf9bc536852d7f37f0225099658752a04e20f8e8814b0',
@@ -65,6 +66,7 @@ DESKTOP_WORKSPACE_PATCH = 'integrations/hermes-mode/patches/webapp-desktop-works
 COMPOSER_PATCH = 'integrations/hermes-mode/patches/webapp-composer-control-center.patch'
 RESUME_OUTCOMES_PATCH = 'integrations/hermes-mode/patches/webapp-resume-outcomes.patch'
 UPDATE_PROTECTION_PATCH = 'integrations/hermes-mode/patches/webapp-update-protection.patch'
+USAGE_CONTEXT_PATCH = 'integrations/hermes-mode/patches/webapp-usage-context.patch'
 MANAGED_MARKER = '.odysseus-managed.json'
 # What importing each runtime extra must make possible, proven against the committed environment before a release is 'ready'.
 RUNTIME_EXTRA_IMPORTS = {'mcp': 'mcp.client.stdio'}
@@ -768,7 +770,7 @@ class WebappComponent:
         installed only when this Odysseus ships it, so an older install keeps working unchanged."""
         folder = self.application_root / 'integrations/hermes-mode/desktop-plugins'
         out = []
-        for name, known, required in ((PLUGIN_NAME, KNOWN_PREVIOUS_PLUGIN_SHA256, True), (RESUME_PLUGIN_NAME, KNOWN_PREVIOUS_RESUME_SHA256, False)):
+        for name, known, required in ((PLUGIN_NAME, KNOWN_PREVIOUS_PLUGIN_SHA256, True), (RESUME_PLUGIN_NAME, KNOWN_PREVIOUS_RESUME_SHA256, False), (USAGE_PLUGIN_NAME, (), False)):
             source = folder / name / 'plugin.js'
             if not source.is_file():
                 if required:
@@ -1246,7 +1248,17 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
+        return (*self.protected_patches(), self.usage_context_patch())
+
+    def protected_patches(self):
+        """The six-patch set (through update protection) releases carried before the usage/context patch (kept for rollback)."""
         return (*self.resume_patches(), self.update_protection_patch())
+
+    def usage_context_patch(self):
+        path = (self.application_root / USAGE_CONTEXT_PATCH).resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed usage-context patch is missing from this Odysseus installation.')
+        return path
 
     def resume_patches(self):
         """The five-patch set (through the resume-outcomes patch) releases carried before update protection (kept for rollback)."""
@@ -1292,9 +1304,9 @@ class WebappComponent:
         return path
 
     def applied_patches(self, agent):
-        """The reviewed patch set a managed source carries exactly: the current set, the previous five-, four- and three-patch sets, the route guard with the MCP recovery, or the route guard alone
+        """The reviewed patch set a managed source carries exactly: the current set, the previous six-, five-, four- and three-patch sets, the route guard with the MCP recovery, or the route guard alone
         (earlier releases kept side by side for rollback). The current set when it matches neither, so a mismatch is reported against it."""
-        for patches in (self.webapp_patches(), self.resume_patches(), self.composer_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
+        for patches in (self.webapp_patches(), self.protected_patches(), self.resume_patches(), self.composer_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
             if patch_state(agent, patches) == 'applied':
                 return patches
         return self.webapp_patches()

@@ -84,3 +84,25 @@ def test_the_proxy_answers_the_local_prefix_itself_only_with_a_grant_and_in_gate
     forward = source.index('await self._forward(scope, receive, send, grant)', gate)
     grant_check = source.index('grant = self._authorize(scope)', source.index('async def __call__'))
     assert grant_check < gate < forward and "self.mode == 'gateway'" in source[gate:forward]
+
+
+def test_usage_costs_route_is_read_only_grant_gated_and_never_writes_the_store(tmp_path):
+    import sqlite3
+    db = sqlite3.connect(tmp_path / 'state.db')
+    db.execute('CREATE TABLE sessions (id TEXT, cwd TEXT, profile_name TEXT)')
+    db.execute('CREATE TABLE session_model_usage (session_id, model, billing_provider, billing_mode, task, api_call_count, input_tokens, output_tokens, '
+               'cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd, cost_status, cost_source, first_seen, last_seen)')
+    db.commit()
+    db.close()
+    before = (tmp_path / 'state.db').read_bytes()
+
+    class Dash(FakeDashboard):
+        hermes_home = tmp_path
+
+    status, headers, body = call(LOCAL_PREFIX + 'usage/costs', dash=Dash())
+    assert status == 200 and body['available'] is True and headers[b'cache-control'] == b'no-store'
+    assert set(body['periods']) == {'today', 'last_7_days', 'last_30_days', 'all_recorded'}
+    assert call(LOCAL_PREFIX + 'usage/costs', grant=None)[0] == 401 and call(LOCAL_PREFIX + 'usage/costs', method='POST')[0] == 405
+    assert call(LOCAL_PREFIX + 'usage/costs', headers={b'sec-fetch-site': b'cross-site'}, dash=Dash())[0] == 403
+    assert call(LOCAL_PREFIX + 'usage/other')[0] == 404
+    assert (tmp_path / 'state.db').read_bytes() == before

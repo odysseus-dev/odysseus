@@ -107,7 +107,7 @@ def _add(bucket, row, kind):
 
 def _finish(kind, bucket):
     priced = kind in PRICED
-    return {'class': kind, 'usd': float(bucket['usd']) if priced else None, 'calls': bucket['calls'], 'aux_calls': bucket['aux_calls'],
+    return {'kind': kind, 'usd': float(bucket['usd']) if priced else None, 'calls': bucket['calls'], 'aux_calls': bucket['aux_calls'],
             'input': bucket['input'], 'output': bucket['output'], 'cache_read': bucket['cache_read'], 'cache_write': bucket['cache_write'],
             'reasoning': bucket['reasoning'], 'sessions': len(bucket['sessions']),
             'price_sources': [{'id': s, 'label': SOURCE_LABELS.get(s, s)} for s in sorted(bucket['sources'])]}
@@ -126,7 +126,7 @@ def overview(state_db, projects_db=None, *, now=None):
             rows = db.execute(
                 'SELECT u.session_id, u.model, u.billing_provider, u.billing_mode, u.task, u.api_call_count, u.input_tokens, u.output_tokens, '
                 'u.cache_read_tokens, u.cache_write_tokens, u.reasoning_tokens, u.estimated_cost_usd, u.actual_cost_usd, u.cost_status, '
-                'u.cost_source, u.last_seen, s.cwd, s.profile_name FROM session_model_usage u LEFT JOIN sessions s ON s.id = u.session_id').fetchall()
+                'u.cost_source, u.first_seen, u.last_seen, s.cwd, s.profile_name FROM session_model_usage u LEFT JOIN sessions s ON s.id = u.session_id').fetchall()
     except sqlite3.Error as exc:
         result['reason'] = 'The Hermes session store could not be read (%s).' % type(exc).__name__
         return result
@@ -135,9 +135,13 @@ def overview(state_db, projects_db=None, *, now=None):
     starts['all_recorded'] = 0.0
     for name, start in starts.items():
         by_class, by_model, by_profile, by_project = {}, {}, {}, {}
+        counted, straddling = set(), set()
         for row in rows:
             if float(row['last_seen'] or 0) < start:
                 continue
+            counted.add(row['session_id'])
+            if start and float(row['first_seen'] or row['last_seen'] or 0) < start:
+                straddling.add(row['session_id'])
             kind = cost_class(row['cost_status'], row['billing_provider'], row['billing_mode'])
             _add(by_class.setdefault(kind, _blank()), row, kind)
             _add(by_model.setdefault((row['billing_provider'] or '', row['model'] or '', kind), _blank()), row, kind)
@@ -148,6 +152,7 @@ def overview(state_db, projects_db=None, *, now=None):
         models = [dict(_finish(k[2], b), provider=k[0], model=k[1]) for k, b in by_model.items()]
         models.sort(key=lambda m: (-(m['usd'] or 0), -(m['input'] + m['output'])))
         result['periods'][name] = {
+            'sessions': len(counted), 'sessions_begun_earlier': len(straddling),
             'by_class': [_finish(kind, by_class[kind]) for kind in CLASSES if kind in by_class],
             'by_model': models[:MAX_ROWS],
             'by_profile': [dict(_finish(k[1], b), profile=k[0]) for k, b in sorted(by_profile.items())][:MAX_ROWS],

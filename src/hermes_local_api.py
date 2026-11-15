@@ -10,14 +10,16 @@ browser administrator and ends with that Odysseus session). Same-origin browser 
 import asyncio
 import json
 import re
+import time
 from urllib.parse import parse_qs
 
 LOCAL_PREFIX = '/__odysseus/api/'
 PROJECT_ID = re.compile(r'[0-9a-f]{10}')
-_ROUTE = re.compile(r'^/__odysseus/api/(?:projects(?:/([^/]+)(?:/(related))?)?|(sessions)|fs/(drives|check))$')
+_ROUTE = re.compile(r'^/__odysseus/api/(?:projects(?:/([^/]+)(?:/(related))?)?|(sessions)|fs/(drives|check)|(usage)/costs)$')
 _HEADERS = [(b'content-type', b'application/json; charset=utf-8'), (b'cache-control', b'no-store'), (b'pragma', b'no-cache'), (b'x-content-type-options', b'nosniff'),
             (b'referrer-policy', b'no-referrer')]
 TIMEOUT_S = 25
+COSTS_CACHE_S = 30.0
 
 
 class LocalProjectsApi:
@@ -25,6 +27,7 @@ class LocalProjectsApi:
         self.get_dashboard = get_dashboard
         self._slots = None
         self._concurrency = concurrency
+        self._costs = (0.0, None)
 
     async def _reply(self, send, status, body, extra=()):
         data = json.dumps(body, default=str).encode()
@@ -39,6 +42,17 @@ class LocalProjectsApi:
                 return int(tail[1]) if len(tail) == 2 and tail[1].isdigit() else 80
         return 80
 
+    def costs(self, dash):
+        """Usage costs from Hermes' own stored accounting (read-only SQLite), cached briefly so a page reload never rereads the store."""
+        stamp, value = self._costs
+        if value is not None and time.monotonic() - stamp < COSTS_CACHE_S:
+            return value
+        from src import usage_costs
+        home = dash.hermes_home
+        value = usage_costs.overview(home / 'state.db' if home else None, home / 'projects.db' if home else None)
+        self._costs = (time.monotonic(), value)
+        return value
+
     async def __call__(self, scope, receive, send, grant):
         if grant is None:                                                   # never serve without a live grant, even if the proxy is wired without them
             return await self._reply(send, 401, {'detail': 'Open Hermes from Odysseus (Projects).'}, [(b'x-odysseus-grant', b'required')])
@@ -51,7 +65,7 @@ class LocalProjectsApi:
         match = _ROUTE.match(scope['path'])
         if not match:
             return await self._reply(send, 404, {'detail': 'Unknown route'})
-        project_id, part, sessions, fs = match.group(1), match.group(2), match.group(3), match.group(4)
+        project_id, part, sessions, fs, usage = match.group(1), match.group(2), match.group(3), match.group(4), match.group(5)
         if project_id is not None and not PROJECT_ID.fullmatch(project_id):
             return await self._reply(send, 404, {'detail': 'Unknown project'})
         port = self._port(scope)
@@ -60,6 +74,8 @@ class LocalProjectsApi:
             self._slots = asyncio.Semaphore(self._concurrency)
 
         def work():
+            if usage:
+                return self.costs(dash)
             if fs == 'drives':
                 return {'drives': dash.drives()}
             if fs == 'check':

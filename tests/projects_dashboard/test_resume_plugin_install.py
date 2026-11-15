@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.hermes_component import ComponentError  # noqa: E402
-from src.hermes_webapp_component import PLUGIN_NAME, RESUME_PLUGIN_NAME, WebappComponent  # noqa: E402
+from src.hermes_webapp_component import PLUGIN_NAME, RESUME_PLUGIN_NAME, USAGE_PLUGIN_NAME, WebappComponent  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / 'integrations/hermes-mode/desktop-plugins'
@@ -25,13 +25,13 @@ def component(app_root=ROOT):
 def test_fresh_install_places_both_plugins_byte_for_byte_and_is_idempotent(tmp_path):
     manager = component()
     assert manager.install_desktop_plugin(tmp_path) == PLUGIN_NAME
-    for name in (PLUGIN_NAME, RESUME_PLUGIN_NAME):
+    for name in (PLUGIN_NAME, RESUME_PLUGIN_NAME, USAGE_PLUGIN_NAME):
         assert (tmp_path / 'desktop-plugins' / name / 'plugin.js').read_bytes() == (SOURCES / name / 'plugin.js').read_bytes()
-    stamps = {n: (tmp_path / 'desktop-plugins' / n / 'plugin.js').stat().st_mtime_ns for n in (PLUGIN_NAME, RESUME_PLUGIN_NAME)}
+    stamps = {n: (tmp_path / 'desktop-plugins' / n / 'plugin.js').stat().st_mtime_ns for n in (PLUGIN_NAME, RESUME_PLUGIN_NAME, USAGE_PLUGIN_NAME)}
     with mock.patch('src.hermes_webapp_component.atomic_bytes', side_effect=AssertionError('an up-to-date plugin must not be rewritten')):
         manager.install_desktop_plugin(tmp_path)
-    assert stamps == {n: (tmp_path / 'desktop-plugins' / n / 'plugin.js').stat().st_mtime_ns for n in (PLUGIN_NAME, RESUME_PLUGIN_NAME)}
-    assert manager.installed_desktop_plugins(tmp_path) == [PLUGIN_NAME, RESUME_PLUGIN_NAME]
+    assert stamps == {n: (tmp_path / 'desktop-plugins' / n / 'plugin.js').stat().st_mtime_ns for n in (PLUGIN_NAME, RESUME_PLUGIN_NAME, USAGE_PLUGIN_NAME)}
+    assert manager.installed_desktop_plugins(tmp_path) == [PLUGIN_NAME, RESUME_PLUGIN_NAME, USAGE_PLUGIN_NAME]
 
 
 def test_existing_production_home_with_only_the_return_plugin_gains_resume_and_keeps_return_untouched(tmp_path):
@@ -80,7 +80,7 @@ def test_an_installed_copy_that_differs_only_in_line_endings_is_current_not_a_co
     ret.write_bytes(lf)
     manager = component()
     manager.install_desktop_plugin(tmp_path)
-    assert ret.read_bytes() == lf and manager.installed_desktop_plugins(tmp_path) == [PLUGIN_NAME, RESUME_PLUGIN_NAME]
+    assert ret.read_bytes() == lf and manager.installed_desktop_plugins(tmp_path) == [PLUGIN_NAME, RESUME_PLUGIN_NAME, USAGE_PLUGIN_NAME]
     crlf_app = tmp_path / 'app'
     folder = crlf_app / 'integrations/hermes-mode/desktop-plugins'
     for name in (PLUGIN_NAME, RESUME_PLUGIN_NAME):
