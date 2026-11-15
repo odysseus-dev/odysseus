@@ -1,0 +1,9 @@
+name: odysseus-local-extract
+version: 0.1.0
+manifest_version: 2
+kind: backend
+description: "Local web_extract backend: fetches a page from this machine and returns readable text. No third-party extraction service, no API key, nothing leaves the machine except the request to the page itself. Extract only (pair it with SearXNG for search). Not a sandbox and not a browser: no JavaScript, public http/https URLs only (Hermes' own private-address check runs first, and redirects are re-checked)."
+author: Odysseus
+license: MIT
+provides_web_providers:
+  - odysseus-local-extract
