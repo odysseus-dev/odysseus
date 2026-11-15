@@ -1,3 +1,4 @@
+import { _clearRichImageSelection } from '../richEditor/imageOps.js';
 // ui/panel/panelLifecycle.js
 
 import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs } from '../../application/documentSession.js';
@@ -180,6 +181,7 @@ pane._dispose = () => {
       pane.querySelector('#doc-md-toolbar')?._resizeObserver?.disconnect();
       pane.querySelector('#doc-tab-bar')?._resizeObserver?.disconnect();
       disposeSourceEditor(pane);
+      _clearRichImageSelection();
       disposeSelectionHighlights();
       clearTimeout(_hlDebounce);
       clearTimeout(_autoDetectDebounce);

@@ -1,3 +1,5 @@
+import { topPortalZ, attachColorPicker } from '../host.js';
+import { _richSelectionCell, _richTableCanMergeRight, _richTableCanSplitCell, _focusRichTableCell } from '../richTables.js';
 // frontend/src/features/documents/ui/richEditor/formatMenus.js
 /**
  * Document Editor Rich-Text Subsystem: formatMenus

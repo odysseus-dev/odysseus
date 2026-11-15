@@ -1,3 +1,6 @@
+import { _syncHeaderActions } from '../../application/documentCommands.js';
+import { _isFormBackedDoc, _setPdfViewActive } from '../pdfTools.js';
+import { _setMarkdownPreviewActive, _setDocxPreviewActive, exitHtmlPreview } from '../previewModes.js';
 // ui/header/languagePicker.js
 
 import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';

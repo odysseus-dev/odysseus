@@ -1,3 +1,8 @@
+import { _selections, clearSelection, updateRichSelectionState } from '../selection/selectionHighlights.js';
+import { autoTitleFromContent } from '../documentActions.js';
+import { _scheduleDocumentStats, _refreshDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
+import { _richSelectionCell, _appendRichTableRow } from '../richTables.js';
+import { _uploadMarkdownImages } from '../editor/markdownImages.js';
 // frontend/src/features/documents/ui/richEditor/richBodyWiring.js
 /**
  * Document Editor Rich-Text Subsystem: richBodyWiring

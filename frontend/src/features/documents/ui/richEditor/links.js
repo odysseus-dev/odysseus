@@ -1,3 +1,4 @@
+import { topPortalZ, uiModule } from '../host.js';
 // frontend/src/features/documents/ui/richEditor/links.js
 /**
  * Document Editor Rich-Text Subsystem: links

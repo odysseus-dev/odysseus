@@ -7,7 +7,7 @@
 import { API_BASE } from '../../application/documentState.js';
 import { _escHtml, _markdownImageAlt } from '../../domain/documentKinds.js';
 import { _showMdDropdown } from './formatMenus.js';
-import { _deleteRichImage, _richImageInsertRange, _selectRichImage, setRichImageInsertRange } from './imageOps.js';
+import { setImageSelectionObserver, _deleteRichImage, _richImageInsertRange, _selectRichImage, setRichImageInsertRange } from './imageOps.js';
 import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from './richBodySync.js';
 import { _activeRichImage } from './richOperations.js';
 
@@ -19,7 +19,10 @@ function _hideRichImageToolbar() {
   }
 
 function _ensureRichImageToolbar(rich) {
-    if (_richImageToolbar?.isConnected) return _richImageToolbar;
+    if (_richImageToolbar?.isConnected) {
+      requestAnimationFrame(_richImageToolbar._position);
+      return _richImageToolbar;
+    }
     const toolbar = document.createElement('div');
     toolbar.className = 'doc-rich-image-toolbar';
     toolbar.setAttribute('role', 'toolbar');
@@ -38,6 +41,7 @@ function _ensureRichImageToolbar(rich) {
       toolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;
       toolbar.style.top = `${Math.max(8, rect.top - toolbar.offsetHeight - 6)}px`;
     };
+    toolbar._position = position;
     toolbar.addEventListener('pointerdown', event => event.preventDefault());
     toolbar.querySelector('.doc-rich-image-edit').addEventListener('click', event => {
       event.preventDefault();
@@ -154,8 +158,7 @@ export function _showRichImageSourceMenu(anchor) {
     }, 0);
   }
 
-if (typeof globalThis !== 'undefined') {
-  globalThis._hideRichImageToolbar = _hideRichImageToolbar;
-  globalThis._ensureRichImageToolbar = _ensureRichImageToolbar;
-}
-
+setImageSelectionObserver((rich, image) => {
+  if (!image) _hideRichImageToolbar();
+  else _ensureRichImageToolbar(rich);
+});

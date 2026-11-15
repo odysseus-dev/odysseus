@@ -1,3 +1,10 @@
+import { _hideRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
+import { _hideRichSlashMenu } from '../richEditor/slashMenu.js';
+import { spinnerModule, uiModule } from '../host.js';
+import { loadDocument } from '../documentFlows.js';
+import { syncHighlighting } from '../editor/sourceEditor.js';
+import { resetEmailStreamState } from './emailBody.js';
+import { _wireEmailRichbody } from '../richEditor/richBodyWiring.js';
 import { API_BASE, activeDocId, docs } from "../../application/documentState.js";
 
 import { _escHtml } from "../../domain/documentKinds.js";
@@ -261,13 +268,12 @@ export function _showEmailFields(doc, { applyLocalDraft = true, forceHeaderField
       _srcWrap.style.display = 'none';
       if (textarea) textarea.style.display = 'none';
       _rich.style.display = '';
-      if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
-      _emailStreamAnimFrame = null;
-      _emailStreamRenderedBody = fields.body || '';
-      _emailStreamTargetBody = fields.body || '';
+      resetEmailStreamState(fields.body || '');
       _rich.innerHTML = _emailBodyToHtml(fields.body);
       _wireEmailRichbody(_rich);
+      const openedDocId = activeDocId;
       setTimeout(() => {
+        if (!_rich.isConnected || activeDocId !== openedDocId) return;
         try {
           const _isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
           if (!_isTouch) _focusEmailBodyEnd();

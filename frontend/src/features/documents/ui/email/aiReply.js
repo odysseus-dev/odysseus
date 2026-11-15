@@ -1,3 +1,4 @@
+import { dismissOrRemove, bindMenuDismiss } from '../host.js';
 import { API_BASE, activeDocId, docs } from "../../application/documentState.js";
 
 import { _setEmailBodyText, _splitEmailReplyQuote } from "./emailBody.js";

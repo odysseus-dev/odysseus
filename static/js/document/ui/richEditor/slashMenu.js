@@ -1,3 +1,4 @@
+import { topPortalZ, bindMenuDismiss } from '../host.js';
 // frontend/src/features/documents/ui/richEditor/slashMenu.js
 /**
  * Document Editor Rich-Text Subsystem: slashMenu

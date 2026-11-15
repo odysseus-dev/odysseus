@@ -1,3 +1,4 @@
+import { topPortalZ } from '../host.js';
 // frontend/src/features/documents/ui/richEditor/selectionToolbar.js
 /**
  * Document Editor Rich-Text Subsystem: selectionToolbar

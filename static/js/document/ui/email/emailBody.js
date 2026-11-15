@@ -1,3 +1,6 @@
+import { _emailRichbodyActive, _emailPlainTextToHtml, _emailHtmlToPlainText } from '../richEditor/richBodySync.js';
+import { markdownModule } from '../host.js';
+import { syncHighlighting } from '../editor/sourceEditor.js';
 import { _emailQuoteMarkerMatch } from "../../domain/emailMessage.js";
 
 import { _persistEmailLocalDraftSoon } from "./localDraft.js";
@@ -6,22 +9,11 @@ export let _emailStreamAnimFrame = null;
 export let _emailStreamRenderedBody = '';
 export let _emailStreamTargetBody = '';
 
-if (typeof globalThis !== "undefined") {
-  Object.defineProperty(globalThis, "_emailStreamAnimFrame", {
-    get() { return _emailStreamAnimFrame; },
-    set(v) { _emailStreamAnimFrame = v; },
-    configurable: true
-  });
-  Object.defineProperty(globalThis, "_emailStreamRenderedBody", {
-    get() { return _emailStreamRenderedBody; },
-    set(v) { _emailStreamRenderedBody = v; },
-    configurable: true
-  });
-  Object.defineProperty(globalThis, "_emailStreamTargetBody", {
-    get() { return _emailStreamTargetBody; },
-    set(v) { _emailStreamTargetBody = v; },
-    configurable: true
-  });
+export function resetEmailStreamState(body = '') {
+  if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
+  _emailStreamAnimFrame = null;
+  _emailStreamRenderedBody = body;
+  _emailStreamTargetBody = body;
 }
 
 export function _captureEmailBodyFocusState() {

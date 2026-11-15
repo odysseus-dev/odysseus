@@ -1,3 +1,6 @@
+import { uiModule, sessionModule } from '../host.js';
+import { loadDocument, _autoCreateSession } from '../documentFlows.js';
+import { addDocToTabs } from '../../application/documentSession.js';
 import { API_BASE, docs, _lastSessionId } from "../../application/documentState.js";
 
 import { _renderComposeAttachments } from "./attachments.js";

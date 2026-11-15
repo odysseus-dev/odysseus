@@ -1,3 +1,4 @@
+import { closePanel } from '../../application/documentCommands.js';
 // ui/panel/paneLayout.js
 
 import { _autoDetectDebounce, _autoTitleDebounce, _handleMarkdownPreviewClickHint, _hlDebounce, _lineNumberContentEl, _lineNumberObservedTextarea, _lineNumberResizeObserver, _lineNumberResizeRaf, _refreshMarkdownPreviewIfVisible, _replaceRange, attemptAutoDetect, syncGutterScroll, syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';

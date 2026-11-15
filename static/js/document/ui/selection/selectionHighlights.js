@@ -12,6 +12,10 @@ import { _scheduleDocumentStats } from '../host.js';
 
 export let _selections = [];
 
+export function replaceSelections(selections) {
+  _selections = selections;
+}
+
 const _richSelectionHighlightName = 'doc-ai-selections';
 
 function _richRootText(rich) {

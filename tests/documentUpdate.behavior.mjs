@@ -199,6 +199,10 @@ function mockEvaluate(fileName, module) {
     set('sessionModule', {
       getCurrentSessionId() { return calls.sessionId || ''; },
     });
+    set('markdownModule', {
+      sanitizeAllowedHtml: value => String(value || ''),
+      mdToHtml: value => String(value || ''),
+    });
     return;
   }
   if (fileName === 'diffViewer.js') {
@@ -287,7 +291,7 @@ async function loadDocumentUpdate() {
     const useMock = !resolved || MOCK_FILES.has(fileName) || !fs.existsSync(resolved);
     if (useMock) {
       const exportNames = {
-        'host.js': ['sessionModule'],
+        'host.js': ['sessionModule', 'markdownModule'],
         'diffViewer.js': ['diffLines', 'exitDiffMode', '_diffModeActive'],
         'previewModes.js': ['_setMarkdownPreviewActive', '_isMarkdownPreviewVisible', 'toggleCsvPreview', 'toggleHtmlPreview', '_themedRenderSrcdoc', '_htmlPreviewActive'],
         'sourceEditor.js': ['syncHighlighting', 'attemptAutoDetect', '_refreshMarkdownPreviewIfVisible'],

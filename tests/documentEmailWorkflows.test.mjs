@@ -65,6 +65,7 @@ import {
   _emailStreamAnimFrame,
   _emailStreamRenderedBody,
   _emailStreamTargetBody,
+  resetEmailStreamState,
   _splitEmailReplyQuote,
   _emailReplyOwnText,
   _emailBodyToHtml,
@@ -197,6 +198,7 @@ class MockElement {
     return [];
   }
   focus() {}
+  closest() { return null; }
   setSelectionRange(start, end) {
     this.selectionStart = start;
     this.selectionEnd = end;
@@ -294,7 +296,9 @@ function setupMockDOM() {
     },
     createTextNode(text) {
       return { textContent: String(text) };
-    }
+    },
+    addEventListener() {},
+    removeEventListener() {}
   };
 
   globalThis.window = {
@@ -338,7 +342,6 @@ function setupMockDOM() {
     const ta = elementsById.get('doc-editor-textarea');
     if (ta && rich) ta.value = rich.textContent;
   };
-  globalThis._wireEmailRichbody = () => {};
   globalThis.markdownModule = {
     sanitizeAllowedHtml: (t) => t
   };
@@ -756,6 +759,8 @@ describe('Document Editor Email Workflows', () => {
       registerDocument(docA);
       registerDocument(docB);
 
+      // Initialize the owner module's stream state directly before switching.
+      resetEmailStreamState('Doc A');
       setActiveDocId('doc-stream-A');
       _renderStreamingEmailBody('Target text for A');
       assert.ok(_emailStreamAnimFrame !== null);

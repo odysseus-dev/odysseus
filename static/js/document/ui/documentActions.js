@@ -146,20 +146,21 @@ export function autoTitleFromContent(content, docId) {
     if (titleInput && id === activeDocId) titleInput.value = title;
   }
 
-export async function updateLanguage() {
-    if (!activeDocId) return;
-    const select = document.getElementById('doc-language-select');
-    if (!select) return;
+export async function updateLanguage(docId = activeDocId, language = document.getElementById('doc-language-select')?.value) {
+    if (!docId || language == null) return;
+    const doc = docs.get(docId);
+    if (!doc) return;
+    doc.language = language;
     try {
-      await fetch(`${API_BASE}/api/document/${activeDocId}`, {
+      const res = await fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: select.value }),
+        body: JSON.stringify({ language }),
       });
-      if (docs.has(activeDocId)) {
-        docs.get(activeDocId).language = select.value;
-        renderTabs();
-      }
+      if (!res.ok) throw new Error(`Language update failed: HTTP ${res.status}`);
+      // The request retains its original identity and value. A response cannot
+      // overwrite a later selection or a newly active document.
+      if (docs.get(docId) === doc && doc.language === language) renderTabs();
     } catch (e) {
       console.error('Failed to update language:', e);
     }

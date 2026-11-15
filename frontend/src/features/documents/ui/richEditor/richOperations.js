@@ -1,3 +1,5 @@
+import { _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
+import { markdownModule } from '../host.js';
 // frontend/src/features/documents/ui/richEditor/richOperations.js
 /**
  * Document Editor Rich-Text Subsystem: richOperations

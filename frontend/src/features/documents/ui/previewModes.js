@@ -1,3 +1,11 @@
+// document-reference-compat: activeDocId - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: docs - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: markdownModule - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: renderTabs - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: API_BASE - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: switchToDoc - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: saveDocument - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: uiModule - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
 // static/js/document/previewModes.js
 /**
  * Preview modes and live renderers for document editor.

@@ -38,6 +38,7 @@ import {
 import {
   _clearRichImageSelection,
   _selectRichImage,
+  setImageSelectionObserver,
   _deleteRichImage,
   _normalizeRichTextImages,
   _replaceRichImage,
@@ -512,7 +513,7 @@ class MockElement {
     return null;
   }
 
-  focus() {}
+  focus() { if (globalThis.document) globalThis.document.activeElement = this; }
   getBoundingClientRect() {
     return { top: 100, bottom: 120, left: 50, right: 200, width: 150, height: 20 };
   }
@@ -642,18 +643,10 @@ beforeEach(() => {
   });
 
   // Image menus observer boundary stubs
-  globalThis._hideRichImageToolbar = () => {};
-  globalThis._ensureRichImageToolbar = () => {};
-  globalThis._richImageToolbar = null;
-  globalThis._activeRichImage = null;
   globalThis._persistEmailLocalDraftSoon = () => {};
   globalThis._scheduleAutoSave = () => {};
   globalThis._markDocumentDirty = () => {};
-  globalThis._replaceRange = (ta, from, to, text) => {
-    ta.value = ta.value.substring(0, from) + text + ta.value.substring(to);
-    ta.selectionStart = from;
-    ta.selectionEnd = from + text.length;
-  };
+  setImageSelectionObserver(() => {});
 
   globalThis.document = {
     body: new MockElement('body'),
@@ -674,7 +667,15 @@ beforeEach(() => {
     getElementById: () => null,
     querySelector: () => null,
     querySelectorAll: () => [],
-    execCommand: (cmd) => {
+    execCommand: (cmd, _showUi, value) => {
+      if (cmd === 'insertText' && globalThis.document.activeElement) {
+        const ta = globalThis.document.activeElement;
+        const start = ta.selectionStart || 0;
+        const end = ta.selectionEnd || start;
+        ta.value = ta.value.slice(0, start) + String(value ?? '') + ta.value.slice(end);
+        ta.selectionStart = ta.selectionEnd = start + String(value ?? '').length;
+        return true;
+      }
       if (cmd === 'delete' && activeRange?._selectedNode) {
         activeRange._selectedNode.remove();
       }
@@ -837,11 +838,11 @@ describe('Document Editor Rich-Text Subsystem', () => {
 
       _selectRichImage(rich, img);
       assert.equal(img.dataset.editorImageSelected, 'true');
-      assert.equal(globalThis._activeRichImage, img);
+      assert.equal(_activeRichImage, img);
 
       _clearRichImageSelection();
       assert.equal(img.hasAttribute('data-editor-image-selected'), false);
-      assert.equal(globalThis._activeRichImage, null);
+      assert.equal(_activeRichImage, null);
     });
 
     it('_deleteRichImage removes image from container', () => {
@@ -998,7 +999,6 @@ describe('Document Editor Rich-Text Subsystem', () => {
       ta.value = 'Hello world formatting';
       ta.selectionStart = 0;
       ta.selectionEnd = 5;
-      ta.focus = () => {};
       ta.setSelectionRange = (s, e) => { ta.selectionStart = s; ta.selectionEnd = e; };
 
       const origGet = document.getElementById;
@@ -1045,7 +1045,7 @@ describe('Document Editor Rich-Text Subsystem', () => {
       _hideRichSelectionToolbar();
 
       assert.equal(img.hasAttribute('data-editor-image-selected'), false, 'image selection flag removed');
-      assert.equal(globalThis._activeRichImage, null, 'active image reference cleared');
+      assert.equal(_activeRichImage, null, 'active image reference cleared');
     });
   });
 

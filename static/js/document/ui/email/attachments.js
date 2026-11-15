@@ -1,3 +1,7 @@
+import { _scheduleAutoSave } from '../../application/persistence.js';
+import { uiModule, spinnerModule, langIcon } from '../host.js';
+import { _activeDocLanguage } from '../status/documentStatus.js';
+import { _showRichImageSourceMenu } from '../richEditor/imageMenus.js';
 import { API_BASE, activeDocId, docs } from "../../application/documentState.js";
 
 import { _escHtml, _isRichTextLang } from "../../domain/documentKinds.js";

@@ -1,3 +1,7 @@
+// document-reference-compat: uiModule - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: docs - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: activeDocId - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: _setMarkdownPreviewActive - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
 // static/js/document/diffViewer.js
 /**
  * Diff mode and review controller for document editor.

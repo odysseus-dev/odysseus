@@ -1,3 +1,5 @@
+import { _cancelAutoSave } from '../../application/persistence.js';
+import { _visibleDocIdsForCurrentSession } from '../documentFlows.js';
 import { API_BASE, activeDocId, isOpen, docs, setActiveDocId, removeDocument, markDeleted } from "../../application/documentState.js";
 import { closePanel, switchToDoc, renderTabs, _syncDocIndicator } from "../../application/documentCommands.js";
 

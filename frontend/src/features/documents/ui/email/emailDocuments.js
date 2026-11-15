@@ -1,3 +1,7 @@
+import { _scheduleAutoSave, _markDocumentDirty } from '../../application/persistence.js';
+import { getChatDocumentId, _autoCreateSession, injectFreshDoc } from '../documentFlows.js';
+import { sessionModule, uiModule } from '../host.js';
+import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
 import { API_BASE, activeDocId, docs, _lastSessionId } from "../../application/documentState.js";
 
 import { _parseEmailHeader, _buildEmailContent, _buildEmailContentFromFields } from "../../domain/emailMessage.js";
@@ -65,6 +69,7 @@ async function ensureEmailDraftEnvelope(docId, freshContent) {
     if (activeDocId === docId) {
       _showEmailFields(doc, { applyLocalDraft: false });
     }
+    _markDocumentDirty(docId);
     _scheduleAutoSave(docId, 800);
     return true;
   }
@@ -133,7 +138,7 @@ async function openEmailDraft(data = {}) {
     if (!doc?.id) throw new Error('Draft open failed: missing document');
     doc._emailDraftUid = data.uid || data.draft_uid || null;
     doc._emailDraftFolder = data.folder || data.draft_folder || null;
-    injectFreshDoc(doc);
+    await injectFreshDoc(doc);
     return doc.id;
   }
 
@@ -176,6 +181,7 @@ async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
       const textarea = document.getElementById('doc-editor-textarea');
       if (textarea) _setEmailBodyText(textarea, body);
     }
+    _markDocumentDirty(docId);
     _scheduleAutoSave(docId, 800);
   }
 

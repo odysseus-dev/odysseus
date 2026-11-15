@@ -1,3 +1,7 @@
+// document-reference-compat: API_BASE - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: activeDocId - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: docs - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
+// document-reference-compat: signatureModule - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
 // static/js/document/pdfTools.js
 /**
  * PDF Viewer, Form-backed Markdown Docs, and Visual Annotation Engine.

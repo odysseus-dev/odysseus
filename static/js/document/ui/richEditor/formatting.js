@@ -1,3 +1,6 @@
+import { _applyRichTableAction } from '../richTables.js';
+import { _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
+import { _replaceRange } from '../editor/sourceEditor.js';
 // frontend/src/features/documents/ui/richEditor/formatting.js
 /**
  * Document Editor Rich-Text Subsystem: formatting

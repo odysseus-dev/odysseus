@@ -1,3 +1,6 @@
+import { markdownModule } from '../host.js';
+import { _markDocumentDirty, _scheduleAutoSave } from '../../application/persistence.js';
+import { _persistEmailLocalDraftSoon } from '../email/localDraft.js';
 // frontend/src/features/documents/ui/richEditor/richBodySync.js
 /**
  * Document Editor Rich-Text Subsystem: richBodySync

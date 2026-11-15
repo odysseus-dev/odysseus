@@ -8,6 +8,12 @@ import { _markdownImageAlt } from '../../domain/documentKinds.js';
 import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from './richBodySync.js';
 import { _activeRichImage, setActiveRichImage } from './richOperations.js';
 
+let imageSelectionObserver = null;
+
+export function setImageSelectionObserver(observer) {
+  imageSelectionObserver = observer;
+}
+
 export let _richImageInsertRange = null;
 
 export function setRichImageInsertRange(range) {
@@ -88,7 +94,7 @@ export function _normalizeRichTextImages(root) {
   }
 
 export function _clearRichImageSelection() {
-    _hideRichImageToolbar();
+    imageSelectionObserver?.(null, null);
     if (_activeRichImage?.isConnected) {
       _activeRichImage.removeAttribute('data-editor-image-selected');
     }
@@ -120,14 +126,7 @@ export function _selectRichImage(rich, image) {
       imageButton.disabled = false;
       imageButton.setAttribute('aria-disabled', 'false');
     }
-    _ensureRichImageToolbar(rich);
-    requestAnimationFrame(() => {
-      if (!_richImageToolbar?.isConnected || !_activeRichImage?.isConnected) return;
-      const rect = _activeRichImage.getBoundingClientRect();
-      const width = _richImageToolbar.offsetWidth || 58;
-      _richImageToolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;
-      _richImageToolbar.style.top = `${Math.max(8, rect.top - _richImageToolbar.offsetHeight - 6)}px`;
-    });
+    imageSelectionObserver?.(rich, image);
     rich.focus({ preventScroll: true });
     const range = document.createRange();
     range.selectNode(image);

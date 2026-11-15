@@ -161,7 +161,7 @@ import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, update
 import './document/ui/header/overflow.js';
 import { _handleMarkdownImageUpload, _uploadMarkdownImages } from './document/ui/editor/markdownImages.js';
 import { _closeWithoutDeleting, _ensureDocPaneMounted, closeTab, createDocument, deleteActiveDocument, getChatDocumentId, injectFreshDoc, loadDocument, moveActiveDocumentToCurrentChat, moveActiveDocumentToNewChat } from './document/ui/documentFlows.js';
-import { _measurePos, _scheduleSelRerender, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from './document/ui/selection/selectionHighlights.js';
+import { replaceSelections, _measurePos, _scheduleSelRerender, _selections, clearSelection, syncSelectionOverlay, updateRichSelectionState, updateSelectionState } from './document/ui/selection/selectionHighlights.js';
 import { _syncDocumentToolbarSeparators, initMdToolbar } from './document/ui/toolbar/toolbar.js';
 import { _closeDocTabMenu, _docTabMenu, _syncDocIndicator, renderTabs, showEmptyState } from './document/ui/tabs/tabBar.js';
 
@@ -230,21 +230,13 @@ if (typeof globalThis !== 'undefined') {
   globalThis._persistEmailLocalDraftSoon = _persistEmailLocalDraftSoon;
 
   // Email workflow & documents bridge
-  globalThis.openEmailDraft = (...args) => globalThis.openEmailDraft?.(...args);
-  globalThis.replaceEmailReplyBody = (...args) => globalThis.replaceEmailReplyBody?.(...args);
-  globalThis.ensureEmailDraftEnvelope = (...args) => globalThis.ensureEmailDraftEnvelope?.(...args);
-  globalThis.getActiveEmailComposerContext = (...args) => globalThis.getActiveEmailComposerContext?.(...args);
-  globalThis.findEmailDocId = (...args) => globalThis.findEmailDocId?.(...args);
-  globalThis.focusEmailReplyBody = (...args) => globalThis.focusEmailReplyBody?.(...args);
 
   // Bridges for functions called by email modules from monolith
   globalThis.loadDocument = loadDocument;
   globalThis.injectFreshDoc = injectFreshDoc;
   globalThis.addDocToTabs = addDocToTabs;
-  globalThis._autoCreateSession = _autoCreateSession;
   globalThis._closeWithoutDeleting = _closeWithoutDeleting;
   globalThis._cancelAutoSave = _cancelAutoSave;
-  globalThis._visibleDocIdsForCurrentSession = _visibleDocIdsForCurrentSession;
   globalThis._emailRichbodyActive = _emailRichbodyActive;
   globalThis._emailPlainTextToHtml = _emailPlainTextToHtml;
   globalThis._emailHtmlToPlainText = _emailHtmlToPlainText;
@@ -256,7 +248,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis._wireEmailRichbody = _wireEmailRichbody;
   Object.defineProperty(globalThis, '_selections', {
     get: () => _selections,
-    set: (v) => { _selections = v; },
+    set: replaceSelections,
     configurable: true
   });
 }
@@ -573,12 +565,12 @@ try {
 }
 
 
-const _openEmailDraft = (...args) => globalThis.openEmailDraft?.(...args);
-const _replaceEmailReplyBody = (...args) => globalThis.replaceEmailReplyBody?.(...args);
-const _ensureEmailDraftEnvelope = (...args) => globalThis.ensureEmailDraftEnvelope?.(...args);
-const _getActiveEmailComposerContext = (...args) => globalThis.getActiveEmailComposerContext?.(...args);
-const _findEmailDocId = (...args) => globalThis.findEmailDocId?.(...args);
-const _focusEmailReplyBody = (...args) => globalThis.focusEmailReplyBody?.(...args);
+const _openEmailDraft = globalThis.openEmailDraft;
+const _replaceEmailReplyBody = globalThis.replaceEmailReplyBody;
+const _ensureEmailDraftEnvelope = globalThis.ensureEmailDraftEnvelope;
+const _getActiveEmailComposerContext = globalThis.getActiveEmailComposerContext;
+const _findEmailDocId = globalThis.findEmailDocId;
+const _focusEmailReplyBody = globalThis.focusEmailReplyBody;
 const _ensureDocPanelFacade = (...args) => globalThis.ensureDocPanel?.(...args);
 const _loadSessionDocsFacade = (...args) => globalThis.loadSessionDocs?.(...args);
 const _getSelectionContextFacade = (...args) => globalThis.getSelectionContext?.(...args);

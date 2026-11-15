@@ -5,10 +5,10 @@ import { chromium } from 'playwright';
 
 const styles = (await fs.readFile('static/index.html', 'utf8')).match(/<link[^>]+rel="stylesheet"[^>]*>/g).join('');
 
-async function setup(t, routeHandler) {
+async function setup(t, routeHandler, options = {}) {
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, ...options });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, [], 'integrated module graph must not throw'));
@@ -20,7 +20,7 @@ async function setup(t, routeHandler) {
     await route.fulfill({ json: { version_count: 2 } });
   });
   await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
-  await page.setContent(`${styles}<div id="toast"></div><aside id="sidebar"></aside><main id="chat-container"><textarea id="message"></textarea></main>`);
+  await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1">${styles}<div id="toast"></div><aside id="sidebar"></aside><main id="chat-container"><textarea id="message"></textarea></main>`);
   await page.evaluate(async () => {
     window.editor = await import('/static/js/document.js');
     editor.init('');
@@ -108,7 +108,7 @@ test('email: real envelope input, clearing recipients, local restoration and aut
   assert.equal(stored.bcc, '');
   // Reload the actual module graph against an older server snapshot.
   await page.reload();
-  await page.setContent(`${styles}<div id="toast"></div><aside id="sidebar"></aside><main id="chat-container"></main>`);
+  await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1">${styles}<div id="toast"></div><aside id="sidebar"></aside><main id="chat-container"></main>`);
   await page.evaluate(async () => {
     window.editor = await import('/static/js/document.js'); editor.init('');
     await editor.loadDocument('email');
@@ -226,3 +226,131 @@ for (const lifecycle of ['mounted', 'minimized', 'navigation', 'detached', 'succ
     }
   });
 }
+
+test('facade: all six public email methods invoke stable implementations', async t => {
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.path !== '/api/document' || request.method !== 'POST') return false;
+    await route.fulfill({ json: { id: 'draft', title: request.body.title, language: 'email', current_content: request.body.content } });
+    return true;
+  });
+  await page.evaluate(async () => {
+    state.setLastSessionId('session');
+    for (const api of [editor, editor.default]) {
+      const id = await api.openEmailDraft({ to: 'to@example.com', subject: 'Subject', sourceUid: '42', sourceFolder: 'INBOX' });
+      if (id !== 'draft' || api.findEmailDocId('42', 'INBOX') !== id || api.getActiveEmailComposerContext().docId !== id) throw new Error('Facade email identity mismatch');
+      api.focusEmailReplyBody();
+      await api.replaceEmailReplyBody(id, 'Replacement body', { force: true });
+      await api.ensureEmailDraftEnvelope(id, 'To: to@example.com\nSubject: Subject\nReferences: <ref>\nX-Source-UID: 42\n---\nReplacement body');
+    }
+  });
+  assert.equal(requests.filter(request => request.method === 'POST' && request.path === '/api/document').length, 2);
+  assert.match(await page.evaluate(() => state.docs.get('draft').content), /Replacement body/);
+});
+
+test('language: selector transitions persist metadata and delayed responses preserve identity', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method === 'PATCH' && request.body?.language === 'python') {
+      await gate;
+      await route.fulfill({ json: {} });
+      return true;
+    }
+    return false;
+  });
+  await inject(page, 'b', 'B original', 'markdown');
+  await inject(page, 'a', '# Heading', 'markdown');
+  await page.locator('#doc-language-select').selectOption('python');
+  await page.evaluate(() => editor.loadDocument('b'));
+  release();
+  await page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/document/a'));
+  assert.equal(await page.evaluate(() => state.docs.get('a').language), 'python');
+  assert.equal(await page.evaluate(() => state.docs.get('b').language), 'markdown');
+  for (const language of ['richtext', 'markdown', 'html', 'csv', 'email', 'markdown']) {
+    await page.locator('#doc-language-select').selectOption(language);
+    await page.waitForFunction(language => state.docs.get('b').language === language, language);
+  }
+  assert(requests.filter(request => request.method === 'PATCH' && request.body?.language).length >= 7);
+});
+
+test('compare: actual header action displays both versions in diff mode', async t => {
+  const { page } = await setup(t, async (route, request) => {
+    if (!request.path.endsWith('/versions')) return false;
+    await route.fulfill({ json: [{ version_number: 2, content: 'new content' }, { version_number: 1, content: 'old content' }] });
+    return true;
+  });
+  await inject(page, 'a', 'new content');
+  await page.locator('#doc-diff-toggle-btn').click();
+  await page.waitForFunction(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive);
+  const content = await page.locator('#doc-editor-code').textContent();
+  assert.match(content, /old content/);
+  assert.match(content, /new content/);
+});
+
+test('panel: default divider collapse closes and can reopen repeatedly', async t => {
+  const { page } = await setup(t);
+  await inject(page, 'a', 'body');
+  for (let count = 0; count < 3; count++) {
+    await page.locator('.doc-divider-collapse').evaluate(button => { delete button.dataset.mode; button.click(); });
+    assert.equal(await page.evaluate(() => editor.isPanelOpen()), false);
+    await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
+    await page.evaluate(() => editor.loadDocument('a'));
+    assert.equal(await page.evaluate(() => editor.isPanelOpen()), true);
+  }
+});
+
+test('autodetect: shipped highlighting library persists SVG metadata', async t => {
+  const { page, requests } = await setup(t);
+  await page.addScriptTag({ url: `${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/lib/highlight.min.js` });
+  await inject(page, 'detect', '', '');
+  await page.evaluate(async () => {
+    const source = await import('/static/js/document/ui/editor/sourceEditor.js');
+    document.getElementById('doc-editor-textarea').value = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20"/></svg>';
+    source.attemptAutoDetect();
+  });
+  await page.waitForFunction(() => state.docs.get('detect').language === 'svg');
+  assert(requests.some(request => request.path === '/api/document/detect' && request.body?.language === 'svg'));
+});
+
+test('mobile: grabber click and synthetic touch dismissal preserve dock and reopen', async t => {
+  const { page } = await setup(t, null, { hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  await inject(page, 'a', 'Mobile body');
+  for (const action of ['click', 'swipe', 'click', 'swipe']) {
+    if (action === 'click') await page.locator('#doc-mobile-grabber').tap();
+    else await page.evaluate(() => {
+      const el = document.getElementById('doc-mobile-grabber');
+      const touch = y => new Touch({ identifier: 1, target: el, clientX: 100, clientY: y });
+      el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [touch(30)] }));
+      el.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [touch(240)] }));
+      el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [touch(240)] }));
+    });
+    assert.equal(await page.evaluate(() => editor.isPanelOpen()), false);
+    assert.equal(await page.evaluate(async () => (await import('/static/js/modalManager.js')).isMinimized('doc-panel')), true);
+    await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
+    await page.evaluate(() => editor.loadDocument('a'));
+    assert.equal(await page.evaluate(() => editor.isPanelOpen()), true);
+  }
+});
+
+test('selection compatibility: writes delegate to selection owner', async t => {
+  const { page } = await setup(t);
+  await inject(page, 'a', 'body');
+  assert.equal(await page.evaluate(async () => {
+    const selections = await import('/static/js/document/ui/selection/selectionHighlights.js');
+    const replacement = [];
+    globalThis._selections = replacement;
+    editor.init('');
+    return selections._selections === replacement && globalThis._selections === replacement;
+  }), true);
+});
+
+test('images: real rich image selection owns toolbar positioning and disposal', async t => {
+  const { page } = await setup(t);
+  await inject(page, 'a', '<p>Image</p><img class="richtext-image" src="/static/favicon.svg" alt="Example">', 'richtext');
+  await page.locator('#doc-email-richbody img').click();
+  await page.waitForFunction(() => !!document.querySelector('.doc-rich-image-toolbar')?.style.top);
+  assert.equal(await page.locator('#doc-email-richbody img').getAttribute('data-editor-image-selected'), 'true');
+  await page.evaluate(() => editor.closePanel('down'));
+  await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.doc-rich-image-toolbar').count(), 0);
+});
