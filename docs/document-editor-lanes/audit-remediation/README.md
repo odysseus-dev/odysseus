@@ -100,7 +100,7 @@ Final executed gates:
 | --- | --- | --- |
 | PASS | Document Python/browser-backed suite | 403 passed, exit 0 |
 | PASS | Document Node suites | 132 passed, 0 failed/skipped, exit 0; includes 12 reference and 6 amendment controls |
-| PASS | Integrated Chromium remediation suite | 30 actual browser cases; separate real chat submission passes |
+| PASS | Integrated Chromium remediation suite | 48 actual browser cases; separate real chat submission passes |
 | PASS with SKIPPED cases | Broader decomposition G3 selection, 148 files | 1,030 passed, 3 skipped, exit 0 |
 | SKIPPED | G3 optional cases | `fitz` unavailable; `openpyxl` unavailable; opt-in Ajax fixture not enabled |
 | PASS | Canonical verifier controls | 25/25, unchanged external tool |
@@ -137,6 +137,16 @@ NOT RUN: physical mobile devices, Firefox/WebKit, real SMTP/IMAP and AI provider
 - `openPanel#7527` (`ui/header/headerActions`): wraps the listener registration in an `if (diffToggleBtn) { ... }` block holding a closure-local `_compareRequestSeq` counter, preserving single-`IfStatement` AST parity with the extracted statement while rejecting superseded or navigated-away responses.
 - `updateTitle` (`ui/documentActions`), `_wireEmailRichbody` (`ui/richEditor/richBodyWiring`), and `handleDocUpdate` (`ui/aiUpdates/documentUpdate`): amended with exact source replacements and SHA-256 pins; runtime tests verify record identity and UI synchronization across await and tab switching.
 
+## Final acceptance audit remediation delta (b0a6e333..HEAD)
+
+| Finding and severity | Problem and impact | Corrective owner change | Automated proof |
+| --- | --- | --- | --- |
+| NB-F1, P3 | Stale auto-title PATCH response arriving after manual title edit overwrote `doc.title` in memory and tab label, and could persist stale title data out of order. | `ui/documentActions.js` (`updateTitle`, `autoTitleFromContent`): cancel in-flight title requests with `doc._titleAbortController.abort()`, assign monotonic sequence `doc._titleRequestSeq`, pass `{ isAutoTitle }` option, drop stale responses when superseded, and guard title input against overwriting non-untitled values. | Chromium regression in `tests/documentAuditRemediation.mjs`: auto-title held while user edits title manually, manual update succeeds, held auto-title released, title and tab remain manual; also covers document navigation, failed PATCH, and repeated edits. PASS. |
+| NB-F2, P3 | `_saveDraft` read `docs.get(activeDocId)` after awaiting asynchronous draft save, leaking draft UID and folder metadata into an unrelated active document if user navigated away during save. | `ui/email/sendWorkflow.js` (`_saveDraft`): capture initiating document identity (`docId = activeDocId`, `doc = docs.get(docId)`), read draft UID/folder/attachments from captured `doc`, and update only when `savedDoc === doc`. | Chromium regression in `tests/documentAuditRemediation.mjs`: save draft A held, user navigates to doc B, release response, doc B receives no metadata, doc A receives metadata; also covers deletion during save, normal save, and failure. PASS. |
+| NB-F3, P3 | `_scheduleSend` called `_closeWithoutDeleting(true)` on `data.success`, closing `activeDocId` instead of the scheduled email if the user switched tabs while scheduling. | `ui/email/sendWorkflow.js` (`_scheduleSend`): capture `sendDocId` and `doc`, clear draft for captured email, and cleanly delete/close only `sendDocId` when still matching `doc` without touching or closing newly active document across navigation. | Chromium regression in `tests/documentAuditRemediation.mjs`: schedule email A held, user navigates to doc B, release response, doc B remains open and active, email A is deleted/closed; also covers normal schedule without navigation and failed schedule. PASS. |
+| NB-F4, P4 | Retained `_emailLocalDraftDebounce` in `ui/email/localDraft.js` is verified as required by Appendix A baseline extraction accounting (item #116 in canonical ledger). | Justified retention: `pendingLocalDraftWrites` owns actual per-key timers, while `_emailLocalDraftDebounce` mirrors the active timer for extraction catalog compatibility. | Canonical verifier (565/565 items passed) and Node/Chromium suites pass cleanly. |
+| NB-F5, P4 | Retention of `_markUnreadAndClose` guard (`if (activeDocId === docId && docs.get(docId) === doc) _discardEmail()`) in `ui/email/sendWorkflow.js` is verified as safe fail-closed behavior preventing cross-document closure. | Confirmed safe design: closing is guarded so navigating away during mark-unread preserves the newly active document without discarding it. | Existing browser test and canonical hash-pinned amendment pass cleanly. |
+
 ## Local commits and final state
 
 | Commit | Checkpoint |
@@ -153,6 +163,8 @@ NOT RUN: physical mobile devices, Firefox/WebKit, real SMTP/IMAP and AI provider
 | `2accadfa` | Documentation and re-audit handoff at prior checkpoint |
 | `1ffc775b` | Guard async version compare, rich-text auto-title, AI title sync, and Chromium regressions |
 | `28976a0a` | Enforce reference checker, per-site compat guards, and portable verifier tests in CI/pytest |
+| `b0a6e333` | Documentation of R01, R02, NB8, and CI remediation details |
+| `26e2b7fe` | Guard async title sequencing and email draft/schedule navigation races |
 
 Final implementation changes are confined to document modules and their published copies, the compatibility facade, local service-worker cache key (`odysseus-v1146-pr40-editor-precache`), focused validation scripts, tests and remediation documentation. Module publication remains 55 maintained/published document modules with exact manifest/precache coverage. See `changed-files.txt` for the complete implementation summary.
 
