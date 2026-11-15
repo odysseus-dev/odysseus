@@ -469,139 +469,19 @@ def run_registry_verification(
     registry: VerifierRegistry,
     plugin_timeout_seconds: float = DEFAULT_PLUGIN_TIMEOUT_SECONDS,
 ) -> Dict[str, Any]:
-    """Execute applicable plugins with non-blocking timeouts, deep immutability, and explicit conflict preservation."""
-    frozen_sources, frozen_edges, frozen_summary, frozen_baseline = freeze_evidence_snapshot(
-        assessments, edges, provenance_summary, baseline_report
+    """Execute applicable plugins with multi-domain routing, non-blocking timeouts, and explicit conflict preservation."""
+    from src.verifiers.router import route_claims_to_plugins
+
+    return route_claims_to_plugins(
+        report_text=report_text,
+        assessments=assessments,
+        edges=edges,
+        provenance_summary=provenance_summary,
+        baseline_report=baseline_report,
+        category=category,
+        registry=registry,
+        plugin_timeout_seconds=plugin_timeout_seconds,
     )
-    url_to_source = {s.url: s for s in frozen_sources}
-    unverified_indep_urls = set(frozen_summary.get("unverified_independence_urls", ()))
-
-    applicable = registry.get_applicable(category)
-    plugin_errors: List[Dict[str, str]] = []
-    missing_domain_plugin = len(applicable) == 0
-    aggregated: List[ClaimAssessment] = []
-
-    for plugin in applicable:
-        p_name = str(getattr(plugin, "name", "unknown_plugin"))
-        p_domain = str(getattr(plugin, "domain", "general"))
-        try:
-            raw_results = _invoke_plugin_nonblocking(
-                plugin,
-                report_text=report_text,
-                frozen_sources=frozen_sources,
-                frozen_edges=frozen_edges,
-                frozen_summary=frozen_summary,
-                frozen_baseline=frozen_baseline,
-                timeout_seconds=plugin_timeout_seconds,
-            )
-
-            if not isinstance(raw_results, list):
-                raise TypeError(f"Plugin '{p_name}' returned non-list output ({type(raw_results).__name__}).")
-
-            for item in raw_results:
-                if not isinstance(item, ClaimAssessment):
-                    raise TypeError(f"Plugin '{p_name}' returned non-ClaimAssessment item ({type(item).__name__}).")
-                if item.claim_assessment not in {"SUPPORTED", "CONTESTED", "INSUFFICIENT_EVIDENCE"}:
-                    raise ValueError(f"Plugin '{p_name}' returned invalid claim_assessment '{item.claim_assessment}'.")
-
-                supp = _clone_and_sanitize_passage_list(item.supporting_passages, url_to_source)
-                conf = _clone_and_sanitize_passage_list(item.conflicting_passages, url_to_source)
-
-                dep = item.source_dependence
-                ev_cls = item.evidence_classification
-                if supp and all(p.source_url in unverified_indep_urls for p in supp):
-                    dep = DependenceConfidence.UNKNOWN.value
-                    if ev_cls == "PRIMARY_CORROBORATED":
-                        ev_cls = "UNVERIFIED_INDEPENDENCE_SINGLE_CLAIM"
-
-                safe_rationale = {
-                    str(k): sanitize_text_full(str(v))
-                    for k, v in copy.deepcopy(dict(item.rationale or {})).items()
-                }
-
-                normalized_ca = ClaimAssessment(
-                    claim_text=str(item.claim_text),
-                    domain=p_domain,
-                    plugin_name=p_name,
-                    claim_assessment=str(item.claim_assessment),
-                    publication_status=str(item.publication_status),
-                    legal_currency=str(item.legal_currency),
-                    source_dependence=str(dep),
-                    evidence_classification=str(ev_cls),
-                    authority_scope_note=str(item.authority_scope_note),
-                    supporting_passages=supp,
-                    conflicting_passages=conf,
-                    rationale=safe_rationale,
-                    verifier_version=str(item.verifier_version),
-                )
-                aggregated.append(normalized_ca)
-
-        except FuturesTimeoutError:
-            plugin_errors.append({
-                "plugin_name": p_name,
-                "domain": p_domain,
-                "status": "TIMED_OUT_BACKGROUND_THREAD_ORPHANED",
-                "error_type": "TimeoutError",
-                "technical_debt_id": THREAD_TIMEOUT_TECH_DEBT_ID,
-                "detail": f"Plugin execution exceeded {plugin_timeout_seconds:.2f}s timeout; background thread orphaned non-blockingly.",
-            })
-        except Exception as exc:
-            plugin_errors.append({
-                "plugin_name": p_name,
-                "domain": p_domain,
-                "status": "PLUGIN_FAILED_CLOSED",
-                "error_type": type(exc).__name__,
-                "technical_debt_id": THREAD_TIMEOUT_TECH_DEBT_ID,
-                "detail": sanitize_text_full(str(exc))[:200],
-            })
-
-    aggregated.sort(
-        key=lambda c: (
-            c.claim_text.strip().lower(),
-            c.plugin_name,
-            c.domain,
-            c.claim_assessment,
-            c.evidence_classification,
-        )
-    )
-
-    by_claim_items: Dict[str, List[ClaimAssessment]] = {}
-    for c in aggregated:
-        by_claim_items.setdefault(c.claim_text.strip().lower(), []).append(c)
-
-    plugin_conflicts: List[str] = []
-    conflict_records: List[Dict[str, Any]] = []
-    for norm_claim_id in sorted(by_claim_items.keys()):
-        items = by_claim_items[norm_claim_id]
-        states = {c.claim_assessment for c in items}
-        if len(states) > 1 or "CONTESTED" in states:
-            plugin_conflicts.append(norm_claim_id)
-            conflict_records.append({
-                "normalized_claim_id": norm_claim_id,
-                "original_claim_texts": sorted({c.claim_text for c in items}),
-                "resolution_policy": "PRESERVE_CONFLICT_NO_CONSENSUS",
-                "competing_states": sorted(states),
-                "competing_assessments": [
-                    {
-                        "plugin_name": c.plugin_name,
-                        "domain": c.domain,
-                        "claim_text": c.claim_text,
-                        "claim_assessment": c.claim_assessment,
-                        "evidence_classification": c.evidence_classification,
-                        "supporting_passages": [copy.deepcopy(p.to_dict()) for p in c.supporting_passages],
-                        "conflicting_passages": [copy.deepcopy(p.to_dict()) for p in c.conflicting_passages],
-                    }
-                    for c in items
-                ],
-            })
-
-    return {
-        "claim_assessments": [c.to_dict() for c in aggregated],
-        "plugin_errors": plugin_errors,
-        "plugin_conflicts": plugin_conflicts,
-        "conflict_records": conflict_records,
-        "missing_domain_plugin": missing_domain_plugin,
-    }
 
 
 def build_default_registry() -> VerifierRegistry:

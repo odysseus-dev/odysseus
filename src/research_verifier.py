@@ -56,6 +56,8 @@ class VerificationReport:
     plugin_conflicts: Optional[List[str]] = None
     conflict_records: Optional[List[Dict[str, Any]]] = None
     missing_domain_plugin: Optional[bool] = None
+    missing_domain_domains: Optional[List[str]] = None
+    routed_claims: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
@@ -81,6 +83,10 @@ class VerificationReport:
             out["conflict_records"] = list(self.conflict_records)
         if self.missing_domain_plugin is not None:
             out["missing_domain_plugin"] = bool(self.missing_domain_plugin)
+        if self.missing_domain_domains is not None:
+            out["missing_domain_domains"] = list(self.missing_domain_domains)
+        if self.routed_claims is not None:
+            out["routed_claims"] = list(self.routed_claims)
         return out
 
     def has_gaps(self) -> bool:
@@ -327,4 +333,6 @@ def verify_report_evidence(
     vr.plugin_conflicts = reg_out["plugin_conflicts"]
     vr.conflict_records = reg_out["conflict_records"]
     vr.missing_domain_plugin = reg_out["missing_domain_plugin"]
+    vr.missing_domain_domains = list(reg_out.get("missing_domain_domains", ()))
+    vr.routed_claims = list(reg_out.get("routed_claims", ()))
     return vr
