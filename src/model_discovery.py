@@ -90,6 +90,436 @@ def discover_tailscale_hosts() -> List[str]:
     return hosts
 
 
+
+SUPPORTED_PROVIDER_PRESETS: List[Dict[str, Any]] = [
+    {
+        "id": "ollama",
+        "name": "Ollama",
+        "category": "local",
+        "endpoint_kind": "local",
+        "default_base_url": "http://localhost:11434/v1",
+        "default_port": 11434,
+        "requires_api_key": False,
+        "key_prefix_hint": "",
+        "env_var": "OLLAMA_BASE_URL",
+        "docs_url": "https://ollama.com",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "lmstudio",
+        "name": "LM Studio",
+        "category": "local",
+        "endpoint_kind": "local",
+        "default_base_url": "http://localhost:1234/v1",
+        "default_port": 1234,
+        "requires_api_key": False,
+        "key_prefix_hint": "",
+        "env_var": "LM_STUDIO_URL",
+        "docs_url": "https://lmstudio.ai/docs/api",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "llamacpp",
+        "name": "llama.cpp (llama-server)",
+        "category": "local",
+        "endpoint_kind": "local",
+        "default_base_url": "http://localhost:8080/v1",
+        "default_port": 8080,
+        "requires_api_key": False,
+        "key_prefix_hint": "",
+        "env_var": "",
+        "docs_url": "https://github.com/ggml-org/llama.cpp/tree/master/tools/server",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "vllm",
+        "name": "vLLM",
+        "category": "local",
+        "endpoint_kind": "local",
+        "default_base_url": "http://localhost:8000/v1",
+        "default_port": 8000,
+        "requires_api_key": False,
+        "key_prefix_hint": "",
+        "env_var": "",
+        "docs_url": "https://docs.vllm.ai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "sglang",
+        "name": "SGLang",
+        "category": "local",
+        "endpoint_kind": "local",
+        "default_base_url": "http://localhost:30000/v1",
+        "default_port": 30000,
+        "requires_api_key": False,
+        "key_prefix_hint": "",
+        "env_var": "",
+        "docs_url": "https://docs.sglang.ai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": False,
+        },
+    },
+    {
+        "id": "openai",
+        "name": "OpenAI",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.openai.com/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "sk-",
+        "env_var": "OPENAI_API_KEY",
+        "docs_url": "https://platform.openai.com/docs/api-reference",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.anthropic.com/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "sk-ant-",
+        "env_var": "ANTHROPIC_API_KEY",
+        "docs_url": "https://docs.anthropic.com",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": False,
+        },
+    },
+    {
+        "id": "google",
+        "name": "Google Gemini",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "AIza",
+        "env_var": "GEMINI_API_KEY",
+        "docs_url": "https://ai.google.dev/gemini-api/docs/openai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "openrouter",
+        "name": "OpenRouter",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "sk-or-",
+        "env_var": "OPENROUTER_API_KEY",
+        "docs_url": "https://openrouter.ai/docs",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": False,
+        },
+    },
+    {
+        "id": "groq",
+        "name": "Groq",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.groq.com/openai/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "gsk_",
+        "env_var": "GROQ_API_KEY",
+        "docs_url": "https://console.groq.com/docs",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": False,
+        },
+    },
+    {
+        "id": "together",
+        "name": "Together AI",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.together.xyz/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "",
+        "env_var": "TOGETHER_API_KEY",
+        "docs_url": "https://docs.together.ai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "deepseek",
+        "name": "DeepSeek",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.deepseek.com/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "sk-",
+        "env_var": "DEEPSEEK_API_KEY",
+        "docs_url": "https://api-docs.deepseek.com",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": False,
+            "structured_output": True,
+            "embeddings": False,
+        },
+    },
+    {
+        "id": "xai",
+        "name": "xAI (Grok)",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.x.ai/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "xai-",
+        "env_var": "XAI_API_KEY",
+        "docs_url": "https://docs.x.ai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": False,
+        },
+    },
+    {
+        "id": "mistral",
+        "name": "Mistral AI",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.mistral.ai/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "",
+        "env_var": "MISTRAL_API_KEY",
+        "docs_url": "https://docs.mistral.ai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "fireworks",
+        "name": "Fireworks AI",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.fireworks.ai/inference/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "fw_",
+        "env_var": "FIREWORKS_API_KEY",
+        "docs_url": "https://docs.fireworks.ai",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": True,
+            "vision": True,
+            "structured_output": True,
+            "embeddings": True,
+        },
+    },
+    {
+        "id": "featherless",
+        "name": "Featherless AI",
+        "category": "hosted",
+        "endpoint_kind": "api",
+        "default_base_url": "https://api.featherless.ai/v1",
+        "default_port": 443,
+        "requires_api_key": True,
+        "key_prefix_hint": "rc_",
+        "env_var": "FEATHERLESS_API_KEY",
+        "docs_url": "https://featherless.ai/docs",
+        "default_capabilities": {
+            "chat": True,
+            "streaming": True,
+            "tools": False,
+            "vision": False,
+            "structured_output": False,
+            "embeddings": False,
+        },
+    },
+]
+
+_PROVIDER_DISPLAY_NAMES: Dict[str, str] = {
+    p["id"]: p["name"] for p in SUPPORTED_PROVIDER_PRESETS
+}
+_PROVIDER_DISPLAY_NAMES["apfel"] = "APFEL"
+
+
+def get_provider_presets(category: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return supported local and hosted provider setup presets."""
+    cat = (category or "").strip().lower()
+    if cat in {"local", "hosted"}:
+        return [dict(p) for p in SUPPORTED_PROVIDER_PRESETS if p["category"] == cat]
+    return [dict(p) for p in SUPPORTED_PROVIDER_PRESETS]
+
+
+def match_provider_preset(
+    base_url: str,
+    detected_provider: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Match a base URL or fingerprinted provider ID to a preset definition."""
+    slug = (detected_provider or "").strip().lower()
+    if slug:
+        for preset in SUPPORTED_PROVIDER_PRESETS:
+            if preset["id"] == slug:
+                return dict(preset)
+    raw = (base_url or "").strip().lower()
+    if not raw:
+        return None
+    parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    for preset in SUPPORTED_PROVIDER_PRESETS:
+        p_parsed = urlparse(preset["default_base_url"])
+        p_host = (p_parsed.hostname or "").lower()
+        if p_host not in {"localhost", "127.0.0.1"} and (host == p_host or host.endswith("." + p_host)):
+            return dict(preset)
+    if port:
+        for preset in SUPPORTED_PROVIDER_PRESETS:
+            if preset["category"] == "local" and preset.get("default_port") == port:
+                return dict(preset)
+    return None
+
+
+def validate_provider_setup(
+    base_url: str,
+    api_key: str = "",
+    endpoint_kind: str = "auto",
+    detected_provider: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validate provider setup parameters and return actionable setup guidance."""
+    warnings: List[str] = []
+    raw_url = (base_url or "").strip()
+    parsed = urlparse(raw_url if "://" in raw_url else f"http://{raw_url}")
+    host = (parsed.hostname or "").strip()
+    port = parsed.port
+    preset = match_provider_preset(raw_url, detected_provider=detected_provider)
+    provider_id = (
+        (detected_provider or "").strip().lower()
+        or (preset["id"] if preset else "")
+    )
+    display_name = _PROVIDER_DISPLAY_NAMES.get(provider_id) or (
+        preset["name"] if preset else (host or "Custom Endpoint")
+    )
+    if preset and preset["category"] == "local" and host:
+        suggested_name = f"{display_name} ({host}:{port})" if port else f"{display_name} ({host})"
+    else:
+        suggested_name = display_name
+
+    clean_key = (api_key or "").strip()
+    if preset:
+        if preset.get("requires_api_key") and not clean_key:
+            env_hint = f" (or set {preset['env_var']})" if preset.get("env_var") else ""
+            warnings.append(
+                f"{preset['name']} requires an API key{env_hint}."
+            )
+        prefix = (preset.get("key_prefix_hint") or "").strip()
+        if clean_key and prefix and not clean_key.startswith(prefix):
+            warnings.append(
+                f"{preset['name']} API keys typically start with '{prefix}'."
+            )
+        expected_base = preset.get("default_base_url", "")
+        if (
+            preset["category"] == "hosted"
+            and "/v1" in expected_base
+            and (parsed.path or "") in {"", "/"}
+        ):
+            warnings.append(
+                f"Base URL has no path suffix; {preset['name']} expects '{expected_base}'."
+            )
+
+    inferred_kind = (endpoint_kind or "auto").strip().lower()
+    if inferred_kind == "auto":
+        inferred_kind = preset["endpoint_kind"] if preset else (
+            "local" if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"} else "api"
+        )
+
+    return {
+        "valid": len(warnings) == 0,
+        "provider": provider_id or None,
+        "provider_name": display_name,
+        "suggested_name": suggested_name,
+        "endpoint_kind": inferred_kind,
+        "preset": preset,
+        "warnings": warnings,
+    }
+
+
 class ModelDiscovery:
     def __init__(self, default_host: str, openai_api_key: Optional[str] = None):
         self.default_host = default_host
@@ -181,6 +611,50 @@ class ModelDiscovery:
                     return "llamacpp"
         except Exception:
             pass
+        # SGLang native /get_model_info endpoint
+        try:
+            r = httpx.get(f"http://{host}:{port}/get_model_info", timeout=1.5)
+            if r.is_success:
+                info = r.json() or {}
+                if isinstance(info, dict) and (
+                    "model_path" in info or "tokenizer_path" in info
+                ):
+                    return "sglang"
+        except Exception:
+            pass
+        # Ollama native /api/version endpoint (must carry a version string and
+        # not look like /api/tags or OpenAI /models)
+        try:
+            r = httpx.get(f"http://{host}:{port}/api/version", timeout=1.5)
+            if r.is_success:
+                ver = r.json() or {}
+                if (
+                    isinstance(ver, dict)
+                    and isinstance(ver.get("version"), str)
+                    and "models" not in ver
+                    and "data" not in ver
+                ):
+                    return "ollama"
+        except Exception:
+            pass
+        # vLLM native /version endpoint (distinct from Ollama /api/version)
+        try:
+            r = httpx.get(f"http://{host}:{port}/version", timeout=1.5)
+            if not getattr(r, "url", None) or str(r.url).endswith(f":{port}/version"):
+                pass
+            if r.is_success:
+                ver = r.json() or {}
+                if (
+                    isinstance(ver, dict)
+                    and isinstance(ver.get("version"), str)
+                    and "models" not in ver
+                    and "data" not in ver
+                ):
+                    return "vllm"
+        except Exception:
+            pass
+        if port == 11435:
+            return "apfel"
         return None
 
     def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
@@ -198,14 +672,44 @@ class ModelDiscovery:
                 if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]
             ]
             if ids:
+                provider = self._fingerprint_provider(host, port)
+                display_provider = _PROVIDER_DISPLAY_NAMES.get(provider or "", provider or "OpenAI-Compatible")
                 return {
                     "host": host,
                     "port": port,
+                    "base_url": base,
                     "url": f"http://{host}:{port}{self.openai_compat_path}",
+                    "endpoint_kind": "local",
+                    "suggested_name": f"{display_provider} ({host}:{port})",
                     "models": ids,
                     "models_display": [i.lstrip("/") for i in ids],
-                    "provider": self._fingerprint_provider(host, port),
+                    "provider": provider,
                 }
+        except Exception:
+            pass
+        # Fallback for Ollama builds where /v1/models is empty/disabled but /api/tags works
+        try:
+            r_tags = httpx.get(f"http://{host}:{port}/api/tags", timeout=2)
+            if r_tags.is_success:
+                tags_data = r_tags.json() or {}
+                tag_models = tags_data.get("models") if isinstance(tags_data, dict) else None
+                if isinstance(tag_models, list):
+                    ids = [
+                        m["name"] for m in tag_models
+                        if isinstance(m, dict) and isinstance(m.get("name"), str) and m["name"]
+                    ]
+                    if ids:
+                        return {
+                            "host": host,
+                            "port": port,
+                            "base_url": base,
+                            "url": f"http://{host}:{port}{self.openai_compat_path}",
+                            "endpoint_kind": "local",
+                            "suggested_name": f"Ollama ({host}:{port})",
+                            "models": ids,
+                            "models_display": [i.lstrip("/") for i in ids],
+                            "provider": "ollama",
+                        }
         except Exception:
             pass
         return None
@@ -221,7 +725,7 @@ class ModelDiscovery:
         # llama-server default), 1234 (LM Studio), 11434 (Ollama), 11435 for APFEL
         # as its default port is occupied by Ollama. The env vars can add more
         # ports which will be merged in.
-        ports = list(range(8000, 8021)) + [8080, 1234, 11434, 11435]
+        ports = list(range(8000, 8021)) + [8080, 1234, 11434, 11435, 30000]
         ports += [p for p in sorted(self._extra_ports) if p not in ports]
         targets = [(h, p) for h in hosts for p in ports]
 
@@ -293,4 +797,4 @@ class ModelDiscovery:
                 }
             )
 
-        return {"providers": providers}
+        return {"providers": providers, "presets": get_provider_presets()}

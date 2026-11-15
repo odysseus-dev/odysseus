@@ -754,6 +754,99 @@ def _resolve_probe_key(ep) -> Optional[str]:
         return None
 
 
+
+def _fingerprint_local_base_url(base_url: str) -> Optional[str]:
+    """Identify local runtime software from a base URL's host and port."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+        host = parsed.hostname
+        if not host:
+            return None
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        from src.model_discovery import ModelDiscovery
+        return ModelDiscovery(default_host=host)._fingerprint_provider(host, port)
+    except Exception:
+        return None
+
+
+def _assess_endpoint_setup_and_capabilities(
+    base_url: str,
+    api_key: Optional[str],
+    *,
+    endpoint_kind: str = "auto",
+    models: Optional[List[str]] = None,
+    is_online: bool = False,
+    ping_error: Optional[str] = None,
+    probe_model: str = "",
+    run_live_probe: bool = False,
+    timeout: int = 8,
+) -> Dict[str, Any]:
+    """Build setup validation and capability metadata for an endpoint."""
+    from src.model_discovery import validate_provider_setup
+
+    category = _classify_endpoint(base_url, endpoint_kind)
+    detected = _safe_detect_provider(base_url)
+    if (not detected or detected == "openai") and category == "local":
+        fp = _fingerprint_local_base_url(base_url)
+        if fp:
+            detected = fp
+
+    setup = validate_provider_setup(
+        base_url,
+        api_key=api_key or "",
+        endpoint_kind=endpoint_kind,
+        detected_provider=detected,
+    )
+    warnings = list(setup.get("warnings") or [])
+    if not is_online and ping_error:
+        warnings.append(f"Endpoint check failed: {ping_error}")
+
+    preset = setup.get("preset") or {}
+    defaults = preset.get("default_capabilities") or {}
+    model_list = list(models or [])
+    chat_candidates = [m for m in model_list if _is_chat_model(m)]
+    embed_candidates = [m for m in model_list if any(k in m.lower() for k in ("embed", "bge", "e5-", "nomic"))]
+
+    capabilities: Dict[str, Any] = {
+        "models_listed": len(model_list) > 0,
+        "model_count": len(model_list),
+        "chat_completions": bool(defaults.get("chat", True)) if is_online else False,
+        "tool_calling": defaults.get("tools"),
+        "vision": defaults.get("vision"),
+        "streaming": bool(defaults.get("streaming", True)) if is_online else False,
+        "structured_output": defaults.get("structured_output"),
+        "embeddings": True if embed_candidates else defaults.get("embeddings"),
+        "probe_model": None,
+        "probe_latency_ms": None,
+        "probe_error": None,
+    }
+
+    target_model = (probe_model or "").strip() or (chat_candidates[0] if chat_candidates else (model_list[0] if model_list else ""))
+    if run_live_probe and is_online and target_model:
+        capabilities["probe_model"] = target_model
+        chat_res = _probe_single_model(base_url, api_key or "", target_model, timeout=timeout, with_tools=False)
+        capabilities["probe_latency_ms"] = chat_res.get("latency_ms")
+        if chat_res.get("status") == "ok":
+            capabilities["chat_completions"] = True
+            tool_res = _probe_single_model(base_url, api_key or "", target_model, timeout=timeout, with_tools=True)
+            capabilities["tool_calling"] = tool_res.get("status") == "ok"
+            if tool_res.get("status") != "ok" and tool_res.get("error"):
+                capabilities["probe_error"] = tool_res.get("error")
+        else:
+            capabilities["chat_completions"] = False
+            capabilities["tool_calling"] = False
+            capabilities["probe_error"] = chat_res.get("error")
+
+    return {
+        "detected_provider": setup.get("provider"),
+        "provider_name": setup.get("provider_name"),
+        "suggested_name": setup.get("suggested_name"),
+        "setup_warnings": warnings,
+        "capabilities": capabilities,
+    }
+
+
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _safe_detect_provider(base)
@@ -2078,6 +2171,18 @@ def setup_model_routes(model_discovery):
         require_admin(request)
         return model_discovery.discover_models()
 
+    @router.get("/provider-presets")
+    def list_provider_presets(request: Request, category: Optional[str] = None):
+        """Return supported local and hosted provider presets for guided setup."""
+        require_admin(request)
+        from src.model_discovery import get_provider_presets
+        presets = get_provider_presets(category=category)
+        return {
+            "presets": presets,
+            "local": [p for p in presets if p["category"] == "local"],
+            "hosted": [p for p in presets if p["category"] == "hosted"],
+        }
+
     # ---- Admin: model endpoints CRUD ----
 
     @router.get("/model-endpoints")
@@ -2416,6 +2521,8 @@ def setup_model_routes(model_discovery):
         api_key: str = Form(""),
         endpoint_kind: str = Form("auto"),
         model_refresh_timeout: str = Form(""),
+        check_capabilities: bool = Form(False),
+        probe_model: str = Form(""),
     ):
         require_admin(request)
         base_url = _normalize_base(base_url)
@@ -2440,10 +2547,22 @@ def setup_model_routes(model_discovery):
             requested_kind = "api"
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
-        models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
-        ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 10.0))
+        clean_key = api_key.strip() or None
+        models = _probe_endpoint(base_url, clean_key, timeout=probe_timeout)
+        ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, clean_key, timeout=min(probe_timeout, 10.0))
         is_online = bool(models) or bool(ping.get("reachable")) or (is_featherless and ping.get("reachable"))
         is_status = "online" if (models or (is_featherless and ping.get("reachable"))) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline"))
+        assessment = _assess_endpoint_setup_and_capabilities(
+            base_url,
+            clean_key,
+            endpoint_kind=requested_kind,
+            models=models,
+            is_online=is_online,
+            ping_error=ping.get("error") if ping else None,
+            probe_model=probe_model,
+            run_live_probe=bool(check_capabilities),
+            timeout=min(probe_timeout, 10),
+        )
         return {
             "base_url": base_url,
             "online": is_online,
@@ -2453,6 +2572,52 @@ def setup_model_routes(model_discovery):
             "count": len(models),
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
+            **assessment,
+        }
+
+    @router.post("/model-endpoints/{ep_id}/check-capabilities")
+    def check_model_endpoint_capabilities(
+        ep_id: str,
+        request: Request,
+        model_id: str = Form(""),
+    ):
+        """Run a live capability check (models, chat completions, tool calling) on a configured endpoint."""
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
+                raise HTTPException(404, "Endpoint not found")
+            base_url = _normalize_base(ep.base_url)
+            api_key = _resolve_probe_key(ep)
+            kind = _effective_endpoint_kind(ep, base_url)
+            cached = _cached_model_ids(ep)
+        finally:
+            db.close()
+
+        models = _probe_endpoint(base_url, api_key, timeout=10.0) or cached
+        ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key, timeout=6.0)
+        is_online = bool(models) or bool(ping.get("reachable"))
+        assessment = _assess_endpoint_setup_and_capabilities(
+            base_url,
+            api_key,
+            endpoint_kind=kind,
+            models=models,
+            is_online=is_online,
+            ping_error=ping.get("error") if ping else None,
+            probe_model=model_id,
+            run_live_probe=True,
+            timeout=10,
+        )
+        return {
+            "endpoint_id": ep_id,
+            "base_url": base_url,
+            "online": is_online,
+            "models": models,
+            "count": len(models),
+            "endpoint_kind": kind,
+            "category": _classify_endpoint(base_url, kind),
+            **assessment,
         }
 
     @router.get("/model-endpoints/{ep_id}/probe")
