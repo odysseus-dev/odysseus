@@ -189,6 +189,117 @@ class TaskUpdate(BaseModel):
     character_id: Optional[str] = None
 
 
+
+def normalize_scheduled_time(value: Optional[str]) -> Optional[str]:
+    """Normalize 'H:MM' strings into zero-padded 'HH:MM' format."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return s
+    parts = s.split(":")
+    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        hh, mm = int(parts[0]), int(parts[1])
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            return f"{hh:02d}:{mm:02d}"
+    return s
+
+
+def compute_task_health(tasks: list, now: Optional[datetime] = None, scheduler_running: bool = True) -> dict:
+    """Summarize operational health, failure streaks, overdue schedules, and latency across tasks."""
+    from datetime import timezone as _tz
+    ref_now = now or datetime.now(_tz.utc).replace(tzinfo=None)
+
+    total = len(tasks)
+    active = 0
+    paused = 0
+    completed = 0
+    overdue = 0
+    failing = 0
+    total_runs = 0
+    success_runs = 0
+    failed_runs = 0
+    durations_ms: list[float] = []
+    needs_attention: list[dict] = []
+
+    for t in tasks:
+        st = (getattr(t, "status", None) or "active").lower()
+        if st == "active":
+            active += 1
+        elif st == "paused":
+            paused += 1
+        elif st == "completed":
+            completed += 1
+
+        runs = list(getattr(t, "runs", None) or [])
+        consec_failures = 0
+        last_error = ""
+        for idx, r in enumerate(runs[:20]):
+            total_runs += 1
+            r_status = (getattr(r, "status", None) or "").lower()
+            if r_status == "completed":
+                success_runs += 1
+            elif r_status in {"error", "failed"}:
+                failed_runs += 1
+                if idx == consec_failures:
+                    consec_failures += 1
+                    if not last_error:
+                        last_error = (getattr(r, "error", None) or getattr(r, "result", None) or "")[:200]
+            started = getattr(r, "started_at", None)
+            finished = getattr(r, "finished_at", None)
+            if started and finished and finished >= started:
+                durations_ms.append((finished - started).total_seconds() * 1000.0)
+
+        next_run = getattr(t, "next_run", None)
+        overdue_minutes = 0
+        is_overdue = False
+        if st == "active" and (getattr(t, "trigger_type", None) or "schedule") == "schedule" and next_run is not None:
+            delta_min = (ref_now - next_run).total_seconds() / 60.0
+            if delta_min > 15.0:
+                is_overdue = True
+                overdue_minutes = int(round(delta_min))
+                overdue += 1
+
+        if consec_failures > 0:
+            failing += 1
+
+        if consec_failures > 0 or is_overdue:
+            needs_attention.append({
+                "id": getattr(t, "id", None),
+                "name": _display_task_name(t),
+                "status": st,
+                "consecutive_failures": consec_failures,
+                "last_error": last_error,
+                "is_overdue": is_overdue,
+                "overdue_minutes": overdue_minutes,
+                "next_run": next_run.isoformat() + "Z" if next_run else None,
+            })
+
+    success_rate = round(success_runs / total_runs, 4) if total_runs > 0 else 1.0
+    avg_duration_ms = round(sum(durations_ms) / len(durations_ms), 1) if durations_ms else None
+
+    return {
+        "scheduler_running": bool(scheduler_running),
+        "counts": {
+            "total": total,
+            "active": active,
+            "paused": paused,
+            "completed": completed,
+            "overdue": overdue,
+            "failing": failing,
+        },
+        "runs": {
+            "sampled": total_runs,
+            "succeeded": success_runs,
+            "failed": failed_runs,
+            "success_rate": success_rate,
+            "avg_duration_ms": avg_duration_ms,
+        },
+        "needs_attention": needs_attention,
+        "housekeeping_defaults_count": len(HOUSEKEEPING_DEFAULTS),
+    }
+
+
 def _display_task_name(t: ScheduledTask) -> str:
     defs = HOUSEKEEPING_DEFAULTS.get(t.action) if t.action else None
     if defs and (t.name or "") in set(defs.get("legacy_names") or []):
@@ -380,6 +491,22 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         finally:
             db.close()
 
+
+    @router.get("/health")
+    async def get_tasks_health(request: Request):
+        """Return operational health, failure streaks, overdue schedules, and latency metrics."""
+        user = _owner(request)
+        db = SessionLocal()
+        try:
+            q = db.query(ScheduledTask)
+            if user:
+                q = q.filter(ScheduledTask.owner == user)
+            tasks = q.all()
+            running = bool(getattr(task_scheduler, "_running", False))
+            return compute_task_health(tasks, scheduler_running=running)
+        finally:
+            db.close()
+
     @router.get("/onboarding")
     async def get_tasks_onboarding(request: Request):
         user = _owner(request)
@@ -456,6 +583,15 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         target = q.first()
         if not target:
             raise HTTPException(404, "Chained task not found")
+        if current_task_id:
+            visited = {current_task_id}
+            cursor = target
+            while cursor and getattr(cursor, "then_task_id", None):
+                nxt_id = cursor.then_task_id
+                if nxt_id in visited:
+                    raise HTTPException(400, "Circular task chain detected")
+                visited.add(nxt_id)
+                cursor = db.query(ScheduledTask).filter(ScheduledTask.id == nxt_id).first()
         return target.id
 
     @router.post("")
@@ -482,6 +618,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             raise HTTPException(400, "Event name is required for event-triggered tasks")
         if req.trigger_type == "event" and not req.trigger_count:
             raise HTTPException(400, "Trigger count is required for event-triggered tasks")
+
+        if req.scheduled_time:
+            req.scheduled_time = normalize_scheduled_time(req.scheduled_time)
 
         # Auto-generate name
         name = req.name
