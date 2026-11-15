@@ -32,8 +32,8 @@ export function _emailFieldsWithLocalDraft(fields) {
     return {
       ...fields,
       to: keepRealField(draft.to, fields.to),
-      cc: keepRealField(draft.cc, fields.cc),
-      bcc: keepRealField(draft.bcc, fields.bcc),
+      cc: draft.cc == null ? fields.cc : String(draft.cc),
+      bcc: draft.bcc == null ? fields.bcc : String(draft.bcc),
       subject: keepRealField(draft.subject, fields.subject),
       inReplyTo: keepRealField(draft.inReplyTo, fields.inReplyTo),
       references: keepRealField(draft.references, fields.references),
@@ -72,7 +72,9 @@ function _loadEmailLocalDraft(fields) {
     }
   }
 
-export function _persistEmailLocalDraftNow() {
+function captureEmailLocalDraft() {
+    const pane = document.getElementById('doc-editor-pane');
+    if (pane?.dataset.activeDocumentId !== activeDocId) return null;
     const doc = activeDocId && docs.get(activeDocId);
     if (!doc || doc.language !== 'email') return;
     const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';
@@ -95,12 +97,27 @@ export function _persistEmailLocalDraftNow() {
       body,
       updatedAt: Date.now(),
     };
-    try { localStorage.setItem(key, JSON.stringify(payload)); } catch (_) {}
+    return { key, payload };
+  }
+
+function writeEmailLocalDraft(snapshot) {
+    if (!snapshot) return;
+    try { localStorage.setItem(snapshot.key, JSON.stringify(snapshot.payload)); } catch (_) {}
+  }
+
+export function _persistEmailLocalDraftNow() {
+    clearTimeout(_emailLocalDraftDebounce);
+    _emailLocalDraftDebounce = null;
+    writeEmailLocalDraft(captureEmailLocalDraft());
   }
 
 export function _persistEmailLocalDraftSoon() {
     clearTimeout(_emailLocalDraftDebounce);
-    _emailLocalDraftDebounce = setTimeout(_persistEmailLocalDraftNow, 800);
+    const snapshot = captureEmailLocalDraft();
+    _emailLocalDraftDebounce = setTimeout(() => {
+      _emailLocalDraftDebounce = null;
+      writeEmailLocalDraft(snapshot);
+    }, 800);
   }
 
 export function _sanitizeOutgoingEmailBody(raw) {

@@ -76,3 +76,53 @@ test('ownership: rapid minimize/reopen preserves cached snapshots and outgoing P
   assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'B original');
 });
 
+test('email: real envelope input, clearing recipients, local restoration and autosave', async t => {
+  const original = 'To: old@example.com\nCc: oldcc@example.com\nBcc: oldbcc@example.com\nSubject: Draft\nX-Source-UID: 42\nX-Source-Folder: INBOX\n---\nBody';
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method !== 'GET' || request.path !== '/api/document/email') return false;
+    await route.fulfill({ json: { id: 'email', language: 'email', current_content: original, title: 'Draft' } });
+    return true;
+  });
+  await inject(page, 'email', original, 'email');
+  for (const [field, value] of [['to', 'new@example.com'], ['cc', 'cc@example.com'], ['bcc', 'bcc@example.com'], ['subject', 'New subject']]) {
+    await page.evaluate(({ field, value }) => {
+      const input = document.getElementById(`doc-email-${field}`);
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, { field, value });
+  }
+  assert.equal(await page.evaluate(() => state.docs.get('email')._saveState), 'dirty');
+  await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
+  const first = requests.filter(request => request.method === 'PUT').at(-1);
+  assert.match(first.body.content, /To: new@example.com/);
+  assert.match(first.body.content, /Cc: cc@example.com/);
+  assert.match(first.body.content, /Bcc: bcc@example.com/);
+  assert.match(first.body.content, /Subject: New subject/);
+  await page.locator('[data-cc-close]').first().evaluate(button => button.click());
+  await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
+  assert.doesNotMatch(requests.filter(request => request.method === 'PUT').at(-1).body.content, /\n(?:Cc|Bcc):/);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|42|'))));
+  assert.equal(stored.to, 'new@example.com');
+  assert.equal(stored.subject, 'New subject');
+  assert.equal(stored.cc, '');
+  assert.equal(stored.bcc, '');
+  // Reload the actual module graph against an older server snapshot.
+  await page.reload();
+  await page.setContent(`${styles}<div id="toast"></div><aside id="sidebar"></aside><main id="chat-container"></main>`);
+  await page.evaluate(async () => {
+    window.editor = await import('/static/js/document.js'); editor.init('');
+    await editor.loadDocument('email');
+  });
+  assert.equal(await page.locator('#doc-email-to').inputValue(), 'new@example.com');
+  assert.equal(await page.locator('#doc-email-subject').inputValue(), 'New subject');
+  assert.equal(await page.locator('#doc-email-cc').inputValue(), '');
+  assert.equal(await page.locator('#doc-email-bcc').inputValue(), '');
+});
+
+test('email: Markdown preview shortcut executes integrated callback', async t => {
+  const { page } = await setup(t);
+  await inject(page, 'a', '# Markdown');
+  await page.evaluate(() => preview._setMarkdownPreviewActive(false));
+  await page.keyboard.press('Control+Alt+m');
+  assert.equal(await page.locator('#doc-md-preview').evaluate(el => el.style.display !== 'none'), true);
+});

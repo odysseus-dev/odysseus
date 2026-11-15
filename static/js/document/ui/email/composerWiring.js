@@ -1,5 +1,8 @@
 // ui/email/composerWiring.js
 
+import { saveCurrentToMap, _syncHeaderActions } from '../../application/documentCommands.js';
+import { toggleMarkdownPreview } from '../previewModes.js';
+
 import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, clearDocuments, docs, endDelete, isOpen, isPanelOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setApiBase, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../../application/documentState.js';
 
 import { _autoSaveDebounce, _cancelAutoSave, _emailRichbodySaveDebounce, _flushAutoSave, _markDocumentDirty, _pendingAutoSaves, _resetPersistenceHooksForTesting, _saveClosingDraft, _scheduleAutoSave, _setDocumentSaveState, awaitWrites, bindPersistenceHooks, runSerializedWrite, saveDocument } from '../../application/persistence.js';
@@ -205,6 +208,7 @@ if (collapseBtn && !collapseBtn._emailCollapseWired) {
       document.getElementById(id)?.addEventListener('input', () => {
         _syncEmailHeaderSummary();
         saveCurrentToMap();
+        _markDocumentDirty(activeDocId);
         _persistEmailLocalDraftSoon();
         _scheduleAutoSave(activeDocId, 800);
       });
@@ -279,6 +283,7 @@ document.querySelectorAll('[data-cc-close]').forEach(closeBtn => {
         if (ccToggle) ccToggle.style.display = '';
         _syncEmailHeaderSummary();
         saveCurrentToMap();
+        _markDocumentDirty(activeDocId);
         _scheduleAutoSave(activeDocId, 800);
       });
     });

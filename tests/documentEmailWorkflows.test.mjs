@@ -243,6 +243,8 @@ function setupMockDOM() {
     return elem;
   }
 
+  const pane = registerElem('doc-editor-pane', 'div');
+  Object.defineProperty(pane.dataset, 'activeDocumentId', { get: () => activeDocId });
   registerElem('doc-editor-textarea', 'textarea');
   const rich = registerElem('doc-email-richbody', 'div');
   rich.style.display = 'none';
