@@ -60,12 +60,12 @@ async def test_failed_primary_is_retried_and_receipt_keeps_channel(reminder_scan
     with pytest.raises(TaskNoop):
         await scan.scan()
     assert len(scan.calls) == 1
-    assert json.loads(scan.path.read_text())["note-1"]["channel"] == "browser"
+    assert json.loads(scan.path.read_text(encoding="utf-8"))["note-1"]["channel"] == "browser"
     message, ok = await scan.scan()
     assert ok is True and "Pinged 1" in message
     assert len(scan.calls) == 2
     assert len(scan.notices) == 1
-    assert json.loads(scan.path.read_text())["note-1"]["channel"] == channel
+    assert json.loads(scan.path.read_text(encoding="utf-8"))["note-1"]["channel"] == channel
     with pytest.raises(TaskNoop):
         await scan.scan()
     assert len(scan.calls) == 2
@@ -79,7 +79,7 @@ async def test_legacy_browser_receipt_allows_external_retry(reminder_scan):
     message, ok = await scan.scan()
     assert ok is True and "Pinged 1" in message
     assert len(scan.calls) == 1 and scan.notices == []
-    assert json.loads(scan.path.read_text())["note-1"]["channel"] == "webhook"
+    assert json.loads(scan.path.read_text(encoding="utf-8"))["note-1"]["channel"] == "webhook"
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_browser_delivery_is_deduped_and_typed(reminder_scan):
     scan.channel["reminder_channel"] = "browser"
     _, ok = await scan.scan()
     assert ok is True
-    assert json.loads(scan.path.read_text())["note-1"]["channel"] == "browser"
+    assert json.loads(scan.path.read_text(encoding="utf-8"))["note-1"]["channel"] == "browser"
     with pytest.raises(TaskNoop):
         await scan.scan()
     assert len(scan.notices) == 1 and scan.calls == []
@@ -103,7 +103,7 @@ async def test_total_delivery_failure_does_not_checkpoint(reminder_scan, monkeyp
     monkeypatch.setattr(note_routes, "_scheduler_ref", None)
     with pytest.raises(TaskNoop):
         await scan.scan()
-    assert "note-1" not in json.loads(scan.path.read_text())
+    assert "note-1" not in json.loads(scan.path.read_text(encoding="utf-8"))
     _, ok = await scan.scan()
     assert ok is True and len(scan.calls) == 2
 
@@ -119,7 +119,7 @@ async def test_pruning_retains_dispatcher_receipt_and_other_due_note(reminder_sc
     scan.statuses[:] = [200]
     _, ok = await scan.scan()
     assert ok is True
-    cache = json.loads(scan.path.read_text())
+    cache = json.loads(scan.path.read_text(encoding="utf-8"))
     assert set(cache) == {"note-1", "later"}
     assert cache["note-1"]["channel"] == "webhook"
     assert cache["later"]["channel"] == "email"

@@ -2,10 +2,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
-LASSO = (ROOT / "static/js/editor/tools/lasso.js").read_text()
-STROKE = (ROOT / "static/js/editor/tools/stroke.js").read_text()
-CANVAS_EVENTS = (ROOT / "static/js/editor/canvas-events.js").read_text()
+EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
+LASSO = (ROOT / "static/js/editor/tools/lasso.js").read_text(encoding="utf-8")
+STROKE = (ROOT / "static/js/editor/tools/stroke.js").read_text(encoding="utf-8")
+CANVAS_EVENTS = (ROOT / "static/js/editor/canvas-events.js").read_text(encoding="utf-8")
 
 
 def test_escape_cancels_transient_editor_tools_before_editor_guard():

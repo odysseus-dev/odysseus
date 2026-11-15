@@ -10,7 +10,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src" / "agent_loop.py"
 
 
 def load_function(name, namespace=None):
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
     namespace = {} if namespace is None else namespace
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), namespace)
@@ -98,7 +98,7 @@ def test_synthesis_preserves_existing_artifact_exception():
 
 
 def test_early_shortcuts_are_guarded_in_the_loop():
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     triggers = {"_early_active_email_reply_body", "_early_active_email_draft_update",
                 "_early_active_document_append", "_no_tool_boundary_answer", "_exact_file_edit"}
     found = set()
@@ -116,7 +116,7 @@ def test_early_shortcuts_are_guarded_in_the_loop():
 @pytest.mark.parametrize("eligible,summary", [(False, "Thirty notes"), (True, "")])
 def test_successful_tool_continues_to_synthesis_without_eligible_answer(eligible, summary):
     """Run the actual post-tool completion branch, including its break."""
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     node = next(n for n in ast.walk(tree) if isinstance(n, ast.If)
                 and "_ody_notes_tool_completed" in {
                     v.id for v in ast.walk(n.test) if isinstance(v, ast.Name)})

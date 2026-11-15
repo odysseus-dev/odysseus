@@ -11,7 +11,7 @@ import pathlib
 
 
 def test_tool_utils_has_no_project_imports():
-    src = pathlib.Path("src/tool_utils.py").read_text()
+    src = pathlib.Path("src/tool_utils.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):

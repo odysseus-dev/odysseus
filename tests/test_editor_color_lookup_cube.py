@@ -94,7 +94,7 @@ def test_generate_round_trip_numeric():
 
 
 def test_engine_is_offline():
-    src = CUBE.read_text()
+    src = CUBE.read_text(encoding="utf-8")
     assert "fetch(" not in src
     assert "XMLHttpRequest" not in src
     assert "export function parseCubeLut(" in src
@@ -104,7 +104,7 @@ def test_engine_is_offline():
 
 
 def test_pixel_pass_applies_the_cube():
-    src = PIXEL.read_text()
+    src = PIXEL.read_text(encoding="utf-8")
     assert "import { applyCubeLut } from './cube-lut.js';" in src
     assert "if (cube && cube.size && cube.data) {" in src
     assert "applyCubeLut(d, w, h, lut, { strength });" in src
@@ -112,7 +112,7 @@ def test_pixel_pass_applies_the_cube():
 
 
 def test_adj_popup_loads_and_exports_and_strength():
-    src = POPUP.read_text()
+    src = POPUP.read_text(encoding="utf-8")
     assert "import { parseCubeLut, generateCubeLut } from './cube-lut.js';" in src
     assert "ge-adj-lut-load" in src
     assert 'accept=".cube,text/plain"' in src
@@ -129,12 +129,12 @@ def test_adj_popup_loads_and_exports_and_strength():
 
 def test_defaults_ops_and_sw():
     assert "return { preset: 'none', strength: 100 };" in HELPERS.read_text(encoding="utf-8")
-    ge = GE.read_text()
+    ge = GE.read_text(encoding="utf-8")
     assert "import { parseCubeLut as _parseCubeLut, generateCubeLut as _generateCubeLut } from './editor/fx/cube-lut.js';" in ge
     assert "'colorLookup.loadCube':" in ge
     assert "'colorLookup.exportCube':" in ge
     assert "_parseCubeLut(text)" in ge
     assert "_generateCubeLut({" in ge
-    sw = SW.read_text()
+    sw = SW.read_text(encoding="utf-8")
     assert re.search(r"odysseus-v\d+-pr40-editor-precache", sw)
     assert "/static/js/editor/fx/cube-lut.js" in sw

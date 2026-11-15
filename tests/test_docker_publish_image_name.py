@@ -57,7 +57,7 @@ def test_image_name_is_lowercase_before_docker_steps(tmp_path, job, repository, 
             text=True,
         )
         if github_env.exists():
-            env.update(line.split("=", 1) for line in github_env.read_text().splitlines())
+            env.update(line.split("=", 1) for line in github_env.read_text(encoding="utf-8").splitlines())
             image_name = env.get("IMAGE_NAME", image_name)
 
     assert image_name == expected

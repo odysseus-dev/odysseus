@@ -303,7 +303,7 @@ async def test_python_virtual_workspace_path_works_for_tmp_workspace(ws, admin):
         workspace=ws,
     )
     assert result["exit_code"] == 0, result
-    assert Path(ws, "native.txt").read_text() == "ok"
+    assert Path(ws, "native.txt").read_text(encoding="utf-8") == "ok"
 
 
 # ── get_workspace tool ──────────────────────────────────────────────────

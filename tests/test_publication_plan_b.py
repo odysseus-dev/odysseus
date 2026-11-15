@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_retained_artifacts_match_distributed_provenance_and_notices():
-    ledger = json.loads((ROOT / 'THIRD_PARTY_PROVENANCE.json').read_text())
+    ledger = json.loads((ROOT / 'THIRD_PARTY_PROVENANCE.json').read_text(encoding="utf-8"))
     assert len(ledger['retained']) == 6
     for entry in ledger['retained']:
         assert entry['source_records']
@@ -29,7 +29,7 @@ def test_retained_artifacts_match_distributed_provenance_and_notices():
 
 
 def test_removed_resource_ledger_has_no_runtime_references():
-    ledger = (ROOT / 'PUBLICATION_ASSET_DECISIONS.md').read_text()
+    ledger = (ROOT / 'PUBLICATION_ASSET_DECISIONS.md').read_text(encoding="utf-8")
     san_entries = re.findall(r'^- SAN-\d+: `([^`]+)`$', ledger, re.M)
     assert len(san_entries) == 21
 
@@ -84,13 +84,13 @@ def test_cold_catalog_and_refresh_use_mutable_data(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, 'MLX_COMMUNITY_CACHE', tmp_path / 'hwfit/mlx_community_models.json')
     monkeypatch.setattr(discovery, 'HF_COLLECTION_MODELS_CACHE', tmp_path / 'hwfit/hf_collection_models.json')
     for file in ['hf_models.json', 'mlx_community_models.json']:
-        assert (ROOT / 'services/hwfit/data' / file).read_text() == '[]\n'
+        assert (ROOT / 'services/hwfit/data' / file).read_text(encoding="utf-8") == '[]\n'
     assert models.get_models() == []
     row = {'name': 'test/runtime', 'parameter_count': '3B', 'quantization': 'F16'}
     monkeypatch.setattr(discovery, 'fetch_collection_models', lambda source: [dict(row, name='mlx-community/test' if source['mlx_only'] else row['name'])] if source.get('mlx_only') else [row])
     assert models.refresh_dynamic_catalogs(force=True) == {'mlx_community': 1, 'hf_collections': 1}
     assert {r['name'] for r in models.get_models()} == {'test/runtime', 'mlx-community/test'}
-    cached = json.loads(discovery.HF_COLLECTION_MODELS_CACHE.read_text())
+    cached = json.loads(discovery.HF_COLLECTION_MODELS_CACHE.read_text(encoding="utf-8"))
     assert cached['source'] and cached['fetched_at'] and cached['count'] == 1
     # Offline cache loading must work without a fetch.
     models.reset_model_cache()
@@ -134,11 +134,11 @@ def test_2fa_setup_still_generates_a_server_png():
 
 def test_distribution_paths_include_all_notices():
     for name in ['Odysseus.spec', 'build-windows-portable.ps1', 'build-macos-app.sh', 'Dockerfile']:
-        text = (ROOT / name).read_text()
+        text = (ROOT / name).read_text(encoding="utf-8")
         assert 'licenses' in text and 'THIRD_PARTY_PROVENANCE.json' in text and 'ACKNOWLEDGMENTS.md' in text
-    ignore = (ROOT / '.dockerignore').read_text()
+    ignore = (ROOT / '.dockerignore').read_text(encoding="utf-8")
     assert '!ACKNOWLEDGMENTS.md' in ignore
-    manifest = json.loads((ROOT / 'static/manifest.json').read_text())
+    manifest = json.loads((ROOT / 'static/manifest.json').read_text(encoding="utf-8"))
     assert manifest.get('icons')
     assert manifest['display'] == 'standalone'
     expected_icons = [

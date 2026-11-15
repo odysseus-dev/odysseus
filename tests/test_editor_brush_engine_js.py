@@ -126,7 +126,7 @@ def test_pixel_brush_preset_roundtrips_pixel_flag():
 
 
 def test_stroke_pipeline_has_pixel_stamping():
-    source = (ROOT / "static/js/editor/stroke-pipeline.js").read_text()
+    source = (ROOT / "static/js/editor/stroke-pipeline.js").read_text(encoding="utf-8")
     assert "function pixelDab(" in source
     assert "function pixelLine(" in source
     assert "state.brushPixel" in source
@@ -141,12 +141,12 @@ def test_stroke_pipeline_has_pixel_stamping():
     assert "let cx = Math.floor(Math.round(x0) / s);" in source
     assert "const cx1 = Math.floor(Math.round(x1) / s);" in source
     assert "ctx.fillRect(cx * s, cy * s, s, s);" in source
-    state = (ROOT / "static/js/editor/state.js").read_text()
+    state = (ROOT / "static/js/editor/state.js").read_text(encoding="utf-8")
     assert "brushPixel: false" in state
 
 
 def test_pixel_brush_does_not_force_a_grid_overlay():
-    guides = (ROOT / "static/js/editor/precision-guides.js").read_text()
+    guides = (ROOT / "static/js/editor/precision-guides.js").read_text(encoding="utf-8")
     # The Pixel tool must not paint a blue grid over the whole document (it
     # read as an unwanted blue tint); the grid follows View > Grid only.
     assert "state.gridVisible || pixelBrush" not in guides
@@ -155,7 +155,7 @@ def test_pixel_brush_does_not_force_a_grid_overlay():
 
 
 def test_pixel_brush_snaps_only_while_shift_is_held():
-    source = (ROOT / "static/js/editor/stroke-pipeline.js").read_text()
+    source = (ROOT / "static/js/editor/stroke-pipeline.js").read_text(encoding="utf-8")
     # Direction snap helper stays.
     assert "function snapDirection(dx, dy)" in source
     assert "Math.round(Math.atan2(dy, dx) / step) * step" in source
@@ -171,5 +171,5 @@ def test_pixel_brush_snaps_only_while_shift_is_held():
     # Freehand by default (no shift).
     assert "if (pixelLast) pixelLine(target.ctx, pixelLast.x, pixelLast.y, px, py," in source
     # The shift modifier has to reach the pipeline from the DOM event.
-    stroke = (ROOT / "static/js/editor/tools/stroke.js").read_text()
+    stroke = (ROOT / "static/js/editor/tools/stroke.js").read_text(encoding="utf-8")
     assert "shift: !!e?.shiftKey" in stroke

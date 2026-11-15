@@ -26,7 +26,7 @@ COMPROMISED_SPKIS = {
 
 class ChromiumCATrustTests(unittest.TestCase):
     def test_policy_distrusts_each_compromised_key_without_adding_trust(self):
-        policy = json.loads((ROOT / "docker" / "chromium-emudhra.json").read_text())
+        policy = json.loads((ROOT / "docker" / "chromium-emudhra.json").read_text(encoding="utf-8"))
         self.assertEqual(set(policy), {"CADistrustedCertificates"})
         self.assertEqual(len(policy["CADistrustedCertificates"]), 8)
         keys = set()

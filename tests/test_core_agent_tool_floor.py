@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_compact_router_keeps_basic_agent_tools_available():
-    source = (ROOT / "src/agent_loop.py").read_text()
+    source = (ROOT / "src/agent_loop.py").read_text(encoding="utf-8")
     assert '_core_agent_tools = set(CONTRACT_CORE_TOOLS)' in source
     assert "_relevant_tools.update(_core_agent_tools)" in source
     assert "_base_relevant_tools.update(_core_agent_tools)" in source
@@ -32,7 +32,7 @@ def test_caller_disabled_tools_are_removed_and_execution_blocked():
 
 
 def test_named_ssh_turn_also_exposes_cookbook_server_resolution():
-    source = (ROOT / "src/agent_loop.py").read_text()
+    source = (ROOT / "src/agent_loop.py").read_text(encoding="utf-8")
     assert 're.search(r"\\bssh\\s+' in source
     assert '_relevant_tools.add("list_cookbook_servers")' in source
     assert '_base_relevant_tools.add("list_cookbook_servers")' in source
@@ -51,7 +51,7 @@ def test_sft_fixture_keeps_read_only_bash_but_not_workspace_mutators():
 
 
 def test_cookbook_intent_is_not_replaced_by_workspace_terminus_tools():
-    source = (ROOT / "src/agent_loop.py").read_text()
+    source = (ROOT / "src/agent_loop.py").read_text(encoding="utf-8")
 
     assert 'and "cookbook" not in (_intent.get("domains") or set())' in source
 

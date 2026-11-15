@@ -8,8 +8,8 @@ Three cases are covered, each asserting both layers:
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EDITOR = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
-ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text()
+EDITOR = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
+ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
 
 
 def test_offline_message_mapping():
@@ -45,7 +45,7 @@ def test_quick_edit_shows_the_generation_message_verbatim():
     assert "_setAiCommandStatus(_isGenOfflineMsg(_genErr) ? _genErr : `Could not generate that edit: ${_genErr}`, 'error');" in EDITOR
     assert "_setAiCommandStatus(_isGenOfflineMsg(msg) ? msg : `Could not generate an image: ${msg}`, 'error');" in EDITOR
     # The extracted generation action keeps the shared failure classifier.
-    generation = (ROOT / 'static/js/editor/image-generation.js').read_text()
+    generation = (ROOT / 'static/js/editor/image-generation.js').read_text(encoding="utf-8")
     assert "formatError: _generationErrorMessage" in EDITOR
     assert "formatError({ network: true" in generation
     assert "formatError({ status: response.status" in generation
@@ -54,7 +54,7 @@ def test_quick_edit_shows_the_generation_message_verbatim():
 def test_sw_cache_is_bumped():
     import re
 
-    sw = (ROOT / "static" / "sw.js").read_text()
+    sw = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
     m = re.search(r"CACHE_NAME = '([^']+)'", sw)
     assert m, "CACHE_NAME not found"
     assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)

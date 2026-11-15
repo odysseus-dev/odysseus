@@ -19,9 +19,9 @@ def test_remove_session_sft_trace_rows_moves_all_session_rows_to_trash(monkeypat
     removed = remove_session_sft_trace_rows("sft_alex", "delete-me")
 
     assert removed == 2
-    kept = [json.loads(line) for line in path.read_text().splitlines()]
+    kept = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [row["session_id"] for row in kept] == ["keep-me"]
-    trash = [json.loads(line) for line in (path.with_suffix(".jsonl.trash")).read_text().splitlines()]
+    trash = [json.loads(line) for line in (path.with_suffix(".jsonl.trash")).read_text(encoding="utf-8").splitlines()]
     assert len(trash) == 2
     assert all(row["deleted_from_training"] is True for row in trash)
 

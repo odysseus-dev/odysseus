@@ -81,8 +81,8 @@ def test_supervisor_setup_failure_closes_unstarted_grant(jobs):
     assert "KeyError" in result.stderr  # Legacy unlinked payload fails before execution.
     assert not (path / "must-not-exist").exists()
     assert containment.active_grants() == []
-    assert (path / "exit").read_text() == "1"
-    report = json.loads((path / "result.json").read_text())
+    assert (path / "exit").read_text(encoding="utf-8") == "1"
+    report = json.loads((path / "result.json").read_text(encoding="utf-8"))
     assert report["containment"]["executed"] is False
     assert report["containment"]["contained"] is False
     assert report["teardown"]["dead"] is True

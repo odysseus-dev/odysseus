@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+    import msvcrt
 import json
 import re
 import sys
@@ -246,6 +250,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--limit", type=int)
     return parser.parse_args()
+
+
+def _try_lock_nonblocking(lock_handle) -> None:
+    if fcntl is not None:
+        _try_lock_nonblocking(lock_handle)
+        return
+    try:
+        msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        raise BlockingIOError(str(exc)) from exc
 
 
 def main() -> int:

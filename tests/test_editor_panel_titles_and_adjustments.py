@@ -2,11 +2,11 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text()
-STUDIO = (ROOT / "static" / "js" / "editor" / "panels" / "studio-panels.js").read_text()
-PANELS_JS = (ROOT / "static" / "js" / "editor" / "panels" / "panels.js").read_text()
-GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
+CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text(encoding="utf-8")
+STUDIO = (ROOT / "static" / "js" / "editor" / "panels" / "studio-panels.js").read_text(encoding="utf-8")
+PANELS_JS = (ROOT / "static" / "js" / "editor" / "panels" / "panels.js").read_text(encoding="utf-8")
+GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
+SW = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 PANELS = ["swatches", "gradients", "patterns", "adjustments", "properties", "histogram"]
 

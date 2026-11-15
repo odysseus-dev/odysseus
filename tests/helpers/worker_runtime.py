@@ -1,11 +1,73 @@
 """Private filesystem defaults established before application imports."""
 
+import logging
 import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+
+
+import gc
+import sqlite3
+
+
+def _close_scoped_sqlite_handles(root: Path) -> None:
+    """Close any open sqlite3.Connection objects pointing inside *root* on Windows."""
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        resolved_root = root
+
+    gc.collect()
+    for obj in gc.get_objects():
+        if isinstance(obj, sqlite3.Connection):
+            try:
+                rows = obj.execute("PRAGMA database_list").fetchall()
+                for _, _, db_file in rows:
+                    if not db_file:
+                        continue
+                    db_path = Path(db_file).resolve()
+                    if db_path == resolved_root or resolved_root in db_path.parents:
+                        obj.close()
+                        break
+            except Exception:
+                pass
+
+
+def _close_scoped_file_handlers(root: Path) -> None:
+    """Flush and close FileHandlers pointing inside *root* so Windows can unlink logs."""
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        resolved_root = root
+
+    loggers = [logging.getLogger()]
+    for entry in list(logging.Logger.manager.loggerDict.values()):
+        if isinstance(entry, logging.Logger):
+            loggers.append(entry)
+
+    for logger in loggers:
+        for handler in list(logger.handlers):
+            if not isinstance(handler, logging.FileHandler):
+                continue
+            base = getattr(handler, "baseFilename", None)
+            if not base:
+                continue
+            try:
+                handler_path = Path(base).resolve()
+                is_scoped = handler_path == resolved_root or resolved_root in handler_path.parents
+            except OSError:
+                is_scoped = str(base).startswith(str(root))
+            if is_scoped:
+                try:
+                    handler.flush()
+                    handler.close()
+                except Exception:
+                    pass
+                logger.removeHandler(handler)
+
 
 
 def bootstrap_runtime():
@@ -68,4 +130,8 @@ def isolated_runtime(worker="main"):
                 patcher.setenv(name, str(tmp))
             # tempfile may already have cached the caller's directory.
             patcher.setattr(tempfile, "tempdir", str(tmp))
-            yield root
+            try:
+                yield root
+            finally:
+                _close_scoped_file_handlers(root)
+                _close_scoped_sqlite_handles(root)

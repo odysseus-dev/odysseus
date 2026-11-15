@@ -13,7 +13,7 @@ def test_remove_trace_sessions_is_owner_file_scoped_and_atomic(tmp_path, monkeyp
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
 
     assert review.remove_trace_sessions("owner", {"reject"}) == 1
-    remaining = [json.loads(line) for line in path.read_text().splitlines()]
+    remaining = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [row["session_id"] for row in remaining] == ["keep"]
 
 

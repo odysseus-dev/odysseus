@@ -87,23 +87,23 @@ def test_flood_fill_tolerance_and_selection_mask():
 
 
 def test_bucket_tool_is_registered_and_wired():
-    toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text()
+    toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
     assert "bucket: { label: 'Paint Bucket'" in toolbar
     assert "['gradient', 'bucket']" in toolbar
 
-    editor = (ROOT / "static/js/galleryEditor.js").read_text()
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     assert "import { createBucketTool } from './editor/tools/bucket.js';" in editor
     assert "const _bucketTool = createBucketTool({" in editor
     assert "if (state.tool === 'bucket') return _bucketTool.fill(e);" in editor
     assert "'fill.flood':" in editor
     assert "_pixelPaintTools = new Set(['brush', 'pixel', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'gradient', 'bucket', 'liquify'])" in editor
 
-    state = (ROOT / "static/js/editor/state.js").read_text()
+    state = (ROOT / "static/js/editor/state.js").read_text(encoding="utf-8")
     assert "bucketTolerance: 32" in state
 
 
 def test_paint_tools_require_confirmation_before_rasterizing():
-    editor = (ROOT / "static/js/galleryEditor.js").read_text()
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     assert "async function _confirmRasterizeLayer(layer) {" in editor
     assert '_saveState(`Rasterize "${layer.name}"`);' in editor
     assert "if (_pixelPaintTools.has(state.tool) && !_getActiveMaskLayer() && !state.quickMaskActive &&" in editor
@@ -111,7 +111,7 @@ def test_paint_tools_require_confirmation_before_rasterizing():
 
 
 def test_smudge_and_dodge_icons_are_distinct():
-    toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text()
+    toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
     # Smudge is a pointing hand/finger, not a swirl.
     assert "M12.5 12V5.5a1.75 1.75 0 1 1 3.5 0V12" in toolbar
     assert "M16 12v-1.5a1.5 1.5 0 0 1 3 0V16a5 5 0 0 1-5 5h-2.2" in toolbar

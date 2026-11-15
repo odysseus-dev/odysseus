@@ -225,7 +225,7 @@ class ImageRecipeTests(unittest.TestCase):
             result = subprocess.run([shutil.which("sh"), "-c", command],
                                     env={"PATH": tmp, "TRACE": str(trace)}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertEqual(trace.read_text().splitlines(),
+            self.assertEqual(trace.read_text(encoding="utf-8").splitlines(),
                              [f"{directory}/python /usr/local/bin/check-ca-trust.py --system"])
 
     def test_builder_and_runtime_inherit_the_guarded_package_layer(self):

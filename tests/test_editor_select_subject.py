@@ -15,14 +15,14 @@ SW = ROOT / "static" / "sw.js"
 
 
 def test_module_exists_and_is_offline():
-    src = MODULE.read_text()
+    src = MODULE.read_text(encoding="utf-8")
     assert "export function computeSubjectMask(" in src
     assert "fetch(" not in src
     assert "XMLHttpRequest" not in src
 
 
 def test_engine_uses_border_background_otsu_and_largest_blob():
-    src = MODULE.read_text()
+    src = MODULE.read_text(encoding="utf-8")
     # background estimated from the border cells
     assert "Background colour = average of the border cells" in src
     assert "addCell(sx, 0);" in src
@@ -44,7 +44,7 @@ def test_engine_uses_border_background_otsu_and_largest_blob():
 
 
 def test_editor_imports_and_helper():
-    src = EDITOR.read_text()
+    src = EDITOR.read_text(encoding="utf-8")
     assert "import { computeSubjectMask as _computeSubjectMask } from './editor/select-subject.js';" in src
     assert "function _applyOfflineSubjectSelection(layer, mode = 'replace') {" in src
     assert "_computeSubjectMask(data, w, h, {});" in src
@@ -52,7 +52,7 @@ def test_editor_imports_and_helper():
 
 
 def test_control_op_prefers_offline_saliency():
-    src = EDITOR.read_text()
+    src = EDITOR.read_text(encoding="utf-8")
     assert "'selection.subject':" in src
     assert "const offline = _applyOfflineSubjectSelection(layer, mode);" in src
     assert "if (offline) return { mode, method: 'saliency', width: offline.width, height: offline.height };" in src
@@ -63,12 +63,12 @@ def test_control_op_prefers_offline_saliency():
 
 
 def test_select_menu_entry_and_wiring():
-    topbar = TOPBAR.read_text()
+    topbar = TOPBAR.read_text(encoding="utf-8")
     assert 'data-selection-action="subject"' in topbar
     assert '<button class="dropdown-item-compact" data-selection-action="subject"><span>Subject</span></button>' in topbar
-    wire = WIRE.read_text()
+    wire = WIRE.read_text(encoding="utf-8")
     assert "else if (action === 'subject') { window.geEditorControl?.invoke?.('selection.subject', {}); handled = true; }" in wire
 
 
 def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW.read_text())
+    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW.read_text(encoding="utf-8"))

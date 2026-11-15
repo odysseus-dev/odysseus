@@ -28,7 +28,7 @@ def test_single_user_save_preserves_other_users(tmp_path, monkeypatch):
     current["theme"] = "dark"
     pr._save_for_user(None, current)
 
-    data = json.loads(f.read_text())
+    data = json.loads(f.read_text(encoding="utf-8"))
     assert "_users" in data, "multi-user store was clobbered"
     assert "bob" in data["_users"] and data["_users"]["bob"] == {"theme": "paper"}
     # the change round-tripped into the first user's slot
@@ -41,7 +41,7 @@ def test_legacy_flat_store_still_saved_flat(tmp_path, monkeypatch):
     monkeypatch.setattr(pr, "PREFS_FILE", str(f))
 
     pr._save_for_user(None, {"theme": "dark"})
-    data = json.loads(f.read_text())
+    data = json.loads(f.read_text(encoding="utf-8"))
     assert data == {"theme": "dark"}
 
 
@@ -51,7 +51,7 @@ def test_named_user_save_unaffected(tmp_path, monkeypatch):
     monkeypatch.setattr(pr, "PREFS_FILE", str(f))
 
     pr._save_for_user("bob", {"theme": "dark"})
-    data = json.loads(f.read_text())
+    data = json.loads(f.read_text(encoding="utf-8"))
     assert data["_users"]["alice"] == {"theme": "light"}
     assert data["_users"]["bob"] == {"theme": "dark"}
 

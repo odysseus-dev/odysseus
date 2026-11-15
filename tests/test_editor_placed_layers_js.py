@@ -46,8 +46,8 @@ def test_replacement_matrix_keeps_document_corners():
 
 
 def test_module_exposes_non_destructive_source_and_rasterize_boundaries():
-    source = (ROOT / "static/js/editor/placed-layer.js").read_text()
-    editor = (ROOT / "static/js/galleryEditor.js").read_text()
+    source = (ROOT / "static/js/editor/placed-layer.js").read_text(encoding="utf-8")
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     assert "placed.sourceCanvas" in source
     assert "drawImage(placed.sourceCanvas" in source
     assert "export function replacePlacedSource" in source

@@ -28,7 +28,7 @@ def _function_source(src_text, name):
 
 
 def test_db_fallback_filters_hidden_from_response():
-    src = _function_source(SRC.read_text(), "get_session_history")
+    src = _function_source(SRC.read_text(encoding="utf-8"), "get_session_history")
     marker = "load from DB"
     assert marker in src, "expected the DB fallback block in get_session_history"
     db_section = src.split(marker, 1)[1]

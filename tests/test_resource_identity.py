@@ -103,7 +103,7 @@ def test_media_workspace_paths_cannot_address_control_state(tmp_path, monkeypatc
         selector = "/workspace/image.png"
     with pytest.raises(ValueError, match="execution-control"):
         _resolve_workspace_path(selector, must_exist=must_exist)
-    assert control.read_text() == "private execution state"
+    assert control.read_text(encoding="utf-8") == "private execution state"
 
 
 def test_destination_binds_absence_and_existing_ancestors(tmp_path):
@@ -200,7 +200,7 @@ async def test_control_files_cannot_be_read_or_written_through_aliases(tmp_path,
     for tool, content in (("read_file", selector), ("write_file", selector + "\nforged")):
         _, result = await dispatch(grant, tool, content)
         assert result["failure_kind"] == "resource_identity_denied"
-    assert target.read_text() == "control-secret"
+    assert target.read_text(encoding="utf-8") == "control-secret"
 
 
 async def test_directory_grep_does_not_scan_control_state_or_hardlinks(tmp_path, monkeypatch):
@@ -525,7 +525,7 @@ async def test_patch_validates_all_targets_before_any_write(tmp_path, kind):
     patch = f"*** Begin Patch\n*** Update File: a\n@@\n-old\n+new\n{suffix}\n*** End Patch"
     _, result = await dispatch(authority(tmp_path, "apply_patch"), "apply_patch", patch)
     assert result["failure_kind"] == "resource_identity_denied"
-    assert (tmp_path / "a").read_text() == "old\n"
+    assert (tmp_path / "a").read_text(encoding="utf-8") == "old\n"
     assert not (tmp_path / "moved").exists()
 
 
@@ -643,7 +643,7 @@ async def test_exact_user_approval_binds_only_one_missing_destination(tmp_path):
     exact, security = approval(grant, "write_file", "new/file.txt\napproved")
     _, result = await dispatch(grant, "write_file", "new/file.txt\napproved", exact_approval=exact, security_context=security)
     assert result["exit_code"] == 0
-    assert (tmp_path / "new/file.txt").read_text() == "approved"
+    assert (tmp_path / "new/file.txt").read_text(encoding="utf-8") == "approved"
     assert grant.grants == () and grant.resource_roots == ()
     _, next_action = await dispatch(grant, "write_file", "other.txt\nunapproved")
     assert next_action["failure_kind"] == "request_authority_denied"
@@ -670,7 +670,7 @@ async def test_restored_empty_roots_approval_is_exact_and_never_restores_generic
     _, replay = await dispatch(restored, "read_file", "approved", exact_approval=exact, security_context=security)
     assert replay["exit_code"] == 1
     assert restored.resource_roots == () and restored.backend_resources == ()
-    assert (tmp_path / "sibling").read_text() == "private sibling"
+    assert (tmp_path / "sibling").read_text(encoding="utf-8") == "private sibling"
 
 
 @pytest.mark.parametrize("change", ["alias", "request", "session", "owner"])

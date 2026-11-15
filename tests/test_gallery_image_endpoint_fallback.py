@@ -117,7 +117,7 @@ def test_unreachable_endpoint_reports_502():
 
     src = (
         Path(__file__).resolve().parents[1] / "routes" / "gallery" / "gallery_routes.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "Image server unreachable" in src
     assert "except httpx.TransportError as exc:" in src
     assert "provider HTTP" in src

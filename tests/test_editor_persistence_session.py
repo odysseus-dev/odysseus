@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_persistence_snapshots_metadata_and_guards_late_callbacks():
-    source = (ROOT / "static/js/galleryEditor.js").read_text()
+    source = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     persist = source[source.index("async function _persistDraft"):source.index("async function _loadDraftById")]
 
     assert "const sessionToken = state.editorSessionToken;" in persist
@@ -17,8 +17,8 @@ def test_persistence_snapshots_metadata_and_guards_late_callbacks():
 
 
 def test_new_editor_invalidates_previous_persistence_lane():
-    state = (ROOT / "static/js/editor/state.js").read_text()
-    editor = (ROOT / "static/js/galleryEditor.js").read_text()
+    state = (ROOT / "static/js/editor/state.js").read_text(encoding="utf-8")
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 
     assert "editorSessionToken: 0" in state
     assert "state.editorSessionToken += 1;" in editor

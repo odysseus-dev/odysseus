@@ -27,7 +27,7 @@ def _function_source(src_text: str, func_name: str) -> str:
 
 
 def test_endpoint_validated_before_fetch():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     for func in ("harmonize_image", "inpaint_proxy"):
         body = _function_source(src, func)
         assert "check_outbound_url" in body, (

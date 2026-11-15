@@ -8,10 +8,10 @@ Fill Layer, all of which reuse existing filter / merge / fill machinery.
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
-WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text()
-EXTRA = (ROOT / "static/js/editor/wire-extra-menus.js").read_text()
-EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
+TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
+WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text(encoding="utf-8")
+EXTRA = (ROOT / "static/js/editor/wire-extra-menus.js").read_text(encoding="utf-8")
+EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 
 
 def test_filter_menu_items_present():

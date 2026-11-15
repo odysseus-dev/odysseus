@@ -607,7 +607,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--output", str(out)])
             self.assertEqual(code, 0)
             self.assertTrue(out.is_file())
-            parsed = json.loads(out.read_text())
+            parsed = json.loads(out.read_text(encoding="utf-8"))
             self.assertTrue(parsed["manifest_valid"])
 
     def test_valid_distinct_markdown_summary_destination_works(self):
@@ -620,7 +620,7 @@ class TestFinding1OutputProtection(unittest.TestCase):
             code = auditor.main([str(mpath), str(tmp), "--summary", str(summ)])
             self.assertEqual(code, 0)
             self.assertTrue(summ.is_file())
-            self.assertIn("Benchmark Evidence Audit Summary", summ.read_text())
+            self.assertIn("Benchmark Evidence Audit Summary", summ.read_text(encoding="utf-8"))
 
     def test_repeated_successful_publication_produces_complete_valid_files(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2149,7 +2149,7 @@ class TestP2DuplicateEvidenceProtection(unittest.TestCase):
                 "--output", str(out),
             ])
             self.assertEqual(code, 0)
-            res = json.loads(out.read_text())
+            res = json.loads(out.read_text(encoding="utf-8"))
             det = res["reproducibility_details"]["raw_trajectories"]
             self.assertTrue(det["prerequisite_complete"])
             self.assertEqual(det["expected_set_status"], "COMPLETE")
@@ -2680,8 +2680,8 @@ class TestMarkdownReportIntegrity(unittest.TestCase):
             summary = root / "audit.md"
             code = auditor.main([str(manifest), str(root), "--output", str(output), "--summary", str(summary), "--deterministic"])
             self.assertEqual(code, 1)
-            self.assertEqual(json.loads(output.read_text())["artifacts"][0]["status"], auditor.MISSING)
-            text = summary.read_text()
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["artifacts"][0]["status"], auditor.MISSING)
+            text = summary.read_text(encoding="utf-8")
             section = text.split("## Artifacts\n", 1)[1].split("## Reproducibility Prerequisites", 1)[0]
             self.assertEqual(sum(line.startswith("|") for line in section.splitlines()), 3)
             self.assertNotIn("\n| forged", text)
@@ -2973,9 +2973,9 @@ def _run_gfm_checks() -> None:
                 output, summary = root / "audit.json", root / "audit.md"
                 self.assertEqual(auditor.main([str(manifest), str(root), "--output", str(output),
                                               "--summary", str(summary), "--deterministic"]), 1)
-                result = json.loads(output.read_text())
+                result = json.loads(output.read_text(encoding="utf-8"))
                 self.assertEqual(result["artifacts"][0]["status"], auditor.MISSING)
-                dom = render(summary.read_text())
+                dom = render(summary.read_text(encoding="utf-8"))
                 for tag in ("a", "img", "del", "em", "span", "script"):
                     self.assertIsNone(dom.find(".//" + tag), tag)
                 rows = dom.findall(".//table")[1].findall(".//tbody/tr")

@@ -9,7 +9,7 @@ import pytest
 from tests.helpers.js_modules import js_function_source
 
 ROOT = Path(__file__).resolve().parents[1]
-PICKER = (ROOT / 'static/js/modelPicker.js').read_text()
+PICKER = (ROOT / 'static/js/modelPicker.js').read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not shutil.which('node'), reason='node not installed')

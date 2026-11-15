@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_ci_checks_the_pinned_upstream_image_on_both_native_architectures():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/searxng-image.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/searxng-image.yml").read_text(encoding="utf-8"))
     events = workflow.get("on", workflow.get(True))
     assert "pull_request_target" not in events
     assert workflow["permissions"] == {"contents": "read"}
@@ -55,7 +55,7 @@ if "up" in args and failure == "up":
     binary.chmod(0o755)
     result = subprocess.run(["bash", str(ROOT / ".github/scripts/validate-searxng-image.sh"), "localhost/searxng:validated"], env={**os.environ, "PATH": str(tmp_path) + ":" + os.environ["PATH"], "DOCKER_CALLS": str(calls), "DOCKER_FAILURE": failure, "SEARXNG_SECRET": "operator-secret-must-not-propagate"}, capture_output=True, text=True)
     assert result.returncode == expected, result.stderr
-    entries = [json.loads(line) for line in calls.read_text().splitlines()]
+    entries = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
     assert all(entry["secret"] == "searxng-ci-validation-only" for entry in entries)
     commands = [entry["args"] for entry in entries]
     if failure == "existing-volume":

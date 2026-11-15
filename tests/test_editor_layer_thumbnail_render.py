@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_hover_thumbnail_uses_rendered_layer_output():
-    source = (ROOT / "static/js/galleryEditor.js").read_text()
+    source = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     start = source.index("function _showLayerThumb")
     end = source.index("function _hideLayerThumb", start)
     block = source[start:end]
@@ -19,7 +19,7 @@ def test_hover_thumbnail_uses_rendered_layer_output():
 
 
 def test_inline_layer_rows_share_the_common_thumbnail_renderer():
-    panel = (ROOT / "static/js/editor/layer-panel.js").read_text()
+    panel = (ROOT / "static/js/editor/layer-panel.js").read_text(encoding="utf-8")
 
     assert "const thumb = createInlineThumbnail(() => renderLayer?.(layer) || layer.canvas, `${layer.name} preview`);" in panel
     assert "thumb._refreshPreview = draw;" in panel
@@ -27,14 +27,14 @@ def test_inline_layer_rows_share_the_common_thumbnail_renderer():
 
 
 def test_inline_thumbnails_are_exposed_as_labeled_images():
-    panel = (ROOT / "static/js/editor/layer-panel.js").read_text()
+    panel = (ROOT / "static/js/editor/layer-panel.js").read_text(encoding="utf-8")
 
     assert "thumb.setAttribute('role', 'img');" in panel
     assert "thumb.setAttribute('aria-label', title);" in panel
 
 
 def test_layer_rows_support_keyboard_selection_without_stealing_control_keys():
-    panel = (ROOT / "static/js/editor/layer-panel.js").read_text()
+    panel = (ROOT / "static/js/editor/layer-panel.js").read_text(encoding="utf-8")
 
     assert "item.tabIndex = 0;" in panel
     assert "item.setAttribute('aria-pressed'" in panel
@@ -42,7 +42,7 @@ def test_layer_rows_support_keyboard_selection_without_stealing_control_keys():
 
 
 def test_group_rows_support_keyboard_selection():
-    panel = (ROOT / "static/js/editor/layer-panel.js").read_text()
+    panel = (ROOT / "static/js/editor/layer-panel.js").read_text(encoding="utf-8")
 
     assert "row.tabIndex = 0;" in panel
     assert "row.setAttribute('aria-label', `${group.name} group`);" in panel
@@ -58,7 +58,7 @@ def test_keyboard_focus_is_visible_for_layer_and_group_rows():
 
 
 def test_layer_subrows_are_keyboard_reachable():
-    panel = (ROOT / "static/js/editor/layer-panel.js").read_text()
+    panel = (ROOT / "static/js/editor/layer-panel.js").read_text(encoding="utf-8")
 
     assert "sub.tabIndex = 0;" in panel
     assert "sub.setAttribute('aria-label', `${mk.name || (mk.mode === 'layer' ? 'Layer Mask' : 'AI Mask')} mask`);" in panel

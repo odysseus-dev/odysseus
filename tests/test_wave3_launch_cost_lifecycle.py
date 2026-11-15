@@ -101,7 +101,7 @@ def test_nonobject_publication_cannot_be_retired(workspace, publication):
     path.write_text(json.dumps(publication))
     launch = identities.ProcessLaunchResource.from_dict(rec['launch_resource'])
     assert not resources.retire_launch(launch, resource.containment_id, job=resource)
-    assert json.loads(path.read_text()) == publication
+    assert json.loads(path.read_text(encoding="utf-8")) == publication
 
 
 async def test_corrupt_publication_retirement_preserves_command_result(workspace, monkeypatch):
@@ -116,7 +116,7 @@ async def test_corrupt_publication_retirement_preserves_command_result(workspace
     monkeypatch.setattr(resources, 'attach_containment_processes', corrupt_after_attachment)
     _, result = await dispatch(authority(workspace), 'bash', 'printf completed')
     assert result['exit_code'] == 0 and result['output'] == 'completed', result
-    assert paths[0].read_text() == '[]'
+    assert paths[0].read_text(encoding="utf-8") == '[]'
 
 
 @pytest.mark.parametrize('status,followed_up,old,removed', [
@@ -145,7 +145,7 @@ def test_old_generation_retirement_cannot_delete_replacement(workspace):
     assert resources.retire_launch(old_launch, old.containment_id, job=old)
     assert resources.launch_path(new.generation).is_file()
     # Even a replaced file at the old generation's slot is not deletable by old linkage.
-    replacement = json.loads(resources.launch_path(new.generation).read_text())
+    replacement = json.loads(resources.launch_path(new.generation).read_text(encoding="utf-8"))
     atomic_write_json(resources.launch_path(old.generation), replacement)
     assert not resources.retire_launch(old_launch, old.containment_id, job=old)
     assert resources.launch_path(old.generation).is_file()

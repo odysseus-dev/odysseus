@@ -68,7 +68,7 @@ def ledger(journal, ws):
 
 
 def records(journal):
-    return [json.loads(line)["type"] for line in journal.effects.path.read_text().splitlines()]
+    return [json.loads(line)["type"] for line in journal.effects.path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_claim_is_durable_before_the_producer_runs(run, monkeypatch):

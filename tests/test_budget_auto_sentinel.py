@@ -40,7 +40,7 @@ def test_saving_an_unrelated_setting_does_not_re_cap_the_budget(tmp_path, monkey
     settings._settings_cache = None
 
     # The budget default is now physically materialized into the file...
-    raw = json.loads(settings_file.read_text())
+    raw = json.loads(settings_file.read_text(encoding="utf-8"))
     assert raw["agent_input_token_budget"] == DEFAULT_BUDGET
     assert raw["search_result_count"] == 9
 

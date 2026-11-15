@@ -103,10 +103,10 @@ def test_crop_and_transform_tools_have_context_actions():
 
 
 def test_context_menu_is_wired_into_canvas_events():
-    events = (ROOT / "static/js/editor/canvas-events.js").read_text()
+    events = (ROOT / "static/js/editor/canvas-events.js").read_text(encoding="utf-8")
     assert "import { wireCanvasContextMenu } from './canvas-context-menu.js';" in events
     assert "wireCanvasContextMenu(canvasArea, { signal });" in events
-    module = (ROOT / "static/js/editor/canvas-context-menu.js").read_text()
+    module = (ROOT / "static/js/editor/canvas-context-menu.js").read_text(encoding="utf-8")
     assert "export function buildCanvasMenuItems(" in module
     assert "export function openCanvasContextMenu(" in module
     assert "window.geEditorControl?.invoke(" in module
@@ -114,7 +114,7 @@ def test_context_menu_is_wired_into_canvas_events():
 
 
 def test_context_menu_styles_exist():
-    css = (ROOT / "static/css/13-image-editor.css").read_text()
+    css = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
     assert ".ge-canvas-menu {" in css
     assert ".ge-canvas-menu-item" in css
     assert ".ge-canvas-menu-sub" in css

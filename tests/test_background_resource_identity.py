@@ -139,7 +139,7 @@ def test_child_cannot_target_sibling_or_replaced_job(store):
 def test_continuation_sidecar_mismatch_fails_closed(store, field, value):
     resource, _ = seed(store, status="done")
     sidecar = bg_jobs._JOBS_DIR / "job.authority.json"
-    data = json.loads(sidecar.read_text())
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
     data["job"][field] = value
     sidecar.write_text(json.dumps(data))
     assert restore_background_authority("job", owner="alice", session_id="thread").grants == ()

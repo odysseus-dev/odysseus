@@ -8,9 +8,9 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT / "static/js/galleryEditor.js").read_text()
-CSS = (ROOT / "static/css/13-image-editor.css").read_text()
-SW = (ROOT / "static/sw.js").read_text()
+JS = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
+CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
+SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_busy_helpers_exist():

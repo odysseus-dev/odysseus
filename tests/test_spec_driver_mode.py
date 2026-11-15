@@ -203,7 +203,7 @@ async def test_driver_configuration_is_not_rechecked_mid_turn(monkeypatch):
 
 
 def test_spec_driver_wired_in_stream_preview():
-    src = Path(runner.__file__).read_text()
+    src = Path(runner.__file__).read_text(encoding="utf-8")
     assert '[spec-driver] round=' in src
     assert 'spec_driver_pick(' in src
     assert '[spec-driver] dropped off-pick call name=' in src

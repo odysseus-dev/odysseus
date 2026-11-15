@@ -4,8 +4,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCK_JS = (ROOT / "static/js/editor/build/dock.js").read_text()
-SW_JS = (ROOT / "static/sw.js").read_text()
+DOCK_JS = (ROOT / "static/js/editor/build/dock.js").read_text(encoding="utf-8")
+SW_JS = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_group_undock_control_is_removed():

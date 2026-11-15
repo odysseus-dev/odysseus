@@ -623,7 +623,7 @@ async def test_empty_required_directory_keeps_native_turn_running(monkeypatch, t
         if event.get('type') == 'agent_step' and event.get('calls_used') == 1
     )
     assert after_mkdir['required_artifact_pending'] is True
-    assert (output / 'answer.txt').read_text() == 'done'
+    assert (output / 'answer.txt').read_text(encoding="utf-8") == 'done'
 
 
 def test_artifact_completion_schema_binds_single_required_file_without_mutating_source():
@@ -6649,7 +6649,7 @@ async def test_suppressed_evidence_tool_recovers_missing_artifact_with_writer(
     )
     final = [event for event in events if event.get('type') == 'final_response']
     assert all('repeated a tool call' not in event.get('content', '') for event in final)
-    assert output.read_text().startswith('# Verified report')
+    assert output.read_text(encoding="utf-8").startswith('# Verified report')
 
 
 @pytest.mark.asyncio
@@ -7387,7 +7387,7 @@ def test_spec_router_think_decision_and_reason(monkeypatch):
     assert spec_router_think_reason(1, None, '') == ''
 
     # --- wiring present in stream_preview -----------------------------------
-    source = (Path(__file__).resolve().parents[1] / 'src/clean_agent_preview.py').read_text()
+    source = (Path(__file__).resolve().parents[1] / 'src/clean_agent_preview.py').read_text(encoding="utf-8")
     assert 'spec_router_thinking_decision(' in source
     assert 'spec_router_think_reason(' in source
 
@@ -7464,7 +7464,7 @@ def test_spec_direct_no_tools_decision(monkeypatch):
     assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
 
     # --- wiring present in stream_preview -----------------------------------
-    source = (Path(__file__).resolve().parents[1] / 'src/clean_agent_preview.py').read_text()
+    source = (Path(__file__).resolve().parents[1] / 'src/clean_agent_preview.py').read_text(encoding="utf-8")
     assert 'spec_direct_no_tools_p(' in source
     assert '[spec-harness] direct answer' in source
 

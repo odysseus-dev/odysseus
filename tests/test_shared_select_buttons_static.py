@@ -45,7 +45,7 @@ def test_bulk_select_triggers_share_dot_and_x_icons():
 
 
 def test_library_titles_have_highlighted_respective_icons():
-    source = (ROOT / "static" / "js" / "documentLibrary.js").read_text()
+    source = (ROOT / "static" / "js" / "documentLibrary.js").read_text(encoding="utf-8")
 
     assert source.count('class="doclib-section-title-icon"') == 4
     assert "color: var(--accent, var(--red));" in app_css()
@@ -54,7 +54,7 @@ def test_library_titles_have_highlighted_respective_icons():
 
 
 def test_library_select_follows_tidy():
-    source = (ROOT / "static" / "js" / "documentLibrary.js").read_text()
+    source = (ROOT / "static" / "js" / "documentLibrary.js").read_text(encoding="utf-8")
     css = app_css()
 
     assert source.index('id="doclib-chats-tidy-btn"') < source.index('id="doclib-chats-select-btn"')
@@ -78,7 +78,7 @@ def test_library_select_follows_tidy():
 
 
 def test_library_filter_chips_match_skills_count_markup():
-    source = (ROOT / "static" / "js" / "documentLibrary.js").read_text()
+    source = (ROOT / "static" / "js" / "documentLibrary.js").read_text(encoding="utf-8")
     css = app_css()
 
     assert "function _setLibraryCountChipContent" in source
@@ -90,7 +90,7 @@ def test_library_filter_chips_match_skills_count_markup():
 
 
 def test_launch_cookbook_filter_chips_match_skills():
-    source = (ROOT / "static" / "js" / "cookbookServe.js").read_text()
+    source = (ROOT / "static" / "js" / "cookbookServe.js").read_text(encoding="utf-8")
 
     assert 'class="skills-summary-chip active" data-serve-tag=""' in source
     assert 'class="skills-summary-chip" data-serve-tag=' in source
@@ -134,7 +134,7 @@ def test_launch_server_selector_and_model_search_move_up_together():
 
 
 def test_launch_heading_uses_accented_flame_icon():
-    source = (ROOT / "static" / "js" / "cookbook.js").read_text()
+    source = (ROOT / "static" / "js" / "cookbook.js").read_text(encoding="utf-8")
 
     heading = source[source.index('id="serve-stats"') - 500:source.index('id="serve-stats"') + 120]
     assert ">Launch <span id=\"serve-stats\"" in heading
@@ -142,7 +142,7 @@ def test_launch_heading_uses_accented_flame_icon():
 
 
 def test_launch_heading_reports_cached_model_count():
-    source = (ROOT / "static" / "js" / "cookbookServe.js").read_text()
+    source = (ROOT / "static" / "js" / "cookbookServe.js").read_text(encoding="utf-8")
 
     assert "function _syncServeStats()" in source
     assert "stats.textContent = `${count} model${count === 1 ? '' : 's'}`;" in source
@@ -167,7 +167,7 @@ def test_launch_search_matches_document_library_search_treatment():
 
 
 def test_memory_filter_chips_match_skills_and_are_not_cropped():
-    source = (ROOT / "static" / "js" / "memory.js").read_text()
+    source = (ROOT / "static" / "js" / "memory.js").read_text(encoding="utf-8")
     css = app_css()
 
     assert "skills-summary-chip memory-filter-chip" in source

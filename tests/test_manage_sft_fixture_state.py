@@ -89,9 +89,9 @@ def test_owner_restore_includes_external_fixture_state(tmp_path):
     (skill_dir / "SKILL.md").write_text("---\nname: alex-skill\nowner: alex\n---\nwrong", encoding="utf-8")
     MODULE.restore_owner(path, snapshot, "alex", tmp_path)
 
-    assert json.loads((tmp_path / "user_prefs.json").read_text())["_users"]["alex"] == {"theme": "dark"}
-    emails = json.loads((tmp_path / "fixture_email_messages.json").read_text())["messages"]
+    assert json.loads((tmp_path / "user_prefs.json").read_text(encoding="utf-8"))["_users"]["alex"] == {"theme": "dark"}
+    emails = json.loads((tmp_path / "fixture_email_messages.json").read_text(encoding="utf-8"))["messages"]
     assert emails == [{"owner": "alex", "uid": "a"}]
-    assert (skill_dir / "SKILL.md").read_text().endswith("body")
-    usage = json.loads((tmp_path / "skills" / "_usage.json").read_text())
+    assert (skill_dir / "SKILL.md").read_text(encoding="utf-8").endswith("body")
+    usage = json.loads((tmp_path / "skills" / "_usage.json").read_text(encoding="utf-8"))
     assert usage["alex::alex-skill"] == {"uses": 2}

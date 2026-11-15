@@ -96,7 +96,7 @@ def test_portal_z_uses_chip_floor_when_the_open_modal_sits_below_it():
 # hardcoded portal z-index, so they cannot regress to the #4720 bug.
 @pytest.mark.parametrize("rel", ["static/js/tasks.js", "static/js/skills.js"])
 def test_late_routed_dropdowns_use_top_portal_z(rel):
-    src = (ROOT / rel).read_text()
+    src = (ROOT / rel).read_text(encoding="utf-8")
     assert "topPortalZ" in src, f"{rel} must import/use topPortalZ()"
     assert "topPortalZ()" in src, f"{rel} must call topPortalZ() for its dropdown z"
 
@@ -105,7 +105,7 @@ def test_late_routed_dropdowns_use_top_portal_z(rel):
 def test_no_hardcoded_portal_z_literals_remain(rel):
     # "app-css" is the whole cascade: a moved rule must not escape this check
     # by landing in a stylesheet this list does not name.
-    src = app_css() if rel == "app-css" else (ROOT / rel).read_text()
+    src = app_css() if rel == "app-css" else (ROOT / rel).read_text(encoding="utf-8")
     # Match the exact 100000/100002 these dropdowns used; the trailing-digit
     # guard avoids false-matching an unrelated 1000000 elsewhere.
     hits = re.findall(r"z-index:\s*10000[02](?!\d)", src)

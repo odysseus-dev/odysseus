@@ -316,7 +316,7 @@ def test_email_mutation_tool_events_include_exact_arguments() -> None:
 
 
 def test_unsubscribe_cleanup_can_remove_same_sender_unsubscribe_messages() -> None:
-    source = (ROOT / "routes" / "email" / "email_routes.py").read_text()
+    source = (ROOT / "routes" / "email" / "email_routes.py").read_text(encoding="utf-8")
     cleanup = source[source.index('@router.post("/unsubscribe/cleanup")'):source.index('@router.get("/contacts")')]
     assert 'scope == "sender_unsubscribe"' in cleanup
     assert "_unsubscribe_sender_uids_sync" in cleanup
@@ -377,9 +377,9 @@ def test_email_settings_sections_use_static_headers() -> None:
 
 
 def test_unsubscribe_scan_defaults_to_bounded_page_in_api_and_tool_prompt() -> None:
-    backend = (ROOT / "routes" / "email" / "email_routes.py").read_text()
-    schema = (ROOT / "src" / "tool_schemas.py").read_text()
-    agent = (ROOT / "src" / "agent_loop.py").read_text()
+    backend = (ROOT / "routes" / "email" / "email_routes.py").read_text(encoding="utf-8")
+    schema = (ROOT / "src" / "tool_schemas.py").read_text(encoding="utf-8")
+    agent = (ROOT / "src" / "agent_loop.py").read_text(encoding="utf-8")
     scan_start = backend.index('@router.get("/unsubscribe/scan")')
     scan_end = backend.index('@router.post("/unsubscribe/execute")', scan_start)
     scan_route = backend[scan_start:scan_end]
@@ -388,7 +388,7 @@ def test_unsubscribe_scan_defaults_to_bounded_page_in_api_and_tool_prompt() -> N
     assert 'for start in range(0, len(uids), 100)' in backend
     assert 'capped at 500' in schema
     assert '"max_scan": 500' in agent[agent.index('def _parse_qwen_explicit_unsubscribe_scan_request'):agent.index('def _parse_qwen_explicit_unsubscribe_email_request')]
-    mcp = (ROOT / "mcp_servers" / "email_server.py").read_text()
+    mcp = (ROOT / "mcp_servers" / "email_server.py").read_text(encoding="utf-8")
     mcp_scan = mcp[mcp.index('def _scan_unsubscribe_candidates'):mcp.index('def _unsubscribe_email')]
     assert 'max_scan=500' in mcp_scan
     assert 'for start in range(0, len(uids), 100)' in mcp_scan

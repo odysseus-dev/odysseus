@@ -119,7 +119,7 @@ def test_alias_map_registers_friendly_names():
     """`manage_settings` should accept 'hard max' and friends."""
     from pathlib import Path
     # manage_settings (and its alias map) moved to agent_tools/admin_tools.py in #3629.
-    src = Path("src/agent_tools/admin_tools.py").read_text()
+    src = Path("src/agent_tools/admin_tools.py").read_text(encoding="utf-8")
     assert '"hard max": "agent_input_token_hard_max"' in src
     assert '"token budget cap": "agent_input_token_hard_max"' in src
     assert '"input budget cap": "agent_input_token_hard_max"' in src

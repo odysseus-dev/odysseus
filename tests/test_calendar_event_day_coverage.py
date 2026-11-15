@@ -10,7 +10,7 @@ import pytest
 from tests.helpers.js_modules import js_function_source
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = js_function_source("_eventsForDay", (ROOT / "static/js/calendar.js").read_text())
+SOURCE = js_function_source("_eventsForDay", (ROOT / "static/js/calendar.js").read_text(encoding="utf-8"))
 ZONES = ["UTC", "Europe/Istanbul", "America/New_York", "Asia/Tokyo"]
 CASES = [
     ("2026-10-22T17:00:00", "2026-10-23T00:00:00", False, ["2026-10-22"]),

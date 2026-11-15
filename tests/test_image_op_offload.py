@@ -40,13 +40,13 @@ def test_restore_local_b64_resizes_back_to_original():
 
 
 def test_inpaint_offloads_cpu_work_to_a_thread():
-    src = (ROOT / "routes/gallery/gallery_routes.py").read_text()
+    src = (ROOT / "routes/gallery/gallery_routes.py").read_text(encoding="utf-8")
     assert "await asyncio.to_thread(\n                        _prepare_local_edit" in src
     assert "asyncio.to_thread(\n                                _restore_local_b64" in src
 
 
 def test_app_exposes_busy_count_and_graceful_shutdown():
-    src = (ROOT / "app.py").read_text()
+    src = (ROOT / "app.py").read_text(encoding="utf-8")
     assert "busy_image_ops" in src
     assert '@app.get("/api/busy")' in src
     assert "_HEAVY_IMAGE_OP_PREFIXES" in src

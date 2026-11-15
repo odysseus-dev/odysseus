@@ -79,7 +79,7 @@ def test_batch_runner_tolerates_an_empty_document_list():
 
 
 def test_gallery_editor_exposes_the_batch_documents_op():
-    src = GALLERY.read_text()
+    src = GALLERY.read_text(encoding="utf-8")
     assert "'actions.batchDocuments':" in src
     assert "import { runBatchOverDocuments } from './editor/batch-runner.js';" in src
     assert "import { createActionsPanel, ACTION_COMMANDS } from './editor/actions-panel.js';" in src
@@ -90,7 +90,7 @@ def test_gallery_editor_exposes_the_batch_documents_op():
 
 
 def test_actions_panel_has_a_batch_docs_button():
-    src = ACTIONS_PANEL.read_text()
+    src = ACTIONS_PANEL.read_text(encoding="utf-8")
     assert "const batchDocsButton = el('button', 'ge-btn ge-btn-sm', 'Batch docs');" in src
     assert "batchRow.append(batchSelect, batchButton, batchDocsButton);" in src
     assert "window.geEditorControl?.invoke?.('actions.batchDocuments', { name })" in src
@@ -99,6 +99,6 @@ def test_actions_panel_has_a_batch_docs_button():
 
 
 def test_service_worker_precaches_the_batch_runner():
-    src = SW.read_text()
+    src = SW.read_text(encoding="utf-8")
     assert re.search(r"odysseus-v\d+-pr40-editor-precache", src)
     assert "'/static/js/editor/batch-runner.js'," in src

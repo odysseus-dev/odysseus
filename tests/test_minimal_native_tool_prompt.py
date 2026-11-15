@@ -131,7 +131,7 @@ def test_cross_domain_or_file_request_is_not_notes_only() -> None:
 def test_minimal_notes_clamp_suppresses_admin_schema_expansion() -> None:
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     clamp = source[source.index("if _minimal_explicit_notes_mode"):]
 
     assert clamp.index("_needs_admin = False") < clamp.index(
@@ -206,7 +206,7 @@ def test_product_review_request_routes_to_web_search_without_search_verb() -> No
 def test_standalone_link_fragment_gets_clarification_path() -> None:
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "def _is_terse_link_request" in source
     assert "_standalone_link_fragment_turn = (" in source
     assert "and not _is_contextual_link_followup(messages, _last_user)" in source
@@ -252,7 +252,7 @@ def test_contextual_link_followup_accepts_bare_resource_reference_only_after_web
 def test_ambiguous_short_turn_clamps_retrieval_before_vector_search() -> None:
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert '_relevant_tools = {"ask_user"}' in source
     assert "_ambiguous_short_turn" in source
 
@@ -261,9 +261,9 @@ def test_calendar_missing_date_guidance_uses_ask_user_not_guessing() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    agent_loop = (root / "src" / "agent_loop.py").read_text()
-    tool_index = (root / "src" / "tool_index.py").read_text()
-    schemas = (root / "src" / "tool_schemas.py").read_text()
+    agent_loop = (root / "src" / "agent_loop.py").read_text(encoding="utf-8")
+    tool_index = (root / "src" / "tool_index.py").read_text(encoding="utf-8")
+    schemas = (root / "src" / "tool_schemas.py").read_text(encoding="utf-8")
 
     assert "do not guess a reservation/event date" in agent_loop
     assert "never invent a day for a reservation" in agent_loop
@@ -540,7 +540,7 @@ def test_qwen35_router_repairs_known_dropped_final_letter_artifacts() -> None:
 def test_qwen_tool_router_does_not_get_notes_prompt_override() -> None:
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     block = source[
         source.index("qwen_tool_router_mode = _is_qwen38_tool_router(candidate_model)"):
         source.index("        _runtime_directive = _tui_runtime_directive")

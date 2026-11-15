@@ -136,12 +136,12 @@ checkIssueDescription({ github, context, core })
 
 
 def test_workflow_handles_issue_closures():
-    workflow = _WORKFLOW.read_text()
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
     assert "types: [opened, edited, reopened, closed]" in workflow
 
 
 def test_bug_template_requires_exact_revision():
-    template = yaml.safe_load(_BUG_TEMPLATE.read_text())
+    template = yaml.safe_load(_BUG_TEMPLATE.read_text(encoding="utf-8"))
     revision = next(item for item in template["body"] if item.get("id") == "revision")
     assert revision["type"] == "input"
     assert revision["attributes"]["label"] == "Odysseus Revision"

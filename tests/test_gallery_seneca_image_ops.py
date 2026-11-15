@@ -206,5 +206,5 @@ def test_outpaint_timeout_env_override(monkeypatch):
 def test_graceful_shutdown_window_covers_a_long_outpaint():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+    src = (Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8")
     assert '"ODYSSEUS_GRACEFUL_SHUTDOWN_TIMEOUT", "900"' in src

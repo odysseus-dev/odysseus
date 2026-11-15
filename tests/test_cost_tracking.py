@@ -217,19 +217,19 @@ def test_migration_adds_total_cost_usd_idempotently(tmp_path, monkeypatch):
 
 def test_sessions_list_route_exposes_total_cost_usd():
     from pathlib import Path
-    source = Path(__file__).parents[1].joinpath("routes/session_routes.py").read_text()
+    source = Path(__file__).parents[1].joinpath("routes/session_routes.py").read_text(encoding="utf-8")
     assert '"total_cost_usd": s.total_cost_usd or 0.0' in source
 
 
 def test_llm_core_captures_openrouter_usage_cost():
     from pathlib import Path
-    source = Path(__file__).parents[1].joinpath("src/llm_core.py").read_text()
+    source = Path(__file__).parents[1].joinpath("src/llm_core.py").read_text(encoding="utf-8")
     assert 'u.get("cost")' in source
     assert '"cost_usd"' in source
 
 
 def test_compact_response_includes_context_tokens_estimate():
     from pathlib import Path
-    source = Path(__file__).parents[1].joinpath("routes/session_routes.py").read_text()
+    source = Path(__file__).parents[1].joinpath("routes/session_routes.py").read_text(encoding="utf-8")
     assert '"context_tokens_estimate": context_tokens_estimate' in source
     assert "len(_message_text(m) or \"\") // 4 + 8" in source

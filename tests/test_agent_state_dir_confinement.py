@@ -96,7 +96,7 @@ def test_valid_resource_authority_cannot_open_unknown_state(tmp_path, monkeypatc
         security_context=execution.NO_TOOL_SECURITY_CONTEXT,
     ))
     assert result["failure_kind"] == "resource_identity_denied"
-    assert secret.read_text() == "UNKNOWN_STATE_SECRET"
+    assert secret.read_text(encoding="utf-8") == "UNKNOWN_STATE_SECRET"
 
 
 def test_public_upload_carveout_never_reopens_publication_manifest(tmp_path, monkeypatch):

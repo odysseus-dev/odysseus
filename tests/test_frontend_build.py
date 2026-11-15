@@ -66,7 +66,7 @@ def test_duplicate_outputs_and_unmapped_sources_are_rejected(tmp_path):
     with pytest.raises(ValueError, match="missing from manifest"):
         build.synchronize(tmp_path)
     manifest_path = tmp_path / "frontend/modules.json"
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["modules"].append({"source": "shared/extra.js", "deployment": "js/helper.js"})
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="must be unique"):
@@ -121,7 +121,7 @@ def test_future_manifest_pair_cannot_publish_without_output_attributes(tmp_path)
     extra = source.with_name("future.js")
     extra.write_bytes(b"export const future = true;\n")
     manifest_file = tmp_path / "frontend/modules.json"
-    manifest = json.loads(manifest_file.read_text())
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     manifest["modules"].append({"source": "shared/future.js", "deployment": "js/future.js"})
     manifest_file.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="static/js/future.js"):
