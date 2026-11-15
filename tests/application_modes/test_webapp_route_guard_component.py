@@ -27,11 +27,11 @@ class RouteGuardComponentTests(unittest.TestCase):
         self.assertEqual(manager.route_guard_state({'origin': 'adopted', 'agent': 'x'}), 'absent')
         self.assertEqual(manager.route_guard_state({'origin': 'managed', 'agent': str(ROOT / 'does-not-exist')}), 'unknown')
 
-    def test_a_new_release_carries_the_route_guard_then_the_mcp_recovery_then_the_desktop_workspace_patch_then_the_composer_patch_then_the_resume_outcomes_patch_then_the_update_protection_patch_then_the_usage_context_patch(self):
+    def test_a_new_release_carries_the_route_guard_then_the_mcp_recovery_then_the_desktop_workspace_patch_then_the_composer_patch_then_the_resume_outcomes_patch_then_the_update_protection_patch_then_the_usage_context_patch_then_the_transcript_clarity_patch(self):
         manager = WebappComponent.__new__(WebappComponent)
         manager.application_root = ROOT
         patches = manager.webapp_patches()
-        self.assertEqual([item.name for item in patches], ['webapp-route-guard.patch', 'webapp-mcp-recovery.patch', 'webapp-desktop-workspace.patch', 'webapp-composer-control-center.patch', 'webapp-resume-outcomes.patch', 'webapp-update-protection.patch', 'webapp-usage-context.patch'])
+        self.assertEqual([item.name for item in patches], ['webapp-route-guard.patch', 'webapp-mcp-recovery.patch', 'webapp-desktop-workspace.patch', 'webapp-composer-control-center.patch', 'webapp-resume-outcomes.patch', 'webapp-update-protection.patch', 'webapp-usage-context.patch', 'webapp-transcript-clarity.patch'])
         self.assertTrue(all(item.is_file() for item in patches))
 
     def test_a_patch_sequence_is_applied_in_order_and_recognised_as_a_whole_or_by_its_first_part(self):
@@ -91,7 +91,16 @@ class RouteGuardComponentTests(unittest.TestCase):
         with mock.patch('src.hermes_webapp_component.patch_state', lambda path, patches: calls.append(patches) or
                         ('applied' if patches == manager.route_guard_patch() else 'foreign')):
             self.assertEqual(manager.applied_patches('x'), manager.route_guard_patch())
-            self.assertEqual(len(calls), 7)
+            self.assertEqual(len(calls), 8)
+
+    def test_a_release_with_the_seven_patch_set_but_not_the_transcript_clarity_patch_is_still_accepted_for_rollback(self):
+        manager = WebappComponent.__new__(WebappComponent)
+        manager.application_root = ROOT
+        with mock.patch('src.hermes_webapp_component.patch_state', lambda path, patches: 'applied' if tuple(patches) == manager.usage_patches() else 'foreign'):
+            self.assertEqual(manager.applied_patches('x'), manager.usage_patches())
+            self.assertEqual(len(manager.usage_patches()), 7)
+            self.assertEqual(manager.usage_patches(), manager.webapp_patches()[:7])
+            self.assertEqual(len(manager.webapp_patches()), 8)
 
     def test_a_release_with_the_five_patch_set_but_not_the_update_protection_patch_is_still_accepted_for_rollback(self):
         manager = WebappComponent.__new__(WebappComponent)

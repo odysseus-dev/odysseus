@@ -67,6 +67,7 @@ COMPOSER_PATCH = 'integrations/hermes-mode/patches/webapp-composer-control-cente
 RESUME_OUTCOMES_PATCH = 'integrations/hermes-mode/patches/webapp-resume-outcomes.patch'
 UPDATE_PROTECTION_PATCH = 'integrations/hermes-mode/patches/webapp-update-protection.patch'
 USAGE_CONTEXT_PATCH = 'integrations/hermes-mode/patches/webapp-usage-context.patch'
+TRANSCRIPT_CLARITY_PATCH = 'integrations/hermes-mode/patches/webapp-transcript-clarity.patch'
 MANAGED_MARKER = '.odysseus-managed.json'
 # What importing each runtime extra must make possible, proven against the committed environment before a release is 'ready'.
 RUNTIME_EXTRA_IMPORTS = {'mcp': 'mcp.client.stdio'}
@@ -1248,7 +1249,17 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
+        return (*self.usage_patches(), self.transcript_clarity_patch())
+
+    def usage_patches(self):
+        """The seven-patch set (through the usage/context patch) releases carried before the transcript-clarity patch (kept for rollback)."""
         return (*self.protected_patches(), self.usage_context_patch())
+
+    def transcript_clarity_patch(self):
+        path = (self.application_root / TRANSCRIPT_CLARITY_PATCH).resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed transcript-clarity patch is missing from this Odysseus installation.')
+        return path
 
     def protected_patches(self):
         """The six-patch set (through update protection) releases carried before the usage/context patch (kept for rollback)."""
@@ -1304,9 +1315,9 @@ class WebappComponent:
         return path
 
     def applied_patches(self, agent):
-        """The reviewed patch set a managed source carries exactly: the current set, the previous six-, five-, four- and three-patch sets, the route guard with the MCP recovery, or the route guard alone
+        """The reviewed patch set a managed source carries exactly: the current set, the previous seven-, six-, five-, four- and three-patch sets, the route guard with the MCP recovery, or the route guard alone
         (earlier releases kept side by side for rollback). The current set when it matches neither, so a mismatch is reported against it."""
-        for patches in (self.webapp_patches(), self.protected_patches(), self.resume_patches(), self.composer_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
+        for patches in (self.webapp_patches(), self.usage_patches(), self.protected_patches(), self.resume_patches(), self.composer_patches(), self.workspace_patches(), self.recovery_patches(), self.route_guard_patch()):
             if patch_state(agent, patches) == 'applied':
                 return patches
         return self.webapp_patches()

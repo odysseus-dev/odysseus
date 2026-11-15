@@ -1,8 +1,8 @@
 diff --git a/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx b/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx
-index a607c073..57601185 100644
+index a607c073..516c86b9 100644
 --- a/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx
 +++ b/apps/desktop/src/components/assistant-ui/tool/approval.test.tsx
-@@ -88,6 +88,16 @@ describe('PendingApprovalStack', () => {
+@@ -88,6 +88,53 @@ describe('PendingApprovalStack', () => {
      expect(screen.getByRole('button', { name: /Reject/ })).toBeTruthy()
    })
  
@@ -16,37 +16,138 @@ index a607c073..57601185 100644
 +    expect(note?.textContent).toContain('do not grant folder access')
 +  })
 +
++  it("shows the gateway's own reason next to a real command, without inventing one", () => {
++    setRequest('rm -rf /tmp/x')
++    const { container, unmount } = render(<PendingApprovalStack />)
++
++    expect(container.querySelector('[data-slot="tool-approval-reason"]')?.textContent).toBe(
++      'Flagged by Hermes: dangerous command'
++    )
++    unmount()
++    clearAllPrompts()
++
++    $activeSessionId.set('sess-1')
++    setApprovalRequest({ command: 'ls', description: '', sessionId: 'sess-1' })
++
++    const second = render(<PendingApprovalStack />)
++
++    expect(second.container.querySelector('[data-slot="tool-approval-reason"]')).toBeNull()
++  })
++
++  it('does not repeat the description when it already is the detail text', () => {
++    $activeSessionId.set('sess-1')
++    setApprovalRequest({ command: '', description: 'delete branch main', sessionId: 'sess-1' })
++
++    const { container } = render(<PendingApprovalStack />)
++
++    expect(container.querySelector('[data-slot="tool-approval-reason"]')).toBeNull()
++  })
++
++  it('labels the permanent choice as global and explains the saved pattern', async () => {
++    setRequest()
++    render(<PendingApprovalStack />)
++
++    fireEvent.pointerDown(screen.getByRole('button', { name: /More approval options/ }), { button: 0, ctrlKey: false })
++    fireEvent.click(await screen.findByRole('menuitem', { name: /Always allow \(all workspaces\)/ }))
++
++    expect(await screen.findByText(/global command pattern/)).toBeTruthy()
++  })
++
    it('renders the description instead of a synthetic plugin-rule placeholder', () => {
      // A pre_tool_call plugin returning {"action": "approve"} escalates through
      // the same gate with a synthetic display target; the real command lives in
 diff --git a/apps/desktop/src/components/assistant-ui/tool/approval.tsx b/apps/desktop/src/components/assistant-ui/tool/approval.tsx
-index 679258bb..a5128b83 100644
+index 679258bb..e5b810eb 100644
 --- a/apps/desktop/src/components/assistant-ui/tool/approval.tsx
 +++ b/apps/desktop/src/components/assistant-ui/tool/approval.tsx
-@@ -228,6 +228,11 @@ export function ApprovalQueue({
+@@ -228,6 +228,18 @@ export function ApprovalQueue({
    )
  }
  
 +// Command approvals are a human confirmation, not a boundary: the approved command or tool runs with the
 +// user's full permissions, and "this session" / "always" remember the command, not a folder.
++const APPROVAL_REASON_PREFIX = 'Flagged by Hermes:'
++const APPROVAL_ALLOW_FOR_LABEL = 'Allow for…'
++const APPROVAL_ALWAYS_LABEL = 'Always allow (all workspaces)'
++
++const APPROVAL_ALWAYS_NOTE =
++  'This saves a global command pattern in your Hermes config. It applies in every workspace and every future session until you remove it.'
++
 +const APPROVAL_SCOPE_NOTE =
 +  'Approval is a confirmation, not a sandbox: an approved command or tool runs with your full Windows permissions. “This session” and “Always” remember the command; they do not grant folder access.'
 +
  interface ApprovalCardProps {
    request: ApprovalRequest
    total: number
-@@ -348,6 +353,9 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+@@ -293,6 +305,10 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+   const showsDescription = !hasCommand || SYNTHETIC_COMMAND_RE.test(request.command.trim())
+ 
+   const details = showsDescription ? request.description.trim() : request.command.trim()
++  // The gateway only asks when its own detector flagged the call, so `description` is its reason. Shown
++  // alongside a real command; when it already is the detail text it is not repeated.
++  const reason = request.description.trim()
++  const showsReason = !showsDescription && reason.length > 0
+ 
+   const respond = useCallback(
+     async (choice: ApprovalChoice) => {
+@@ -348,6 +364,17 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
            {details}
          </pre>
        )}
++      {showsReason && (
++        <p
++          className="m-0 px-2.5 pb-1 text-[0.6875rem] leading-snug text-(--ui-text-secondary)"
++          data-slot="tool-approval-reason"
++        >
++          {APPROVAL_REASON_PREFIX} {reason}
++        </p>
++      )}
 +      <p className="m-0 px-2.5 pb-1 text-[0.6875rem] leading-snug text-(--ui-text-tertiary)" data-slot="tool-approval-scope-note">
 +        {APPROVAL_SCOPE_NOTE}
 +      </p>
        <div className="flex items-center justify-end gap-1.5 px-2 pb-2 pt-1" data-slot="tool-approval-actions">
          <Button data-approval-deny="" disabled={busy} onClick={() => void respond('deny')} size="sm" variant="text">
            {submitting === 'deny' ? <Loader2 className="size-3 animate-spin" /> : copy.reject}
+@@ -356,7 +383,7 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+           <DropdownMenu>
+             <DropdownMenuTrigger asChild>
+               <Button aria-label={copy.moreOptions} disabled={busy} size="sm" variant="secondary">
+-                {copy.alwaysAllowMenu}
++                {APPROVAL_ALLOW_FOR_LABEL}
+                 <ChevronDown className="size-3" />
+               </Button>
+             </DropdownMenuTrigger>
+@@ -373,7 +400,7 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+                     setTimeout(() => setConfirmAlways(true), 0)
+                   }}
+                 >
+-                  {copy.alwaysAllowMenu}
++                  {APPROVAL_ALWAYS_LABEL}…
+                 </DropdownMenuItem>
+               )}
+               <DropdownMenuItem onSelect={() => void respond('deny')} variant="destructive">
+@@ -392,7 +419,9 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+         <DialogContent className="max-w-md">
+           <DialogHeader>
+             <DialogTitle>{copy.alwaysTitle}</DialogTitle>
+-            <DialogDescription>{copy.alwaysDescription(request.description)}</DialogDescription>
++            <DialogDescription>
++              {copy.alwaysDescription(request.description)} {APPROVAL_ALWAYS_NOTE}
++            </DialogDescription>
+           </DialogHeader>
+ 
+           {request.command.trim() && (
+@@ -413,7 +442,7 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
+               size="sm"
+               variant="destructive"
+             >
+-              {copy.alwaysAllow}
++              {APPROVAL_ALWAYS_LABEL}
+             </Button>
+           </DialogFooter>
+         </DialogContent>
 diff --git a/apps/desktop/src/components/assistant-ui/tool/fallback.tsx b/apps/desktop/src/components/assistant-ui/tool/fallback.tsx
-index e3a7584d..3ffd202c 100644
+index e3a7584d..68c8ca68 100644
 --- a/apps/desktop/src/components/assistant-ui/tool/fallback.tsx
 +++ b/apps/desktop/src/components/assistant-ui/tool/fallback.tsx
 @@ -22,7 +22,8 @@ import { AnsiText } from '@/components/assistant-ui/ansi-text'
@@ -67,7 +168,7 @@ index e3a7584d..3ffd202c 100644
    toolCopyPayload,
    toolEntryDisclosureId,
    type ToolPart,
-@@ -875,6 +877,26 @@ export function splitRunItems(toolNames: readonly string[]): RunItem[] {
+@@ -875,6 +877,28 @@ export function splitRunItems(toolNames: readonly string[]): RunItem[] {
  // The one grey line that stands in for a run of tool calls — "Explored 3
  // files, ran 5 commands". Live, it narrates in the present tense above the
  // ticker by default; its toggle can reveal the activity before it settles.
@@ -78,11 +179,13 @@ index e3a7584d..3ffd202c 100644
 +    return null
 +  }
 +
-+  const seconds = Math.round(completedAt - startedAt)
++  const elapsed = completedAt - startedAt
 +
-+  if (!Number.isFinite(seconds) || seconds < TURN_QUIET_S) {
++  if (!Number.isFinite(elapsed) || elapsed < TURN_QUIET_S) {
 +    return null
 +  }
++
++  const seconds = Math.round(elapsed)
 +
 +  return (
 +    <span className={cn(SCAFFOLD_META_CLASS, 'mr-1.5')} data-slot="tool-run-duration">
@@ -94,7 +197,7 @@ index e3a7584d..3ffd202c 100644
  function ToolRunHeader({
    completedAt,
    live,
-@@ -895,7 +917,12 @@ function ToolRunHeader({
+@@ -895,7 +919,12 @@ function ToolRunHeader({
        <ScaffoldRow
          onToggle={onToggle}
          open={open}
@@ -108,7 +211,7 @@ index e3a7584d..3ffd202c 100644
        >
          <FadeText className={cn(SCAFFOLD_LABEL_CLASS, 'truncate')}>
            {live ? <span className="shimmer">{summary}</span> : summary}
-@@ -907,6 +934,8 @@ function ToolRunHeader({
+@@ -907,6 +936,8 @@ function ToolRunHeader({
  
  interface ToolRunState {
    approvalActivity: boolean
@@ -117,7 +220,7 @@ index e3a7584d..3ffd202c 100644
    completedAt?: number
    count: number
    /** Disclosure id of each row in the run, so the run can tell when one is open. */
-@@ -980,6 +1009,7 @@ function useToolRun(startIndex: number, endIndex: number): ToolRunState {
+@@ -980,6 +1011,7 @@ function useToolRun(startIndex: number, endIndex: number): ToolRunState {
            count: tools.length,
            approvalActivity: tools.length > 0 && tools.every(isApprovalActivity),
            entryIds: tools.map(tool => toolEntryDisclosureId(state.message.id, tool)),
@@ -125,7 +228,7 @@ index e3a7584d..3ffd202c 100644
            key: `${state.message.id}:${tools[0]?.toolCallId ?? ''}`,
            live,
            startedAt: timelineTools.reduce<number | undefined>(
-@@ -1021,7 +1051,7 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
+@@ -1021,7 +1053,7 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
  }) => {
    const messageRunning = useAuiState(selectMessageRunning)
  
@@ -134,7 +237,7 @@ index e3a7584d..3ffd202c 100644
      startIndex,
      endIndex
    )
-@@ -1038,6 +1068,12 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
+@@ -1038,6 +1070,12 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
    const collapsed = representedByApproval && !rowOpen && !persistedOpen
    const reduced = useReducedMotion()
  
@@ -147,7 +250,7 @@ index e3a7584d..3ffd202c 100644
    // The original runtime stays mounted while its summary owns the activity.
    // Reveal its footprint gradually when the last approval clears, instead of
    // inserting all represented rows in the outgoing card's first exit frame.
-@@ -1066,6 +1102,12 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
+@@ -1066,6 +1104,12 @@ const ToolRun: FC<PropsWithChildren<{ endIndex: number; startIndex: number }>> =
          )}
          {count > 1 && live && !expanded && <ToolRunTicker>{children}</ToolRunTicker>}
          {expanded && <div className="grid min-w-0 max-w-full gap-(--tool-row-gap)">{children}</div>}
