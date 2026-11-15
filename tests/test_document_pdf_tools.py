@@ -402,3 +402,50 @@ def test_coordinate_conversion_and_scale_helpers():
     assert resize["w"] == 20.0
     # dh = (350 - 300) / 1000 * 100 = 5%. start.h + 5% = 9%
     assert resize["h"] == 9.0
+
+
+def test_decomposed_pdf_submodules_and_per_doc_isolation():
+    """Verify pdf/geometry, pdf/annotations, and pdf/persistence standalone boundaries."""
+    script = r"""
+      import { calculateDragMove } from './static/js/document/ui/pdf/geometry.js';
+      import { _isFormBackedDoc, _annotationRegexGlobal } from './static/js/document/ui/pdf/annotations.js';
+      import {
+        _pdfPaneAnnotationsByDoc,
+        _pdfUndoStackByDoc,
+        _cleanupPdfDocState,
+      } from './static/js/document/ui/pdf/persistence.js';
+
+      const moved = calculateDragMove(
+        { x: 10, y: 10, mx: 200, my: 200 },
+        { mx: 280, my: 250 },
+        { width: 800, height: 1000 },
+        20,
+        10
+      );
+      _pdfPaneAnnotationsByDoc.set('doc-a', [{ id: 'a1' }]);
+      _pdfPaneAnnotationsByDoc.set('doc-b', [{ id: 'b1' }]);
+      _pdfUndoStackByDoc.set('doc-a', ['snap-a']);
+      _pdfUndoStackByDoc.set('doc-b', ['snap-b']);
+
+      _cleanupPdfDocState('doc-a');
+
+      console.log(JSON.stringify({
+        moved,
+        isForm: _isFormBackedDoc('<!-- pdf_source upload_id="x" -->'),
+        hasRegex: _annotationRegexGlobal() instanceof RegExp,
+        aPresent: _pdfPaneAnnotationsByDoc.has('doc-a'),
+        bPresent: _pdfPaneAnnotationsByDoc.has('doc-b'),
+        aUndo: _pdfUndoStackByDoc.has('doc-a'),
+        bUndo: _pdfUndoStackByDoc.get('doc-b'),
+      }));
+    """
+    out = _run_node_script(script)
+
+    assert out["moved"]["x"] == 20.0
+    assert out["moved"]["y"] == 15.0
+    assert out["isForm"] is True
+    assert out["hasRegex"] is True
+    assert out["aPresent"] is False
+    assert out["bPresent"] is True
+    assert out["aUndo"] is False
+    assert out["bUndo"] == ["snap-b"]

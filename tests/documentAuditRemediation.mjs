@@ -1355,3 +1355,85 @@ test('NB-F3: scheduled email completion closes only originating email across nav
   assert.equal(await page.evaluate(() => state.docs.has('email-sched-fail')), true);
   assert.equal(await page.evaluate(() => state.activeDocId), 'email-sched-fail');
 });
+
+test('pdf lifecycle: reopen preserves proximity controls, clears mirror nodes, and isolates docs', async t => {
+  const { page } = await setup(t, async (route, request) => {
+    if (!request.path.endsWith('/render-pages')) return false;
+    await route.fulfill({
+      json: {
+        pages: [{
+          page: 1,
+          width: 600,
+          height: 800,
+          image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M/wHwAF/gL+AvzZ8QAAAABJRU5ErkJggg==',
+          fields: [],
+        }],
+      },
+    });
+    return true;
+  });
+
+  const pdfA = '<!-- pdf_source upload_id="doc-a" -->\n\n## Annotations\n\n- Alpha <!-- annotation id=ann-a page=1 x=20.00 y=20.00 w=25.00 h=6.00 kind=text lh=1.50 fs=14.0 -->\n';
+  const pdfB = '<!-- pdf_source upload_id="doc-b" -->\n\n## Annotations\n\n- Beta <!-- annotation id=ann-b page=1 x=30.00 y=30.00 w=25.00 h=6.00 kind=text lh=1.50 fs=14.0 -->\n';
+  await inject(page, 'pdf-a', pdfA);
+  await inject(page, 'pdf-b', pdfB);
+
+  const openAndMeasureProximity = async docId => {
+    await page.evaluate(async id => {
+      editor.init('');
+      await editor.loadDocument(id);
+      const pdfTools = await import('/static/js/document/ui/pdfTools.js');
+      await pdfTools._setPdfViewActive(true);
+    }, docId);
+    await page.waitForSelector('.pdf-annotation-wrap');
+    await page.waitForFunction(() => {
+      const ed = document.getElementById('doc-editor-pane');
+      return ed && getComputedStyle(ed).opacity === '1';
+    });
+    const box = await page.locator('.pdf-annotation-wrap').first().boundingBox();
+    // Move away first so reopening always produces a real pointer transition into the proximity buffer.
+    await page.mouse.move(1, 1);
+    await page.mouse.move(Math.max(1, box.x - 12), box.y + box.height / 2);
+    await page.waitForTimeout(80);
+    return page.evaluate(() => ({
+      controlsVisible: Array.from(document.querySelectorAll('.pdf-annotation-menu-btn'))
+        .filter(btn => btn.style.display !== 'none').length,
+      mirrorCount: document.body.querySelectorAll('.pdf-annotation-measure').length,
+    }));
+  };
+
+  // Cycle 1: proximity controls work and mirror is cleaned up on minimize/close
+  const firstMount = await openAndMeasureProximity('pdf-a');
+  assert(firstMount.controlsVisible >= 1, 'initial PDF mount must reveal annotation controls on proximity');
+  await page.evaluate(() => editor.closePanel('down'));
+  await page.waitForFunction(() => !document.getElementById('doc-editor-pane'));
+  const mirrorsAfterClose = await page.evaluate(() => document.body.querySelectorAll('.pdf-annotation-measure').length);
+  assert.equal(mirrorsAfterClose, 0, 'closing PDF panel must remove any body measure mirror');
+
+  // Cycle 2: reopened pane must rewire proximity on the new #doc-pdf-view node
+  const reopenMount = await openAndMeasureProximity('pdf-a');
+  assert(reopenMount.controlsVisible >= 1, 'reopened PDF pane must rewire proximity controls');
+
+  // Cross-doc isolation: cleaning up pdf-a must not delete pdf-b state or save timers
+  const isolation = await page.evaluate(async () => {
+    const pdfPersistence = await import('/static/js/document/ui/pdf/persistence.js');
+    const pdfTools = await import('/static/js/document/ui/pdfTools.js');
+    pdfPersistence._pdfPaneAnnotationsByDoc.set('pdf-b', [{ id: 'ann-b', page: 1, x: 30, y: 30, w: 25, h: 6 }]);
+    const dummyTimer = setTimeout(() => {}, 60000);
+    pdfPersistence._pdfPaneSaveTimers.set('pdf-b', dummyTimer);
+
+    pdfTools._cleanupPdfDocState('pdf-a');
+    const bStateIntact = pdfPersistence._pdfPaneAnnotationsByDoc.has('pdf-b') && pdfPersistence._pdfPaneSaveTimers.has('pdf-b');
+    const aCleared = !pdfPersistence._pdfPaneAnnotationsByDoc.has('pdf-a');
+    const mirrorsAfterCleanup = document.body.querySelectorAll('.pdf-annotation-measure').length;
+
+    clearTimeout(dummyTimer);
+    pdfPersistence._pdfPaneSaveTimers.delete('pdf-b');
+    pdfPersistence._pdfPaneAnnotationsByDoc.clear();
+    return { bStateIntact, aCleared, mirrorsAfterCleanup };
+  });
+
+  assert.equal(isolation.bStateIntact, true, 'disposing pdf-a must not disrupt pdf-b persistence state or timer');
+  assert.equal(isolation.aCleared, true, 'disposing pdf-a must clear pdf-a state');
+  assert.equal(isolation.mirrorsAfterCleanup, 0, 'disposing active PDF doc must clear mirror element');
+});

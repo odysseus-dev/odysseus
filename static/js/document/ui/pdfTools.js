@@ -4,76 +4,83 @@
 // document-reference-compat: signatureModule - Optional standalone fallback guarded by typeof; integrated callers supply explicit init dependencies.
 // static/js/document/pdfTools.js
 /**
- * PDF Viewer, Form-backed Markdown Docs, and Visual Annotation Engine.
- * Extracted from document.js for modularity, testability, and maintainability.
+ * PDF Viewer UI, Form Field & Annotation Overlay Controller, and Lifecycle Facade.
+ * Delegates pure geometry to ./pdf/geometry.js, markdown annotation serialization to
+ * ./pdf/annotations.js, and per-doc state/autosave to ./pdf/persistence.js.
  */
 
-// Tracks which form-backed docs the user has toggled into PDF view
-// (per-doc, in-memory). Survives switches between docs in the same session.
-const _pdfViewState = new Map();
-const _pdfPaneFieldsByDoc = new Map(); // docId -> [{name, type, inputEl, ...}]
-const _pdfPaneAnnotationsByDoc = new Map(); // docId -> [{id, page, x, y, w, h, el, wrap}]
-const _pdfUndoStackByDoc = new Map(); // docId -> markdown snapshots
-const _pdfPaneSaveTimers = new Map(); // docId -> timeoutId
-const _pdfRenderGenerationByDoc = new Map();
-const _pdfViewTransitionByDoc = new Map();
+import {
+  clamp,
+  pxToPct,
+  pctToPx,
+  calculateFontSizeCqh,
+  calculateFieldRectPct,
+  calculateAnnotationPlacement,
+  calculateDragMove,
+  calculateResize,
+} from './pdf/geometry.js';
+import {
+  _isFormBackedDoc,
+  _annotationRegexGlobal,
+  _escapeAnnotationValue,
+  _unescapeAnnotationValue,
+  _parseAnnotations,
+  _annotationLine,
+  _writeAnnotations,
+  _newAnnotationId,
+  _encodeFieldName,
+} from './pdf/annotations.js';
+import {
+  _pdfViewState,
+  _pdfPaneFieldsByDoc,
+  _pdfPaneAnnotationsByDoc,
+  _pdfUndoStackByDoc,
+  _pdfPaneSaveTimers,
+  _pdfPaneSaveTimer,
+  _pdfRenderGenerationByDoc,
+  _pdfViewTransitionByDoc,
+  _pdfLastLineHeight,
+  _pdfLastFontSize,
+  _sigCache,
+  _pdfMountedDocId,
+  setPdfMountedDocId,
+  configurePdfRuntimeDeps,
+  getPdfRuntimeDeps,
+  _getApiBase,
+  _getActiveDocId,
+  _getDoc,
+  _persistPdfDocument,
+  _pdfMarkdownFromLive,
+  _pushPdfUndoSnapshot,
+  _cancelPdfPaneSave,
+  _hasPendingPdfPaneSave,
+  _releasePdfPane,
+  _cleanupPdfDocState as _cleanupPersistedPdfDocState,
+  _setPdfSaveStatus,
+  _syncPdfPaneToDoc,
+  _schedulePdfPaneSave,
+  _flushPdfPaneSave,
+  _savePdfPaneToMarkdown,
+  _saveActiveDocBeforeExport,
+} from './pdf/persistence.js';
+
 let _pdfToolsUnbind = null;
 let _pdfToolsDispose = null;
-let _pdfMountedDocId = null;
-let _pdfPaneSaveTimer = null;
 let _pdfAnnotationMenuDismissWired = false;
 let _pdfPaneProximityWired = false;
-const _sigCache = new Map();
-
-function _syncPdfPaneTimerExport() {
-  _pdfPaneSaveTimer = _pdfPaneSaveTimers.values().next().value || null;
-}
-
-let _deps = {
-  getApiBase: () => '',
-  getActiveDocId: () => null,
-  getDoc: () => null,
-  getDocs: () => new Map(),
-  saveDocument: null,
-  markDocumentDirty: null,
-  dismissDocKb: () => {},
-  getUiModule: () => (typeof window !== 'undefined' ? window.uiModule : null),
-  getSpinnerModule: () => (typeof window !== 'undefined' ? window.spinnerModule : null),
-  getSignatureModule: () => (typeof window !== 'undefined' ? window.signatureModule : null),
-};
-
-function _getApiBase() {
-  if (_deps.getApiBase) {
-    const val = _deps.getApiBase();
-    if (val != null) return val;
-  }
-  if (typeof API_BASE !== 'undefined') return API_BASE;
-  return '';
-}
-
-function _getActiveDocId() {
-  if (_deps.getActiveDocId) {
-    const id = _deps.getActiveDocId();
-    if (id != null) return id;
-  }
-  if (typeof activeDocId !== 'undefined') return activeDocId;
-  return null;
-}
-
-function _getDoc(docId) {
-  if (_deps.getDoc) {
-    const d = _deps.getDoc(docId);
-    if (d != null) return d;
-  }
-  if (typeof docs !== 'undefined' && docs.get) {
-    return docs.get(docId);
-  }
-  return null;
-}
+let _pdfDropMode = null;
+let _pdfAnnotationDragging = false;
+let _pdfMenuDismissController = null;
+let _pdfProximityController = null;
+let _pdfProximityPane = null;
+let _pdfProximityRaf = 0;
+let _pdfMeasureMirror = null;
+let _pdfActivePointerCleanup = null;
 
 function _dismissDocKb() {
-  if (_deps.dismissDocKb) {
-    _deps.dismissDocKb();
+  const deps = getPdfRuntimeDeps();
+  if (deps.dismissDocKb) {
+    deps.dismissDocKb();
     return;
   }
   if (typeof window === 'undefined') return;
@@ -90,24 +97,27 @@ function _dismissDocKb() {
 }
 
 function _getUiModule() {
-  if (_deps.getUiModule) {
-    const m = _deps.getUiModule();
+  const deps = getPdfRuntimeDeps();
+  if (deps.getUiModule) {
+    const m = deps.getUiModule();
     if (m) return m;
   }
   return typeof window !== 'undefined' ? window.uiModule : null;
 }
 
 function _getSpinnerModule() {
-  if (_deps.getSpinnerModule) {
-    const m = _deps.getSpinnerModule();
+  const deps = getPdfRuntimeDeps();
+  if (deps.getSpinnerModule) {
+    const m = deps.getSpinnerModule();
     if (m) return m;
   }
   return typeof window !== 'undefined' ? window.spinnerModule : null;
 }
 
 function _getSignatureModule() {
-  if (_deps.getSignatureModule) {
-    const m = _deps.getSignatureModule();
+  const deps = getPdfRuntimeDeps();
+  if (deps.getSignatureModule) {
+    const m = deps.getSignatureModule();
     if (m) return m;
   }
   return typeof window !== 'undefined' ? window.signatureModule : null;
@@ -119,162 +129,22 @@ const _escHtml = (s) => String(s || '')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
-// -----------------------------------------------------------------------------
-// Coordinate conversion and scale calculation helpers
-// -----------------------------------------------------------------------------
-
-function clamp(val, min = 0, max = 100) {
-  return Math.max(min, Math.min(max, val));
+function _getPdfMeasureMirror() {
+  if (typeof document === 'undefined') return null;
+  if (_pdfMeasureMirror && _pdfMeasureMirror.isConnected) return _pdfMeasureMirror;
+  _pdfMeasureMirror?.remove?.();
+  _pdfMeasureMirror = document.createElement('div');
+  _pdfMeasureMirror.className = 'pdf-annotation-measure';
+  _pdfMeasureMirror.setAttribute('aria-hidden', 'true');
+  _pdfMeasureMirror.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-family:inherit;padding:1px 4px;left:-9999px;top:-9999px;pointer-events:none;';
+  document.body.appendChild(_pdfMeasureMirror);
+  return _pdfMeasureMirror;
 }
 
-function pxToPct(px, total) {
-  if (!total) return 0;
-  return (px / total) * 100;
-}
-
-function pctToPx(pct, total) {
-  if (!total) return 0;
-  return (pct / 100) * total;
-}
-
-function calculateFontSizeCqh(fontSize = 11) {
-  return (fontSize * 1.5) / 11;
-}
-
-function calculateFieldRectPct(rectPx = [0, 0, 0, 0], pageWidth = 1, pageHeight = 1) {
-  const [x0, y0, x1, y1] = rectPx;
-  const pw = pageWidth || 1;
-  const ph = pageHeight || 1;
-  return {
-    left: pxToPct(x0, pw),
-    top: pxToPct(y0, ph),
-    width: pxToPct(x1 - x0, pw),
-    height: pxToPct(y1 - y0, ph),
-  };
-}
-
-function calculateAnnotationPlacement({
-  clientX = 0,
-  clientY = 0,
-  pageRect = { left: 0, top: 0, width: 1, height: 1 },
-  mode = 'text',
-  pageNumber = 1,
-  lastLineHeight = 1.3,
-  lastFontSize = 11,
-} = {}) {
-  const rect = pageRect || { left: 0, top: 0, width: 1, height: 1 };
-  const xPct = pxToPct(clientX - rect.left, rect.width);
-  const yPct = pxToPct(clientY - rect.top, rect.height);
-  const sizes = {
-    text: { w: 8, h: 2.5 },
-    check: { w: 2.5, h: 2.5 },
-    signature: { w: 22, h: 6 },
-  };
-  const size = sizes[mode] || sizes.text;
-  const centered = mode === 'check';
-  const x = clamp(centered ? xPct - size.w / 2 : xPct, 0, 100 - size.w);
-  const y = clamp(centered ? yPct - size.h / 2 : yPct, 0, 100 - size.h);
-  return {
-    id: _newAnnotationId(),
-    page: pageNumber,
-    x,
-    y,
-    w: size.w,
-    h: size.h,
-    value: mode === 'check' ? '[ ]' : '',
-    kind: mode,
-    lineHeight: mode === 'text' ? lastLineHeight : undefined,
-    fontSize: mode === 'text' ? lastFontSize : undefined,
-  };
-}
-
-function calculateDragMove(start, current, pageRect, widthPct, heightPct) {
-  const pw = pageRect?.width || 1;
-  const ph = pageRect?.height || 1;
-  const dxPct = pxToPct(current.mx - start.mx, pw);
-  const dyPct = pxToPct(current.my - start.my, ph);
-  const w = widthPct || 0;
-  const h = heightPct || 0;
-  return {
-    x: clamp(start.x + dxPct, 0, 100 - w),
-    y: clamp(start.y + dyPct, 0, 100 - h),
-  };
-}
-
-function calculateResize(start, current, pageRect, leftPct, topPct) {
-  const pw = pageRect?.width || 1;
-  const ph = pageRect?.height || 1;
-  const dwPct = pxToPct(current.mx - start.mx, pw);
-  const dhPct = pxToPct(current.my - start.my, ph);
-  const x = leftPct || 0;
-  const y = topPct || 0;
-  return {
-    w: clamp(start.w + dwPct, 1, 100 - x),
-    h: clamp(start.h + dhPct, 0.8, 100 - y),
-  };
-}
-
-// -----------------------------------------------------------------------------
-// Form-backed document detection and export
-// -----------------------------------------------------------------------------
-
-function _isFormBackedDoc(docOrContent) {
-  const c = typeof docOrContent === 'string'
-    ? docOrContent
-    : (docOrContent?.content || '');
-  return /<!--\s*pdf_form_source\s+upload_id="[^"]+"/.test(c)
-      || /<!--\s*pdf_source\s+upload_id="[^"]+"/.test(c);
-}
-
-async function _persistPdfDocument(docId, md, opts = {}) {
-  const doc = _getDoc(docId);
-  if (!docId || !doc) return false;
-  doc.content = md;
-  if (typeof document !== 'undefined' && docId === _getActiveDocId()) {
-    const ta = document.getElementById('doc-editor-textarea');
-    if (ta) ta.value = md;
-  }
-  if (typeof _deps.markDocumentDirty === 'function') {
-    _deps.markDocumentDirty(docId);
-  }
-  if (typeof _deps.saveDocument === 'function') {
-    return await _deps.saveDocument({
-      silent: true,
-      docId,
-      keepalive: !!opts.keepalive,
-      skipPdfSync: true,
-    });
-  }
-  const apiBase = _getApiBase();
-  const res = await fetch(`${apiBase}/api/document/${docId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: md }),
-    keepalive: !!opts.keepalive,
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => res.statusText);
-    const err = new Error(t || res.statusText || `HTTP ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-  return true;
-}
-
-async function _saveActiveDocBeforeExport() {
-  const activeId = _getActiveDocId();
-  if (!activeId) return;
-  await _flushPdfPaneSave(activeId);
-  if (typeof document === 'undefined') return;
-  const ta = document.getElementById('doc-editor-textarea');
-  const doc = _getDoc(activeId);
-  if (!ta || !doc) return;
-  const live = ta.value;
-  if (live === doc.content) return;
-  try {
-    await _persistPdfDocument(activeId, live);
-  } catch (e) {
-    console.warn('Pre-export save failed:', e);
+function _clearPdfMeasureMirror() {
+  if (_pdfMeasureMirror) {
+    _pdfMeasureMirror.remove();
+    _pdfMeasureMirror = null;
   }
 }
 
@@ -308,100 +178,6 @@ async function _downloadFilledPdf() {
     if (ui?.showError) ui.showError('Export failed: ' + e.message);
     else if (typeof alert === 'function') alert('Export failed: ' + e.message);
   }
-}
-
-// -----------------------------------------------------------------------------
-// Annotation model serialization & parsing
-// -----------------------------------------------------------------------------
-
-function _annotationRegexGlobal() {
-  return /^[ \t]*-\s+(.*?)\s*<!--\s*annotation\s+id=([\w-]+)\s+page=(\d+)\s+x=([\d.]+)\s+y=([\d.]+)\s+w=([\d.]+)\s+h=([\d.]+)(?:\s+kind=(\w+))?(?:\s+lh=([\d.]+))?(?:\s+fs=([\d.]+))?\s*-->[ \t]*$/gm;
-}
-
-function _escapeAnnotationValue(s) {
-  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
-}
-
-function _unescapeAnnotationValue(s) {
-  return String(s || '').replace(/\\(.)/g, (m, c) => c === 'n' ? '\n' : c === '\\' ? '\\' : m);
-}
-
-function _parseAnnotations(md) {
-  const out = [];
-  const re = _annotationRegexGlobal();
-  let m;
-  while ((m = re.exec(md || '')) !== null) {
-    const rawVal = m[1] === '_(empty)_' ? '' : _unescapeAnnotationValue(m[1]);
-    out.push({
-      value: rawVal,
-      id: m[2],
-      page: parseInt(m[3], 10),
-      x: parseFloat(m[4]),
-      y: parseFloat(m[5]),
-      w: parseFloat(m[6]),
-      h: parseFloat(m[7]),
-      kind: m[8] || 'text',
-      lineHeight: m[9] ? parseFloat(m[9]) : 1.3,
-      fontSize: m[10] ? parseFloat(m[10]) : 11,
-    });
-  }
-  return out;
-}
-
-function _annotationLine(a) {
-  const kind = a.kind || 'text';
-  const lh = (a.lineHeight && Number.isFinite(a.lineHeight)) ? a.lineHeight : 1.3;
-  const fs = (a.fontSize && Number.isFinite(a.fontSize)) ? a.fontSize : 11;
-  const escaped = a.value === '' || a.value == null ? '_(empty)_' : _escapeAnnotationValue(a.value);
-  return `- ${escaped} <!-- annotation id=${a.id} page=${a.page} x=${a.x.toFixed(2)} y=${a.y.toFixed(2)} w=${a.w.toFixed(2)} h=${a.h.toFixed(2)} kind=${kind} lh=${lh.toFixed(2)} fs=${fs.toFixed(1)} -->`;
-}
-
-function _writeAnnotations(md, annotations) {
-  let out = (md || '').replace(_annotationRegexGlobal(), '');
-  out = out.replace(/\n##\s+Annotations\s*\r?\n+/g, '\n');
-  out = out.replace(/\n{3,}/g, '\n\n');
-  if (!annotations || !annotations.length) return out;
-  if (!out.endsWith('\n')) out += '\n';
-  out += '\n## Annotations\n\n';
-  for (const a of annotations) out += _annotationLine(a) + '\n';
-  return out;
-}
-
-function _newAnnotationId() {
-  return 'ann-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
-}
-
-// -----------------------------------------------------------------------------
-// Gesture, placement, and undo history
-// -----------------------------------------------------------------------------
-
-function _encodeFieldName(name) {
-  let out = '';
-  for (const ch of name || '') {
-    if (/[A-Za-z0-9_.\-]/.test(ch)) {
-      out += ch;
-    } else {
-      const enc = new TextEncoder().encode(ch);
-      for (const b of enc) out += '%' + b.toString(16).toUpperCase().padStart(2, '0');
-    }
-  }
-  return out;
-}
-
-function _pdfMarkdownFromLive(docId = _getActiveDocId()) {
-  const doc = _getDoc(docId);
-  if (!doc) return null;
-  return _composePdfPaneMarkdown(docId)?.md ?? doc.content ?? '';
-}
-
-function _pushPdfUndoSnapshot(docId = _getActiveDocId()) {
-  const md = _pdfMarkdownFromLive(docId);
-  if (md == null) return;
-  const stack = _pdfUndoStackByDoc.get(docId) || [];
-  if (stack[stack.length - 1] === md) return;
-  stack.push(md);
-  if (stack.length > 50) stack.shift();
-  _pdfUndoStackByDoc.set(docId, stack);
 }
 
 async function _undoPdfPaneAction(docId = _getActiveDocId()) {
@@ -447,8 +223,6 @@ async function _undoPdfPaneAction(docId = _getActiveDocId()) {
   }
 }
 
-let _pdfDropMode = null;
-let _pdfAnnotationDragging = false;
 function _setPdfAnnotationDragging(dragging) {
   _pdfAnnotationDragging = dragging;
   const currentDocId = typeof _getActiveDocId === 'function' ? _getActiveDocId() : (typeof activeDocId !== 'undefined' ? activeDocId : null);
@@ -460,12 +234,12 @@ function _setPdfAnnotationDragging(dragging) {
     }
   }
 }
-// Per-doc last-used line spacing for text annotations.
-const _pdfLastLineHeight = new Map(); // docId -> number
-const _pdfLastFontSize = new Map(); // docId -> number
 
 function _wirePdfAnnotationMenuDismiss() {
-  if (_pdfAnnotationMenuDismissWired || typeof document === 'undefined') return;
+  if ((_pdfAnnotationMenuDismissWired && _pdfMenuDismissController) || typeof document === 'undefined') return;
+  _pdfMenuDismissController?.abort();
+  const controller = new AbortController();
+  _pdfMenuDismissController = controller;
   _pdfAnnotationMenuDismissWired = true;
   document.addEventListener('pointerdown', (ev) => {
     if (ev.target.closest('.pdf-annotation-text-menu, .pdf-annotation-menu-btn')) return;
@@ -473,14 +247,22 @@ function _wirePdfAnnotationMenuDismiss() {
       menu.style.display = 'none';
       menu.dataset.lhUndoCaptured = '0';
     });
-  });
+  }, { signal: controller.signal });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
     document.querySelectorAll('.pdf-annotation-text-menu').forEach(menu => {
       menu.style.display = 'none';
       menu.dataset.lhUndoCaptured = '0';
     });
-  });
+  }, { signal: controller.signal });
+}
+
+function _unwirePdfAnnotationMenuDismiss() {
+  if (_pdfMenuDismissController) {
+    _pdfMenuDismissController.abort();
+    _pdfMenuDismissController = null;
+  }
+  _pdfAnnotationMenuDismissWired = false;
 }
 
 function _setPdfDropMode(mode) {
@@ -498,15 +280,32 @@ function _setPdfDropMode(mode) {
   }
 }
 
+function _unwirePdfPaneProximity() {
+  if (_pdfProximityRaf && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(_pdfProximityRaf);
+  }
+  _pdfProximityRaf = 0;
+  if (_pdfProximityController) {
+    _pdfProximityController.abort();
+    _pdfProximityController = null;
+  }
+  _pdfProximityPane = null;
+  _pdfPaneProximityWired = false;
+}
+
 function _wirePdfPaneProximity(pane) {
-  if (_pdfPaneProximityWired || !pane) return;
+  if (!pane) return;
+  if (_pdfPaneProximityWired && _pdfProximityPane === pane && _pdfProximityController) return;
+  _unwirePdfPaneProximity();
+  const controller = new AbortController();
+  _pdfProximityController = controller;
+  _pdfProximityPane = pane;
   _pdfPaneProximityWired = true;
-  let raf = 0;
   const buffer = 44;
   pane.addEventListener('mousemove', (ev) => {
-    if (raf) return;
-    raf = requestAnimationFrame(() => {
-      raf = 0;
+    if (_pdfProximityRaf) return;
+    _pdfProximityRaf = requestAnimationFrame(() => {
+      _pdfProximityRaf = 0;
       const currentDocId = _getActiveDocId();
       const refs = _pdfPaneAnnotationsByDoc.get(currentDocId) || [];
       for (const ref of refs) {
@@ -517,27 +316,25 @@ function _wirePdfPaneProximity(pane) {
         ref._setHandlesVisible(Math.hypot(dx, dy) <= buffer);
       }
     });
-  });
+  }, { signal: controller.signal });
   pane.addEventListener('mouseleave', () => {
     const currentDocId = _getActiveDocId();
     const refs = _pdfPaneAnnotationsByDoc.get(currentDocId) || [];
     for (const ref of refs) ref._setHandlesVisible && ref._setHandlesVisible(false);
-  });
+  }, { signal: controller.signal });
 }
 
 async function _pdfResponseErrorMessage(res) {
-  const text = await res.text().catch(() => '');
+  const status = res?.status ? `HTTP ${res.status}` : 'PDF error';
+  const raw = await res?.text?.().catch(() => '');
+  if (!raw) return status;
   try {
-    const data = JSON.parse(text);
-    if (typeof data?.detail === 'string') return data.detail;
-    if (data?.detail) return JSON.stringify(data.detail);
-  } catch (_) {}
-  return text || res.statusText || `HTTP ${res.status}`;
+    const parsed = JSON.parse(raw);
+    return parsed?.detail || parsed?.message || status;
+  } catch (_) {
+    return raw.trim() || status;
+  }
 }
-
-// -----------------------------------------------------------------------------
-// PDF Pane rendering and live sync
-// -----------------------------------------------------------------------------
 
 async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
   if (typeof document === 'undefined') return;
@@ -548,7 +345,7 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
     _pdfPaneAnnotationsByDoc.delete(_pdfMountedDocId);
     _pdfRenderGenerationByDoc.set(_pdfMountedDocId, (_pdfRenderGenerationByDoc.get(_pdfMountedDocId) || 0) + 1);
   }
-  _pdfMountedDocId = docId;
+  setPdfMountedDocId(docId);
   const generation = (_pdfRenderGenerationByDoc.get(docId) || 0) + 1;
   _pdfRenderGenerationByDoc.set(docId, generation);
   const renderPane = pane;
@@ -632,11 +429,9 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
     pageWrap.appendChild(img);
 
     for (const f of (page.fields || [])) {
+      const rect = calculateFieldRectPct(f.rect_px || [0, 0, 0, 0], page.width, page.height);
+      const { left: lPct, top: tPct, width: wPct, height: hPct } = rect;
       const [x0, y0, x1, y1] = f.rect_px || [0, 0, 0, 0];
-      const wPct = ((x1 - x0) / page.width) * 100;
-      const hPct = ((y1 - y0) / page.height) * 100;
-      const lPct = (x0 / page.width) * 100;
-      const tPct = (y0 / page.height) * 100;
       const isSig = f.type === 'signature' || /sign(?:ed|ature)/i.test((f.name || '') + ' ' + (f.label || ''));
       let el;
       const baseStyle = `position:absolute;left:${lPct}%;top:${tPct}%;width:${wPct}%;height:${hPct}%;box-sizing:border-box;font-family:inherit;`;
@@ -656,8 +451,8 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
             imgEl.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;pointer-events:none;';
             try {
               if (!_sigCache.has(sigId)) {
-                const apiBase = typeof _getApiBase === "function" ? _getApiBase() : (typeof API_BASE !== "undefined" ? API_BASE : "");
-          const r = await fetch(`${apiBase}/api/signatures`);
+                const sigApiBase = typeof _getApiBase === 'function' ? _getApiBase() : (typeof API_BASE !== 'undefined' ? API_BASE : '');
+                const r = await fetch(`${sigApiBase}/api/signatures`);
                 const sdata = await r.json();
                 for (const s of sdata.signatures || []) _sigCache.set(s.id, s.data_url);
               }
@@ -683,7 +478,7 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
         };
         el.addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          const sigModule = typeof _getSignatureModule === "function" ? _getSignatureModule() : (typeof signatureModule !== "undefined" ? signatureModule : null);
+          const sigModule = typeof _getSignatureModule === 'function' ? _getSignatureModule() : (typeof signatureModule !== 'undefined' ? signatureModule : null);
           const sig = sigModule?.pick ? await sigModule.pick() : null;
           if (sig) {
             _sigCache.set(sig.id, sig.dataUrl);
@@ -761,27 +556,17 @@ async function _renderPdfPane(docId = _getActiveDocId(), options = {}) {
       placementStartedOnPage = false;
       if (!canPlace || !isBlankPageTarget(ev.target) || _pdfAnnotationDragging) return;
       if (!_pdfDropMode) return;
-      const rect = pageWrap.getBoundingClientRect();
-      const xPct = ((ev.clientX - rect.left) / rect.width) * 100;
-      const yPct = ((ev.clientY - rect.top) / rect.height) * 100;
-      const sizes = {
-        text: { w: 8, h: 2.5 },
-        check: { w: 2.5, h: 2.5 },
-        signature: { w: 22, h: 6 },
-      };
-      const size = sizes[_pdfDropMode] || sizes.text;
-      const centered = _pdfDropMode === 'check';
-      const x = Math.max(0, Math.min(100 - size.w, centered ? xPct - size.w / 2 : xPct));
-      const y = Math.max(0, Math.min(100 - size.h, centered ? yPct - size.h / 2 : yPct));
       const ann = {
-        id: _newAnnotationId(),
+        ...calculateAnnotationPlacement({
+          clientX: ev.clientX,
+          clientY: ev.clientY,
+          pageRect: pageWrap.getBoundingClientRect(),
+          mode: _pdfDropMode,
+          pageNumber: page.page,
+          lastLineHeight: _pdfLastLineHeight.get(docId) || 1.3,
+          lastFontSize: _pdfLastFontSize.get(docId) || 11,
+        }),
         docId,
-        page: page.page,
-        x, y, w: size.w, h: size.h,
-        value: _pdfDropMode === 'check' ? '[ ]' : '',
-        kind: _pdfDropMode,
-        lineHeight: _pdfDropMode === 'text' ? (_pdfLastLineHeight.get(docId) || 1.3) : undefined,
-        fontSize: _pdfDropMode === 'text' ? (_pdfLastFontSize.get(docId) || 11) : undefined,
       };
       _pushPdfUndoSnapshot(docId);
       const built = _buildAnnotation(pageWrap, ann);
@@ -821,11 +606,11 @@ function _buildAnnotation(arg1, arg2, scale) {
   let input;
   if (kind === 'check') {
     input = document.createElement('div');
-    input.style.cssText = `width:100%;height:100%;display:flex;align-items:center;justify-content:center;user-select:none;pointer-events:none;`;
-    input.innerHTML = `<svg viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block;"><path d="M4 12 L10 18 L20 6" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    input.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;user-select:none;pointer-events:none;';
+    input.innerHTML = '<svg viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block;"><path d="M4 12 L10 18 L20 6" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   } else if (kind === 'signature') {
     input = document.createElement('div');
-    input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;font-size:10px;color:var(--accent, var(--red));`;
+    input.style.cssText = 'width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;font-size:10px;color:var(--accent, var(--red));';
     input.textContent = (ann.value && ann.value.startsWith('signature:')) ? '' : 'Sign here';
     input.dataset.signatureId = (ann.value && ann.value.startsWith('signature:')) ? ann.value.slice(10) : '';
   } else {
@@ -836,7 +621,7 @@ function _buildAnnotation(arg1, arg2, scale) {
     input.spellcheck = false;
     const lh = ann.lineHeight || 1.3;
     const fs = ann.fontSize || 11;
-    input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);font-family:inherit;font-size:${(fs * 1.5 / 11).toFixed(3)}cqh;line-height:${lh};padding:1px 4px;color:#111;resize:none;overflow:auto;white-space:pre-wrap;`;
+    input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);font-family:inherit;font-size:${calculateFontSizeCqh(fs).toFixed(3)}cqh;line-height:${lh};padding:1px 4px;color:#111;resize:none;overflow:auto;white-space:pre-wrap;`;
   }
 
   const _isTouch = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
@@ -923,7 +708,7 @@ function _buildAnnotation(arg1, arg2, scale) {
       input.dataset.signatureId = sigId;
       try {
         if (!_sigCache.has(sigId)) {
-          const apiBase = typeof _getApiBase === "function" ? _getApiBase() : (typeof API_BASE !== "undefined" ? API_BASE : "");
+          const apiBase = typeof _getApiBase === 'function' ? _getApiBase() : (typeof API_BASE !== 'undefined' ? API_BASE : '');
           const r = await fetch(`${apiBase}/api/signatures`);
           const data = await r.json();
           for (const s of data.signatures || []) _sigCache.set(s.id, s.data_url);
@@ -942,7 +727,7 @@ function _buildAnnotation(arg1, arg2, scale) {
     };
     input.addEventListener('click', async (ev) => {
       ev.stopPropagation();
-      const sigModule = typeof _getSignatureModule === "function" ? _getSignatureModule() : (typeof signatureModule !== "undefined" ? signatureModule : null);
+      const sigModule = typeof _getSignatureModule === 'function' ? _getSignatureModule() : (typeof signatureModule !== 'undefined' ? signatureModule : null);
       const sig = sigModule?.pick ? await sigModule.pick() : null;
       if (sig) {
         const targetId = _annotationDocId();
@@ -955,27 +740,23 @@ function _buildAnnotation(arg1, arg2, scale) {
     });
     _renderSig(input.dataset.signatureId);
   } else {
-    let _mirror = null;
     const _autoGrow = () => {
-      if (!pageWrap) return;
+      if (!pageWrap || !wrap.isConnected) return;
       const pageRect = pageWrap.getBoundingClientRect();
       if (!pageRect.height || !pageRect.width) return;
 
-      if (!_mirror) {
-        _mirror = document.createElement('div');
-        _mirror.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-family:inherit;padding:1px 4px;left:-9999px;top:-9999px;';
-        document.body.appendChild(_mirror);
-      }
+      const mirror = _getPdfMeasureMirror();
+      if (!mirror) return;
       const cs = window.getComputedStyle(input);
-      _mirror.style.fontSize = cs.fontSize;
-      _mirror.style.fontWeight = cs.fontWeight;
-      _mirror.style.fontFamily = cs.fontFamily;
-      _mirror.style.letterSpacing = cs.letterSpacing;
+      mirror.style.fontSize = cs.fontSize;
+      mirror.style.fontWeight = cs.fontWeight;
+      mirror.style.fontFamily = cs.fontFamily;
+      mirror.style.letterSpacing = cs.letterSpacing;
       let widestPx = 0;
       const lines = (input.value || input.placeholder || '').split('\n');
       for (const line of lines) {
-        _mirror.textContent = line || ' ';
-        if (_mirror.offsetWidth > widestPx) widestPx = _mirror.offsetWidth;
+        mirror.textContent = line || ' ';
+        if (mirror.offsetWidth > widestPx) widestPx = mirror.offsetWidth;
       }
       const neededWPct = ((widestPx + 12) / pageRect.width) * 100;
       if (neededWPct > ref.w) {
@@ -1032,70 +813,52 @@ function _buildAnnotation(arg1, arg2, scale) {
     _removeAnnotation(ref, targetId);
   });
 
-  grip.addEventListener('pointerdown', (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const targetId = _annotationDocId();
-    _pushPdfUndoSnapshot(targetId);
-    try { grip.setPointerCapture(ev.pointerId); } catch (_) {}
-    _setPdfAnnotationDragging(true);
-    del.style.display = 'none';
-    resize.style.display = 'none';
-    if (menuBtn) menuBtn.style.display = 'none';
-    const start = { mx: ev.clientX, my: ev.clientY, x: ref.x, y: ref.y };
-    const rect = pageWrap ? pageWrap.getBoundingClientRect() : { width: 1, height: 1 };
-    const onMove = (e) => {
-      const dxPct = ((e.clientX - start.mx) / rect.width) * 100;
-      const dyPct = ((e.clientY - start.my) / rect.height) * 100;
-      ref.x = Math.max(0, Math.min(100 - ref.w, start.x + dxPct));
-      ref.y = Math.max(0, Math.min(100 - ref.h, start.y + dyPct));
-      wrap.style.left = ref.x + '%';
-      wrap.style.top = ref.y + '%';
-    };
-    const onUp = () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', onUp);
-      _setPdfAnnotationDragging(false);
-      _setHandlesVisible(true);
-      _schedulePdfPaneSave(targetId);
-    };
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-    document.addEventListener('pointercancel', onUp);
+  const _bindPointerGesture = (handle, hiddenHandles, startState, onDragStep) => {
+    handle.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const targetId = _annotationDocId();
+      _pushPdfUndoSnapshot(targetId);
+      try { handle.setPointerCapture(ev.pointerId); } catch (_) {}
+      _setPdfAnnotationDragging(true);
+      for (const h of hiddenHandles) if (h) h.style.display = 'none';
+      const rect = pageWrap ? pageWrap.getBoundingClientRect() : { width: 1, height: 1 };
+      const start = { mx: ev.clientX, my: ev.clientY, ...startState() };
+      const onMove = (e) => onDragStep(start, { mx: e.clientX, my: e.clientY }, rect);
+      const cleanupGesture = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        if (_pdfActivePointerCleanup === cleanupGesture) _pdfActivePointerCleanup = null;
+      };
+      const onUp = () => {
+        cleanupGesture();
+        _setPdfAnnotationDragging(false);
+        _setHandlesVisible(true);
+        _schedulePdfPaneSave(targetId);
+      };
+      _pdfActivePointerCleanup?.();
+      _pdfActivePointerCleanup = cleanupGesture;
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onUp);
+    });
+  };
+
+  _bindPointerGesture(grip, [del, resize, menuBtn], () => ({ x: ref.x, y: ref.y }), (start, current, rect) => {
+    const moved = calculateDragMove(start, current, rect, ref.w, ref.h);
+    ref.x = moved.x;
+    ref.y = moved.y;
+    wrap.style.left = ref.x + '%';
+    wrap.style.top = ref.y + '%';
   });
 
-  resize.addEventListener('pointerdown', (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const targetId = _annotationDocId();
-    _pushPdfUndoSnapshot(targetId);
-    try { resize.setPointerCapture(ev.pointerId); } catch (_) {}
-    _setPdfAnnotationDragging(true);
-    del.style.display = 'none';
-    grip.style.display = 'none';
-    if (menuBtn) menuBtn.style.display = 'none';
-    const start = { mx: ev.clientX, my: ev.clientY, w: ref.w, h: ref.h };
-    const rect = pageWrap ? pageWrap.getBoundingClientRect() : { width: 1, height: 1 };
-    const onMove = (e) => {
-      const dwPct = ((e.clientX - start.mx) / rect.width) * 100;
-      const dhPct = ((e.clientY - start.my) / rect.height) * 100;
-      ref.w = Math.max(1, Math.min(100 - ref.x, start.w + dwPct));
-      ref.h = Math.max(0.8, Math.min(100 - ref.y, start.h + dhPct));
-      wrap.style.width = ref.w + '%';
-      wrap.style.height = ref.h + '%';
-    };
-    const onUp = () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', onUp);
-      _setPdfAnnotationDragging(false);
-      _setHandlesVisible(true);
-      _schedulePdfPaneSave(targetId);
-    };
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-    document.addEventListener('pointercancel', onUp);
+  _bindPointerGesture(resize, [del, grip, menuBtn], () => ({ w: ref.w, h: ref.h }), (start, current, rect) => {
+    const resized = calculateResize(start, current, rect, ref.x, ref.y);
+    ref.w = resized.w;
+    ref.h = resized.h;
+    wrap.style.width = ref.w + '%';
+    wrap.style.height = ref.h + '%';
   });
 
   if (kind === 'text') {
@@ -1158,7 +921,7 @@ function _buildAnnotation(arg1, arg2, scale) {
       v = Math.max(6, Math.min(72, v));
       ref.fontSize = v;
       _pdfLastFontSize.set(targetId, v);
-      input.style.fontSize = `${(v * 1.5 / 11).toFixed(3)}cqh`;
+      input.style.fontSize = `${calculateFontSizeCqh(v).toFixed(3)}cqh`;
       if (fromSlider) fsInput.value = String(Math.round(v));
       else fsSlider.value = String(Math.max(6, Math.min(36, v)));
       if (typeof ref._autoGrow === 'function') ref._autoGrow();
@@ -1234,28 +997,30 @@ function _buildAnnotation(arg1, arg2, scale) {
 
 function _removeAnnotation(refOrId, explicitDocId = null) {
   if (!refOrId) return;
-  const docId = explicitDocId || (typeof _getActiveDocId === "function" ? _getActiveDocId() : (typeof activeDocId !== "undefined" ? activeDocId : null));
+  const docId = explicitDocId || (typeof _getActiveDocId === 'function' ? _getActiveDocId() : (typeof activeDocId !== 'undefined' ? activeDocId : null));
   const refs = _pdfPaneAnnotationsByDoc.get(docId) || [];
   let targetRef = null;
   let idx = -1;
   if (typeof refOrId === 'string') {
-    idx = refs.findIndex(r => r.id === refOrId);
-    if (idx >= 0) targetRef = refs[idx];
+    idx = refs.findIndex(r => r && r.id === refOrId);
+    targetRef = idx >= 0 ? refs[idx] : null;
   } else {
-    idx = refs.indexOf(refOrId);
     targetRef = refOrId;
+    idx = refs.indexOf(refOrId);
+    if (idx < 0 && refOrId.id) idx = refs.findIndex(r => r && r.id === refOrId.id);
   }
   if (idx >= 0) refs.splice(idx, 1);
-  if (targetRef && targetRef.wrap) {
+  if (targetRef && targetRef.wrap && targetRef.wrap.remove) {
     targetRef.wrap.remove();
   } else if (typeof refOrId === 'string' && typeof document !== 'undefined') {
     const wrap = document.querySelector(`.pdf-annotation-wrap[data-ann-id="${refOrId}"]`);
     wrap?.remove();
   }
+  if (!refs.length) _clearPdfMeasureMirror();
   _schedulePdfPaneSave(docId);
 }
-// Prompt user for an instruction and ask the backend's VL pipeline to propose annotations
 
+// Prompt user for an instruction and ask the backend's VL pipeline to propose annotations
 async function _aiFillAnnotations(docId = _getActiveDocId()) {
   if (!docId) return;
   const doc = _getDoc(docId);
@@ -1321,218 +1086,12 @@ async function _aiFillAnnotations(docId = _getActiveDocId()) {
   }
 }
 
-function _cancelPdfPaneSave(docId = _getActiveDocId()) {
-  if (!docId) return;
-  const timer = _pdfPaneSaveTimers.get(docId);
-  if (timer) {
-    clearTimeout(timer);
-    _pdfPaneSaveTimers.delete(docId);
-    _syncPdfPaneTimerExport();
-  }
-}
-
-function _hasPendingPdfPaneSave(docId = _getActiveDocId()) {
-  return Boolean(docId && _pdfPaneSaveTimers.has(docId));
-}
-
-// Call after capturing pending edits when this shared pane changes owner.
-function _releasePdfPane(docId) {
-  if (!docId) return;
-  _pdfPaneFieldsByDoc.delete(docId);
-  _pdfPaneAnnotationsByDoc.delete(docId);
-  _pdfRenderGenerationByDoc.set(docId, (_pdfRenderGenerationByDoc.get(docId) || 0) + 1);
-  if (_pdfMountedDocId === docId) _pdfMountedDocId = null;
-  if (typeof document !== 'undefined') {
-    const pane = document.getElementById('doc-pdf-view');
-    if (pane?.dataset.renderedDocId === docId) delete pane.dataset.renderedDocId;
-  }
-}
-
 function _cleanupPdfDocState(docId) {
   if (!docId) return;
-  _cancelPdfPaneSave(docId);
-  _releasePdfPane(docId);
-  _pdfRenderGenerationByDoc.delete(docId);
-  _pdfViewTransitionByDoc.delete(docId);
-  _pdfUndoStackByDoc.delete(docId);
-  _pdfLastLineHeight.delete(docId);
-  _pdfLastFontSize.delete(docId);
-  _pdfViewState.delete(docId);
-}
-
-function _schedulePdfPaneSave(docId = _getActiveDocId()) {
-  if (!docId) return;
-  // Removing a focused control can fire change while its old pane is being
-  // replaced. A disposed view cannot revise or schedule the current draft.
-  if (!_pdfPaneFieldsByDoc.has(docId) && !_pdfPaneAnnotationsByDoc.has(docId)) return;
-  const doc = _getDoc(docId);
-  if (!doc) return;
-  _syncPdfPaneToDoc(docId, { markDirty: false });
-  if (typeof _deps.markDocumentDirty === 'function') {
-    _deps.markDocumentDirty(docId);
-  }
-  _setPdfSaveStatus('dirty', undefined, docId);
-  _cancelPdfPaneSave(docId);
-  const timer = setTimeout(() => {
-    _pdfPaneSaveTimers.delete(docId);
-    _syncPdfPaneTimerExport();
-    _savePdfPaneToMarkdown(docId, { persistDraft: true });
-  }, 600);
-  _pdfPaneSaveTimers.set(docId, timer);
-  _syncPdfPaneTimerExport();
-}
-
-function _setPdfSaveStatus(status, msg, docId = _getActiveDocId()) {
-  if (typeof document === 'undefined') return;
-  if (docId && docId !== _getActiveDocId()) return;
-  const pill = document.getElementById('doc-pdf-save-pill');
-  if (!pill) return;
-  const palette = {
-    idle:   { txt: '',           bg: 'transparent',           fg: 'transparent' },
-    dirty:  { txt: 'Editing…',   bg: 'var(--panel)',          fg: 'var(--fg)' },
-    saving: { txt: 'Saving…',    bg: 'var(--panel)',          fg: 'var(--fg)' },
-    saved:  { txt: 'Saved',      bg: 'rgba(34,197,94,0.85)',  fg: '#fff' },
-    error:  { txt: msg || 'Save failed', bg: 'var(--red)',    fg: 'var(--bg)' },
-  };
-  const p = palette[status] || palette.idle;
-  pill.textContent = p.txt;
-  pill.style.background = p.bg;
-  pill.style.color = p.fg;
-  pill.style.display = p.txt ? '' : 'none';
-  if (status === 'saved') {
-    const expectedDocId = docId;
-    setTimeout(() => {
-      if (expectedDocId && expectedDocId !== _getActiveDocId()) return;
-      if (pill.textContent === 'Saved') _setPdfSaveStatus('idle', undefined, expectedDocId);
-    }, 1200);
-  }
-}
-
-function _composePdfPaneMarkdown(docId) {
-  const hasFields = _pdfPaneFieldsByDoc.has(docId);
-  const hasAnnotations = _pdfPaneAnnotationsByDoc.has(docId);
-  const fields = _pdfPaneFieldsByDoc.get(docId) || [];
-  const annotations = _pdfPaneAnnotationsByDoc.get(docId) || [];
-  if (!docId) return null;
-  const doc = _getDoc(docId);
-  if (!doc) return null;
-  if (!hasFields && !hasAnnotations) return null;
-
-  let md = doc.content || '';
-  for (const ref of fields) {
-    const encName = _encodeFieldName(ref.name);
-    const re = new RegExp(
-      `^(\\s*-\\s+)(.*?)(\\s*<!--\\s*field=${encName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s+type=\\w+\\s*-->\\s*)$`,
-      'm'
-    );
-    const m = md.match(re);
-    if (!m) continue;
-    const body = m[2];
-    let newBody = body;
-    if (ref.type === 'checkbox') {
-      const mark = ref.el.checked ? '[x]' : '[ ]';
-      newBody = body.replace(/^\s*\[[ xX]\]/, mark);
-    } else if (ref.type === 'choice') {
-      const v = ref.el.value || '_(not selected)_';
-      newBody = body.replace(/(\][\s]*:[ ]*).*$/, `$1${v}`);
-    } else if (ref.type === 'signature') {
-      const sid = ref.el.dataset.signatureId || '';
-      const v = sid ? `signature:${sid}` : '_(unsigned)_';
-      newBody = body.replace(/(:\*\*[ ]*).*$/, `$1${v}`);
-    } else {
-      const v = ref.el.value === '' ? '_(empty)_' : ref.el.value;
-      newBody = body.replace(/(:\*\*[ ]*).*$/, `$1${v}`);
-    }
-    if (newBody !== body) {
-      md = md.replace(re, `${m[1]}${newBody}${m[3]}`);
-    }
-  }
-  if (hasAnnotations) md = _writeAnnotations(md, annotations.map(a => {
-    let value = '';
-    if (a.kind === 'check') {
-      value = '✓';
-    } else if (a.kind === 'signature') {
-      const sid = a.el && a.el.dataset && a.el.dataset.signatureId;
-      value = sid ? `signature:${sid}` : '';
-    } else {
-      value = (a.el && typeof a.el.value === 'string') ? a.el.value : '';
-    }
-    return {
-      id: a.id,
-      page: a.page,
-      x: a.x,
-      y: a.y,
-      w: a.w,
-      h: a.h,
-      kind: a.kind || 'text',
-      lineHeight: a.lineHeight || 1.3,
-      fontSize: a.fontSize || 11,
-      value,
-    };
-  }));
-  return { doc, md, changed: md !== doc.content };
-}
-
-function _syncPdfPaneToDoc(docId = _getActiveDocId(), { markDirty = true } = {}) {
-  if (!docId) return false;
-  const composed = _composePdfPaneMarkdown(docId);
-  if (!composed || !composed.changed) return false;
-  composed.doc.content = composed.md;
-  if (typeof document !== 'undefined' && docId === _getActiveDocId()) {
-    const ta = document.getElementById('doc-editor-textarea');
-    if (ta) ta.value = composed.md;
-  }
-  if (markDirty && typeof _deps.markDocumentDirty === 'function') {
-    _deps.markDocumentDirty(docId);
-  }
-  return true;
-}
-
-async function _flushPdfPaneSave(docId = _getActiveDocId(), opts = {}) {
-  if (!docId) return false;
-  const hadTimer = _hasPendingPdfPaneSave(docId);
-  _cancelPdfPaneSave(docId);
-  if (!hadTimer) {
-    const composed = _composePdfPaneMarkdown(docId);
-    if (!composed || !composed.changed) return false;
-  }
-  return await _savePdfPaneToMarkdown(docId, { ...opts, persistDraft: hadTimer });
-}
-
-async function _savePdfPaneToMarkdown(targetDocId = _getActiveDocId(), opts = {}) {
-  if (targetDocId && typeof targetDocId === 'object') {
-    opts = targetDocId;
-    targetDocId = opts.docId || _getActiveDocId();
-  }
-  const docId = targetDocId || opts.docId || _getActiveDocId();
-  if (!docId) return false;
-  _cancelPdfPaneSave(docId);
-  const doc = _getDoc(docId);
-  const composed = _composePdfPaneMarkdown(docId)
-    || (opts.persistDraft && doc ? { doc, md: doc.content, changed: false } : null);
-  if (!composed) return false;
-  if (!composed.changed && !opts.persistDraft && !['dirty', 'error'].includes(doc?._saveState)) {
-    _setPdfSaveStatus('idle', undefined, docId);
-    return true;
-  }
-  _setPdfSaveStatus('saving', undefined, docId);
-  try {
-    const ok = await _persistPdfDocument(docId, composed.md, opts);
-    if (!ok) {
-      if (_getDoc(docId)) {
-        _setPdfSaveStatus('error', 'Save failed', docId);
-      } else {
-        _setPdfSaveStatus('idle', undefined, docId);
-      }
-      return false;
-    }
-    _setPdfSaveStatus('saved', undefined, docId);
-    return true;
-  } catch (e) {
-    const msg = e?.status ? `Save failed: ${e.status}` : (e.message || 'Save failed');
-    _setPdfSaveStatus('error', msg, docId);
-    console.warn('PDF-pane save failed:', e);
-    return false;
+  const wasMounted = _pdfMountedDocId === docId;
+  _cleanupPersistedPdfDocState(docId);
+  if (wasMounted) {
+    _clearPdfMeasureMirror();
   }
 }
 
@@ -1565,6 +1124,10 @@ async function _setPdfViewActive(active) {
     await _flushPdfPaneSave(activeId);
     if (_pdfViewTransitionByDoc.get(activeId) !== transition || _getActiveDocId() !== activeId) return;
     _pdfViewState.set(activeId, false);
+    _unwirePdfPaneProximity();
+    _unwirePdfAnnotationMenuDismiss();
+    _clearPdfMeasureMirror();
+    _pdfActivePointerCleanup?.();
     delete pane.dataset.renderedDocId;
     pane.style.display = 'none';
     const savedPill = document.getElementById('doc-pdf-save-pill');
@@ -1579,7 +1142,7 @@ async function _setPdfViewActive(active) {
 }
 
 function initPdfTools(options = {}) {
-  _deps = { ..._deps, ...options };
+  configurePdfRuntimeDeps(options);
   if (typeof document === 'undefined') return () => {};
   _pdfToolsUnbind?.();
   const bindings = [];
@@ -1613,7 +1176,7 @@ function initPdfTools(options = {}) {
   window.addEventListener('beforeunload', beforeUnload);
   bindings.push(() => window.removeEventListener('beforeunload', beforeUnload));
   const unbind = () => {
-    for (const unbind of bindings.splice(0)) unbind();
+    for (const unbindFn of bindings.splice(0)) unbindFn();
   };
   _pdfToolsUnbind = unbind;
   const dispose = () => {
@@ -1621,12 +1184,15 @@ function initPdfTools(options = {}) {
     if (_pdfToolsUnbind !== unbind) return;
     _pdfToolsUnbind = null;
     _pdfToolsDispose = null;
+    _unwirePdfAnnotationMenuDismiss();
+    _unwirePdfPaneProximity();
+    _clearPdfMeasureMirror();
+    _pdfActivePointerCleanup?.();
     const docId = _pdfMountedDocId;
-    _pdfMountedDocId = null;
     if (docId) {
-      _pdfPaneFieldsByDoc.delete(docId);
-      _pdfPaneAnnotationsByDoc.delete(docId);
-      _pdfRenderGenerationByDoc.set(docId, (_pdfRenderGenerationByDoc.get(docId) || 0) + 1);
+      _releasePdfPane(docId);
+    } else {
+      setPdfMountedDocId(null);
     }
   };
   _pdfToolsDispose = dispose;
