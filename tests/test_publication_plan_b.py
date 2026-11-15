@@ -121,6 +121,7 @@ def test_2fa_setup_still_generates_a_server_png():
 
     auth = Mock()
     auth.get_username_for_token.return_value = 'alice'
+    auth.is_oidc_user.return_value = False
     auth.totp_enabled.return_value = False
     auth.totp_generate_secret.return_value = 'JBSWY3DPEHPK3PXP'
     auth.totp_get_provisioning_uri.return_value = 'otpauth://totp/test:alice?secret=JBSWY3DPEHPK3PXP&issuer=test'
