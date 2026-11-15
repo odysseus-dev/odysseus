@@ -447,6 +447,18 @@ export function disposeSourceEditor(pane) {
   _lineNumberResizeRaf = null;
 }
 
+export function scheduleAutoTitle(value, docId = activeDocId, delay = 600) {
+  const doc = docId ? docs.get(docId) : null;
+  clearTimeout(_autoTitleDebounce);
+  _autoTitleDebounce = null;
+  if (!docId) return;
+  if (doc && doc.title && doc.title !== 'Untitled') return;
+  _autoTitleDebounce = setTimeout(() => {
+    _autoTitleDebounce = null;
+    if (docId && docs.get(docId) === doc) autoTitleFromContent(value, docId);
+  }, delay);
+}
+
 export function scheduleSourceEditorWork(value, docId = activeDocId) {
   const pane = document.getElementById('doc-editor-pane');
   const doc = docs.get(docId);
@@ -461,9 +473,5 @@ export function scheduleSourceEditorWork(value, docId = activeDocId) {
     _autoDetectDebounce = null;
     if (ownsPane()) attemptAutoDetect();
   }, AUTO_DETECT_DELAY);
-  clearTimeout(_autoTitleDebounce);
-  _autoTitleDebounce = setTimeout(() => {
-    _autoTitleDebounce = null;
-    if (docId && docs.get(docId) === doc) autoTitleFromContent(value, docId);
-  }, 600);
+  scheduleAutoTitle(value, docId, 600);
 }

@@ -1,5 +1,5 @@
 import { _selections, clearSelection, updateRichSelectionState } from '../selection/selectionHighlights.js';
-import { autoTitleFromContent } from '../documentActions.js';
+import { scheduleAutoTitle } from '../editor/sourceEditor.js';
 import { _scheduleDocumentStats, _refreshDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
 import { _richSelectionCell, _appendRichTableRow } from '../richTables.js';
 import { _uploadMarkdownImages } from '../editor/markdownImages.js';
@@ -41,10 +41,12 @@ export function _wireEmailRichbody(rich) {
       if (findBar?.style.display !== 'none' && findInput?.value) {
         findInput.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      const doc = activeDocId && docs.get(activeDocId);
-      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()) {
-        clearTimeout(rich._autoTitleTimer);
-        rich._autoTitleTimer = setTimeout(() => autoTitleFromContent(rich.innerText || ''), 500);
+      const docId = activeDocId;
+      const doc = docId && docs.get(docId);
+      const pane = rich.closest('#doc-editor-pane');
+      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()
+          && rich.isConnected && (!pane || (pane.isConnected && pane.dataset.activeDocumentId === docId))) {
+        scheduleAutoTitle(rich.innerText || '', docId, 500);
       }
       _scheduleDocumentStats();
       _refreshDocumentOutline();

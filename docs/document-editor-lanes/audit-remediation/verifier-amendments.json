@@ -440,7 +440,7 @@
         },
         {
           "from": "        _refreshMarkdownPreviewIfVisible(docId, newContent);\n      }\n    }\n\n",
-          "to": "        _refreshMarkdownPreviewIfVisible(docId, newContent);\n      }\n    }\n\n    const pane = document.getElementById('doc-editor-pane');\n    if (pane) pane.dataset.activeDocumentId = docId;\n    const ownsPane = () => pane?.isConnected && pane === document.getElementById('doc-editor-pane') && pane.dataset.activeDocumentId === docId && activeDocId === docId;\n\n",
+          "to": "        _refreshMarkdownPreviewIfVisible(docId, newContent);\n      }\n    }\n\n    const ownsPane = () => pane?.isConnected && pane === document.getElementById('doc-editor-pane') && pane.dataset.activeDocumentId === docId && activeDocId === docId;\n\n",
           "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
         },
         {
@@ -450,13 +450,18 @@
         },
         {
           "from": "    if (data.title && titleInput) titleInput.value = data.title;\n",
-          "to": "    if (titleInput) titleInput.value = docs.get(docId)?.title || '';\n",
-          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+          "to": "    if (titleInput) titleInput.value = docs.get(docId)?.title || '';\n    // Auto-title from content after activating the tab and title input so UI stays synchronized\n    if (!data.title) autoTitleFromContent(newContent, docId);\n",
+          "rationale": "Synchronize title input before deriving an automatic title so subsequent tab switches preserve the derived title."
         },
         {
           "from": "    activeDocId = docId;\n",
-          "to": "    setActiveDocId(docId);\n",
-          "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
+          "to": "    setActiveDocId(docId);\n    const pane = document.getElementById('doc-editor-pane');\n    if (pane) pane.dataset.activeDocumentId = docId;\n",
+          "rationale": "Stamp pane document ownership alongside setActiveDocId before updating controls or deriving titles."
+        },
+        {
+          "from": "    // Auto-title from content if still \"Untitled\" and AI didn't provide a title\n    if (!data.title) autoTitleFromContent(newContent, docId);\n\n",
+          "to": "",
+          "rationale": "Defer auto-titling until after setActiveDocId and titleInput initialization."
         },
         {
           "from": "    if (!isOpen) openPanel();\n",
@@ -494,7 +499,7 @@
           "rationale": "Use documentState owner operations and guard delayed UI updates against a superseded pane and document."
         }
       ],
-      "targetFunctionSha256": "2a4492e0bbad6d3c48958e98e337af3fcf09e7fd4f6576d9509c6e684392cfcd"
+      "targetFunctionSha256": "f3fbeb3de1208ead004802bb1edbf41599d52ed7645580d06921b9612e288bb8"
     },
     "updateLanguage": {
       "file": "ui/documentActions.js",
@@ -544,6 +549,30 @@
           "from": "        if (lang === 'markdown') {\n          requestAnimationFrame(() => _setMarkdownPreviewActive(true, { remember: true }));\n        }",
           "to": "        if (lang === 'markdown') {\n          const docId = activeDocId;\n          const pane = document.getElementById('doc-editor-pane');\n          requestAnimationFrame(() => {\n            if (activeDocId !== docId || !pane?.isConnected || pane.dataset.activeDocumentId !== docId) return;\n            _setMarkdownPreviewActive(true, { remember: true });\n          });\n        }",
           "rationale": "Capture the accepting document and connected pane before scheduling preview activation."
+        }
+      ]
+    },
+    "updateTitle": {
+      "file": "ui/documentActions.js",
+      "rationale": "Verify PATCH status, preserve document record identity, and synchronize an empty or Untitled active title input after async completion.",
+      "targetFunctionSha256": "6a52909a162f6fe8d64938fff58768fce47e9aa42b1e9b8af2eec0edce36ed95",
+      "replacements": [
+        {
+          "from": "    const title = overrideTitle || document.getElementById('doc-title-input')?.value;\n    if (!title) return;\n    try {\n      await fetch(`${API_BASE}/api/document/${docId}`, {\n        method: 'PATCH',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ title }),\n      });\n      if (docs.has(docId)) {\n        docs.get(docId).title = title;\n        renderTabs();\n      }\n    } catch (e) {",
+          "to": "    const doc = docs.get(docId);\n    const title = overrideTitle || document.getElementById('doc-title-input')?.value;\n    if (!title) return;\n    try {\n      const res = await fetch(`${API_BASE}/api/document/${docId}`, {\n        method: 'PATCH',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ title }),\n      });\n      if (!res.ok) throw new Error(`HTTP ${res.status}`);\n      const currentDoc = docs.get(docId);\n      if (currentDoc && (!doc || currentDoc === doc)) {\n        currentDoc.title = title;\n        const titleInput = document.getElementById('doc-title-input');\n        const pane = document.getElementById('doc-editor-pane');\n        const activeTitle = (titleInput?.value || '').trim();\n        if (titleInput && docId === activeDocId\n            && (!pane || pane.dataset.activeDocumentId === docId)\n            && document.activeElement !== titleInput\n            && (!activeTitle || activeTitle === 'Untitled')) {\n          titleInput.value = title;\n        }\n        renderTabs();\n      }\n    } catch (e) {",
+          "rationale": "Retain document identity across await and keep active title UI consistent without clobbering unrelated tabs."
+        }
+      ]
+    },
+    "_wireEmailRichbody": {
+      "file": "ui/richEditor/richBodyWiring.js",
+      "rationale": "Route rich-text automatic title scheduling through the source-editor auto-title owner with captured document identity and pane disposal cleanup.",
+      "targetFunctionSha256": "c52a23393f9c1810b0c420908543c23ce1dda13393fde276c9175086596d46b1",
+      "replacements": [
+        {
+          "from": "      const doc = activeDocId && docs.get(activeDocId);\n      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()) {\n        clearTimeout(rich._autoTitleTimer);\n        rich._autoTitleTimer = setTimeout(() => autoTitleFromContent(rich.innerText || ''), 500);\n      }",
+          "to": "      const docId = activeDocId;\n      const doc = docId && docs.get(docId);\n      const pane = rich.closest('#doc-editor-pane');\n      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()\n          && rich.isConnected && (!pane || (pane.isConnected && pane.dataset.activeDocumentId === docId))) {\n        scheduleAutoTitle(rich.innerText || '', docId, 500);\n      }",
+          "rationale": "Capture rich-text content and document identity synchronously and cancel on pane disposal."
         }
       ]
     }
@@ -698,6 +727,21 @@
           "rationale": "Write the sentinel only in its owning module."
         }
       ]
+    },
+    {
+      "id": "openPanel#7527",
+      "id": "openPanel#7527",
+      "rationale": "Validate captured document, pane, and navigation generation before applying async version-history comparison results, and separate fetch errors from diff initialization errors.",
+      "targetFunctionFile": "ui/header/headerActions.js",
+      "targetFunctionName": "bindHeaderActionsSecondary",
+      "targetFunctionSha256": "94045817f0870cd817baef7df1f10e5beaffe879eb5012ca14a2e3c24956b236",
+      "replacements": [
+        {
+          "from": "if (diffToggleBtn) diffToggleBtn.addEventListener('click', async () => {\n      if (_diffModeActive) {\n        exitDiffMode(true);\n        return;\n      }\n      if (!activeDocId) return;\n      const ta = document.getElementById('doc-editor-textarea');\n      if (!ta) return;\n      const current = ta.value;\n\n      // Fetch version history and compare against previous version\n      try {\n        const res = await fetch(`${API_BASE}/api/document/${activeDocId}/versions`);\n        if (!res.ok) throw new Error('Failed');\n        const versions = await res.json();\n        if (versions.length < 2) {\n          if (uiModule) uiModule.showToast('No previous version to compare');\n          return;\n        }\n        // versions are sorted desc — [0] is latest, [1] is previous\n        const prevContent = versions[1].content || '';\n        if (prevContent === current) {\n          if (uiModule) uiModule.showToast('No changes from previous version');\n          return;\n        }\n        enterDiffMode(prevContent, current);\n      } catch {\n        if (uiModule) uiModule.showError('Failed to load version history');\n      }\n    });",
+          "to": "if (diffToggleBtn) {\n      let _compareRequestSeq = 0;\n      diffToggleBtn.addEventListener('click', async () => {\n      const requestSeq = ++_compareRequestSeq;\n      if (_diffModeActive) {\n        exitDiffMode(true);\n        return;\n      }\n      const docId = activeDocId;\n      if (!docId) return;\n      const doc = docs.get(docId);\n      const ownerPane = pane || document.getElementById('doc-editor-pane');\n      const ta = document.getElementById('doc-editor-textarea');\n      if (!doc || !ownerPane || !ta) return;\n      const generation = _documentNavigationGeneration;\n      const current = ta.value;\n      const isCompareOwnerValid = () => (\n        requestSeq === _compareRequestSeq &&\n        isOpen &&\n        _documentNavigationGeneration === generation &&\n        activeDocId === docId &&\n        docs.get(docId) === doc &&\n        ownerPane.isConnected &&\n        ownerPane === document.getElementById('doc-editor-pane') &&\n        ownerPane.dataset.activeDocumentId === docId\n      );\n\n      // Fetch version history and compare against previous version\n      let versions;\n      try {\n        const res = await fetch(`${API_BASE}/api/document/${docId}/versions`);\n        if (!res.ok) throw new Error(`HTTP ${res.status}`);\n        versions = await res.json();\n      } catch (err) {\n        if (!isCompareOwnerValid()) return;\n        console.error('Failed to load version history:', err);\n        if (uiModule) uiModule.showError('Failed to load version history');\n        return;\n      }\n\n      if (!isCompareOwnerValid()) return;\n      if (!Array.isArray(versions) || versions.length < 2) {\n        if (uiModule) uiModule.showToast('No previous version to compare');\n        return;\n      }\n      // versions are sorted desc — [0] is latest, [1] is previous\n      const prevContent = versions[1].content || '';\n      if (prevContent === current) {\n        if (uiModule) uiModule.showToast('No changes from previous version');\n        return;\n      }\n      try {\n        enterDiffMode(prevContent, current);\n      } catch (err) {\n        console.error('Failed to initialize diff mode:', err);\n        if (uiModule) uiModule.showError('Failed to compare versions');\n        throw err;\n      }\n    });\n    }",
+          "rationale": "Guard delayed compare-changes activation with initiating document, record, pane, and navigation generation."
+        }
+      ]
     }
   ],
   "exports": {
@@ -773,7 +817,14 @@
       {
         "name": "handleDocUpdate",
         "rationale": "Expose the maintained document update entry point.",
-        "declarationSha256": "1ff4803b0ac3231907c103f15014edc058571ec17f305ea7d39e40b1cac68f23"
+        "declarationSha256": "2d1673c75f71f4d5b6382541aad75463c8a0cf21dff9f4b9cda8ecde6a6a740a"
+      }
+    ],
+    "ui/editor/sourceEditor": [
+      {
+        "name": "scheduleAutoTitle",
+        "rationale": "Share source-editor auto-title debouncing and disposal with rich-text editing through a single module owner.",
+        "declarationSha256": "7557d2d60f18df90396bd7e5527a9cda7c83434a358e1cbc3d7e6d9427f6a102"
       }
     ],
     "ui/aiUpdates/liveStream": [

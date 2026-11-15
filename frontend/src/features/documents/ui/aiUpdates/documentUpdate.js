@@ -317,9 +317,6 @@ export function handleDocUpdate(data) {
 
     _syncDocIndicator();
 
-    // Auto-title from content if still "Untitled" and AI didn't provide a title
-    if (!data.title) autoTitleFromContent(newContent, docId);
-
     if (!isOpen) openPanel();
     textarea = document.getElementById('doc-editor-textarea');
 
@@ -335,6 +332,8 @@ export function handleDocUpdate(data) {
 
     // Switch to this doc's tab
     setActiveDocId(docId);
+    const pane = document.getElementById('doc-editor-pane');
+    if (pane) pane.dataset.activeDocumentId = docId;
 
     const badge = document.getElementById('doc-version-badge');
     const titleInput = document.getElementById('doc-title-input');
@@ -347,6 +346,8 @@ export function handleDocUpdate(data) {
     }
     if (badge) badge.textContent = `v${data.version || 1}`;
     if (titleInput) titleInput.value = docs.get(docId)?.title || '';
+    // Auto-title from content after activating the tab and title input so UI stays synchronized
+    if (!data.title) autoTitleFromContent(newContent, docId);
     // Set language from data, or fall back to what the doc already has (e.g. from streaming)
     const docLang = data.language || (docs.has(docId) && docs.get(docId).language) || '';
     if (langSelect) langSelect.value = docLang || 'markdown';
@@ -385,8 +386,6 @@ export function handleDocUpdate(data) {
       }
     }
 
-    const pane = document.getElementById('doc-editor-pane');
-    if (pane) pane.dataset.activeDocumentId = docId;
     const ownsPane = () => pane?.isConnected && pane === document.getElementById('doc-editor-pane') && pane.dataset.activeDocumentId === docId && activeDocId === docId;
 
     // Flash the editor wrap to indicate content was updated

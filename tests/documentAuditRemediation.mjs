@@ -591,3 +591,390 @@ test('compare: deferred accepted-change preview cannot change another document',
   assert.equal(await page.evaluate(() => state.docs.get('a')._markdownPreviewActive), true);
   assert.equal(await page.evaluate(() => state.docs.get('b')._markdownPreviewActive === true), false);
 });
+
+test('compare: stale versions response after navigation does not activate diff or overwrite target across exit paths', async t => {
+  for (const exitPath of ['accept-all', 'reject-all', 'toggle-off', 'navigate-c', 'minimize', 'escape']) {
+    await t.test(exitPath, async t => {
+      let releaseVersions;
+      let markVersionsStarted;
+      const heldVersions = new Promise(resolve => { releaseVersions = resolve; });
+      const versionsStarted = new Promise(resolve => { markVersionsStarted = resolve; });
+      const { page, requests } = await setup(t, async (route, request) => {
+        if (request.method === 'GET' && request.path === '/api/document/a/versions') {
+          markVersionsStarted();
+          await heldVersions;
+          await route.fulfill({ json: [{ content: 'A latest' }, { content: 'A previous' }] });
+          return true;
+        }
+        if (request.method === 'GET' && request.path === '/api/document/b/versions') {
+          await route.fulfill({ json: [{ content: 'B own content' }] });
+          return true;
+        }
+        return false;
+      });
+      await inject(page, 'b', 'B own content', 'text', 'B Title');
+      await inject(page, 'c', 'C own content', 'text', 'C Title');
+      await inject(page, 'a', 'A latest', 'text', 'A Title');
+
+      await page.locator('#doc-diff-toggle-btn').click();
+      await versionsStarted;
+
+      await page.evaluate(() => editor.loadDocument('b'));
+      assert.equal(await page.evaluate(() => state.activeDocId), 'b');
+
+      releaseVersions();
+      await page.waitForTimeout(50);
+
+      const diffState = await page.evaluate(async () => {
+        const diff = await import('/static/js/document/ui/diffViewer.js');
+        const toolbar = document.getElementById('doc-diff-toolbar');
+        return {
+          active: diff._diffModeActive,
+          bContent: state.docs.get('b').content,
+          editorValue: document.getElementById('doc-editor-textarea')?.value,
+          toolbarVisible: Boolean(toolbar && getComputedStyle(toolbar).display !== 'none'),
+          codeText: document.getElementById('doc-editor-code')?.textContent || '',
+        };
+      });
+      assert.equal(diffState.active, false);
+      assert.equal(diffState.bContent, 'B own content');
+      assert.equal(diffState.editorValue, 'B own content');
+      assert.equal(diffState.toolbarVisible, false);
+      assert.equal(diffState.codeText.includes('A previous'), false);
+
+      if (exitPath === 'accept-all') {
+        await page.evaluate(() => document.getElementById('doc-diff-accept-all-btn')?.click());
+      } else if (exitPath === 'reject-all') {
+        await page.evaluate(() => document.getElementById('doc-diff-reject-all-btn')?.click());
+      } else if (exitPath === 'toggle-off') {
+        await page.locator('#doc-diff-toggle-btn').click();
+      } else if (exitPath === 'navigate-c') {
+        await page.evaluate(() => editor.loadDocument('c'));
+      } else if (exitPath === 'minimize') {
+        await page.evaluate(() => editor.closePanel('down'));
+      } else if (exitPath === 'escape') {
+        await page.keyboard.press('Escape');
+      }
+      await page.waitForTimeout(50);
+
+      assert.equal(await page.evaluate(() => state.docs.get('b').content), 'B own content');
+      const puts = requests.filter(r => r.method === 'PUT' && (r.path === '/api/document/b' || r.path === '/api/document/c'));
+      assert.deepEqual(puts, []);
+    });
+  }
+});
+
+test('compare: rapid A -> B -> A switch invalidates stale request, while normal compare on A works', async t => {
+  let releaseFirst;
+  let firstStarted;
+  let versionCall = 0;
+  const heldFirst = new Promise(resolve => { releaseFirst = resolve; });
+  const firstInFlight = new Promise(resolve => { firstStarted = resolve; });
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method === 'GET' && request.path === '/api/document/a/versions') {
+      versionCall += 1;
+      if (versionCall === 1) {
+        firstStarted();
+        await heldFirst;
+        await route.fulfill({ json: [{ content: 'A new' }, { content: 'A stale old' }] });
+        return true;
+      }
+      await route.fulfill({ json: [{ content: 'A new' }, { content: 'A valid old' }] });
+      return true;
+    }
+    return false;
+  });
+  await inject(page, 'b', 'B original', 'text', 'B Title');
+  await inject(page, 'a', 'A new', 'text', 'A Title');
+
+  await page.locator('#doc-diff-toggle-btn').click();
+  await firstInFlight;
+  await page.evaluate(async () => {
+    await editor.loadDocument('b');
+    await editor.loadDocument('a');
+  });
+  releaseFirst();
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive), false);
+
+  await page.locator('#doc-diff-toggle-btn').click();
+  await page.waitForFunction(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive === true);
+  const diffInfo = await page.evaluate(() => {
+    const toolbar = document.getElementById('doc-diff-toolbar');
+    return {
+      toolbarVisible: Boolean(toolbar && getComputedStyle(toolbar).display !== 'none'),
+      codeText: document.getElementById('doc-editor-code')?.textContent || '',
+    };
+  });
+  assert.equal(diffInfo.toolbarVisible, true);
+  assert.equal(diffInfo.codeText.includes('A valid old'), true);
+  assert.equal(diffInfo.codeText.includes('A new'), true);
+
+  await page.locator('#doc-diff-accept-all-btn').click();
+  await page.waitForFunction(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive === false);
+  assert.equal(await page.evaluate(() => state.docs.get('a').content), 'A new');
+  assert.equal(requests.filter(r => r.method === 'PUT' && r.path === '/api/document/b').length, 0);
+});
+
+test('compare: stale version-fetch errors do not surface after navigation while active fetch errors report properly', async t => {
+  let releaseFail;
+  let failStarted;
+  const heldFail = new Promise(resolve => { releaseFail = resolve; });
+  const failInFlight = new Promise(resolve => { failStarted = resolve; });
+  let mode = 'held-fail';
+  const { page } = await setup(t, async (route, request) => {
+    if (request.method === 'GET' && request.path.endsWith('/versions')) {
+      if (mode === 'held-fail') {
+        failStarted();
+        await heldFail;
+        await route.fulfill({ status: 500, json: { error: 'boom' } });
+        return true;
+      }
+      await route.fulfill({ status: 500, json: { error: 'boom' } });
+      return true;
+    }
+    return false;
+  });
+  await inject(page, 'b', 'B body', 'text', 'B');
+  await inject(page, 'a', 'A body', 'text', 'A');
+  await page.evaluate(async () => {
+    const host = await import('/static/js/document/ui/host.js');
+    window.__errors = [];
+    host.uiModule.showError = msg => window.__errors.push(msg);
+  });
+
+  await page.locator('#doc-diff-toggle-btn').click();
+  await failInFlight;
+  await page.evaluate(() => editor.loadDocument('b'));
+  releaseFail();
+  await page.waitForTimeout(50);
+  assert.deepEqual(await page.evaluate(() => window.__errors), []);
+
+  mode = 'active-fail';
+  await page.locator('#doc-diff-toggle-btn').click();
+  await page.waitForFunction(() => window.__errors.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.__errors), ['Failed to load version history']);
+});
+
+test('titles: rich-text A to Markdown B retains A identity and leaves B untitled', async t => {
+  const { page, requests } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'b', 'B markdown body', 'markdown', '');
+  await inject(page, 'a', '', 'richtext', '');
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('Rich Title A');
+  await page.evaluate(() => editor.loadDocument('b'));
+  await page.clock.runFor(700);
+  await page.waitForFunction(() => state.docs.get('a').title === 'Rich Title A');
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+  assert.match(await page.evaluate(() => state.docs.get('a').content), /Rich Title A/);
+  assert(requests.some(r => r.method === 'PATCH' && r.path === '/api/document/a' && r.body?.title === 'Rich Title A'));
+  assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title));
+});
+
+test('titles: rich-text A to rich-text B never applies A title to B', async t => {
+  const { page, requests } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'b', 'B rich initial', 'richtext', '');
+  await inject(page, 'a', '', 'richtext', '');
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('Alpha Rich Title');
+  await page.evaluate(() => editor.loadDocument('b'));
+  await page.clock.runFor(700);
+  await page.waitForFunction(() => state.docs.get('a').title === 'Alpha Rich Title');
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+  assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title));
+
+  await page.locator('#doc-email-richbody').fill('');
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('Beta Own Title');
+  await page.clock.runFor(700);
+  await page.waitForFunction(() => state.docs.get('b').title === 'Beta Own Title');
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), 'Beta Own Title');
+  assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title === 'Alpha Rich Title'));
+});
+
+test('titles: rich-text A minimized before B opened cancels pending title timer', async t => {
+  const { page, requests } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'b', 'B content', 'richtext', '');
+  await inject(page, 'a', '', 'richtext', '');
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('Minimized Rich Title');
+  await page.evaluate(() => editor.closePanel('down'));
+  await page.clock.runFor(900);
+  assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/editor/sourceEditor.js'))._autoTitleDebounce), null);
+  assert(!requests.some(r => r.method === 'PATCH' && r.body?.title));
+  await page.evaluate(() => editor.loadDocument('b'));
+  await page.clock.runFor(900);
+  assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/editor/sourceEditor.js'))._autoTitleDebounce), null);
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+  assert.equal(await page.evaluate(() => state.docs.get('a').title), '');
+  assert.match(await page.evaluate(() => state.docs.get('a').content), /Minimized Rich Title/);
+  assert(!requests.some(r => r.method === 'PATCH' && r.body?.title));
+});
+
+test('titles: rich-text rapid switching and deletion guard stale callbacks, normal auto-title works, and remounts do not duplicate timers', async t => {
+  const { page, requests } = await setup(t);
+  await page.clock.install();
+  await inject(page, 'b', 'B untitled', 'richtext', '');
+  await inject(page, 'a', '', 'richtext', '');
+
+  // Rapid switch A -> B -> A -> B cancels earlier A timer and applies latest A text only to A
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('First Draft');
+  await page.evaluate(async () => {
+    await editor.loadDocument('b');
+    await editor.loadDocument('a');
+  });
+  await page.locator('#doc-email-richbody').fill('Final Draft A');
+  await page.locator('#doc-email-richbody').dispatchEvent('input');
+  await page.evaluate(() => editor.loadDocument('b'));
+  await page.clock.runFor(700);
+  await page.waitForFunction(() => state.docs.get('a').title === 'Final Draft A');
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+  assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title));
+
+  // Closing/removing A before its title timer fires cancels auto-title via record identity
+  await inject(page, 'temp', '', 'richtext', '');
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('Temp Removed Doc');
+  await page.evaluate(async () => {
+    state.markDeleted('temp');
+    state.removeDocument('temp');
+    await editor.loadDocument('b');
+  });
+  await page.clock.runFor(700);
+  assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/temp' && r.body?.title));
+  assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
+
+  // Repeated minimize/reopen cycles still allow single normal rich-text auto-title without duplicate PATCHes
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(async () => {
+      editor.closePanel('down');
+      await editor.loadDocument('b');
+    });
+    await page.clock.runFor(250);
+  }
+  await page.locator('#doc-email-richbody').fill('');
+  await page.locator('#doc-email-richbody').click();
+  await page.keyboard.type('Normal Rich Title');
+  await page.clock.runFor(700);
+  await page.waitForFunction(() => state.docs.get('b').title === 'Normal Rich Title');
+  const bTitlePatches = requests.filter(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title === 'Normal Rich Title');
+  assert.equal(bTitlePatches.length, 1);
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Normal Rich Title');
+});
+
+test('titles: AI-created document without explicit title preserves derived title across tab switching', async t => {
+  let releasePatch;
+  const heldPatch = new Promise(resolve => { releasePatch = resolve; });
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method === 'PATCH' && request.path === '/api/document/ai1') {
+      await heldPatch;
+      await route.fulfill({ json: { status: 'ok', title: request.body?.title } });
+      return true;
+    }
+    if (request.method === 'PATCH' && request.path === '/api/document/ai2') {
+      await route.fulfill({ json: { status: 'ok', title: request.body?.title } });
+      return true;
+    }
+    return false;
+  });
+
+  await inject(page, 'prev', 'Previous doc', 'markdown', 'Previous Title');
+  await page.evaluate(() => {
+    editor.handleDocUpdate({
+      doc_id: 'ai1',
+      content: '# Executive Summary\n\nBody text.',
+      language: 'markdown',
+      version: 1,
+      title: '',
+    });
+  });
+
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Executive Summary');
+  releasePatch();
+  await page.waitForFunction(() => state.docs.get('ai1')?.title === 'Executive Summary');
+
+  const tabTitle = id => page.evaluate(docId => {
+    const tab = document.querySelector(`.doc-tab[data-doc-id="${docId}"] .doc-tab-title`);
+    return tab?.textContent || '';
+  }, id);
+  assert.equal(await tabTitle('ai1'), 'Executive Summary');
+
+  await page.evaluate(() => editor.loadDocument('prev'));
+  assert.equal(await page.evaluate(() => state.docs.get('ai1').title), 'Executive Summary');
+  assert.equal(await tabTitle('ai1'), 'Executive Summary');
+
+  await page.evaluate(() => editor.loadDocument('ai1'));
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Executive Summary');
+  assert.equal(await tabTitle('ai1'), 'Executive Summary');
+  assert.equal(await page.evaluate(() => state.docs.get('ai1').title), 'Executive Summary');
+  assert.equal(await page.evaluate(() => state.docs.get('ai1').content), '# Executive Summary\n\nBody text.');
+  assert(requests.some(r => r.method === 'PATCH' && r.path === '/api/document/ai1' && r.body?.title === 'Executive Summary'));
+
+  await page.evaluate(() => editor.closePanel('down'));
+  await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
+  await page.evaluate(() => {
+    editor.handleDocUpdate({
+      doc_id: 'ai2',
+      content: '# Closed Start Report\n\nBody',
+      language: 'markdown',
+      version: 1,
+    });
+  });
+  await page.waitForFunction(() => state.docs.get('ai2')?.title === 'Closed Start Report');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Closed Start Report');
+  await page.evaluate(async () => {
+    await editor.loadDocument('prev');
+    await editor.loadDocument('ai2');
+  });
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Closed Start Report');
+  assert.equal(await tabTitle('ai2'), 'Closed Start Report');
+});
+
+test('facade: importing and running document module publishes only the documented window globals and exports', async t => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  t.after(() => assert.deepEqual(errors, [], 'integrated module graph must not throw'));
+  await page.route('**/api/**', route => route.fulfill({ json: { version_count: 1 } }));
+  await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentStats.js`);
+  await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1">${styles}<div id="toast"></div><aside id="sidebar"></aside><main id="chat-container"><textarea id="message"></textarea></main>`);
+  const result = await page.evaluate(async () => {
+    await import('/static/js/ui.js?v=20260916largetoolscroll1');
+    await import('/static/js/sessions.js');
+    await import('/static/js/markdown.js');
+    await import('/static/js/documentLibrary.js?v=20260911librarybulkdelete1');
+    await import('/static/js/modalManager.js');
+    const before = new Set(Object.getOwnPropertyNames(window));
+    const mod = await import('/static/js/document.js');
+    mod.init('');
+    await mod.injectFreshDoc({
+      id: 'pub-email',
+      title: 'Email Pub Check',
+      language: 'email',
+      current_content: 'To: a@example.com\nSubject: Hi\n---\nBody',
+      version_count: 1,
+    });
+    const after = Object.getOwnPropertyNames(window);
+    return {
+      addedKeys: after.filter(k => !before.has(k) && !/^\d+$/.test(k)).sort(),
+      namedExportCount: Object.keys(mod).filter(k => k !== 'default').length,
+      defaultKeyCount: Object.keys(mod.default).length,
+    };
+  });
+  assert.equal(result.namedExportCount, 30);
+  assert.equal(result.defaultKeyCount, 39);
+  assert.deepEqual(result.addedKeys, [
+    '_selections',
+    'documentModule',
+    'markdownModule',
+    'odysseusEmailCaretIntent',
+    'odysseusEmailSendIntent',
+    'uiModule',
+  ]);
+});

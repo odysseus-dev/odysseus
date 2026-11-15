@@ -2,7 +2,7 @@ import { closePanel } from '../../application/documentCommands.js';
 import { enterDiffMode } from '../diffViewer.js';
 // ui/header/headerActions.js
 
-import { API_BASE, activeDocId, docs } from '../../application/documentState.js';
+import { API_BASE, _documentNavigationGeneration, activeDocId, docs, isOpen } from '../../application/documentState.js';
 
 import { saveDocument } from '../../application/persistence.js';
 
@@ -478,34 +478,64 @@ if (docRedoBtn) docRedoBtn.addEventListener('click', () => {
       _dismissDocKb();
     });
 const diffToggleBtn = document.getElementById('doc-diff-toggle-btn');
-if (diffToggleBtn) diffToggleBtn.addEventListener('click', async () => {
+if (diffToggleBtn) {
+      let _compareRequestSeq = 0;
+      diffToggleBtn.addEventListener('click', async () => {
+      const requestSeq = ++_compareRequestSeq;
       if (_diffModeActive) {
         exitDiffMode(true);
         return;
       }
-      if (!activeDocId) return;
+      const docId = activeDocId;
+      if (!docId) return;
+      const doc = docs.get(docId);
+      const ownerPane = pane || document.getElementById('doc-editor-pane');
       const ta = document.getElementById('doc-editor-textarea');
-      if (!ta) return;
+      if (!doc || !ownerPane || !ta) return;
+      const generation = _documentNavigationGeneration;
       const current = ta.value;
+      const isCompareOwnerValid = () => (
+        requestSeq === _compareRequestSeq &&
+        isOpen &&
+        _documentNavigationGeneration === generation &&
+        activeDocId === docId &&
+        docs.get(docId) === doc &&
+        ownerPane.isConnected &&
+        ownerPane === document.getElementById('doc-editor-pane') &&
+        ownerPane.dataset.activeDocumentId === docId
+      );
 
       // Fetch version history and compare against previous version
+      let versions;
       try {
-        const res = await fetch(`${API_BASE}/api/document/${activeDocId}/versions`);
-        if (!res.ok) throw new Error('Failed');
-        const versions = await res.json();
-        if (versions.length < 2) {
-          if (uiModule) uiModule.showToast('No previous version to compare');
-          return;
-        }
-        // versions are sorted desc — [0] is latest, [1] is previous
-        const prevContent = versions[1].content || '';
-        if (prevContent === current) {
-          if (uiModule) uiModule.showToast('No changes from previous version');
-          return;
-        }
-        enterDiffMode(prevContent, current);
-      } catch {
+        const res = await fetch(`${API_BASE}/api/document/${docId}/versions`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        versions = await res.json();
+      } catch (err) {
+        if (!isCompareOwnerValid()) return;
+        console.error('Failed to load version history:', err);
         if (uiModule) uiModule.showError('Failed to load version history');
+        return;
+      }
+
+      if (!isCompareOwnerValid()) return;
+      if (!Array.isArray(versions) || versions.length < 2) {
+        if (uiModule) uiModule.showToast('No previous version to compare');
+        return;
+      }
+      // versions are sorted desc — [0] is latest, [1] is previous
+      const prevContent = versions[1].content || '';
+      if (prevContent === current) {
+        if (uiModule) uiModule.showToast('No changes from previous version');
+        return;
+      }
+      try {
+        enterDiffMode(prevContent, current);
+      } catch (err) {
+        console.error('Failed to initialize diff mode:', err);
+        if (uiModule) uiModule.showError('Failed to compare versions');
+        throw err;
       }
     });
+    }
 }

@@ -83,16 +83,28 @@ export async function copyDocument() {
 export async function updateTitle(overrideDocId, overrideTitle) {
     const docId = overrideDocId || activeDocId;
     if (!docId) return;
+    const doc = docs.get(docId);
     const title = overrideTitle || document.getElementById('doc-title-input')?.value;
     if (!title) return;
     try {
-      await fetch(`${API_BASE}/api/document/${docId}`, {
+      const res = await fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
       });
-      if (docs.has(docId)) {
-        docs.get(docId).title = title;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const currentDoc = docs.get(docId);
+      if (currentDoc && (!doc || currentDoc === doc)) {
+        currentDoc.title = title;
+        const titleInput = document.getElementById('doc-title-input');
+        const pane = document.getElementById('doc-editor-pane');
+        const activeTitle = (titleInput?.value || '').trim();
+        if (titleInput && docId === activeDocId
+            && (!pane || pane.dataset.activeDocumentId === docId)
+            && document.activeElement !== titleInput
+            && (!activeTitle || activeTitle === 'Untitled')) {
+          titleInput.value = title;
+        }
         renderTabs();
       }
     } catch (e) {
