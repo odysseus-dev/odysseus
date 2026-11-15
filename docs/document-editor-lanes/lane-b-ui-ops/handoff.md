@@ -94,6 +94,14 @@ Focused check: `node --test tests/documentFlows.test.mjs` passed (3 behavioral c
 
 Cumulative extraction verifier: 34 listed, 34 verified, 51 Class 1/2 rewrites, 8 documented Class 4 human-review exceptions, simulation clean, zero removal violations. The eight exceptions are the expected PDF pane lifecycle hook substitutions in `_closeWithoutDeleting`, `_detachDocFromSession`, `deleteActiveDocument`, and `loadSessionDocs`: `_cancelPdfPaneSave`, `_syncPdfPaneToDoc`, and `_hasPendingPdfPaneSave` route through the existing PDF module boundary. They are reported, not silently ignored. State transitions use the authoritative state operations.
 
+## Checkpoint 5: selection highlights
+
+Source: `frontend/src/features/documents/ui/selection/selectionHighlights.js`
+
+Moved 20 declarations plus `stmt#11153` (the 21 assigned baseline items). The cumulative removal gate reports 55 listed, 55 verified, 60 rewrites, 8 expected PDF lifecycle hook exceptions, zero removal violations, and a clean simulation. Focused test `node --test tests/selectionHighlights.test.mjs` passes. It checks nearest-occurrence selection reanchoring and removal of stale references, plus one-time page resize registration and idempotent listener disposal.
+
+Confirmed implementation fix: the generated resize installer registered during module evaluation but had no disposer and was not idempotent. It now keeps the evaluation-time registration for current behavior, returns a stable disposer, and safely removes the listener once. Exact Appendix A exports remain unchanged. Test setup instruments the module-local selection array in the VM fixture because native module namespace exports are intentionally read-only.
+
 ## Remaining modules
 
 Header overflow, markdown images, document flows, selection highlights (`stmt#11153`), toolbar, and tab bar (`stmt#206`) are still outstanding for this handoff. Continue in that order. Each group gets focused tests, a manifest update, verifier evidence, and a local commit.
