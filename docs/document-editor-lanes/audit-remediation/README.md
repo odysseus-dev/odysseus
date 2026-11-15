@@ -122,6 +122,21 @@ The full broad fast lane was collected, with 17,882 selected of 17,887 nodes and
 
 NOT RUN: physical mobile devices, Firefox/WebKit, real SMTP/IMAP and AI providers, offline service-worker cache upgrade, exhaustive manual QA and the remaining release-smoke areas. Synthetic Chromium touch events are not device validation. Frontend publication here means local maintained/published parity only; no deployment or remote publication occurred.
 
+## Post-2accadfa re-audit remediation delta
+
+| Source finding | Defect / gap | Corrective owner change | Chromium & automated proof | Commits |
+| --- | --- | --- | --- | --- |
+| Codex R02, P2 | Delayed `/versions` response in Compare Changes could activate diff mode after navigation/disposal and persist A content to B on exit; `enterDiffMode` errors were reported as history fetch failures. | `ui/header/headerActions.js` (`openPanel#7527`): capture doc ID, record, pane, navigation generation, and request sequence; validate owner before error reporting and before `enterDiffMode`; separate fetch errors from diff init errors. | 6 Chromium exit paths (`accept-all`, `reject-all`, `toggle-off`, `navigate-c`, `minimize`, `escape`), `A -> B -> A` invalidation, normal compare, and error separation in `tests/documentAuditRemediation.mjs`. PASS. | `1ffc775b` |
+| Codex R01, P2 | Rich-text input debounced auto-title on `rich._autoTitleTimer` without capturing doc identity, read `rich.innerText` lazily, defaulted to `activeDocId`, and survived pane disposal. | `ui/editor/sourceEditor.js`, `ui/richEditor/richBodyWiring.js`: export `scheduleAutoTitle` sharing `_autoTitleDebounce` and `disposeSourceEditor` cleanup; capture doc ID, record, and text synchronously with connected-pane check. | Rich->Markdown, Rich->Rich, minimize->B, rapid switch/removal, pane disposal, repeated remount, and normal rich auto-title in `tests/documentAuditRemediation.mjs`. PASS. | `1ffc775b` |
+| Claude NB8, P3 | AI-created documents without explicit title temporarily showed `Untitled` after switching away and back because `autoTitleFromContent` ran before `setActiveDocId`/`titleInput` setup and `updateTitle` did not sync `titleInput`. | `ui/aiUpdates/documentUpdate.js`, `ui/documentActions.js`: order `setActiveDocId` and pane ownership stamp before deriving auto-title; check PATCH status, record identity, and sync empty/Untitled `#doc-title-input` in `updateTitle`. | Chromium regression verifying AI-created doc with and without closed panel retains derived title across `prev` tab round-trips in `tests/documentAuditRemediation.mjs`. PASS. | `1ffc775b` |
+| Claude NB1, NB2, NB3, NB4, NB5, NB6, NB9 | Reference check not in CI/pytest; compat suppressions were file-wide; unused imports not failed; verifier unit test used absolute user path; publication set needed explicit test. | `scripts/check_document_references.mjs`, `.github/workflows/ci.yml`, `tests/documentReferences.test.mjs`, `tests/documentRemediationVerifier.test.mjs`, `tests/test_document_references.py`, `tests/documentAuditRemediation.mjs`: per-use-site AST `typeof` guards, `unused-import` enforcement, negative-control fixture, portable verifier path with skip when external tool absent, Chromium global publication assertion, CI/pytest integration. Retained `_emailLocalDraftDebounce` (NB5) for Appendix A baseline export parity (`pendingLocalDraftWrites` owns per-key timers). Recorded amendment behavioral notes (NB6). | All reference checker, verifier, architecture, and Chromium facade checks PASS. | `1ffc775b`, `28976a0a` |
+
+### Verifier amendment behavioral notes (NB6)
+
+- `scheduleAutoTitle` (`ui/editor/sourceEditor`): added as an approved Appendix A export amendment so rich-text input and source/Markdown-image editing share a single `_autoTitleDebounce` owner cancelled by `disposeSourceEditor`.
+- `openPanel#7527` (`ui/header/headerActions`): wraps the listener registration in an `if (diffToggleBtn) { ... }` block holding a closure-local `_compareRequestSeq` counter, preserving single-`IfStatement` AST parity with the extracted statement while rejecting superseded or navigated-away responses.
+- `updateTitle` (`ui/documentActions`), `_wireEmailRichbody` (`ui/richEditor/richBodyWiring`), and `handleDocUpdate` (`ui/aiUpdates/documentUpdate`): amended with exact source replacements and SHA-256 pins; runtime tests verify record identity and UI synchronization across await and tab switching.
+
 ## Local commits and final state
 
 | Commit | Checkpoint |
@@ -135,6 +150,9 @@ NOT RUN: physical mobile devices, Firefox/WebKit, real SMTP/IMAP and AI provider
 | `e827ef51` | Independent local draft persistence/cancellation and strengthened lifecycle regressions |
 | `48a9bb08` | Preserve recipient focus across delayed composer setup |
 | `433a4d29` | Retain diff acceptance preview ownership across navigation |
+| `2accadfa` | Documentation and re-audit handoff at prior checkpoint |
+| `1ffc775b` | Guard async version compare, rich-text auto-title, AI title sync, and Chromium regressions |
+| `28976a0a` | Enforce reference checker, per-site compat guards, and portable verifier tests in CI/pytest |
 
 Final implementation changes are confined to document modules and their published copies, the compatibility facade, local service-worker cache key (`odysseus-v1146-pr40-editor-precache`), focused validation scripts, tests and remediation documentation. Module publication remains 55 maintained/published document modules with exact manifest/precache coverage. See `changed-files.txt` for the complete implementation summary.
 

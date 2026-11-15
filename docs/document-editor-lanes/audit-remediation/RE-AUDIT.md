@@ -40,12 +40,14 @@ node scripts/check_document_references.mjs
 node scripts/verify_document_remediation.mjs
 node scripts/check_frontend.mjs
 python3 scripts/build_frontend.py --check
-node --test tests/frontendArchitecture.test.mjs tests/markdownImages.test.mjs tests/selectionHighlights.test.mjs
-PYTHONDONTWRITEBYTECODE=1 /tmp/document-editor-remediation-venv/bin/python -m pytest -p no:cacheprovider -q tests/test_document*.py
+node scripts/check_document_references.mjs
+node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs tests/documentRemediationVerifier.test.mjs tests/markdownImages.test.mjs tests/selectionHighlights.test.mjs
+python3 docs/document-editor-lanes/audit-remediation/validation/static-browser-runner.py node --test tests/documentAuditRemediation.mjs
+PYTHONDONTWRITEBYTECODE=1 /tmp/document-editor-remediation-venv/bin/python -m pytest -p no:cacheprovider -q tests/test_document_references.py tests/test_document_source_test_hygiene.py tests/test_frontend_module_graph.py tests/test_document_active_restore.py tests/test_document_rich_text_tools.py tests/test_document_module_api.py tests/test_document_state_contract.py tests/test_document_session_contract.py tests/test_document_rich_editor_contract.py tests/test_document_source_editor.py tests/test_document_email_workflows.py
 git diff --check 032d98575f5a7492e2377089cbc68f148753dd64..HEAD
 ```
 
-`tests/test_document_audit_remediation.py` starts the established ephemeral static server and runs 30 Chromium behavioral cases from `tests/documentAuditRemediation.mjs`. `tests/test_document_chat_send_remediation.py` exercises actual chat submission, with only HTTP responses controlled. Existing persistence, navigation, security, streaming and preview suites remain in the selection.
+`tests/test_document_audit_remediation.py` (invoked directly via `static-browser-runner.py node --test tests/documentAuditRemediation.mjs`) starts the established ephemeral static server and runs all 45 Chromium behavioral cases (including R01, R02, NB2 publication set, and NB8 regressions). `tests/test_document_references.py` exercises `scripts/check_document_references.mjs`, `tests/documentReferences.test.mjs`, and portable `tests/documentRemediationVerifier.test.mjs` modes.
 
 If the temporary Python environment is absent, create a new private venv, install `playwright==1.62.0`, and reference the existing repository dependency directory from that private environment only. Use the installed Chromium executable when needed. Do not modify global or repository venv configuration to reproduce this report. The original environment source was `/home/alteixeira20/.venvs/odysseus-pr-6495/lib/python3.14/site-packages`; all other runtime files were under temporary directories.
 
