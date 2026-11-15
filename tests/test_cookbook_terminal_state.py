@@ -156,3 +156,58 @@ def test_zero_files_classifier_is_marker_based():
     source = _read("routes/cookbook_output.py")
     assert 'if "DOWNLOAD_OK" in full_snapshot:' in source
     assert "return (\"error\", True)" in source
+
+
+# -- invariant 2: zero-files must be verified against the actual cache -------
+
+
+def test_zero_files_is_verified_against_the_cache_before_calling_failure():
+    """HF prints "Fetching 0 files" both when nothing matched and when every
+    file was already cached. Only an empty result may be reported as a
+    failure; a complete cache is a success."""
+    source = _read("routes/cookbook_routes.py")
+
+    # Both the live and the persisted-terminal branch must verify.
+    assert source.count("_download_cache_complete(") >= 2
+    assert "# Ambiguous on its own — HF also prints this when every" in source
+    assert '# "Fetching 0 files" is ambiguous on its own: HF prints' in source
+
+
+def test_gated_repo_output_is_classified_from_markers_not_guessed():
+    """The classifier keys off the runner markers only; it must not infer a
+    cause (gated repo, wrong pattern, empty result) from prose."""
+    source = _read("routes/cookbook_output.py")
+    assert 'if "DOWNLOAD_OK" in full_snapshot:' in source
+    assert 'if "DOWNLOAD_FAILED" in full_snapshot:' in source
+    assert "HuggingFace Token" not in source
+
+
+def test_cache_probe_distinguishes_shell_from_populated_cache(tmp_path):
+    """Functional: the same probe the endpoint uses must report an empty
+    refs-only repo as incomplete and a populated one as complete."""
+    import subprocess as sp
+    import sys
+
+    from routes.cookbook_output import HF_CACHE_COMPLETE_PROBE
+
+    shell = tmp_path / "hub" / "models--acme--empty-shell"
+    (shell / "refs").mkdir(parents=True)
+    (shell / "refs" / "main").write_text("deadbeef", encoding="utf-8")
+
+    real = tmp_path / "hub" / "models--acme--real"
+    blob = real / "blobs"
+    blob.mkdir(parents=True)
+    (blob / "weights").write_bytes(b"\0" * 4096)
+    snap = real / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "model.gguf").write_bytes(b"\0" * 4096)
+
+    def probe(repo, cache_root):
+        return sp.run(
+            [sys.executable, "-c", HF_CACHE_COMPLETE_PROBE, repo, str(cache_root)],
+            capture_output=True, text=True,
+        ).returncode
+
+    # The probe appends /hub to the cache root itself.
+    assert probe("acme/empty-shell", tmp_path) == 1
+    assert probe("acme/real", tmp_path) == 0

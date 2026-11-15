@@ -4453,6 +4453,16 @@ def setup_cookbook_routes() -> APIRouter:
                 _marker = classify_dead_download(full_snapshot) if task_type == "download" else None
                 if _marker is not None:
                     status, download_zero_files = _marker
+                    if status == "error" and download_zero_files:
+                        # "Fetching 0 files" is ambiguous on its own: HF prints
+                        # it both when nothing matched and when every file was
+                        # already cached. Only call it a failure when nothing
+                        # usable actually landed in the cache.
+                        if _download_cache_complete(
+                            _payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or ""
+                        ):
+                            status = "completed"
+                            download_zero_files = False
                     if status == "completed" and not progress_text:
                         progress_text = "Download complete"
                 else:
@@ -4479,8 +4489,16 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "error"
                 elif task_type == "download" and download_has_ok:
                     if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
-                        status = "error"
-                        download_zero_files = True
+                        # Ambiguous on its own — HF also prints this when every
+                        # file was already cached. Verify the cache before
+                        # calling it a failure.
+                        if _download_cache_complete(
+                            _payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or ""
+                        ):
+                            status = "completed"
+                        else:
+                            status = "error"
+                            download_zero_files = True
                     else:
                         status = "completed"
                 elif task_type == "download" and download_has_failed:
