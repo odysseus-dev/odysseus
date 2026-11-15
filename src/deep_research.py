@@ -659,7 +659,14 @@ class DeepResearcher:
             _v_dict = _vr.to_dict()
             _v_dict["verification_status"] = _v_status
             self.verification_summary = _v_dict
-            if (_vr.verified_facts or _vr.conflicting_evidence or _vr.unsupported_claims or _vr.unverified_citations) and "## Evidence Verification Summary" not in final:
+            _has_domain_telemetry = bool(
+                _vr.claim_assessments
+                or _vr.conflict_records
+                or _vr.missing_domain_plugin
+                or _vr.missing_domain_domains
+                or _vr.plugin_errors
+            )
+            if (_vr.verified_facts or _vr.conflicting_evidence or _vr.unsupported_claims or _vr.unverified_citations or _has_domain_telemetry) and "## Evidence Verification Summary" not in final:
                 final = final.rstrip() + "\n\n" + _vr.to_markdown()
         except Exception as _final_ver_err:
             _err_type = type(_final_ver_err).__name__

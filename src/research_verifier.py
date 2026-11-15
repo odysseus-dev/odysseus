@@ -90,7 +90,29 @@ class VerificationReport:
         return out
 
     def has_gaps(self) -> bool:
-        return bool(self.unsupported_claims or self.unverified_citations or self.conflicting_evidence)
+        if self.unsupported_claims or self.unverified_citations or self.conflicting_evidence:
+            return True
+        if self.conflict_records:
+            return True
+        if self.missing_domain_plugin or self.missing_domain_domains:
+            return True
+        if self.plugin_errors:
+            return True
+        if self.claim_assessments:
+            gap_verdicts = {"CONTESTED", "INSUFFICIENT_EVIDENCE", "UNSUPPORTED", "CONFLICTING_EVIDENCE"}
+            for item in self.claim_assessments:
+                if isinstance(item, dict) and str(item.get("claim_assessment", "")).upper() in gap_verdicts:
+                    return True
+        return False
+
+    @staticmethod
+    def _sanitize_md_text(value: Any, max_len: int = 180) -> str:
+        text = " ".join(str(value or "").split())
+        text = text.replace("`", "'").replace("[", "(").replace("]", ")")
+        if len(text) > max_len:
+            text = text[: max_len - 3].rstrip() + "..."
+        return text
+
     def to_markdown(self) -> str:
         lines = ["## Evidence Verification Summary"]
         lines.append(f"- **Verified Claims (Non-Conflicting):** {len(self.verified_facts)} (Corroborated 2+ sources: {len(self.corroborated_facts)}, Single-source: {len(self.single_source_claims)})")
@@ -106,6 +128,44 @@ class VerificationReport:
             lines.append(f"  - [Unverified] {item}")
         for url in self.unverified_citations[:5]:
             lines.append(f"  - [Unverified Citation] {url}")
+
+        if self.claim_assessments is not None:
+            assessments = [a for a in self.claim_assessments if isinstance(a, dict)]
+            lines.append(f"- **Domain Verification:** {len(assessments)} claim(s) assessed")
+            for a in assessments[:8]:
+                dom = self._sanitize_md_text(a.get("domain") or "general", 32).upper()
+                verdict = self._sanitize_md_text(a.get("claim_assessment") or "UNVERIFIED", 32).upper()
+                claim = self._sanitize_md_text(a.get("claim_text") or "", 160)
+                plugin = self._sanitize_md_text(a.get("plugin_name") or "unknown", 40)
+                pub = self._sanitize_md_text(a.get("publication_status") or "UNKNOWN", 32)
+                legal = self._sanitize_md_text(a.get("legal_currency") or "UNKNOWN", 32)
+                dep = self._sanitize_md_text(a.get("source_dependence") or "UNKNOWN", 32)
+                lines.append(
+                    f"  - [{dom} | {verdict}] {claim} (plugin={plugin}, pub={pub}, legal={legal}, dep={dep})"
+                )
+
+            conflicts = [c for c in (self.conflict_records or []) if isinstance(c, dict)]
+            if conflicts:
+                lines.append(f"- **Preserved Domain Conflicts:** {len(conflicts)}")
+                for c in conflicts[:6]:
+                    key = self._sanitize_md_text(c.get("normalized_claim_key") or "conflict", 100)
+                    doms = ", ".join(self._sanitize_md_text(d, 32) for d in (c.get("domains_involved") or []))
+                    states = ", ".join(self._sanitize_md_text(s, 32) for s in (c.get("competing_states") or []))
+                    lines.append(f"  - [Domain Conflict] {key} (domains={doms}; states={states})")
+
+            missing_doms = [self._sanitize_md_text(d, 32) for d in (self.missing_domain_domains or []) if d]
+            if self.missing_domain_plugin or missing_doms:
+                dom_label = ", ".join(missing_doms) if missing_doms else "unspecified"
+                lines.append(f"- **Missing Domain Verifier Coverage:** {dom_label}")
+
+            errors = [e for e in (self.plugin_errors or []) if isinstance(e, dict)]
+            if errors:
+                lines.append(f"- **Domain Verifier Plugin Faults (Fail-Closed):** {len(errors)}")
+                for err in errors[:6]:
+                    p_name = self._sanitize_md_text(err.get("plugin_name") or "plugin", 40)
+                    e_type = self._sanitize_md_text(err.get("error_type") or "Error", 40)
+                    lines.append(f"  - [Plugin Fault] {p_name} ({e_type})")
+
         return "\n".join(lines)
 
 
