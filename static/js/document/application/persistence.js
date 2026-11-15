@@ -292,12 +292,7 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
     if (_deletedDocIds.has(savingDocId)) {
       return false;
     }
-    const badge = document.getElementById('doc-version-badge');
-    if (badge && activeDocId === savingDocId) {
-      const _v = doc.version_count || 1;
-      badge.textContent = `v${_v}`;
-      badge.style.display = _v > 1 ? '' : 'none';
-    }
+    _ports._renderVersionBadge(savingDocId, doc.version_count || 1);
     // Update map
     let versionChanged = false;
     const targetDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);

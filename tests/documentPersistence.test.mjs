@@ -208,6 +208,29 @@ describe('Document Persistence Engine', () => {
       assert.equal(badge.textContent, 'v2');
       assert.equal(badge.style.display, '');
     });
+
+    it('routes version badge updates through bound _renderVersionBadge port without direct DOM access', async () => {
+      const badgeCalls = [];
+      bindPersistenceHooks({
+        _renderVersionBadge(docId, version) {
+          badgeCalls.push({ docId, version });
+        }
+      }, { idempotent: true });
+
+      const badge = globalThis.document.getElementById('doc-version-badge');
+      badge.textContent = 'untouched';
+      badge.style.display = 'none';
+
+      const doc = { id: 'doc-1', title: 'Test Document', content: 'hello world', version: 1 };
+      registerDocument(doc);
+      setActiveDocId('doc-1');
+
+      await saveDocument({ silent: true, docId: 'doc-1' });
+
+      assert.deepEqual(badgeCalls, [{ docId: 'doc-1', version: 2 }]);
+      assert.equal(badge.textContent, 'untouched', 'bound port must replace direct DOM mutation inside saveDocument');
+      assert.equal(badge.style.display, 'none');
+    });
   });
 
   // -------------------------------------------------------------------------
