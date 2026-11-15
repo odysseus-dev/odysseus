@@ -29,13 +29,16 @@ actions.appendChild(copy);
 actions.appendChild(exportButton);
 actions.appendChild(save);
 
+globalThis._syncOverflow = undefined;
 await import('../frontend/src/features/documents/ui/header/overflow.js');
 
 test('overflow initializes, tracks recency, and preserves the sync callback contract', () => {
+  assert.equal(globalThis._syncOverflow, undefined);
   globalThis.initActionOverflow();
   assert.equal(frames.length, 1);
   frames.shift()();
   assert.equal(globalThis._syncOverflow instanceof Function, true);
+  const installedSync = globalThis._syncOverflow;
   assert.equal(wrapper.style.display, '');
   assert.equal(copy.classList.contains('doc-collapsed'), false);
   assert.equal(exportButton.classList.contains('doc-collapsed'), false);
@@ -44,6 +47,7 @@ test('overflow initializes, tracks recency, and preserves the sync callback cont
   save.click();
   assert.deepEqual(JSON.parse(localStorage.getItem('odysseus-doc-actions-recent')), ['doc-save-btn']);
   globalThis._syncOverflow();
+  assert.equal(globalThis._syncOverflow, installedSync);
   assert.equal(save.classList.contains('doc-collapsed'), false);
   assert.equal(exportButton.classList.contains('doc-collapsed'), true);
 

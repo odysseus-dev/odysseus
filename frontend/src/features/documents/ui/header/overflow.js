@@ -6,6 +6,11 @@
 
 import { showExportMenu } from '../exportDocx.js';
 
+// Preserve the legacy script's global identifier binding so the assignment in
+// initActionOverflow remains valid in this strict ES module. The callback is
+// still installed only when initialization runs.
+if (!('_syncOverflow' in globalThis)) globalThis._syncOverflow = undefined;
+
 const _DOC_RECENTS_KEY = 'odysseus-doc-actions-recent';
 
 const _DOC_MAX_VISIBLE = 2;
@@ -139,9 +144,7 @@ function initActionOverflow() {
     });
 
     requestAnimationFrame(syncOverflow);
-    // The monolith exposed this callback as a page-scope binding. ES modules
-    // are strict, so keep that compatibility hook explicit after extraction.
-    globalThis._syncOverflow = syncOverflow;
+    _syncOverflow = syncOverflow;
   }
 
 
