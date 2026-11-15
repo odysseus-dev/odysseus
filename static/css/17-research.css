@@ -3185,3 +3185,65 @@ body.theme-frosted .modal {
     min-width: 24px;
   }
 }
+
+
+/* DR-5.6 Domain Verification Toggle & Telemetry Card */
+.research-setting-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.research-setting-toggle input[type="checkbox"] {
+  accent-color: var(--accent, #5b8def);
+  cursor: pointer;
+}
+.research-domain-verification {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.03));
+  font-size: 12px;
+}
+.research-domain-verification.has-gaps {
+  border-color: var(--warning-border, rgba(245, 158, 11, 0.45));
+}
+.research-dv-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.research-dv-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(91, 141, 239, 0.16);
+}
+.research-domain-verification.has-gaps .research-dv-status {
+  background: rgba(245, 158, 11, 0.18);
+}
+.research-dv-count,
+.research-dv-meta {
+  opacity: 0.75;
+  font-weight: 400;
+}
+.research-dv-list {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.research-dv-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+}
+.research-dv-alert {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--warning-text, #f59e0b);
+}
