@@ -1,16 +1,22 @@
-"""DR-5.8 Historical Domain Verifier Plugin.
+"""DR-5.8 Unified Historical Domain Verifier Plugin.
 
-Enforces evidence rules DR5.8-H1 through DR5.8-H5 behind enable_domain_verifiers=False:
-  - H1: Temporal & era anchor discipline (BCE/BC vs. CE/AD, century, and circa/approximate
-        bounds; prevents cross-era conflation and exact-date claims on approximate sources).
-  - H2: Primary archival / contemporary chronicle vs. tertiary / unverified blog tiering
-        (unverified blogs never auto-corroborate historical claims).
-  - H3: Historiographical debate & contradictory chronology preservation (disputed dates,
-        authorship, or revisionist debates remain CONTESTED with supporting & conflicting
-        passages rather than picking a recency winner).
-  - H4: Myth / legend / apocryphal attribution hygiene (claims framed as myth, legend,
-        folklore, or apocryphal tradition fail closed).
-  - H5: Cold-start & disabled-flag isolation (lazy import inside build_default_registry()).
+Enforces evidence rules DR5.8-H1 through DR5.8-H8 behind enable_domain_verifiers=False:
+  - H1: Temporal, era, & calendar anchor discipline (BCE/BC vs. CE/AD, century,
+        Julian vs. Gregorian calendar disambiguation, and circa/approximate bounds).
+  - H2: Primary archival / peer-reviewed scholarship vs. tertiary / unverified blog
+        tiering (unverified blogs never auto-corroborate historical claims).
+  - H3: Historiographical debate & quantitative conflict preservation (disputed dates,
+        scholarly consensus gaps, and conflicting casualty/troop counts remain
+        CONTESTED under PRESERVE_CONFLICT_NO_CONSENSUS).
+  - H4: Myth / legend / apocryphal & forged/retracted chronicle hygiene (claims framed
+        as myth/legend fail closed; forged/retracted sources surface DISCREDITED_OR_FORGED_SOURCE).
+  - H5: Anachronistic polity / entity attribution guard (flags attributing events to
+        polities or institutions prior to their established founding date).
+  - H6: Undated historical claim fail-closed discipline (explicit historical claims
+        lacking any chronological anchor fail closed with UNDATED_HISTORICAL_CLAIM).
+  - H7: Defense-in-depth PII/token sanitization via PassageEvidenceRef while preserving
+        historical dates and catalog identifiers.
+  - H8: Cold-start & disabled-flag isolation (lazy import inside build_default_registry()).
 """
 
 from __future__ import annotations
@@ -29,17 +35,19 @@ from src.research_sources import (
 )
 from src.verifiers.base import ClaimAssessment
 
-HISTORICAL_VERIFIER_VERSION = "dr5.8-v1.0"
+HISTORICAL_VERIFIER_VERSION = "dr5.8-v1.1"
 
 _ERA_YEAR_RE = re.compile(r"\b(\d{1,4})\s*(BCE|BC|CE|AD)\b", re.IGNORECASE)
 _CENTURY_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\s+century(?:\s*(BCE|BC|CE|AD))?\b", re.IGNORECASE)
 _PLAIN_YEAR_RE = re.compile(r"\b(1\d{3}|20\d{2})\b")
+_JULIAN_RE = re.compile(r"\b(?:julian|old\s+style|o\.s\.)\b", re.IGNORECASE)
+_GREGORIAN_RE = re.compile(r"\b(?:gregorian|new\s+style|n\.s\.)\b", re.IGNORECASE)
 _CIRCA_RE = re.compile(
-    r"\b(?:circa|c\.\s*\d|approximately|around\s+\d|traditionally\s+dated|uncertain\s+date|disputed\s+date)\b",
+    r"\b(?:circa|c\.|ca\.|fl\.|approximately|around\s+\d|radiocarbon|traditionally\s+dated|uncertain\s+date|disputed\s+date)\b",
     re.IGNORECASE,
 )
 _HISTORICAL_TOPIC_RE = re.compile(
-    r"\b(?:\d{1,4}\s*(?:bce|bc|ce|ad)\b|century|dynasty|empire|treaty|battle|archival|archive|manuscript|chronicle|ancient|medieval|renaissance|founding|historical|historian|radiocarbon|circa|declaration|constitution|revolution|republic|kingdom|emperor|pharaoh)\b",
+    r"\b(?:\d{1,4}\s*(?:bce|bc|ce|ad)\b|century|dynasty|empire|treaty|battle|archival|archive|manuscript|chronicle|ancient|medieval|renaissance|founding|historical|historian|radiocarbon|circa|declaration|constitution|revolution|republic|kingdom|emperor|pharaoh|magna\s+carta|sealed|ratified)\b",
     re.IGNORECASE,
 )
 _DEBATE_RE = re.compile(
@@ -47,19 +55,36 @@ _DEBATE_RE = re.compile(
     re.IGNORECASE,
 )
 _MYTH_RE = re.compile(
-    r"\b(?:legend|myth|mythological|folklore|apocryphal|fictional|unverified\s+tradition|semi-legendary|fabricated)\b",
+    r"\b(?:legend|myth|mythological|folklore|apocryphal|fictional|unverified\s+tradition|semi-legendary)\b",
+    re.IGNORECASE,
+)
+_FORGED_RE = re.compile(
+    r"\b(?:forged|forgery|fabricated|spurious|debunked|hoax|retracted|pseudepigrapha|discredited)\b",
+    re.IGNORECASE,
+)
+_FOUNDED_RE = re.compile(
+    r"\b(?:founded|established|formed|unified|incorporated|created|ratified\s+into\s+existence)\s+in\s+([0-9]{3,4})(?:\s*(BCE|BC|CE|AD))?\b",
+    re.IGNORECASE,
+)
+_CASUALTY_OR_COUNT_RE = re.compile(
+    r"\b([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+(?:\.[0-9]+)?\s*(?:million|thousand))\s+"
+    r"(?:casualties|dead|killed|deaths|troops|soldiers|inhabitants|signatories|victims)\b",
     re.IGNORECASE,
 )
 _PRIMARY_ARCHIVE_DOMAIN_RE = re.compile(
-    r"(?:\.gov|\.edu|\.ac\.uk|archives\.gov|loc\.gov|britishmuseum\.org|bl\.uk|bnf\.fr|si\.edu|archive\.org|jstor\.org|cambridge\.org|oxfordacademic|oup\.com)",
+    r"(?:\.gov|\.edu|\.ac\.uk|\.de|\.org\.uk|archives\.gov|loc\.gov|britishmuseum\.org|bl\.uk|bnf\.fr|si\.edu|archive\.org|jstor\.org|cambridge\.org|oxfordacademic|oup\.com|nature\.com|bundesarchiv\.de|iwm\.org\.uk)",
     re.IGNORECASE,
 )
 _PRIMARY_KEYWORD_RE = re.compile(
-    r"\b(?:primary\s+source|archival|manuscript|charter|treaty\s+text|chronicle|inscription|epigraphy|radiocarbon|excavation|peer-reviewed)\b",
+    r"\b(?:primary\s+source|archival|manuscript|charter|treaty\s+text|chronicle|inscription|epigraphy|radiocarbon|excavation|peer-reviewed|national\s+archives|diplomatic\s+records)\b",
     re.IGNORECASE,
 )
 _TERTIARY_BLOG_RE = re.compile(
-    r"(?:blog|wordpress|medium\.com|substack|rumor|trivia|listicle|seo)",
+    r"(?:blog|blogspot|wordpress|medium\.com|substack|rumor|trivia|listicle|seo)",
+    re.IGNORECASE,
+)
+_ABBREV_DOT_RE = re.compile(
+    r"\b(c|ca|fl|approx|st|mr|mrs|dr|prof|vol|no|ch|sec|fig|et\s+al|o\.s|n\.s|b\.c\.e|c\.e|b\.c|a\.d)\.",
     re.IGNORECASE,
 )
 
@@ -77,6 +102,13 @@ class _TemporalAnchor:
     era: str
     century: Optional[int]
     is_approximate: bool
+    calendar: str = "UNSPECIFIED"
+
+    @property
+    def signed_year(self) -> Optional[int]:
+        if self.year is None:
+            return None
+        return -self.year if self.era == "BCE" else self.year
 
 
 @dataclass(frozen=True)
@@ -85,12 +117,13 @@ class _ParsedHistoricalClaim:
     anchor: Optional[_TemporalAnchor]
     keywords: Tuple[str, ...]
     claims_myth_framed: bool
+    count_norm: Optional[str]
 
 
 def _norm_era(raw_era: Optional[str], default_ce: bool = False) -> str:
     if not raw_era:
         return "CE" if default_ce else "UNKNOWN"
-    u = raw_era.strip().upper()
+    u = raw_era.strip().upper().rstrip(".")
     if u in {"BCE", "BC"}:
         return "BCE"
     if u in {"CE", "AD"}:
@@ -98,26 +131,43 @@ def _norm_era(raw_era: Optional[str], default_ce: bool = False) -> str:
     return "UNKNOWN"
 
 
+def _detect_calendar(text: str) -> str:
+    has_j = bool(_JULIAN_RE.search(text or ""))
+    has_g = bool(_GREGORIAN_RE.search(text or ""))
+    if has_j and not has_g:
+        return "JULIAN"
+    if has_g and not has_j:
+        return "GREGORIAN"
+    return "UNSPECIFIED"
+
+
+def _norm_count(tok: str) -> str:
+    s = re.sub(r"\s+", "", tok.strip().upper()).replace(",", "")
+    s = s.replace("MILLION", "M").replace("THOUSAND", "K")
+    return s
+
+
 def _extract_temporal_anchor(text: str) -> Optional[_TemporalAnchor]:
     approx = bool(_CIRCA_RE.search(text or ""))
+    cal = _detect_calendar(text or "")
     era_m = _ERA_YEAR_RE.search(text or "")
     if era_m:
         yr = int(era_m.group(1))
         era = _norm_era(era_m.group(2))
         cent = ((yr - 1) // 100) + 1 if yr > 0 else None
-        return _TemporalAnchor(year=yr, era=era, century=cent, is_approximate=approx)
+        return _TemporalAnchor(year=yr, era=era, century=cent, is_approximate=approx, calendar=cal)
 
     cent_m = _CENTURY_RE.search(text or "")
     if cent_m:
         cent = int(cent_m.group(1))
         era = _norm_era(cent_m.group(2), default_ce=True)
-        return _TemporalAnchor(year=None, era=era, century=cent, is_approximate=approx)
+        return _TemporalAnchor(year=None, era=era, century=cent, is_approximate=approx, calendar=cal)
 
     yr_m = _PLAIN_YEAR_RE.search(text or "")
     if yr_m:
         yr = int(yr_m.group(1))
         cent = ((yr - 1) // 100) + 1
-        return _TemporalAnchor(year=yr, era="CE", century=cent, is_approximate=approx)
+        return _TemporalAnchor(year=yr, era="CE", century=cent, is_approximate=approx, calendar=cal)
 
     return None
 
@@ -147,19 +197,24 @@ def _extract_historical_claims(report_text: str) -> List[_ParsedHistoricalClaim]
         kws = _extract_keywords(line)
         if not kws:
             continue
+        cnt_m = _CASUALTY_OR_COUNT_RE.search(line)
+        cnt_norm = _norm_count(cnt_m.group(1)) if cnt_m else None
         claims.append(
             _ParsedHistoricalClaim(
                 raw_text=line,
                 anchor=anchor,
                 keywords=kws,
                 claims_myth_framed=bool(_MYTH_RE.search(line)),
+                count_norm=cnt_norm,
             )
         )
     return claims
 
 
 def _sentence_windows(text: str) -> List[str]:
-    return [s.strip() for s in re.split(r"(?:(?<!\d)\.(?!\d)|[!?])\s+|\n+", text or "") if s.strip()]
+    protected = _ABBREV_DOT_RE.sub(lambda m: m.group(0)[:-1] + "\u2024", text or "")
+    parts = re.split(r"(?:(?<!\d)\.(?!\d)|[!?])\s+|\n+", protected)
+    return [s.replace("\u2024", ".").strip() for s in parts if s.strip()]
 
 
 def _is_primary_or_scholarly_source(sa: Any) -> bool:
@@ -168,6 +223,13 @@ def _is_primary_or_scholarly_source(sa: Any) -> bool:
     txt = str(getattr(sa, "normalized_text", "") or "")
     if _TERTIARY_BLOG_RE.search(url) or _TERTIARY_BLOG_RE.search(title):
         return False
+    sc = getattr(sa, "source_class", None)
+    if sc in {
+        SourceClass.PRIMARY_INSTITUTIONAL,
+        SourceClass.PEER_REVIEWED_VENUE,
+        SourceClass.ESTABLISHED_SECONDARY,
+    }:
+        return True
     if _PRIMARY_ARCHIVE_DOMAIN_RE.search(url):
         return True
     if getattr(sa, "is_peer_reviewed", False):
@@ -180,6 +242,12 @@ def _is_primary_or_scholarly_source(sa: Any) -> bool:
 def _anchors_compatible(claim_a: Optional[_TemporalAnchor], src_a: Optional[_TemporalAnchor]) -> Tuple[bool, str]:
     if claim_a is None or src_a is None:
         return True, ""
+    if (
+        claim_a.calendar != "UNSPECIFIED"
+        and src_a.calendar != "UNSPECIFIED"
+        and claim_a.calendar != src_a.calendar
+    ):
+        return False, f"calendar_mismatch ({claim_a.calendar} vs {src_a.calendar})"
     if claim_a.era != "UNKNOWN" and src_a.era != "UNKNOWN" and claim_a.era != src_a.era:
         return False, f"era_mismatch ({claim_a.era} vs {src_a.era})"
     if claim_a.year is not None and src_a.year is not None and claim_a.year != src_a.year:
@@ -202,6 +270,8 @@ class HistoricalVerifierPlugin:
             "archival",
             "archaeology",
             "antiquity",
+            "chronology",
+            "historiography",
         }
 
     def verify(
@@ -218,6 +288,30 @@ class HistoricalVerifierPlugin:
 
         out: List[ClaimAssessment] = []
         for claim in _extract_historical_claims(report_text):
+            if claim.anchor is None:
+                out.append(
+                    ClaimAssessment(
+                        claim_text=claim.raw_text,
+                        domain=self.domain,
+                        claim_assessment="INSUFFICIENT_EVIDENCE",
+                        publication_status=PublicationStatus.NOT_APPLICABLE.value,
+                        legal_currency=LegalCurrencyStatus.CURRENT_STATUS_NOT_ESTABLISHED.value,
+                        source_dependence=DependenceConfidence.UNKNOWN.value,
+                        evidence_classification="UNDATED_HISTORICAL_CLAIM",
+                        authority_scope_note="Historical claim lacks a chronological date, era, or period anchor; fails closed.",
+                        plugin_name=self.name,
+                        supporting_passages=[],
+                        conflicting_passages=[],
+                        rationale={
+                            "rule_version": HISTORICAL_VERIFIER_VERSION,
+                            "primary_sources_matched": "0",
+                            "tertiary_sources_matched": "0",
+                            "chronology_anchor": "UNANCHORED",
+                        },
+                    )
+                )
+                continue
+
             supporting_passages: List[PassageEvidenceRef] = []
             conflicting_passages: List[PassageEvidenceRef] = []
             matched_primary_urls: Set[str] = set()
@@ -225,6 +319,10 @@ class HistoricalVerifierPlugin:
             matched_all_urls: Set[str] = set()
             approx_conflict = False
             myth_conflict = False
+            forged_conflict = False
+            anachronism_conflict = False
+            calendar_conflict = False
+            count_conflict = False
             debate_detected = False
             era_or_date_conflict_reasons: List[str] = []
 
@@ -234,6 +332,16 @@ class HistoricalVerifierPlugin:
                 src_text = str(getattr(sa, "normalized_text", "") or "")
                 is_primary = _is_primary_or_scholarly_source(sa)
                 sa_url = str(getattr(sa, "url", "") or "")
+                term_hint = claim.keywords[0]
+
+                if getattr(sa, "retraction_warning", False) or _FORGED_RE.search(src_text):
+                    src_l = src_text.lower()
+                    if sum(1 for kw in claim.keywords if kw in src_l) >= min_kw_hits:
+                        forged_conflict = True
+                        ref = build_passage_evidence_ref(sa, query_or_claim_term=term_hint)
+                        if ref not in conflicting_passages:
+                            conflicting_passages.append(ref)
+                        continue
 
                 for sent in _sentence_windows(src_text):
                     sent_l = sent.lower()
@@ -241,13 +349,26 @@ class HistoricalVerifierPlugin:
                     if kw_hits < min_kw_hits:
                         continue
 
-                    src_anchor = _extract_temporal_anchor(sent)
-                    compat, mismatch_reason = _anchors_compatible(claim.anchor, src_anchor)
-                    term_hint = claim.keywords[0]
                     ref = build_passage_evidence_ref(sa, query_or_claim_term=term_hint)
 
+                    f_m = _FOUNDED_RE.search(sent)
+                    if f_m and claim.anchor.signed_year is not None:
+                        f_year = int(f_m.group(1))
+                        f_era = _norm_era(f_m.group(2), default_ce=True)
+                        f_signed = -f_year if f_era == "BCE" else f_year
+                        if claim.anchor.signed_year < f_signed:
+                            anachronism_conflict = True
+                            if ref not in conflicting_passages:
+                                conflicting_passages.append(ref)
+                            continue
+
+                    src_anchor = _extract_temporal_anchor(sent)
+                    compat, mismatch_reason = _anchors_compatible(claim.anchor, src_anchor)
                     if not compat:
-                        era_or_date_conflict_reasons.append(mismatch_reason)
+                        if mismatch_reason.startswith("calendar_mismatch"):
+                            calendar_conflict = True
+                        else:
+                            era_or_date_conflict_reasons.append(mismatch_reason)
                         if ref not in conflicting_passages:
                             conflicting_passages.append(ref)
                         continue
@@ -265,8 +386,7 @@ class HistoricalVerifierPlugin:
                         continue
 
                     if (
-                        claim.anchor is not None
-                        and not claim.anchor.is_approximate
+                        not claim.anchor.is_approximate
                         and src_anchor is not None
                         and src_anchor.is_approximate
                     ):
@@ -274,6 +394,14 @@ class HistoricalVerifierPlugin:
                         if ref not in conflicting_passages:
                             conflicting_passages.append(ref)
                         continue
+
+                    if claim.count_norm:
+                        sent_cnt_m = _CASUALTY_OR_COUNT_RE.search(sent)
+                        if sent_cnt_m and _norm_count(sent_cnt_m.group(1)) != claim.count_norm:
+                            count_conflict = True
+                            if ref not in conflicting_passages:
+                                conflicting_passages.append(ref)
+                            continue
 
                     if ref not in supporting_passages:
                         supporting_passages.append(ref)
@@ -304,21 +432,41 @@ class HistoricalVerifierPlugin:
             )
 
             has_established_anchor = bool(
-                claim.anchor is not None
-                and claim.anchor.era != "UNKNOWN"
+                claim.anchor.era != "UNKNOWN"
                 and (claim.anchor.year is not None or claim.anchor.century is not None)
                 and not claim.anchor.is_approximate
             )
+            has_any_conflict = bool(
+                conflicting_passages
+                or approx_conflict
+                or era_or_date_conflict_reasons
+                or forged_conflict
+                or anachronism_conflict
+                or calendar_conflict
+                or count_conflict
+            )
             currency_status = (
                 LegalCurrencyStatus.CURRENT_VERIFIED.value
-                if has_established_anchor and matched_primary_urls and not approx_conflict and not era_or_date_conflict_reasons
+                if has_established_anchor and matched_primary_urls and not has_any_conflict
                 else LegalCurrencyStatus.CURRENT_STATUS_NOT_ESTABLISHED.value
             )
 
-            if conflicting_passages and supporting_passages:
+            if forged_conflict:
+                verdict = "CONTESTED"
+                ev_cls = "DISCREDITED_OR_FORGED_SOURCE"
+                note = "Source flagged as forged, retracted, or authenticity-disputed; fails closed."
+            elif anachronism_conflict:
+                verdict = "CONTESTED"
+                ev_cls = "ANACHRONISTIC_ENTITY_ATTRIBUTION"
+                note = "Claim attributes a historical event to an entity or polity prior to its established founding."
+            elif calendar_conflict:
+                verdict = "CONTESTED"
+                ev_cls = "CALENDAR_SYSTEM_MISMATCH"
+                note = "Julian vs. Gregorian calendar discrepancy detected without explicit conversion alignment."
+            elif conflicting_passages and supporting_passages:
                 verdict = "CONTESTED"
                 ev_cls = "CONTESTED_CHRONOLOGY_OR_HISTORIOGRAPHY"
-                note = "Retrieved sources contain conflicting dates/eras, approximate bounds, or historiographical debate."
+                note = "Retrieved sources contain conflicting dates/eras, casualty counts, or historiographical debate."
             elif era_or_date_conflict_reasons:
                 verdict = "CONTESTED"
                 ev_cls = "ERA_OR_CHRONOLOGY_MISMATCH"
@@ -331,10 +479,10 @@ class HistoricalVerifierPlugin:
                 verdict = "CONTESTED"
                 ev_cls = "APPROXIMATE_CHRONOLOGY_MISMATCH"
                 note = "Claim states a precise date/period, whereas retrieved sources qualify the chronology as approximate (circa)."
-            elif debate_detected:
+            elif debate_detected or count_conflict:
                 verdict = "CONTESTED"
                 ev_cls = "HISTORIOGRAPHICAL_DEBATE"
-                note = "Retrieved sources indicate active scholarly debate or lack of historical consensus."
+                note = "Retrieved sources indicate active scholarly debate or conflicting quantitative estimates."
             elif not supporting_passages:
                 verdict = "INSUFFICIENT_EVIDENCE"
                 ev_cls = "NO_PRIMARY_HISTORICAL_EVIDENCE"
