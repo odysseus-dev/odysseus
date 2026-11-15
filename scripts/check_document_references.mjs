@@ -39,50 +39,107 @@ function patternIds(pattern, out = []) {
   return out;
 }
 
+function collectTypeofProbes(expr, target = 'defined', out = new Set()) {
+  if (!expr) return out;
+  if (expr.type === 'UnaryExpression' && expr.operator === '!') {
+    return collectTypeofProbes(expr.argument, target === 'defined' ? 'absent' : 'defined', out);
+  }
+  if (expr.type === 'LogicalExpression') {
+    if ((target === 'defined' && expr.operator === '&&') || (target === 'absent' && expr.operator === '||')) {
+      collectTypeofProbes(expr.left, target, out);
+      collectTypeofProbes(expr.right, target, out);
+    }
+    return out;
+  }
+  if (expr.type === 'BinaryExpression' && ['===', '==', '!==', '!='].includes(expr.operator)) {
+    const isEq = expr.operator === '===' || expr.operator === '==';
+    const pair = [expr.left, expr.right];
+    const typeofNode = pair.find(n => n?.type === 'UnaryExpression' && n.operator === 'typeof' && isId(n.argument));
+    const litNode = pair.find(n => n?.type === 'Literal' && typeof n.value === 'string');
+    if (typeofNode && litNode) {
+      const checksDefined = litNode.value === 'undefined' ? !isEq : isEq;
+      if ((target === 'defined' && checksDefined) || (target === 'absent' && !checksDefined)) {
+        out.add(typeofNode.argument.name);
+      }
+    }
+  }
+  return out;
+}
+
 export function analyzeDocumentReferences(source, filename = '<source>') {
   const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
   const root = { parent: null, names: new Map() }, refs = [], importedWrites = [], imports = [], diagnostics = [], exports = new Set(), exportAll = [], reexports = [];
   const scopeAt = new WeakMap();
   const declare = (scope, id, kind = 'local') => { if (isId(id)) scope.names.set(id.name, kind); };
-  const targetRefs = (n, mode = 'read', scope = root) => {
+  const targetRefs = (n, mode = 'read', scope = root, guarded = new Set()) => {
     if (!n) return;
-    if (n.type === 'Identifier') { scopeAt.set(n, scope); refs.push({ node: n, mode }); return; }
+    if (n.type === 'Identifier') { scopeAt.set(n, scope); refs.push({ node: n, mode, typeofGuarded: guarded.has(n.name) }); return; }
     if (n.type === 'MemberExpression') {
-      visit(n.object, n, 'object', scope);
-      if (mode !== 'read' && isId(n.object)) refs.push({ node: n.object, mode: 'namespace-write' });
-      if (n.computed) visit(n.property, n, 'property', scope);
+      visit(n.object, n, 'object', scope, guarded);
+      if (mode !== 'read' && isId(n.object)) refs.push({ node: n.object, mode: 'namespace-write', typeofGuarded: guarded.has(n.object.name) });
+      if (n.computed) visit(n.property, n, 'property', scope, guarded);
       return;
     }
-    if (n.type === 'RestElement') return targetRefs(n.argument, mode, scope);
-    if (n.type === 'AssignmentPattern') { targetRefs(n.left, mode, scope); visit(n.right, null, '', scope); return; }
-    if (n.type === 'ArrayPattern') { n.elements.forEach(x => targetRefs(x, mode, scope)); return; }
-    if (n.type === 'ObjectPattern') { n.properties.forEach(p => { if (p.type === 'RestElement') targetRefs(p.argument, mode, scope); else { if (p.computed) visit(p.key, p, 'key', scope); if (p.value.type === 'AssignmentPattern') { targetRefs(p.value.left, mode, scope); visit(p.value.right, p.value, 'right', scope); } else targetRefs(p.value, mode, scope); } }); return; }
-    visit(n, null, '', scope);
+    if (n.type === 'RestElement') return targetRefs(n.argument, mode, scope, guarded);
+    if (n.type === 'AssignmentPattern') { targetRefs(n.left, mode, scope, guarded); visit(n.right, null, '', scope, guarded); return; }
+    if (n.type === 'ArrayPattern') { n.elements.forEach(x => targetRefs(x, mode, scope, guarded)); return; }
+    if (n.type === 'ObjectPattern') { n.properties.forEach(p => { if (p.type === 'RestElement') targetRefs(p.argument, mode, scope, guarded); else { if (p.computed) visit(p.key, p, 'key', scope, guarded); if (p.value.type === 'AssignmentPattern') { targetRefs(p.value.left, mode, scope, guarded); visit(p.value.right, p.value, 'right', scope, guarded); } else targetRefs(p.value, mode, scope, guarded); } }); return; }
+    visit(n, null, '', scope, guarded);
   };
-  const patternDefaults = (p,s) => visitPatternDefaults(p,s,visit);
-  function visit(n, parent = null, field = '', scope = root) {
+  const patternDefaults = (p, s, g) => visitPatternDefaults(p, s, (node, parent, field, sc) => visit(node, parent, field, sc, g));
+  function visit(n, parent = null, field = '', scope = root, guarded = new Set()) {
     if (!n) return;
     if (['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(n.type)) {
       if (n.type === 'FunctionDeclaration') declare(scope, n.id);
       const s = { parent: scope, names: new Map(), functionScope: true }; scopeAt.set(n, s);
       if (n.type === 'FunctionExpression') declare(s, n.id);
+      const fnGuarded = new Set();
       n.params.forEach(p => patternIds(p).forEach(id => declare(s, id)));
-      n.params.forEach(p => patternDefaults(p, s));
-      visit(n.body, n, 'body', s); return;
+      n.params.forEach(p => patternDefaults(p, s, fnGuarded));
+      visit(n.body, n, 'body', s, fnGuarded); return;
     }
     if (n.type === 'BlockStatement' || n.type === 'SwitchStatement' || n.type === 'CatchClause') {
       const s = { parent: scope, names: new Map() }; scopeAt.set(n, s);
-      if (n.type === 'CatchClause') { patternIds(n.param).forEach(id => declare(s, id)); patternDefaults(n.param, s); }
-      for (const [c, f] of childNodes(n)) visit(c, n, f, s); return;
+      if (n.type === 'CatchClause') { patternIds(n.param).forEach(id => declare(s, id)); patternDefaults(n.param, s, guarded); }
+      for (const [c, f] of childNodes(n)) visit(c, n, f, s, guarded); return;
+    }
+    if (n.type === 'IfStatement') {
+      visit(n.test, n, 'test', scope, guarded);
+      const thenGuarded = new Set(guarded);
+      collectTypeofProbes(n.test, 'defined', thenGuarded);
+      visit(n.consequent, n, 'consequent', scope, thenGuarded);
+      if (n.alternate) {
+        const elseGuarded = new Set(guarded);
+        collectTypeofProbes(n.test, 'absent', elseGuarded);
+        visit(n.alternate, n, 'alternate', scope, elseGuarded);
+      }
+      return;
+    }
+    if (n.type === 'ConditionalExpression') {
+      visit(n.test, n, 'test', scope, guarded);
+      const thenGuarded = new Set(guarded);
+      collectTypeofProbes(n.test, 'defined', thenGuarded);
+      visit(n.consequent, n, 'consequent', scope, thenGuarded);
+      const elseGuarded = new Set(guarded);
+      collectTypeofProbes(n.test, 'absent', elseGuarded);
+      visit(n.alternate, n, 'alternate', scope, elseGuarded);
+      return;
+    }
+    if (n.type === 'LogicalExpression' && (n.operator === '&&' || n.operator === '||')) {
+      visit(n.left, n, 'left', scope, guarded);
+      const rightGuarded = new Set(guarded);
+      collectTypeofProbes(n.left, n.operator === '&&' ? 'defined' : 'absent', rightGuarded);
+      visit(n.right, n, 'right', scope, rightGuarded);
+      return;
     }
     if (n.type === 'ForStatement' || n.type === 'ForInStatement' || n.type === 'ForOfStatement') {
       const loop = { parent: scope, names: new Map() };
       const left = n.init || n.left;
       if (left?.type === 'VariableDeclaration' && left.kind !== 'var') left.declarations.forEach(d => patternIds(d.id).forEach(id => declare(loop, id)));
       for (const [c,f] of childNodes(n)) {
-        if ((n.type === 'ForInStatement' || n.type === 'ForOfStatement') && f === 'left' && c.type !== 'VariableDeclaration') targetRefs(c,'write',loop);
-        else if ((f === 'left' || f === 'init') && c.type === 'VariableDeclaration') visit(c,n,f,loop);
-        else visit(c,n,f,loop);
+        if ((n.type === 'ForInStatement' || n.type === 'ForOfStatement') && f === 'left' && c.type !== 'VariableDeclaration') targetRefs(c,'write',loop,guarded);
+        else if ((f === 'left' || f === 'init') && c.type === 'VariableDeclaration') visit(c,n,f,loop,guarded);
+        else visit(c,n,f,loop,guarded);
       }
       return;
     }
@@ -90,36 +147,36 @@ export function analyzeDocumentReferences(source, filename = '<source>') {
     if (n.type === 'VariableDeclaration') {
       const dest = n.kind === 'var' ? nearestFunction(scope) : scope;
       n.declarations.forEach(d => patternIds(d.id).forEach(id => declare(dest, id)));
-      n.declarations.forEach(d => { patternDefaults(d.id, scope); if (d.init) visit(d.init, d, 'init', scope); }); return;
+      n.declarations.forEach(d => { patternDefaults(d.id, scope, guarded); if (d.init) visit(d.init, d, 'init', scope, guarded); }); return;
     }
     if (n.type === 'ImportDeclaration') {
       for (const spec of n.specifiers) { const record={ source: n.source.value, name: spec.type === 'ImportDefaultSpecifier' ? 'default' : spec.type === 'ImportNamespaceSpecifier' ? '*' : spec.imported.name, local: spec.local.name, line: spec.loc.start.line, uses: 0 }; scope.names.set(spec.local.name,{kind:'import',record}); imports.push(record); } return;
     }
-    if (n.type === 'ExportDefaultDeclaration') { exports.add('default'); if (n.declaration.type !== 'FunctionDeclaration' && n.declaration.type !== 'ClassDeclaration') visit(n.declaration,n,'declaration',scope); else visit(n.declaration,n,'declaration',scope); return; }
+    if (n.type === 'ExportDefaultDeclaration') { exports.add('default'); visit(n.declaration,n,'declaration',scope,guarded); return; }
     if (n.type === 'ExportAllDeclaration') { if (n.exported) exports.add(n.exported.name); else exportAll.push(n.source.value); return; }
     if (n.type === 'ExportNamedDeclaration') {
       if (n.declaration) {
         if (n.declaration.type === 'VariableDeclaration') n.declaration.declarations.forEach(d => patternIds(d.id).forEach(id => exports.add(id.name)));
         else if (n.declaration.id) exports.add(n.declaration.id.name);
-        visit(n.declaration,n,'declaration',scope);
-      } else n.specifiers.forEach(s => { if (s.type === 'ExportSpecifier') { exports.add(s.exported.name); if (n.source) reexports.push({source:n.source.value,name:s.local.name,line:s.loc.start.line}); else visit(s.local,s,'local',scope); } });
+        visit(n.declaration,n,'declaration',scope,guarded);
+      } else n.specifiers.forEach(s => { if (s.type === 'ExportSpecifier') { exports.add(s.exported.name); if (n.source) reexports.push({source:n.source.value,name:s.local.name,line:s.loc.start.line}); else visit(s.local,s,'local',scope,guarded); } });
       return;
     }
     if (n.type === 'ClassDeclaration') declare(scope, n.id);
-    if (n.type === 'ClassExpression' && n.id) { const s = { parent: scope, names: new Map() }; declare(s, n.id); for (const [c,f] of childNodes(n)) visit(c,n,f,s); return; }
-    if (n.type === 'AssignmentExpression') { targetRefs(n.left, n.operator === '=' ? 'write' : 'readwrite', scope); visit(n.right,n,'right',scope); return; }
-    if (n.type === 'UpdateExpression') { targetRefs(n.argument, 'readwrite', scope); return; }
-    if (n.type === 'UnaryExpression' && n.operator === 'typeof' && n.argument.type === 'Identifier') { scopeAt.set(n.argument, scope); refs.push({ node:n.argument, mode:'typeof' }); return; }
-    if (n.type === 'ForInStatement' || n.type === 'ForOfStatement') { targetRefs(n.left, 'write', scope); visit(n.right,n,'right',scope); visit(n.body,n,'body',scope); return; }
+    if (n.type === 'ClassExpression' && n.id) { const s = { parent: scope, names: new Map() }; declare(s, n.id); for (const [c,f] of childNodes(n)) visit(c,n,f,s,new Set()); return; }
+    if (n.type === 'AssignmentExpression') { targetRefs(n.left, n.operator === '=' ? 'write' : 'readwrite', scope, guarded); visit(n.right,n,'right',scope,guarded); return; }
+    if (n.type === 'UpdateExpression') { targetRefs(n.argument, 'readwrite', scope, guarded); return; }
+    if (n.type === 'UnaryExpression' && n.operator === 'typeof' && n.argument.type === 'Identifier') { scopeAt.set(n.argument, scope); refs.push({ node:n.argument, mode:'typeof', typeofGuarded: true }); return; }
+    if (n.type === 'ForInStatement' || n.type === 'ForOfStatement') { targetRefs(n.left, 'write', scope, guarded); visit(n.right,n,'right',scope,guarded); visit(n.body,n,'body',scope,guarded); return; }
     if (n.type === 'Identifier') {
       if (parent?.type === 'MemberExpression' && field === 'property' && !parent.computed) return;
       if (parent?.type === 'Property' && field === 'key' && (!parent.computed || parent.shorthand)) return;
       if (parent?.type === 'MethodDefinition' && field === 'key' && !parent.computed) return;
       if (parent?.type === 'LabeledStatement' && field === 'label' || parent?.type === 'BreakStatement' || parent?.type === 'ContinueStatement') return;
       if (parent?.type === 'VariableDeclarator' && field === 'id' || parent?.type === 'FunctionDeclaration' && field === 'id' || parent?.type === 'FunctionExpression' && field === 'id' || parent?.type === 'ClassDeclaration' && field === 'id' || parent?.type === 'ClassExpression' && field === 'id' || parent?.type === 'CatchClause' && field === 'param' || parent?.type.startsWith('Import')) return;
-      refs.push({ node: n, mode: 'read' }); return;
+      refs.push({ node: n, mode: 'read', typeofGuarded: guarded.has(n.name) }); return;
     }
-    for (const [c, f] of childNodes(n)) visit(c, n, f, scope);
+    for (const [c, f] of childNodes(n)) visit(c, n, f, scope, guarded);
   }
   function nearestFunction(s) { while (s && !s.functionScope && s !== root) s = s.parent; return s || root; }
   visit(ast);
@@ -131,14 +188,17 @@ export function analyzeDocumentReferences(source, filename = '<source>') {
       const namespaceWrite = ref.mode === 'namespace-write';
       if (namespaceWrite ? binding.record.name === '*' : ref.mode !== 'read' && ref.mode !== 'typeof') importedWrites.push({ name,line,mode:ref.mode });
     }
-    if (ref.mode !== 'namespace-write' && !binding && !globals.has(name) && !ignored.has(name) && ref.mode !== 'typeof') diagnostics.push({ file:filename,line,name,type:'unresolved' });
+    if (ref.mode !== 'namespace-write' && !binding && !globals.has(name) && !ignored.has(name) && ref.mode !== 'typeof') diagnostics.push({ file:filename,line,name,type:'unresolved',typeofGuarded:ref.typeofGuarded });
   }
   const compatibilityAllowances = [];
   for (const line of source.split(/\r?\n/)) {
     const match = line.match(/\/\/\s*document-reference-compat:\s*([A-Za-z_$][\w$]*)\s+-\s+(.+?)\s*$/);
     if (match && refs.some(r => r.node.name === match[1] && r.mode === 'typeof')) compatibilityAllowances.push({ name:match[1], rationale:match[2], line:source.slice(0,source.indexOf(line)).split('\n').length });
   }
-  for (let i=diagnostics.length-1;i>=0;i--) if(compatibilityAllowances.some(a=>a.name===diagnostics[i].name)) diagnostics.splice(i,1);
+  for (let i=diagnostics.length-1;i>=0;i--) {
+    if (diagnostics[i].typeofGuarded && compatibilityAllowances.some(a=>a.name===diagnostics[i].name)) diagnostics.splice(i,1);
+    else delete diagnostics[i].typeofGuarded;
+  }
   return { imports, unusedImports: imports.filter(i => i.uses === 0), importedWrites, diagnostics, exports:[...exports], exportAll, reexports, compatibilityAllowances };
 }
 
@@ -153,6 +213,7 @@ export function checkDocumentReferences(root) {
     const result=analyzeDocumentReferences(fs.readFileSync(file,'utf8'),rel);
     for (const d of result.diagnostics) results.push(d);
     for (const w of result.importedWrites) results.push({file:rel,line:w.line,name:w.name,type:'imported-write'});
+    for (const u of result.unusedImports) results.push({file:rel,line:u.line,name:u.local,type:'unused-import'});
   }
   return results.sort((a,b)=>a.file.localeCompare(b.file)||a.line-b.line||a.type.localeCompare(b.type));
 }

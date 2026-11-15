@@ -85,3 +85,47 @@ test('namespace properties are read-only while imported objects retain mutable p
   const result = analyzeDocumentReferences("import * as ns from './owner.js'; import { object } from './owner.js'; ns.value = 2; object.value = 2; ns.object.value = 3;");
   assert.deepEqual(result.importedWrites.map(write => write.name), ['ns']);
 });
+
+test('compatibility exceptions apply only to typeof-guarded sites, not unguarded reads in the same file', () => {
+  const result = analyzeDocumentReferences(
+    `if (typeof legacyHook === 'function') legacyHook();\n` +
+    `legacyHook();\n` +
+    `// document-reference-compat: legacyHook - retained for old host pages`
+  );
+  assert.deepEqual(result.compatibilityAllowances.map(x => x.name), ['legacyHook']);
+  assert.deepEqual(result.diagnostics.map(x => [x.line, x.name, x.type]), [[2, 'legacyHook', 'unresolved']]);
+});
+
+test('checkDocumentReferences fails closed on unresolved reads, unguarded compat reads, imported writes, and unused imports', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'document-refs-neg-'));
+  try {
+    const docs = path.join(root, 'frontend/src/features/documents/ui');
+    fs.mkdirSync(docs, { recursive: true });
+    fs.mkdirSync(path.join(root, 'static/js'), { recursive: true });
+    fs.writeFileSync(path.join(docs, 'owner.js'), 'export const val = 1;\nexport const unusedVal = 2;\n');
+    fs.writeFileSync(
+      path.join(docs, 'broken.js'),
+      [
+        "import { val, unusedVal } from './owner.js';",
+        'val = 3;',
+        'missingSymbol();',
+        '// document-reference-compat: legacyHook - fallback',
+        'if (typeof legacyHook === "function") legacyHook();',
+        'legacyHook();',
+      ].join('\n')
+    );
+    fs.writeFileSync(path.join(root, 'static', 'js', 'document.js'), 'export {};\n');
+    const results = checkDocumentReferences(root);
+    assert.deepEqual(
+      results.map(r => [r.type, r.name, r.line]),
+      [
+        ['unused-import', 'unusedVal', 1],
+        ['imported-write', 'val', 2],
+        ['unresolved', 'missingSymbol', 3],
+        ['unresolved', 'legacyHook', 6],
+      ]
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

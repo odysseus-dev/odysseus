@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { parse } from 'acorn';
 import {
@@ -14,7 +14,15 @@ import {
   validateRecordedSource
 } from '../scripts/verify_document_remediation.mjs';
 
-const verifierRoot='/home/alteixeira20/Projects/Odysseus/audit-artifacts/tools/document-extraction-verifier';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const candidateVerifierRoots = [
+  process.env.DOCUMENT_EXTRACTION_VERIFIER_ROOT,
+  path.resolve(repoRoot, '../../audit-artifacts/tools/document-extraction-verifier'),
+  path.resolve(repoRoot, '../audit-artifacts/tools/document-extraction-verifier'),
+].filter(Boolean);
+const verifierRoot = candidateVerifierRoots.find(candidate => fs.existsSync(candidate)) || candidateVerifierRoots[0];
+const hasExternalVerifier = fs.existsSync(path.join(verifierRoot, 'lib/exports.mjs'))
+  && fs.existsSync(path.join(verifierRoot, 'lib/transforms.mjs'));
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const baseAmendments=()=>({schemaVersion:1,auditedRevision:'032d98575f5a7492e2377089cbc68f148753dd64',accountingBaseline:'087e6c8837969339e9e7823dd84a4d717d536cea',functionBodyRewrites:{},openPanelStatementRewrites:[],exports:{}});
 const baseRemoval=()=>({baseline:'f3a05c10c998e4efff14ac6498b01bd50138ad6e',statementBaseline:'087e6c8837969339e9e7823dd84a4d717d536cea',functionBodyRewrites:{closePanel:[{from:'old',to:'new'}]},openPanelStatementRewrites:[{id:'stmt#x',replacements:[{from:'a',to:'b'}]}]});
@@ -34,7 +42,11 @@ test('manifest composition appends only exact amendment replacements',()=>{
   assert.deepEqual(composed.openPanelStatementRewrites[0].replacements.map(x=>x.from),['a','c']);
 });
 
-test('export reconciliation preserves non-export canonical failures and rejects extra exports',async()=>{
+test('export reconciliation preserves non-export canonical failures and rejects extra exports',async t=>{
+  if (!hasExternalVerifier) {
+    t.skip(`External document-extraction-verifier tool not present at ${verifierRoot}`);
+    return;
+  }
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'remediation-exports-'));
   try {
     const file=path.join(dir,'ui/example.js'); fs.mkdirSync(path.dirname(file),{recursive:true});
@@ -68,7 +80,11 @@ test('recorded hashes reject changed corrected functions and exports',()=>{
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
-test('canonical function rewrite comparison rejects any unrecorded body change',async()=>{
+test('canonical function rewrite comparison rejects any unrecorded body change',async t=>{
+  if (!hasExternalVerifier) {
+    t.skip(`External document-extraction-verifier tool not present at ${verifierRoot}`);
+    return;
+  }
   const {compareManifestFunction}=await import(pathToFileURL(path.join(verifierRoot,'lib/transforms.mjs')).href);
   const base='function corrected() { return 1; }';
   const targetAst=code=>parse(code,{ecmaVersion:'latest',sourceType:'module'}).body[0];
