@@ -1,0 +1,22 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Cookbook isolated reliability replay</title>
+<link rel="stylesheet" href="/static/css/10-cookbook.css">
+<style>
+:root {--bg:#181818;--fg:#eee;--fg-muted:#aaa;--border:#454545;--accent:#39b9ef;--red:#ee6262;--green:#50fa7b;--card:#222;--bg-elevated:#252525;--bg-input:#171717;--input-bg:#171717}
+body{background:var(--bg);color:var(--fg);font:15px system-ui;margin:20px}button,input,select{font:inherit;color:inherit;background:#292929;border:1px solid var(--border);border-radius:5px;padding:7px}.hidden{display:none!important}.lab-controls{display:flex;gap:12px;align-items:center;margin-bottom:15px;flex-wrap:wrap}#cookbook-modal{position:static;display:block!important}.modal-content{max-width:1100px}.cookbook-body{padding:12px;max-height:82vh;overflow:auto}.admin-card{border:1px solid var(--border);border-radius:12px;padding:18px;background:#202020}pre{white-space:pre-wrap}a{color:var(--accent)}
+</style></head><body>
+<h2>Isolated Cookbook reliability replay</h2>
+<p>No model download or inference. Real routes and Cookbook UI; labelled fixture transfer and retained Gemma log.</p>
+<div class="lab-controls"><button id="replay-gemma">Replay Gemma failure</button><button id="replay-success">Run cached-success fixture</button><span id="lab-status">Loading UI…</span></div>
+<div id="cookbook-modal" class="hidden"><div class="modal-content"><div class="cookbook-body"></div></div></div>
+<script>window.labErrors=[];window.addEventListener('error',e=>labErrors.push(e.message));window.addEventListener('unhandledrejection',e=>labErrors.push(String(e.reason)));</script>
+<script type="module">
+import cookbook, { _addTask } from '/static/js/cookbook.js';
+window.cookbookModule=cookbook;
+await cookbook.open({tab:'Serve'});
+document.getElementById('lab-status').textContent='Ready — isolated data and logs';
+for(const kind of ['gemma','success']) document.getElementById(`replay-${kind}`).onclick=async()=>{
+ const r=await fetch(`/lab/replay/${kind}`,{method:'POST'}); const p=await r.json();
+ _addTask(p.session_id,`${p.repo_id.split('/').pop()} · Q4_K_M`, 'download',p);
+ document.getElementById('lab-status').textContent=`Fixture running: ${p.session_id}`;
+};
+</script></body></html>

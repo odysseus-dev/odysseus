@@ -143,7 +143,7 @@ TERMINAL_TASK_STATUSES = {
 }
 
 
-def _set_task_status(session_id: str, status: str, *, stamp: bool = False) -> dict:
+def _set_task_status(session_id: str, status: str, *, stamp: bool = False, expected_status: str | None = None) -> dict:
     """Atomically set one task's status in the on-disk cookbook state.
 
     The state file is the single source of truth for cross-device sync, so a
@@ -180,6 +180,10 @@ def _set_task_status(session_id: str, status: str, *, stamp: bool = False) -> di
             if task.get("sessionId") != session_id:
                 continue
             previous = task.get("status")
+            # Classification runs outside the store lock. Do not undo a Stop
+            # or a newer outcome recorded while the file probe was in flight.
+            if expected_status is not None and (previous or "").lower() != expected_status:
+                return {"changed": False, "found": True, "previous": previous, "conflict": True}
             changed = previous != status
             if changed:
                 task["status"] = status
@@ -4330,8 +4334,14 @@ def setup_cookbook_routes() -> APIRouter:
             local_win_task = (not remote) and IS_WINDOWS
 
             progress_text = ""
-            full_snapshot = (task.get("output") or "")[-12000:] if task_type == "serve" else ""
-            _persisted_terminal = False
+            full_snapshot = (task.get("output") or "")[-12000:]
+            _task_status = (task.get("status") or "").lower()
+            _persisted_serve_ready = (
+                task_type == "serve"
+                and bool(full_snapshot)
+                and _parse_serve_phase(full_snapshot, task_type).get("status") == "ready"
+            )
+            _persisted_terminal = _task_status in TERMINAL_TASK_STATUSES and not _persisted_serve_ready
 
             _pid_unverifiable = False
             if local_win_task:
@@ -4345,7 +4355,7 @@ def setup_cookbook_routes() -> APIRouter:
                     task_pid = None
                 _pid_state = _local_pid_state(task_pid, session_id)
                 is_alive = _pid_state == "owned"
-                _pid_unverifiable = _pid_state in {"unverifiable", "recycled"}
+                _pid_unverifiable = _pid_state in {"unverifiable", "recycled"} and not _persisted_terminal
                 try:
                     if log_path.exists():
                         full_snapshot = log_path.read_text(
@@ -4363,13 +4373,6 @@ def setup_cookbook_routes() -> APIRouter:
                 # stopped tasks). The agent's `list_served_models` call
                 # was blocking the chat stream every time.
 
-                _task_status = (task.get("status") or "").lower()
-                _persisted_serve_ready = (
-                    task_type == "serve"
-                    and bool(full_snapshot)
-                    and _parse_serve_phase(full_snapshot, task_type).get("status") == "ready"
-                )
-                _persisted_terminal = _task_status in TERMINAL_TASK_STATUSES and not _persisted_serve_ready
                 if _persisted_terminal:
                     is_alive = False
                     # Keep the persisted output_tail for the UI — it's
@@ -4470,31 +4473,11 @@ def setup_cookbook_routes() -> APIRouter:
                 # log that merely contains the word "error" would flip a
                 # completed download back to error, and a session reusing the
                 # name could flip a finished task back to running.
-                #
-                # The runner's own conclusive markers are the exception: they
-                # are printed only on the real outcome, so a download that ends
-                # DOWNLOAD_OK + "Fetching 0 files" is a genuine failure even if
-                # a client already recorded "done" (gated repo, wrong quant
-                # pattern, empty result). Without this the durable guard would
-                # launder that failure into a permanent success.
+                # Runner markers are evidence, unlike error-word heuristics.
+                # Requested-file verification below is shared by every platform.
                 _marker = classify_dead_download(full_snapshot) if task_type == "download" else None
-                if _marker is not None:
+                if _marker is not None and _task_status not in CANCELLED_STATUSES:
                     status, download_zero_files = _marker
-                    if status == "error" and download_zero_files:
-                        # "Fetching 0 files" is ambiguous on its own: HF prints
-                        # it both when nothing matched and when every file was
-                        # already cached. Only call it a failure when the
-                        # requested quant/pattern is genuinely absent from the
-                        # cache — an unrelated cached file must not satisfy it.
-                        if _download_cache_matches(
-                            _payload.get("repo_id") or model,
-                            _payload.get("include") or "",
-                            remote, str(_tport or ""), _payload.get("local_dir") or ""
-                        ):
-                            status = "completed"
-                            download_zero_files = False
-                    if status == "completed" and not progress_text:
-                        progress_text = "Download complete"
                 else:
                     status = _task_status
             elif is_alive or (local_win_task and full_snapshot):
@@ -4518,21 +4501,7 @@ def setup_cookbook_routes() -> APIRouter:
                 elif has_error and not ("application startup complete" in lower):
                     status = "error"
                 elif task_type == "download" and download_has_ok:
-                    if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
-                        # Ambiguous on its own — HF also prints this when every
-                        # file was already cached. Verify the requested
-                        # quant/pattern is actually present before succeeding.
-                        if _download_cache_matches(
-                            _payload.get("repo_id") or model,
-                            _payload.get("include") or "",
-                            remote, str(_tport or ""), _payload.get("local_dir") or ""
-                        ):
-                            status = "completed"
-                        else:
-                            status = "error"
-                            download_zero_files = True
-                    else:
-                        status = "completed"
+                    status = "completed"  # verified against requested files below
                 elif task_type == "download" and download_has_failed:
                     status = "error"
                 elif task_type == "download" and download_has_incomplete_evidence:
@@ -4568,6 +4537,35 @@ def setup_cookbook_routes() -> APIRouter:
                 else:
                     status = "stopped"
 
+            # All platforms share the final download decision. Exit 0 and
+            # DOWNLOAD_OK prove the CLI finished, not that the requested weights
+            # exist. Run this after the liveness branches, including Windows.
+            if task_type == "download" and _task_status not in CANCELLED_STATUSES:
+                _exit = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
+                if _exit:
+                    exit_code = int(_exit.group(1))
+                if download_has_failed or (exit_code is not None and exit_code != 0):
+                    status = "error"
+                elif download_has_ok or status in {"done", "completed"}:
+                    repo_id = _payload.get("repo_id") or model
+                    is_hf_download = "/" in repo_id and _payload.get("backend") != "ollama" and not _payload.get("_dep")
+                    if is_hf_download:
+                        if _download_cache_matches(
+                            repo_id, _payload.get("include") or "", remote,
+                            str(_tport or ""), _payload.get("local_dir") or ""
+                        ):
+                            status = "completed"
+                            download_zero_files = False
+                        else:
+                            status = "error"
+                            download_zero_files = True
+                    elif download_has_ok:
+                        status = "completed"
+                if status == "completed":
+                    progress_text = "Download complete"
+            elif task_type == "download" and _task_status in CANCELLED_STATUSES:
+                status = _task_status
+
             # Parse structured phase info — single source of truth for the UI
             phase_info = _parse_serve_phase(full_snapshot, task_type) if (task_type == "serve" and full_snapshot) else {}
             if phase_info.get("status") == "ready" and is_alive:
@@ -4584,11 +4582,17 @@ def setup_cookbook_routes() -> APIRouter:
             # authoritative, but without writing it back the state file keeps
             # the stale value forever and a browser POST can keep re-sending
             # it. `_set_task_status` is the existing locked, atomic writer.
-            if _persisted_terminal and status != _task_status:
+            if status != _task_status and (
+                _persisted_terminal or (task_type == "download" and status in {"completed", "error"})
+            ):
                 try:
-                    _set_task_status(session_id, status)
+                    saved = _set_task_status(session_id, status, expected_status=_task_status)
+                    if saved.get("conflict"):
+                        status = saved["previous"]
+                        diagnosis = None
+                    _state_get_cache.pop("value", None)
                 except Exception:
-                    pass
+                    logger.exception("Could not persist Cookbook outcome for %s", session_id)
 
             results.append({
                 "session_id": session_id,

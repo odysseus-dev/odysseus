@@ -909,9 +909,13 @@ function _isQueuedDownloadPlaceholder(task) {
 }
 
 function _redactStoredText(value) {
-  return String(value || '')
-    .replace(/hf_[A-Za-z0-9]{20,}/g, '[redacted-token]')
-    .replace(/((?:api[_-]?key|token|authorization|password|passwd|secret)\s*[=:]\s*)(["']?)[^\s"']+/gi, '$1$2[redacted]');
+  return String(value || '').split('\n').map(line => {
+    // These exact runner messages contain status only, never a credential.
+    if (/^\[odysseus\] HF token: (?:applied|NOT SET — gated\/private models will be denied\. Add one in Odysseus Cookbook -> Settings -> HuggingFace Token\.)$/.test(line.trimEnd())) return line;
+    return line
+      .replace(/hf_[A-Za-z0-9]{20,}/g, '[redacted-token]')
+      .replace(/((?:api[_-]?key|token|authorization|password|passwd|secret)\s*[=:]\s*)(["']?)[^\s"']+/gi, '$1$2[redacted]');
+  }).join('\n');
 }
 
 function _isServeOutputPlaceholder(value) {
@@ -1117,8 +1121,8 @@ function _winSessionCmd(task, tmuxArgs) {
   if (tmuxArgs.includes('capture-pane')) {
     const lines = tmuxArgs.match(/-S\s*-?(\d+)/)?.[1] || '200';
     const ps = host
-      ? `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`
-      : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Tail ${lines} -ErrorAction SilentlyContinue`;
+      ? `Get-Content '${sd}\\${sid}.log' -Encoding UTF8 -Tail ${lines} -ErrorAction SilentlyContinue`
+      : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Encoding UTF8 -Tail ${lines} -ErrorAction SilentlyContinue`;
     return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('has-session')) {
@@ -1141,7 +1145,7 @@ function _winSessionCmd(task, tmuxArgs) {
 }
 
 function _winPowerShellCmd(task, ps) {
-  const command = `powershell -Command "${ps}"`;
+  const command = `powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); ${ps}"`;
   const host = _taskRemoteHost(task);
   if (!host) return command;
   return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(command)}`;
@@ -3217,7 +3221,8 @@ export function _renderRunningTab() {
     // Wire copy button
     el.querySelector('.cookbook-output-copy').addEventListener('click', (e) => {
       e.stopPropagation();
-      const text = el.querySelector('.cookbook-output-pre')?.textContent || '';
+      const text = _loadTasks().find(t => t.sessionId === task.sessionId)?.output
+        || task.output || el.querySelector('.cookbook-output-pre')?.textContent || '';
       if (!text.trim()) {
         uiModule.showToast('No log content available yet');
         return;
@@ -3281,6 +3286,12 @@ async function _reconnectTask(el, task) {
   // launch POST is in flight. It has no tmux/process session to reconnect yet,
   // so polling it reads a non-existent session and can flip the row to crashed.
   if (!el || !task || _isQueuedDownloadPlaceholder(task)) return;
+  // Downloads are classified by the status API after checking the requested
+  // files. A parallel pane parser must not turn exit 0 into a fake success.
+  if (task.type === 'download') {
+    _pollBackgroundStatus().catch(() => {});
+    return;
+  }
   const wrap = el.querySelector('.cookbook-output-wrap');
   if (!_isRunningTabVisible() || !wrap || wrap.classList.contains('cookbook-task-collapsed')) return;
   if (el._abort && !el._abort.signal?.aborted) return;
@@ -3563,7 +3574,7 @@ async function _reconnectTask(el, task) {
         // 40px tolerance covers sub-pixel rounding + the moment between
         // releasing the scrollbar and the next poll arriving.
         const _atBottom = (output.scrollHeight - output.scrollTop - output.clientHeight) < 40;
-        output.textContent = snapshot;
+        output.textContent = _cleanTerminalText(snapshot);
         if (_atBottom) output.scrollTop = output.scrollHeight;
 
         // Live status parsing for download tasks
@@ -4236,6 +4247,9 @@ async function _selfHealStaleTasksImpl(opts = {}) {
   const tasks = _loadTasks();
   const candidates = tasks.filter(t => {
     if (t.type !== 'download') return false;
+    // The server has already resolved this task; a surviving shell is not a
+    // new transfer and cannot resurrect its terminal outcome.
+    if (t._backendStatus && !['running', 'unknown'].includes(t._backendStatus)) return false;
     if (!['done', 'error', 'crashed', 'stopped'].includes(t.status)) return false;
     if (!t.sessionId || String(t.sessionId).startsWith('queue-')) return false;
     // Finished downloads with strong completion markers (DOWNLOAD_OK or HF
@@ -4458,36 +4472,22 @@ async function _pollBackgroundStatus() {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
         const updates = {};
+        if (task._backendStatus !== live.status) updates._backendStatus = live.status;
         // A finished dependency install whose tmux pane is gone is reported
         // "stopped" by the backend (its pip package is never in the HF cache the
         // dead-session check inspects). Recover "done" from the retained output's
         // exit-0 sentinel so a clean install isn't downgraded to crashed.
         const combinedOutput = `${task.output || ''}\n${live.output_tail || ''}`;
         const depDone = !!task.payload?._dep && _depInstallSucceeded(combinedOutput);
-        // A finished model download whose tmux pane is gone is also reported
-        // "stopped" (the dead-session check can miss the landed snapshot).
-        // Recover "done" from the terminal `DOWNLOAD_OK` sentinel — emitted
-        // only after the runner exits 0 — so a completed download isn't
-        // downgraded to crashed. This background poll runs blind (no live
-        // stream to debounce against), so unlike the reconnect loop it keys
-        // off the conclusive exit sentinel only, never the `/snapshots/` path,
-        // which can be printed mid-stream for multi-file downloads.
-        const downloadDone = task.type === 'download'
-          && String(combinedOutput || '').includes('DOWNLOAD_OK');
+        // Backend status includes requested-file verification. DOWNLOAD_OK is
+        // only CLI exit evidence and must never override it (or cancellation).
         const serveReady = task.type === 'serve'
           && (live.status === 'ready' || _serveOutputLooksReady({ ...task, output: live.output_tail || task.output || '' }));
-        const completedByOutput = depDone || downloadDone;
-        const nextStatus = completedByOutput
-          ? 'done'
-          : (serveReady
-          ? 'ready'
-          : (live.status === 'completed'
-          ? 'done'
-          : (live.status === 'error'
-            ? 'error'
-            : (live.status === 'stopped'
-                ? ((depDone || downloadDone) ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
-                : null))));
+        const completedByOutput = depDone && live.status === 'stopped';
+        const nextStatus = task.type === 'download'
+          ? (live.status === 'completed' ? 'done' : (completedByOutput ? 'done' : live.status))
+          : (serveReady ? 'ready' : (['completed', 'done'].includes(live.status)
+            ? 'done' : (['error', 'stopped', 'crashed', 'failed', 'stopping', 'cancel_requested'].includes(live.status) ? live.status : null)));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
@@ -4505,7 +4505,9 @@ async function _pollBackgroundStatus() {
         if (live.exit_code != null && live.exit_code !== task.exit_code) updates.exit_code = live.exit_code;
         if (live.output_tail) {
           const previous = String(task.output || '');
-          const tail = String(live.output_tail || '');
+          // Compare like-for-like: storage redacts secrets, while API tails are
+          // raw. Comparing raw to redacted text appended the same log each poll.
+          const tail = _redactStoredText(live.output_tail);
           if (tail && !previous.endsWith(tail)) {
             updates.output = _isServeOutputPlaceholder(previous)
               ? tail.slice(-5000)
@@ -4528,7 +4530,7 @@ async function _pollBackgroundStatus() {
         _renderRunningTab();
         for (const task of localTasks) {
           if (!task._backendDiagnosis) continue;
-          const el = document.querySelector(`[data-session-id="${CSS.escape(task.sessionId)}"]`);
+          const el = document.querySelector(`[data-task-id="${CSS.escape(task.sessionId)}"]`);
           if (!el || el.querySelector('.cookbook-diagnosis')) continue;
           _showDiagnosis(el, task._backendDiagnosis, task.output || '');
         }
@@ -4624,7 +4626,9 @@ async function _pollBackgroundStatus() {
       _showCookbookNotif(false);
     } else {
       _clearCookbookNotif();
-      _stopBackgroundMonitor();
+      // A newly-added task may not have reached the debounced state POST yet.
+      // An empty server poll is not evidence that the local transfer finished.
+      if (!_hasLiveTasks()) _stopBackgroundMonitor();
     }
 
     if (statusEl) {

@@ -167,10 +167,11 @@ def test_zero_files_is_verified_against_the_cache_before_calling_failure():
     failure; a complete cache is a success."""
     source = _read("routes/cookbook_routes.py")
 
-    # Both the live and the persisted-terminal branch must verify.
-    assert source.count("_download_cache_complete(") >= 2
-    assert "# Ambiguous on its own — HF also prints this when every" in source
-    assert '# "Fetching 0 files" is ambiguous on its own: HF prints' in source
+    # Verification is shared after all liveness/terminal branches, including
+    # Windows. Behavioral variants live in test_cookbook_windows_completion.py.
+    verify = source.index("# All platforms share the final download decision.")
+    assert source.index("elif is_alive or (local_win_task and full_snapshot):") < verify
+    assert source.index("if _download_cache_matches(", verify) > verify
 
 
 def test_gated_repo_output_is_classified_from_markers_not_guessed():
@@ -244,5 +245,5 @@ def test_corrected_terminal_outcome_is_persisted():
     an error; otherwise a browser POST keeps re-sending the false success."""
     source = _read("routes/cookbook_routes.py")
 
-    assert "if _persisted_terminal and status != _task_status:" in source
-    assert "_set_task_status(session_id, status)" in source
+    assert "if status != _task_status and (" in source
+    assert "_set_task_status(session_id, status, expected_status=_task_status)" in source
