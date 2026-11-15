@@ -1978,6 +1978,7 @@ class TaskScheduler:
         - email:name@example.com or raw name@example.com: send there
         """
         from email.message import EmailMessage
+        from email.utils import make_msgid
 
         target = (output or "").strip()
         explicit = ""
@@ -2007,6 +2008,10 @@ class TaskScheduler:
             msg["From"] = from_addr
             msg["To"] = to_addr
             msg["Subject"] = f"[Task] {task.name}"
+            # From-domain Message-ID — bare make_msgid() would use the
+            # container's non-resolvable fqdn, which receivers discard.
+            from_domain = (from_addr or "").rsplit("@", 1)[-1].strip()
+            msg["Message-ID"] = make_msgid(domain=from_domain or None)
             msg["X-Odysseus-Origin"] = "odysseus-ui"
             msg["X-Odysseus-Kind"] = "task"
             msg["X-Odysseus-Ref"] = str(task.id)

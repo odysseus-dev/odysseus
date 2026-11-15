@@ -2690,7 +2690,12 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
     if "Date" not in msg:
         msg["Date"] = email.utils.formatdate(localtime=True)
     if "Message-ID" not in msg:
-        msg["Message-ID"] = email.utils.make_msgid()
+        # Anchor the Message-ID to the From address domain. Bare make_msgid()
+        # falls back to socket.getfqdn(), which inside a container is a
+        # non-resolvable hostname; receiving providers accept the SMTP
+        # delivery and then silently discard such mail as spam.
+        from_domain = (cfg.get("from_address") or "").rsplit("@", 1)[-1].strip()
+        msg["Message-ID"] = email.utils.make_msgid(domain=from_domain or None)
     msg.set_content(body)
 
     recipients = []
