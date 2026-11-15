@@ -168,3 +168,61 @@ test('titles: image work is cancelled at disposal and repeated mount remains usa
   await page.clock.runFor(900);
   await page.waitForFunction(() => state.docs.get('b').title === 'Valid title after reopen');
 });
+
+for (const lifecycle of ['mounted', 'minimized', 'navigation', 'detached', 'successful deletion']) {
+  test(`pdf rollback: ${lifecycle} retains edits with document-level persistence`, async t => {
+    let releaseDelete;
+    let deleteStarted;
+    const gate = new Promise(resolve => { releaseDelete = resolve; });
+    const started = new Promise(resolve => { deleteStarted = resolve; });
+    const { page, requests } = await setup(t, async (route, request) => {
+      if (request.path.endsWith('/render-pages')) {
+        await route.fulfill({ json: { pages: [{ page: 1, width: 600, height: 800, fields: [{ name: 'Name', type: 'text', rect_px: [40, 40, 220, 80], value: 'Ada' }] }] } });
+        return true;
+      }
+      if (request.method === 'DELETE') {
+        deleteStarted();
+        await gate;
+        await route.fulfill({ status: lifecycle === 'successful deletion' ? 200 : 500, json: {} });
+        return true;
+      }
+      return false;
+    });
+    await page.clock.install();
+    await inject(page, 'b', 'B untouched');
+    await inject(page, 'pdf-a', '<!-- pdf_form_source upload_id="source" -->\n- Name:** Ada <!-- field=Name type=text -->\n');
+    await page.evaluate(async () => {
+      window.pdf = await import('/static/js/document/ui/pdfTools.js');
+      window.flows = await import('/static/js/document/ui/documentFlows.js');
+      const host = await import('/static/js/document/ui/host.js');
+      host.uiModule.styledConfirm = async () => true;
+      await pdf._setPdfViewActive(true);
+    });
+    await page.locator('[data-field-name="Name"]').fill('Pending PDF edit');
+    await page.evaluate(() => { window.deleting = flows.deleteActiveDocument(); });
+    await started;
+    if (lifecycle === 'navigation') await page.evaluate(() => editor.loadDocument('b'));
+    if (lifecycle === 'detached') await page.evaluate(() => flows.closeTab('pdf-a'));
+    if (lifecycle === 'minimized' || lifecycle === 'successful deletion') {
+      await page.evaluate(() => editor.closePanel('down'));
+      await page.clock.runFor(250);
+      assert.equal(await page.locator('#doc-editor-pane').count(), 0);
+    }
+    releaseDelete();
+    await page.evaluate(() => window.deleting);
+    await page.clock.runFor(1200);
+    if (lifecycle === 'successful deletion') {
+      assert.equal(await page.evaluate(() => state.docs.has('pdf-a') || state._closingDocs.has('pdf-a')), false);
+      assert.equal(requests.filter(request => request.method === 'PUT' && request.path === '/api/document/pdf-a').length, 0);
+    } else {
+      await page.waitForFunction(() => {
+        const doc = state.docs.get('pdf-a') || state._closingDocs.get('pdf-a');
+        return !doc || doc._saveState === 'saved';
+      });
+      const writes = requests.filter(request => request.method === 'PUT' && request.path === '/api/document/pdf-a');
+      assert(writes.length > 0, 'failed deletion must issue a real recovery PUT');
+      assert(writes.every(request => request.body.content.includes('Pending PDF edit')));
+      assert.equal(await page.evaluate(() => state.docs.get('b').content), 'B untouched');
+    }
+  });
+}

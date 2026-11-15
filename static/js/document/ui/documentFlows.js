@@ -541,7 +541,11 @@ export async function deleteActiveDocument() {
         pendingAutoSaveEntry = _pendingAutoSaves.get(idToDelete) || null;
         hadPendingAutoSave = Boolean(pendingAutoSaveEntry);
         hadPendingPdfSave = _hasPendingPdfPaneSave(idToDelete);
-        wasDirty = (docs.get(idToDelete)?._saveState === 'dirty');
+        // Preserve the draft before stopping view timers. Rollback must also
+        // work after navigation or disposal removes every PDF control.
+        _syncPdfPaneToDoc(idToDelete, { markDirty: false });
+        if (activeDocId === idToDelete) saveCurrentToMap();
+        wasDirty = ((docs.get(idToDelete) || _closingDocs.get(idToDelete))?._saveState === 'dirty');
         _cancelAutoSave(idToDelete);
         _cancelPdfPaneSave(idToDelete);
 
@@ -576,10 +580,9 @@ export async function deleteActiveDocument() {
         if (uiModule) uiModule.showToast('Document deleted');
       } catch (e) {
         console.error('Failed to delete document:', e);
-        if (confirmed && docs.has(idToDelete) && !_deletedDocIds.has(idToDelete)) {
-          if (hadPendingPdfSave) {
-            _schedulePdfPaneSave(idToDelete);
-          } else if (hadPendingAutoSave || wasDirty) {
+        const draft = docs.get(idToDelete) || _closingDocs.get(idToDelete);
+        if (confirmed && draft && !_deletedDocIds.has(idToDelete)) {
+          if (hadPendingPdfSave || hadPendingAutoSave || wasDirty || draft._saveState === 'dirty' || draft._saveState === 'error') {
             _scheduleAutoSave(idToDelete, 800, pendingAutoSaveEntry?.options || {});
           }
         }
