@@ -44,6 +44,7 @@ from src.model_profiles import (
     is_odysseus_merged_tools_model,
     tool_schema_profile,
 )
+from src.action_intents import NAMED_COMPUTER_TASK
 from src.agent_evidence import (
     EvidenceLedger,
     command_has_mutation_effect,
@@ -8764,7 +8765,7 @@ _LOCAL_COMPUTER_REFERENCE_RE = re.compile(
     r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"
-    r"|\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b)(?:[a-z][a-z0-9_.-]{1,31})\b",
+    rf"|{NAMED_COMPUTER_TASK}",
     re.IGNORECASE,
 )
 _LOCAL_NETWORK_REFERENCE_RE = re.compile(

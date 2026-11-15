@@ -1,4 +1,7 @@
+import pytest
+
 from src.action_intents import classify_tool_intent, message_needs_tools
+from src.turn_contract import requested_capabilities
 
 
 def test_calendar_entry_request_promotes_to_agent():
@@ -95,6 +98,44 @@ def test_page_references_are_not_mistaken_for_named_computers():
 
     intent = classify_tool_intent("check the service on odysseus")
     assert intent.needs_tools and intent.category == "workspace"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Who is Jensen Huang from NVIDIA?",
+        "Who is Tim Cook from Apple?",
+        "Who is Satya Nadella from Microsoft?",
+        "What happened on Monday?",
+        "What is the best book on Rome?",
+        "Tell me a story from Japan",
+        "What is the best GPU from NVIDIA?",
+        "Who is running from the police?",
+    ],
+)
+def test_people_and_topics_are_not_mistaken_for_named_computers(prompt):
+    assert classify_tool_intent(prompt).reason != "named computer task request"
+    assert "shell_files" not in requested_capabilities(prompt)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "check disk usage on gpu-box",
+        "how much free disk on gpu-box?",
+        "what's the uptime on nas01",
+        "list running processes on gpu-box",
+        "is nginx running on gpu-box",
+        "is ffmpeg installed on workstation",
+        "what is the gpu usage on gpu-box",
+        "copy the logs from gpu-box",
+        "fetch the config file from prod-db",
+        "download the checkpoint from gpu-box",
+    ],
+)
+def test_computer_tasks_on_a_named_host_keep_shell_tools(prompt):
+    assert classify_tool_intent(prompt).category == "workspace"
+    assert requested_capabilities(prompt) == {"shell_files"}
 
 
 def test_direct_code_requests_promote_to_workspace_agent():

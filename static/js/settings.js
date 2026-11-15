@@ -781,16 +781,21 @@ var _searchProviderHints = {
   google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at ' + _LINK('https://programmablesearchengine.google.com/', 'programmablesearchengine.google.com'),
   tavily: 'AI-optimized search. 1,000 free credits/month at ' + _LINK('https://tavily.com/', 'tavily.com'),
   serper: 'Google results via API. 2,500 free queries at ' + _LINK('https://serper.dev/', 'serper.dev'),
+  you_com: 'Works with no key, but keyless requests are subject to usage limits and Deep Research can consume multiple requests. Optional API key from ' + _LINK('https://you.com/platform?utm_source=odysseus-dev-odysseus&utm_medium=oss_integration&utm_campaign=2026-10-oss-integrations&utm_content=settings', 'you.com/platform') + ' for higher limits.',
   disabled: 'Web search and deep research tools will be unavailable.',
 };
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
+// Optional key: show the key field but do not treat a missing key as misconfigured.
+var _searchOptionalKey = { you_com: 1 };
 var _searchLabels = {
   searxng: 'SearXNG', duckduckgo: 'DuckDuckGo', brave: 'Brave Search',
-  google_pse: 'Google PSE', tavily: 'Tavily', serper: 'Serper', disabled: 'Disabled',
+  google_pse: 'Google PSE', tavily: 'Tavily', serper: 'Serper',
+  you_com: 'You.com', disabled: 'Disabled',
 };
 var _searchKeyFields = {
   brave: 'brave_api_key', google_pse: 'google_pse_key',
   tavily: 'tavily_api_key', serper: 'serper_api_key',
+  you_com: 'ydc_api_key',
 };
 
 async function initSearchSettings() {
@@ -811,19 +816,23 @@ async function initSearchSettings() {
 
   function loadKeyForProvider(prov) {
     var field = keyFieldFor(prov);
-    keyInput.value = field ? (_settings[field] || _settings.search_api_key || '') : '';
+    // Optional-key providers ignore the legacy shared key so a stale key from
+    // another provider is not silently copied over.
+    var legacy = _searchOptionalKey[prov] ? '' : (_settings.search_api_key || '');
+    keyInput.value = field ? (_settings[field] || legacy) : '';
   }
 
   function updateVisibility() {
     var prov = provSel.value;
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
-    keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
+    keyRow.style.display = (_searchNeedsKey[prov] || _searchOptionalKey[prov]) ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
     hint.innerHTML = _searchProviderHints[prov] || '';
     if (prov === 'brave') keyInput.placeholder = 'Brave API key';
     else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
     else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
     else if (prov === 'serper') keyInput.placeholder = 'Serper API key';
+    else if (prov === 'you_com') keyInput.placeholder = 'YDC_API_KEY (optional)';
     else keyInput.placeholder = 'API key';
     loadKeyForProvider(prov);
   }
@@ -870,9 +879,26 @@ async function initSearchSettings() {
       var label = _searchLabels[active] || active;
       var extra = '';
       var kf = keyFieldFor(active);
-      var hasKey = kf ? ((s[kf] || '').trim() || (s.search_api_key || '').trim()) : false;
+      var legacyKey = _searchOptionalKey[active] ? '' : (s.search_api_key || '').trim();
+      // hasKey from saved settings (what /api/auth/settings returns).
+      var hasKey = kf ? ((s[kf] || '').trim() || legacyKey) : false;
+      // For optional-key providers, also check runtime key presence via
+      // /api/search/config so that a configured key (from settings or
+      // environment) is reflected even when credentials are hidden or
+      // empty in /api/auth/settings (#6809).
+      if (_searchOptionalKey[active] && !hasKey) {
+        try {
+          var cfgRes = await fetch('/api/search/config', { credentials: 'same-origin' });
+          var cfg = await cfgRes.json();
+          if (cfg.active_provider === active && cfg.has_api_key) {
+            hasKey = true;
+          }
+        } catch (_) { /* /api/search/config is best-effort */ }
+      }
       if (_searchNeedsKey[active]) {
         extra = hasKey ? ' (key set)' : ' (no key)';
+      } else if (_searchOptionalKey[active]) {
+        extra = hasKey ? ' (key active)' : ' (keyless)';
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
@@ -1257,7 +1283,9 @@ async function initResearchSearchSettings() {
       var kf = _searchKeyFields[prov];
       if (!kf) return;
       var hasKey = ((settings[kf] || '').trim() || (settings.search_api_key || '').trim());
-      if (!hasKey) {
+      // Optional-key providers work without a key; do not flag them as
+      // misconfigured when no key is saved in settings (#6809).
+      if (!hasKey && !_searchOptionalKey[prov]) {
         opt.textContent = (_searchLabels[prov] || prov) + ' (no key)';
         opt.style.color = 'var(--red)';
       } else {
