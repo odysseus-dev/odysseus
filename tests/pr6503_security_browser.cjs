@@ -2,12 +2,31 @@ const playwright = require('playwright');
 const { readFileSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert/strict');
+const acorn = require('acorn');
 
-const source = readFileSync('static/js/document.js', 'utf8');
-function documentFunction(name, text = source) {
-  const match = text.match(new RegExp('^  (?:async )?function ' + name + '\\(.*?^  }', 'ms'));
-  assert(match, name);
-  return match[0];
+const sourceFiles = [
+  'static/js/document.js',
+  'static/js/document/domain/emailMessage.js',
+  'static/js/document/domain/documentKinds.js',
+  'static/js/document/domain/richTextRules.js',
+  'static/js/document/ui/email/localDraft.js',
+  'static/js/document/ui/email/aiReply.js',
+  'static/js/document/ui/email/attachments.js',
+  'static/js/document/ui/richEditor/richBodySync.js',
+  'static/js/document/ui/richEditor/richOperations.js',
+].map(file => typeof file === 'string' ? readFileSync(file, 'utf8') : file);
+function documentFunction(name, text) {
+  const candidates = text === undefined ? sourceFiles : [text];
+  for (const source of candidates) {
+    const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    for (const node of ast.body) {
+      const declaration = node.type === 'ExportNamedDeclaration' ? node.declaration : node;
+      if (declaration?.type === 'FunctionDeclaration' && declaration.id?.name === name) {
+        return source.slice(declaration.start, declaration.end);
+      }
+    }
+  }
+  assert.fail(name);
 }
 
 (async () => {
