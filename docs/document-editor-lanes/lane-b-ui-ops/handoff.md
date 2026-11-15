@@ -102,6 +102,14 @@ Moved 20 declarations plus `stmt#11153` (the 21 assigned baseline items). The cu
 
 Confirmed implementation fix: the generated resize installer registered during module evaluation but had no disposer and was not idempotent. It now keeps the evaluation-time registration for current behavior, returns a stable disposer, and safely removes the listener once. Exact Appendix A exports remain unchanged. Test setup instruments the module-local selection array in the VM fixture because native module namespace exports are intentionally read-only.
 
+## Checkpoint 6: toolbar
+
+Source: `frontend/src/features/documents/ui/toolbar/toolbar.js`
+
+Moved all 10 Appendix A declarations. Focused test `node --test tests/documentToolbar.test.mjs` passes for rich-text versus textarea selection priority and click/keyboard dropdown activation.
+
+Confirmed implementation fix: the generated module imported `_mdDdActivationSerial` read-only and fabricated tokens by adding one million, bypassing the `formatMenus` owner and risking collisions with the owning serial. The toolbar no longer imports or reads the owner’s serial. Its local token adapter returns null, which `_showMdDropdown` treats as a request to issue its own serial. Pointerdown/click and keyboard activation retain their event lifecycle without cross-module writes or fabricated serials. Exact exports are unchanged. Cumulative verifier: 65 listed, 65 verified, clean removal gate, zero removal violations; 8 PDF hook exceptions remain documented.
+
 ## Remaining modules
 
 Header overflow, markdown images, document flows, selection highlights (`stmt#11153`), toolbar, and tab bar (`stmt#206`) are still outstanding for this handoff. Continue in that order. Each group gets focused tests, a manifest update, verifier evidence, and a local commit.

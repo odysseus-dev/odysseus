@@ -57,7 +57,17 @@
     "stmt#11153",
     "syncSelectionOverlay",
     "updateRichSelectionState",
-    "updateSelectionState"
+    "updateSelectionState",
+    "_AI_WRITING_ACTIONS",
+    "_DOCUMENT_TOOLBAR_GROUPS",
+    "_aiWritingButtonMarkup",
+    "_aiWritingSelectionText",
+    "_closeAiWritingMenu",
+    "_orderDocumentToolbar",
+    "_setAiWritingLoading",
+    "_showAiWritingMenu",
+    "_syncDocumentToolbarSeparators",
+    "initMdToolbar"
   ],
   "targetModules": {
     "autoTitleFromContent": "ui/documentActions",
@@ -114,7 +124,17 @@
     "stmt#11153": "ui/selection/selectionHighlights",
     "syncSelectionOverlay": "ui/selection/selectionHighlights",
     "updateRichSelectionState": "ui/selection/selectionHighlights",
-    "updateSelectionState": "ui/selection/selectionHighlights"
+    "updateSelectionState": "ui/selection/selectionHighlights",
+    "_AI_WRITING_ACTIONS": "ui/toolbar/toolbar",
+    "_DOCUMENT_TOOLBAR_GROUPS": "ui/toolbar/toolbar",
+    "_aiWritingButtonMarkup": "ui/toolbar/toolbar",
+    "_aiWritingSelectionText": "ui/toolbar/toolbar",
+    "_closeAiWritingMenu": "ui/toolbar/toolbar",
+    "_orderDocumentToolbar": "ui/toolbar/toolbar",
+    "_setAiWritingLoading": "ui/toolbar/toolbar",
+    "_showAiWritingMenu": "ui/toolbar/toolbar",
+    "_syncDocumentToolbarSeparators": "ui/toolbar/toolbar",
+    "initMdToolbar": "ui/toolbar/toolbar"
   },
   "destinationExports": [
     "autoTitleFromContent",
@@ -154,11 +174,13 @@
     "clearSelection",
     "syncSelectionOverlay",
     "updateRichSelectionState",
-    "updateSelectionState"
+    "updateSelectionState",
+    "_syncDocumentToolbarSeparators",
+    "initMdToolbar"
   ],
   "addedImports": [
     "import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from \"./document/ui/documentActions.js\";"
   ],
-  "description": "Lane B validated checkpoints through selection highlights. Statement item stmt#11153 is assigned to ui/selection/selectionHighlights and included in the removal simulation.",
+  "description": "Lane B validated checkpoints through toolbar. Remaining tab statement stmt#206 is included in the next checkpoint.",
   "intentionalNonVerbatimChanges": []
 }
