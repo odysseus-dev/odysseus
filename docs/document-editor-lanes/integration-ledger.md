@@ -57,7 +57,7 @@ Development branch baseline: `f3a05c10c998e4efff14ac6498b01bd50138ad6e`. Its wor
 - Source editor debounce work and selection observer cleanup are owned by their modules. Autosave no longer mutates imported source-editor timer bindings.
 - Replaced the recursive `generateEmailReply` global bridge with the owned `aiReply` export. Email send workflow now imports its required collaborators directly.
 - Rich-text dropdown activation tokens are issued by `formatMenus`, the state owner. The integration overflow callback remains module-owned and no longer creates a global mutable alias.
-- Registered and published all nine modules. Maintained/published parity is clean; service-worker cache key is `odysseus-v1145-editor-precache`.
+- Registered and published all nine modules. Maintained/published parity is clean; service-worker cache key is `odysseus-v1145-pr40-editor-precache`.
 - Canonical verifier against baseline `087e6c8837969339e9e7823dd84a4d717d536cea`: PASS, 565 total, 557 moved, 8 planned composition-root items, zero missing or duplicate items, zero violations. Exact exports: 46 modules, zero violations. Import graph: 55 modules, 320 edges, zero cycles or layer violations. State ownership: 48 files, zero violations. Ports: 12 commands, 6 hooks, zero registered optional observers, zero violations.
 - JavaScript document suites: 114 passed, zero failed or skipped. Full document Python/browser-backed regression group: 401 passed, zero failed, one pre-existing SQLAlchemy deprecation warning. Verifier negative and positive controls: 25/25 passed.
 - Frontend architecture checker passed (98 maintained modules); publication check passed with zero changed modules; `git diff --check` passed.
