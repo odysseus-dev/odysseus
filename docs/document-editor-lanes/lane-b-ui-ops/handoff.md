@@ -110,6 +110,14 @@ Moved all 10 Appendix A declarations. Focused test `node --test tests/documentTo
 
 Confirmed implementation fix: the generated module imported `_mdDdActivationSerial` read-only and fabricated tokens by adding one million, bypassing the `formatMenus` owner and risking collisions with the owning serial. The toolbar no longer imports or reads the owner’s serial. Its local token adapter returns null, which `_showMdDropdown` treats as a request to issue its own serial. Pointerdown/click and keyboard activation retain their event lifecycle without cross-module writes or fabricated serials. Exact exports are unchanged. Cumulative verifier: 65 listed, 65 verified, clean removal gate, zero removal violations; 8 PDF hook exceptions remain documented.
 
+## Checkpoint 7: tab bar
+
+Source: `frontend/src/features/documents/ui/tabs/tabBar.js`
+
+Moved 10 Appendix A declarations and `stmt#206` (11 assigned baseline items). Focused test `node --test tests/documentTabBar.test.mjs` passes, covering escaped titles, active and current-session filtering, new-tab markup, and the open empty-state ghost tab. The existing statement installer remains the style initialization owner.
+
+Final cumulative extraction verifier: 76 listed, 76 verified, 73 authorized rewrites, 8 reported PDF lifecycle hook exceptions, zero removal violations, clean simulation. Exact exports, import graph (0 cycles), layer legality, state ownership, and ports are clean. Overall status remains FAIL solely for 76 expected duplicate-across-monolith-and-module findings pending integration.
+
 ## Remaining modules
 
 Header overflow, markdown images, document flows, selection highlights (`stmt#11153`), toolbar, and tab bar (`stmt#206`) are still outstanding for this handoff. Continue in that order. Each group gets focused tests, a manifest update, verifier evidence, and a local commit.

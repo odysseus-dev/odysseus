@@ -67,7 +67,18 @@
     "_setAiWritingLoading",
     "_showAiWritingMenu",
     "_syncDocumentToolbarSeparators",
-    "initMdToolbar"
+    "initMdToolbar",
+    "_closeDocTabMenu",
+    "_docTabMenu",
+    "_isEditingTabTitle",
+    "_syncDocIndicator",
+    "initTabDragReorder",
+    "renderTabs",
+    "showDocTabMenu",
+    "showEmptyState",
+    "startTitleEdit",
+    "stmt#206",
+    "updateArrowVisibility"
   ],
   "targetModules": {
     "autoTitleFromContent": "ui/documentActions",
@@ -134,7 +145,18 @@
     "_setAiWritingLoading": "ui/toolbar/toolbar",
     "_showAiWritingMenu": "ui/toolbar/toolbar",
     "_syncDocumentToolbarSeparators": "ui/toolbar/toolbar",
-    "initMdToolbar": "ui/toolbar/toolbar"
+    "initMdToolbar": "ui/toolbar/toolbar",
+    "_closeDocTabMenu": "ui/tabs/tabBar",
+    "_docTabMenu": "ui/tabs/tabBar",
+    "_isEditingTabTitle": "ui/tabs/tabBar",
+    "_syncDocIndicator": "ui/tabs/tabBar",
+    "initTabDragReorder": "ui/tabs/tabBar",
+    "renderTabs": "ui/tabs/tabBar",
+    "showDocTabMenu": "ui/tabs/tabBar",
+    "showEmptyState": "ui/tabs/tabBar",
+    "startTitleEdit": "ui/tabs/tabBar",
+    "stmt#206": "ui/tabs/tabBar",
+    "updateArrowVisibility": "ui/tabs/tabBar"
   },
   "destinationExports": [
     "autoTitleFromContent",
@@ -176,11 +198,16 @@
     "updateRichSelectionState",
     "updateSelectionState",
     "_syncDocumentToolbarSeparators",
-    "initMdToolbar"
+    "initMdToolbar",
+    "_closeDocTabMenu",
+    "_docTabMenu",
+    "_syncDocIndicator",
+    "renderTabs",
+    "showEmptyState"
   ],
   "addedImports": [
     "import { autoTitleFromContent, copyDocument, runDocument, updateLanguage, updateTitle } from \"./document/ui/documentActions.js\";"
   ],
-  "description": "Lane B validated checkpoints through toolbar. Remaining tab statement stmt#206 is included in the next checkpoint.",
+  "description": "Lane B complete accounting: 74 declarations plus stmt#11153 and stmt#206. The integrator adds corresponding imports to static/js/document.js and removes these baseline items there.",
   "intentionalNonVerbatimChanges": []
 }
