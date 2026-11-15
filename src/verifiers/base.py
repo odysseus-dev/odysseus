@@ -486,12 +486,14 @@ def run_registry_verification(
 
 def build_default_registry() -> VerifierRegistry:
     from src.verifiers.financial import FinancialVerifierPlugin
+    from src.verifiers.historical import HistoricalVerifierPlugin
     from src.verifiers.legal import LegalVerifierPlugin
     from src.verifiers.medical import MedicalVerifierPlugin
 
     reg = VerifierRegistry()
     reg.register(HardwareBaselinePlugin())
     reg.register(FinancialVerifierPlugin())
+    reg.register(HistoricalVerifierPlugin())
     reg.register(LegalVerifierPlugin())
     reg.register(MedicalVerifierPlugin())
     return reg

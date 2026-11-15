@@ -274,15 +274,18 @@ def test_R7_deterministic_output_regardless_of_registration_order():
 def test_R8_records_missing_domains_via_missing_domain_plugin_and_missing_domain_domains():
     report = "In 44 BCE, the Roman Senate treaty of antiquity reshaped Mediterranean history."
     findings = [_make_finding("https://archive.example.org/rome", "Roman Archive", report)]
+    reg_without_hist = VerifierRegistry()
+    reg_without_hist.register(HardwareBaselinePlugin())
     vr = verify_report_evidence(
         report,
         findings,
         enable_domain_verifiers=True,
         category="general",
+        registry=reg_without_hist,
     )
     assert vr.missing_domain_plugin is True
     assert vr.missing_domain_domains == ["historical"]
-    assert "historical" not in build_default_registry().list_plugins()
+    assert "historical_verifier" in build_default_registry().list_plugins()
 
 
 def test_R9_preserves_lazy_imports_when_disabled():
@@ -346,11 +349,12 @@ def test_A1_all_five_routing_domains_recognized():
     assert classify_claim_domains("Ryzen 9 7950X has 16 cores and 170 W TDP.") == ("hardware",)
 
 
-def test_A2_default_registry_contains_exactly_four_authorized_plugins():
+def test_A2_default_registry_contains_exactly_five_authorized_plugins():
     reg = build_default_registry()
     assert reg.list_plugins() == [
         "financial_verifier",
         "hardware_baseline",
+        "historical_verifier",
         "legal_verifier",
         "medical_verifier",
     ]
