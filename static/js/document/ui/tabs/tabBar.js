@@ -285,12 +285,13 @@ function startTitleEdit(titleSpan, docId, doc) {
       if (!_isEditingTabTitle) return;
       const newTitle = input.value.trim();
       _isEditingTabTitle = false;
+      const prevTitle = doc.title;
       doc.title = newTitle;
       if (docId === activeDocId) {
         const titleInput = document.getElementById('doc-title-input');
         if (titleInput) titleInput.value = newTitle;
       }
-      updateTitle(docId, newTitle);
+      updateTitle(docId, newTitle, { expectedTitle: prevTitle });
       renderTabs();
     }
 

@@ -929,6 +929,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
             if req.title is not None:
+                normalized_title = req.title.strip()
                 if req.if_untitled:
                     updated = (
                         db.query(Document)
@@ -940,25 +941,40 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                                 Document.title == "",
                             ),
                         )
-                        .update({"title": req.title}, synchronize_session=False)
+                        .update({"title": normalized_title}, synchronize_session=False)
                     )
                     if updated == 0:
                         raise HTTPException(409, "Document title condition not met: document is not untitled")
-                    doc.title = req.title
+                    doc.title = normalized_title
                 elif req.expected_title is not None:
-                    updated = (
-                        db.query(Document)
-                        .filter(
-                            Document.id == doc_id,
-                            Document.title == req.expected_title,
+                    expected_val = req.expected_title.strip()
+                    if expected_val in ("Untitled", "", None):
+                        updated = (
+                            db.query(Document)
+                            .filter(
+                                Document.id == doc_id,
+                                or_(
+                                    Document.title == "Untitled",
+                                    Document.title.is_(None),
+                                    Document.title == "",
+                                ),
+                            )
+                            .update({"title": normalized_title}, synchronize_session=False)
                         )
-                        .update({"title": req.title}, synchronize_session=False)
-                    )
+                    else:
+                        updated = (
+                            db.query(Document)
+                            .filter(
+                                Document.id == doc_id,
+                                Document.title == req.expected_title,
+                            )
+                            .update({"title": normalized_title}, synchronize_session=False)
+                        )
                     if updated == 0:
                         raise HTTPException(409, f"Document title condition not met: expected {req.expected_title!r}")
-                    doc.title = req.title
+                    doc.title = normalized_title
                 else:
-                    doc.title = req.title
+                    doc.title = normalized_title
             if req.language is not None:
                 doc.language = req.language
             if req.session_id is not None:

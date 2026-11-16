@@ -154,6 +154,42 @@ def test_diff_large_input_handling_and_size_guard():
     assert all(e["type"] == "insert" for e in compute_entries[801:])
 
 
+def test_diff_large_document_with_small_change_preserves_prefix_and_suffix():
+    """Verify that an 800-line document with a single changed line produces a bounded per-hunk diff."""
+    result = _eval_js(
+        """(() => {
+            const linesOld = Array.from({ length: 800 }, (_, i) => "Line " + i);
+            const linesNew = linesOld.slice();
+            linesNew[400] = "Modified Line 400";
+            const oldText = linesOld.join("\\n");
+            const newText = linesNew.join("\\n");
+
+            const raw = diffLines(oldText, newText);
+            const entries = _computeLineDiff(oldText, newText);
+            const chunks = _buildDiffChunks(entries);
+            return {
+                rawNotNone: raw !== null,
+                totalEntries: entries.length,
+                chunkCount: chunks.length,
+                chunkStart: chunks[0].startLine,
+                oldChunk: chunks[0].oldLines,
+                newChunk: chunks[0].newLines,
+                prefixEqualCount: entries.slice(0, 400).filter(e => e.type === "equal").length,
+                suffixEqualCount: entries.slice(402).filter(e => e.type === "equal").length,
+            };
+        })()"""
+    )
+
+    assert result["rawNotNone"] is True
+    assert result["totalEntries"] == 801
+    assert result["chunkCount"] == 1
+    assert result["chunkStart"] == 400
+    assert result["oldChunk"] == ["Line 400"]
+    assert result["newChunk"] == ["Modified Line 400"]
+    assert result["prefixEqualCount"] == 400
+    assert result["suffixEqualCount"] == 399
+
+
 def test_diff_downstream_consumer_contracts():
     """Verify that downstream consumers correctly process diff outputs."""
     result = _eval_js(

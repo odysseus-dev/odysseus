@@ -68,7 +68,7 @@ let updateLineNumbers = (text) => {
 };
 
 /**
- * Pure LCS line-diff algorithm.
+ * Pure LCS line-diff algorithm with prefix and suffix preservation.
  * Compares oldText and newText line by line.
  * Returns array of { type: 'equal'|'insert'|'delete', text: string } or null when over maxCells.
  */
@@ -77,35 +77,63 @@ function diffLines(oldText, newText, { maxCells = 500000 } = {}) {
   const newLines = (newText || '').split('\n');
   const m = oldLines.length, n = newLines.length;
 
+  let suffix = 0;
+  while (suffix < m && suffix < n && oldLines[m - 1 - suffix] === newLines[n - 1 - suffix]) {
+    suffix++;
+  }
+
+  let prefix = 0;
+  while (prefix < (m - suffix) && prefix < (n - suffix) && oldLines[prefix] === newLines[prefix]) {
+    prefix++;
+  }
+
+  const mMid = m - prefix - suffix;
+  const nMid = n - prefix - suffix;
+
   // Guard against massive inputs that could freeze the UI thread
-  if (m * n > maxCells) return null;
+  if (mMid * nMid > maxCells) return null;
 
-  // Build LCS table
-  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = oldLines[i - 1] === newLines[j - 1]
-        ? dp[i - 1][j - 1] + 1
-        : Math.max(dp[i - 1][j], dp[i][j - 1]);
-    }
-  }
-
-  // Backtrack to produce diff entries
   const entries = [];
-  let i = m, j = n;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-      entries.push({ type: 'equal', text: oldLines[i - 1] });
-      i--; j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      entries.push({ type: 'insert', text: newLines[j - 1] });
-      j--;
-    } else {
-      entries.push({ type: 'delete', text: oldLines[i - 1] });
-      i--;
+  for (let k = 0; k < prefix; k++) {
+    entries.push({ type: 'equal', text: oldLines[k] });
+  }
+
+  if (mMid > 0 || nMid > 0) {
+    const oldMid = oldLines.slice(prefix, m - suffix);
+    const newMid = newLines.slice(prefix, n - suffix);
+    const dp = Array.from({ length: mMid + 1 }, () => new Uint16Array(nMid + 1));
+    for (let i = 1; i <= mMid; i++) {
+      for (let j = 1; j <= nMid; j++) {
+        dp[i][j] = oldMid[i - 1] === newMid[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+
+    const midEntries = [];
+    let i = mMid, j = nMid;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && oldMid[i - 1] === newMid[j - 1]) {
+        midEntries.push({ type: 'equal', text: oldMid[i - 1] });
+        i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        midEntries.push({ type: 'insert', text: newMid[j - 1] });
+        j--;
+      } else {
+        midEntries.push({ type: 'delete', text: oldMid[i - 1] });
+        i--;
+      }
+    }
+    midEntries.reverse();
+    for (let k = 0; k < midEntries.length; k++) {
+      entries.push(midEntries[k]);
     }
   }
-  entries.reverse();
+
+  for (let k = m - suffix; k < m; k++) {
+    entries.push({ type: 'equal', text: oldLines[k] });
+  }
+
   return entries;
 }
 

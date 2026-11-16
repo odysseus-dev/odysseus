@@ -222,6 +222,44 @@ def test_backward_compatibility_existing_patch_clients():
     assert exc_info.value.status_code == 409
 
 
+def test_clearing_title_persists_empty_string_and_enables_auto_title():
+    """Clearing title to empty string persists and subsequently allows if_untitled auto-title."""
+    patch_ep = _endpoint("PATCH", "/api/document/{doc_id}")
+    doc_id = _create_doc(title="Initial Title")
+
+    # 1. User clears title to empty string
+    res_clear = asyncio_run(patch_ep(_req(), doc_id, DocumentPatch(title="")))
+    assert res_clear["title"] == ""
+
+    # Verify DB has empty string
+    db = _TS()
+    try:
+        row = db.query(Document).filter(Document.id == doc_id).first()
+        assert row.title == ""
+    finally:
+        db.close()
+
+    # 2. Auto-title arrives with if_untitled=True and successfully applies
+    res_auto = asyncio_run(patch_ep(_req(), doc_id, DocumentPatch(title="Derived Title", if_untitled=True)))
+    assert res_auto["title"] == "Derived Title"
+
+    db = _TS()
+    try:
+        row = db.query(Document).filter(Document.id == doc_id).first()
+        assert row.title == "Derived Title"
+    finally:
+        db.close()
+
+
+def test_expected_title_supports_empty_and_untitled_equivalency():
+    """expected_title allows empty string and Untitled interchangeably for untitled documents."""
+    patch_ep = _endpoint("PATCH", "/api/document/{doc_id}")
+    doc_id = _create_doc(title="Untitled")
+
+    res = asyncio_run(patch_ep(_req(), doc_id, DocumentPatch(title="First Named", expected_title="")))
+    assert res["title"] == "First Named"
+
+
 def asyncio_run(coro):
     import asyncio
     return asyncio.run(coro)

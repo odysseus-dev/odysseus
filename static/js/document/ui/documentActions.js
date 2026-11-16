@@ -86,10 +86,20 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
     if (!docId) return;
     const doc = docs.get(docId);
     if (!doc) return;
-    const title = overrideTitle || document.getElementById('doc-title-input')?.value;
-    if (!title) return;
-    if (isAutoTitle && doc.title && doc.title !== 'Untitled' && doc.title !== title) return;
 
+    let title;
+    if (overrideTitle !== undefined && overrideTitle !== null) {
+      title = String(overrideTitle).trim();
+    } else {
+      const input = document.getElementById('doc-title-input');
+      title = input ? input.value.trim() : '';
+    }
+
+    if (isAutoTitle && (!title || (doc.title && doc.title !== 'Untitled' && doc.title !== '' && doc.title !== title))) {
+      return;
+    }
+
+    const previousTitle = doc.title;
     doc._titleAbortController?.abort();
     const controller = new AbortController();
     doc._titleAbortController = controller;
@@ -98,6 +108,8 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
     try {
       const payload = { title };
       if (isAutoTitle) payload.if_untitled = true;
+      if (options.expectedTitle !== undefined) payload.expected_title = options.expectedTitle;
+
       const res = await fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -105,12 +117,15 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => null);
+      const serverTitle = (data && typeof data.title === 'string') ? data.title : title;
+
       const currentDoc = docs.get(docId);
       if (currentDoc && currentDoc === doc && doc._titleRequestSeq === requestSeq) {
-        if (isAutoTitle && currentDoc.title && currentDoc.title !== 'Untitled' && currentDoc.title !== title) {
+        if (isAutoTitle && currentDoc.title && currentDoc.title !== 'Untitled' && currentDoc.title !== '' && currentDoc.title !== serverTitle) {
           return;
         }
-        currentDoc.title = title;
+        currentDoc.title = serverTitle;
         const titleInput = document.getElementById('doc-title-input');
         const pane = document.getElementById('doc-editor-pane');
         const activeTitle = (titleInput?.value || '').trim();
@@ -118,12 +133,21 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
             && (!pane || pane.dataset.activeDocumentId === docId)
             && document.activeElement !== titleInput
             && (!activeTitle || activeTitle === 'Untitled' || !isAutoTitle)) {
-          titleInput.value = title;
+          titleInput.value = serverTitle;
         }
         renderTabs();
       }
     } catch (e) {
       if (e?.name === 'AbortError') return;
+      const currentDoc = docs.get(docId);
+      if (currentDoc && currentDoc === doc && doc._titleRequestSeq === requestSeq && !isAutoTitle) {
+        currentDoc.title = previousTitle;
+        const titleInput = document.getElementById('doc-title-input');
+        if (titleInput && docId === activeDocId && document.activeElement !== titleInput) {
+          titleInput.value = previousTitle || '';
+        }
+        renderTabs();
+      }
       if (isAutoTitle && e?.message?.includes('409')) return;
       console.error('Failed to update title:', e);
     } finally {
