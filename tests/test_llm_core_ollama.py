@@ -257,7 +257,7 @@ def test_llm_call_threads_discovered_num_ctx(monkeypatch):
     """When get_context_length returns a real, large value, it ends up
     in the outgoing Ollama request as options.num_ctx (issue #909)."""
     monkeypatch.setattr(llm_core, "get_context_length",
-                        lambda url, model: 32768)
+                        lambda url, model, headers=None: 32768)
 
     seen = {}
 
@@ -299,7 +299,7 @@ def test_stream_llm_threads_discovered_num_ctx(monkeypatch):
         }
 
     monkeypatch.setattr(llm_core, "get_context_length",
-                        lambda url, model: 32768)
+                        lambda url, model, headers=None: 32768)
     monkeypatch.setattr(llm_core, "_build_ollama_payload",
                         spy_build_ollama_payload)
 

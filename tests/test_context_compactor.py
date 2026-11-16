@@ -309,7 +309,7 @@ class TestMaybeCompactFourthMessage:
         async def _fake_summary(*a, **k):
             return "compact summary text"
 
-        cc.get_context_length = lambda url, model: context_length
+        cc.get_context_length = lambda url, model, headers=None: context_length
         cc.llm_call_async = _fake_summary
         def fake_resolve_endpoint(which, **kwargs):
             assert which == "utility"
@@ -392,7 +392,7 @@ async def test_deferred_compaction_persists_only_after_route_commit(monkeypatch)
         {"role": "user", "content": "five"},
     ]
 
-    monkeypatch.setattr(cc, "get_context_length", lambda *args: 100)
+    monkeypatch.setattr(cc, "get_context_length", lambda *args, **kwargs: 100)
     monkeypatch.setattr(cc, "resolve_endpoint", lambda *args, **kwargs: (None, None, None))
 
     async def fake_summary(*args, **kwargs):
@@ -439,7 +439,7 @@ async def test_deterministic_compaction_never_calls_summary_model(monkeypatch):
             },
         ])
 
-    monkeypatch.setattr(cc, "get_context_length", lambda *args: 2048)
+    monkeypatch.setattr(cc, "get_context_length", lambda *args, **kwargs: 2048)
 
     async def forbidden_summary(*args, **kwargs):
         raise AssertionError("deterministic compaction must not call an LLM")

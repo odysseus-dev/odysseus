@@ -2391,7 +2391,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         target_url = _normalize_ollama_url(url)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=False, num_ctx=get_context_length(url, model),
+            stream=False, num_ctx=get_context_length(url, model, headers=headers),
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2694,7 +2694,7 @@ async def llm_call_async(
 
             max_tokens = fit_output_token_budget(
                 max_tokens,
-                get_context_length(url, model),
+                get_context_length(url, model, headers=headers),
                 messages_copy,
             )
         except Exception:
@@ -2788,7 +2788,7 @@ async def llm_call_async(
             h.update(headers)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=False, num_ctx=get_context_length(url, model),
+            stream=False, num_ctx=get_context_length(url, model, headers=headers),
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -3040,7 +3040,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             h.update(headers)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=True, tools=tools, num_ctx=get_context_length(url, model),
+            stream=True, tools=tools, num_ctx=get_context_length(url, model, headers=headers),
         )
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
@@ -4574,7 +4574,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
                 bounded_max_tokens = fit_output_token_budget(
                     requested_max_tokens,
-                    get_context_length(url, model),
+                    get_context_length(url, model, headers=headers),
                     candidate_messages,
                     candidate_kwargs.get("tools"),
                 )

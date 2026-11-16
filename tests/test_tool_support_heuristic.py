@@ -1,8 +1,8 @@
 """Regression tests for the tool-support heuristic in stream_agent_loop.
 
 Verifies two critical cases:
-  1. local Ollama endpoints must NOT enable native tool schemas by default
-     (some models terminate after one token with schemas).
+  1. local Ollama endpoints without reported tool capabilities must retain
+     the textual fallback (some models terminate after one token with schemas).
   2. api.deepseek.com must still be treated as tool-capable via the host
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
 """
@@ -19,7 +19,10 @@ from src.llm_core import _is_ollama_native_url
 
 
 def _compute_is_api_model(model: str, endpoint_url: str, endpoint_supports=None) -> bool:
-    """Replicate the heuristic from stream_agent_loop without side effects."""
+    """Legacy fallback when provider capability metadata is unavailable.
+
+    Actual Auto routing with /api/show is covered by test_ollama_metadata.py.
+    """
     model_lc = model.lower()
 
     model_supports_tools = any(kw in model_lc for kw in (
