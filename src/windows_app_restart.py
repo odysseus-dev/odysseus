@@ -314,6 +314,8 @@ async def _prepare_shutdown(server, gate, config, identity, protected, timeout: 
             return {'ok': False, 'state': 'blocked-after-mcp-close', 'guard': guard, 'forced': False}
         with REGISTRY.lock:
             state = REGISTRY.snapshot()
+            if time.monotonic() >= deadline:
+                return {'ok': False, 'state': 'control-timeout', 'forced': False}
             if state['unknown'] or state['in_flight'] or not state['connections_closed']:
                 return {'ok': False, 'state': 'mcp-activity-unknown', 'mcp': state, 'forced': False}
             _commit_shutdown(server)

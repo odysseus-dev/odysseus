@@ -245,3 +245,23 @@ as unavailable with current legacy instrumentation, and B as a scheduled,
 narrowly scoped MCP interruption-risk exception needing separate approval.
 The reconciliation commit is ready for code-only review, but unmerged. Serving
 lifecycle/context work remains separate at `d1356e096cba895eb4a11b596cc9728635ee9e7f`.
+
+### Final deadline check and separate lifecycle continuation
+
+Final review reproduced expiry while acquiring/reading the last MCP snapshot:
+the deadline now is rechecked inside the commit fence, after that snapshot,
+before requesting app exit. The new regression failed before the two-line fix;
+it and the existing coordinator success case passed afterwards. Evidence:
+`.odysseus-dev/mcp-final-deadline-green.xml`. This adds one distinct case to the
+accepted 24; do not count the rerun success case twice. No prior process/browser
+rehearsal or production-descendant audit was repeated.
+
+Separate serving branch advanced to `b37eabfd9acdc6696d39a1f185fb7716013bf0ec`:
+dense GGUF layer/GQA/head metadata now supplies a conservative F16 KV context
+cap and estimate provenance, while derived knowledge alone keeps runtime fit
+unknown and preserves explicit acknowledgement. MLA/hybrid/VRAM stay unknown.
+Twenty-one focused metadata/plan/memory checks passed, fourteen unrelated
+deselected (`gguf-kv-verified.xml`). No inference, NVML or model/runtime download.
+Neither branch was integrated. Production remains clean at `a86c1c7b`; final
+read-only app/gateway/Chroma JSON health checks all passed. First activation and
+its exact maintenance/startup approval remain outstanding.

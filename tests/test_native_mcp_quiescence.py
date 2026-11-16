@@ -204,3 +204,26 @@ async def test_expired_control_deadline_cannot_commit_late_shutdown(setup, monke
                                             deadline=time.monotonic() - 1)
     assert not result['ok'] and not server.should_exit
     assert not registry.snapshot()['draining'] and not gate.preparing
+
+
+@pytest.mark.asyncio
+async def test_deadline_expiring_during_final_snapshot_refuses_commit(setup, monkeypatch):
+    from src import windows_app_restart as control
+    registry, manager = setup
+    now, checks = [1.0], [0]
+    def guard(*args, **kwargs):
+        checks[0] += 1
+        return {'clear': True, 'errors': []}
+    original = registry.snapshot
+    def delayed_snapshot():
+        result = original()
+        if checks[0] == 3:
+            now[0] = 100.0
+        return result
+    monkeypatch.setattr(control, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(control, 'full_guard', guard)
+    monkeypatch.setattr(control, '_commit_shutdown', lambda server: setattr(server, 'should_exit', True))
+    monkeypatch.setattr(registry, 'snapshot', delayed_snapshot)
+    server = SimpleNamespace(should_exit=False)
+    result = await control.prepare_shutdown(server, control.Admission(None), {}, {}, [], timeout=2)
+    assert not result['ok'] and not server.should_exit
