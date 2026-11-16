@@ -1,0 +1,82 @@
+"""Lab ASGI app and real persistent HTTP sidecars; never an inference runtime."""
+import asyncio
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+WORKERS = []
+
+
+def port_live(port):
+    with socket.socket() as sock:
+        return sock.connect_ex(('127.0.0.1', port)) == 0
+
+
+async def app(scope, receive, send):
+    if scope['type'] == 'lifespan':
+        while True:
+            event = await receive()
+            if event['type'] == 'lifespan.startup':
+                port = int(os.environ['ODYSSEUS_RESTART_LAB_GATEWAY_PORT'])
+                if not port_live(port):
+                    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--port', str(port)],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
+                for _ in range(100):
+                    if port_live(port):
+                        break
+                    await asyncio.sleep(.02)
+                await send({'type': 'lifespan.startup.complete'})
+            elif event['type'] == 'lifespan.shutdown':
+                hold = Path(os.environ['ODYSSEUS_RESTART_LAB_DIR']) / 'shutdown-hold'
+                while hold.exists():
+                    await asyncio.sleep(.05)
+                # Gateway child deliberately survives the app's exit.
+                await send({'type': 'lifespan.shutdown.complete'})
+                return
+    elif scope['type'] == 'http':
+        if scope['path'] == '/fixture-spawn-worker':
+            WORKERS.append(subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW))
+        elif scope['path'] == '/fixture-clear-worker':
+            for worker in WORKERS:
+                if worker.poll() is None:
+                    worker.terminate()
+                worker.wait(timeout=3)
+            WORKERS.clear()
+        await send({'type': 'http.response.start', 'status': 200, 'headers': [(b'content-type', b'application/json')]})
+        await send({'type': 'http.response.body', 'body': json.dumps({'pid': os.getpid()}).encode()})
+        if scope['path'] == '/fixture-exit':
+            asyncio.get_running_loop().call_later(.1, os._exit, 0)
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', type=int, required=True)
+    args = parser.parse_args()
+    if args.port in {7000, 9130, 8100}:
+        raise SystemExit('Fixture refuses production ports')
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+        def log_message(self, format, *args):
+            pass
+        def do_GET(self):
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def do_POST(self):
+            self.do_GET()
+            if self.path == '/fixture-stop':
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    server.serve_forever()
+    server.server_close()

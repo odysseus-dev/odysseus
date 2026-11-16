@@ -23,11 +23,43 @@ param(
     [switch]$NoChroma,
 
     # Skip installing / updating the optional Hermes Mode component.
-    [switch]$NoHermes
+    [switch]$NoHermes,
+    [switch]$RunOnly,
+    [string]$Python = "",
+    [string]$StateDirectory = "",
+    [string]$ControlDirectory = "",
+    [string]$WorkersDirectory = "",
+    [string]$GatewayDatabase = "",
+    [int]$GatewayPort = 9130,
+    [int]$ChromaPort = 8100,
+    [string]$LabApplication = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
+
+# This branch must stay before all installation, setup and sidecar ownership.
+# It never falls through to maintenance and never terminates shared children.
+if ($RunOnly) {
+    if ($BindHost -notin @("127.0.0.1", "localhost")) { throw "Run-only control requires a loopback bind." }
+    if (-not $Python) { $Python = Join-Path $PSScriptRoot "venv\Scripts\python.exe" }
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw "Installed Python is missing; run-only never installs it." }
+    if (-not $ControlDirectory) { $ControlDirectory = Join-Path $env:LOCALAPPDATA "Odysseus\run" }
+    $controlArgs = @((Join-Path $PSScriptRoot "scripts\windows-app-control.py"), "run",
+        "--control-dir", $ControlDirectory, "--port", "$Port", "--gateway-port", "$GatewayPort",
+        "--chroma-port", "$ChromaPort", "--launcher-pid", "$PID", "--python", $Python)
+    if ($StateDirectory) { $controlArgs += @("--state-dir", $StateDirectory) }
+    if ($WorkersDirectory) { $controlArgs += @("--workers-dir", $WorkersDirectory) }
+    if ($GatewayDatabase) { $controlArgs += @("--gateway-db", $GatewayDatabase) }
+    if ($LabApplication) {
+        if (-not $StateDirectory -or $Port -in @(7000,9130) -or $GatewayPort -in @(7000,9130) -or $ChromaPort -in @(8100,7000,9130)) {
+            throw "Lab mode requires explicit isolated state and non-production ports."
+        }
+        $controlArgs += @("--lab-application", $LabApplication)
+    }
+    & $Python @controlArgs
+    exit $LASTEXITCODE
+}
 
 function Write-Step($msg) { Write-Host ""; Write-Host ("==> " + $msg) -ForegroundColor Cyan }
 function Fail($msg) {
