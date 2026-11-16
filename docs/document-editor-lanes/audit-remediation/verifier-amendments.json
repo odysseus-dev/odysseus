@@ -769,6 +769,35 @@
         }
       ]
     },
+    "_smartRichPasteUrl": {
+      "file": "ui/richEditor/richOperations.js",
+      "rationale": "Route all pasted URL schemes (mailto, tel, http, https) through _normalizeRichLinkUrl and strict URL protocol parsing.",
+      "targetFunctionSha256": "402fa0aa5599c93fb8c902af96641264c022e46fab3faed9212a5d452ecafeaa",
+      "replacements": [
+        {
+          "from": "function _smartRichPasteUrl(rawText) {\n    const candidate = String(rawText || '').trim();\n    if (!candidate || /\\s/.test(candidate)) return '';\n    if (/^[^@/:\\s]+@[^@/:\\s]+\\.[^@/:\\s]+$/.test(candidate)) return `mailto:${candidate}`;\n    if (/^mailto:/i.test(candidate)) {\n      return /^mailto:[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/i.test(candidate)\n        ? _normalizeRichLinkUrl(candidate)\n        : '';\n    }\n    if (/^tel:/i.test(candidate)) {\n      return /^tel:\\+?[\\d().-]+$/i.test(candidate) ? _normalizeRichLinkUrl(candidate) : '';\n    }\n    const absoluteWebUrl = /^(?:https?:)?\\/\\/[^/\\s]+(?:\\/[^\\s]*)?$/i.test(candidate);\n    const bareDomain = /^(?:www\\.)?[^./:\\s]+\\.[^/\\s]+(?:\\/[^\\s]*)?$/i.test(candidate);\n    if (!absoluteWebUrl && !bareDomain) return '';\n    const safeUrl = _normalizeRichLinkUrl(candidate);\n    if (!safeUrl) return '';\n    try {\n      const parsed = new URL(safeUrl);\n      return /^https?:$/.test(parsed.protocol) && parsed.hostname ? parsed.href : '';\n    } catch (_) {\n      return '';\n    }\n  }",
+          "to": "function _smartRichPasteUrl(rawText) {\n    const candidate = String(rawText || '').trim();\n    if (!candidate || /\\s/.test(candidate)) return '';\n    let normalized = '';\n    if (/^[^@/:\\s]+@[^@/:\\s]+\\.[^@/:\\s]+$/.test(candidate)) {\n      normalized = _normalizeRichLinkUrl(`mailto:${candidate}`);\n    } else if (/^mailto:/i.test(candidate)) {\n      normalized = /^mailto:[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/i.test(candidate)\n        ? _normalizeRichLinkUrl(candidate)\n        : '';\n    } else if (/^tel:/i.test(candidate)) {\n      normalized = /^tel:\\+?[\\d().-]+$/i.test(candidate) ? _normalizeRichLinkUrl(candidate) : '';\n    } else {\n      const absoluteWebUrl = /^(?:https?:)?\\/\\/[^/\\s]+(?:\\/[^\\s]*)?$/i.test(candidate);\n      const bareDomain = /^(?:www\\.)?[^./:\\s]+\\.[^/\\s]+(?:\\/[^\\s]*)?$/i.test(candidate);\n      if (!absoluteWebUrl && !bareDomain) return '';\n      normalized = _normalizeRichLinkUrl(candidate);\n    }\n    if (!normalized) return '';\n    try {\n      const parsed = new URL(normalized);\n      if (parsed.protocol === 'mailto:' || parsed.protocol === 'tel:') {\n        return parsed.href;\n      }\n      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname) {\n        return parsed.href;\n      }\n      return '';\n    } catch (_) {\n      return '';\n    }\n  }",
+          "rationale": "Eliminate unfiltered mailto/tel early returns by routing every URL branch through _normalizeRichLinkUrl and strict URL protocol validation."
+        }
+      ]
+    },
+    "_insertSmartRichPasteLink": {
+      "file": "ui/richEditor/richOperations.js",
+      "rationale": "Re-verify explicit safe scheme prefix and attach href via setAttribute instead of direct anchor.href property assignment.",
+      "targetFunctionSha256": "45977aabd062afa4cca88b3ae7fd5d339a50087dae37e134b7dc78e120ac1a3b",
+      "replacements": [
+        {
+          "from": "function _insertSmartRichPasteLink(rich, rawText) {\n    const url = _smartRichPasteUrl(rawText);\n    if (!url) return false;",
+          "to": "function _insertSmartRichPasteLink(rich, rawText) {\n    const url = _smartRichPasteUrl(rawText);\n    if (!url) return false;\n    let safeHref = '';\n    if (url.startsWith('https://')) safeHref = `https://${url.slice('https://'.length)}`;\n    else if (url.startsWith('http://')) safeHref = `http://${url.slice('http://'.length)}`;\n    else if (url.startsWith('mailto:')) safeHref = `mailto:${url.slice('mailto:'.length)}`;\n    else if (url.startsWith('tel:')) safeHref = `tel:${url.slice('tel:'.length)}`;\n    if (!safeHref) return false;",
+          "rationale": "Enforce explicit safe scheme prefix checks at the paste insertion sink."
+        },
+        {
+          "from": "    anchor.href = url;\n    anchor.rel = 'noopener noreferrer';",
+          "to": "    anchor.setAttribute('href', safeHref);\n    anchor.setAttribute('rel', 'noopener noreferrer');",
+          "rationale": "Set href via setAttribute with the scheme-verified URL instead of assigning to anchor.href."
+        }
+      ]
+    },
     "_aiReply": {
       "file": "ui/email/aiReply.js",
       "rationale": "Inspect split reply content with shared pure HTML helpers instead of DOMParser or regex HTML stripping.",

@@ -400,6 +400,12 @@ function documentFunction(name, text) {
       getSelection().addRange(collapsed);
       result.collapsed = insert(rich, 'https://outside.example/\"><svg/onload=window.executed++>');
       result.quoteUnsafe = rich.querySelectorAll('svg,[onload]').length;
+      result.mailInserted = insert(rich, 'person@example.com');
+      result.telInserted = insert(rich, 'tel:+12345');
+      result.badSchemeInserted = insert(rich, 'javascript:window.executed++');
+      const pastedHrefs = Array.from(rich.querySelectorAll('a')).map(a => a.getAttribute('href'));
+      result.hasMailHref = pastedHrefs.includes('mailto:person@example.com');
+      result.hasTelHref = pastedHrefs.includes('tel:+12345');
 
       rich.innerHTML = '<p>First</p><p>Second</p>';
       const crossing = document.createRange();
@@ -433,6 +439,11 @@ function documentFunction(name, text) {
     assert.equal(links.cleanUnsafe, 0);
     assert.equal(links.collapsed, true);
     assert.equal(links.quoteUnsafe, 0);
+    assert.equal(links.mailInserted, true);
+    assert.equal(links.telInserted, true);
+    assert.equal(links.badSchemeInserted, false);
+    assert.equal(links.hasMailHref, true);
+    assert.equal(links.hasTelHref, true);
     assert.equal(links.crossing, false);
     assert.equal(links.outside, false);
 

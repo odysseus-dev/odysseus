@@ -389,23 +389,31 @@ export function _toggleRichInlineCode(rich) {
 function _smartRichPasteUrl(rawText) {
     const candidate = String(rawText || '').trim();
     if (!candidate || /\s/.test(candidate)) return '';
-    if (/^[^@/:\s]+@[^@/:\s]+\.[^@/:\s]+$/.test(candidate)) return `mailto:${candidate}`;
-    if (/^mailto:/i.test(candidate)) {
-      return /^mailto:[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(candidate)
+    let normalized = '';
+    if (/^[^@/:\s]+@[^@/:\s]+\.[^@/:\s]+$/.test(candidate)) {
+      normalized = _normalizeRichLinkUrl(`mailto:${candidate}`);
+    } else if (/^mailto:/i.test(candidate)) {
+      normalized = /^mailto:[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(candidate)
         ? _normalizeRichLinkUrl(candidate)
         : '';
+    } else if (/^tel:/i.test(candidate)) {
+      normalized = /^tel:\+?[\d().-]+$/i.test(candidate) ? _normalizeRichLinkUrl(candidate) : '';
+    } else {
+      const absoluteWebUrl = /^(?:https?:)?\/\/[^/\s]+(?:\/[^\s]*)?$/i.test(candidate);
+      const bareDomain = /^(?:www\.)?[^./:\s]+\.[^/\s]+(?:\/[^\s]*)?$/i.test(candidate);
+      if (!absoluteWebUrl && !bareDomain) return '';
+      normalized = _normalizeRichLinkUrl(candidate);
     }
-    if (/^tel:/i.test(candidate)) {
-      return /^tel:\+?[\d().-]+$/i.test(candidate) ? _normalizeRichLinkUrl(candidate) : '';
-    }
-    const absoluteWebUrl = /^(?:https?:)?\/\/[^/\s]+(?:\/[^\s]*)?$/i.test(candidate);
-    const bareDomain = /^(?:www\.)?[^./:\s]+\.[^/\s]+(?:\/[^\s]*)?$/i.test(candidate);
-    if (!absoluteWebUrl && !bareDomain) return '';
-    const safeUrl = _normalizeRichLinkUrl(candidate);
-    if (!safeUrl) return '';
+    if (!normalized) return '';
     try {
-      const parsed = new URL(safeUrl);
-      return /^https?:$/.test(parsed.protocol) && parsed.hostname ? parsed.href : '';
+      const parsed = new URL(normalized);
+      if (parsed.protocol === 'mailto:' || parsed.protocol === 'tel:') {
+        return parsed.href;
+      }
+      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname) {
+        return parsed.href;
+      }
+      return '';
     } catch (_) {
       return '';
     }
@@ -414,6 +422,12 @@ function _smartRichPasteUrl(rawText) {
 export function _insertSmartRichPasteLink(rich, rawText) {
     const url = _smartRichPasteUrl(rawText);
     if (!url) return false;
+    let safeHref = '';
+    if (url.startsWith('https://')) safeHref = `https://${url.slice('https://'.length)}`;
+    else if (url.startsWith('http://')) safeHref = `http://${url.slice('http://'.length)}`;
+    else if (url.startsWith('mailto:')) safeHref = `mailto:${url.slice('mailto:'.length)}`;
+    else if (url.startsWith('tel:')) safeHref = `tel:${url.slice('tel:'.length)}`;
+    if (!safeHref) return false;
     const selection = window.getSelection();
     if (!selection?.rangeCount) return false;
     const range = selection.getRangeAt(0);
@@ -427,8 +441,8 @@ export function _insertSmartRichPasteLink(rich, rawText) {
     }
 
     const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.rel = 'noopener noreferrer';
+    anchor.setAttribute('href', safeHref);
+    anchor.setAttribute('rel', 'noopener noreferrer');
     if (range.collapsed) {
       anchor.textContent = String(rawText || '').trim();
     } else {
