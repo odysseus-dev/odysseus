@@ -704,6 +704,10 @@ test('_normalizeRichLinkUrl normalizes links and rejects unsafe schemes', () => 
   assert.equal(_normalizeRichLinkUrl('mailto:support@example.com'), 'mailto:support@example.com');
   assert.equal(_normalizeRichLinkUrl('tel:+1234567890'), 'tel:+1234567890');
   assert.equal(_normalizeRichLinkUrl('tel:+15551234567'), 'tel:+15551234567');
+  assert.equal(_normalizeRichLinkUrl('mailto:a@b.com,c@d.com'), 'mailto:a@b.com,c@d.com');
+  assert.equal(_normalizeRichLinkUrl('mailto:a@b.com,c@d.com?subject=Hello'), 'mailto:a@b.com,c@d.com?subject=Hello');
+  assert.equal(_normalizeRichLinkUrl('tel:+1-555-1234;ext=12'), 'tel:+1-555-1234;ext=12');
+  assert.equal(_normalizeRichLinkUrl('tel:+1-555-1234;phone-context=example.com'), 'tel:+1-555-1234;phone-context=example.com');
 
   // Unsafe / forbidden protocols rejected
   assert.equal(_normalizeRichLinkUrl('javascript:alert(1)'), '');
@@ -723,8 +727,10 @@ test('_normalizeRichLinkUrl normalizes links and rejects unsafe schemes', () => 
   assert.equal(_normalizeRichLinkUrl('///evil'), '');
   assert.equal(_normalizeRichLinkUrl('mailto:'), '');
   assert.equal(_normalizeRichLinkUrl('mailto:not-an-email'), '');
+  assert.equal(_normalizeRichLinkUrl('mailto:a@b.com,bad-email'), '');
   assert.equal(_normalizeRichLinkUrl('tel:'), '');
   assert.equal(_normalizeRichLinkUrl('tel:abc'), '');
+  assert.equal(_normalizeRichLinkUrl('tel:+1-555-1234;ext=<script>'), '');
 });
 
 test('_RICH_FONT_SIZE_PX is frozen and defines levels 1 through 7', () => {

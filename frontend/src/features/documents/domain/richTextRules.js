@@ -59,10 +59,19 @@ export function _normalizeRichLinkUrl(rawUrl) {
     }
   } else if (/^mailto:/i.test(url)) {
     const recipient = url.slice('mailto:'.length).split('?')[0].trim();
-    if (!recipient || !/^[^\s@]+@[^\s@]+$/.test(recipient)) return '';
+    if (!recipient) return '';
+    const addrs = recipient.split(',').map(s => s.trim()).filter(Boolean);
+    if (addrs.length === 0 || !addrs.every(addr => /^[^\s@,]+@[^\s@,]+$/.test(addr))) return '';
   } else if (/^tel:/i.test(url)) {
     const phone = url.slice('tel:'.length).trim();
-    if (!phone || !/^[+\d().\-\s]+$/.test(phone) || !/\d/.test(phone)) return '';
+    if (!phone) return '';
+    const parts = phone.split(';');
+    const number = parts[0].trim();
+    if (!number || !/^[+\d().\-\s]+$/.test(number) || !/\d/.test(number)) return '';
+    for (let k = 1; k < parts.length; k++) {
+      const param = parts[k].trim();
+      if (!param || !/^[a-zA-Z0-9\-]+(?:=[a-zA-Z0-9\-+.]*)?$/.test(param)) return '';
+    }
   }
   return url;
 }

@@ -134,16 +134,21 @@ export async function _autoCreateFromInput(content) {
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
       if (!doc || !doc.id) throw new Error('Document create failed: missing id');
-      if (generation !== _documentNavigationGeneration) return;
-      content = document.getElementById('doc-editor-textarea')?.value ?? content;
+
+      const initialContent = document.getElementById('doc-editor-textarea')?.value ?? content;
       addDocToTabs(doc, sessionId);
-      // Set the content into the map so switchToDoc preserves it
       const d = docs.get(doc.id);
-      if (d) d.content = content;
+      if (d) d.content = initialContent;
+
+      if (generation !== _documentNavigationGeneration) {
+        renderTabs();
+        return;
+      }
+
       switchToDoc(doc.id);
       // Trigger auto-detect and auto-title
       setTimeout(attemptAutoDetect, 100);
-      setTimeout(() => autoTitleFromContent(content, doc.id), 300);
+      setTimeout(() => autoTitleFromContent(initialContent, doc.id), 300);
       // Auto-save
       _scheduleAutoSave(doc.id, 2000);
     } catch (e) {
@@ -158,7 +163,7 @@ export async function createDocument(sessionId) {
     _creatingDoc = true;
     const generation = bumpNavigationGeneration();
     // If the panel was in empty-state, the user may type into the editor
-    // during the create round-trip — preserve that text into the new doc
+    // during the create round-trip - preserve that text into the new doc
     // instead of letting switchToDoc blank it.
     const wasEmpty = !activeDocId;
     try {
@@ -176,8 +181,14 @@ export async function createDocument(sessionId) {
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
       if (!doc || !doc.id) throw new Error('Document create failed: missing id');
-      if (generation !== _documentNavigationGeneration) return;
+
       addDocToTabs(doc, sessionId);
+
+      if (generation !== _documentNavigationGeneration) {
+        renderTabs();
+        return;
+      }
+
       if (!isOpen) openPanel();
       // Re-enable editor if it was in empty state
       let textarea = document.getElementById('doc-editor-textarea');
@@ -186,7 +197,7 @@ export async function createDocument(sessionId) {
         _syncEditorPlaceholder();
       }
       // Capture text typed during the round-trip (only when starting from the
-      // empty editor — don't steal another doc's content).
+      // empty editor - don't steal another doc's content).
       const typed = (wasEmpty && textarea && textarea.value.trim()) ? textarea.value : '';
       switchToDoc(doc.id);
       if (typed) {

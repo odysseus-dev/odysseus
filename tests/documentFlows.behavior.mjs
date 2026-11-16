@@ -108,6 +108,18 @@ describe('documentFlows navigation', () => {
     assert.equal(textarea.focused, true);
     assert.deepEqual(calls.switch, ['created']);
   });
+  it('reconciles document created during navigation without stealing focus or orphaning document', async () => {
+    let resolveCreate;
+    globalThis.fetch = () => new Promise(resolve => { resolveCreate = resolve; });
+    const pendingCreate = api.createDocument('session-1');
+    stateValues.bumpNavigationGeneration();
+    resolveCreate({ ok: true, json: async () => ({ id: 'nav-raced', session_id: 'session-1', title: 'New Doc' }) });
+    await pendingCreate;
+    assert.equal(docs.has('nav-raced'), true);
+    assert.equal(calls.adds.includes('nav-raced'), true);
+    assert.equal(calls.switch.includes('nav-raced'), false);
+    assert.ok(calls.tabs > 0);
+  });
   it('quietly closes a nonempty tab and clears the active document when no tab remains', async () => {
     docs.set('close-me', { id: 'close-me', content: 'keep this draft', sessionId: 'session-1' });
     active = 'close-me'; stateModule.setExport('activeDocId', active);
