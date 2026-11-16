@@ -547,7 +547,7 @@ export function buildAttachCards(attachments) {
         // full-resolution photo. Click still opens the full image.
         img.alt = att.name || 'Image';
         img.loading = 'lazy';
-        img.style.cssText = 'max-width:300px;max-height:200px;border-radius:6px;display:' + (att.previewUrl ? 'block' : 'none') + ';';
+        img.style.cssText = 'max-width:100%;max-height:200px;border-radius:6px;display:' + (att.previewUrl ? 'block' : 'none') + ';';
         let _revealed = false;
         let _revealTimer = null;
         const _reveal = () => {

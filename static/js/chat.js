@@ -4893,7 +4893,7 @@ import { invalidateSettings } from './appConfig.js';
                         const _im = document.createElement('img');
                         _im.src = API_BASE + '/api/upload/' + _att.id;
                         _im.alt = _att.name || 'Image';
-                        _im.style.cssText = 'max-width:300px;max-height:200px;border-radius:6px;display:block;';
+                        _im.style.cssText = 'max-width:100%;max-height:200px;border-radius:6px;display:block;';
                         _iw.appendChild(_im);
                         if (_att.vision_model) {
                           const _vl = document.createElement('div');
