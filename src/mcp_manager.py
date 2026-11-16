@@ -149,6 +149,9 @@ class McpManager:
     """Manages MCP server connections and tool routing."""
 
     def __init__(self):
+        from src.native_mcp_activity import REGISTRY
+        self._activity_registry = REGISTRY
+        self._activity_owner = REGISTRY.register(self)
         # server_id -> connection state
         self._connections: Dict[str, Dict[str, Any]] = {}
         # server_id -> list of tool schemas
@@ -171,6 +174,22 @@ class McpManager:
         self._resource_owners = {}
 
     async def connect_server(
+        self, server_id: str, name: str, transport: str,
+        command: Optional[str] = None, args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None, url: Optional[str] = None,
+    ) -> bool:
+        from src.native_mcp_activity import AdmissionClosed, CONNECTING
+        try:
+            with self._activity_registry.operation(self._activity_owner, server_id, 'connection'):
+                token = CONNECTING.set((self._activity_registry, self._activity_owner, server_id))
+                try:
+                    return await self._connect_server(server_id, name, transport, command, args, env, url)
+                finally:
+                    CONNECTING.reset(token)
+        except AdmissionClosed:
+            return False
+
+    async def _connect_server(
         self,
         server_id: str,
         name: str,
@@ -213,6 +232,8 @@ class McpManager:
         try:
             from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
+            from src.native_mcp_stdio import install
+            install(self._activity_registry)
             from contextlib import AsyncExitStack
 
             server_params = StdioServerParameters(
@@ -367,6 +388,14 @@ class McpManager:
         return False
 
     async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
+        from src.native_mcp_activity import AdmissionClosed
+        try:
+            with self._activity_registry.operation(self._activity_owner, server_id, 'connection'):
+                return await self._connect_http_impl(server_id, name, url)
+        except AdmissionClosed:
+            return False
+
+    async def _connect_http_impl(self, server_id: str, name: str, url: str) -> bool:
         """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
         try:
             from mcp import ClientSession
@@ -569,6 +598,17 @@ class McpManager:
                                 owner=record[3])
 
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
+        from src.native_mcp_activity import AdmissionClosed
+        parts = qualified_name.split('__', 2)
+        server = parts[1] if len(parts) == 3 else 'invalid'
+        try:
+            with self._activity_registry.operation(self._activity_owner, server):
+                return await self._call_tool(qualified_name, arguments)
+        except AdmissionClosed:
+            return {'error': 'Native MCP admission is fenced for restart', 'exit_code': 1,
+                    'failure_kind': 'restart_draining'}
+
+    async def _call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
 
         Returns a result dict compatible with agent_tools format.
@@ -636,7 +676,12 @@ class McpManager:
 
     async def _do_call(self, session, tool_name: str, arguments: Dict) -> Dict:
         """Execute a single MCP tool call and return result dict."""
-        result = await session.call_tool(tool_name, arguments)
+        owner, server, _ = self._activity_registry.require_operation()
+        try:
+            result = await session.call_tool(tool_name, arguments)
+        except BaseException:
+            self._activity_registry.unknown('remote_completion_unknown', owner, server)
+            raise
         output_parts = []
         images = []
         for content in result.content:

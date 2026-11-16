@@ -195,7 +195,7 @@ def descendants(root, parents):
         found.update(more)
 
 
-def full_guard(config, app_identity, protected):
+def full_guard(config, app_identity, protected, *, allow_mcp_busy=False):
     result = file_guard(config['state_dir'], config['workers_dir'], config['gateway_db'])
     try:
         if win.identity(app_identity['pid']) != app_identity or win.listener_pid(config['port']) != app_identity['pid']:
@@ -203,6 +203,15 @@ def full_guard(config, app_identity, protected):
         verify_protected(protected)
         parents = win.process_parents()
         permitted = set()
+        from src.native_mcp_activity import REGISTRY
+        from src.native_mcp_stdio import validate
+        validate(REGISTRY)
+        permitted |= REGISTRY.accounted_process_ids()
+        result['mcp'] = REGISTRY.snapshot()
+        if not result['mcp']['initialized'] or result['mcp']['unknown']:
+            result['errors'].append('Native MCP activity is unknown or untracked')
+        if result['mcp']['in_flight'] and not allow_mcp_busy:
+            result['errors'].append('Native MCP operations are active')
         for service in protected:
             cursor = service['pid']
             seen = set()
@@ -223,6 +232,7 @@ def full_guard(config, app_identity, protected):
 class Admission:
     def __init__(self, app):
         self.app, self.lock, self.paused, self.mutations = app, threading.Lock(), False, 0
+        self.preparing = False
 
     async def __call__(self, scope, receive, send):
         mutation = scope['type'] == 'http' and scope['method'] not in {'GET', 'HEAD', 'OPTIONS'}
@@ -242,7 +252,81 @@ class Admission:
                     self.mutations -= 1
 
 
-def _receive(connection, timeout=3):
+def _commit_shutdown(server):
+    from src import shutdown
+    shutdown.request_shutdown()
+    server.should_exit = True
+
+
+async def prepare_shutdown(server, gate, config, identity, protected, timeout: float = 30, *, deadline: float | None = None):
+    with gate.lock:
+        if gate.preparing:
+            return {'ok': False, 'state': 'already-draining', 'forced': False}
+        gate.preparing = True
+    try:
+        return await _prepare_shutdown(server, gate, config, identity, protected, timeout, deadline)
+    finally:
+        with gate.lock:
+            gate.preparing = False
+
+
+async def _prepare_shutdown(server, gate, config, identity, protected, timeout: float, deadline: float | None):
+    """Fence, observe accepted work, close owned peers without force, then commit."""
+    from src.native_mcp_activity import REGISTRY, AdmissionClosed
+    if not math.isfinite(timeout) or not 0 < timeout <= 300:
+        raise ValueError('MCP shutdown observation must be finite, positive and at most 300 seconds')
+    deadline = min(deadline, time.monotonic() + timeout) if deadline is not None else time.monotonic() + timeout
+    if not math.isfinite(deadline) or time.monotonic() >= deadline:
+        return {'ok': False, 'state': 'control-timeout', 'forced': False}
+    guard = await asyncio.to_thread(full_guard, config, identity, protected, allow_mcp_busy=True)
+    if not guard['clear'] or time.monotonic() >= deadline:
+        return {'ok': False, 'state': 'blocked', 'guard': guard, 'forced': False}
+    try:
+        generation = REGISTRY.fence()
+    except AdmissionClosed:
+        return {'ok': False, 'state': 'already-draining', 'mcp': REGISTRY.snapshot(), 'forced': False}
+    with gate.lock:
+        gate.paused = True
+    closing = REGISTRY.connections_closed
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {'ok': False, 'state': 'mcp-drain-timeout', 'forced': False}
+        result = await REGISTRY.wait_idle(remaining)
+        if not result['ok']:
+            return {**result, 'forced': False}
+        while True:
+            with gate.lock:
+                busy = gate.mutations != 0
+            if not busy:
+                break
+            if time.monotonic() >= deadline:
+                return {'ok': False, 'state': 'app-drain-timeout', 'forced': False}
+            await asyncio.sleep(.02)
+        guard = await asyncio.to_thread(full_guard, config, identity, protected)
+        if not guard['clear'] or time.monotonic() >= deadline:
+            return {'ok': False, 'state': 'blocked', 'guard': guard, 'forced': False}
+        closing = True
+        if not await REGISTRY.close_connections(max(.001, deadline - time.monotonic())):
+            return {'ok': False, 'state': 'mcp-close-incomplete', 'mcp': REGISTRY.snapshot(), 'forced': False}
+        guard = await asyncio.to_thread(full_guard, config, identity, protected)
+        if not guard['clear'] or time.monotonic() >= deadline:
+            return {'ok': False, 'state': 'blocked-after-mcp-close', 'guard': guard, 'forced': False}
+        with REGISTRY.lock:
+            state = REGISTRY.snapshot()
+            if state['unknown'] or state['in_flight'] or not state['connections_closed']:
+                return {'ok': False, 'state': 'mcp-activity-unknown', 'mcp': state, 'forced': False}
+            _commit_shutdown(server)
+        return {'ok': True, 'state': 'draining', 'mcp': REGISTRY.snapshot(), 'forced': False}
+    finally:
+        if not server.should_exit:
+            with gate.lock:
+                gate.paused = False
+            if not closing and not REGISTRY.snapshot()['unknown']:
+                REGISTRY.resume(generation)
+
+
+def _receive(connection, timeout: float = 3):
     if not connection.poll(timeout):
         raise TimeoutError('Local control handshake timed out')
     return json.loads(connection.recv_bytes(32768))
@@ -290,24 +374,16 @@ def control_loop(server, gate, config, receipt, key, event_loop, stopped):
                     _send(connection, {'ok': True, 'identity': receipt['identity'],
                                        'guard': full_guard(config, receipt['identity'], receipt['protected'])})
                     continue
-                with gate.lock:
-                    already = gate.paused
-                    gate.paused = True
-                    busy = gate.mutations != 0
-                guard = full_guard(config, receipt['identity'], receipt['protected'])
-                if already or busy or not guard['clear']:
-                    with gate.lock:
-                        if not already:
-                            gate.paused = False
-                    _send(connection, {'ok': False, 'state': 'blocked', 'guard': guard,
-                                       'error': 'Already draining or busy/unknown workers'})
+                deadline = request.get('deadline', time.monotonic() + 30)
+                if not isinstance(deadline, (int, float)) or not math.isfinite(deadline):
+                    raise ValueError('Invalid shutdown deadline')
+                budget = min(300, deadline - time.monotonic())
+                if budget <= 0:
+                    _send(connection, {'ok': False, 'state': 'control-timeout', 'forced': False})
                     continue
-                _send(connection, {'ok': True, 'state': 'draining'})
-                def stop_app():
-                    from src import shutdown
-                    shutdown.request_shutdown()
-                    server.should_exit = True
-                event_loop.call_soon_threadsafe(stop_app)
+                future = asyncio.run_coroutine_threadsafe(prepare_shutdown(
+                    server, gate, config, receipt['identity'], receipt['protected'], budget, deadline=deadline), event_loop)
+                _send(connection, future.result(timeout=budget + .05))
         except (OSError, ValueError, KeyError, TypeError, TimeoutError, PermissionError):
             pass  # Malformed/unauthenticated connections never request shutdown.
         finally:
@@ -350,11 +426,11 @@ def request_control(directory, action, timeout=3, *, key_override=None, identity
         peer = win.peer_pid(handle, server=True)
         if peer != expected['pid'] or win.identity(peer) != expected or win.user_sid(peer) != win.user_sid():
             raise PermissionError('Control server identity/user mismatch')
-        challenge = _receive(connection, timeout)['challenge']
-        request = {'action': action, 'identity': identity_override or expected}
+        challenge = _receive(connection, max(0, deadline - time.monotonic()))['challenge']
+        request = {'action': action, 'identity': identity_override or expected, 'deadline': deadline}
         key = key_override if key_override is not None else (directory / 'secret.key').read_bytes()
         _send(connection, {'request': request, 'mac': _mac(key, challenge, request)})
-        return _receive(connection, timeout)
+        return _receive(connection, max(0, deadline - time.monotonic()))
 
 
 async def serve(config):
@@ -457,10 +533,14 @@ def restart(directory, timeout: float = 30, *, start=True):
 
 def _restart(directory, timeout, *, start):
     receipt = json.loads((Path(directory) / 'app.json').read_text(encoding='utf-8'))
-    response = request_control(directory, 'stop', snapshot=receipt)
+    deadline = time.monotonic() + timeout
+    try:
+        response = request_control(directory, 'stop', timeout=timeout, snapshot=receipt)
+    except TimeoutError:
+        return {'ok': False, 'state': 'control-timeout', 'stop_outcome': 'unconfirmed',
+                'forced': False, 'replacement_started': False}
     if not response.get('ok'):
         return response
-    deadline = time.monotonic() + timeout
     while any(win.identity(value['pid']) == value for value in (receipt['identity'], receipt['launcher'])):
         if time.monotonic() >= deadline:
             return {'ok': False, 'state': 'shutdown-timeout', 'forced': False, 'replacement_started': False}

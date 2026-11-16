@@ -72,7 +72,7 @@ def lab(tmp_path, request):
     sidecar = subprocess.Popen([sys.executable, str(ROOT / 'tests/helpers/windows_restart_fixture.py'),
                                '--port', str(config['chroma_port'])], stdout=stream, stderr=stream,
                               creationflags=subprocess.CREATE_NO_WINDOW)
-    wait_for(lambda: health(config['chroma_port'], '/api/v2/heartbeat'))
+    wait_for(lambda: health(config['chroma_port'], '/api/v2/heartbeat', kind='chroma'))
     env = {key: value for key, value in os.environ.items() if not key.startswith(('ODYSSEUS_', 'HERMES_'))}
     def launch():
         child = subprocess.Popen(launcher_argv(config), stdout=stream, stderr=stream,

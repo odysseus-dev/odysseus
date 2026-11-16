@@ -8,9 +8,12 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WORKERS = []
+MCP: Any = None
+MCP_OWNER = None
 
 
 def port_live(port):
@@ -19,10 +22,13 @@ def port_live(port):
 
 
 async def app(scope, receive, send):
+    global MCP, MCP_OWNER
     if scope['type'] == 'lifespan':
         while True:
             event = await receive()
             if event['type'] == 'lifespan.startup':
+                from src.mcp_manager import McpManager
+                MCP = McpManager()
                 port = int(os.environ['ODYSSEUS_RESTART_LAB_GATEWAY_PORT'])
                 if not port_live(port):
                     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--port', str(port)],
@@ -41,6 +47,22 @@ async def app(scope, receive, send):
                 await send({'type': 'lifespan.shutdown.complete'})
                 return
     elif scope['type'] == 'http':
+        body = None
+        if scope['path'] == '/fixture-mcp-start':
+            ready = asyncio.Event()
+            peer = Path(__file__).with_name('native_mcp_peer.py')
+            directory = Path(os.environ['ODYSSEUS_RESTART_LAB_DIR']) / 'mcp-peer'
+            async def owner():
+                connected = await MCP.connect_server('fixture', 'fixture', 'stdio',
+                    command=sys.executable, args=[str(peer), str(directory)])
+                ready.set()
+                if connected:
+                    await MCP.hold_owned_connection('fixture')
+            MCP_OWNER = asyncio.create_task(owner())
+            await asyncio.wait_for(ready.wait(), 10)
+            body = {'connected': 'fixture' in MCP._sessions}
+        elif scope['path'] == '/fixture-mcp-call':
+            body = await MCP.call_tool('mcp__fixture__pause', {})
         if scope['path'] == '/fixture-spawn-worker':
             WORKERS.append(subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -52,7 +74,8 @@ async def app(scope, receive, send):
                 worker.wait(timeout=3)
             WORKERS.clear()
         await send({'type': 'http.response.start', 'status': 200, 'headers': [(b'content-type', b'application/json')]})
-        body = {'status': 'healthy'} if scope['path'] == '/api/health' else {'pid': os.getpid()}
+        if body is None:
+            body = {'status': 'healthy'} if scope['path'] == '/api/health' else {'pid': os.getpid()}
         await send({'type': 'http.response.body', 'body': json.dumps(body).encode()})
         if scope['path'] == '/fixture-exit':
             asyncio.get_running_loop().call_later(.1, os._exit, 0)

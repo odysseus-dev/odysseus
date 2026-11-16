@@ -209,5 +209,39 @@ The full descendant guard and the current active-turn guard remain blocking.
 
 Details: `docs/windows-activation-inventory.md`; actual evidence under the fresh
 backup directory. This new guard candidate is DEVELOPMENT ONLY and needs separate
-integration approval. Do not request a legacy transition until complete native
-MCP quiescence is established; known purpose/low CPU/ping is not an idle proof.
+integration approval. Strict legacy MCP quiescence remains unprovable; known
+purpose/low CPU/ping is not an idle proof. The decision below records the user's
+new request for a separately approved maintenance exception, not an idle claim.
+
+## Permanent native MCP quiescence candidate
+
+Branch `feature/windows-mcp-quiescence` is based on observational reconciliation
+`10b7ed5cf531389568ab71f625630dfe5c94b6bf`, not the serving-lifecycle branch.
+Production remains `a86c1c7b346256354d49520e63ea705525f47748`; nothing deployed,
+restarted, terminated or changed in autostart/configuration by this milestone.
+
+Native tool dispatch now has a process-local counter, setup/HTTP OAuth scope
+coverage, an admission fence and sticky unknown-completion evidence. Coordinator
+shutdown drains accepted calls without cancellation, closes actual owned peers,
+rechecks guards and refuses unknown work. The Windows SDK 1.30.0 adapter disables
+its implicit force-cleanup paths only for newly owned private stdio processes.
+Unsupported or replaced hooks block automatic restart. This cannot retrofit
+the legacy interpreter and does not mutate Sonnet's chat/UI or shared services.
+
+Focused current group: 24 passed in `mcp-quiescence-verified.xml` (unit/dispatch,
+coordinator and two actual new Windows stdio/pipe checks). A blocked real tool
+finishes before app exit; a stubborn EOF peer survives the SDK cleanup timeout,
+with the app/gateway/Chroma stand-ins preserved, then exits on fixture release.
+Initial fixture errors (missing explicit Chroma health role and parsing a plain
+503 as JSON) were fixed; red/green regressions also exposed background-connect
+counting, recycled child identity replacement and an expired control deadline.
+No model/GPU activity, package download, production-descendant re-audit, full
+test suite or repeated accepted browser sequence. Prior 17 inventory, 14 health
+and 11 Windows process cases remain reused evidence, not new pass counts.
+
+`docs/windows-mcp-quiescence.md` documents contract/failure modes and the exact
+SDK compatibility limit. `docs/windows-first-activation-decision.md` records A
+as unavailable with current legacy instrumentation, and B as a scheduled,
+narrowly scoped MCP interruption-risk exception needing separate approval.
+The reconciliation commit is ready for code-only review, but unmerged. Serving
+lifecycle/context work remains separate at `d1356e096cba895eb4a11b596cc9728635ee9e7f`.
