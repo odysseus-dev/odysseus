@@ -1,5 +1,5 @@
 name: Odysseus
-version: "1.2.0"
+version: "1.3.0"
 slug: odysseus
 description: >-
   Self-hosted AI workspace for chat, agents, deep research, documents, email,
@@ -17,6 +17,18 @@ stage: stable
 # core via the Supervisor auth API (POST /auth). Grants no other API
 # access; the Supervisor token this implies is used only for that check.
 auth_api: true
+
+# Sidebar panel: Supervisor proxies /api/hassio_ingress/<token>/ through to
+# APP_PORT, injects the logged-in HA user's identity (X-Remote-User-*), and
+# the frontend derives its URL prefix from the browser path at runtime
+# (window.__odysseusAppUrl). ingress_stream keeps POST bodies unbuffered so
+# SSE / streaming uploads through the panel stay low-latency.
+ingress: true
+ingress_port: 7000
+ingress_stream: true
+panel_title: Odysseus
+panel_icon: mdi:sail-boat
+panel_admin: false
 
 # ---------------------------------------------------------------------------
 # Direct port access. The web UI and API are served on this port; set the host

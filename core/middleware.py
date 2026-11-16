@@ -54,6 +54,29 @@ def is_cors_preflight(method: str, headers) -> bool:
     return method == "OPTIONS" and "access-control-request-method" in headers
 
 
+def is_ingress_request(request: Request) -> bool:
+    """True for a request proxied by the Home Assistant Supervisor.
+
+    Supervisor's ingress proxy (supervisor/api/ingress.py) strips any
+    client-supplied X-Remote-User-* headers and re-injects the signed-in HA
+    user's identity, so the presence of X-Remote-User-Id proves the request
+    arrived through the panel -- and the panel renders the app inside an
+    iframe on the Home Assistant frontend origin, which the default
+    DENY / frame-ancestors 'none' policy would block. The header cannot be
+    smuggled in through an iframe: cross-origin iframe loads cannot set
+    custom request headers, so this relaxation is not a clickjacking vector.
+    (Header presence alone is NOT treated as authentication anywhere --
+    src.hass_auth.ingress_identity additionally verifies the peer is the
+    Supervisor container before trusting the identity headers.)
+    """
+    ident = request.headers.get("X-Remote-User-Id", "").strip()
+    if not ident:
+        return False
+    # Supervisor injects both ID and name on proxied requests; a bare
+    # X-Remote-User-Id with no name is not a Supervisor injection.
+    return bool(request.headers.get("X-Remote-User-Name", "").strip())
+
+
 def require_admin(request: Request):
     """Raise 403 if the current user isn't an admin.
     Allows access when auth is explicitly disabled, or when the request carries
@@ -128,6 +151,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
+                "frame-ancestors 'self'"
+            )
+        elif is_ingress_request(request):
+            # Served inside the Home Assistant sidebar panel iframe: same
+            # origin as the HA frontend, so SAMEORIGIN / 'self' both allow
+            # the panel and keep third-party framing blocked.
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self'; "
+                "frame-src 'self'; "
                 "frame-ancestors 'self'"
             )
         else:

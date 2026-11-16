@@ -332,7 +332,7 @@ export async function runServer(code, panel, lang) {
     command = `python3 -c "import base64, subprocess, sys; sys.exit(subprocess.run(['bash','-c',base64.b64decode('${b64}').decode('utf-8')]).returncode)"`;
   }
   try {
-    var res = await fetch('/api/shell/exec', {
+    var res = await fetch(appUrl('/api/shell/exec'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

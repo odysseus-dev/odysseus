@@ -178,7 +178,7 @@ async function _updateResearchCount() {
   const el = document.getElementById('research-stats');
   if (!el) return;
   try {
-    const res = await fetch('/api/research/library?limit=1', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/research/library?limit=1'), { credentials: 'same-origin' });
     if (!res.ok) return;
     const data = await res.json();
     const n = data.total || 0;

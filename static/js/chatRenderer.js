@@ -86,7 +86,14 @@ function _safeHref(url) {
   if (!url) return '#';
   try {
     var parsed = new URL(url, window.location.origin);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return uiModule.esc(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      // Same-origin paths are app paths — they need the browser-side mount
+      // prefix (HA ingress panel) to stay reachable; absolute URLs unchanged.
+      if (parsed.origin === window.location.origin) {
+        return uiModule.esc(new URL(appUrl(parsed.pathname + parsed.search + parsed.hash), window.location.origin).href);
+      }
+      return uiModule.esc(url);
+    }
   } catch(e) { /* invalid URL */ }
   return '#';
 }
@@ -108,6 +115,11 @@ export function safeDisplayImageSrc(raw) {
   try {
     const parsed = new URL(src, window.location.origin);
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      // Same-origin path payloads need the browser-side mount prefix (HA
+      // ingress panel) to stay reachable; absolute URLs pass through as-is.
+      if (parsed.origin === window.location.origin) {
+        return new URL(appUrl(parsed.pathname + parsed.search + parsed.hash), window.location.origin).href;
+      }
       return parsed.href;
     }
   } catch (_) {}
@@ -188,7 +200,7 @@ function _searxngSearchUrl(query) {
   const q = String(query || '').trim();
   if (!q) return '';
   try {
-    const url = new URL('/search/web', window.location.origin);
+    const url = new URL(appUrl('/search/web'), window.location.origin);
     url.search = '';
     url.hash = '';
     url.searchParams.set('q', q);
@@ -547,7 +559,7 @@ export function buildAttachCards(attachments) {
         };
         img.addEventListener('load', _reveal);
         img.addEventListener('error', _reveal);
-        img.src = att.previewUrl || `/api/upload/${att.id}?thumb=1`;
+        img.src = appUrl(att.previewUrl || `/api/upload/${att.id}?thumb=1`);
         // Cached images can be complete before the load listener attaches.
         if (img.complete && img.naturalWidth) _reveal();
         // Failsafe: if neither load nor error fires within 8s, reveal anyway.
@@ -600,7 +612,7 @@ export function buildAttachCards(attachments) {
           // PDFs & text/code/markdown → open in the Documents viewer
           // (others fall back to the raw file).
           if (window.chatModule?.openAttachment) window.chatModule.openAttachment(att, false);
-          else window.open(`/api/upload/${att.id}`, '_blank');
+          else window.open(appUrl(`/api/upload/${att.id}`), '_blank');
         });
       }
       const icon = _attachIcon(att.mime || att.name);
@@ -646,7 +658,7 @@ function _openImageLightbox(att) {
   // error label rather than a blank overlay forever.
   const img = document.createElement('img');
   img.alt = att.name || '';
-  img.src = `/api/upload/${att.id}?thumb=1`;
+  img.src = appUrl(`/api/upload/${att.id}?thumb=1`);
   overlay.appendChild(img);
   const full = new Image();
   full.addEventListener('load', () => { img.src = full.src; });
@@ -656,7 +668,7 @@ function _openImageLightbox(att) {
     err.textContent = 'Failed to load full-resolution image.';
     overlay.appendChild(err);
   });
-  full.src = `/api/upload/${att.id}`;
+  full.src = appUrl(`/api/upload/${att.id}`);
 
   const _onKey = (e) => { if (e.key === 'Escape') _close(); };
   const _close = () => {
@@ -725,7 +737,7 @@ function _openVisionEditor(att, userMsgEl) {
   closeBtn.innerHTML = '<span class="vision-btn-label">Close</span>';
   closeBtn.addEventListener('click', _closeVisionEditor);
   const _saveVisionText = async () => {
-    const res = await fetch(`/api/upload/${att.id}/vision`, {
+    const res = await fetch(appUrl(`/api/upload/${att.id}/vision`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -789,7 +801,7 @@ function _openVisionEditor(att, userMsgEl) {
   _visionEditorEsc = (e) => { if (e.key === 'Escape') _closeVisionEditor(); };
   document.addEventListener('keydown', _visionEditorEsc);
 
-  fetch(`/api/upload/${att.id}/vision`, { credentials: 'same-origin' })
+  fetch(appUrl(`/api/upload/${att.id}/vision`), { credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : Promise.reject(r))
     .then(data => {
       ta.value = data.text || '';
@@ -1167,7 +1179,7 @@ export function applyModelColor(roleEl, modelName) {
       if (!_realCtx && window.sessionModule) {
         const _sid = window.sessionModule.getCurrentSessionId();
         if (_sid) {
-          fetch('/api/session/' + _sid + '/context_info').then(r => r.ok ? r.json() : null).then(d => {
+          fetch(appUrl('/api/session/' + _sid + '/context_info')).then(r => r.ok ? r.json() : null).then(d => {
             if (d && d.context_length) {
               if (!window._realContextLengths) window._realContextLengths = {};
               window._realContextLengths[modelName] = d.context_length;
@@ -2007,6 +2019,11 @@ document.addEventListener('click', function(e) {
  * Build a generated-image bubble element.
  */
 export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId) {
+  // History/payload URLs are clean app paths; the browser needs the mount
+  // prefix (HA ingress panel). Normalize ONCE here so every use below --
+  // dataset, img.src, fetch, window.open, editor hand-off -- is prefixed
+  // exactly once. Scheme-absolute URLs pass through appUrl unchanged.
+  imageUrl = appUrl(String(imageUrl || ''));
   var esc = uiModule.esc;
   const wrap = document.createElement('div');
   wrap.className = 'msg msg-ai generated-image-wrap';
@@ -2194,7 +2211,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     // the bubble from chat (e.g. external DALL-E url that wasn't saved).
     if (imageId) {
       try {
-        const res = await fetch(`/api/gallery/${encodeURIComponent(imageId)}`, {
+        const res = await fetch(appUrl(`/api/gallery/${encodeURIComponent(imageId)}`), {
           method: 'DELETE', credentials: 'same-origin',
         });
         if (!res.ok && res.status !== 404) {
@@ -2849,7 +2866,7 @@ export function displayMetrics(messageElement, metrics) {
           }, 150);
 
           try {
-            const res = await fetch(window.location.origin + '/api/session/' + sid + '/compact', {
+            const res = await fetch(appUrl(`/api/session/${sid}/compact`), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
             });

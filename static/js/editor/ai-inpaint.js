@@ -157,7 +157,7 @@ export function wireInpaintButtons({
       baseSnap.width = state.imgWidth;
       baseSnap.height = state.imgHeight;
       baseSnap.getContext('2d').drawImage(flatCanvas, 0, 0);
-      const res = await fetch('/api/image/inpaint', {
+      const res = await fetch(appUrl('/api/image/inpaint'), {
         signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

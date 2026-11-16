@@ -3871,7 +3871,7 @@ function _canBackgroundPoll() {
 function _fetchWithTimeout(input, init = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(input, { ...init, signal: controller.signal })
+  return fetch(typeof input === 'string' ? appUrl(input) : input, { ...init, signal: controller.signal })
     .finally(() => clearTimeout(timer));
 }
 

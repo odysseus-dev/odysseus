@@ -29,7 +29,9 @@ export function createImageGenerationAction({
       await waitForImagePreferences();
       controller.signal.throwIfAborted();
       let response;
-      try { response = await fetchImpl(window.geGenerateImageEndpoint || '/api/image/generate', {
+      // geGenerateImageEndpoint may be an absolute provider URL (appUrl
+        // passes those through) or an app path (prefixed).
+        try { response = await fetchImpl(appUrl(window.geGenerateImageEndpoint || '/api/image/generate'), {
         method: 'POST', credentials: 'same-origin', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ _use_image_settings: true, prompt: params.prompt || '',

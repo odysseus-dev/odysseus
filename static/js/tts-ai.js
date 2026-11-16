@@ -44,7 +44,7 @@ class AITTSManager {
                 }
             } catch {}
 
-            const response = await fetch('/api/tts/stats');
+            const response = await fetch(appUrl('/api/tts/stats'));
             const stats = await response.json();
             this.available = stats.available && stats.ready;
             this.playbackSpeed = stats.speed || 1;
@@ -132,7 +132,7 @@ class AITTSManager {
         try {
             if (onProgress) onProgress('synthesizing');
 
-            const response = await fetch('/api/tts/synthesize', {
+            const response = await fetch(appUrl('/api/tts/synthesize'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

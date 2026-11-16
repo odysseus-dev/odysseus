@@ -9,13 +9,14 @@ import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { selectSession } from './sessions.js';
 import { sortModelIds } from './modelSort.js';
 
-const API = '/api/assistant';
+// Prefix-aware under a mount (HA ingress panel); plain path when direct.
+const API = window.appUrl('/api/assistant');
 
 let _cachedSettings = null;   // most recent GET /api/assistant/settings payload
 let _modalEl = null;
 
 async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
+  const res = await fetch(typeof url === 'string' ? appUrl(url) : url, { credentials: 'same-origin', ...opts });
   if (!res.ok) throw new Error(`${url} → ${res.status}`);
   return res.json();
 }

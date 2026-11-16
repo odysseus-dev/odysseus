@@ -68,7 +68,7 @@ const PRIV_LABELS = {
 async function loadUsers() {
   const list = el('adm-userList');
   try {
-    const res = await fetch('/api/auth/users', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/auth/users'), { credentials: 'same-origin' });
     if (res.status === 401 || res.status === 403) { list.innerHTML = '<div class="admin-empty">Access denied</div>'; return; }
     const data = await res.json();
     if (!data.users || data.users.length === 0) { list.innerHTML = '<div class="admin-empty">No users found</div>'; return; }
@@ -175,7 +175,7 @@ async function loadUsers() {
             else if (input.type === 'number') value = parseInt(input.value) || 0;
             else value = input.value;
             try {
-              await fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
+              await fetch(appUrl(`/api/auth/users/${encodeURIComponent(username)}/privileges`), {
                 method: 'PUT', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ [key]: value }),
@@ -198,7 +198,7 @@ async function loadUsers() {
         if (password !== confirmation) { uiModule.showError('Passwords do not match'); return; }
         passwordBtn.disabled = true;
         try {
-          const res = await fetch(`/api/auth/users/${encodeURIComponent(u.username)}/password`, {
+          const res = await fetch(appUrl(`/api/auth/users/${encodeURIComponent(u.username)}/password`), {
             method: 'PUT', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ new_password: password }),
@@ -224,7 +224,7 @@ async function loadUsers() {
           const username = (next || '').trim();
           if (!username || username === oldUsername) return;
           try {
-            const res = await fetch(`/api/auth/users/${encodeURIComponent(oldUsername)}/rename`, {
+            const res = await fetch(appUrl(`/api/auth/users/${encodeURIComponent(oldUsername)}/rename`), {
               method: 'PUT',
               credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
@@ -253,7 +253,7 @@ async function loadUsers() {
           e.stopPropagation();
           const username = delBtn.dataset.admDelUser;
           if (!await uiModule.styledConfirm(`Remove user "${username}"?`, { confirmText: 'Remove', danger: true })) return;
-          const res = await fetch('/api/auth/users', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
+          const res = await fetch(appUrl('/api/auth/users'), { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
           if (res.ok) loadUsers();
           else uiModule.showError('Failed to delete user');
         });
@@ -272,7 +272,7 @@ async function loadUsers() {
           if (!await uiModule.styledConfirm(confirmMsg, { confirmText: makeAdmin ? 'Make admin' : 'Revoke admin', danger: !makeAdmin })) return;
           adminToggleBtn.disabled = true;
           try {
-            const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/admin`, {
+            const res = await fetch(appUrl(`/api/auth/users/${encodeURIComponent(username)}/admin`), {
               method: 'PUT',
               credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
@@ -309,7 +309,7 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
     // (e.g. a freshly-added cloud API like DeepSeek) simply don't show up
     // until some other endpoint happens to trigger a cache refresh. The
     // endpoints listing always reflects every configured endpoint.
-    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
     const data = await res.json();
     const allModels = [];
     (Array.isArray(data) ? data : []).forEach(ep => {
@@ -362,7 +362,7 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
       }
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
       if (hint) hint.textContent = hintText;
-      fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
+      fetch(appUrl(`/api/auth/users/${encodeURIComponent(username)}/privileges`), {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted, block_all_models: blockAll }),
@@ -388,13 +388,13 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
 
 function initSignupToggle() {
   const toggle = el('adm-signupToggle');
-  fetch('/api/auth/status', { credentials: 'same-origin' })
+  fetch(appUrl('/api/auth/status'), { credentials: 'same-origin' })
     .then(r => r.json())
     .then(d => { toggle.checked = !!d.signup_enabled; })
     .catch(e => console.warn('Auth status fetch failed:', e));
   toggle.addEventListener('change', async () => {
     try {
-      const res = await fetch('/api/auth/signup-toggle', { method: 'POST', credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/auth/signup-toggle'), { method: 'POST', credentials: 'same-origin' });
       const data = await res.json();
       toggle.checked = data.signup_enabled;
     } catch (e) { toggle.checked = !toggle.checked; }
@@ -408,7 +408,7 @@ function initShareDefaultsToggle() {
     .catch(e => console.warn('Settings fetch failed:', e));
   toggle.addEventListener('change', async () => {
     try {
-      const res = await fetch('/api/auth/settings', {
+      const res = await fetch(appUrl('/api/auth/settings'), {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -426,7 +426,7 @@ function initShareDefaultsToggle() {
 }
 
 function initAddUser() {
-  fetch('/api/auth/policy', { credentials: 'same-origin' })
+  fetch(appUrl('/api/auth/policy'), { credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : null)
     .then(policy => {
       if (!policy) return;
@@ -446,7 +446,7 @@ function initAddUser() {
     if (_authPolicy.reserved_usernames.includes(username.toLowerCase())) { msg.textContent = 'This username is reserved'; msg.className = 'admin-error'; return; }
     el('adm-addBtn').disabled = true;
     try {
-      const res = await fetch('/api/auth/users', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, is_admin }) });
+      const res = await fetch(appUrl('/api/auth/users'), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, is_admin }) });
       const data = await res.json();
       if (res.ok) { msg.textContent = 'User created'; msg.className = 'admin-success'; el('adm-newUsername').value = ''; el('adm-newPassword').value = ''; el('adm-newIsAdmin').checked = false; loadUsers(); }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
@@ -597,7 +597,7 @@ function _ensureEndpointBulkControls() {
     });
     const results = await Promise.all(ids.map(async id => {
       try {
-        const res = await fetch(`/api/model-endpoints/${encodeURIComponent(id)}`, {
+        const res = await fetch(appUrl(`/api/model-endpoints/${encodeURIComponent(id)}`), {
           method: 'DELETE', credentials: 'same-origin'
         });
         return res.ok;
@@ -730,7 +730,7 @@ function renderFeatherlessPanel(panel, ep, row) {
 
   const saveState = async () => {
     try {
-      await fetch(`/api/model-endpoints/${epId}/models`, {
+      await fetch(appUrl(`/api/model-endpoints/${epId}/models`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -900,7 +900,7 @@ function renderFeatherlessPanel(panel, ep, row) {
         showSpinner();
 
         try {
-          const res = await fetch(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(q)}&page=1&per_page=50`, {
+          const res = await fetch(appUrl(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(q)}&page=1&per_page=50`), {
             credentials: 'same-origin',
             signal: searchAbortController.signal,
           });
@@ -932,7 +932,7 @@ function renderFeatherlessPanel(panel, ep, row) {
       currentPage += 1;
 
       try {
-        const res = await fetch(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(currentQuery)}&page=${currentPage}&per_page=50`, {
+        const res = await fetch(appUrl(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(currentQuery)}&page=${currentPage}&per_page=50`), {
           credentials: 'same-origin',
         });
         if (!res.ok) {
@@ -1021,7 +1021,7 @@ async function loadEndpoints() {
     }, 0);
   };
   try {
-    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
     // Treat a non-OK response (e.g. 401/403 for non-admins, or backend
     // returning an error envelope) the same as "no endpoints yet": show the
     // empty state, not "Failed to load". The user just installed the app —
@@ -1200,7 +1200,7 @@ async function loadEndpoints() {
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' });
+        await fetch(appUrl(`/api/model-endpoints/${btn.dataset.admToggleEp}`), { method: 'PATCH' });
         await _refreshAfterEndpointChange();
         loadEndpoints();
       });
@@ -1244,7 +1244,7 @@ async function loadEndpoints() {
           }
           input.disabled = true;
           try {
-            const res = await fetch(`/api/model-endpoints/${encodeURIComponent(epId)}`, {
+            const res = await fetch(appUrl(`/api/model-endpoints/${encodeURIComponent(epId)}`), {
               method: 'PATCH',
               credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
@@ -1295,7 +1295,7 @@ async function loadEndpoints() {
         if (!isOffline) {
           var deps = [];
           try {
-            var depRes = await fetch('/api/model-endpoints/' + epId + '/dependents', { credentials: 'same-origin' });
+            var depRes = await fetch(appUrl('/api/model-endpoints/' + epId + '/dependents'), { credentials: 'same-origin' });
             var depData = await depRes.json();
             deps = depData.dependents || [];
           } catch (e) { /* proceed without warning */ }
@@ -1308,7 +1308,7 @@ async function loadEndpoints() {
         // Optimistic: remove from UI immediately
         const row = btn.closest('[data-adm-ep-id]');
         if (row) row.remove();
-        fetch('/api/model-endpoints/' + epId, { method: 'DELETE' })
+        fetch(appUrl('/api/model-endpoints/' + epId), { method: 'DELETE' })
           .then(() => _refreshAfterEndpointChange(epId))
           .then(() => loadEndpoints())
           .catch(() => loadEndpoints());
@@ -1388,7 +1388,7 @@ async function loadEndpoints() {
                 e.preventDefault();
                 panel.innerHTML = _loadingHtml('Refreshing models...');
                 try {
-                  const res = await fetch(`/api/model-endpoints/${epId}/models?refresh=true&refresh_timeout=60`, { credentials: 'same-origin' });
+                  const res = await fetch(appUrl(`/api/model-endpoints/${epId}/models?refresh=true&refresh_timeout=60`), { credentials: 'same-origin' });
                   const refreshWarning = res.headers.get('X-Model-Refresh-Warning') || '';
                   if (!res.ok) throw new Error(`HTTP ${res.status}`);
                   const refreshedModels = await res.json();
@@ -1477,7 +1477,7 @@ async function loadEndpoints() {
             });
           };
           try {
-            const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
+            const res = await fetch(appUrl(`/api/model-endpoints/${epId}/models`), { credentials: 'same-origin' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const models = await res.json();
             _stopSpin();
@@ -1515,7 +1515,7 @@ async function _saveEpModelState(epId, panel) {
   const body = usesPinnedPicker ? { pinned_models: pinned } : { hidden };
   if (Object.keys(modelToolModes).length) body.model_tool_modes = modelToolModes;
   try {
-    await fetch(`/api/model-endpoints/${epId}/models`, {
+    await fetch(appUrl(`/api/model-endpoints/${epId}/models`), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -1592,7 +1592,7 @@ const _chatgptReconnectInflight = new Set();
 
 async function _loadChatgptUsage(container, authId, epId, { refresh = false } = {}) {
   if (!container || !authId) return;
-  const url = '/api/chatgpt-subscription/accounts/' + encodeURIComponent(authId) + '/usage' + (refresh ? '?refresh=1' : '');
+  const url = appUrl('/api/chatgpt-subscription/accounts/' + encodeURIComponent(authId) + '/usage' + (refresh ? '?refresh=1' : ''));
   let payload = null;
   try {
     const res = await fetch(url, { credentials: 'same-origin' });
@@ -1889,7 +1889,7 @@ function initEndpointForm() {
 
   async function _defaultOllamaUrl() {
     try {
-      const res = await fetch('/api/runtime', { credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/runtime'), { credentials: 'same-origin' });
       if (res.ok) {
         const data = await res.json();
         if (data && data.ollama_base_url) return data.ollama_base_url;
@@ -1953,7 +1953,7 @@ function initEndpointForm() {
         fd.append('endpoint_kind', _apiEndpointKind());
         fd.append('model_refresh_timeout', '30');
         if (apiKey) fd.append('api_key', apiKey);
-        const res = await fetch('/api/model-endpoints/test', {
+        const res = await fetch(appUrl('/api/model-endpoints/test'), {
           method: 'POST',
           body: fd,
           credentials: 'same-origin',
@@ -2014,7 +2014,7 @@ function initEndpointForm() {
       if (epType) fd.append('model_type', epType.value);
       if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
       else fd.append('skip_probe', 'false');
-      const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/model-endpoints'), { method: 'POST', body: fd, credentials: 'same-origin' });
       const d = await res.json();
       if (res.ok) {
         const count = d.models ? d.models.length : 0;
@@ -2297,7 +2297,7 @@ function initEndpointForm() {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      return await fetch(url, { ...opts, signal: ctrl.signal });
+      return await fetch(typeof url === 'string' ? appUrl(url) : url, { ...opts, signal: ctrl.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -2308,7 +2308,7 @@ function initEndpointForm() {
       .filter(Boolean);
     if (domIds.length) return Array.from(new Set(domIds));
     try {
-      const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
       const data = await res.json().catch(() => []);
       return (Array.isArray(data) ? data : []).map(ep => ep && ep.id).filter(Boolean);
     } catch (_) {
@@ -2338,7 +2338,7 @@ function initEndpointForm() {
         } catch (_) {
           probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing...</span>';
         }
-        await _fetchWithTimeout('/api/model-endpoints/probe-local', { credentials: 'same-origin' }, 12000).catch(() => null);
+        await _fetchWithTimeout(appUrl('/api/model-endpoints/probe-local'), { credentials: 'same-origin' }, 12000).catch(() => null);
         const ids = await _collectAddedEndpointIds();
         if (!ids.length) {
           await loadEndpoints();
@@ -2349,7 +2349,7 @@ function initEndpointForm() {
         let failed = 0;
         const lane = async (id) => {
           try {
-            const res = await _fetchWithTimeout(`/api/model-endpoints/${encodeURIComponent(id)}/models?refresh=true&refresh_timeout=20`, {
+            const res = await _fetchWithTimeout(appUrl(`/api/model-endpoints/${encodeURIComponent(id)}/models?refresh=true&refresh_timeout=20`), {
               credentials: 'same-origin'
             }, 25000);
             if (!res || !res.ok || res.headers.get('X-Model-Refresh-Status') === 'failed') failed += 1;
@@ -2412,7 +2412,7 @@ function initEndpointForm() {
         if (row) row.remove();
       });
       await Promise.all(ids.map(id =>
-        fetch('/api/model-endpoints/' + id, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})
+        fetch(appUrl('/api/model-endpoints/' + id), { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})
       ));
       await _refreshAfterEndpointChange();
       try { await loadEndpoints(); } catch (_) {}
@@ -2464,7 +2464,7 @@ function initEndpointForm() {
         const fd = new FormData();
         fd.append('base_url', url);
         if (apiKey) fd.append('api_key', apiKey);
-        const res = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const res = await fetch(appUrl('/api/model-endpoints/test'), { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         _renderEndpointTestResult(msg, res, d);
       } catch (e) {
@@ -2496,7 +2496,7 @@ function initEndpointForm() {
         const lt = el('adm-epLocalType');
         if (lt) fd.append('model_type', lt.value);
         fd.append('skip_probe', 'false');
-        const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const res = await fetch(appUrl('/api/model-endpoints'), { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         if (res.ok) {
           el('adm-epLocalUrl').value = '';
@@ -2559,7 +2559,7 @@ function initEndpointForm() {
         discoverBtn._wp = wp;
       } catch(e) { msg.textContent = 'Scanning...'; }
       try {
-        const res = await fetch('/api/discover');
+        const res = await fetch(appUrl('/api/discover'));
         const data = await res.json();
         const items = data.items || [];
         if (!items.length) {
@@ -2589,7 +2589,7 @@ function initEndpointForm() {
             fd.append('endpoint_kind', 'local');
             fd.append('model_refresh_mode', 'auto');
             fd.append('skip_probe', 'false');
-            const r = await fetch('/api/model-endpoints', { method: 'POST', body: fd });
+            const r = await fetch(appUrl('/api/model-endpoints'), { method: 'POST', body: fd });
             if (r.ok) {
               try {
                 const dd = await r.json();
@@ -2870,7 +2870,7 @@ async function loadBuiltinTools() {
         .map(([id]) => id);
 
       try {
-        const res = await fetch('/api/tools', {
+        const res = await fetch(appUrl('/api/tools'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ disabled }),
@@ -2936,7 +2936,7 @@ async function loadMcpServers() {
   const list = el('adm-mcpList');
   if (!list) return;  // MCP section not visible / not yet rendered
   try {
-    const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/mcp/servers'), { credentials: 'same-origin' });
     const servers = await res.json();
     if (!servers.length) { list.innerHTML = '<div class="admin-empty">No MCP servers configured</div>'; return; }
     list.innerHTML = servers.map(s => {
@@ -2952,7 +2952,7 @@ async function loadMcpServers() {
             ${hasTools ? `<span style="font-size:10px;opacity:0.4;">Click to manage tools</span>` : ''}
           </div>
           <div style="display:flex;gap:4px;align-items:center;">
-            ${s.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${s.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;">Authorize</a>` : ''}
+            ${s.needs_oauth ? `<a href="${appUrl(`/api/mcp/oauth/authorize/${s.id}`)}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;">Authorize</a>` : ''}
             <button class="admin-btn-sm" data-adm-mcp-reconnect="${s.id}">Reconnect</button>
             <button class="admin-btn-delete" style="border-color:${s.is_enabled ? 'color-mix(in srgb, var(--red) 30%, transparent)' : 'color-mix(in srgb, var(--fg) 30%, transparent)'};color:${s.is_enabled ? 'var(--red)' : 'var(--fg)'};" data-adm-mcp-toggle="${s.id}" data-adm-mcp-enable="${!s.is_enabled}">${s.is_enabled ? 'Disable' : 'Enable'}</button>
             <button class="admin-btn-delete" data-adm-mcp-delete="${s.id}">Delete</button>
@@ -2966,7 +2966,7 @@ async function loadMcpServers() {
       btn.addEventListener('click', async () => {
         const msg = el('adm-mcpMsg'); msg.textContent = 'Reconnecting...'; msg.className = '';
         try {
-          const res = await fetch(`/api/mcp/servers/${btn.dataset.admMcpReconnect}/reconnect`, { method: 'POST', credentials: 'same-origin' });
+          const res = await fetch(appUrl(`/api/mcp/servers/${btn.dataset.admMcpReconnect}/reconnect`), { method: 'POST', credentials: 'same-origin' });
           const data = await res.json();
           msg.textContent = data.connected ? `Reconnected (${data.tool_count} tools)` : `Failed: ${data.error || 'unknown'}`;
           msg.className = data.connected ? 'admin-success' : 'admin-error';
@@ -2977,14 +2977,14 @@ async function loadMcpServers() {
     list.querySelectorAll('[data-adm-mcp-toggle]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const fd = new FormData(); fd.append('is_enabled', btn.dataset.admMcpEnable);
-        await fetch(`/api/mcp/servers/${btn.dataset.admMcpToggle}`, { method: 'PATCH', body: fd, credentials: 'same-origin' });
+        await fetch(appUrl(`/api/mcp/servers/${btn.dataset.admMcpToggle}`), { method: 'PATCH', body: fd, credentials: 'same-origin' });
         loadMcpServers();
       });
     });
     list.querySelectorAll('[data-adm-mcp-delete]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!await uiModule.styledConfirm('Delete this MCP server?', { confirmText: 'Delete', danger: true })) return;
-        await fetch(`/api/mcp/servers/${btn.dataset.admMcpDelete}`, { method: 'DELETE', credentials: 'same-origin' });
+        await fetch(appUrl(`/api/mcp/servers/${btn.dataset.admMcpDelete}`), { method: 'DELETE', credentials: 'same-origin' });
         loadMcpServers();
       });
     });
@@ -3010,7 +3010,7 @@ async function loadMcpServers() {
           _toolsLoaded = true;
           panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">Loading tools...</span>';
           try {
-            const res = await fetch(`/api/mcp/servers/${sid}/tools`, { credentials: 'same-origin' });
+            const res = await fetch(appUrl(`/api/mcp/servers/${sid}/tools`), { credentials: 'same-origin' });
             const tools = await res.json();
             if (!tools.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No tools</span>'; return; }
             const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
@@ -3054,7 +3054,7 @@ async function _saveMcpToolState(serverId, panel) {
   });
   const total = panel.querySelectorAll('input[type=checkbox]').length;
   try {
-    await fetch(`/api/mcp/servers/${serverId}/tools`, {
+    await fetch(appUrl(`/api/mcp/servers/${serverId}/tools`), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -3254,14 +3254,14 @@ function initMcpForm() {
     }
     msg.textContent = 'Adding...'; msg.className = '';
     try {
-      const res = await fetch('/api/mcp/servers', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/mcp/servers'), { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
       if (!res.ok) {
         msg.textContent = data.detail || `Failed (${res.status})`; msg.className = 'admin-error';
         return;
       }
       if (data.needs_oauth) {
-        msg.innerHTML = `Added ${esc(name)} — <a href="/api/mcp/oauth/authorize/${data.id}" target="_blank" style="color:var(--red);font-weight:600;">Authorize with Google</a> to connect`;
+        msg.innerHTML = `Added ${esc(name)} — <a href="${appUrl(`/api/mcp/oauth/authorize/${data.id}`)}" target="_blank" style="color:var(--red);font-weight:600;">Authorize with Google</a> to connect`;
         msg.className = 'admin-success';
       } else if (data.connected) {
         msg.textContent = `Added ${name} (${data.tool_count} tools discovered)`; msg.className = 'admin-success';
@@ -3282,7 +3282,7 @@ function initMcpForm() {
 /* ── RAG ── */
 async function loadRag() {
   try {
-    const res = await fetch('/api/personal');
+    const res = await fetch(appUrl('/api/personal'));
     const data = await res.json();
     const dirList = el('adm-ragDirList');
     const dirs = data.directories || [];
@@ -3294,7 +3294,7 @@ async function loadRag() {
           if (!await uiModule.styledConfirm(`Remove directory "${btn.dataset.admRagDir}" from RAG?`, { confirmText: 'Remove', danger: true })) return;
           btn.disabled = true; btn.textContent = '...';
           try {
-            const res = await fetch('/api/personal/remove_directory?directory=' + encodeURIComponent(btn.dataset.admRagDir), { method: 'DELETE' });
+            const res = await fetch(appUrl('/api/personal/remove_directory?directory=' + encodeURIComponent(btn.dataset.admRagDir)), { method: 'DELETE' });
             if (res.ok) { ragMsg('Directory removed'); loadRag(); }
             else { const e = await res.json(); ragMsg(e.detail || 'Failed', true); }
           } catch (e) { ragMsg('Error: ' + e.message, true); }
@@ -3314,7 +3314,7 @@ async function loadRag() {
           if (!await uiModule.styledConfirm(`Delete "${btn.dataset.admRagFile}" from RAG?`, { confirmText: 'Delete', danger: true })) return;
           btn.disabled = true; btn.textContent = '...';
           try {
-            const res = await fetch('/api/personal/file?filepath=' + encodeURIComponent(btn.dataset.admRagFile), { method: 'DELETE' });
+            const res = await fetch(appUrl('/api/personal/file?filepath=' + encodeURIComponent(btn.dataset.admRagFile)), { method: 'DELETE' });
             if (res.ok) { ragMsg('File removed'); loadRag(); }
             else { const e = await res.json(); ragMsg(e.detail || 'Failed', true); }
           } catch (e) { ragMsg('Error: ' + e.message, true); }
@@ -3341,7 +3341,7 @@ async function ragUpload(files) {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   try {
-    const res = await fetch('/api/personal/upload', { method: 'POST', body: fd });
+    const res = await fetch(appUrl('/api/personal/upload'), { method: 'POST', body: fd });
     const data = await res.json();
     if (data.success) { ragMsg(`Uploaded ${data.uploaded.length} file(s), ${data.indexed_count} chunks indexed`); loadRag(); }
     else ragMsg(data.detail || 'Upload failed', true);
@@ -3362,7 +3362,7 @@ function initRag() {
     const btn = el('adm-ragAddDirBtn');
     btn.disabled = true; btn.textContent = 'Indexing...';
     try {
-      const res = await fetch('/api/personal/add_directory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ directory: dir }) });
+      const res = await fetch(appUrl('/api/personal/add_directory'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ directory: dir }) });
       const data = await res.json();
       if (data.success) { ragMsg(`Indexed ${data.indexed_count} chunks from directory`); el('adm-ragDirInput').value = ''; loadRag(); }
       else ragMsg(data.detail || data.message || 'Failed', true);
@@ -3373,7 +3373,7 @@ function initRag() {
     const btn = el('adm-ragReloadBtn');
     btn.disabled = true; btn.textContent = 'Reloading...';
     try {
-      const res = await fetch('/api/personal/reload', { method: 'POST' });
+      const res = await fetch(appUrl('/api/personal/reload'), { method: 'POST' });
       const data = await res.json();
       ragMsg(`Index reloaded: ${data.count} documents`);
       loadRag();
@@ -3425,7 +3425,7 @@ async function loadTokens() {
   const list = el('adm-tokenList');
   if (!list) return;
   try {
-    const res = await fetch('/api/tokens', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/tokens'), { credentials: 'same-origin' });
     const tokens = await res.json();
     if (!tokens.length) { list.innerHTML = '<div class="admin-empty" style="color:var(--accent, var(--red));opacity:0.7;font-size:10px;">No API tokens</div>'; return; }
     list.innerHTML = tokens.map(t => `
@@ -3450,7 +3450,7 @@ async function loadTokens() {
     list.querySelectorAll('[data-adm-del-token]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!await uiModule.styledConfirm('Revoke this API token? External integrations using it will stop working.', { confirmText: 'Revoke', danger: true })) return;
-        await fetch(`/api/tokens/${btn.dataset.admDelToken}`, { method: 'DELETE', credentials: 'same-origin' });
+        await fetch(appUrl(`/api/tokens/${btn.dataset.admDelToken}`), { method: 'DELETE', credentials: 'same-origin' });
         loadTokens();
         // Codex / Claude integration cards on the Integrations panel are
         // backed by these tokens — let them re-render so the deleted token
@@ -3473,7 +3473,7 @@ async function loadTokens() {
         const name = (input.value || '').trim();
         if (!name || name === original) return;
         try {
-          const r = await fetch(`/api/tokens/${input.dataset.tokenId}`, {
+          const r = await fetch(appUrl(`/api/tokens/${input.dataset.tokenId}`), {
             method: 'PATCH', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
@@ -3493,7 +3493,7 @@ async function loadTokens() {
         const msg = list.querySelector(`.adm-tok-scope-msg[data-token-id="${tokenId}"]`);
         const scopes = Array.from(panel.querySelectorAll('.adm-tok-scope:checked')).map(input => input.dataset.scope);
         try {
-          const r = await fetch(`/api/tokens/${tokenId}`, {
+          const r = await fetch(appUrl(`/api/tokens/${tokenId}`), {
             method: 'PATCH', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ scopes }),
@@ -3524,7 +3524,7 @@ function initTokenForm() {
     const scopes = (el('adm-tokenScopes')?.value || '').trim();
     if (scopes) fd.append('scopes', scopes);
     try {
-      const res = await fetch('/api/tokens', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/tokens'), { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
       if (res.ok) {
         el('adm-tokenValue').textContent = data.token;
@@ -3558,7 +3558,7 @@ function initTokenForm() {
 async function loadWebhooks() {
   const list = el('adm-whList');
   try {
-    const res = await fetch('/api/webhooks', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/webhooks'), { credentials: 'same-origin' });
     const hooks = await res.json();
     if (!hooks.length) { list.innerHTML = '<div class="admin-empty">No webhooks configured</div>'; return; }
     list.innerHTML = hooks.map(w => {
@@ -3588,19 +3588,19 @@ async function loadWebhooks() {
       btn.addEventListener('click', async () => {
         const msg = el('adm-whMsg'); msg.textContent = 'Sending test...'; msg.className = '';
         try {
-          const res = await fetch(`/api/webhooks/${btn.dataset.admWhTest}/test`, { method: 'POST', credentials: 'same-origin' });
+          const res = await fetch(appUrl(`/api/webhooks/${btn.dataset.admWhTest}/test`), { method: 'POST', credentials: 'same-origin' });
           msg.textContent = res.ok ? 'Test sent!' : 'Test failed'; msg.className = res.ok ? 'admin-success' : 'admin-error';
           setTimeout(() => loadWebhooks(), 1000);
         } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }
       });
     });
     list.querySelectorAll('[data-adm-wh-toggle]').forEach(btn => {
-      btn.addEventListener('click', async () => { await fetch(`/api/webhooks/${btn.dataset.admWhToggle}`, { method: 'PATCH', credentials: 'same-origin' }); loadWebhooks(); });
+      btn.addEventListener('click', async () => { await fetch(appUrl(`/api/webhooks/${btn.dataset.admWhToggle}`), { method: 'PATCH', credentials: 'same-origin' }); loadWebhooks(); });
     });
     list.querySelectorAll('[data-adm-wh-delete]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!await uiModule.styledConfirm('Delete this webhook?', { confirmText: 'Delete', danger: true })) return;
-        await fetch(`/api/webhooks/${btn.dataset.admWhDelete}`, { method: 'DELETE', credentials: 'same-origin' }); loadWebhooks();
+        await fetch(appUrl(`/api/webhooks/${btn.dataset.admWhDelete}`), { method: 'DELETE', credentials: 'same-origin' }); loadWebhooks();
       });
     });
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load webhooks</div>'; }
@@ -3620,7 +3620,7 @@ function initWebhookForm() {
     const fd = new FormData();
     fd.append('name', name); fd.append('url', url); fd.append('secret', secret); fd.append('events', events);
     try {
-      const res = await fetch('/api/webhooks', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/webhooks'), { method: 'POST', body: fd, credentials: 'same-origin' });
       if (res.ok) { msg.textContent = 'Webhook added'; msg.className = 'admin-success'; el('adm-whName').value = ''; el('adm-whUrl').value = ''; el('adm-whSecret').value = ''; loadWebhooks(); }
       else { const d = await res.json(); msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }
@@ -3637,7 +3637,7 @@ const featureLabels = {
 async function loadFeatures() {
   const container = el('adm-featureToggles');
   try {
-    const res = await fetch('/api/auth/features', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/auth/features'), { credentials: 'same-origin' });
     const features = await res.json();
     container.innerHTML = Object.entries(featureLabels).map(([key, label]) => `
       <div class="admin-toggle-row" style="padding:0.4rem 0;border-bottom:1px solid var(--border);">
@@ -3647,7 +3647,7 @@ async function loadFeatures() {
     container.querySelectorAll('input[data-adm-feature]').forEach(toggle => {
       toggle.addEventListener('change', async () => {
         const body = {}; body[toggle.dataset.admFeature] = toggle.checked;
-        await fetch('/api/auth/features', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await fetch(appUrl('/api/auth/features'), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       });
     });
   } catch (e) { container.innerHTML = '<div class="admin-error">Failed to load features</div>'; }
@@ -3711,7 +3711,7 @@ function initBackup() {
     const msg = el('adm-backupMsg');
     btn.disabled = true; btn.textContent = 'Exporting...'; msg.textContent = '';
     try {
-      const res = await fetch('/api/export', { credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/export'), { credentials: 'same-origin' });
       if (!res.ok) throw new Error('Export failed');
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';
@@ -3743,7 +3743,7 @@ function initBackup() {
       } catch (e) {
         throw new Error('Invalid backup file: ' + e.message);
       }
-      const res = await fetch('/api/import', {
+      const res = await fetch(appUrl('/api/import'), {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -3792,7 +3792,7 @@ function initDangerZone() {
           const results = [];
           for (const k of kinds) {
             try {
-              const r = await fetch(`/api/admin/wipe/${k}`, { method: 'DELETE', credentials: 'same-origin' });
+              const r = await fetch(appUrl(`/api/admin/wipe/${k}`), { method: 'DELETE', credentials: 'same-origin' });
               const d = await r.json().catch(() => ({}));
               results.push({ k, ok: r.ok, count: d.count ?? 0, error: r.ok ? null : (d.detail || 'failed') });
             } catch (e) {
@@ -3812,7 +3812,7 @@ function initDangerZone() {
             }
           }
         } else {
-          const res = await fetch(`/api/admin/wipe/${kind}`, { method: 'DELETE', credentials: 'same-origin' });
+          const res = await fetch(appUrl(`/api/admin/wipe/${kind}`), { method: 'DELETE', credentials: 'same-origin' });
           const data = await res.json().catch(() => ({}));
           if (res.ok) {
             if (_wipeMsg) { _wipeMsg.textContent = `Deleted ${data.count ?? 0} ${label}.`; _wipeMsg.className = 'admin-success'; }
@@ -3912,7 +3912,7 @@ async function loadLogs(isAutoPoll = false) {
   const { signal } = logsAbortController;
 
   try {
-    const res = await fetch(`/api/diagnostics/logs?limit=${limit}`, {
+    const res = await fetch(appUrl(`/api/diagnostics/logs?limit=${limit}`), {
       credentials: 'same-origin',
       signal
     });
@@ -4055,7 +4055,7 @@ async function loadNotificationLogs() {
   notificationLogsAbortController = new AbortController();
   const { signal } = notificationLogsAbortController;
   try {
-    const res = await fetch('/api/tasks/notification-logs?limit=500', {
+    const res = await fetch(appUrl('/api/tasks/notification-logs?limit=500'), {
       credentials: 'same-origin',
       signal,
     });

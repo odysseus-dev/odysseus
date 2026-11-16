@@ -16,8 +16,9 @@ notes, tasks and calendar, packaged for Home Assistant OS.
    **Install**.
 5. Open the **Configuration** tab, set at least your model provider or LLM host,
    then click **Start**.
-6. Open the web UI with the **OPEN WEB UI** button, or at
-   `http://<home-assistant-host>:7000`.
+6. Open **Odysseus** from the Home Assistant sidebar (the panel signs you in
+   with your Home Assistant account — see below), or with the **OPEN WEB UI**
+   button at `http://<home-assistant-host>:7000`.
 
 The first build clones and installs the Odysseus application, so installation
 takes a few minutes. Later updates reuse the cached dependency layer.
@@ -26,10 +27,11 @@ takes a few minutes. Later updates reuse the cached dependency layer.
 
 | Way in | Address | Authentication |
 | --- | --- | --- |
-| Direct port | `http://<home-assistant-host>:7000` | Odysseus login |
+| HA sidebar panel | **Odysseus** entry in the sidebar | Home Assistant session (single sign-on) |
+| Direct port | `http://<home-assistant-host>:7000` | Odysseus login (HA username/password works too) |
 
 Set the host port to `null` in the add-on **Network** settings to disable direct
-access.
+access; the sidebar panel keeps working.
 
 Serve it over your own reverse proxy or VPN for remote access. Plain HTTP on a
 non-loopback host does not get browser "secure context" features (clipboard,
@@ -157,6 +159,25 @@ username and password** — no separate Odysseus account needed:
   the next Odysseus login.
 - To create a purely local admin instead, turn `hass_auth` off: the login page
   then offers the regular first-run setup form.
+
+### Home Assistant single sign-on (sidebar panel)
+
+The **Odysseus** sidebar panel (added in add-on 1.3.0) signs you in with the
+Home Assistant account you are already using — no login form at all:
+
+- The panel runs through the Supervisor's ingress proxy, which injects your
+  signed-in HA user's identity headers (`X-Remote-User-*`) into every proxied
+  request and strips any client-supplied versions first.
+- Odysseus trusts those headers **only** when the connection comes from the
+  Supervisor container itself (verified against the `supervisor` hostname on
+  the add-on network). On the directly exposed port the same headers are
+  untrusted and ignored — a LAN client cannot spoof its way in.
+- A trusted panel request provisions the matching Odysseus account (HA admins
+  → Odysseus admins, others → regular accounts) and issues a normal Odysseus
+  session cookie, so everything downstream — sessions, logout, admin gating —
+  behaves exactly like a form login.
+- `panel_admin: false` (default) shows the panel to all HA users; set it to
+  `true` to restrict the sidebar entry to HA admins.
 
 ### Agent safety
 

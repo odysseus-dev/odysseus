@@ -74,7 +74,6 @@ from core.middleware import (
     get_application_route_path,
     is_cors_preflight,
     path_is_route_or_child,
-    with_asgi_root_path,
 )
 from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
@@ -87,6 +86,7 @@ import bcrypt as _bcrypt
 from src.app_helpers import abs_join, serve_html_with_nonce
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from src.owner_identity import auth_disabled
+from src.hass_auth import ensure_ha_user, ingress_identity
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -437,6 +437,43 @@ if AUTH_ENABLED:
                     return await call_next(request)
             except Exception as _e:
                 logger.warning("Internal tool auth header check failed", exc_info=_e)
+            # --- Home Assistant ingress single sign-on (sidebar panel) ------
+            # Supervisor proxies panel requests and injects the signed-in HA
+            # user's identity headers — but only from its own container, which
+            # ingress_identity() verifies (the direct port is spoofable).
+            # Provision the matching Odysseus account if needed and issue a
+            # normal session cookie, so every downstream route — status,
+            # logout, sessions — behaves exactly like a form login. Falls
+            # through to the regular unauthenticated path when identity is
+            # absent or provisioning is refused (reserved username).
+            _ingress_ident = ingress_identity(request)
+            if _ingress_ident is not None:
+                _ha_name, _ha_groups = _ingress_ident
+                from src.hass_auth import hass_user_is_admin
+
+                _provisioned = await _asyncio.to_thread(
+                    ensure_ha_user,
+                    auth_manager,
+                    _ha_name,
+                    hass_user_is_admin(_ha_groups),
+                )
+                if _provisioned:
+                    _username = _ha_name.strip().lower()
+                    _token = await _asyncio.to_thread(
+                        auth_manager.create_session_trusted, _username
+                    )
+                    if _token:
+                        request.state.current_user = _username
+                        request.state.api_token = False
+                        _response = await call_next(request)
+                        _response.set_cookie(
+                            SESSION_COOKIE,
+                            _token,
+                            httponly=True,
+                            samesite="lax",
+                            path="/",
+                        )
+                        return _response
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
@@ -445,12 +482,15 @@ if AUTH_ENABLED:
             if LOCALHOST_BYPASS and _is_trusted_loopback(request):
                 return await call_next(request)
             if not auth_manager.is_configured:
-                # No users yet — redirect to login for first-time setup
+                # No users yet — redirect to login for first-time setup.
+                # RELATIVE location: the browser resolves it against the
+                # request URL, so it keeps whatever prefix the client is
+                # browsing under — the HA ingress panel path
+                # (/api/hassio_ingress/<token>/…, which Supervisor strips
+                # before it reaches us), an ASGI root_path mount, or plain
+                # direct-port access.
                 if not path.startswith("/api/"):
-                    return RedirectResponse(
-                        url=with_asgi_root_path(request.scope, "/login"),
-                        status_code=302,
-                    )
+                    return RedirectResponse(url="login", status_code=302)
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
 
             # --- Bearer token auth (API tokens for external integrations) ---
@@ -512,10 +552,9 @@ if AUTH_ENABLED:
             if not auth_manager.validate_token(token):
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-                return RedirectResponse(
-                    url=with_asgi_root_path(request.scope, "/login"),
-                    status_code=302,
-                )
+                # Relative location — resolves against the client's URL so it
+                # keeps the ingress / root_path prefix. See comment above.
+                return RedirectResponse(url="login", status_code=302)
 
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)
@@ -1029,7 +1068,9 @@ async def serve_backgrounds(request: Request):
 @app.get("/login")
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
-        return RedirectResponse(url="/", status_code=302)
+        # Relative "./" keeps the ingress / root_path prefix (auth-off + HA
+        # panel is an unusual combination, but stay correct anyway).
+        return RedirectResponse(url="./", status_code=302)
     return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")

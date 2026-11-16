@@ -106,6 +106,14 @@ def test_ingress_panel_fields_when_enabled():
     assert cfg.get("panel_title")
 
 
+def test_addon_icon_and_logo_exist():
+    # Supervisor serves the store icon/logo from fixed filenames in the
+    # add-on folder (supervisor/apps/model.py path_icon / path_logo);
+    # without them the store falls back to a placeholder image.
+    assert (BASE / "hass-addon" / "icon.png").is_file()
+    assert (BASE / "hass-addon" / "logo.png").is_file()
+
+
 # ---------------------------------------------------------------------------
 # PostgreSQL URL builder
 # ---------------------------------------------------------------------------

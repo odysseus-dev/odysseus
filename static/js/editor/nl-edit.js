@@ -162,7 +162,9 @@ export async function fetchStyleGuide(url = '/api/editor/style-guide', fetchImpl
   const doFetch = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null);
   if (!doFetch) return null;
   try {
-    const res = await doFetch(url, { headers: { Accept: 'application/json' } });
+    // url is one of our app paths by default — appUrl prefixes it and
+    // passes any absolute provider URL through unchanged.
+    const res = await doFetch(typeof url === 'string' ? appUrl(url) : url, { headers: { Accept: 'application/json' } });
     if (!res || !res.ok) return null;
     const data = await res.json();
     return setStyleGuide(data);
@@ -461,7 +463,8 @@ export function createNaturalLanguageEditor({ control, planUrl = DEFAULT_PLAN_UR
   }
 
   async function postJson(url, body) {
-    const res = await doFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    // url is always one of our default app paths here — prefix it.
+    const res = await doFetch(appUrl(url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res || !res.ok) return null;
     return res.json().catch(() => null);
   }
@@ -491,7 +494,7 @@ export function createNaturalLanguageEditor({ control, planUrl = DEFAULT_PLAN_UR
     if (!doFetch || !chatUrl) return null;
     try {
       if (!cachedSession) {
-        const r = await doFetch(sessionUrl);
+        const r = await doFetch(appUrl(sessionUrl));
         if (r && r.ok) {
           const d = await r.json().catch(() => null);
           cachedSession = d && (d.session?.id || d.session_id || d.id || d.sessionId) || null;

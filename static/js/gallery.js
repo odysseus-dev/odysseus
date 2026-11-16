@@ -1451,7 +1451,7 @@ function _renderGrid() {
       <div class="gallery-card" data-id="${_esc(img.id)}">
         <span class="gallery-select-dot" style="display:none;"></span>
         <button class="gallery-fav-btn${favCls}" data-id="${_esc(img.id)}" title="Favorite">&#9829;</button>
-        <button class="gallery-dl-btn" data-id="${_esc(img.id)}" data-url="${_esc(img.url)}" data-filename="${_esc(img.filename || '')}" title="Download">
+        <button class="gallery-dl-btn" data-id="${_esc(img.id)}" data-url="${_esc(appUrl(img.url))}" data-filename="${_esc(img.filename || '')}" title="Download">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         ${_isVideoUrl(img.url)
@@ -1511,7 +1511,7 @@ function _renderGrid() {
   grid.querySelectorAll('.gallery-dl-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const url = btn.dataset.url;
+      const url = appUrl(btn.dataset.url);
       const filename = btn.dataset.filename || `image-${btn.dataset.id}.png`;
       try {
         const res = await fetch(url, { credentials: 'same-origin' });
@@ -1739,7 +1739,7 @@ function _openDetail(img) {
     }
 
     try {
-      const dcRes = await fetch('/api/default-chat', { credentials: 'same-origin' });
+      const dcRes = await fetch(appUrl('/api/default-chat'), { credentials: 'same-origin' });
       const dc = await dcRes.json();
       if (!dc?.endpoint_url || !dc?.model) {
         uiModule.showError && uiModule.showError('Pick a chat model first');
@@ -1747,7 +1747,7 @@ function _openDetail(img) {
       }
       sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
       closeGallery();
-      const res = await fetch(img.url, { credentials: 'same-origin' });
+      const res = await fetch(appUrl(img.url), { credentials: 'same-origin' });
       if (!res.ok) throw new Error('image fetch ' + res.status);
       const blob = await res.blob();
       const name = img.filename || 'gallery-photo.jpg';
@@ -1789,7 +1789,7 @@ function _openDetail(img) {
     const input = document.getElementById('message');
     if (!input || !img.prompt) return;
     try {
-      const res = await fetch(img.url, { credentials: 'same-origin' });
+      const res = await fetch(appUrl(img.url), { credentials: 'same-origin' });
       if (!res.ok) throw new Error(`image fetch ${res.status}`);
       const blob = await res.blob();
       const file = new File([blob], img.filename || 'gallery-image.png', {
@@ -1923,7 +1923,7 @@ function _openDetail(img) {
 
   document.getElementById('gallery-download-btn').addEventListener('click', async () => {
     try {
-      const res = await fetch(img.url, { credentials: 'same-origin' });
+      const res = await fetch(appUrl(img.url), { credentials: 'same-origin' });
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -2020,7 +2020,7 @@ function _openDetail(img) {
       if (editorContainer) editorContainer.style.display = 'flex';
       const baseFilename = (img.filename || '').replace(/\.[^.]+$/, '');
       const label = img.prompt?.trim() || baseFilename || 'Photo';
-      openEditor(img.url, img.id, null, label);
+      openEditor(appUrl(img.url), img.id, null, label);
     } catch (e) {
       console.error('[edit] failed:', e);
       if (uiModule) uiModule.showError('Failed to open editor: ' + (e?.message || 'unknown'));
@@ -3122,7 +3122,7 @@ export function openGallery() {
       const it = _items.find(i => i.id === id);
       if (!it) continue;
       try {
-        const res = await fetch(it.url, { credentials: 'same-origin' });
+        const res = await fetch(appUrl(it.url), { credentials: 'same-origin' });
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');

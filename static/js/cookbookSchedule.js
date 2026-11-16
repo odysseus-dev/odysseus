@@ -38,7 +38,7 @@ try { (function () {
       if (parentSignal.aborted) controller.abort();
       else parentSignal.addEventListener("abort", abortFromParent, { once: true });
     }
-    return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+    return fetch(typeof input === "string" ? appUrl(input) : input, { ...init, signal: controller.signal }).finally(() => {
       clearTimeout(timer);
       parentSignal?.removeEventListener("abort", abortFromParent);
     });
@@ -51,7 +51,7 @@ try { (function () {
   async function _getToast() {
     if (_toastFn) return _toastFn;
     try {
-      const m = await import("/static/js/ui.js?v=20260916largetoolscroll1");
+      const m = await import(appUrl("/static/js/ui.js?v=20260916largetoolscroll1"));
       _toastFn = m.default?.showToast || m.showToast || null;
     } catch (_) { _toastFn = null; }
     return _toastFn;
@@ -70,7 +70,7 @@ try { (function () {
   let _tasksMod = null;
   async function _getTasksMod() {
     if (_tasksMod) return _tasksMod;
-    try { _tasksMod = await import("/static/js/tasks.js?v=20260914taskmodel1"); } catch (_) {}
+    try { _tasksMod = await import(appUrl("/static/js/tasks.js?v=20260914taskmodel1")); } catch (_) {}
     return _tasksMod;
   }
   async function openTaskInTasksTab(taskId) {

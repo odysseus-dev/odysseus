@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
 // in without the previous one logging out cleanly.
 (async () => {
   try {
-    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/auth/status'), { credentials: 'same-origin' });
     if (!res.ok) return;
     const data = await res.json().catch(() => ({}));
     const liveUser = (data && data.username) || '';

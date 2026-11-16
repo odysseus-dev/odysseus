@@ -83,7 +83,7 @@ function _flatten() {
 
 async function _loadSkillEntries() {
   try {
-    const res = await fetch('/api/skills/slash-catalog', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/skills/slash-catalog'), { credentials: 'same-origin' });
     if (!res.ok) return [];
     const data = await res.json();
     return (Array.isArray(data.skills) ? data.skills : []).map(s => ({

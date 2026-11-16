@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.3.0
+
+- **Sidebar panel with Home Assistant single sign-on**: `ingress: true` +
+  `panel_title`/`panel_icon` add Odysseus to the HA sidebar. Supervisor
+  injects the signed-in HA user's identity (`X-Remote-User-*`) on proxied
+  panel requests and filters client-supplied versions; Odysseus trusts
+  them only from the Supervisor container's own connections and issues a
+  normal session cookie — open the panel and you are in, no login form.
+  HA admins become Odysseus admins, other HA users regular accounts.
+- The frontend is mount-prefix aware end to end: every URL the browser
+  builds (`fetch`, `EventSource`, asset `<link>`/`<script>`, payload
+  image URLs, redirects) carries the `/api/hassio_ingress/<token>/`
+  prefix via a runtime-derived `appUrl()` helper; server redirects are
+  relative so they resolve under any mount.
+- Frame policy relaxes to `SAMEORIGIN` / `frame-ancestors 'self'` only for
+  Supervisor-proxied requests; direct-port traffic keeps `DENY` / `'none'`.
+- **Add-on icon and logo**: `icon.png` (128px) and `logo.png` (256px) in the
+  add-on folder — Supervisor serves both from fixed filenames; without them
+  the store showed a fallback image instead of the Odysseus mark.
+- `ingress_stream: true` keeps POST bodies unbuffered through the panel so
+  uploads and streaming responses stay low-latency.
+
 ## 1.2.0
 
 - **Login with your Home Assistant credentials**: the Odysseus login form now

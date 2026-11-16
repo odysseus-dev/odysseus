@@ -232,7 +232,7 @@ async function _fetchUrgentEmailSettings() {
 
 async function _saveUrgentEmailSettings(prompt) {
   try {
-    await fetch('/api/auth/settings', {
+    await fetch(appUrl('/api/auth/settings'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1980,7 +1980,7 @@ async function _doRunNow(id, force = false) {
     let fired = false;
     try {
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        new Notification('Task', { body: msg, tag: 'task-runnow-' + id, icon: '/static/favicon.ico' });
+        new Notification('Task', { body: msg, tag: 'task-runnow-' + id, icon: appUrl('/static/favicon.ico') });
         fired = true;
       }
     } catch (_) {}
@@ -3386,7 +3386,7 @@ async function _pollTaskNotifications() {
         let fired = false;
         try {
           if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            new Notification(title, { body: n.body, tag: 'task-' + (n.task_id || title), icon: '/static/favicon.ico' });
+            new Notification(title, { body: n.body, tag: 'task-' + (n.task_id || title), icon: appUrl('/static/favicon.ico') });
             fired = true;
           }
         } catch (_) {}

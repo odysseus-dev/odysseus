@@ -192,7 +192,7 @@ function _wireAttachmentHandlers(reader, folder) {
           if (typeof load === 'function') {
             await load(json.doc_id);
           } else {
-            location.href = `/?doc=${encodeURIComponent(json.doc_id)}`;
+            location.href = appUrl(`/?doc=${encodeURIComponent(json.doc_id)}`);
           }
         } catch (e) {
           console.error('Open document failed:', e);

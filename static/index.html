@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover" />
   <title>Odysseus Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="manifest" href="/static/manifest.json">
+  <link rel="manifest" href="static/manifest.json">
   <meta name="theme-color" content="#282c34">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,7 +13,7 @@
        in email bodies — was wrapping random digits in <a href="tel:..."> with
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="static/icons/icon-192.png">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -210,7 +210,7 @@
     } catch(e){}
   })();
   </script>
-  <script defer src="/static/lib/highlight.min.js"></script>
+  <script defer src="static/lib/highlight.min.js"></script>
   <!-- Inter font — self-hosted, no Google dependencies -->
   <style>
     @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
@@ -245,44 +245,70 @@
        crossorigin is required even though these are same-origin: fonts are
        always fetched in CORS mode, and a preload whose mode does not match the
        real request is discarded and the font fetched a second time. -->
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/14-email.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/17-research.css?v=20261021confirmalign1">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="static/fonts/FiraCode-Regular.woff2">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="static/fonts/FiraCode-SemiBold.woff2">
+  <link rel="stylesheet" href="static/css/00-tokens.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/01-agent-chat.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/02-compare.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/03-agent-chat.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/04-memory.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/05-documents.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/06-admin-settings.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/07-documents.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/08-skills.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/09-gallery.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/10-cookbook.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/11-tasks.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/12-gallery.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/13-image-editor.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/14-email.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/15-notes.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/16-calendar.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/17-research.css?v=20261021confirmalign1">
   <!-- Panel stylesheets split out of style.css for maintainability. They are
        eager and their order is load-bearing: the cascade is the concatenation of
        these files in this order, so they must stay in this order here and in the
        PRECACHE list in sw.js. None of them is lazy-loaded. -->
-  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261021confirmalign1">
-  <link rel="modulepreload" href="/static/app.js?v=20261021confirmalign1">
-<link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
-  <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
-  <link rel="modulepreload" href="/static/js/sessions.js">
-  <link rel="modulepreload" href="/static/js/markdown.js">
+  <link rel="stylesheet" href="static/css/documents-gallery-editor.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/email-calendar-notes-tasks.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="static/css/cookbook-research-memory-settings.css?v=20261021confirmalign1">
+  <link rel="modulepreload" href="static/app.js?v=20261021confirmalign1">
+<link rel="modulepreload" href="static/js/chat.js?v=20260917toolttft1">
+  <link rel="modulepreload" href="static/js/ui.js?v=20260916largetoolscroll1">
+  <link rel="modulepreload" href="static/js/sessions.js">
+  <link rel="modulepreload" href="static/js/markdown.js">
 </head>
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
   <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
     <div id="loader-wave" style="color:color-mix(in srgb, #9cdef2 62%, var(--brand-color,var(--red,#e06c75)));font-family:monospace;font-size:11px;opacity:.5;position:relative;padding-top:10px;line-height:1;white-space:pre">▁▂▃</div>
   </div>
+  <script nonce="{{CSP_NONCE}}">
+  // Mount-prefix bootstrap — must run before any module script. Under the HA
+  // ingress panel the browser URL is /api/hassio_ingress/<token>/… while the
+  // app itself serves clean paths (Supervisor strips the prefix), so the
+  // frontend derives its URL prefix from window.location.pathname here and
+  // appUrl() maps app paths ('/api/…', '/static/…') onto it. Direct access
+  // has no prefix and appUrl(p) === p.
+  (function(){
+    function computeAppBasePath(){
+      var path = window.location.pathname || '/';
+      // App routes are top-level ('/', '/login', '/tasks', '/library', …).
+      // Strip the last segment to get the mount prefix; '/' alone → ''.
+      var i = path.lastIndexOf('/');
+      return i <= 0 ? '' : path.slice(0, i);
+    }
+    var base = computeAppBasePath();
+    window.__odysseusAppBase = base;
+    window.API_BASE = base; // legacy: chatRenderer reads window.API_BASE
+    window.appUrl = function(p){
+      if (!p) return base + '/';
+      if (/^[a-z][a-z0-9+.-]*:/i.test(p)) return p; // absolute/URL-scheme
+      if (p.charAt(0) !== '/') return base + '/' + p;
+      return base + p;
+    };
+  })();
+  </script>
   <script nonce="{{CSP_NONCE}}">
   (function(){
     var el=document.getElementById('loader-wave');
@@ -2679,39 +2705,39 @@
 
 
 <!-- Load modules in this order -->
-<script type="module" src="/static/js/storage.js"></script>
-<script type="module" src="/static/js/ui.js?v=20260916largetoolscroll1"></script>
-<script type="module" src="/static/js/markdown.js"></script>
-<script type="module" src="/static/js/dragSort.js"></script>
-<script type="module" src="/static/js/sessions.js"></script>
-<script type="module" src="/static/js/memory.js"></script>
-<script type="module" src="/static/js/skills.js?v=20260909kebabconsistency1"></script>
-<script type="module" src="/static/js/tourHints.js"></script>
-<script type="module" src="/static/js/tourAutoplay.js"></script>
-<script type="module" src="/static/js/fileHandler.js?v=20260909mobileattachmentedit1"></script>
-<script type="module" src="/static/js/voiceRecorder.js"></script>
-<script type="module" src="/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
-<script type="module" src="/static/js/rag.js"></script>
-<script type="module" src="/static/js/presets.js?v=20260908personaname1"></script>
-<script type="module" src="/static/js/search.js"></script>
-<script type="module" src="/static/js/spinner.js"></script>
-<script type="module" src="/static/js/tts-ai.js"></script>
-<script type="module" src="/static/js/document.js?v=20260916docctx2"></script>
-<script type="module" src="/static/js/gallery.js?v=20260910promptcopy1"></script>
-<script type="module" src="/static/js/chatRenderer.js?v=20260914metricssummary1"></script>
-<script type="module" src="/static/js/codeRunner.js?v=20260831richtexttools91"></script>
-<script type="module" src="/static/js/chatStream.js?v=20261026devsync1"></script>
-<script type="module" src="/static/js/chat.js?v=20260917toolttft1"></script>
-<script type="module" src="/static/js/cookbook.js"></script>
-<script src="/static/js/cookbookSchedule.js"></script>
-<script type="module" src="/static/js/search-chat.js"></script>
-<script type="module" src="/static/js/theme.js?v=20260911organsrain1"></script>
-<script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
-<script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20261021confirmalign1"></script>  <!-- app.js must be LAST -->
-  <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
-<script type="module" src="/static/js/a11y.js"></script>
-<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>
+<script type="module" src="static/js/storage.js"></script>
+<script type="module" src="static/js/ui.js?v=20260916largetoolscroll1"></script>
+<script type="module" src="static/js/markdown.js"></script>
+<script type="module" src="static/js/dragSort.js"></script>
+<script type="module" src="static/js/sessions.js"></script>
+<script type="module" src="static/js/memory.js"></script>
+<script type="module" src="static/js/skills.js?v=20260909kebabconsistency1"></script>
+<script type="module" src="static/js/tourHints.js"></script>
+<script type="module" src="static/js/tourAutoplay.js"></script>
+<script type="module" src="static/js/fileHandler.js?v=20260909mobileattachmentedit1"></script>
+<script type="module" src="static/js/voiceRecorder.js"></script>
+<script type="module" src="static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
+<script type="module" src="static/js/rag.js"></script>
+<script type="module" src="static/js/presets.js?v=20260908personaname1"></script>
+<script type="module" src="static/js/search.js"></script>
+<script type="module" src="static/js/spinner.js"></script>
+<script type="module" src="static/js/tts-ai.js"></script>
+<script type="module" src="static/js/document.js?v=20260916docctx2"></script>
+<script type="module" src="static/js/gallery.js?v=20260910promptcopy1"></script>
+<script type="module" src="static/js/chatRenderer.js?v=20260914metricssummary1"></script>
+<script type="module" src="static/js/codeRunner.js?v=20260831richtexttools91"></script>
+<script type="module" src="static/js/chatStream.js?v=20261026devsync1"></script>
+<script type="module" src="static/js/chat.js?v=20260917toolttft1"></script>
+<script type="module" src="static/js/cookbook.js"></script>
+<script src="static/js/cookbookSchedule.js"></script>
+<script type="module" src="static/js/search-chat.js"></script>
+<script type="module" src="static/js/theme.js?v=20260911organsrain1"></script>
+<script type="module" src="static/js/censor.js"></script>
+<script type="module" src="static/js/settings.js?v=20260912writingstyle3"></script>
+<script type="module" src="static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
+<script type="module" src="static/app.js?v=20261021confirmalign1"></script>  <!-- app.js must be LAST -->
+  <script type="module" src="static/js/init.js?v=20260829chatstyle12"></script>
+<script type="module" src="static/js/a11y.js"></script>
+<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>
 </body>
 </html>

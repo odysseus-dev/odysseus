@@ -40,7 +40,7 @@ export async function initTtsSettings() {
 
   var ttsKeywords = ['tts', 'audio'];
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    var epRes = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
     var endpoints = await epRes.json();
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
@@ -51,7 +51,7 @@ export async function initTtsSettings() {
   } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
 
   try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settingsRes = await fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' });
     var settings = await settingsRes.json();
     if (settings.tts_provider) provSel.value = settings.tts_provider;
     if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
@@ -79,7 +79,7 @@ export async function initTtsSettings() {
 
   async function saveAndClearCache() {
     await saveTTS();
-    fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+    fetch(appUrl('/api/tts/clear-cache'), { method: 'POST', credentials: 'same-origin' }).catch(function(){});
   }
 
   provSel.addEventListener('change', function() {
@@ -137,7 +137,7 @@ export async function initTtsSettings() {
             window.speechSynthesis.speak(utt);
           });
         } else {
-          var res = await fetch('/api/tts/synthesize', {
+          var res = await fetch(appUrl('/api/tts/synthesize'), {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: testText, format: 'audio' })
@@ -207,7 +207,7 @@ export async function initSttSettings() {
 
   // Add API endpoints that might support STT
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    var epRes = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
     var endpoints = await epRes.json();
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
@@ -217,7 +217,7 @@ export async function initSttSettings() {
 
   // Load saved settings
   try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settingsRes = await fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' });
     var settings = await settingsRes.json();
     if (settings.stt_provider) provSel.value = settings.stt_provider;
     if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }

@@ -10,7 +10,7 @@ export function createNotesNotifications({ browser, notify, openPanel, toast }) 
   function show(title, body, noteId) {
     if ('Notification' in browser && notify.permission === 'granted') {
       try {
-        const notification = new notify(title, { body, tag: 'note-' + noteId, icon: '/static/favicon.ico' });
+        const notification = new notify(title, { body, tag: 'note-' + noteId, icon: appUrl('/static/favicon.ico') });
         notification.onclick = () => { browser.focus(); openPanel(); notification.close(); };
       } catch {}
     }

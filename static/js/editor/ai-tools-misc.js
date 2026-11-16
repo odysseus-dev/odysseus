@@ -119,7 +119,7 @@ export function wireAIToolsMisc({
     try {
       const flat = flatten();
       const imageB64 = flat.toDataURL('image/png').split(',')[1];
-      const res = await fetch('/api/image/upscale-local', {
+      const res = await fetch(appUrl('/api/image/upscale-local'), {
         signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

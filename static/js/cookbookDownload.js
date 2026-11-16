@@ -37,7 +37,7 @@ const _downloadStartsInFlight = new Set();
 function _fetchDownloadControlWithTimeout(input, init = {}, timeoutMs = 20000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return fetch(typeof input === 'string' ? appUrl(input) : input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // ── Panel field helpers ──
@@ -390,7 +390,7 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
   if (opts.use_tmux) payload.use_tmux = true;
 
   try {
-    const res = await fetch('/api/shell/stream', {
+    const res = await fetch(appUrl('/api/shell/stream'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

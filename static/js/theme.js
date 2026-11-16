@@ -156,7 +156,7 @@ export function deleteCustomTheme(name) {
 }
 function _syncCustomThemesToServer(ct) {
   try {
-    fetch('/api/prefs/custom-themes', {
+    fetch(appUrl('/api/prefs/custom-themes'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -539,7 +539,7 @@ export function save(name, colors, opts) {
 
 function _syncToServer(obj) {
   try {
-    fetch('/api/prefs/theme', {
+    fetch(appUrl('/api/prefs/theme'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -550,7 +550,7 @@ function _syncToServer(obj) {
 
 async function _loadFromServer() {
   try {
-    const res = await fetch('/api/prefs/theme', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/prefs/theme'), { credentials: 'same-origin' });
     const data = await res.json();
     return data.value || null;
   } catch { return null; }
@@ -1190,7 +1190,7 @@ export function initThemeUI() {
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
     // Fetch custom fonts from local folder and populate dropdown
-    fetch('/api/fonts/custom', { credentials: 'same-origin' })
+    fetch(appUrl('/api/fonts/custom'), { credentials: 'same-origin' })
       .then(r => r.json())
       .then(data => {
         _customFonts = data.fonts || {};
@@ -2305,7 +2305,7 @@ async function _initWithSync() {
   }
   // Also sync custom themes from server
   try {
-    const res = await fetch('/api/prefs/custom-themes', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/prefs/custom-themes'), { credentials: 'same-origin' });
     const data = await res.json();
     if (data.value && typeof data.value === 'object') {
       const local = _loadCustomThemes();

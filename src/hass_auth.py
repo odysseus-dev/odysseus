@@ -99,3 +99,97 @@ async def supervisor_check_login(
 def hass_user_is_admin(group_ids: Optional[list]) -> bool:
     """Whether Supervisor-reported HA groups mark the user as an admin."""
     return bool(group_ids) and HA_ADMIN_GROUP in (group_ids or [])
+
+
+# ---------------------------------------------------------------------------
+# Supervisor ingress identity (sidebar panel single sign-on)
+# ---------------------------------------------------------------------------
+
+# Headers the Supervisor injects on proxied ingress requests after filtering
+# any client-supplied versions (supervisor/api/ingress.py:_init_header).
+HEADER_REMOTE_USER_ID = "X-Remote-User-Id"
+HEADER_REMOTE_USER_NAME = "X-Remote-User-Name"
+HEADER_REMOTE_USER_GROUPS = "X-Remote-User-Groups"
+
+_SUPERVISOR_IP_CACHE: Optional[str] = None
+
+
+def _supervisor_ip() -> Optional[str]:
+    """Resolve the Supervisor's IP on the add-on network, cached.
+
+    Only requests originating from this address are trusted to carry the
+    X-Remote-User-* identity headers: on the directly exposed port a LAN
+    client could otherwise forge them. DNS here is the Supervisor's own
+    container name resolution; overridable for unusual deployments via
+    ODYSSEUS_INGRESS_TRUSTED_IP. Failure to resolve disables ingress SSO
+    (fail closed), it never falls back to trusting the headers.
+    """
+    global _SUPERVISOR_IP_CACHE
+    import socket
+
+    if _SUPERVISOR_IP_CACHE is not None:
+        return _SUPERVISOR_IP_CACHE or None
+    override = os.getenv("ODYSSEUS_INGRESS_TRUSTED_IP", "").strip()
+    if override:
+        _SUPERVISOR_IP_CACHE = override
+        return override
+    try:
+        _SUPERVISOR_IP_CACHE = socket.gethostbyname("supervisor")
+    except OSError:
+        logger.debug("Could not resolve 'supervisor'; ingress SSO disabled")
+        _SUPERVISOR_IP_CACHE = ""
+    return _SUPERVISOR_IP_CACHE or None
+
+
+def ingress_identity(request) -> Optional[tuple]:
+    """Return (username, group_ids) for a Supervisor-proxied ingress request.
+
+    None unless the connection provably originated from the Supervisor
+    container AND it injected a user identity — the panel iframe's request
+    carries these only when a Home Assistant user is actually signed in on
+    the frontend that rendered it.
+    """
+    if not hass_auth_enabled():
+        return None
+    name = request.headers.get(HEADER_REMOTE_USER_NAME, "").strip()
+    if not name:
+        return None
+    # Trust boundary: only the Supervisor's own connections may assert
+    # identity headers. Everything else (direct port access) is spoofable.
+    peer = request.client.host if request.client else None
+    trusted = _supervisor_ip()
+    if not peer or not trusted or peer != trusted:
+        return None
+    groups = [
+        g.strip()
+        for g in request.headers.get(HEADER_REMOTE_USER_GROUPS, "").split(",")
+        if g.strip()
+    ]
+    return name, groups
+
+
+def ensure_ha_user(auth_manager, username: str, ha_admin: bool) -> bool:
+    """Provision (or verify) the Odysseus account for a verified HA user.
+
+    Same policy as the credential-delegation login: the very first account
+    on an unconfigured instance becomes the admin; afterwards HA admins map
+    to Odysseus admins and everyone else to a regular account. Local
+    passwords are never set from HA material — a random secret is stored so
+    the account has no usable local credential.
+    """
+    from core.auth import RESERVED_USERNAMES
+
+    username = (username or "").strip().lower()
+    if not username or username in RESERVED_USERNAMES:
+        return False
+    if username in auth_manager.users:
+        return True
+    import secrets as _secrets
+
+    first_account = not auth_manager.is_configured
+    is_admin = first_account or ha_admin
+    return auth_manager.create_user(
+        username,
+        _secrets.token_hex(32) + "!Aa1",
+        is_admin=is_admin,
+    )

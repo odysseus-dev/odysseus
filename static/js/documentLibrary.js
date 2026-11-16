@@ -1591,7 +1591,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     if (window.XLSX) return (_xlsxReady = Promise.resolve());
     _xlsxReady = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/static/lib/xlsx.full.min.js';
+      s.src = appUrl('/static/lib/xlsx.full.min.js');
       s.onload = resolve;
       s.onerror = () => reject(new Error('Failed to load XLSX library'));
       document.head.appendChild(s);
@@ -1605,7 +1605,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     if (window.mammoth) return (_mammothReady = Promise.resolve());
     _mammothReady = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/static/lib/mammoth.browser.min.js';
+      s.src = appUrl('/static/lib/mammoth.browser.min.js');
       s.onload = resolve;
       s.onerror = () => reject(new Error('Failed to load DOCX library'));
       document.head.appendChild(s);
@@ -2589,7 +2589,7 @@ function _setLibraryCountChipContent(chip, label, count) {
       Promise.all([
         fetch(API_BASE + '/api/sessions/archived?limit=100&sort=recent', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
         fetch(API_BASE + '/api/documents/library?archived=true&limit=50', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-        fetch('/api/research/library?archived=true', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+        fetch(appUrl('/api/research/library?archived=true'), { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
       ]).then(([s, d, r]) => {
         // These are all archived by definition — flag them so the expanded
         // chat preview hides its (redundant) "Archive" button.
@@ -2830,9 +2830,9 @@ function _setLibraryCountChipContent(chip, label, count) {
           _toggleResearchPreview(card, r);
         });
         card.querySelector('._arc-res-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
-          { label: 'Open', action: () => { const a = document.createElement('a'); a.href = '/api/research/report/' + r.id; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); } },
-          { label: 'Restore', action: async () => { await fetch('/api/research/' + r.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
-          { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return; await fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: 'Open', action: () => { const a = document.createElement('a'); a.href = appUrl('/api/research/report/' + r.id); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); } },
+          { label: 'Restore', action: async () => { await fetch(appUrl('/api/research/' + r.id + '/archive?archived=false'), { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return; await fetch(appUrl('/api/research/' + r.id), { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('research:' + r.id);
@@ -2902,13 +2902,13 @@ function _setLibraryCountChipContent(chip, label, count) {
     function _arcRestoreOne(key) {
       const i = key.indexOf(':'), type = key.slice(0, i), id = key.slice(i + 1);
       if (type === 'documents') return fetch(API_BASE + '/api/document/' + id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' });
-      if (type === 'research') return fetch('/api/research/' + id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' });
+      if (type === 'research') return fetch(appUrl('/api/research/' + id + '/archive?archived=false'), { method: 'POST', credentials: 'same-origin' });
       return fetch(API_BASE + '/api/session/' + id + '/unarchive', { method: 'POST', credentials: 'same-origin' });
     }
     function _arcDeleteOne(key) {
       const i = key.indexOf(':'), type = key.slice(0, i), id = key.slice(i + 1);
       if (type === 'documents') return fetch(API_BASE + '/api/document/' + id, { method: 'DELETE', credentials: 'same-origin' });
-      if (type === 'research') return fetch('/api/research/' + id, { method: 'DELETE', credentials: 'same-origin' });
+      if (type === 'research') return fetch(appUrl('/api/research/' + id), { method: 'DELETE', credentials: 'same-origin' });
       return fetch(API_BASE + '/api/session/' + id, { method: 'DELETE', credentials: 'same-origin' });
     }
     document.getElementById('doclib-arc-bulk-restore').addEventListener('click', async () => {
@@ -2960,7 +2960,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         grid.appendChild(_sp.element);
       } catch { grid.innerHTML = '<div class="hwfit-loading">Loading…</div>'; }
       try {
-        const res = await fetch('/api/research/library' + (_researchArchivedView ? '?archived=true' : ''), { credentials: 'same-origin' });
+        const res = await fetch(appUrl('/api/research/library' + (_researchArchivedView ? '?archived=true' : '')), { credentials: 'same-origin' });
         if (!res.ok) throw new Error(res.statusText);
         const data = await res.json();
         _researchItems = data.research || data || [];
@@ -3081,7 +3081,7 @@ function _setLibraryCountChipContent(chip, label, count) {
       if (openBtn) openBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const a = document.createElement('a');
-        a.href = '/api/research/report/' + item.id;
+        a.href = appUrl('/api/research/report/' + item.id);
         a.target = '_blank';
         a.rel = 'noopener';
         document.body.appendChild(a);
@@ -3240,7 +3240,7 @@ function _setLibraryCountChipContent(chip, label, count) {
                 const toArchived = !_researchArchivedView;
                 const card = btn.closest('.doclib-research-card');
                 if (card) { card.style.transition = 'opacity 0.25s, transform 0.25s'; card.style.opacity = '0'; card.style.transform = 'scale(0.95)'; }
-                try { await fetch('/api/research/' + rid + '/archive?archived=' + toArchived, { method: 'POST', credentials: 'same-origin' }); } catch {}
+                try { await fetch(appUrl('/api/research/' + rid + '/archive?archived=' + toArchived), { method: 'POST', credentials: 'same-origin' }); } catch {}
                 await new Promise(r => setTimeout(r, 200));
                 _researchItems = _researchItems.filter(r => r.id !== rid);
                 _renderResearchGrid();
@@ -3255,7 +3255,7 @@ function _setLibraryCountChipContent(chip, label, count) {
                   card.style.transform = 'scale(0.95)';
                 }
                 await new Promise(r => setTimeout(r, 250));
-                await fetch('/api/research/' + rid, { method: 'DELETE', credentials: 'same-origin' });
+                await fetch(appUrl('/api/research/' + rid), { method: 'DELETE', credentials: 'same-origin' });
                 _researchItems = _researchItems.filter(r => r.id !== rid);
                 _renderResearchGrid();
               } },
@@ -3323,7 +3323,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         }
         const results = await Promise.all(needFetch.map(async r => {
           try {
-            const res = await fetch('/api/research/detail/' + r.id, { credentials: 'same-origin' });
+            const res = await fetch(appUrl('/api/research/detail/' + r.id), { credentials: 'same-origin' });
             if (!res.ok) return null;
             const d = await res.json();
             // Backend JSON uses `result` (rendered) or `raw_report` (raw md).
@@ -3337,7 +3337,7 @@ function _setLibraryCountChipContent(chip, label, count) {
           if (uiModule) uiModule.showToast('Nothing to tidy');
           return;
         }
-        await Promise.all(candidates.map(r => fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})));
+        await Promise.all(candidates.map(r => fetch(appUrl('/api/research/' + r.id), { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})));
         const ids = new Set(candidates.map(r => r.id));
         _researchItems = _researchItems.filter(r => !ids.has(r.id));
         _renderResearchGrid();
@@ -3388,7 +3388,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         });
       }
       await new Promise(r => setTimeout(r, 250));
-      await Promise.all([..._researchSelected].map(rid => fetch('/api/research/' + rid, { method: 'DELETE', credentials: 'same-origin' })));
+      await Promise.all([..._researchSelected].map(rid => fetch(appUrl('/api/research/' + rid), { method: 'DELETE', credentials: 'same-origin' })));
       _researchItems = _researchItems.filter(r => !_researchSelected.has(r.id));
       _researchSelected.clear();
       _researchSelectMode = false;
@@ -3412,7 +3412,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         });
       }
       await new Promise(r => setTimeout(r, 250));
-      await Promise.all([..._researchSelected].map(rid => fetch('/api/research/' + rid + '/archive?archived=' + toArchived, { method: 'POST', credentials: 'same-origin' })));
+      await Promise.all([..._researchSelected].map(rid => fetch(appUrl('/api/research/' + rid + '/archive?archived=' + toArchived), { method: 'POST', credentials: 'same-origin' })));
       _researchItems = _researchItems.filter(r => !_researchSelected.has(r.id));
       _researchSelected.clear();
       _researchSelectMode = false;

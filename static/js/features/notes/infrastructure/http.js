@@ -21,7 +21,7 @@ export function createNotesApi({ origin, request }) {
     reorder: ids => request(`${origin}/api/notes/reorder`, json('POST', { ids })),
     upload: body => request(`${origin}/api/upload`, { method: 'POST', body, credentials: 'same-origin' }),
     uploadUrl: id => `${origin}/api/upload/${id}`,
-    fireReminder: body => request('/api/notes/fire-reminder', json('POST', body)),
+    fireReminder: body => request(appUrl('/api/notes/fire-reminder'), json('POST', body)),
     defaultChat: () => request(`${origin}/api/default-chat`, { credentials: 'same-origin' }),
     createSession: body => request(`${origin}/api/session`, { method: 'POST', body, credentials: 'same-origin' }),
     startChat: body => request(`${origin}/api/chat_stream`, { method: 'POST', body, credentials: 'same-origin' }),

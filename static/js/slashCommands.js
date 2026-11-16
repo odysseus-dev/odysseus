@@ -4826,7 +4826,7 @@ async function _cmdTourLibrary(args, ctx) {
   // Try to load the user's most recent document. If none exist, end with a hint.
   let firstDocId = null;
   try {
-    const r = await fetch('/api/documents/library?limit=1&sort=recent', { credentials: 'same-origin' });
+    const r = await fetch(appUrl('/api/documents/library?limit=1&sort=recent'), { credentials: 'same-origin' });
     if (r.ok) {
       const data = await r.json();
       if (data.documents && data.documents.length) firstDocId = data.documents[0].id;

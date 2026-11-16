@@ -267,7 +267,7 @@ function _initModelPickerDropdown() {
     if (now - _localProbeFetchedAt < _LOCAL_PROBE_TTL_MS) return;
     _localProbeFetchedAt = now;
     try {
-      const r = await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' });
+      const r = await fetch(appUrl('/api/model-endpoints/probe-local'), { credentials: 'same-origin' });
       if (r.ok) _localProbe = (await r.json()) || {};
     } catch (_) { /* leave stale data; picker still works */ }
   }

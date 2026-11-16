@@ -260,7 +260,7 @@ import { invalidateSettings } from './appConfig.js';
         }
         // Gallery references name an owner-scoped metadata resource, not image bytes.
         if (!imageUrl.trim().startsWith('data:') && new URL(imageUrl, window.location.origin).pathname.startsWith('/api/gallery/')) {
-          const response = await fetch(imageUrl, { credentials: 'same-origin' });
+          const response = await fetch(appUrl(imageUrl), { credentials: 'same-origin' });
           if (!response.ok) { _notifyError('The gallery image is unavailable.'); return; }
           const image = await response.json();
           const source = new URL(image.url || '', window.location.origin);
@@ -268,7 +268,10 @@ import { invalidateSettings } from './appConfig.js';
               !/^\/api\/generated-image\/[A-Za-z0-9_.-]+$/.test(source.pathname)) {
             _notifyError('Invalid gallery image reference.'); return;
           }
-          imageUrl = source.href;
+          // source.pathname keeps the *unprefixed* payload semantics for
+          // the regex check above; the URL the browser gets must carry the
+          // mount prefix (HA ingress panel), so map it through appUrl.
+          imageUrl = new URL(appUrl(source.pathname + source.search + source.hash), window.location.origin).href;
         }
 
         // Verify attachment is accessible and authorized on the server before launching editor
@@ -294,7 +297,7 @@ import { invalidateSettings } from './appConfig.js';
         }
 
         if (typeof window.gePhotoEditorApply !== 'function') {
-          await import('/static/js/galleryEditor.js?v=20260909movepicklayer1');
+          await import(appUrl('/static/js/galleryEditor.js?v=20260909movepicklayer1'));
         }
         await window.gePhotoEditorApply({
           imageId: (action && (action.imageId || action.image_id)) || null,
@@ -901,7 +904,7 @@ import { invalidateSettings } from './appConfig.js';
       try {
         let res;
         try {
-          res = await fetch('/api/auth/settings', {
+          res = await fetch(appUrl('/api/auth/settings'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -996,7 +999,7 @@ import { invalidateSettings } from './appConfig.js';
 	    const next = !!enabled;
 	    if (toggleBtn) toggleBtn.disabled = true;
 	    try {
-	      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/memory-extraction`, {
+	      const res = await fetch(appUrl(`/api/session/${encodeURIComponent(sid)}/memory-extraction`), {
 	        method: 'POST',
 	        headers: { 'Content-Type': 'application/json' },
 	        credentials: 'same-origin',
@@ -1034,7 +1037,7 @@ import { invalidateSettings } from './appConfig.js';
 	    const next = !!enabled;
 	    if (toggleBtn) toggleBtn.disabled = true;
 	    try {
-	      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/skill-injection`, {
+	      const res = await fetch(appUrl(`/api/session/${encodeURIComponent(sid)}/skill-injection`), {
 	        method: 'POST',
 	        headers: { 'Content-Type': 'application/json' },
 	        credentials: 'same-origin',
@@ -1070,7 +1073,7 @@ import { invalidateSettings } from './appConfig.js';
     const next = !!enabled;
     if (toggleBtn) toggleBtn.disabled = true;
     try {
-      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/memory-injection`, {
+      const res = await fetch(appUrl(`/api/session/${encodeURIComponent(sid)}/memory-injection`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -1101,7 +1104,7 @@ import { invalidateSettings } from './appConfig.js';
     if (!sid) return false;
     const next = { thinking_mode: _contextHeaderData?.thinking_mode || '', temperature_override: _contextHeaderData?.temperature_override ?? null, max_tokens_override: _contextHeaderData?.max_tokens_override ?? null, ...change };
     try {
-      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/generation-settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(next) });
+      const res = await fetch(appUrl(`/api/session/${encodeURIComponent(sid)}/generation-settings`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(next) });
       if (!res.ok) throw new Error(await res.text());
       _contextHeaderData = { ..._contextHeaderData, ...await res.json() };
       const session = _liveSessionModule()?.getSessions?.().find(item => item.id === sid);
@@ -1122,7 +1125,7 @@ import { invalidateSettings } from './appConfig.js';
       return false;
     }
     try {
-      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/compact`, { method: 'POST' });
+      const res = await fetch(appUrl(`/api/session/${encodeURIComponent(sid)}/compact`), { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       uiModule.showToast('Context compacted');
       _closeContextHeaderPopup();
@@ -1152,7 +1155,7 @@ import { invalidateSettings } from './appConfig.js';
     pill.hidden = false;
     pill.classList.add('loading');
     try {
-      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/context`, { credentials: 'same-origin' });
+      const res = await fetch(appUrl(`/api/session/${encodeURIComponent(sid)}/context`), { credentials: 'same-origin' });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       if (seq !== _contextHeaderSeq) return;
@@ -1217,7 +1220,7 @@ import { invalidateSettings } from './appConfig.js';
         });
         try {
           if (navigator.sendBeacon) {
-            navigator.sendBeacon(`${API_BASE}/api/client-perf`, new Blob([payload], { type: 'application/json' }));
+            navigator.sendBeacon(appUrl(`/api/client-perf`), new Blob([payload], { type: 'application/json' }));
             return;
           }
         } catch (_) {}
@@ -1534,7 +1537,7 @@ import { invalidateSettings } from './appConfig.js';
 
   /** POST the exact Stop for one observed run identity. */
   function _postExactStop(sessionId, runId) {
-    fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
+    fetch(appUrl(`/api/chat/stop/${encodeURIComponent(sessionId)}`), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-Odysseus-Run-Id': runId },
@@ -1605,10 +1608,13 @@ import { invalidateSettings } from './appConfig.js';
     const chatBox = document.getElementById('chat-history');
     if (!chatBox) return false;
     const imageKey = String(data.image_id || imageUrl);
+    // buildImageBubble normalizes the URL through appUrl (mount prefix under
+    // the HA ingress panel), so dedup must compare against the same form.
+    const normUrl = appUrl(String(imageUrl || ''));
     const exists = Array.from(chatBox.querySelectorAll('.generated-image-wrap')).some(el => (
       el.dataset.imageKey === imageKey ||
-      el.dataset.imageUrl === imageUrl ||
-      el.querySelector('img.generated-image')?.getAttribute('src') === imageUrl
+      el.dataset.imageUrl === normUrl ||
+      el.querySelector('img.generated-image')?.getAttribute('src') === normUrl
     ));
     if (exists) return false;
     const bubble = _buildImageBubble(
@@ -2389,7 +2395,7 @@ import { invalidateSettings } from './appConfig.js';
         try {
           if (!dc || !dc.endpoint_url || !dc.model) {
             _sendPerf.mark('default_chat_fetch_begin');
-            const dcRes = await fetch('/api/default-chat');
+            const dcRes = await fetch(appUrl('/api/default-chat'));
             dc = await dcRes.json();
             _sendPerf.mark('default_chat_fetch_done');
             if (dc && dc.endpoint_url && dc.model) {
@@ -3454,7 +3460,7 @@ import { invalidateSettings } from './appConfig.js';
         const q = String(query || '').trim();
         if (!q) return '';
         try {
-          const url = new URL('/search/web', window.location.origin);
+          const url = new URL(appUrl('/search/web'), window.location.origin);
           url.search = '';
           url.hash = '';
           url.searchParams.set('q', q);

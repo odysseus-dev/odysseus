@@ -61,7 +61,7 @@ import { getSettings } from './js/appConfig.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260910sidebarbounce1';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
@@ -146,10 +146,10 @@ function initForegroundActivityHeartbeat() {
     try {
       if (navigator.sendBeacon) {
         const body = new Blob(['{}'], { type: 'application/json' });
-        if (navigator.sendBeacon('/api/activity/heartbeat', body)) return;
+        if (navigator.sendBeacon(appUrl('/api/activity/heartbeat'), body)) return;
       }
     } catch (_) {}
-    fetch('/api/activity/heartbeat', {
+    fetch(appUrl('/api/activity/heartbeat'), {
       method: 'POST',
       credentials: 'same-origin',
       keepalive: true,
@@ -206,7 +206,7 @@ const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
-    window.location.href = '/login';
+    window.location.href = appUrl('/login');
   }
   return res;
 };
@@ -229,7 +229,7 @@ try {
 } catch (_) {}
 async function _refreshDefaultChat() {
   try {
-    const d = await (await fetch('/api/default-chat')).json();
+    const d = await (await fetch(appUrl('/api/default-chat'))).json();
     if (d && d.endpoint_url && d.model) {
       _defaultChat = d;
       try {

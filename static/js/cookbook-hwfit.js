@@ -51,7 +51,7 @@ function _fetchHwfitWithTimeout(input, init = {}, timeoutMs = 20000) {
     if (parentSignal.aborted) controller.abort();
     else parentSignal.addEventListener('abort', abortFromParent, { once: true });
   }
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+  return fetch(typeof input === 'string' ? appUrl(input) : input, { ...init, signal: controller.signal }).finally(() => {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', abortFromParent);
   });
@@ -884,7 +884,9 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
       const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
       if (_fitOnly) params.set('fit_only', '1');
     }
-    const endpoint = isImageMode ? `/api/hwfit/image-models?${params}` : `/api/hwfit/models?${params}`;
+    const endpoint = appUrl(isImageMode
+      ? `/api/hwfit/image-models?${params}`
+      : `/api/hwfit/models?${params}`);
     const res = await _fetchHwfitWithTimeout(endpoint, { signal: _requestController.signal }, 30000);
     // A newer scan started while this one was in flight (user switched servers
     // mid-probe) — drop this stale response so it can't clobber the new one.

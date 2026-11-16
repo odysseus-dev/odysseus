@@ -39,7 +39,7 @@ function _diagFetchWithTimeout(input, init = {}, timeoutMs = 75000) {
     if (parentSignal.aborted) controller.abort();
     else parentSignal.addEventListener('abort', abortFromParent, { once: true });
   }
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+  return fetch(typeof input === 'string' ? appUrl(input) : input, { ...init, signal: controller.signal }).finally(() => {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', abortFromParent);
   });
