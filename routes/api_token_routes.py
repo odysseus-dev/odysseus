@@ -255,6 +255,7 @@ def setup_api_token_routes() -> APIRouter:
             ]
 
     @router.post("/tokens/self")
+    @usage_monitor(10, 3600, "log")
     def create_self_token(
         request: Request,
         name: str = Form(""),
@@ -296,6 +297,7 @@ def setup_api_token_routes() -> APIRouter:
         }
 
     @router.delete("/tokens/self/{token_id}")
+    @usage_monitor(30, 3600, "log")
     def delete_self_token(request: Request, token_id: str):
         """Delete one of the current user's own API tokens. Cookie session only."""
         user = _require_self_token_user(request)
