@@ -1,5 +1,6 @@
 import { dismissOrRemove, bindMenuDismiss } from '../host.js';
 import { API_BASE, activeDocId, docs } from "../../application/documentState.js";
+import { _hasRichHtmlElement, _htmlToPlainText } from "../../domain/documentKinds.js";
 
 import { _setEmailBodyText, _splitEmailReplyQuote } from "./emailBody.js";
 import { _emailRichbodyActive } from "../richEditor/richBodySync.js";
@@ -37,13 +38,8 @@ async function _aiReply(opts = {}) {
     };
     const splitCurrent = _splitEmailReplyQuote(currentBody);
     const ownBodyHtml = String(splitCurrent.body || '');
-    const ownBody = typeof DOMParser !== 'undefined'
-      ? new DOMParser().parseFromString(ownBodyHtml, 'text/html').body
-      : null;
-    const ownText = (ownBody ? ownBody.textContent : ownBodyHtml.replace(/<[^>]*>/g, '')).trim();
-    const hasRichElement = ownBody
-      ? Boolean(ownBody.querySelector('img,video,audio,iframe,table'))
-      : /<(?:img|video|audio|iframe|table)\b/i.test(ownBodyHtml);
+    const ownText = _htmlToPlainText(ownBodyHtml).trim();
+    const hasRichElement = _hasRichHtmlElement(ownBodyHtml);
     const isReplaceableDraft = (!ownText && !hasRichElement) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
     if (!isReplaceableDraft) {
       if (uiModule) uiModule.showToast('Reply already has text');

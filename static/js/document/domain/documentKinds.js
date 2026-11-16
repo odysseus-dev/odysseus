@@ -100,3 +100,199 @@ export function _looksLikeMarkdown(text) {
   }
   return score >= 3;
 }
+
+function _inspectHtmlText(input) {
+  if (input == null) return { text: '', hasRichElement: false };
+  const source = typeof input === 'string'
+    ? input
+    : (typeof input === 'number' || typeof input === 'boolean' ? String(input) : '');
+  if (!source) return { text: '', hasRichElement: false };
+
+  const richTags = new Set(['img', 'video', 'audio', 'iframe', 'table']);
+  const rawTextTags = new Set(['script', 'style', 'noscript']);
+  const namedEntities = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: '\u00a0',
+    ndash: '\u2013',
+    mdash: '\u2014',
+    hellip: '\u2026',
+    lsquo: '\u2018',
+    rsquo: '\u2019',
+    ldquo: '\u201c',
+    rdquo: '\u201d',
+    copy: '\u00a9',
+    reg: '\u00ae',
+    trade: '\u2122',
+  };
+
+  function decodeEntityText(chunk) {
+    if (!chunk || !chunk.includes('&')) return chunk;
+    return chunk.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*);/gi, (match, body) => {
+      const lower = body.toLowerCase();
+      if (lower.startsWith('#x')) {
+        const cp = Number.parseInt(lower.slice(2), 16);
+        if (!Number.isFinite(cp) || cp <= 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+          return '\ufffd';
+        }
+        return String.fromCodePoint(cp);
+      }
+      if (lower.startsWith('#')) {
+        const cp = Number.parseInt(lower.slice(1), 10);
+        if (!Number.isFinite(cp) || cp <= 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+          return '\ufffd';
+        }
+        return String.fromCodePoint(cp);
+      }
+      return Object.prototype.hasOwnProperty.call(namedEntities, lower) ? namedEntities[lower] : match;
+    });
+  }
+
+  function findQuotedTagEnd(startIdx, len) {
+    let quote = '';
+    let idx = startIdx;
+    while (idx < len) {
+      const ch = source[idx];
+      if (quote) {
+        if (ch === quote) quote = '';
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '>') {
+        return idx;
+      }
+      idx += 1;
+    }
+    return len;
+  }
+
+  const len = source.length;
+  const chunks = [];
+  let hasRichElement = false;
+  let i = 0;
+
+  while (i < len) {
+    const nextLt = source.indexOf('<', i);
+    if (nextLt === -1) {
+      chunks.push(source.slice(i));
+      break;
+    }
+    if (nextLt > i) {
+      chunks.push(source.slice(i, nextLt));
+      i = nextLt;
+    }
+    if (i + 1 >= len) {
+      chunks.push('<');
+      break;
+    }
+
+    const next = source[i + 1];
+    if (next === '!') {
+      if (source.startsWith('<!--', i)) {
+        if (source.startsWith('<!-->', i)) { i += 5; continue; }
+        if (source.startsWith('<!--->', i)) { i += 6; continue; }
+        const endComment = source.indexOf('-->', i + 4);
+        i = endComment === -1 ? len : endComment + 3;
+        continue;
+      }
+      const endDecl = source.indexOf('>', i + 2);
+      i = endDecl === -1 ? len : endDecl + 1;
+      continue;
+    }
+
+    if (next === '?') {
+      const endPi = source.indexOf('>', i + 2);
+      i = endPi === -1 ? len : endPi + 1;
+      continue;
+    }
+
+    if (next === '/') {
+      if (i + 2 < len && source[i + 2] === '>') {
+        i += 3;
+        continue;
+      }
+      if (i + 2 < len && /[A-Za-z]/.test(source[i + 2])) {
+        const endTag = findQuotedTagEnd(i + 2, len);
+        i = endTag >= len ? len : endTag + 1;
+        continue;
+      }
+      chunks.push('<');
+      i += 1;
+      continue;
+    }
+
+    if (!/[A-Za-z]/.test(next)) {
+      chunks.push('<');
+      i += 1;
+      continue;
+    }
+
+    let nameEnd = i + 2;
+    while (nameEnd < len && /[A-Za-z0-9:-]/.test(source[nameEnd])) {
+      nameEnd += 1;
+    }
+    const tagName = source.slice(i + 1, nameEnd).toLowerCase();
+    const endTag = findQuotedTagEnd(nameEnd, len);
+    if (endTag >= len) {
+      i = len;
+      break;
+    }
+
+    if (richTags.has(tagName)) {
+      hasRichElement = true;
+    }
+
+    if (rawTextTags.has(tagName)) {
+      const closeLen = 2 + tagName.length;
+      let searchPos = endTag + 1;
+      let closed = false;
+      while (searchPos + closeLen <= len) {
+        const closeIdx = source.indexOf('</', searchPos);
+        if (closeIdx === -1 || closeIdx + closeLen > len) break;
+        if (source.slice(closeIdx + 2, closeIdx + closeLen).toLowerCase() === tagName) {
+          const afterPos = closeIdx + closeLen;
+          if (afterPos === len) {
+            i = len;
+            closed = true;
+            break;
+          }
+          const afterCh = source[afterPos];
+          if (
+            afterCh === '>'
+            || afterCh === '/'
+            || afterCh === ' '
+            || afterCh === '\t'
+            || afterCh === '\n'
+            || afterCh === '\r'
+            || afterCh === '\f'
+          ) {
+            const closeEnd = source.indexOf('>', afterPos);
+            i = closeEnd === -1 ? len : closeEnd + 1;
+            closed = true;
+            break;
+          }
+        }
+        searchPos = closeIdx + 2;
+      }
+      if (!closed) i = len;
+      continue;
+    }
+
+    i = endTag + 1;
+  }
+
+  return {
+    text: decodeEntityText(chunks.join('')),
+    hasRichElement,
+  };
+}
+
+export function _htmlToPlainText(input) {
+  return _inspectHtmlText(input).text;
+}
+
+export function _hasRichHtmlElement(input) {
+  return _inspectHtmlText(input).hasRichElement;
+}

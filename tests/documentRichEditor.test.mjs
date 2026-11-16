@@ -729,6 +729,20 @@ describe('Document Editor Rich-Text Subsystem', () => {
       assert.equal(_emailHtmlToPlainText(''), '');
       assert.equal(_emailHtmlToPlainText('<b>Bold</b> text'), 'Bold text');
       assert.equal(_emailHtmlToPlainText('<p>Line 1</p><p>Line 2</p>'), 'Line 1Line 2');
+      assert.equal(
+        _emailHtmlToPlainText('<p>Hi &amp; bye</p><script>alert("x")</script><style>.a{}</style>'),
+        'Hi & bye'
+      );
+      assert.equal(
+        _emailHtmlToPlainText('<scr<script>ipt>alert(1)</script><img alt="a > b" src=x onerror=alert(1)>Tail'),
+        'ipt>alert(1)Tail'
+      );
+      // Decoding escaped tags to plaintext must remain non-executable when rendered back via _emailPlainTextToHtml.
+      const decoded = _emailHtmlToPlainText('&lt;img src=x onerror="alert(1)"&gt; &amp;lt;b&amp;gt;');
+      assert.equal(decoded, '<img src=x onerror="alert(1)"> &lt;b&gt;');
+      const rendered = _emailPlainTextToHtml(decoded);
+      assert.equal(rendered, '&lt;img src=x onerror="alert(1)"&gt; &amp;lt;b&amp;gt;');
+      assert.ok(!rendered.includes('<img'), 're-rendered plaintext never emits raw <img> tag');
     });
 
     it('_richTextContentToHtml detects raw HTML and leaves it intact', () => {

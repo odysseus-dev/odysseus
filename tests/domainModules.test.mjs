@@ -11,7 +11,9 @@ import {
   _buildDiffSummary,
   _esc,
   _escHtml,
+  _hasRichHtmlElement,
   _hasViewToggle,
+  _htmlToPlainText,
   _isDocxLang,
   _isMarkdownImageFile,
   _isRenderLang,
@@ -230,6 +232,59 @@ test('_buildDiffSummary formats line changes and limits display to top changes',
   const newMany = 'a1\na2\na3\na4\na5';
   const manySummary = _buildDiffSummary(oldMany, newMany);
   assert.ok(manySummary.includes('+6 more changes'));
+});
+
+test('_htmlToPlainText and _hasRichHtmlElement convert untrusted HTML safely without DOMParser', () => {
+  // Plain text and literal angle brackets not starting HTML tags
+  assert.equal(_htmlToPlainText('Hello world'), 'Hello world');
+  assert.equal(_htmlToPlainText('5 < 10 and 10 > 5'), '5 < 10 and 10 > 5');
+
+  // Unexpected input types and empty values
+  assert.equal(_htmlToPlainText(null), '');
+  assert.equal(_htmlToPlainText(undefined), '');
+  assert.equal(_htmlToPlainText(''), '');
+  assert.equal(_htmlToPlainText(0), '0');
+  assert.equal(_htmlToPlainText(false), 'false');
+  assert.equal(_htmlToPlainText({ toString: () => '<p>hi</p>' }), '');
+  assert.equal(_htmlToPlainText(['<a>x</a>']), '');
+
+  // Legitimate HTML and entity decoding without double-unescape
+  assert.equal(_htmlToPlainText('<p>Hello <b>world</b> &amp; friends</p>'), 'Hello world & friends');
+  assert.equal(_htmlToPlainText('&lt;script&gt;alert(1)&lt;/script&gt;'), '<script>alert(1)</script>');
+  assert.equal(_htmlToPlainText('&amp;lt;script&amp;gt;'), '&lt;script&gt;');
+  assert.equal(_htmlToPlainText('&#60;b&#x3E;bold&#x26;#x27;'), '<b>bold&#x27;');
+  assert.equal(_htmlToPlainText('&#0;&#x110000;ok'), '\ufffd\ufffdok');
+
+  // Script/style/noscript contents and quoted attribute '>' characters
+  assert.equal(_htmlToPlainText('<script>alert("<div>xss</div>")</script>After'), 'After');
+  assert.equal(_htmlToPlainText('<style>p > a { color: red; }</style>Visible'), 'Visible');
+  assert.equal(_htmlToPlainText('<noscript><img src=x></noscript>Shown'), 'Shown');
+  assert.equal(_htmlToPlainText('<img alt="a > b" src=x onerror="javascript:alert(1)">'), '');
+  assert.equal(_htmlToPlainText('<scr<script>ipt>alert(1)</script>Tail'), 'ipt>alert(1)Tail');
+  assert.equal(_htmlToPlainText('<div attr="unclosed'), '');
+  assert.equal(_htmlToPlainText('<!-- <img src=x> -->Clean'), 'Clean');
+
+  // Rich element detection ignores comments and escaped entities
+  for (const rich of [
+    '<img src="x">',
+    '<VIDEO src="x"></VIDEO>',
+    '<audio controls></audio>',
+    '<iframe srcdoc="<p>nested</p>"></iframe>',
+    '<table><tr><td>Cell</td></tr></table>',
+    '<img alt="a > b" src="x">',
+  ]) {
+    assert.equal(_hasRichHtmlElement(rich), true, `Expected rich element in: ${rich}`);
+  }
+  for (const plain of [
+    '',
+    null,
+    '<p>Plain text</p>',
+    '<!-- <img src="x"> -->',
+    '&lt;img src="x"&gt;',
+    '[AI reply draft will appear here]',
+  ]) {
+    assert.equal(_hasRichHtmlElement(plain), false, `Did not expect rich element in: ${String(plain)}`);
+  }
 });
 
 // ============================================================================

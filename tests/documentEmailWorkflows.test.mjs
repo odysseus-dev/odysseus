@@ -503,6 +503,13 @@ describe('Document Editor Email Workflows', () => {
       const raw = 'Simple message body\n\n\n\nWith multiple blank lines.';
       const cleaned = _sanitizeOutgoingEmailBody(raw);
       assert.equal(cleaned, 'Simple message body\n\nWith multiple blank lines.');
+
+      const wrappedText = 'To: bob@example.com\nSubject: Hi\n---\nInner body';
+      const b64Wrapped = Buffer.from(wrappedText, 'utf8').toString('base64');
+      assert.equal(_sanitizeOutgoingEmailBody(`<div>${b64Wrapped}</div>`), 'Inner body');
+      assert.equal(_sanitizeOutgoingEmailBody('Reply to <alice@example.com>\n\nThanks!'), 'Reply to <alice@example.com>\n\nThanks!');
+      assert.equal(_sanitizeOutgoingEmailBody('<script>alert(1)</script>Hello\n\nWorld'), '<script>alert(1)</script>Hello\n\nWorld');
+      assert.equal(_sanitizeOutgoingEmailBody(null), '');
     });
   });
 

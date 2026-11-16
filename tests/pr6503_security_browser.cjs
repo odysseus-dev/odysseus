@@ -216,7 +216,8 @@ function documentFunction(name, text) {
     assert.equal(ledger.clearedReserved, true);
 
     const names = ['_unfoldEmailHeaderLines', '_parseEmailHeader', '_looksLikeWrappedEmailContent', '_decodeBase64EmailWrapper',
-      '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_aiReply',
+      '_inspectHtmlText', '_htmlToPlainText', '_hasRichHtmlElement',
+      '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_emailPlainTextToHtml', '_aiReply',
       '_loadOdysseusAttachItems', '_odysseusAttachLabel', '_escHtml',
       '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml'];
     const functions = Object.fromEntries(names.map(name => [name, documentFunction(name)]));
@@ -226,8 +227,12 @@ function documentFunction(name, text) {
       const _parseEmailHeader = eval('(' + functions._parseEmailHeader + ')');
       const _looksLikeWrappedEmailContent = eval('(' + functions._looksLikeWrappedEmailContent + ')');
       const _decodeBase64EmailWrapper = eval('(' + functions._decodeBase64EmailWrapper + ')');
+      const _inspectHtmlText = eval('(' + functions._inspectHtmlText + ')');
+      const _htmlToPlainText = eval('(' + functions._htmlToPlainText + ')');
+      const _hasRichHtmlElement = eval('(' + functions._hasRichHtmlElement + ')');
       const _sanitizeOutgoingEmailBody = eval('(' + functions._sanitizeOutgoingEmailBody + ')');
       const _emailHtmlToPlainText = eval('(' + functions._emailHtmlToPlainText + ')');
+      const _emailPlainTextToHtml = eval('(' + functions._emailPlainTextToHtml + ')');
       const activeDocId = 'fixture';
       const docs = new Map();
       const toasts = [];
@@ -257,15 +262,38 @@ function documentFunction(name, text) {
       }
       const normal = _emailHtmlToPlainText('<p>Hello <b>world</b> &amp; friends</p>');
       const literal = _emailHtmlToPlainText('&lt;img src=x onerror="window.executed++"&gt;');
+      const reRenderedLiteral = _emailPlainTextToHtml(literal);
+      const renderedProbe = document.createElement('div');
+      renderedProbe.innerHTML = reRenderedLiteral;
+      const malformedText = _htmlToPlainText('<scr<script>ipt>window.executed++</script><img alt="a > b" src="/inert-probe" onerror="window.executed++">');
+      const commentRich = _hasRichHtmlElement('<!-- <img src="/inert-probe"> --><span>[AI reply draft will appear here]</span>');
       const outgoing = _sanitizeOutgoingEmailBody('Hello\n\nworld');
       const wrapped = _sanitizeOutgoingEmailBody(btoa('To: person@example.com\nSubject: Test\n---\nValid reply'));
+      const htmlWrapped = _sanitizeOutgoingEmailBody('<div>' + btoa('To: person@example.com\nSubject: Test\n---\nWrapped html reply') + '</div>');
       await new Promise(resolve => setTimeout(resolve, 150));
-      return { normal, literal, outgoing, wrapped, toasts, executed: window.executed };
+      return {
+        normal,
+        literal,
+        reRenderedLiteral,
+        renderedTagCount: renderedProbe.querySelectorAll('img').length,
+        malformedText,
+        commentRich,
+        outgoing,
+        wrapped,
+        htmlWrapped,
+        toasts,
+        executed: window.executed,
+      };
     }, functions);
     assert.equal(email.normal, 'Hello world & friends');
     assert.equal(email.literal, '<img src=x onerror="window.executed++">');
+    assert.equal(email.renderedTagCount, 0);
+    assert.ok(email.reRenderedLiteral.startsWith('&lt;img'));
+    assert.equal(email.malformedText, 'ipt>window.executed++');
+    assert.equal(email.commentRich, false);
     assert.equal(email.outgoing, 'Hello\n\nworld');
     assert.equal(email.wrapped, 'Valid reply');
+    assert.equal(email.htmlWrapped, 'Wrapped html reply');
     assert.deepEqual(email.toasts, Array(9).fill('Reply already has text'));
     assert.equal(email.executed, 0);
     assert.deepEqual(probes, []);

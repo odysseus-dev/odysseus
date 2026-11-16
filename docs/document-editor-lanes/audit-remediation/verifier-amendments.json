@@ -711,25 +711,25 @@
     },
     "_sanitizeOutgoingEmailBody": {
       "file": "ui/email/localDraft.js",
-      "rationale": "Parse wrapped HTML via DOMParser instead of assigning untrusted text to template.innerHTML.",
-      "targetFunctionSha256": "db938b1af39840199368a7a2ebc0c9a4bcde690ff38f01bc0403e8031ee5daff",
+      "rationale": "Extract plaintext via shared pure _htmlToPlainText helper instead of DOMParser or regex HTML stripping.",
+      "targetFunctionSha256": "70181671a20b7c8d46db1023c1ee085776f7435045afa68fcc380be2315bf057",
       "replacements": [
         {
           "from": "    if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {\n      const probe = document.createElement('template');\n      probe.innerHTML = text;\n      const plain = (probe.content.textContent || '').trim();\n      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;\n      if (plainClean !== plain) return plainClean;\n    }",
-          "to": "    if (!changed && /<[^>]+>/.test(text)) {\n      const plain = (\n        typeof DOMParser !== 'undefined'\n          ? (new DOMParser().parseFromString(text, 'text/html').body?.textContent || '')\n          : text.replace(/<[^>]*>/g, '')\n      ).trim();\n      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;\n      if (plainClean !== plain) return plainClean;\n    }",
-          "rationale": "Extract plain text using DOMParser or regex fallback without an innerHTML sink."
+          "to": "    if (!changed && text.includes('<')) {\n      const plain = _htmlToPlainText(text).trim();\n      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;\n      if (plainClean !== plain) return plainClean;\n    }",
+          "rationale": "Delegate wrapped-HTML text extraction to the shared pure scanner contract without DOMParser or regex sanitization."
         }
       ]
     },
     "_emailHtmlToPlainText": {
       "file": "ui/richEditor/richBodySync.js",
-      "rationale": "Parse email HTML via DOMParser instead of assigning untrusted HTML to template.innerHTML.",
-      "targetFunctionSha256": "ac5ee6ab84fea8d226c4836f8e78a7e220c3cf427f9508fe6b5c471c1c1ab529",
+      "rationale": "Convert email HTML to plaintext through shared pure _htmlToPlainText helper without DOMParser or regex tag stripping.",
+      "targetFunctionSha256": "a20a55cdae8c108411497d9efe57b08cf54f12495c2c9ecce441aa8c2c4e350a",
       "replacements": [
         {
           "from": "function _emailHtmlToPlainText(html) {\n    if (typeof document === 'undefined') return String(html || '');\n    const d = document.createElement('template');\n    d.innerHTML = String(html || '');\n    return d.content.textContent || '';\n  }",
-          "to": "function _emailHtmlToPlainText(html) {\n    const source = String(html || '');\n    if (typeof DOMParser !== 'undefined') {\n      return new DOMParser().parseFromString(source, 'text/html').body?.textContent || '';\n    }\n    if (typeof document === 'undefined') return source;\n    return source.replace(/<[^>]*>/g, '');\n  }",
-          "rationale": "Extract textContent via DOMParser without assigning to template.innerHTML."
+          "to": "function _emailHtmlToPlainText(html) {\n    return _htmlToPlainText(html);\n  }",
+          "rationale": "Use deterministic single-pass pure HTML-to-plaintext conversion across browser and non-browser runtimes."
         }
       ]
     },
@@ -771,13 +771,13 @@
     },
     "_aiReply": {
       "file": "ui/email/aiReply.js",
-      "rationale": "Parse split reply body with DOMParser instead of assigning untrusted HTML to template.innerHTML.",
-      "targetFunctionSha256": "5d8dee75398fc7eae57518f787bbaefcb3ffe029d80b56138abe24851636cb5a",
+      "rationale": "Inspect split reply content with shared pure HTML helpers instead of DOMParser or regex HTML stripping.",
+      "targetFunctionSha256": "40dc9174543889c2c1892801b2c0d9364ae37796549ac7c729320f24f3bf6102",
       "replacements": [
         {
           "from": "    const ownBody = document.createElement('template');\n    ownBody.innerHTML = String(splitCurrent.body || '');\n    const ownText = (ownBody.content.textContent || '').trim();\n    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\\[AI reply draft will appear here\\]|Drafting AI reply)/i.test(ownText);",
-          "to": "    const ownBodyHtml = String(splitCurrent.body || '');\n    const ownBody = typeof DOMParser !== 'undefined'\n      ? new DOMParser().parseFromString(ownBodyHtml, 'text/html').body\n      : null;\n    const ownText = (ownBody ? ownBody.textContent : ownBodyHtml.replace(/<[^>]*>/g, '')).trim();\n    const hasRichElement = ownBody\n      ? Boolean(ownBody.querySelector('img,video,audio,iframe,table'))\n      : /<(?:img|video|audio|iframe|table)\\b/i.test(ownBodyHtml);\n    const isReplaceableDraft = (!ownText && !hasRichElement) || /^(\\[AI reply draft will appear here\\]|Drafting AI reply)/i.test(ownText);",
-          "rationale": "Inspect own reply content for rich elements and text using DOMParser without innerHTML."
+          "to": "    const ownBodyHtml = String(splitCurrent.body || '');\n    const ownText = _htmlToPlainText(ownBodyHtml).trim();\n    const hasRichElement = _hasRichHtmlElement(ownBodyHtml);\n    const isReplaceableDraft = (!ownText && !hasRichElement) || /^(\\[AI reply draft will appear here\\]|Drafting AI reply)/i.test(ownText);",
+          "rationale": "Detect existing reply text and rich media elements using _htmlToPlainText and _hasRichHtmlElement without DOMParser or regex sanitization."
         }
       ]
     },
@@ -1116,6 +1116,18 @@
         "name": "setImageSelectionObserver",
         "rationale": "Keep toolbar observation registered through the image operation owner.",
         "declarationSha256": "9053b3e23113aafb19c85dba7bc020db5853a295ed0b62661f543bc1435cbe41"
+      }
+    ],
+    "domain/documentKinds": [
+      {
+        "name": "_htmlToPlainText",
+        "rationale": "Provide a single pure HTML-to-plaintext conversion contract shared by document UI modules without DOMParser or regex tag stripping.",
+        "declarationSha256": "62ccce71be991b46fc7158da911e15072c85f0893f3b986c006f1b73c6798d0f"
+      },
+      {
+        "name": "_hasRichHtmlElement",
+        "rationale": "Detect rich media and table elements in reply drafts without interpreting untrusted HTML in the DOM.",
+        "declarationSha256": "9f9fbcf298fda3b6036c83f63ab3151727460abd1c2ccebecd6a1e06c8adc1e5"
       }
     ]
   },

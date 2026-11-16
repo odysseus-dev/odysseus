@@ -8,7 +8,7 @@ import { _persistEmailLocalDraftSoon } from '../email/localDraft.js';
  */
 
 import { activeDocId, docs } from '../../application/documentState.js';
-import { _isRichTextLang } from '../../domain/documentKinds.js';
+import { _htmlToPlainText, _isRichTextLang } from '../../domain/documentKinds.js';
 import { _normalizeRichLinkUrl, _isRichInlineCodeMarker } from '../../domain/richTextRules.js';
 import { _buildEmailContent, _parseEmailHeader } from '../../domain/emailMessage.js';
 
@@ -19,12 +19,7 @@ export function _emailPlainTextToHtml(text) {
   }
 
 export function _emailHtmlToPlainText(html) {
-    const source = String(html || '');
-    if (typeof DOMParser !== 'undefined') {
-      return new DOMParser().parseFromString(source, 'text/html').body?.textContent || '';
-    }
-    if (typeof document === 'undefined') return source;
-    return source.replace(/<[^>]*>/g, '');
+    return _htmlToPlainText(html);
   }
 
 export function _sanitizedRichTextHtml(rich) {
