@@ -438,15 +438,20 @@
       return;
     }
     signupAllowed = !!data.signup_enabled;
-    if (!data.configured) {
+    if (!data.configured && !data.hass_auth) {
       setMode('setup');
     } else {
+      // With Home Assistant credential delegation enabled, the first HA
+      // login bootstraps the instance (that account becomes the admin),
+      // so the local first-run setup form is not required.
       setMode('login');
     }
-    if (data.hass_auth && data.configured) {
+    if (data.hass_auth) {
       // Home Assistant credential delegation is enabled on this deployment —
       // advertise it so the operator knows their HA login works here.
-      setupNote.textContent = 'Tip: you can sign in with your Home Assistant username and password';
+      setupNote.textContent = data.configured
+        ? 'Tip: you can sign in with your Home Assistant username and password'
+        : 'Sign in with your Home Assistant username and password — the first login becomes the admin';
       setupNote.style.display = 'block';
       setTimeout(() => { if (mode === 'login') setupNote.style.display = 'none'; }, 10000);
     }

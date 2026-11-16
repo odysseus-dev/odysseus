@@ -144,9 +144,10 @@ username and password** — no separate Odysseus account needed:
   it against Home Assistant core (`auth_api` in the add-on manifest grants
   exactly that endpoint; the Supervisor token injected into the container is
   used only for this check and is never exposed).
-- On first login the matching Odysseus account is created automatically:
-  **Home Assistant admins become Odysseus admins**, other HA users become
-  regular accounts.
+- **No admin setup required**: leave `admin_user` / `admin_password` empty and
+  sign in with your HA admin account — the first HA login bootstraps the
+  instance and becomes the Odysseus admin. Other HA users get regular
+  accounts on their first login.
 - Local Odysseus passwords keep working and are always checked first; this
   adds a second way in, it never locks out local accounts. Failures (wrong
   password, Supervisor unreachable) are refused — an outage can't be
@@ -154,6 +155,8 @@ username and password** — no separate Odysseus account needed:
 - Odysseus sessions are separate from Home Assistant's; logging out of
   Odysseus does not log you out of HA, and HA-side password changes apply on
   the next Odysseus login.
+- To create a purely local admin instead, turn `hass_auth` off: the login page
+  then offers the regular first-run setup form.
 
 ### Agent safety
 

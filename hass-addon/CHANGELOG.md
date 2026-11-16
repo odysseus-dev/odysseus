@@ -7,6 +7,9 @@
   (`auth_api: true`). HA admins become Odysseus admins on first login; other
   HA users get regular accounts. Local passwords keep working unchanged.
 - New `hass_auth` option (default on) to toggle the HA credential login.
+- **No admin setup needed**: with `hass_auth` on, leave `admin_user` /
+  `admin_password` empty — the first HA login bootstraps the instance and
+  becomes the Odysseus admin.
 - Failure closed: if the Supervisor is unreachable or rejects the pair,
   Odysseus refuses the login instead of failing open.
 
