@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
+from src.model_capability_readers import generic_openai, google, llamacpp, llamaswap, lmstudio, ollama, openai, openrouter
 from src.model_capability_readers.base import (
     ModelCapabilityRecord,
     VENDOR_ANTHROPIC,
@@ -13,6 +13,7 @@ from src.model_capability_readers.base import (
     VENDOR_GOOGLE,
     VENDOR_HUGGINGFACE,
     VENDOR_LLAMACPP,
+    VENDOR_LLAMASWAP,
     VENDOR_LMSTUDIO,
     VENDOR_OLLAMA,
     VENDOR_OPENAI,
@@ -31,6 +32,7 @@ READER_MODULES = {
     VENDOR_OPENROUTER: openrouter,
     VENDOR_GOOGLE: google,
     VENDOR_LLAMACPP: llamacpp,
+    VENDOR_LLAMASWAP: llamaswap,
     VENDOR_OLLAMA: ollama,
     VENDOR_LMSTUDIO: lmstudio,
 }
@@ -61,6 +63,10 @@ def records_from_payload(
 ) -> tuple[ModelCapabilityRecord, ...]:
     vendor_id = vendor or detect_vendor(base_url, endpoint_kind)
     reader = reader_for_vendor(vendor_id)
+    if reader is generic_openai and llamaswap.is_native_payload(payload):
+        # llama-swap fronts other engines on arbitrary hosts and ports; only its
+        # native payload shape identifies it.
+        reader = llamaswap
     if reader is generic_openai:
         record_vendor = vendor_id if vendor_id not in {VENDOR_UNKNOWN, ""} else VENDOR_GENERIC_OPENAI
         return reader.records_from_payload(
@@ -81,6 +87,7 @@ __all__ = [
     "VENDOR_GOOGLE",
     "VENDOR_HUGGINGFACE",
     "VENDOR_LLAMACPP",
+    "VENDOR_LLAMASWAP",
     "VENDOR_LMSTUDIO",
     "VENDOR_OLLAMA",
     "VENDOR_OPENAI",

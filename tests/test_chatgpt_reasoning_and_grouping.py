@@ -185,8 +185,8 @@ def test_history_and_chat_routes_support_reasoning_effort():
     assert "reasoning_effort" in hist_src
     assert "def _effort_mode(" in hist_src
     assert 'return f"effort:{effort}" if effort else "off"' in hist_src
-    assert "mode = _effort_mode(session.model, raw_effort)" in hist_src
-    assert "mode = _effort_mode(session.model, raw_mode[7:])" in hist_src
+    assert "mode = _effort_mode(session.model, raw_effort, base_url=endpoint_url)" in hist_src
+    assert "mode = _effort_mode(session.model, raw_mode[7:], base_url=endpoint_url)" in hist_src
 
     chat_src = (ROOT / "routes/chat_routes.py").read_text(encoding="utf-8")
     assert "validate_reasoning_effort(sess.model, reasoning_effort)" in chat_src
