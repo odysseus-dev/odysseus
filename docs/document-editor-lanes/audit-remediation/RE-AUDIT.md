@@ -1,11 +1,11 @@
 # Independent re-audit handoff
 
-Claude and Codex should each perform a fresh read-only review and return their own verdict. This remediation was implemented and checked by the remediation team; no independent approval is claimed.
+Independent reviewers should perform a fresh read-only review against the pinned branch tip and return their own verdict. This remediation was implemented and checked locally; no independent approval is claimed.
 
 ## Identity and diff
 
 ```sh
-cd /home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation
+cd <repo-worktree>
 git branch --show-current
 git rev-parse HEAD
 git status --short
@@ -14,9 +14,9 @@ git diff --stat 032d98575f5a7492e2377089cbc68f148753dd64..HEAD
 git diff 032d98575f5a7492e2377089cbc68f148753dd64..HEAD -- frontend/src/features/documents static/js/document.js static/sw.js
 ```
 
-Expected branch: `fix/document-editor-audit-remediation`. Final implementation checkpoint: `433a4d29e817322396c4fe09f4172d8bb3089cfb`. Later changes are the remediation report and receipts. Pin the actual final branch tip before auditing. The working tree should be clean.
+Historical audit-remediation checkpoint: branch `fix/document-editor-audit-remediation`, commit `433a4d29e817322396c4fe09f4172d8bb3089cfb` (later commits on PR `#7292` include the remediation reports, receipts, security fixes, and CI compatibility updates). Pin the actual branch tip before auditing. The working tree should be clean.
 
-Read both original reports at the absolute paths and checksums in README.md. Read this report, `reference-disposition.json`, `global-consumers.json`, the original final audit package, and the exact amendments in `verifier-amendments.json`. Use 087e6c88 for pre-extraction behavioral comparison; f3a05c10 already includes inherited extraction defects.
+Read both original reports referenced in README.md (by relative path and SHA-256). Read this report, `reference-disposition.json`, `global-consumers.json`, the original final audit package, and the exact amendments in `verifier-amendments.json`. Use 087e6c88 for pre-extraction behavioral comparison; f3a05c10 already includes inherited extraction defects.
 
 ## Critical review boundaries
 
@@ -53,7 +53,7 @@ If Playwright or pytest dependencies are run outside the active repository venv,
 Canonical controls remain external and unchanged:
 
 ```sh
-cd /home/alteixeira20/Projects/Odysseus/audit-artifacts/tools/document-extraction-verifier
+cd "$DOCUMENT_EXTRACTION_VERIFIER_ROOT" # default: ../../audit-artifacts/tools/document-extraction-verifier
 node tests/run-all-tests.mjs
 ```
 

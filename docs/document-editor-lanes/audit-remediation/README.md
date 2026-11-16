@@ -4,8 +4,7 @@ Status: COMPLETE, READY FOR INDEPENDENT RE-AUDIT. All Document Editor blockers a
 
 ## Scope and revisions
 
-- Worktree: `/home/alteixeira20/Projects/Odysseus/worktrees/document-editor-remediation`.
-- Branch: `fix/document-editor-audit-remediation`.
+- Historical remediation worktree/branch (checkpoint `433a4d29`): `document-editor-remediation` / `fix/document-editor-audit-remediation` (subsequent PR `#7292` commits continue on `refactor/document-editor-decomposition`).
 - Original audited HEAD: `032d98575f5a7492e2377089cbc68f148753dd64`, preserved unchanged.
 - Original decomposition comparison: `f3a05c10c998e4efff14ac6498b01bd50138ad6e`.
 - Original 565-item accounting and behavioral reference: `087e6c8837969339e9e7823dd84a4d717d536cea`. The supplied f3a05c10 revision already contains earlier extraction waves, including inherited defects.
@@ -16,8 +15,8 @@ Original reports remain unchanged:
 
 | Auditor | Report | SHA-256 |
 | --- | --- | --- |
-| Claude | `/home/alteixeira20/Projects/Odysseus/audit-artifacts/document-editor-claude-independent-audit-20261115.md` | `098db1787aeffd0433016f65fb1728ddb6068e5cc3b9daf4434d3bffcfa66b7c` |
-| Codex | `/home/alteixeira20/Projects/Odysseus/audit-artifacts/codex-document-editor-runtime-audit-032d985.md` | `5a14bccd6361d8f27ea3656c3ac68c4e03701a916da9916751446f5591bdea04` |
+| Claude | `../../audit-artifacts/document-editor-claude-independent-audit-20261115.md` (external audit artifact dir) | `098db1787aeffd0433016f65fb1728ddb6068e5cc3b9daf4434d3bffcfa66b7c` |
+| Codex | `../../audit-artifacts/codex-document-editor-runtime-audit-032d985.md` (external audit artifact dir) | `5a14bccd6361d8f27ea3656c3ac68c4e03701a916da9916751446f5591bdea04` |
 
 The historical final audit package remains a snapshot. Its claims describe 032d9857, not this remediation. The canonical decomposition plan, integration ledger, 16 original persistence-hook dispositions, testing standard, and both independent reports were examined before remediation.
 
@@ -104,12 +103,12 @@ Final executed gates:
 | PASS with SKIPPED cases | Broader decomposition G3 selection, 148 files | 1,030 passed, 3 skipped, exit 0 |
 | SKIPPED | G3 optional cases | `fitz` unavailable; `openpyxl` unavailable; opt-in Ajax fixture not enabled |
 | PASS | Canonical verifier controls | 25/25, unchanged external tool |
-| PASS | Canonical engine with exact remediation amendments | 565/565; zero missing, duplicates, cycles, layer or unauthorized state violations; 55 modules / 372 import edges; 12 commands, 6 hooks, 1 observer |
+| PASS | Canonical engine with exact remediation amendments (historical `433a4d29` snapshot; later PR commits keep 565/565 passing across 59 document modules) | 565/565; zero missing, duplicates, cycles, layer or unauthorized state violations; 55 modules / 372 import edges at `433a4d29` (expanded to 59 modules later); 12 commands, 6 hooks, 1 observer |
 | FAIL, expected historical manifest mismatch | Frozen canonical CLI with original manifest | Rejects intentional body/export corrections; full diagnostic summary recorded in `validation/original-manifest-result.json` |
 | PASS | Frontend Node architecture plus image/selection wrappers | 12 passed, exit 0 |
 | PASS | Frontend Python build/offline/module/parity/panel and CodeQL security selection | 42 passed, exit 0 |
-| PASS | Reference/import gate; frontend checker; build parity | Zero diagnostics; 98 maintained modules; zero stale published modules |
-| PASS | Document module publication inventory | All 55 maintained files mirrored, registered and precached; root API remains 30 named / 39 default properties |
+| PASS | Reference/import gate; frontend checker; build parity (`433a4d29` snapshot; later PR commits maintain zero stale published modules across 102 maintained modules) | Zero diagnostics; 98 maintained modules at `433a4d29`; zero stale published modules |
+| PASS | Document module publication inventory (`433a4d29` snapshot; later PR commits expand to 59 document modules) | All 55 maintained files mirrored, registered and precached at `433a4d29`; root API remains 30 named / 39 default properties |
 | PASS | Whitespace | `git diff --check` and staged diff checks clean |
 
 Isolated live backend: document create/edit/version/restore/delete smoke passed, 1 test, using an ephemeral loopback app, temporary database/data/auth and an owned process stopped afterward. The other 11 release-smoke areas were NOT RUN.
@@ -170,7 +169,7 @@ NOT RUN: physical mobile devices, Firefox/WebKit, real SMTP/IMAP and AI provider
 | `c393117a` | Documentation of final acceptance findings remediation and regression proofs |
 | `5719f0f0` | Atomic conditional backend title updates and safe scheduled draft cleanup |
 
-Final implementation changes are confined to document modules and their published copies, the compatibility facade, local service-worker cache key (`odysseus-v1146-pr40-editor-precache`), focused validation scripts, tests and remediation documentation. Module publication remains 55 maintained/published document modules with exact manifest/precache coverage. See `changed-files.txt` for the complete implementation summary.
+At checkpoint `433a4d29`, implementation changes were confined to document modules and their published copies (55 maintained/published document modules at that checkpoint), the compatibility facade, local service-worker cache key, focused validation scripts, tests and remediation documentation. Subsequent PR `#7292` commits expanded the document feature set to 59 maintained/published modules with 102 maintained frontend modules overall, updated the service-worker cache key to `odysseus-v1148-pr40-editor-precache`, and applied CodeQL security and CI compatibility remediations while preserving exact manifest/precache coverage and 30 named / 39 default root API properties. See `changed-files.txt` for the historical `433a4d29` checkpoint summary.
 
 Remaining confirmed Document Editor findings: none. The re-audit must independently assess the behavioral corrections, explicit ownership interfaces and verifier amendments. Clean final worktree and exact final tip are checked after the documentation commit and reported in the completion response.
 
