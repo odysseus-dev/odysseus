@@ -14,6 +14,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from core.database import SessionLocal, ModelEndpoint
+from src.constants import APP_VERSION
 from src.llm_core import _detect_provider, _host_match, _is_kimi_code_url, KIMI_CODE_USER_AGENT, _ollama_api_root
 
 logger = logging.getLogger(__name__)
@@ -429,6 +430,8 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
         return chatgpt_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    if provider == "perplexity":
+        headers["X-Pplx-Integration"] = f"odysseus/{APP_VERSION}"
     if provider == "openrouter":
         headers.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")

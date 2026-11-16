@@ -7,6 +7,35 @@ headers), and the no-key case.
 import pytest
 
 from src import endpoint_resolver as er
+from src.constants import APP_VERSION
+
+
+@pytest.mark.parametrize("base, expected", [
+    ("https://api.perplexity.ai", f"odysseus/{APP_VERSION}"),
+    ("https://api.perplexity.ai.example.com", None),
+])
+def test_model_probe_attribution_is_provider_scoped(monkeypatch, base, expected):
+    import httpx
+    from routes.model_routes import _probe_endpoint
+
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"id": "sonar"}]})
+
+    monkeypatch.setattr(er, "resolve_url", lambda url: url)
+    def get(url, *, verify=True, **kwargs):
+        with httpx.Client(transport=httpx.MockTransport(respond), verify=verify) as client:
+            return client.get(url, **kwargs)
+
+    monkeypatch.setattr(httpx, "get", get)
+    assert _probe_endpoint(base, "fixture-key") == ["sonar"]
+
+    assert len(seen) == 1
+    assert str(seen[0].url) == f"{base}/models"
+    assert seen[0].headers["Authorization"] == "Bearer fixture-key"
+    assert seen[0].headers.get_list("X-Pplx-Integration") == ([expected] if expected else [])
 
 
 def test_headers_anthropic_uses_x_api_key():
