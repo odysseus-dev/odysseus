@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -23,8 +24,76 @@ from src import windows_restart_os as win
 TERMINAL = {'done', 'completed', 'finished', 'error', 'failed', 'stopped', 'cancelled', 'canceled', 'ended', 'killed'}
 
 
+def observe_worker_receipt(file):
+    """Observe the recorded incarnation; never retire files, tasks or a live PID."""
+    observation = {'session_id': file.stem, 'state': 'unknown', 'signal_authorized': False}
+    try:
+        raw = file.read_bytes()
+        pid = int(raw.decode('utf-8').strip())
+        if pid <= 0:
+            return observation
+        token_file = file.with_suffix('.pid.token')
+        raw_token = token_file.read_bytes() if token_file.is_file() else None
+        token = raw_token.decode('utf-8').strip() if raw_token is not None else None
+        current = win.identity(pid)
+        if current is None:
+            state = 'gone'
+        elif token and re.fullmatch(r'win32:[1-9][0-9]*', token):
+            state = 'live' if current['start_token'] == token else 'obsolete'
+        else:
+            state = 'unknown'
+        if (file.read_bytes() != raw or win.identity(pid) != current
+                or (token_file.read_bytes() if token_file.is_file() else None) != raw_token):
+            state = 'unknown'
+        observation.update(pid=pid, state=state)
+    except (OSError, ValueError):
+        pass
+    return observation
+
+
+def _native_background_processes():
+    """No commands/credentials leave the OS query; incomplete visibility is unknown."""
+    script = '''$ErrorActionPreference='Stop';
+[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new();
+$p=@(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'");
+@{complete=(@($p | Where-Object {[string]::IsNullOrWhiteSpace($_.CommandLine)}).Count -eq 0 -and ($p.ProcessId -contains SELF_PID));
+supervisors=@($p | Where-Object {$_.CommandLine -match '(containment_worker|bg_worker)\\.py'} |
+ ForEach-Object {[int]$_.ProcessId})} | ConvertTo-Json -Compress'''
+    try:
+        raw = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+            script.replace('SELF_PID', str(os.getpid()))], timeout=5,
+            stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+        return json.loads(raw)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {'complete': False, 'supervisors': None}
+
+
+def _uninitialized_background(state_dir):
+    directory = Path(state_dir)
+    def no_artifacts():
+        if not directory.is_dir() or any((directory / name).exists() for name in (
+                'bg_jobs.json', 'bg_jobs', 'containment_grants.json')):
+            return False
+        publications = directory / 'process_resources'
+        if publications.is_symlink():
+            return False
+        return not publications.exists() or (publications.is_dir() and all(
+            file.name == 'publication.lock' and file.is_file() and not file.is_symlink()
+            for file in publications.iterdir()))
+    try:
+        if not no_artifacts():
+            return False
+        snapshot = _native_background_processes()
+        return (isinstance(snapshot, dict) and snapshot.get('complete') is True
+                and snapshot.get('supervisors') == [] and no_artifacts())
+    except OSError:
+        return False
+
+
 def file_guard(state_dir, workers_dir, gateway_db):
     errors = []
+    receipts = []
+    background = {'state': 'unknown'}
     try:
         with closing(sqlite3.connect(Path(gateway_db).resolve().as_uri() + '?mode=ro', uri=True, timeout=1)) as db:
             active = db.execute('select count(*) from session_turn_leases where expires_at > ?', (time.time(),)).fetchone()[0]
@@ -42,6 +111,13 @@ def file_guard(state_dir, workers_dir, gateway_db):
                 raise ValueError('invalid inventory')
             if any(not isinstance(row, dict) or str(row.get('status', '')).lower() not in TERMINAL for row in records):
                 errors.append('busy or unknown ' + filename)
+            elif filename == 'bg_jobs.json':
+                background = {'state': 'recorded_idle'}
+        except FileNotFoundError:
+            if filename == 'bg_jobs.json' and _uninitialized_background(state_dir):
+                background = {'state': 'uninitialized_idle', 'basis': 'no launch artifacts and complete supervisor scan'}
+            else:
+                errors.append('unknown ' + filename)
         except Exception:
             errors.append('unknown ' + filename)
     try:
@@ -49,12 +125,13 @@ def file_guard(state_dir, workers_dir, gateway_db):
         if not directory.is_dir():
             raise ValueError('missing worker inventory')
         for file in directory.glob('*.pid'):
-            pid = int(file.read_text(encoding='utf-8').strip())
-            if pid <= 0 or win.identity(pid) is not None:
+            observation = observe_worker_receipt(file)
+            receipts.append(observation)
+            if observation['state'] not in {'gone', 'obsolete'}:
                 errors.append('live or unknown worker receipt')
     except Exception:
         errors.append('unknown worker inventory')
-    return {'clear': not errors, 'errors': errors}
+    return {'clear': not errors, 'errors': errors, 'worker_receipts': receipts, 'background_jobs': background}
 
 
 def health(port, path='/api/health', *, kind='app'):

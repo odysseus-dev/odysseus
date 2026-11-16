@@ -179,3 +179,35 @@ Lifecycle remains separate: `4c6636c499cef5a845fa7f9d3e56b485a2a05456` adds
 receipt-bound direct-child exit diagnostics; 45 focused exit/control/API checks
 passed. It is neither merged nor a dependency of this health correction.
 Public activation/recovery plan: `.odysseus-dev/WINDOWS_FIRST_ACTIVATION_APPROVAL.md`.
+
+## Health correction integrated; inventory reconciliation development
+
+With separate explicit approval, clean production `3ce9bff2` was fast-forwarded
+only to `a86c1c7b346256354d49520e63ea705525f47748`. Fresh private backup and
+verified inverse-tree rollback: `.odysseus-dev/windows-restart-deploy-20261116-165732`.
+Task XML, live wrapper and configuration hashes stayed unchanged. No restart,
+autostart change, process termination, push or release; 14 HTTP checks reused.
+
+Actual DATA_DIR was proved from the live app's open `logs/app.log` handle name,
+not environment/credential reads or an assumed default. The job store really
+is `F:\Odysseus\data\bg_jobs.json`. It is lazy-created; absent job/containment/
+publication artifacts plus a complete OS supervisor scan establish pre-first-
+launch idle state. A new observational candidate handles that strict case without
+inventing a registry and retains unknown/partial/racing evidence as blocking.
+
+Fresh receipt audit found 13 gone and two obsolete/foreign incarnations. The
+candidate rereads paired files and kernel identities, never deletes history,
+changes recorded outcomes or signals current PID occupants. All original
+receipts/task bytes were verified unchanged. Seventeen focused guard checks pass.
+
+All 19 non-gateway descendants have source-traced app-private MCP ownership
+(four built-in Python services and Playwright, plus wrappers). None was whitelisted
+or stopped. Their in-flight activity is NOT authoritatively observable through
+the current interfaces: `/api/busy` is image-only and authenticated. The request
+for a normal signed-in read timed out; no authentication bypass was attempted.
+The full descendant guard and the current active-turn guard remain blocking.
+
+Details: `docs/windows-activation-inventory.md`; actual evidence under the fresh
+backup directory. This new guard candidate is DEVELOPMENT ONLY and needs separate
+integration approval. Do not request a legacy transition until complete native
+MCP quiescence is established; known purpose/low CPU/ping is not an idle proof.
