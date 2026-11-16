@@ -4,6 +4,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import Storage from './storage.js';
+import { canonicalToggleName, isBlockedAgentToggle, isToggleOn } from './toggleGuard.js';
 import themeModule from './theme.js?v=20260911organsrain1';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
@@ -48,6 +49,14 @@ export function handleUIControl(uiData) {
 
   try {
     if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
+      // The agent may turn shell off, but only the user may turn it on. The
+      // backend refuses agent-initiated enable events; this guard also protects
+      // against a stale/cached backend or a replayed event flipping the UI.
+      if (isBlockedAgentToggle(uiData)) {
+        return;
+      }
+      var toggleName = canonicalToggleName(uiData.toggle_name);
+      var toggleState = isToggleOn(uiData.state);
       var toggleMap = {
         web: 'web-toggle', bash: 'bash-toggle', rag: 'rag-toggle',
         research: 'research-toggle', incognito: 'incognito-toggle',
@@ -55,23 +64,24 @@ export function handleUIControl(uiData) {
       var btnMap = {
         web: 'web-toggle-btn', bash: 'bash-toggle-btn', rag: 'rag-indicator-btn',
       };
-      var chkId = toggleMap[uiData.toggle_name];
-      var btnId = btnMap[uiData.toggle_name];
-      if (uiData.toggle_name === 'rag' && window._syncRagIndicator) {
-        window._syncRagIndicator(!!uiData.state);
+      var chkId = toggleMap[toggleName];
+      var btnId = btnMap[toggleName];
+      if (toggleName === 'rag' && window._syncRagIndicator) {
+        window._syncRagIndicator(toggleState);
       } else {
         if (chkId) {
           var chk = document.getElementById(chkId);
-          if (chk) chk.checked = !!uiData.state;
+          if (chk) chk.checked = toggleState;
         }
         if (btnId) {
           var btn = document.getElementById(btnId);
-          if (btn) btn.classList.toggle('active', !!uiData.state);
+          if (btn) {
+            btn.classList.toggle('active', toggleState);
+            btn.setAttribute('aria-pressed', String(toggleState));
+          }
         }
       }
-      var ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-      ts[uiData.toggle_name] = !!uiData.state;
-      Storage.setJSON(Storage.KEYS.TOGGLES, ts);
+      Storage.setToolToggle(toggleName, toggleState);
 
     } else if (uiEvent === 'set_mode' || uiData.ui_event === 'set_mode') {
       var modeVal = uiData.mode;

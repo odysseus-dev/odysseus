@@ -109,6 +109,20 @@ export function setToggle(name, value) {
   saveToggleState(state);
 }
 
+// Web search and shell are per-mode preferences: the UI reads web_agent /
+// web_chat and bash_agent / bash_chat, so agent-originated changes must write
+// the same keys or they disappear on reload. Other toggles stay bare.
+export function setToolToggle(name, value, mode) {
+  const state = loadToggleState();
+  const currentMode = mode || state.mode || 'chat';
+  if (name === 'web' || name === 'bash') {
+    state[`${name}_${currentMode}`] = value;
+  } else {
+    state[name] = value;
+  }
+  saveToggleState(state);
+}
+
 const Storage = {
   KEYS,
   getJSON,
@@ -119,7 +133,8 @@ const Storage = {
   loadToggleState,
   saveToggleState,
   getToggle,
-  setToggle
+  setToggle,
+  setToolToggle
 };
 
 export default Storage;
