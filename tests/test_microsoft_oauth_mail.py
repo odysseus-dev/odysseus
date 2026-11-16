@@ -85,8 +85,10 @@ def test_scopes_contain_required_grants():
 
     scopes = set(MICROSOFT_OAUTH_SCOPES.split())
     assert _DOCUMENTED_SCOPES <= scopes
-    # The outlook.office365.com resource is not the documented one.
-    assert not any("outlook.office365.com" in s for s in scopes)
+    # Only the documented resource scopes and identity grants are permitted.
+    assert scopes == _DOCUMENTED_SCOPES | {
+        "openid", "email", "profile", "offline_access",
+    }
     assert "offline_access" in MICROSOFT_OAUTH_SCOPES
     # Identity claims ride along so the connect flow can verify the mailbox.
     assert "openid" in MICROSOFT_OAUTH_SCOPES and "email" in MICROSOFT_OAUTH_SCOPES
