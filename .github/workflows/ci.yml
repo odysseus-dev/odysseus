@@ -108,9 +108,8 @@ jobs:
           done
           node --check scripts/check_frontend.mjs
           node --check scripts/check_document_references.mjs
-          node --check scripts/verify_document_remediation.mjs
-      - name: Test frontend architecture gates, reference checks, and stateless proof
-        run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs tests/documentRemediationVerifier.test.mjs
+      - name: Test frontend architecture gates and reference checks
+        run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs
       - name: Test document behavior suites
         run: |
           node --test tests/domainModules.test.mjs \

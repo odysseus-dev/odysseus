@@ -37,32 +37,16 @@ def test_document_reference_checker_passes():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_document_reference_and_verifier_tests_pass():
+def test_document_reference_tests_pass():
     _require_node_acorn()
     result = subprocess.run(
         [
             "node",
             "--test",
             "tests/documentReferences.test.mjs",
-            "tests/documentRemediationVerifier.test.mjs",
         ],
         cwd=ROOT,
         env=os.environ.copy(),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_verifier_unit_tests_are_portable_without_external_tool(tmp_path):
-    _require_node_acorn()
-    env = os.environ.copy()
-    env["DOCUMENT_EXTRACTION_VERIFIER_ROOT"] = str(tmp_path / "missing-verifier")
-    result = subprocess.run(
-        ["node", "--test", "tests/documentRemediationVerifier.test.mjs"],
-        cwd=ROOT,
-        env=env,
         capture_output=True,
         text=True,
         timeout=60,
