@@ -39,6 +39,7 @@ camera); use HTTPS if you need those.
 
 ```yaml
 auth_enabled: true          # Require login
+hass_auth: true             # Accept Home Assistant username/password in the login form
 admin_user: ""              # Optional initial local admin username
 admin_password: ""          # Optional initial local admin password
 llm_provider: none          # openai | anthropic | openrouter | groq | deepseek | google | mistral | none
@@ -133,6 +134,26 @@ extra_env:
   - TAVILY_API_KEY=...
   - ODYSSEUS_INPROCESS_TASKS=1
 ```
+
+### Home Assistant credentials
+
+`hass_auth` (default on) lets you sign in to Odysseus with your **Home Assistant
+username and password** — no separate Odysseus account needed:
+
+- The Odysseus login form verifies the pair with the Supervisor, which checks
+  it against Home Assistant core (`auth_api` in the add-on manifest grants
+  exactly that endpoint; the Supervisor token injected into the container is
+  used only for this check and is never exposed).
+- On first login the matching Odysseus account is created automatically:
+  **Home Assistant admins become Odysseus admins**, other HA users become
+  regular accounts.
+- Local Odysseus passwords keep working and are always checked first; this
+  adds a second way in, it never locks out local accounts. Failures (wrong
+  password, Supervisor unreachable) are refused — an outage can't be
+  mistaken for a successful HA login.
+- Odysseus sessions are separate from Home Assistant's; logging out of
+  Odysseus does not log you out of HA, and HA-side password changes apply on
+  the next Odysseus login.
 
 ### Agent safety
 

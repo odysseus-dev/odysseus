@@ -443,6 +443,13 @@
     } else {
       setMode('login');
     }
+    if (data.hass_auth && data.configured) {
+      // Home Assistant credential delegation is enabled on this deployment —
+      // advertise it so the operator knows their HA login works here.
+      setupNote.textContent = 'Tip: you can sign in with your Home Assistant username and password';
+      setupNote.style.display = 'block';
+      setTimeout(() => { if (mode === 'login') setupNote.style.display = 'none'; }, 10000);
+    }
     const policyRes = await policyPromise;
     if (policyRes && policyRes.ok) {
       policy = await policyRes.json();

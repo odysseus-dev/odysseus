@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+- **Login with your Home Assistant credentials**: the Odysseus login form now
+  accepts HA username/password pairs, verified by the Supervisor auth API
+  (`auth_api: true`). HA admins become Odysseus admins on first login; other
+  HA users get regular accounts. Local passwords keep working unchanged.
+- New `hass_auth` option (default on) to toggle the HA credential login.
+- Failure closed: if the Supervisor is unreachable or rejects the pair,
+  Odysseus refuses the login instead of failing open.
+
 ## 1.1.0
 
 - Track the current Odysseus `dev` line (588 upstream commits since 1.0.0),

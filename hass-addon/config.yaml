@@ -1,5 +1,5 @@
 name: Odysseus
-version: "1.1.0"
+version: "1.2.0"
 slug: odysseus
 description: >-
   Self-hosted AI workspace for chat, agents, deep research, documents, email,
@@ -12,6 +12,11 @@ init: false
 startup: application
 boot: auto
 stage: stable
+
+# Lets the add-on verify username/password pairs against Home Assistant
+# core via the Supervisor auth API (POST /auth). Grants no other API
+# access; the Supervisor token this implies is used only for that check.
+auth_api: true
 
 # ---------------------------------------------------------------------------
 # Direct port access. The web UI and API are served on this port; set the host
@@ -35,6 +40,11 @@ map:
 options:
   # --- Odysseus native authentication ------------------------------------
   auth_enabled: true
+  # --- Home Assistant credentials ----------------------------------------
+  # Accept Home Assistant username/password in the Odysseus login form.
+  # Verified by the Supervisor against HA core; HA admins become Odysseus
+  # admins, other HA users become regular Odysseus accounts.
+  hass_auth: true
   # --- Model provider ----------------------------------------------------
   # Pick the provider the API key is for; the add-on seeds a ready-to-use model
   # endpoint for it. "none" = configure models in the app instead.
@@ -58,6 +68,7 @@ options:
 
 schema:
   auth_enabled: bool
+  hass_auth: bool
   # Optional (no default): empty until the user sets them.
   admin_user: str?
   admin_password: password?

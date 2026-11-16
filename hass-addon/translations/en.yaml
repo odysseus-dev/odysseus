@@ -4,6 +4,13 @@ configuration:
     description: >-
       Keep Odysseus authentication enabled. Turning this off makes anyone who
       can reach the add-on a full user.
+  hass_auth:
+    name: Home Assistant credentials
+    description: >-
+      Accept your Home Assistant username and password in the Odysseus login
+      form. Verified by the Supervisor against Home Assistant; HA admins
+      become Odysseus admins, other HA users get regular accounts on first
+      login.
   admin_user:
     name: Initial admin username
     description: Optional local Odysseus admin created on first start.

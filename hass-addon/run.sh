@@ -51,6 +51,15 @@ export ODYSSEUS_EDITOR_DRAFT_MAX_BYTES="${ODYSSEUS_EDITOR_DRAFT_MAX_BYTES:-26843
 # --- Odysseus native authentication -----------------------------------------
 export AUTH_ENABLED="$(_flag auth_enabled true)"
 
+# --- Home Assistant credentials ---------------------------------------------
+# ODYSSEUS_HASS_AUTH lets the login form verify username/password pairs with
+# the Supervisor auth API (config.yaml auth_api). Home Assistant injects
+# SUPERVISOR_TOKEN into this container automatically; the app refuses to
+# enable the feature when it is missing. extra_env below can still override.
+if [ "$(_flag hass_auth true)" = "true" ]; then
+    export ODYSSEUS_HASS_AUTH="${ODYSSEUS_HASS_AUTH:-1}"
+fi
+
 ADMIN_USER="$(_opt admin_user)"
 ADMIN_PASSWORD="$(_opt admin_password)"
 if [ -n "$ADMIN_USER" ]; then export ODYSSEUS_ADMIN_USER="$ADMIN_USER"; fi
