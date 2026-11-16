@@ -154,9 +154,10 @@ export function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     if (emptyImport) emptyImport.style.display = 'none';
     const md = textarea.value || '';
     if (richMode) {
-      const safe = mdMod?.sanitizeAllowedHtml
+      const sanitized = typeof mdMod?.sanitizeAllowedHtml === 'function'
         ? mdMod.sanitizeAllowedHtml(md)
-        : md;
+        : _escHtml(md).replace(/\n/g, '<br>');
+      const safe = typeof sanitized === 'string' ? sanitized : '';
       preview.classList.add('doc-rich-preview');
       preview.innerHTML = safe || '<p class="doc-rich-preview-empty">No preview yet.</p>';
     } else if (mdMod && mdMod.mdToHtml) {

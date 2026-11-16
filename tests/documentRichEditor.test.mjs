@@ -629,6 +629,13 @@ beforeEach(() => {
   globalThis.NodeFilter = {
     SHOW_TEXT: 4
   };
+  globalThis.DOMParser = class MockDOMParser {
+    parseFromString(html) {
+      const body = new MockElement('body');
+      body.innerHTML = String(html ?? '');
+      return { body };
+    }
+  };
   globalThis.markdownModule = {
     sanitizeAllowedHtml: (html) => String(html || '').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''),
     mdToHtml: (raw) => `<p>${raw}</p>`
@@ -1046,6 +1053,50 @@ describe('Document Editor Rich-Text Subsystem', () => {
 
       assert.equal(img.hasAttribute('data-editor-image-selected'), false, 'image selection flag removed');
       assert.equal(_activeRichImage, null, 'active image reference cleared');
+    });
+  });
+
+  describe('Security Fail-Closed Sanitization (PR #7292)', () => {
+    it('_sanitizedRichTextHtml and _richTextContentToHtml fail closed when sanitizer is unavailable or returns non-string', () => {
+      const rich = new MockElement('div');
+      rich.innerHTML = '<p>Safe <b>text</b><img src=x onerror=alert(1)></p>';
+      rich.textContent = 'Safe text';
+
+      const prevSanitizer = globalThis.markdownModule.sanitizeAllowedHtml;
+      try {
+        globalThis.markdownModule.sanitizeAllowedHtml = undefined;
+        const fallbackSaved = _sanitizedRichTextHtml(rich);
+        assert.ok(!fallbackSaved.includes('<img'), 'fail-closed escape omits raw img tag');
+        assert.equal(_richTextContentToHtml('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
+
+        globalThis.markdownModule.sanitizeAllowedHtml = () => null;
+        assert.equal(_sanitizedRichTextHtml(rich), '');
+        assert.equal(_richTextContentToHtml('<p>Hello</p>'), '');
+      } finally {
+        globalThis.markdownModule.sanitizeAllowedHtml = prevSanitizer;
+      }
+    });
+
+    it('_cleanRichTextPasteHtml fails closed and strips foreign/blocked tags even if sanitizer misses them', () => {
+      const prevSanitizer = globalThis.markdownModule.sanitizeAllowedHtml;
+      try {
+        globalThis.markdownModule.sanitizeAllowedHtml = undefined;
+        const escaped = _cleanRichTextPasteHtml('<img src=x onerror=alert(1)>');
+        assert.equal(escaped, '&lt;img src=x onerror=alert(1)&gt;');
+
+        // Even with a permissive sanitizer, blocked containers and unsafe links must be removed
+        globalThis.markdownModule.sanitizeAllowedHtml = (html) => html;
+        const cleaned = _cleanRichTextPasteHtml(
+          '<p><b>Keep</b></p><svg onload="alert(1)"><text>bad</text></svg><iframe src="https://evil.example"></iframe><a href="java\tscript:alert(1)">Link</a>'
+        );
+        assert.ok(cleaned.includes('<b>Keep</b>'), 'valid formatting preserved');
+        assert.ok(!cleaned.includes('<svg'), 'svg removed');
+        assert.ok(!cleaned.includes('<iframe'), 'iframe removed');
+        assert.ok(!cleaned.includes('href'), 'malformed link href stripped');
+        assert.ok(cleaned.includes('Link'), 'link text preserved');
+      } finally {
+        globalThis.markdownModule.sanitizeAllowedHtml = prevSanitizer;
+      }
     });
   });
 

@@ -43,11 +43,28 @@ export function _isRichInlineCodeMarker(element) {
 
 export function _normalizeRichLinkUrl(rawUrl) {
   let url = String(rawUrl || '').trim();
-  if (!url) return '';
+  if (!url || /[\u0000-\u001f\u007f-\u009f]/.test(url)) return '';
+  if (/^\/{2,}(?:$|[\s/?#\\])/.test(url) || /^\/\\/.test(url)) return '';
   if (/^(?:#|\/|\.\/|\.\.\/)/.test(url)) return url;
   if (url.startsWith('//')) url = `https:${url}`;
+  if (/^(?:javascript|vbscript|data|file):/i.test(url.replace(/\s+/g, ''))) return '';
   if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = `https://${url}`;
-  return /^(?:https?:|mailto:|tel:)/i.test(url) ? url : '';
+  if (!/^(?:https?:|mailto:|tel:)/i.test(url)) return '';
+  if (/^https?:/i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) return '';
+    } catch (_) {
+      return '';
+    }
+  } else if (/^mailto:/i.test(url)) {
+    const recipient = url.slice('mailto:'.length).split('?')[0].trim();
+    if (!recipient || !/^[^\s@]+@[^\s@]+$/.test(recipient)) return '';
+  } else if (/^tel:/i.test(url)) {
+    const phone = url.slice('tel:'.length).trim();
+    if (!phone || !/^[+\d().\-\s]+$/.test(phone) || !/\d/.test(phone)) return '';
+  }
+  return url;
 }
 
 export const _RICH_FONT_SIZE_PX = Object.freeze({

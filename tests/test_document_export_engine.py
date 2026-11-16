@@ -109,7 +109,13 @@ def test_base_export_naming_sanitization():
 def test_html_export_markup_generation_and_theme_variables():
     """Validate HTML export markup structure, clean CSS, and theme variables."""
     script = r"""
-      import { buildHtmlExportMarkup, _richTextExportCss } from './static/js/document/ui/exportDocx.js';
+      import { buildHtmlExportMarkup, _richTextExportCss, initExportDocx } from './static/js/document/ui/exportDocx.js';
+
+      initExportDocx({
+        getMarkdownModule: () => ({
+          sanitizeAllowedHtml: html => String(html || '').replace(/<script[\s\S]*?<\/script>/gi, ''),
+        }),
+      });
 
       const richDoc = {
         title: 'Project & Status <2026>',
@@ -117,6 +123,13 @@ def test_html_export_markup_generation_and_theme_variables():
         content: '<h1>Header</h1><p>Body paragraph</p><hr class="richtext-page-break">',
       };
       const richHtml = buildHtmlExportMarkup(richDoc);
+
+      initExportDocx({});
+      const failClosedHtml = buildHtmlExportMarkup({
+        title: 'Fail Closed',
+        language: 'richtext',
+        content: '<p>Hi</p><script>alert(1)</script>',
+      });
 
       const plainDoc = {
         title: 'Script File',
@@ -129,11 +142,15 @@ def test_html_export_markup_generation_and_theme_variables():
 
       console.log(JSON.stringify({
         richHtml,
+        failClosedHtml,
         plainHtml,
         css,
       }));
     """
     res = _run_node_module(script)
+
+    assert '<script>' not in res["failClosedHtml"]
+    assert '&lt;script&gt;alert(1)&lt;/script&gt;' in res["failClosedHtml"]
 
     rich = res["richHtml"]
     assert "<!DOCTYPE html>" in rich
@@ -391,3 +408,56 @@ def test_import_from_device_extracted_module_and_export_extensions():
     assert res["hasImport"] is True
     assert res["hasInit"] is True
     assert res["downloads"] == ["Script.py", "Chart.svg", "Config.xml"]
+
+
+def test_docx_inline_and_richtext_export_rejects_unsafe_links_and_fails_closed():
+    """DOCX inline hyperlinks and rich-text export must reject dangerous URLs and escape if sanitizer is absent."""
+    script = r"""
+      import { _docxInlineChildren, _richTextToDocxChildren, initExportDocx } from './static/js/document/ui/exportDocx.js';
+
+      globalThis.Node = { ELEMENT_NODE: 1, TEXT_NODE: 3 };
+      class FakeTextRun { constructor(opts) { this.kind = 'TextRun'; Object.assign(this, opts); } }
+      class FakeExternalHyperlink { constructor(opts) { this.kind = 'ExternalHyperlink'; Object.assign(this, opts); } }
+      class FakeParagraph { constructor(opts) { this.kind = 'Paragraph'; Object.assign(this, opts); } }
+      const fakeDocx = {
+        TextRun: FakeTextRun,
+        ExternalHyperlink: FakeExternalHyperlink,
+        Paragraph: FakeParagraph,
+        HeadingLevel: { HEADING_1: 'h1', HEADING_2: 'h2', HEADING_3: 'h3', HEADING_4: 'h4', HEADING_5: 'h5', HEADING_6: 'h6' },
+      };
+
+      function makeLink(href, text) {
+        return {
+          nodeType: 1,
+          tagName: 'A',
+          getAttribute: (n) => (n === 'href' ? href : null),
+          childNodes: [{ nodeType: 3, nodeValue: text }],
+        };
+      }
+
+      const inline = _docxInlineChildren(
+        [
+          makeLink('https://example.com/ok', 'Valid HTTPS'),
+          makeLink('mailto:team@example.com', 'Valid Mailto'),
+          makeLink('javascript:alert(1)', 'Bad JS'),
+          makeLink('java\tscript:alert(1)', 'Bad Tab JS'),
+          makeLink('https://', 'Malformed Empty Host'),
+        ],
+        fakeDocx
+      );
+
+      // Without sanitizer or DOMParser, _richTextToDocxChildren fails closed safely without throwing or passing raw HTML.
+      initExportDocx({});
+      const emptyNoParser = await _richTextToDocxChildren('<script>alert(1)</script>', fakeDocx);
+
+      console.log(JSON.stringify({
+        links: inline.filter(n => n.kind === 'ExternalHyperlink').map(n => n.link),
+        texts: inline.filter(n => n.kind === 'TextRun').map(n => n.text),
+        emptyNoParser,
+      }));
+    """
+    res = _run_node_module(script)
+
+    assert res["links"] == ["https://example.com/ok", "mailto:team@example.com"]
+    assert res["texts"] == ["Bad JS", "Bad Tab JS", "Malformed Empty Host"]
+    assert res["emptyNoParser"] == []

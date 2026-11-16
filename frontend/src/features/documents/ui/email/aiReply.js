@@ -36,10 +36,15 @@ async function _aiReply(opts = {}) {
         .trim();
     };
     const splitCurrent = _splitEmailReplyQuote(currentBody);
-    const ownBody = document.createElement('template');
-    ownBody.innerHTML = String(splitCurrent.body || '');
-    const ownText = (ownBody.content.textContent || '').trim();
-    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
+    const ownBodyHtml = String(splitCurrent.body || '');
+    const ownBody = typeof DOMParser !== 'undefined'
+      ? new DOMParser().parseFromString(ownBodyHtml, 'text/html').body
+      : null;
+    const ownText = (ownBody ? ownBody.textContent : ownBodyHtml.replace(/<[^>]*>/g, '')).trim();
+    const hasRichElement = ownBody
+      ? Boolean(ownBody.querySelector('img,video,audio,iframe,table'))
+      : /<(?:img|video|audio|iframe|table)\b/i.test(ownBodyHtml);
+    const isReplaceableDraft = (!ownText && !hasRichElement) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
     if (!isReplaceableDraft) {
       if (uiModule) uiModule.showToast('Reply already has text');
       return;

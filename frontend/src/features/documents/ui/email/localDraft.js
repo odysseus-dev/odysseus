@@ -154,10 +154,12 @@ export function _sanitizeOutgoingEmailBody(raw) {
       return _parseEmailHeader(decoded).body || '';
     }).join('');
 
-    if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {
-      const probe = document.createElement('template');
-      probe.innerHTML = text;
-      const plain = (probe.content.textContent || '').trim();
+    if (!changed && /<[^>]+>/.test(text)) {
+      const plain = (
+        typeof DOMParser !== 'undefined'
+          ? (new DOMParser().parseFromString(text, 'text/html').body?.textContent || '')
+          : text.replace(/<[^>]*>/g, '')
+      ).trim();
       const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;
       if (plainClean !== plain) return plainClean;
     }

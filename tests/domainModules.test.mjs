@@ -648,6 +648,19 @@ test('_normalizeRichLinkUrl normalizes links and rejects unsafe schemes', () => 
   assert.equal(_normalizeRichLinkUrl('file:///etc/passwd'), '');
   assert.equal(_normalizeRichLinkUrl('ftp://ftp.example.com'), '');
   assert.equal(_normalizeRichLinkUrl('vbscript:msgbox("hello")'), '');
+
+  // Control chars, obfuscated schemes, empty hosts, and malformed mailto/tel rejected
+  assert.equal(_normalizeRichLinkUrl('java\tscript:alert(1)'), '');
+  assert.equal(_normalizeRichLinkUrl('java\nscript:alert(1)'), '');
+  assert.equal(_normalizeRichLinkUrl('java script:alert(1)'), '');
+  assert.equal(_normalizeRichLinkUrl('https://example.com/\0bad'), '');
+  assert.equal(_normalizeRichLinkUrl('https://'), '');
+  assert.equal(_normalizeRichLinkUrl('http://'), '');
+  assert.equal(_normalizeRichLinkUrl('///evil'), '');
+  assert.equal(_normalizeRichLinkUrl('mailto:'), '');
+  assert.equal(_normalizeRichLinkUrl('mailto:not-an-email'), '');
+  assert.equal(_normalizeRichLinkUrl('tel:'), '');
+  assert.equal(_normalizeRichLinkUrl('tel:abc'), '');
 });
 
 test('_RICH_FONT_SIZE_PX is frozen and defines levels 1 through 7', () => {

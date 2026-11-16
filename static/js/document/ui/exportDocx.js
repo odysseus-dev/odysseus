@@ -5,6 +5,7 @@
  */
 
 import { _escHtml, _isDocxLang, _isRichTextLang } from '../domain/documentKinds.js';
+import { _normalizeRichLinkUrl } from '../domain/richTextRules.js';
 import { _importFromDevice } from './importFromDevice.js';
 import { _isFormBackedDoc } from './pdf/annotations.js';
 
@@ -114,15 +115,18 @@ const _richTextToHtmlString = (html) => {
   if (_deps.richTextContentToHtml) return _deps.richTextContentToHtml(html);
   const raw = String(html || '');
   if (!raw.trim()) return '';
-  if (/<\/?[a-z][^>]*>/i.test(raw)) {
-    const md = _getMarkdownModule();
-    return md?.sanitizeAllowedHtml ? md.sanitizeAllowedHtml(raw) : raw;
-  }
   const md = _getMarkdownModule();
+  if (/<\/?[a-z][^>]*>/i.test(raw)) {
+    if (typeof md?.sanitizeAllowedHtml !== 'function') return _escHtml(raw);
+    const sanitized = md.sanitizeAllowedHtml(raw);
+    return typeof sanitized === 'string' ? sanitized : '';
+  }
   try {
-    return md?.mdToHtml ? md.mdToHtml(raw, { shortcodes: false }) : raw;
+    if (typeof md?.mdToHtml !== 'function') return _escHtml(raw);
+    const rendered = md.mdToHtml(raw, { shortcodes: false });
+    return typeof rendered === 'string' ? rendered : _escHtml(raw);
   } catch (_) {
-    return raw;
+    return _escHtml(raw);
   }
 };
 
@@ -218,7 +222,7 @@ export function buildHtmlExportMarkup(doc, options = {}) {
 
   let body;
   if (_isRichTextLang(lang)) {
-    body = text;
+    body = _richTextToHtmlString(text);
   } else if (lang === 'markdown' && markdownMod?.mdToHtml) {
     body = markdownMod.mdToHtml(text, { shortcodes: false });
   } else {
@@ -328,10 +332,12 @@ export async function exportAsPdf(doc) {
   // Render content as HTML for the browser print dialog.
   let html;
   if (_isRichTextLang(lang)) {
-    html = text;
+    html = _richTextToHtmlString(text);
   } else if (_isDocxLang(lang)) {
-    html = document.querySelector('#doc-docx-preview .doc-docx-paper')?.innerHTML ||
-      '<pre style="white-space:pre-wrap">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+    const previewHtml = document.querySelector('#doc-docx-preview .doc-docx-paper')?.innerHTML;
+    html = previewHtml
+      ? _richTextToHtmlString(previewHtml)
+      : '<pre style="white-space:pre-wrap">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
   } else if (lang === 'markdown' && markdownMod?.mdToHtml) {
     html = markdownMod.mdToHtml(text, { shortcodes: false });
   } else {
@@ -353,7 +359,10 @@ export async function exportAsPdf(doc) {
     printDoc.title = _getExportBaseName(targetDoc);
     const container = printDoc.createElement('div');
     container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
-    container.innerHTML = html;
+    const parsedDoc = new DOMParser().parseFromString(html, 'text/html');
+    for (const node of Array.from(parsedDoc.body?.childNodes || [])) {
+      container.appendChild(printDoc.importNode(node, true));
+    }
     if (_isRichTextLang(lang)) {
       const style = printDoc.createElement('style');
       style.textContent = _richTextExportCss();
@@ -581,6 +590,9 @@ export function showExportMenu(anchor, anchorRect) {
     if (_deps.convertDocxToRichText) options.push({ label: 'Convert to Rich Text', fn: _deps.convertDocxToRichText });
     options.push({ label: 'Sign / annotate (PDF)', fn: convertOriginalToPdfForSigning });
   }
+  // PDF-backed documents already have a lossless filled-PDF export above.
+  // Running the generic browser print path would rebuild the extracted text and
+  // destroy the original page layout, images, and form structure.
   if (!isForm && (_isDocxLang(lang) || typeof window.print === 'function')) {
     options.push({
       label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print / save PDF',
@@ -859,8 +871,13 @@ export function _docxInlineChildren(nodes, docx, inherited = {}, preparedImages 
     }
     const style = _docxInlineStyle(node, inherited);
     const nested = _docxInlineChildren(node.childNodes, docx, style, preparedImages);
-    if (node.tagName === 'A' && node.getAttribute('href') && nested.length) {
-      children.push(new docx.ExternalHyperlink({ link: node.getAttribute('href'), children: nested }));
+    if (node.tagName === 'A' && nested.length) {
+      const safeHref = _normalizeRichLinkUrl(node.getAttribute('href'));
+      if (safeHref) {
+        children.push(new docx.ExternalHyperlink({ link: safeHref, children: nested }));
+      } else {
+        children.push(...nested);
+      }
     } else {
       children.push(...nested);
     }
@@ -1033,10 +1050,13 @@ export function _docxBlocksFromNodes(nodes, docx, preparedImages = new Map()) {
 }
 
 export async function _richTextToDocxChildren(html, docx) {
-  const template = document.createElement('template');
-  template.innerHTML = _richTextToHtmlString(html);
-  const preparedImages = await _docxPrepareImages(template.content, docx);
-  return _docxBlocksFromNodes(template.content.childNodes, docx, preparedImages);
+  const safeHtml = _richTextToHtmlString(html);
+  const parsed = typeof DOMParser !== 'undefined'
+    ? new DOMParser().parseFromString(safeHtml, 'text/html').body
+    : null;
+  if (!parsed) return [];
+  const preparedImages = await _docxPrepareImages(parsed, docx);
+  return _docxBlocksFromNodes(parsed.childNodes, docx, preparedImages);
 }
 
 export function _markdownToDocxChildren(text, docx) {

@@ -509,15 +509,52 @@ function documentFunction(name, text) {
       result.controlExecuted = window.executed;
       control.remove();
       window.executed = 0;
+
+      // Print and preview fail closed if sanitizeAllowedHtml is unavailable.
+      exporter.initExportDocx({
+        getActiveDocId: () => 'fixture', getActiveDoc: () => doc, getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getLanguage: () => 'richtext', getMarkdownModule: () => ({ renderMath: markdownModule.renderMath }),
+        getUiModule: () => ({ showError: text => failures.push(text) }),
+      });
+      await exporter.exportAsPdf();
+      result.prints = prints;
+      const failClosedFrame = document.getElementById('doc-browser-print-frame');
+      result.failClosedPrintScripts = failClosedFrame.contentDocument.querySelectorAll('script,img[onerror],svg,iframe').length;
+      result.failClosedPrintText = failClosedFrame.contentDocument.body.textContent;
+      failClosedFrame.remove();
+
+      const previewModes = await import('/static/js/document/ui/previewModes.js');
+      previewModes.initPreviewModes({
+        getActiveDocId: () => 'fixture', getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getMdPreview: () => document.getElementById('doc-md-preview'),
+        getEditorWrap: () => document.getElementById('doc-editor-wrap'),
+        getLanguage: () => 'richtext', getMarkdownModule: () => ({}),
+      });
+      const previewEl = document.createElement('div');
+      previewEl.id = 'doc-md-preview';
+      const wrapEl = document.createElement('div');
+      wrapEl.id = 'doc-editor-wrap';
+      document.body.append(previewEl, wrapEl);
+      previewModes._setMarkdownPreviewActive(true, { remember: false });
+      result.previewUnsafe = previewEl.querySelectorAll('script,img[onerror],svg[onload],iframe').length;
+      result.previewExecuted = window.executed;
+      previewEl.remove();
+      wrapEl.remove();
       return result;
     }, functions);
-    assert.equal(print.prints, 1);
+    assert.equal(print.prints, 2);
     assert.deepEqual(print.failures, []);
     assert.equal(print.sandbox, 'allow-same-origin allow-modals');
     assert.equal(print.text, 'Printable');
     assert.equal(print.title, 'Print _test_');
     assert.equal(print.executed, 0);
     assert(print.controlExecuted > 0);
+    assert.equal(print.failClosedPrintScripts, 0);
+    assert.ok(print.failClosedPrintText.includes('<b>Printable</b>'));
+    assert.equal(print.previewUnsafe, 0);
+    assert.equal(print.previewExecuted, 0);
 
     // Both appendChild findings follow tainted card._md, an ordinary JS
     // property. Rendering and re-rendering must keep that markdown as text.

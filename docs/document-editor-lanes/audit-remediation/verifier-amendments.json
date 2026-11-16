@@ -708,6 +708,90 @@
           "rationale": "Cancel active writing stream poll timer and clear deferred listener registration on panel abort or menu close."
         }
       ]
+    },
+    "_sanitizeOutgoingEmailBody": {
+      "file": "ui/email/localDraft.js",
+      "rationale": "Parse wrapped HTML via DOMParser instead of assigning untrusted text to template.innerHTML.",
+      "targetFunctionSha256": "db938b1af39840199368a7a2ebc0c9a4bcde690ff38f01bc0403e8031ee5daff",
+      "replacements": [
+        {
+          "from": "    if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {\n      const probe = document.createElement('template');\n      probe.innerHTML = text;\n      const plain = (probe.content.textContent || '').trim();\n      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;\n      if (plainClean !== plain) return plainClean;\n    }",
+          "to": "    if (!changed && /<[^>]+>/.test(text)) {\n      const plain = (\n        typeof DOMParser !== 'undefined'\n          ? (new DOMParser().parseFromString(text, 'text/html').body?.textContent || '')\n          : text.replace(/<[^>]*>/g, '')\n      ).trim();\n      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;\n      if (plainClean !== plain) return plainClean;\n    }",
+          "rationale": "Extract plain text using DOMParser or regex fallback without an innerHTML sink."
+        }
+      ]
+    },
+    "_emailHtmlToPlainText": {
+      "file": "ui/richEditor/richBodySync.js",
+      "rationale": "Parse email HTML via DOMParser instead of assigning untrusted HTML to template.innerHTML.",
+      "targetFunctionSha256": "ac5ee6ab84fea8d226c4836f8e78a7e220c3cf427f9508fe6b5c471c1c1ab529",
+      "replacements": [
+        {
+          "from": "function _emailHtmlToPlainText(html) {\n    if (typeof document === 'undefined') return String(html || '');\n    const d = document.createElement('template');\n    d.innerHTML = String(html || '');\n    return d.content.textContent || '';\n  }",
+          "to": "function _emailHtmlToPlainText(html) {\n    const source = String(html || '');\n    if (typeof DOMParser !== 'undefined') {\n      return new DOMParser().parseFromString(source, 'text/html').body?.textContent || '';\n    }\n    if (typeof document === 'undefined') return source;\n    return source.replace(/<[^>]*>/g, '');\n  }",
+          "rationale": "Extract textContent via DOMParser without assigning to template.innerHTML."
+        }
+      ]
+    },
+    "_sanitizedRichTextHtml": {
+      "file": "ui/richEditor/richBodySync.js",
+      "rationale": "Fail closed when sanitizeAllowedHtml is unavailable, parse sanitized HTML via DOMParser, and move inline code child nodes without innerHTML.",
+      "targetFunctionSha256": "008350ed715bf44bb18e8a8b53e21b7f396a75058a2d0882d08082978cf916bf",
+      "replacements": [
+        {
+          "from": "    const sanitized = markdownModule.sanitizeAllowedHtml\n      ? markdownModule.sanitizeAllowedHtml(html)\n      : html;\n    const tpl = document.createElement('template');\n    tpl.innerHTML = sanitized;\n    tpl.content.querySelectorAll('a[href]').forEach(link => {\n      const safeUrl = _normalizeRichLinkUrl(link.getAttribute('href'));\n      if (!safeUrl) {\n        link.replaceWith(...Array.from(link.childNodes));\n        return;\n      }\n      link.setAttribute('href', safeUrl);\n      link.setAttribute('rel', 'noopener noreferrer');\n    });\n    tpl.content.querySelectorAll('span').forEach(span => {\n      if (!_isRichInlineCodeMarker(span)) return;\n      const code = document.createElement('code');\n      code.innerHTML = span.innerHTML;\n      const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);\n      let node;\n      while ((node = walker.nextNode())) node.nodeValue = node.nodeValue.replace(/\\u200b/g, '');\n      span.replaceWith(code);\n    });\n    return tpl.innerHTML\n      .replace(/\\sdata-editor-(?:table|checklist|image|inline-code|link)-token=\"[^\"]*\"/gi, '')\n      .replace(/\\sdata-editor-image-selected(?:=\"[^\"]*\")?/gi, '');",
+          "to": "    if (typeof markdownModule?.sanitizeAllowedHtml !== 'function' || typeof DOMParser === 'undefined') {\n      return _emailPlainTextToHtml(rich.innerText || rich.textContent || '');\n    }\n    const sanitizedResult = markdownModule.sanitizeAllowedHtml(html);\n    const sanitized = typeof sanitizedResult === 'string' ? sanitizedResult : '';\n    const root = new DOMParser().parseFromString(sanitized, 'text/html').body;\n    if (!root) return '';\n    root.querySelectorAll('a[href]').forEach(link => {\n      const safeUrl = _normalizeRichLinkUrl(link.getAttribute('href'));\n      if (!safeUrl) {\n        link.replaceWith(...Array.from(link.childNodes));\n        return;\n      }\n      link.setAttribute('href', safeUrl);\n      link.setAttribute('rel', 'noopener noreferrer');\n    });\n    root.querySelectorAll('span').forEach(span => {\n      if (!_isRichInlineCodeMarker(span)) return;\n      const code = document.createElement('code');\n      Array.from(span.childNodes).forEach(child => code.appendChild(child));\n      const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);\n      let node;\n      while ((node = walker.nextNode())) node.nodeValue = node.nodeValue.replace(/\\u200b/g, '');\n      span.replaceWith(code);\n    });\n    return root.innerHTML\n      .replace(/\\sdata-editor-(?:table|checklist|image|inline-code|link)-token=\"[^\"]*\"/gi, '')\n      .replace(/\\sdata-editor-image-selected(?:=\"[^\"]*\")?/gi, '');",
+          "rationale": "Require sanitizer and DOMParser, fail closed when unavailable, and transfer child nodes instead of assigning code.innerHTML."
+        }
+      ]
+    },
+    "_richTextContentToHtml": {
+      "file": "ui/richEditor/richBodySync.js",
+      "rationale": "Fail closed to escaped HTML when sanitizeAllowedHtml or mdToHtml is unavailable or returns non-string output.",
+      "targetFunctionSha256": "3c6c10843744cff393e0707df7b3a58fae1c1a2da11097aadffb753f3dc1a02a",
+      "replacements": [
+        {
+          "from": "    if (/<\\/?[a-z][^>]*>/i.test(raw)) {\n      return markdownModule.sanitizeAllowedHtml\n        ? markdownModule.sanitizeAllowedHtml(raw)\n        : raw;\n    }\n    try { return markdownModule.mdToHtml(raw, { shortcodes: false }); }",
+          "to": "    if (/<\\/?[a-z][^>]*>/i.test(raw)) {\n      if (typeof markdownModule?.sanitizeAllowedHtml !== 'function') {\n        return _emailPlainTextToHtml(raw);\n      }\n      const sanitized = markdownModule.sanitizeAllowedHtml(raw);\n      return typeof sanitized === 'string' ? sanitized : '';\n    }\n    try {\n      if (typeof markdownModule?.mdToHtml !== 'function') return _emailPlainTextToHtml(raw);\n      const rendered = markdownModule.mdToHtml(raw, { shortcodes: false });\n      return typeof rendered === 'string' ? rendered : _emailPlainTextToHtml(raw);\n    }",
+          "rationale": "Never return raw unsanitized HTML when markdownModule.sanitizeAllowedHtml is absent or non-string."
+        }
+      ]
+    },
+    "_cleanRichTextPasteHtml": {
+      "file": "ui/richEditor/richOperations.js",
+      "rationale": "Fail closed when sanitizeAllowedHtml or DOMParser is unavailable, parse via DOMParser, remove blocked tags case-insensitively, and uppercase tag checks.",
+      "targetFunctionSha256": "3701141dc5191116204195f916db6f82afff45bf1f1d63a727e74bffb4aded0f",
+      "replacements": [
+        {
+          "from": "function _cleanRichTextPasteHtml(rawHtml) {\n    const sanitized = markdownModule.sanitizeAllowedHtml\n      ? markdownModule.sanitizeAllowedHtml(String(rawHtml || ''))\n      : String(rawHtml || '');\n    const tpl = document.createElement('template');\n    tpl.innerHTML = sanitized;\n    const allowedTags = new Set([\n      'A', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'SPAN',\n      'P', 'DIV', 'BR', 'HR', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4',\n      'BLOCKQUOTE', 'CODE', 'PRE', 'SUP', 'SUB',\n      'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD',\n    ]);\n\n    // Keep useful document structure but discard presentation copied from the\n    // source page. Editor-applied formatting is unaffected; this only cleans\n    // newly pasted HTML before it enters the browser's undo stack.\n    tpl.content.querySelectorAll('img, video, audio, canvas').forEach(el => el.remove());\n    tpl.content.querySelectorAll('*').forEach(el => {\n      if (!allowedTags.has(el.tagName)) {\n        el.replaceWith(...Array.from(el.childNodes));\n        return;\n      }\n      for (const attr of Array.from(el.attributes)) {\n        const name = attr.name.toLowerCase();\n        const keepLink = el.tagName === 'A' && name === 'href';\n        const keepTableSpan = (el.tagName === 'TD' || el.tagName === 'TH')\n          && (name === 'colspan' || name === 'rowspan');\n        const keepChecklistClass = el.tagName === 'UL' && name === 'class'\n          && el.classList.contains('rich-checklist');\n        const keepChecklistState = el.tagName === 'LI'\n          && (name === 'data-checked' || name === 'aria-checked')\n          && el.parentElement?.classList.contains('rich-checklist');\n        if (!keepLink && !keepTableSpan && !keepChecklistClass && !keepChecklistState) {\n          el.removeAttribute(attr.name);\n        }\n      }\n      if (el.tagName === 'A') {\n        const safeUrl = _normalizeRichLinkUrl(el.getAttribute('href'));\n        if (!safeUrl) el.replaceWith(...Array.from(el.childNodes));\n        else {\n          el.setAttribute('href', safeUrl);\n          el.setAttribute('rel', 'noopener noreferrer');\n        }\n      }\n    });\n    return tpl.innerHTML;\n  }",
+          "to": "function _cleanRichTextPasteHtml(rawHtml) {\n    const rawText = String(rawHtml || '');\n    if (!rawText) return '';\n    if (typeof markdownModule?.sanitizeAllowedHtml !== 'function' || typeof DOMParser === 'undefined') {\n      return rawText.replace(/[&<>\"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[ch]));\n    }\n    const sanitizedResult = markdownModule.sanitizeAllowedHtml(rawText);\n    const sanitized = typeof sanitizedResult === 'string' ? sanitizedResult : '';\n    if (!sanitized) return '';\n    const root = new DOMParser().parseFromString(sanitized, 'text/html').body;\n    if (!root) return '';\n    const allowedTags = new Set([\n      'A', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'SPAN',\n      'P', 'DIV', 'BR', 'HR', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4',\n      'BLOCKQUOTE', 'CODE', 'PRE', 'SUP', 'SUB',\n      'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD',\n    ]);\n    const blockedTags = new Set([\n      'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH',\n      'FORM', 'BASE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE',\n    ]);\n\n    // Keep useful document structure but discard presentation copied from the\n    // source page. Editor-applied formatting is unaffected; this only cleans\n    // newly pasted HTML before it enters the browser's undo stack.\n    root.querySelectorAll('img, video, audio, canvas').forEach(el => el.remove());\n    Array.from(root.querySelectorAll('*')).forEach(el => {\n      if (blockedTags.has(el.tagName.toUpperCase())) el.remove();\n    });\n    root.querySelectorAll('*').forEach(el => {\n      const tag = el.tagName.toUpperCase();\n      if (!allowedTags.has(tag)) {\n        el.replaceWith(...Array.from(el.childNodes));\n        return;\n      }\n      for (const attr of Array.from(el.attributes)) {\n        const name = attr.name.toLowerCase();\n        const keepLink = tag === 'A' && name === 'href';\n        const keepTableSpan = (tag === 'TD' || tag === 'TH')\n          && (name === 'colspan' || name === 'rowspan');\n        const keepChecklistClass = tag === 'UL' && name === 'class'\n          && el.classList.contains('rich-checklist');\n        const keepChecklistState = tag === 'LI'\n          && (name === 'data-checked' || name === 'aria-checked')\n          && el.parentElement?.classList.contains('rich-checklist');\n        if (!keepLink && !keepTableSpan && !keepChecklistClass && !keepChecklistState) {\n          el.removeAttribute(attr.name);\n        }\n      }\n      if (tag === 'A') {\n        const safeUrl = _normalizeRichLinkUrl(el.getAttribute('href'));\n        if (!safeUrl) el.replaceWith(...Array.from(el.childNodes));\n        else {\n          el.setAttribute('href', safeUrl);\n          el.setAttribute('rel', 'noopener noreferrer');\n        }\n      }\n    });\n    return root.innerHTML;\n  }",
+          "rationale": "Fail closed without sanitizer/DOMParser and sanitize via DOMParser with case-insensitive blocked tag removal."
+        }
+      ]
+    },
+    "_aiReply": {
+      "file": "ui/email/aiReply.js",
+      "rationale": "Parse split reply body with DOMParser instead of assigning untrusted HTML to template.innerHTML.",
+      "targetFunctionSha256": "5d8dee75398fc7eae57518f787bbaefcb3ffe029d80b56138abe24851636cb5a",
+      "replacements": [
+        {
+          "from": "    const ownBody = document.createElement('template');\n    ownBody.innerHTML = String(splitCurrent.body || '');\n    const ownText = (ownBody.content.textContent || '').trim();\n    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\\[AI reply draft will appear here\\]|Drafting AI reply)/i.test(ownText);",
+          "to": "    const ownBodyHtml = String(splitCurrent.body || '');\n    const ownBody = typeof DOMParser !== 'undefined'\n      ? new DOMParser().parseFromString(ownBodyHtml, 'text/html').body\n      : null;\n    const ownText = (ownBody ? ownBody.textContent : ownBodyHtml.replace(/<[^>]*>/g, '')).trim();\n    const hasRichElement = ownBody\n      ? Boolean(ownBody.querySelector('img,video,audio,iframe,table'))\n      : /<(?:img|video|audio|iframe|table)\\b/i.test(ownBodyHtml);\n    const isReplaceableDraft = (!ownText && !hasRichElement) || /^(\\[AI reply draft will appear here\\]|Drafting AI reply)/i.test(ownText);",
+          "rationale": "Inspect own reply content for rich elements and text using DOMParser without innerHTML."
+        }
+      ]
+    },
+    "_normalizeRichLinkUrl": {
+      "file": "domain/richTextRules.js",
+      "rationale": "Reject control characters, whitespace-obfuscated dangerous schemes, empty-host URLs, and malformed mailto/tel links while preserving valid relative, protocol-relative, bare-domain, https, http, mailto, and tel URLs.",
+      "targetFunctionSha256": "9a5034d0c79100c6abf7bbd223d496082434c7fb03ab560560090dc6c2323ee8",
+      "replacements": [
+        {
+          "from": "function _normalizeRichLinkUrl(rawUrl) {\n    let url = String(rawUrl || '').trim();\n    if (!url) return '';\n    if (/^(?:#|\\/|\\.\\/|\\.\\.\\/)/.test(url)) return url;\n    if (url.startsWith('//')) url = `https:${url}`;\n    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = `https://${url}`;\n    return /^(?:https?:|mailto:|tel:)/i.test(url) ? url : '';\n  }",
+          "to": "function _normalizeRichLinkUrl(rawUrl) {\n    let url = String(rawUrl || '').trim();\n    if (!url || /[\\u0000-\\u001f\\u007f-\\u009f]/.test(url)) return '';\n    if (/^\\/{2,}(?:$|[\\s/?#\\\\])/.test(url) || /^\\/\\\\/.test(url)) return '';\n    if (/^(?:#|\\/|\\.\\/|\\.\\.\\/)/.test(url)) return url;\n    if (url.startsWith('//')) url = `https:${url}`;\n    if (/^(?:javascript|vbscript|data|file):/i.test(url.replace(/\\s+/g, ''))) return '';\n    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = `https://${url}`;\n    if (!/^(?:https?:|mailto:|tel:)/i.test(url)) return '';\n    if (/^https?:/i.test(url)) {\n      try {\n        const parsed = new URL(url);\n        if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) return '';\n      } catch (_) {\n        return '';\n      }\n    } else if (/^mailto:/i.test(url)) {\n      const recipient = url.slice('mailto:'.length).split('?')[0].trim();\n      if (!recipient || !/^[^\\s@]+@[^\\s@]+$/.test(recipient)) return '';\n    } else if (/^tel:/i.test(url)) {\n      const phone = url.slice('tel:'.length).trim();\n      if (!phone || !/^[+\\d().\\-\\s]+$/.test(phone) || !/\\d/.test(phone)) return '';\n    }\n    return url;\n  }",
+          "rationale": "Enforce strict scheme, control-character, and host/target validation on rich-text links."
+        }
+      ]
     }
   },
   "openPanelStatementRewrites": [

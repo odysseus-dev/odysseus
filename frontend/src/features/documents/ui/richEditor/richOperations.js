@@ -451,42 +451,55 @@ export function _insertSmartRichPasteLink(rich, rawText) {
   }
 
 export function _cleanRichTextPasteHtml(rawHtml) {
-    const sanitized = markdownModule.sanitizeAllowedHtml
-      ? markdownModule.sanitizeAllowedHtml(String(rawHtml || ''))
-      : String(rawHtml || '');
-    const tpl = document.createElement('template');
-    tpl.innerHTML = sanitized;
+    const rawText = String(rawHtml || '');
+    if (!rawText) return '';
+    if (typeof markdownModule?.sanitizeAllowedHtml !== 'function' || typeof DOMParser === 'undefined') {
+      return rawText.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+    const sanitizedResult = markdownModule.sanitizeAllowedHtml(rawText);
+    const sanitized = typeof sanitizedResult === 'string' ? sanitizedResult : '';
+    if (!sanitized) return '';
+    const root = new DOMParser().parseFromString(sanitized, 'text/html').body;
+    if (!root) return '';
     const allowedTags = new Set([
       'A', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'SPAN',
       'P', 'DIV', 'BR', 'HR', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4',
       'BLOCKQUOTE', 'CODE', 'PRE', 'SUP', 'SUB',
       'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD',
     ]);
+    const blockedTags = new Set([
+      'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH',
+      'FORM', 'BASE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE',
+    ]);
 
     // Keep useful document structure but discard presentation copied from the
     // source page. Editor-applied formatting is unaffected; this only cleans
     // newly pasted HTML before it enters the browser's undo stack.
-    tpl.content.querySelectorAll('img, video, audio, canvas').forEach(el => el.remove());
-    tpl.content.querySelectorAll('*').forEach(el => {
-      if (!allowedTags.has(el.tagName)) {
+    root.querySelectorAll('img, video, audio, canvas').forEach(el => el.remove());
+    Array.from(root.querySelectorAll('*')).forEach(el => {
+      if (blockedTags.has(el.tagName.toUpperCase())) el.remove();
+    });
+    root.querySelectorAll('*').forEach(el => {
+      const tag = el.tagName.toUpperCase();
+      if (!allowedTags.has(tag)) {
         el.replaceWith(...Array.from(el.childNodes));
         return;
       }
       for (const attr of Array.from(el.attributes)) {
         const name = attr.name.toLowerCase();
-        const keepLink = el.tagName === 'A' && name === 'href';
-        const keepTableSpan = (el.tagName === 'TD' || el.tagName === 'TH')
+        const keepLink = tag === 'A' && name === 'href';
+        const keepTableSpan = (tag === 'TD' || tag === 'TH')
           && (name === 'colspan' || name === 'rowspan');
-        const keepChecklistClass = el.tagName === 'UL' && name === 'class'
+        const keepChecklistClass = tag === 'UL' && name === 'class'
           && el.classList.contains('rich-checklist');
-        const keepChecklistState = el.tagName === 'LI'
+        const keepChecklistState = tag === 'LI'
           && (name === 'data-checked' || name === 'aria-checked')
           && el.parentElement?.classList.contains('rich-checklist');
         if (!keepLink && !keepTableSpan && !keepChecklistClass && !keepChecklistState) {
           el.removeAttribute(attr.name);
         }
       }
-      if (el.tagName === 'A') {
+      if (tag === 'A') {
         const safeUrl = _normalizeRichLinkUrl(el.getAttribute('href'));
         if (!safeUrl) el.replaceWith(...Array.from(el.childNodes));
         else {
@@ -495,7 +508,7 @@ export function _cleanRichTextPasteHtml(rawHtml) {
         }
       }
     });
-    return tpl.innerHTML;
+    return root.innerHTML;
   }
 
 export let _activeRichImage = null;

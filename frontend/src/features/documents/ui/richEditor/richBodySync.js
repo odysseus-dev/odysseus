@@ -19,10 +19,12 @@ export function _emailPlainTextToHtml(text) {
   }
 
 export function _emailHtmlToPlainText(html) {
-    if (typeof document === 'undefined') return String(html || '');
-    const d = document.createElement('template');
-    d.innerHTML = String(html || '');
-    return d.content.textContent || '';
+    const source = String(html || '');
+    if (typeof DOMParser !== 'undefined') {
+      return new DOMParser().parseFromString(source, 'text/html').body?.textContent || '';
+    }
+    if (typeof document === 'undefined') return source;
+    return source.replace(/<[^>]*>/g, '');
   }
 
 export function _sanitizedRichTextHtml(rich) {
@@ -30,12 +32,14 @@ export function _sanitizedRichTextHtml(rich) {
     const text = (rich.innerText || rich.textContent || '').replace(/\u00a0/g, ' ').trim();
     if (!text && !rich.querySelector('img, hr, table')) return '';
     const html = rich.innerHTML || '';
-    const sanitized = markdownModule.sanitizeAllowedHtml
-      ? markdownModule.sanitizeAllowedHtml(html)
-      : html;
-    const tpl = document.createElement('template');
-    tpl.innerHTML = sanitized;
-    tpl.content.querySelectorAll('a[href]').forEach(link => {
+    if (typeof markdownModule?.sanitizeAllowedHtml !== 'function' || typeof DOMParser === 'undefined') {
+      return _emailPlainTextToHtml(rich.innerText || rich.textContent || '');
+    }
+    const sanitizedResult = markdownModule.sanitizeAllowedHtml(html);
+    const sanitized = typeof sanitizedResult === 'string' ? sanitizedResult : '';
+    const root = new DOMParser().parseFromString(sanitized, 'text/html').body;
+    if (!root) return '';
+    root.querySelectorAll('a[href]').forEach(link => {
       const safeUrl = _normalizeRichLinkUrl(link.getAttribute('href'));
       if (!safeUrl) {
         link.replaceWith(...Array.from(link.childNodes));
@@ -44,16 +48,16 @@ export function _sanitizedRichTextHtml(rich) {
       link.setAttribute('href', safeUrl);
       link.setAttribute('rel', 'noopener noreferrer');
     });
-    tpl.content.querySelectorAll('span').forEach(span => {
+    root.querySelectorAll('span').forEach(span => {
       if (!_isRichInlineCodeMarker(span)) return;
       const code = document.createElement('code');
-      code.innerHTML = span.innerHTML;
+      Array.from(span.childNodes).forEach(child => code.appendChild(child));
       const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
       let node;
       while ((node = walker.nextNode())) node.nodeValue = node.nodeValue.replace(/\u200b/g, '');
       span.replaceWith(code);
     });
-    return tpl.innerHTML
+    return root.innerHTML
       .replace(/\sdata-editor-(?:table|checklist|image|inline-code|link)-token="[^"]*"/gi, '')
       .replace(/\sdata-editor-image-selected(?:="[^"]*")?/gi, '');
   }
@@ -62,11 +66,17 @@ export function _richTextContentToHtml(content) {
     const raw = String(content || '');
     if (!raw.trim()) return '';
     if (/<\/?[a-z][^>]*>/i.test(raw)) {
-      return markdownModule.sanitizeAllowedHtml
-        ? markdownModule.sanitizeAllowedHtml(raw)
-        : raw;
+      if (typeof markdownModule?.sanitizeAllowedHtml !== 'function') {
+        return _emailPlainTextToHtml(raw);
+      }
+      const sanitized = markdownModule.sanitizeAllowedHtml(raw);
+      return typeof sanitized === 'string' ? sanitized : '';
     }
-    try { return markdownModule.mdToHtml(raw, { shortcodes: false }); }
+    try {
+      if (typeof markdownModule?.mdToHtml !== 'function') return _emailPlainTextToHtml(raw);
+      const rendered = markdownModule.mdToHtml(raw, { shortcodes: false });
+      return typeof rendered === 'string' ? rendered : _emailPlainTextToHtml(raw);
+    }
     catch (_) { return _emailPlainTextToHtml(raw); }
   }
 
