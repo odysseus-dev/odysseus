@@ -786,3 +786,188 @@ def test_successful_sign_in_fills_blank_usernames_in_the_form():
         prefix = "eaf" if "el('eaf-imap-user')" in authorized else "uf"
         assert f"if (!el('{prefix}-imap-user').value.trim()) el('{prefix}-imap-user').value = email;" in authorized
         assert f"if (!el('{prefix}-smtp-user').value.trim()) el('{prefix}-smtp-user').value = email;" in authorized
+
+
+def test_put_changing_username_on_oauth_row_clears_oauth_credentials(device_app):
+    from core.database import EmailAccount
+
+    account_id = _make_account(
+        device_app.db, owner="alice", imap_user="alice@contoso.com", provider="microsoft",
+    )
+    r = device_app.client.put(
+        f"/api/email/accounts/{account_id}",
+        json={"imap_user": "bob@contoso.com"},
+        headers=_as("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    db = device_app.db()
+    try:
+        row = db.get(EmailAccount, account_id)
+        assert row.imap_user == "bob@contoso.com"
+        assert row.oauth_provider is None
+        assert row.oauth_access_token is None
+        assert row.oauth_refresh_token is None
+        assert row.oauth_token_expiry is None
+    finally:
+        db.close()
+
+
+def test_put_same_username_case_insensitive_preserves_oauth_credentials(device_app):
+    from core.database import EmailAccount
+    from src.secret_storage import encrypt
+
+    account_id = _make_account(
+        device_app.db, owner="alice", imap_user="alice@contoso.com", provider="microsoft",
+    )
+    db = device_app.db()
+    try:
+        row = db.get(EmailAccount, account_id)
+        row.oauth_access_token = encrypt("access-123")
+        db.commit()
+    finally:
+        db.close()
+
+    r = device_app.client.put(
+        f"/api/email/accounts/{account_id}",
+        json={"imap_user": "ALICE@contoso.com", "imap_host": "outlook.office365.com"},
+        headers=_as("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    db = device_app.db()
+    try:
+        row = db.get(EmailAccount, account_id)
+        assert row.oauth_provider == "microsoft"
+        assert row.oauth_access_token is not None
+        assert row.oauth_refresh_token is not None
+    finally:
+        db.close()
+
+
+def test_ms_id_token_identity_edge_cases():
+    from routes.email.email_routes import _ms_id_token_identity
+
+    # Preferred username wins and requires an @ sign
+    assert _ms_id_token_identity(_jwt({"preferred_username": "alice@contoso.com"})) == "alice@contoso.com"
+    assert _ms_id_token_identity(_jwt({"preferred_username": "not-an-email"})) == ""
+    assert _ms_id_token_identity(_jwt({"preferred_username": "has space@contoso.com"})) == ""
+
+    # UPN is accepted when preferred_username is absent
+    assert _ms_id_token_identity(_jwt({"upn": "bob@contoso.com"})) == "bob@contoso.com"
+
+    # Unverified email claim alone is rejected (nOAuth defense)
+    assert _ms_id_token_identity(_jwt({"email": "victim@example.com"})) == ""
+
+    # Verified email claim (xms_edov == 1 or email_verified is True) is accepted if no UPN
+    assert _ms_id_token_identity(_jwt({"email": "verified@example.com", "xms_edov": "1"})) == "verified@example.com"
+    assert _ms_id_token_identity(_jwt({"email": "verified@example.com", "email_verified": True})) == "verified@example.com"
+
+    # Preferred username overrides any conflicting email claim
+    assert _ms_id_token_identity(_jwt({
+        "preferred_username": "alice@contoso.com",
+        "email": "victim@example.com",
+    })) == "alice@contoso.com"
+
+    # Malformed tokens fail safely
+    assert _ms_id_token_identity("") == ""
+    assert _ms_id_token_identity("not.enough.parts.four.five") == ""
+    assert _ms_id_token_identity("bad-header.bad-payload.bad-sig") == ""
+
+
+def test_device_poll_terminal_errors_fail_immediately_without_polling(device_app):
+    account_id = _make_account(device_app.db, owner="alice", imap_user="", provider=None)
+    poll_id = device_app.client.post(
+        f"{_DEVICE}/start", data={"account_id": account_id}, headers=_as("alice"),
+    ).json()["poll_id"]
+
+    device_app.fake.script["token"] = (400, {
+        "error": "invalid_grant",
+        "error_description": "AADSTS700084: The device code expired.",
+    })
+
+    r = device_app.client.post(f"{_DEVICE}/poll", data={"poll_id": poll_id}, headers=_as("alice"))
+    data = r.json()
+    assert data["status"] == "failed"
+    assert "Authorization session expired" in data["error"]
+
+
+def test_device_start_surfaces_microsoft_error_detail(device_app):
+    account_id = _make_account(device_app.db, owner="alice")
+    device_app.fake.script["devicecode"] = (400, {
+        "error": "invalid_client",
+        "error_description": "AADSTS700016: Application was not found in the directory.",
+    })
+
+    r = device_app.client.post(f"{_DEVICE}/start", data={"account_id": account_id}, headers=_as("alice"))
+    assert r.status_code == 502
+    assert "AADSTS700016" in r.text
+
+
+def test_concurrent_refresh_serialized_single_call(account_db, monkeypatch):
+    import concurrent.futures
+    import threading
+    import time
+    import httpx
+    from routes.email_helpers import _get_valid_microsoft_token
+    from core.database import EmailAccount
+    from src.secret_storage import decrypt
+
+    monkeypatch.setenv("MICROSOFT_OAUTH_CLIENT_ID", "client-123")
+    account_id = _make_account(account_db)
+
+    # Set expiry in the past
+    db = account_db()
+    try:
+        row = db.get(EmailAccount, account_id)
+        row.oauth_token_expiry = "100"
+        db.commit()
+    finally:
+        db.close()
+
+    call_count = 0
+    count_lock = threading.Lock()
+
+    def fake_post(url, data=None, timeout=None):
+        nonlocal call_count
+        with count_lock:
+            call_count += 1
+            current = call_count
+        time.sleep(0.05)
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "access_token": f"access-{current}",
+                "refresh_token": f"refresh-{current}",
+                "expires_in": 3600,
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    cfg = {"account_id": account_id, "oauth_token_expiry": "100", "oauth_access_token": "expired"}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        futures = [ex.submit(_get_valid_microsoft_token, account_id, cfg) for _ in range(4)]
+        results = [f.result() for f in futures]
+
+    assert call_count == 1
+    assert all(res == "access-1" for res in results)
+
+
+def test_settings_forms_abort_and_protect_against_stale_device_flows():
+    src = _settings_js()
+
+    # Both forms abort active flows on cancel
+    assert "_legacyFlowController.abort();" in src
+    assert "_ufEmailFlowController.abort();" in src
+
+    # Both forms abort any previous active flow when opened
+    assert "if (_legacyFlowController) {\n      _legacyFlowController.abort();" in src
+    assert "if (_ufEmailFlowController) {\n      _ufEmailFlowController.abort();" in src
+
+    # Both forms pass the AbortSignal to runProviderDeviceFlow
+    assert src.count("signal: controller.signal,") == 2
+
+    # Both forms check generation/formToken before updating DOM on completion
+    assert "if (formToken !== _legacyFlowFormToken || controller.signal.aborted || result.status === 'cancelled') {" in src
+    assert "if (formToken !== _ufEmailFlowFormToken || controller.signal.aborted || result.status === 'cancelled') {" in src

@@ -83,6 +83,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`model/matchKey.js`** | Model-to-key matching helper. |
 | **`providers.js`** | Provider metadata and account-management helpers. |
 | **`providerDeviceFlow.js`** | OAuth device-flow support for providers. |
+| **`deviceAuthPanel.js`** | Shared code, copy button, and authorization link panel for OAuth device flows. |
 | **`presets.js`** | Character/preset selection, custom preset saving, inject prefix/suffix handling. |
 | **`search.js`** | Web-search settings, provider selection, API key management. |
 | **`settings.js`** | Settings panel (models, search, appearance, users, MCP, RAG, embedding, tokens). |

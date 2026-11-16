@@ -195,3 +195,103 @@ def test_microsoft_mail_sends_account_id_and_uses_plain_verification_uri():
         ["/api/email/oauth/microsoft/device/poll", None, "poll-ms"],
     ]
     assert out["opened"] == ["https://login.microsoft.com/device"]
+
+
+def test_abort_signal_stops_polling_and_notifies_cancel():
+    js = f"""
+      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      const calls = [];
+      const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
+      const controller = new AbortController();
+      const fetchImpl = async (url, opts) => {{
+        calls.push(url);
+        if (url.endsWith('/device/start')) {{
+          return response(true, 200, {{
+            poll_id: 'poll-abort-test',
+            user_code: 'ABORT-CODE',
+            verification_uri: 'https://microsoft.com/devicelogin',
+            interval: 5,
+            expires_in: 900,
+          }});
+        }}
+        if (url.endsWith('/device/cancel')) {{
+          return response(true, 200, {{ status: 'cancelled' }});
+        }}
+        return response(true, 200, {{ status: 'pending' }});
+      }};
+      const result = await runProviderDeviceFlow('microsoft-mail', {{
+        fetchImpl,
+        signal: controller.signal,
+        openWindow: () => {{}},
+        onWaiting: () => {{
+          controller.abort();
+        }},
+        sleep: async () => {{}},
+        now: () => 0,
+      }});
+      console.log(JSON.stringify({{ result, calls }}));
+    """
+    out = _run_node(js)
+    assert out["result"] == {"status": "cancelled"}
+    assert "/api/email/oauth/microsoft/device/cancel" in out["calls"]
+
+
+def test_pre_aborted_signal_does_not_fetch():
+    js = f"""
+      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      const calls = [];
+      const controller = new AbortController();
+      controller.abort();
+      const fetchImpl = async (url) => {{
+        calls.push(url);
+        return {{ ok: true, status: 200, async json() {{ return {{}}; }} }};
+      }};
+      const result = await runProviderDeviceFlow('copilot', {{
+        fetchImpl,
+        signal: controller.signal,
+        openWindow: () => {{}},
+        sleep: async () => {{}},
+        now: () => 0,
+      }});
+      console.log(JSON.stringify({{ result, calls }}));
+    """
+    out = _run_node(js)
+    assert out["result"] == {"status": "cancelled"}
+    assert out["calls"] == []
+
+
+def test_abort_during_sleep_wakes_and_cancels():
+    js = f"""
+      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      const calls = [];
+      const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
+      const controller = new AbortController();
+      const fetchImpl = async (url) => {{
+        calls.push(url);
+        if (url.endsWith('/device/start')) {{
+          return response(true, 200, {{
+            poll_id: 'poll-sleep-test',
+            user_code: 'CODE',
+            verification_uri: 'https://microsoft.com/devicelogin',
+            interval: 5,
+            expires_in: 900,
+          }});
+        }}
+        return response(true, 200, {{ status: 'cancelled' }});
+      }};
+      // Abort after 20ms while default sleep is waiting
+      setTimeout(() => controller.abort(), 20);
+      const start = Date.now();
+      const result = await runProviderDeviceFlow('microsoft-mail', {{
+        fetchImpl,
+        signal: controller.signal,
+        openWindow: () => {{}},
+        now: () => 0,
+      }});
+      const elapsed = Date.now() - start;
+      console.log(JSON.stringify({{ result, elapsed, calls }}));
+    """
+    out = _run_node(js)
+    assert out["result"] == {"status": "cancelled"}
+    assert out["elapsed"] < 3000
+    assert "/api/email/oauth/microsoft/device/cancel" in out["calls"]

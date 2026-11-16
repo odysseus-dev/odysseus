@@ -100,6 +100,51 @@ def _google_oauth_imap_transport_allowed(port: int, starttls: bool) -> bool:
 def _google_oauth_smtp_transport_allowed(port: int, security: str) -> bool:
     return (port == 465 and security == "ssl") or (port == 587 and security == "starttls")
 
+
+def _ms_id_token_identity(id_token: str) -> str:
+    """Best-effort mailbox identity from an ID token.
+
+    The token arrives directly from the token endpoint over TLS (not via
+    the browser), so decoding the claims without signature verification
+    carries the same trust level as the access token beside it.
+
+    UPN (preferred_username) is preferred over the email claim: with a
+    multi-tenant app, email is an unverified claim a foreign tenant can
+    set to a victim address (the nOAuth attack). Prefer preferred_username
+    or upn, which identifies the signing user inside the issuing tenant.
+    An email claim is only accepted if domain-verified (xms_edov is 1
+    or email_verified is True).
+    """
+    import base64
+    import json as _json
+    try:
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return ""
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(payload))
+        if not isinstance(claims, dict):
+            return ""
+        candidate = str(
+            claims.get("preferred_username")
+            or claims.get("upn")
+            or ""
+        ).strip()
+        if not candidate:
+            is_verified = (
+                str(claims.get("xms_edov") or "").strip() == "1"
+                or claims.get("email_verified") is True
+            )
+            if is_verified:
+                candidate = str(claims.get("email") or "").strip()
+        if candidate and "@" in candidate and " " not in candidate:
+            return candidate
+        return ""
+    except Exception:
+        return ""
+
+
 def _email_style_key(account_id: str | None) -> str:
     return str(account_id or "").strip()
 
@@ -6847,10 +6892,20 @@ def setup_email_routes():
                     value = (data[key] or "").strip()
                     # An OAuth account's usernames are the mailbox the sign-in
                     # verified (and filled in when they were blank). A form that
-                    # still shows them blank must not erase them — like passwords,
+                    # still shows them blank must not erase them; like passwords,
                     # they only change when a value is given.
                     if not value and key in ("imap_user", "smtp_user") and row.oauth_provider:
                         continue
+                    if value and key in ("imap_user", "smtp_user") and row.oauth_provider:
+                        existing_val = (getattr(row, key, None) or "").strip()
+                        if existing_val and value.casefold() != existing_val.casefold():
+                            # Username is changing on an OAuth-authenticated account.
+                            # Clear stored OAuth credentials so the new username
+                            # cannot silently inherit another identity's tokens.
+                            row.oauth_provider = None
+                            row.oauth_access_token = None
+                            row.oauth_refresh_token = None
+                            row.oauth_token_expiry = None
                     setattr(row, key, value)
             for key in ("imap_port", "smtp_port"):
                 if data.get(key) not in (None, ""):
@@ -7343,33 +7398,6 @@ def setup_email_routes():
     # Device-code start/poll run on the event loop; bound each Microsoft call.
     _MS_OAUTH_HTTP_TIMEOUT = 10.0
 
-    def _ms_id_token_identity(id_token: str) -> str:
-        """Best-effort mailbox identity from an ID token.
-
-        The token arrives directly from the token endpoint over TLS (not via
-        the browser), so decoding the claims without signature verification
-        carries the same trust level as the access token beside it.
-
-        UPN (preferred_username) is preferred over the `email` claim: with a
-        multi-tenant app, `email` is an unverified claim a foreign tenant can
-        set to a victim address (the "nOAuth" attack) — prefer the UPN, which
-        always identifies the signing user inside the issuing tenant.
-        """
-        import base64
-        import json as _json
-        try:
-            payload = id_token.split(".")[1]
-            payload += "=" * (-len(payload) % 4)
-            claims = _json.loads(base64.urlsafe_b64decode(payload))
-            return str(
-                claims.get("preferred_username")
-                or claims.get("upn")
-                or claims.get("email")
-                or ""
-            ).strip()
-        except Exception:
-            return ""
-
     def _ms_require_account(account_id: str, owner: str):
         from core.database import SessionLocal, EmailAccount
         if not account_id:
@@ -7411,8 +7439,19 @@ def setup_email_routes():
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as e:
+            detail = ""
+            if e.response is not None:
+                try:
+                    err_json = e.response.json()
+                    detail = err_json.get("error_description") or err_json.get("error") or ""
+                    detail = detail.splitlines()[0] if detail else ""
+                except Exception:
+                    pass
             status = e.response.status_code if e.response is not None else "unknown"
-            raise HTTPException(502, f"Microsoft device-code request failed (HTTP {status})")
+            msg = f"Microsoft device-code request failed (HTTP {status})"
+            if detail:
+                msg += f": {detail}"
+            raise HTTPException(502, msg)
         except Exception as e:
             raise HTTPException(502, f"Microsoft device-code request failed: {e}")
         if not data.get("device_code"):
@@ -7517,9 +7556,26 @@ def setup_email_routes():
             return DeviceFlowPoll.pending()
         if err == "slow_down":
             return DeviceFlowPoll.slow_down(int(data.get("interval") or 0) or None)
-        if err in ("expired_token", "access_denied", "authorization_declined"):
-            return DeviceFlowPoll.failed(err)
-        return DeviceFlowPoll.pending(err or f"HTTP {resp.status_code}")
+
+        err_desc = str(data.get("error_description") or "").strip()
+        err_detail = err_desc.splitlines()[0] if err_desc else ""
+
+        if err == "expired_token":
+            msg = "Authorization code expired - please try again"
+        elif err in ("access_denied", "authorization_declined"):
+            msg = "Sign-in was declined or cancelled"
+        elif err == "invalid_grant":
+            msg = "Authorization session expired or already used - please try again"
+        elif err == "invalid_client":
+            msg = "Microsoft OAuth client ID is invalid - check MICROSOFT_OAUTH_CLIENT_ID"
+        elif err_detail:
+            msg = f"{err or 'Error'}: {err_detail}"
+        elif err:
+            msg = err
+        else:
+            msg = f"HTTP {resp.status_code}"
+
+        return DeviceFlowPoll.failed(msg)
 
     router.include_router(
         create_device_flow_router(

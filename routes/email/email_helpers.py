@@ -14,6 +14,7 @@ and `email_pollers.py` (the background loops):
 
 import os
 import base64
+import threading
 import time
 import imaplib
 import smtplib
@@ -246,51 +247,102 @@ def _microsoft_token_endpoint() -> str:
     )
 
 
+_MS_REFRESH_MUTEX = threading.Lock()
+_MS_ACCOUNT_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _account_refresh_lock(account_id: str) -> threading.Lock:
+    with _MS_REFRESH_MUTEX:
+        lock = _MS_ACCOUNT_LOCKS.get(account_id)
+        if lock is None:
+            lock = threading.Lock()
+            _MS_ACCOUNT_LOCKS[account_id] = lock
+        return lock
+
+
 def _refresh_microsoft_token(account_id: str) -> str | None:
     """Exchange the stored refresh token for a new access token and persist it.
 
     The v2 endpoint rotates refresh tokens; when the response carries a new
     one it replaces the stored token so the grant chain never expires out
     from under a long-lived account row.
+
+    Thread-safe per account_id to serialize concurrent refresh attempts and
+    prevent races from redeeming the same rotated refresh token multiple times.
     """
     import httpx
     from core.database import SessionLocal as _SL, EmailAccount as _EA
     from src.secret_storage import encrypt as _enc, decrypt as _dec
+
+    if not account_id:
+        return None
+
     client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
     if not client_id:
         return None
-    db = _SL()
-    try:
-        row = db.get(_EA, account_id)
-        if not row or row.oauth_provider != "microsoft" or not row.oauth_refresh_token:
+
+    lock = _account_refresh_lock(account_id)
+    with lock:
+        db = _SL()
+        try:
+            row = db.get(_EA, account_id)
+            if not row or row.oauth_provider != "microsoft" or not row.oauth_refresh_token:
+                return None
+
+            # Re-check under the lock: another thread may have refreshed the token
+            # while this thread was waiting for the lock.
+            expiry_str = row.oauth_token_expiry or ""
+            access_token = _dec(row.oauth_access_token or "")
+            if access_token and expiry_str:
+                try:
+                    if int(expiry_str) - 60 > time.time():
+                        return access_token
+                except (ValueError, TypeError):
+                    pass
+
+            refresh_token = _dec(row.oauth_refresh_token or "")
+            if not refresh_token:
+                return None
+
+            resp = httpx.post(
+                _microsoft_token_endpoint(),
+                data={
+                    "client_id": client_id,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                    "scope": MICROSOFT_OAUTH_SCOPES,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            access_token = data["access_token"]
+            row.oauth_access_token = _enc(access_token)
+            if data.get("refresh_token"):
+                row.oauth_refresh_token = _enc(data["refresh_token"])
+            row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+            db.commit()
+            return access_token
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            if e.response is not None:
+                try:
+                    err_json = e.response.json()
+                    detail = err_json.get("error_description") or err_json.get("error") or ""
+                    detail = detail.splitlines()[0] if detail else ""
+                except Exception:
+                    pass
+            status = e.response.status_code if e.response is not None else "unknown"
+            msg = f"HTTP {status}"
+            if detail:
+                msg += f": {detail}"
+            logger.warning(f"Microsoft token refresh failed for account {account_id} ({msg})")
             return None
-        refresh_token = _dec(row.oauth_refresh_token or "")
-        if not refresh_token:
+        except Exception as e:
+            logger.warning(f"Microsoft token refresh failed for account {account_id}: {e}")
             return None
-        resp = httpx.post(
-            _microsoft_token_endpoint(),
-            data={
-                "client_id": client_id,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-                "scope": MICROSOFT_OAUTH_SCOPES,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        access_token = data["access_token"]
-        row.oauth_access_token = _enc(access_token)
-        if data.get("refresh_token"):
-            row.oauth_refresh_token = _enc(data["refresh_token"])
-        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
-        db.commit()
-        return access_token
-    except Exception:
-        logger.warning(f"Microsoft token refresh failed for account {account_id}")
-        return None
-    finally:
-        db.close()
+        finally:
+            db.close()
 
 
 def _get_valid_microsoft_token(account_id: str, cfg: dict) -> str | None:

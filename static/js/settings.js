@@ -2344,7 +2344,15 @@ async function initEmailAccountsSettings() {
     });
   }
 
+  let _legacyFlowController = null;
+  let _legacyFlowFormToken = 0;
+
   function showForm(existing) {
+    if (_legacyFlowController) {
+      _legacyFlowController.abort();
+      _legacyFlowController = null;
+    }
+    const formToken = ++_legacyFlowFormToken;
     const a = existing || {};
     const isEdit = !!existing;
     // The account row this form writes to. Starts as the edited row; the
@@ -2493,9 +2501,16 @@ async function initEmailAccountsSettings() {
     async function _runMsDeviceFlow(accId) {
       // Shared device-flow runner + the same code/Copy/Authorize panel the
       // Copilot and ChatGPT sign-ins use.
-      const box = el('eaf-oauth-device');
-      const status = el('eaf-oauth-status');
-      const btn = el('eaf-oauth-btn');
+      if (_legacyFlowController) {
+        _legacyFlowController.abort();
+        _legacyFlowController = null;
+      }
+      const controller = new AbortController();
+      _legacyFlowController = controller;
+
+      const box = formEl.querySelector('#eaf-oauth-device') || el('eaf-oauth-device');
+      const status = formEl.querySelector('#eaf-oauth-status') || el('eaf-oauth-status');
+      const btn = formEl.querySelector('#eaf-oauth-btn') || el('eaf-oauth-btn');
       btn.disabled = true;
       box.style.display = '';
       box.textContent = 'Starting Microsoft sign-in...';
@@ -2504,15 +2519,22 @@ async function initEmailAccountsSettings() {
       const clearBox = () => { box.innerHTML = ''; box.style.display = 'none'; };
       try {
         const result = await runProviderDeviceFlow('microsoft-mail', {
+          signal: controller.signal,
           openWindow: () => {},
           formData,
-          onStart: ({ start, authUrl }) => renderDeviceAuthWaitPanel(box, {
-            userCode: start.user_code,
-            authUrl,
-            authLabel: 'Authorize with Microsoft',
-            waitLabel: 'Waiting for Microsoft authorization...',
-          }),
+          onStart: ({ start, authUrl }) => {
+            if (formToken !== _legacyFlowFormToken || controller.signal.aborted) return;
+            renderDeviceAuthWaitPanel(box, {
+              userCode: start.user_code,
+              authUrl,
+              authLabel: 'Authorize with Microsoft',
+              waitLabel: 'Waiting for Microsoft authorization...',
+            });
+          },
         });
+        if (formToken !== _legacyFlowFormToken || controller.signal.aborted || result.status === 'cancelled') {
+          return;
+        }
         if (result.status === 'authorized') {
           const email = result.endpoint && result.endpoint.email;
           status.textContent = '✓ Connected via Microsoft OAuth' + (email ? ` (${email})` : '');
@@ -2537,9 +2559,17 @@ async function initEmailAccountsSettings() {
           box.innerHTML = `<span style="color:var(--red)">Microsoft sign-in failed: ${esc(result.error || 'denied')}</span>`;
         }
       } catch (e) {
+        if (formToken !== _legacyFlowFormToken || controller.signal.aborted || e?.name === 'AbortError') {
+          return;
+        }
         box.innerHTML = `<span style="color:var(--red)">${esc(formatDeviceFlowError(e))}</span>`;
       } finally {
-        btn.disabled = false;
+        if (_legacyFlowController === controller) {
+          _legacyFlowController = null;
+        }
+        if (formToken === _legacyFlowFormToken) {
+          btn.disabled = false;
+        }
       }
     }
 
@@ -2587,7 +2617,13 @@ async function initEmailAccountsSettings() {
     el('eaf-smtp-same').addEventListener('change', _syncSmtpSame);
     _syncSmtpSame();
 
-    el('eaf-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('eaf-cancel').addEventListener('click', () => {
+      if (_legacyFlowController) {
+        _legacyFlowController.abort();
+        _legacyFlowController = null;
+      }
+      formEl.style.display = 'none';
+    });
     el('eaf-save').addEventListener('click', async () => {
       const body = {
         name: el('eaf-name').value.trim(),
@@ -3908,7 +3944,15 @@ async function initUnifiedIntegrations() {
   // When editId is a real account id, edit that row. When editId is falsy or 'new',
   // create a fresh account. Posts to /api/email/accounts, never to the legacy
   // /api/email/config which would overwrite the default.
+  let _ufEmailFlowController = null;
+  let _ufEmailFlowFormToken = 0;
+
   async function showEmailForm(editId) {
+    if (_ufEmailFlowController) {
+      _ufEmailFlowController.abort();
+      _ufEmailFlowController = null;
+    }
+    const formToken = ++_ufEmailFlowFormToken;
     const isEdit = editId && editId !== 'new' && editId !== '__email__';
     // The account row this form writes to (see the legacy form's savedId):
     // the Microsoft sign-in creates the row and the form keeps editing it.
@@ -4230,9 +4274,16 @@ async function initUnifiedIntegrations() {
     async function _runMsDeviceFlow(accId) {
       // Shared device-flow runner + the same code/Copy/Authorize panel the
       // Copilot and ChatGPT sign-ins use.
-      const box = el('uf-oauth-device');
-      const status = el('uf-oauth-status');
-      const btn = el('uf-oauth-btn');
+      if (_ufEmailFlowController) {
+        _ufEmailFlowController.abort();
+        _ufEmailFlowController = null;
+      }
+      const controller = new AbortController();
+      _ufEmailFlowController = controller;
+
+      const box = formEl.querySelector('#uf-oauth-device') || el('uf-oauth-device');
+      const status = formEl.querySelector('#uf-oauth-status') || el('uf-oauth-status');
+      const btn = formEl.querySelector('#uf-oauth-btn') || el('uf-oauth-btn');
       btn.disabled = true;
       box.style.display = '';
       box.textContent = 'Starting Microsoft sign-in...';
@@ -4241,15 +4292,22 @@ async function initUnifiedIntegrations() {
       const clearBox = () => { box.innerHTML = ''; box.style.display = 'none'; };
       try {
         const result = await runProviderDeviceFlow('microsoft-mail', {
+          signal: controller.signal,
           openWindow: () => {},
           formData,
-          onStart: ({ start, authUrl }) => renderDeviceAuthWaitPanel(box, {
-            userCode: start.user_code,
-            authUrl,
-            authLabel: 'Authorize with Microsoft',
-            waitLabel: 'Waiting for Microsoft authorization...',
-          }),
+          onStart: ({ start, authUrl }) => {
+            if (formToken !== _ufEmailFlowFormToken || controller.signal.aborted) return;
+            renderDeviceAuthWaitPanel(box, {
+              userCode: start.user_code,
+              authUrl,
+              authLabel: 'Authorize with Microsoft',
+              waitLabel: 'Waiting for Microsoft authorization...',
+            });
+          },
         });
+        if (formToken !== _ufEmailFlowFormToken || controller.signal.aborted || result.status === 'cancelled') {
+          return;
+        }
         if (result.status === 'authorized') {
           const email = result.endpoint && result.endpoint.email;
           status.textContent = '✓ Connected via Microsoft OAuth' + (email ? ` (${email})` : '');
@@ -4274,9 +4332,17 @@ async function initUnifiedIntegrations() {
           box.innerHTML = `<span style="color:var(--red)">Microsoft sign-in failed: ${esc(result.error || 'denied')}</span>`;
         }
       } catch (e) {
+        if (formToken !== _ufEmailFlowFormToken || controller.signal.aborted || e?.name === 'AbortError') {
+          return;
+        }
         box.innerHTML = `<span style="color:var(--red)">${esc(formatDeviceFlowError(e))}</span>`;
       } finally {
-        btn.disabled = false;
+        if (_ufEmailFlowController === controller) {
+          _ufEmailFlowController = null;
+        }
+        if (formToken === _ufEmailFlowFormToken) {
+          btn.disabled = false;
+        }
       }
     }
 
@@ -4340,7 +4406,13 @@ async function initUnifiedIntegrations() {
       el('uf-smtp-port').value = 465;
       el('uf-smtp-security').value = 'ssl';
     }
-    el('uf-email-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('uf-email-cancel').addEventListener('click', () => {
+      if (_ufEmailFlowController) {
+        _ufEmailFlowController.abort();
+        _ufEmailFlowController = null;
+      }
+      formEl.style.display = 'none';
+    });
 
     // Reset the Test button to neutral when the user edits any field
     // after a test — stale green/red would imply the new values were
