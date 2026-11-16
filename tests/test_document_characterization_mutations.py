@@ -39,7 +39,7 @@ EXPECTED_MUTATION_FUNCTIONS = {
 def test_seventeen_document_content_mutation_sites():
     """Verify all content mutation sites and their owning functions across modules."""
     script = r"""
-    const acorn = require('/home/alteixeira20/Projects/Odysseus/dev/lab/node_modules/acorn');
+    const acorn = require('acorn');
     const fs = require('fs');
 
     const sourcePaths = process.argv.slice(1);
