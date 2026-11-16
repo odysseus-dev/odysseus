@@ -1,9 +1,41 @@
 # Cooperative Windows application restart
 
-Status: tested development infrastructure, NOT installed or activated in production.
-Production remains `164861eff5aa111f894bcc0eb83f002f81323e11`.
-Branch: `feature/windows-cooperative-restart`, based directly on that production
-commit, independent of `feature/cookbook-serving-lifecycle-31d9f294`.
+Status: base infrastructure was integrated CODE ONLY as
+`3ce9bff2c1d14339ca5d0474904c94c0e7ced436`; runtime activation remains pending.
+This health-contract follow-up is development only on
+`fix/windows-restart-real-health`, directly on that production commit and
+independent of `feature/cookbook-serving-lifecycle-31d9f294`.
+
+## Pre-activation finding: real health contracts
+
+Do not first-activate the uncorrected base candidate. Actual Odysseus `/health`
+redirects to login, which its no-redirect check rejects; the real public path is
+`/api/health`. The managed Webapp also uses `/api/health`; `/health` returns SPA
+HTML with status 200 and is not a health assertion. A generic HTTP-200 claim or
+login page is not proof of backend health.
+
+The follow-up uses role-specific, bounded JSON checks: app `status: healthy`,
+gateway `ok: true` plus boolean `auth_required` and nonempty `displayVersion`,
+and a positive integer Chroma `nanosecond heartbeat`. Redirects, HTML, malformed/
+oversized JSON and wrong-role payloads fail closed. Proxies remain ignored.
+Protected-service records carry their expected role through rechecks; stale
+records with missing roles are not silently trusted. No live production runner
+receipt needs migration because first activation has not occurred.
+
+Fourteen unique new focused real-HTTP checks passed across incremental runs,
+including a native listener identity/role recheck. The accepted 11 process cases
+were not rerun; they remain evidence for unchanged control mechanics, not a claim
+that the corrected predicate was rehearsed through another supervised restart.
+The stand-in payloads were aligned with production's contracts. Real read-only
+probes of all three original production listeners also passed the corrected
+predicates. Full real-app startup remains unverified.
+
+The actual preflight still blocks on an active turn, absent background-job
+registry, recycled legacy PID receipts and unaccounted app descendants. Do not
+manufacture empty state, remove receipts, whitelist executable names or stop
+workers to clear it. Reconcile those facts and live path bindings before asking
+to execute a separately approved legacy exception. Current operator plan:
+`.odysseus-dev/WINDOWS_FIRST_ACTIVATION_APPROVAL.md`.
 
 ## What changes
 

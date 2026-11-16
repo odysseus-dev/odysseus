@@ -57,35 +57,55 @@ def file_guard(state_dir, workers_dir, gateway_db):
     return {'clear': not errors, 'errors': errors}
 
 
-def health(port, path='/health'):
+def health(port, path='/api/health', *, kind='app'):
     if type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError('Health probes require a numeric local port')
-    if path not in {'/health', '/api/v2/heartbeat'}:
+    paths = {'app': '/api/health', 'gateway': '/api/health', 'chroma': '/api/v2/heartbeat'}
+    if kind not in paths or path != paths[kind]:
         raise ValueError('Unknown local health path')
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    with opener.open(f'http://127.0.0.1:{port}{path}', timeout=1) as response:
-        return response.status == 200
+    try:
+        with opener.open(f'http://127.0.0.1:{port}{path}', timeout=1) as response:
+            if response.status != 200 or response.headers.get_content_type() != 'application/json':
+                return False
+            raw = response.read(65537)
+            if len(raw) > 65536:
+                return False
+            body = json.loads(raw)
+        if not isinstance(body, dict):
+            return False
+        if kind == 'app':
+            return body.get('status') == 'healthy'
+        if kind == 'gateway':
+            return (body.get('ok') is True and type(body.get('auth_required')) is bool
+                    and isinstance(body.get('displayVersion'), str) and bool(body['displayVersion']))
+        value = body.get('nanosecond heartbeat')
+        return type(value) is int and value > 0
+    except (OSError, ValueError, RecursionError):
+        return False
 
 
 def protected_state(config):
     result = []
-    for port, path in ((config['gateway_port'], '/health'), (config['chroma_port'], '/api/v2/heartbeat')):
-        if not health(port, path):
+    for port, path, kind in ((config['gateway_port'], '/api/health', 'gateway'),
+                             (config['chroma_port'], '/api/v2/heartbeat', 'chroma')):
+        if not health(port, path, kind=kind):
             raise RuntimeError('Shared service is not healthy')
         value = win.identity(win.listener_pid(port))
         if not value:
             raise RuntimeError('Shared listener identity unavailable')
-        result.append({'port': port, 'path': path, **value})
+        result.append({'port': port, 'path': path, 'kind': kind, **value})
     return result
 
 
 def verify_protected(records):
     for value in records:
         if (win.identity(value['pid']) != {k: value[k] for k in ('pid', 'start_token')}
-                or win.listener_pid(value['port']) != value['pid'] or not health(value['port'], value['path'])):
+                or win.listener_pid(value['port']) != value['pid']
+                or not health(value['port'], value['path'], kind=value.get('kind'))):
             raise RuntimeError('Protected service identity or health changed')
 
 

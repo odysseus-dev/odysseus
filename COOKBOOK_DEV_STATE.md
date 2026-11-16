@@ -142,3 +142,40 @@ Final standalone integration branch:
 commit directly on production `164861ef`. It supersedes prototype `0fbeab22`;
 do not integrate the prototype. Development history and the separate model
 readiness increment `de10bf76` are retained on their own branches, not merged.
+
+## Code-only integration and real-health follow-up
+
+With explicit approval, production was clean at `164861ef` and fast-forwarded
+only to `3ce9bff2c1d14339ca5d0474904c94c0e7ced436`; no rebase was required.
+Private source/config/state/task/wrapper backup and forward-only inverse-tree
+verification are in `.odysseus-dev/windows-restart-deploy-20261116-121811`.
+The original app/gateway/Chroma identities remain unchanged. All real public
+JSON health endpoints responded correctly. Task XML, wrapper and configuration
+hashes remained unchanged; actual private backup ACLs were read back and permit
+only the owner and SYSTEM. No activation, autostart mutation, push or release.
+
+Actual guards refuse activation: an active turn; missing `data/bg_jobs.json`;
+two foreign/recycled Cookbook PID receipts (Gemma's PID is now Discord); and
+unaccounted app descendants. No receipt/registry/worker was modified. Live path
+bindings need independent verification; missing evidence is not an idle proof.
+The staged permanent-startup proposal inserts only RunOnly in the existing
+UTF-16 wrapper and leaves all task XML/settings/account/trigger fields unchanged.
+
+Final real probes caught a missed contract: app `/health` is a login redirect,
+gateway `/health` is SPA HTML, and their actual health API is `/api/health`.
+The installed base would fail app-health verification and falsely accept a
+gateway SPA page. This new DEVELOPMENT-ONLY follow-up fixes paths, bounded JSON
+schemas and role-preserving protected-service rechecks. It requires its own
+code-integration approval before first activation. No guard was relaxed.
+
+New regression first failed on the real redirect behavior, then on HTML/invalid
+role responses. Fourteen latest unique focused real-HTTP cases pass across
+incremental runs: `.odysseus-dev/restart-health-evidence.json`. The corrected
+predicate also passed read-only checks of the real listeners. Accepted 11
+supervised process cases were not repeated; changed stand-in payloads match
+real contracts, but no new process rehearsal/full real-app boot is claimed.
+
+Lifecycle remains separate: `4c6636c499cef5a845fa7f9d3e56b485a2a05456` adds
+receipt-bound direct-child exit diagnostics; 45 focused exit/control/API checks
+passed. It is neither merged nor a dependency of this health correction.
+Public activation/recovery plan: `.odysseus-dev/WINDOWS_FIRST_ACTIVATION_APPROVAL.md`.

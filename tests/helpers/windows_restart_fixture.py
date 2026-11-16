@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WORKERS = []
@@ -51,7 +52,8 @@ async def app(scope, receive, send):
                 worker.wait(timeout=3)
             WORKERS.clear()
         await send({'type': 'http.response.start', 'status': 200, 'headers': [(b'content-type', b'application/json')]})
-        await send({'type': 'http.response.body', 'body': json.dumps({'pid': os.getpid()}).encode()})
+        body = {'status': 'healthy'} if scope['path'] == '/api/health' else {'pid': os.getpid()}
+        await send({'type': 'http.response.body', 'body': json.dumps(body).encode()})
         if scope['path'] == '/fixture-exit':
             asyncio.get_running_loop().call_later(.1, os._exit, 0)
 
@@ -68,8 +70,11 @@ if __name__ == '__main__':
         def log_message(self, format, *args):
             pass
         def do_GET(self):
-            body = b'{"ok":true}'
+            payload = ({'nanosecond heartbeat': time.time_ns()} if self.path == '/api/v2/heartbeat'
+                       else {'ok': True, 'auth_required': False, 'displayVersion': 'isolated-fixture'})
+            body = json.dumps(payload).encode()
             self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)
