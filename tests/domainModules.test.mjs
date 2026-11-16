@@ -261,8 +261,17 @@ test('_htmlToPlainText and _hasRichHtmlElement convert untrusted HTML safely wit
   assert.equal(_htmlToPlainText('<noscript><img src=x></noscript>Shown'), 'Shown');
   assert.equal(_htmlToPlainText('<img alt="a > b" src=x onerror="javascript:alert(1)">'), '');
   assert.equal(_htmlToPlainText('<scr<script>ipt>alert(1)</script>Tail'), 'ipt>alert(1)Tail');
-  assert.equal(_htmlToPlainText('<div attr="unclosed'), '');
+  assert.equal(_htmlToPlainText('<div attr="unclosed'), '<div attr="unclosed');
   assert.equal(_htmlToPlainText('<!-- <img src=x> -->Clean'), 'Clean');
+  assert.equal(
+    _htmlToPlainText('Hi Bob,\n\nI think a<b holds.\n\nThanks'),
+    'Hi Bob,\n\nI think a<b holds.\n\nThanks'
+  );
+  assert.equal(_htmlToPlainText('<p>R&eacute;union &euro;5</p>'), 'Réunion €5');
+  assert.equal(_htmlToPlainText('<p>Paragraph 1</p><p>Paragraph 2</p>'), 'Paragraph 1\n\nParagraph 2');
+  assert.equal(_htmlToPlainText('Line 1<br>Line 2<br><br>Line 3'), 'Line 1\nLine 2\n\nLine 3');
+  assert.equal(_htmlToPlainText('<div>Item 1</div><div>Item 2</div>'), 'Item 1\nItem 2');
+  assert.equal(_htmlToPlainText('<p>Outer <b>bold <i>italic</i></b> tail</p>'), 'Outer bold italic tail');
 
   // Rich element detection ignores comments and escaped entities
   for (const rich of [

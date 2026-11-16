@@ -508,7 +508,13 @@ describe('Document Editor Email Workflows', () => {
       const b64Wrapped = Buffer.from(wrappedText, 'utf8').toString('base64');
       assert.equal(_sanitizeOutgoingEmailBody(`<div>${b64Wrapped}</div>`), 'Inner body');
       assert.equal(_sanitizeOutgoingEmailBody('Reply to <alice@example.com>\n\nThanks!'), 'Reply to <alice@example.com>\n\nThanks!');
-      assert.equal(_sanitizeOutgoingEmailBody('<script>alert(1)</script>Hello\n\nWorld'), '<script>alert(1)</script>Hello\n\nWorld');
+      assert.equal(_sanitizeOutgoingEmailBody('<script>alert(1)</script>Hello\n\nWorld'), 'Hello\n\nWorld');
+      assert.equal(
+        _sanitizeOutgoingEmailBody('Hi Bob,\n\nI think a<b holds.\n\nThanks'),
+        'Hi Bob,\n\nI think a<b holds.\n\nThanks'
+      );
+      assert.equal(_sanitizeOutgoingEmailBody('<p>Hello</p><p>World</p>'), 'Hello\n\nWorld');
+      assert.equal(_sanitizeOutgoingEmailBody('<p>R&eacute;union &euro;5</p>'), 'Réunion €5');
       assert.equal(_sanitizeOutgoingEmailBody(null), '');
     });
   });

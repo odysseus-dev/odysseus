@@ -101,6 +101,31 @@ export function _looksLikeMarkdown(text) {
   return score >= 3;
 }
 
+export const HTML_TAGS = new Set([
+  'a', 'abbr', 'address', 'area', 'article', 'aside', 'audio', 'b', 'base', 'bdi',
+  'bdo', 'blockquote', 'body', 'br', 'button', 'canvas', 'caption', 'cite', 'code',
+  'col', 'colgroup', 'data', 'datalist', 'dd', 'del', 'details', 'dfn', 'dialog',
+  'div', 'dl', 'dt', 'em', 'embed', 'fieldset', 'figcaption', 'figure', 'footer',
+  'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup', 'hr',
+  'html', 'i', 'iframe', 'img', 'input', 'ins', 'kbd', 'label', 'legend', 'li',
+  'link', 'main', 'map', 'mark', 'menu', 'meta', 'meter', 'nav', 'noscript',
+  'object', 'ol', 'optgroup', 'option', 'output', 'p', 'picture', 'pre', 'progress',
+  'q', 'rp', 'rt', 'ruby', 's', 'samp', 'script', 'section', 'select', 'slot',
+  'small', 'source', 'span', 'strong', 'style', 'sub', 'summary', 'sup', 'table',
+  'tbody', 'td', 'template', 'textarea', 'tfoot', 'th', 'thead', 'time', 'title',
+  'tr', 'track', 'u', 'ul', 'var', 'video', 'wbr',
+  'font', 'center', 'strike', 'big', 'tt'
+]);
+
+export function _looksLikeHtml(text) {
+  if (!text || typeof text !== 'string' || !text.includes('<')) return false;
+  if (/<!(?:doctype|--)/i.test(text)) return true;
+  const tagMatch = text.match(/<\/?([a-zA-Z][a-zA-Z0-9:-]*)\b([^>]*)>/);
+  if (!tagMatch) return false;
+  const tagName = tagMatch[1].toLowerCase();
+  return HTML_TAGS.has(tagName);
+}
+
 function _inspectHtmlText(input) {
   if (input == null) return { text: '', hasRichElement: false };
   const source = typeof input === 'string'
@@ -111,43 +136,82 @@ function _inspectHtmlText(input) {
   const richTags = new Set(['img', 'video', 'audio', 'iframe', 'table']);
   const rawTextTags = new Set(['script', 'style', 'noscript']);
   const namedEntities = {
-    amp: '&',
-    lt: '<',
-    gt: '>',
-    quot: '"',
-    apos: "'",
-    nbsp: '\u00a0',
-    ndash: '\u2013',
-    mdash: '\u2014',
-    hellip: '\u2026',
-    lsquo: '\u2018',
-    rsquo: '\u2019',
-    ldquo: '\u201c',
-    rdquo: '\u201d',
-    copy: '\u00a9',
-    reg: '\u00ae',
-    trade: '\u2122',
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0',
+    ndash: '\u2013', mdash: '\u2014', hellip: '\u2026', lsquo: '\u2018', rsquo: '\u2019',
+    sbquo: '\u201a', ldquo: '\u201c', rdquo: '\u201d', bdquo: '\u201e', dagger: '\u2020',
+    Dagger: '\u2021', permil: '\u2030', lsaquo: '\u2039', rsaquo: '\u203a', bull: '\u2022',
+    prime: '\u2032', Prime: '\u2033', oline: '\u203e', frasl: '\u2044',
+    euro: '\u20ac', cent: '\u00a2', pound: '\u00a3', curren: '\u00a4', yen: '\u00a5',
+    copy: '\u00a9', reg: '\u00ae', trade: '\u2122', sect: '\u00a7', deg: '\u00b0',
+    plusmn: '\u00b1', sup1: '\u00b9', sup2: '\u00b2', sup3: '\u00b3', acute: '\u00b4',
+    micro: '\u00b5', para: '\u00b6', middot: '\u00b7', cedil: '\u00b8', ordm: '\u00ba',
+    ordf: '\u00aa', laquo: '\u00ab', raquo: '\u00bb', not: '\u00ac', shy: '\u00ad',
+    macr: '\u00af', brvbar: '\u00a6', uml: '\u00a8', iquest: '\u00bf', iexcl: '\u00a1',
+    times: '\u00d7', divide: '\u00f7', frac14: '\u00bc', frac12: '\u00bd', frac34: '\u00be',
+    Agrave: '\u00c0', Aacute: '\u00c1', Acirc: '\u00c2', Atilde: '\u00c3', Auml: '\u00c4',
+    Aring: '\u00c5', AElig: '\u00c6', Ccedil: '\u00c7', Egrave: '\u00c8', Eacute: '\u00c9',
+    Ecirc: '\u00ca', Euml: '\u00cb', Igrave: '\u00cc', Iacute: '\u00cd', Icirc: '\u00ce',
+    Iuml: '\u00cf', ETH: '\u00d0', Ntilde: '\u00d1', Ograve: '\u00d2', Oacute: '\u00d3',
+    Ocirc: '\u00d4', Otilde: '\u00d5', Ouml: '\u00d6', Oslash: '\u00d8', Ugrave: '\u00d9',
+    Uacute: '\u00da', Ucirc: '\u00db', Uuml: '\u00dc', Yacute: '\u00dd', THORN: '\u00de',
+    szlig: '\u00df', agrave: '\u00e0', aacute: '\u00e1', acirc: '\u00e2', atilde: '\u00e3',
+    auml: '\u00e4', aring: '\u00e5', aelig: '\u00e6', ccedil: '\u00e7', egrave: '\u00e8',
+    eacute: '\u00e9', ecirc: '\u00ea', euml: '\u00eb', igrave: '\u00ec', iacute: '\u00ed',
+    icirc: '\u00ee', iuml: '\u00ef', eth: '\u00f0', ntilde: '\u00f1', ograve: '\u00f2',
+    oacute: '\u00f3', ocirc: '\u00f4', otilde: '\u00f5', ouml: '\u00f6', oslash: '\u00f8',
+    ugrave: '\u00f9', uacute: '\u00fa', ucirc: '\u00fb', uuml: '\u00fc', yacute: '\u00fd',
+    thorn: '\u00fe', yuml: '\u00ff',
+    larr: '\u2190', uarr: '\u2191', rarr: '\u2192', darr: '\u2193', harr: '\u2194',
+    crarr: '\u21b5', lArr: '\u21d0', uArr: '\u21d1', rArr: '\u21d2', dArr: '\u21d3',
+    hArr: '\u21d4', forall: '\u2200', part: '\u2202', exist: '\u2203', empty: '\u2205',
+    nabla: '\u2207', isin: '\u2208', notin: '\u2209', ni: '\u220b', prod: '\u220f',
+    sum: '\u2211', minus: '\u2212', lowast: '\u2217', radic: '\u221a', prop: '\u221d',
+    infin: '\u221e', ang: '\u2220', and: '\u2227', or: '\u2228', cap: '\u2229',
+    cup: '\u222a', int: '\u222b', there4: '\u2234', sim: '\u223c', cong: '\u2245',
+    asymp: '\u2248', ne: '\u2260', equiv: '\u2261', le: '\u2264', ge: '\u2265',
+    sub: '\u2282', sup: '\u2283', nsub: '\u2284', sube: '\u2286', supe: '\u2287',
+    oplus: '\u2295', otimes: '\u2297', perp: '\u22a5', sdot: '\u22c5',
   };
+
+  let _domParser = null;
+  function decodeNamedEntity(name) {
+    if (Object.prototype.hasOwnProperty.call(namedEntities, name)) {
+      return namedEntities[name];
+    }
+    const lower = name.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(namedEntities, lower)) {
+      return namedEntities[lower];
+    }
+    if (typeof DOMParser !== 'undefined') {
+      try {
+        if (!_domParser) _domParser = new DOMParser();
+        const doc = _domParser.parseFromString('&' + name + ';', 'text/html');
+        const val = doc.body.textContent;
+        if (val && val !== '&' + name + ';') return val;
+      } catch (_) {}
+    }
+    return null;
+  }
 
   function decodeEntityText(chunk) {
     if (!chunk || !chunk.includes('&')) return chunk;
     return chunk.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*);/gi, (match, body) => {
-      const lower = body.toLowerCase();
-      if (lower.startsWith('#x')) {
-        const cp = Number.parseInt(lower.slice(2), 16);
+      if (body.startsWith('#x') || body.startsWith('#X')) {
+        const cp = Number.parseInt(body.slice(2), 16);
         if (!Number.isFinite(cp) || cp <= 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
           return '\ufffd';
         }
         return String.fromCodePoint(cp);
       }
-      if (lower.startsWith('#')) {
-        const cp = Number.parseInt(lower.slice(1), 10);
+      if (body.startsWith('#')) {
+        const cp = Number.parseInt(body.slice(1), 10);
         if (!Number.isFinite(cp) || cp <= 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
           return '\ufffd';
         }
         return String.fromCodePoint(cp);
       }
-      return Object.prototype.hasOwnProperty.call(namedEntities, lower) ? namedEntities[lower] : match;
+      const decoded = decodeNamedEntity(body);
+      return decoded !== null ? decoded : match;
     });
   }
 
@@ -173,6 +237,22 @@ function _inspectHtmlText(input) {
   let hasRichElement = false;
   let i = 0;
 
+  function pushBreak(newlines = 1) {
+    if (chunks.length === 0) return;
+    let trailing = 0;
+    for (let k = chunks.length - 1; k >= 0; k--) {
+      const c = chunks[k];
+      for (let j = c.length - 1; j >= 0; j--) {
+        if (c[j] === '\n') trailing += 1;
+        else if (c[j] === ' ' || c[j] === '\t' || c[j] === '\r') continue;
+        else { k = -1; break; }
+      }
+    }
+    const needed = Math.min(2, newlines) - trailing;
+    if (needed === 1) chunks.push('\n');
+    else if (needed >= 2) chunks.push('\n\n');
+  }
+
   while (i < len) {
     const nextLt = source.indexOf('<', i);
     if (nextLt === -1) {
@@ -194,17 +274,32 @@ function _inspectHtmlText(input) {
         if (source.startsWith('<!-->', i)) { i += 5; continue; }
         if (source.startsWith('<!--->', i)) { i += 6; continue; }
         const endComment = source.indexOf('-->', i + 4);
-        i = endComment === -1 ? len : endComment + 3;
+        if (endComment === -1) {
+          chunks.push('<');
+          i += 1;
+          continue;
+        }
+        i = endComment + 3;
         continue;
       }
       const endDecl = source.indexOf('>', i + 2);
-      i = endDecl === -1 ? len : endDecl + 1;
+      if (endDecl === -1) {
+        chunks.push('<');
+        i += 1;
+        continue;
+      }
+      i = endDecl + 1;
       continue;
     }
 
     if (next === '?') {
       const endPi = source.indexOf('>', i + 2);
-      i = endPi === -1 ? len : endPi + 1;
+      if (endPi === -1) {
+        chunks.push('<');
+        i += 1;
+        continue;
+      }
+      i = endPi + 1;
       continue;
     }
 
@@ -214,8 +309,23 @@ function _inspectHtmlText(input) {
         continue;
       }
       if (i + 2 < len && /[A-Za-z]/.test(source[i + 2])) {
-        const endTag = findQuotedTagEnd(i + 2, len);
-        i = endTag >= len ? len : endTag + 1;
+        let closeNameEnd = i + 2;
+        while (closeNameEnd < len && /[A-Za-z0-9:-]/.test(source[closeNameEnd])) {
+          closeNameEnd += 1;
+        }
+        const closeTagName = source.slice(i + 2, closeNameEnd).toLowerCase();
+        const endTag = findQuotedTagEnd(closeNameEnd, len);
+        if (endTag >= len) {
+          chunks.push('<');
+          i += 1;
+          continue;
+        }
+        if (closeTagName === 'p' || closeTagName === 'blockquote' || /^h[1-6]$/.test(closeTagName)) {
+          pushBreak(2);
+        } else if (closeTagName === 'div' || closeTagName === 'li' || closeTagName === 'tr') {
+          pushBreak(1);
+        }
+        i = endTag + 1;
         continue;
       }
       chunks.push('<');
@@ -236,8 +346,9 @@ function _inspectHtmlText(input) {
     const tagName = source.slice(i + 1, nameEnd).toLowerCase();
     const endTag = findQuotedTagEnd(nameEnd, len);
     if (endTag >= len) {
-      i = len;
-      break;
+      chunks.push('<');
+      i += 1;
+      continue;
     }
 
     if (richTags.has(tagName)) {
@@ -280,11 +391,23 @@ function _inspectHtmlText(input) {
       continue;
     }
 
+    if (tagName === 'br') {
+      chunks.push('\n');
+    } else if (tagName === 'p' || tagName === 'blockquote' || tagName === 'hr' || /^h[1-6]$/.test(tagName)) {
+      pushBreak(2);
+    } else if (tagName === 'div' || tagName === 'li' || tagName === 'tr') {
+      pushBreak(1);
+    } else if (tagName === 'td' || tagName === 'th') {
+      if (chunks.length > 0 && !/\s$/.test(chunks[chunks.length - 1])) {
+        chunks.push(' ');
+      }
+    }
+
     i = endTag + 1;
   }
 
   return {
-    text: decodeEntityText(chunks.join('')),
+    text: decodeEntityText(chunks.join('')).replace(/^\n+|\n+$/g, ''),
     hasRichElement,
   };
 }

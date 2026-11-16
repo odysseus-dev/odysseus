@@ -1,6 +1,6 @@
 import { activeDocId, docs } from "../../application/documentState.js";
 
-import { _htmlToPlainText } from "../../domain/documentKinds.js";
+import { _htmlToPlainText, _looksLikeHtml } from "../../domain/documentKinds.js";
 import {
   _decodeBase64EmailWrapper,
   _looksLikeWrappedEmailContent,
@@ -155,13 +155,14 @@ export function _sanitizeOutgoingEmailBody(raw) {
       return _parseEmailHeader(decoded).body || '';
     }).join('');
 
-    if (!changed && text.includes('<')) {
+    if (changed) text = clean;
+
+    if (_looksLikeHtml(text)) {
       const plain = _htmlToPlainText(text).trim();
-      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;
-      if (plainClean !== plain) return plainClean;
+      return _sanitizeOutgoingEmailBody(plain);
     }
 
-    return (changed ? clean : text)
+    return text
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   }
