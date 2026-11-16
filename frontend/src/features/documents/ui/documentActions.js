@@ -198,12 +198,12 @@ export function autoTitleFromContent(content, docId) {
     if (title.length > 50) title = title.slice(0, 48) + '...';
     if (!title) return;
 
-    updateTitle(id, title, { isAutoTitle: true });
     const titleInput = document.getElementById('doc-title-input');
     const activeTitle = (titleInput?.value || '').trim();
     if (titleInput && id === activeDocId && (!activeTitle || activeTitle === 'Untitled') && document.activeElement !== titleInput) {
       titleInput.value = title;
     }
+    return updateTitle(id, title, { isAutoTitle: true });
   }
 
 export async function updateLanguage(docId = activeDocId, language = document.getElementById('doc-language-select')?.value) {

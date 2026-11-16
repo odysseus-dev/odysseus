@@ -111,6 +111,20 @@ jobs:
           node --check scripts/verify_document_remediation.mjs
       - name: Test frontend architecture gates, reference checks, and stateless proof
         run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs tests/documentRemediationVerifier.test.mjs
+      - name: Test document behavior suites
+        run: |
+          node --test tests/domainModules.test.mjs \
+            tests/documentActions.test.mjs \
+            tests/documentUpdate.test.mjs \
+            tests/documentStatus.test.mjs \
+            tests/documentVersionHistory.test.mjs \
+            tests/markdownImages.test.mjs \
+            tests/documentTabBar.test.mjs \
+            tests/selectionHighlights.test.mjs \
+            tests/documentLiveStream.test.mjs \
+            tests/documentToolbar.test.mjs \
+            tests/documentOverflow.test.mjs \
+            tests/documentFlows.test.mjs
 
   python-tests:
     name: Python tests (pytest ${{ matrix.shard }})

@@ -1,26 +1,6 @@
-// tests/documentStatus.test.mjs
-/**
- * Runner for the document status behavior suite.
- */
-
 import test from 'node:test';
-import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { runBehaviorSuite } from './helpers/runBehaviorSuite.mjs';
 
-test('document status extracted behavior', () => {
-  const suite = fileURLToPath(new URL('./documentStatus.behavior.mjs', import.meta.url));
-  const env = { ...process.env };
-  delete env.NODE_TEST_CONTEXT;
-  delete env.NODE_TEST_WORKER_ID;
-  const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--test', suite], {
-    encoding: 'utf8',
-    env,
-  });
-  if (result.status !== 0) {
-    process.stderr.write(result.stderr || '');
-    process.stdout.write(result.stdout || '');
-  }
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout || '', /ℹ pass [1-9]/);
+test('documentStatus extracted behavior', () => {
+  runBehaviorSuite(new URL('./documentStatus.behavior.mjs', import.meta.url));
 });

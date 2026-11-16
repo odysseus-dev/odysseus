@@ -1,2 +1,6 @@
-import test from 'node:test'; import assert from 'node:assert/strict'; import {spawnSync} from 'node:child_process'; import {fileURLToPath} from 'node:url';
-test('selection highlights extracted behavior',()=>{const suite=fileURLToPath(new URL('./selectionHighlights.behavior.mjs',import.meta.url));const env={...process.env};delete env.NODE_TEST_CONTEXT;delete env.NODE_TEST_WORKER_ID;const r=spawnSync(process.execPath,['--experimental-vm-modules','--test',suite],{encoding:'utf8',env});if(r.status!==0)process.stderr.write(r.stderr||r.stdout||'');assert.equal(r.status,0,r.stderr||r.stdout);assert.match(r.stdout||'',/ℹ pass [1-9]/);});
+import test from 'node:test';
+import { runBehaviorSuite } from './helpers/runBehaviorSuite.mjs';
+
+test('selection highlights extracted behavior', () => {
+  runBehaviorSuite(new URL('./selectionHighlights.behavior.mjs', import.meta.url));
+});
