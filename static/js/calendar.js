@@ -9,6 +9,7 @@ import { topPortalZ } from './toolWindowZOrder.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { layoutTimedEvents } from './features/calendar/domain/weekLayout.js';
 import {
   WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
@@ -1287,67 +1288,30 @@ function _wkFormatHourLabel(h) {
   const hh = ((h + 11) % 12) + 1;
   return `${hh} ${ampm}`;
 }
-function _wkEventTopHeight(ev, dayStr) {
-  // Convert event start/end (local) into top/height in px relative to the
-  // day's grid origin. Clamp to visible window.
-  // The dtstart/dtend strings are like "2026-05-11T09:00:00" (no tz), so
-  // pull the time portion directly to avoid TZ math drift; falls back to
-  // Date math if the string isn't shaped as expected.
-  const _toMin = (iso, fallbackDate) => {
+function _wkLayoutTimedEvents(events, dayStr) {
+  // Resolve each endpoint to a minute on the displayed local day before layout.
+  const minuteInDay = (iso) => {
     if (!iso) return null;
     const mins = _timeToMin(iso);
     if (mins !== null && iso.includes('T')) {
-      // If the event spans into a previous/next day, clamp to today's bounds.
       const evDate = _localDateOf(iso);
-      if (evDate < fallbackDate) return 0;             // event started before today
-      if (evDate > fallbackDate) return 24 * 60;       // event ends after today
+      if (evDate < dayStr) return 0;
+      if (evDate > dayStr) return 24 * 60;
       return mins;
     }
     // All-day or date-only — treat as start of day.
     return 0;
   };
-  const startMin = _toMin(ev.dtstart, dayStr);
-  const endMin   = _toMin(ev.dtend, dayStr) ?? (startMin + 60);
-  const gridStart = WEEK_HOUR_START * 60;
-  const gridEnd   = WEEK_HOUR_END * 60;
-  const sMin = Math.max(gridStart, startMin);
-  const eMin = Math.min(gridEnd, Math.max(endMin, sMin + 15));
-  const top = (sMin - gridStart) * (WEEK_HOUR_PX / 60);
-  const height = Math.max(18, (eMin - sMin) * (WEEK_HOUR_PX / 60));
-  return { top, height };
-}
-
-function _wkLayoutTimedEvents(events, dayStr) {
-  const items = events.map(ev => {
-    const { top, height } = _wkEventTopHeight(ev, dayStr);
-    return { ev, top, height, start: top, end: top + height, lane: 0, laneCount: 1 };
-  }).sort((a, b) => (a.start - b.start) || (a.end - b.end));
-
-  const clusters = [];
-  let cluster = null;
-  for (const item of items) {
-    if (!cluster || item.start >= cluster.end) {
-      cluster = { end: item.end, items: [item] };
-      clusters.push(cluster);
-    } else {
-      cluster.items.push(item);
-      cluster.end = Math.max(cluster.end, item.end);
-    }
-  }
-
-  for (const group of clusters) {
-    const laneEnds = [];
-    for (const item of group.items) {
-      let lane = laneEnds.findIndex(end => end <= item.start);
-      if (lane < 0) lane = laneEnds.length;
-      laneEnds[lane] = item.end;
-      item.lane = lane;
-    }
-    const laneCount = Math.max(1, laneEnds.length);
-    for (const item of group.items) item.laneCount = laneCount;
-  }
-
-  return items;
+  const intervals = events.map(ev => ({
+    ev,
+    startMinute: minuteInDay(ev.dtstart),
+    endMinute: minuteInDay(ev.dtend),
+  }));
+  return layoutTimedEvents(intervals, {
+    gridStart: WEEK_HOUR_START * 60,
+    gridEnd: WEEK_HOUR_END * 60,
+    hourPx: WEEK_HOUR_PX,
+  });
 }
 
 function _layoutCrowdedWeekHover(body) {

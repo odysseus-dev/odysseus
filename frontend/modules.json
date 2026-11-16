@@ -6,6 +6,10 @@
       "deployment": "js/actionMenuOrder.js"
     },
     {
+      "source": "features/calendar/domain/weekLayout.js",
+      "deployment": "js/features/calendar/domain/weekLayout.js"
+    },
+    {
       "source": "features/notes/domain/recurrence.js",
       "deployment": "js/features/notes/domain/recurrence.js"
     },

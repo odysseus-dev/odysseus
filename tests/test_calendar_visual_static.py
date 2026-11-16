@@ -22,7 +22,6 @@ def test_calendar_week_view_has_overlap_lanes_and_live_ruler_hooks():
     calendar_src = (ROOT / "static/js/calendar.js").read_text()
     style_src = app_css()
 
-    assert "function _wkLayoutTimedEvents" in calendar_src
     assert "--lane:${lane};--lane-count:${laneCount}" in calendar_src
     assert "--wk-hour-px:${WEEK_HOUR_PX}px" in calendar_src
     assert "cal-wk-now::after" in style_src
