@@ -46,7 +46,7 @@ let _dependenciesModelHint = '';
 function _fetchCookbookUiWithTimeout(input, init = {}, timeoutMs = 20000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return fetch(typeof input === 'string' ? appUrl(input) : input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // Radio-style check marking which model directory is a server's download target.
@@ -1128,7 +1128,7 @@ async function _fetchDependencies() {
     } else {
       list.replaceChildren(loading);
     }
-    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''), {
+    const resp = await fetch(appUrl('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : '')), {
       credentials: 'same-origin',
       signal: depController.signal,
     });

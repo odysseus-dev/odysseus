@@ -195,7 +195,7 @@ export function wireImport({ container, saveState, createLayer, composite, rende
   // thumbnail-grid picker overlay.
   document.getElementById('ge-import-gallery')?.addEventListener('click', async () => {
     try {
-      const res = await fetch('/api/gallery/library?limit=50', { credentials: 'same-origin' });
+      const res = await fetch(appUrl('/api/gallery/library?limit=50'), { credentials: 'same-origin' });
       const data = await res.json();
       const items = data.items || [];
       if (!items.length) { if (uiModule) uiModule.showToast('No images in gallery'); return; }

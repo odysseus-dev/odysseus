@@ -11,7 +11,7 @@
 
 import uiModule from '../ui.js?v=20260916largetoolscroll1';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 let _notifFired = new Set(JSON.parse(localStorage.getItem('cal-notif-fired') || '[]'));
 
@@ -87,7 +87,7 @@ async function _pollReminders() {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification(note.title || 'Calendar Reminder', {
           body,
-          icon: '/static/favicon.png',
+          icon: appUrl('/static/favicon.png'),
           tag: `cal-remind-${note.id}`,
         });
       }

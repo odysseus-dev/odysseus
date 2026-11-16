@@ -270,12 +270,15 @@ def test_real_auth_middleware_uses_application_relative_path(tmp_path):
     }
     assert payload["static_lookalike"] == {
         "status": 302,
-        "location": "/odysseus/login",
+        # Relative: the browser resolves it against the request URL, keeping
+        # whatever prefix the client browses under (ASGI root_path mount,
+        # HA ingress panel path) — the server cannot know the browser prefix.
+        "location": "login",
         "called": 0,
     }
     assert payload["mounted_browser"] == {
         "status": 302,
-        "location": "/odysseus/login",
+        "location": "login",
         "called": 0,
     }
     for name in ("mounted_api", "default_api"):

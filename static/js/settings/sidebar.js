@@ -188,7 +188,7 @@ function paintSettingsBuildInfo(modalEl, info) {
 
 async function loadSettingsBuildInfo(modalEl) {
   try {
-    const res = await fetch('/api/version', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/version'), { credentials: 'same-origin' });
     if (!res.ok) return;
     paintSettingsBuildInfo(modalEl, formatSettingsBuildInfo(await res.json()));
   } catch {

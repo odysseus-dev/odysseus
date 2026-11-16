@@ -371,7 +371,7 @@ function _wireToastSwipe(el) {
  * Show success toast message
  */
 export function showToast(msg, durationOrOpts) {
-  fetch('/api/tasks/notification-logs', {
+  fetch(appUrl('/api/tasks/notification-logs'), {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body: String(msg || ''), status: 'success' }),
@@ -510,7 +510,7 @@ export function showToast(msg, durationOrOpts) {
  * Show error toast message
  */
 export function showError(msg) {
-  fetch('/api/tasks/notification-logs', {
+  fetch(appUrl('/api/tasks/notification-logs'), {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body: String(msg || ''), status: 'error' }),

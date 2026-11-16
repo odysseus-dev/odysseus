@@ -39,18 +39,20 @@ import { createNotesWorkflows } from './application/workflows.js';
 import { createNotesApi } from './infrastructure/http.js';
 import { createNotesPersistence, REMINDER_DISMISSED_AT_KEY, NOTES_FIRST_OPEN_HINT_KEY, NOTES_LABELS_COLLAPSED_KEY } from './infrastructure/storage.js';
 import * as dates from './domain/recurrence.js';
-import uiModule from '/static/js/ui.js?v=20260916largetoolscroll1';
-import { spawnConfetti } from '/static/js/shared/ui/confetti.js';
-import * as Modals from '/static/js/modalManager.js';
-import { attachColorPicker } from '/static/js/colorPicker.js?v=20260910eyedropper1';
-import { makeWindowDraggable } from '/static/js/windowDrag.js';
-import { snapModalToZone } from '/static/js/tileManager.js?v=20260910responsivebounds1';
-import { applyEdgeDock, clearDockSide } from '/static/js/modalSnap.js';
-import { topToolWindowZ, topPortalZ } from '/static/js/toolWindowZOrder.js';
-import { bindMenuDismiss, dismissOrRemove } from '/static/js/escMenuStack.js';
-import { bindTourHintDismiss } from '/static/js/tourHintDismiss.js';
+import uiModule from '../../ui.js?v=20260916largetoolscroll1';
+import { spawnConfetti } from '../../shared/ui/confetti.js';
+import * as Modals from '../../modalManager.js';
+import { attachColorPicker } from '../../colorPicker.js?v=20260910eyedropper1';
+import { makeWindowDraggable } from '../../windowDrag.js';
+import { snapModalToZone } from '../../tileManager.js?v=20260910responsivebounds1';
+import { applyEdgeDock, clearDockSide } from '../../modalSnap.js';
+import { topToolWindowZ, topPortalZ } from '../../toolWindowZOrder.js';
+import { bindMenuDismiss, dismissOrRemove } from '../../escMenuStack.js';
+import { bindTourHintDismiss } from '../../tourHintDismiss.js';
 
-const api = createNotesApi({ origin: window.location.origin, request: (...args) => fetch(...args) });
+// origin is a URL *path prefix* for http.js (not an absolute origin):
+// empty for direct access, mount prefix under the HA ingress panel.
+const api = createNotesApi({ origin: window.__odysseusAppBase, request: (...args) => fetch(...args) });
 const persistence = createNotesPersistence({ storage: typeof localStorage === 'undefined' ? undefined : localStorage });
 const { _loadPendingHighlights, _loadGlowedReminders, _saveGlowedReminders, _loadActiveHighlights, _saveActiveHighlights, _savePendingHighlights, _loadFiredReminders, _saveFiredReminders, _draftKey, _loadDraft, _clearDraft } = persistence;
 const clock = { now: () => Date.now() };

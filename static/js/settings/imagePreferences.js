@@ -4,8 +4,8 @@ const USER_PREFERENCE_KEYS = ['image_model', 'image_edit_model', 'image_quality'
 
 export async function readImagePreferences() {
   const [prefsRes, settingsRes] = await Promise.all([
-    fetch('/api/prefs', { credentials: 'same-origin' }).catch(() => null),
-    fetch('/api/auth/settings', { credentials: 'same-origin' }).catch(() => null),
+    fetch(appUrl('/api/prefs'), { credentials: 'same-origin' }).catch(() => null),
+    fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' }).catch(() => null),
   ]);
   const prefs = (prefsRes && prefsRes.ok) ? await prefsRes.json().catch(() => ({})) : {};
   const settings = (settingsRes && settingsRes.ok) ? await settingsRes.json().catch(() => ({})) : {};
@@ -24,7 +24,7 @@ export function saveImagePreferences(patch) {
   const save = async () => {
     let response;
     try {
-      response = await fetch('/api/auth/settings', {
+      response = await fetch(appUrl('/api/auth/settings'), {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
       });
@@ -43,7 +43,7 @@ export function saveImagePreferences(patch) {
         throw err;
       }
       for (const [key, value] of userEntries) {
-        const prefRes = await fetch(`/api/prefs/${encodeURIComponent(key)}`, {
+        const prefRes = await fetch(appUrl(`/api/prefs/${encodeURIComponent(key)}`), {
           method: 'PUT', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ value }),
@@ -61,7 +61,7 @@ export function saveImagePreferences(patch) {
     } else if (response.ok) {
       const clearResults = await Promise.all(USER_PREFERENCE_KEYS.map(async key => {
         try {
-          const res = await fetch(`/api/prefs/${encodeURIComponent(key)}`, {
+          const res = await fetch(appUrl(`/api/prefs/${encodeURIComponent(key)}`), {
             method: 'PUT', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value: null }),

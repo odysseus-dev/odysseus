@@ -5,7 +5,7 @@ import { invalidateSettings } from '../appConfig.js';
 
 export async function postSettings(body) {
   try {
-    const response = await fetch('/api/auth/settings', {
+    const response = await fetch(appUrl('/api/auth/settings'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

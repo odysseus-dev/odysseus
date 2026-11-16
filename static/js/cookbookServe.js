@@ -55,7 +55,7 @@ function _fetchCookbookWithTimeout(input, init = {}, timeoutMs = 20000) {
     if (parentSignal.aborted) controller.abort();
     else parentSignal.addEventListener('abort', abortFromParent, { once: true });
   }
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+  return fetch(typeof input === 'string' ? appUrl(input) : input, { ...init, signal: controller.signal }).finally(() => {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', abortFromParent);
   });
@@ -3018,7 +3018,7 @@ function _rerenderCachedModels() {
           const remoteHost = (hostEl && hostEl.value || '').trim();
           const params = new URLSearchParams();
           if (remoteHost) params.set('host', remoteHost);
-          const url = '/api/cookbook/gpus' + (params.toString() ? '?' + params.toString() : '');
+          const url = appUrl('/api/cookbook/gpus' + (params.toString() ? '?' + params.toString() : ''));
           const res = await _fetchCookbookWithTimeout(url, { credentials: 'same-origin' }, 10000);
           let data;
           try { data = await res.json(); } catch (_) { data = {}; }

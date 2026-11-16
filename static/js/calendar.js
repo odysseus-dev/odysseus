@@ -18,7 +18,7 @@ import {
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 // Open a file picker, upload the chosen image, return the URL string.
 function _pickCalBgImage() {
   return new Promise(resolve => {
@@ -689,7 +689,7 @@ async function _createEventReminder(ev, dueDate) {
     event_dtstart: new Date(ev.dtstart).toISOString(),
   };
   try {
-    const res = await fetch(`/api/notes`, {
+    const res = await fetch(appUrl(`/api/notes`), {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -3530,7 +3530,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     e.preventDefault();
     const taskId = e.currentTarget?.dataset?.taskId || '';
     try {
-      const m = await import('/static/js/tasks.js?v=20260914taskmodel1');
+      const m = await import(appUrl('/static/js/tasks.js?v=20260914taskmodel1'));
       const openTasks = m.openTasks || m.default?.openTasks;
       if (typeof openTasks === 'function') { openTasks(taskId); return; }
     } catch (_) {}

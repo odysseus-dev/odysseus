@@ -260,7 +260,7 @@ function _historyPageLimit() {
 }
 
 function _historyUrl(id, { limit = null, offset = null } = {}) {
-  const url = new URL(`${API_BASE}/api/history/${id}`);
+  const url = new URL(`${API_BASE}/api/history/${id}`, window.location.origin);
   if (limit != null) url.searchParams.set('limit', String(limit));
   if (offset != null) url.searchParams.set('offset', String(offset));
   return url.toString();

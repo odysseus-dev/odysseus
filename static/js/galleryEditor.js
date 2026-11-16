@@ -873,7 +873,7 @@ function _startAiProgress(requestId) {
     pending = true;
     try {
       const epQuery = endpointId ? `&endpoint_id=${encodeURIComponent(endpointId)}` : '';
-      const r = await fetch(`/api/image/edit-progress?request_id=${encodeURIComponent(requestId)}` + epQuery, { credentials: 'same-origin' });
+      const r = await fetch(appUrl(`/api/image/edit-progress?request_id=${encodeURIComponent(requestId)}`) + epQuery, { credentials: 'same-origin' });
       if (!r.ok) return;
       const p = await r.json();
       if (epoch !== _aiProgressEpoch) return;
@@ -2648,7 +2648,7 @@ function _wireAiCommandBox() {
     // direct cross-origin call from the page fails). HARNESS provides
     // POST /api/editor/self-check {model,prompt,before,after} -> {text}.
     try {
-      const r = await fetch('/api/editor/self-check', {
+      const r = await fetch(appUrl('/api/editor/self-check'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: judgePrompt, before, after }),
       });
@@ -4714,7 +4714,7 @@ async function _persistDraft() {
     };
     const doRequest = async () => {
       if (draftIdAtStart) {
-        const res = await fetch(`/api/editor-drafts/${encodeURIComponent(draftIdAtStart)}`, {
+        const res = await fetch(appUrl(`/api/editor-drafts/${encodeURIComponent(draftIdAtStart)}`), {
           method: 'PUT', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: serializedBody,
@@ -4722,7 +4722,7 @@ async function _persistDraft() {
         // 404 means our row was deleted while editing — fall through to
         // create a fresh one so the user doesn't lose work.
         if (res.status === 404) {
-          return fetch('/api/editor-drafts', {
+          return fetch(appUrl('/api/editor-drafts'), {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: serializedBody,
@@ -4734,7 +4734,7 @@ async function _persistDraft() {
         if (!res.ok) throw await responseError(res, 'PUT');
         return res.json();
       }
-      const res = await fetch('/api/editor-drafts', {
+      const res = await fetch(appUrl('/api/editor-drafts'), {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: serializedBody,
@@ -4798,7 +4798,7 @@ async function _persistDraft() {
 async function _loadDraftById(draftId) {
   if (!draftId) return null;
   try {
-    const res = await fetch(`/api/editor-drafts/${encodeURIComponent(draftId)}`, {
+    const res = await fetch(appUrl(`/api/editor-drafts/${encodeURIComponent(draftId)}`), {
       credentials: 'same-origin',
     });
     if (!res.ok) return null;
@@ -4813,7 +4813,7 @@ async function _loadDraftById(draftId) {
 async function _findDraftForImage(imageId) {
   if (!imageId) return null;
   try {
-    const res = await fetch('/api/editor-drafts', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/editor-drafts'), { credentials: 'same-origin' });
     if (!res.ok) return null;
     const out = await res.json();
     const match = (out.drafts || []).find(d => d.source_image_id === imageId);
@@ -4827,7 +4827,7 @@ async function _findDraftForImage(imageId) {
 async function _clearDraftServer(draftId) {
   if (!draftId) return;
   try {
-    await fetch(`/api/editor-drafts/${encodeURIComponent(draftId)}`, {
+    await fetch(appUrl(`/api/editor-drafts/${encodeURIComponent(draftId)}`), {
       method: 'DELETE', credentials: 'same-origin',
     });
   } catch (_) { /* best-effort */ }
@@ -7572,7 +7572,7 @@ async function _runSamTextSelection() {
 }
 
 async function _requestAndApplySamMask(layer, payload, mode, seedPoint, opts = {}) {
-  const res = await fetch('/api/image/mask', {
+  const res = await fetch(appUrl('/api/image/mask'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: opts.signal,
@@ -12229,7 +12229,7 @@ function _buildEditor(container) {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (aborted) break;
         try {
-          res = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body, signal: _ctl ? _ctl.signal : undefined });
+          res = await fetch(appUrl(endpoint), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body, signal: _ctl ? _ctl.signal : undefined });
         } catch (e) {
           res = null;
           if (e && e.name === 'AbortError') { aborted = true; lastErr = 'timed out'; }
@@ -12614,7 +12614,7 @@ function _buildEditor(container) {
           'mask.feather': { description: 'Feather the active layer mask edge {radius}.', run: (p) => { const mask = _getActiveMaskLayer(); if (!mask) throw new Error('no mask'); const radius = Math.max(0, Number(p && p.radius) || 4); _saveState('Feather mask'); const out = _featherMaskCanvas((w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }, mask.canvas, radius); mask.ctx.globalCompositeOperation = 'source-over'; mask.ctx.clearRect(0, 0, mask.canvas.width, mask.canvas.height); mask.ctx.drawImage(out, 0, 0); composite(); _renderLayerPanel(); return { radius }; } },
           'layers.getImage': { description: 'Return a layer as a PNG data URL (id/index/name).', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); const c = _renderLayerOutput(l) || l.canvas; if (!c || !c.toDataURL) throw new Error('layer has no raster content'); return { id: l.id, name: l.name, kind: l.kind || 'raster', width: c.width, height: c.height, dataUrl: c.toDataURL('image/png') }; } },
           'layers.getBounds': { description: 'Return the non-transparent bounds of a layer in document space (id/index/name).', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l || !l.canvas) throw new Error('layer not found'); const c = _renderLayerOutput(l) || l.canvas; const data = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data; const b = _maskAlphaBounds(data, c.width, c.height, 8); const off = state.layerOffsets.get(l.id) || { x: 0, y: 0 }; return { id: l.id, name: l.name, bounds: b, x: (b ? b.x : 0) + (off.x || 0), y: (b ? b.y : 0) + (off.y || 0), width: b ? b.w : 0, height: b ? b.h : 0 }; } },
-          'ai.removeBackground': { description: 'Remove a layer background and store it as a NON-destructive layer mask {id/index/name}.', run: async (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l || !l.canvas) throw new Error('layer not found'); const image = l.canvas.toDataURL('image/png').split(',')[1]; const res = await fetch('/api/image/remove-bg', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) }); if (!res.ok) { let err = res.statusText; try { const e = await res.json(); err = e.detail || e.error || err; } catch (_) {} throw new Error(err); } const data = await res.json(); if (data.error) throw new Error(data.error); if (!data.image) throw new Error('No image returned'); const img = await _decodeAIImage(data.image, _aiSignal); const cut = document.createElement('canvas'); cut.width = l.canvas.width; cut.height = l.canvas.height; const cctx = cut.getContext('2d'); cctx.drawImage(img, 0, 0, cut.width, cut.height); cctx.globalCompositeOperation = 'source-in'; cctx.fillStyle = '#ffffff'; cctx.fillRect(0, 0, cut.width, cut.height); _saveState('Remove background (mask)'); if (!l.masks) l.masks = []; const mask = { id: 'mask-' + (state.nextLayerId++), name: 'Background removed', canvas: cut, ctx: cctx, visible: true, mode: 'layer', space: 'layer', linked: true, offset: { x: 0, y: 0 } }; l.masks.push(mask); l.activeMaskId = mask.id; composite(); _renderLayerPanel(); return { layerId: l.id, maskId: mask.id }; } },
+          'ai.removeBackground': { description: 'Remove a layer background and store it as a NON-destructive layer mask {id/index/name}.', run: async (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l || !l.canvas) throw new Error('layer not found'); const image = l.canvas.toDataURL('image/png').split(',')[1]; const res = await fetch(appUrl('/api/image/remove-bg'), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) }); if (!res.ok) { let err = res.statusText; try { const e = await res.json(); err = e.detail || e.error || err; } catch (_) {} throw new Error(err); } const data = await res.json(); if (data.error) throw new Error(data.error); if (!data.image) throw new Error('No image returned'); const img = await _decodeAIImage(data.image, _aiSignal); const cut = document.createElement('canvas'); cut.width = l.canvas.width; cut.height = l.canvas.height; const cctx = cut.getContext('2d'); cctx.drawImage(img, 0, 0, cut.width, cut.height); cctx.globalCompositeOperation = 'source-in'; cctx.fillStyle = '#ffffff'; cctx.fillRect(0, 0, cut.width, cut.height); _saveState('Remove background (mask)'); if (!l.masks) l.masks = []; const mask = { id: 'mask-' + (state.nextLayerId++), name: 'Background removed', canvas: cut, ctx: cctx, visible: true, mode: 'layer', space: 'layer', linked: true, offset: { x: 0, y: 0 } }; l.masks.push(mask); l.activeMaskId = mask.id; composite(); _renderLayerPanel(); return { layerId: l.id, maskId: mask.id }; } },
           'ai.generativeFill': { description: 'Generative fill: inpaint the current selection with a prompt; result is a NEW layer masked to the selection. {prompt}.', run: (p) => _aiInpaintSelection((p && p.prompt) || '') },
           'ai.replaceBackground': { description: 'Replace the background/scene with new content while keeping the subject (server-side subject mask + harmonise + contact shadow). {prompt}.', run: (p) => _aiReplaceBackground((p && p.prompt) || '') },
           'ai.outpaint': { description: 'Extend/outpaint the canvas to a ratio (16:9, 9:16) or size WxH via the server outpaint pipeline (pad + strip inpaint with tone match, original pixels preserved). {prompt,ratio,size,context,steps}.', run: (p) => _aiOutpaint((p && p.prompt) || '', { ratio: p && p.ratio, size: p && p.size, context: p && p.context, steps: p && p.steps }) },
@@ -12623,7 +12623,7 @@ function _buildEditor(container) {
           'ai.harmonize': { description: 'Harmonize the layer/selection lighting with the rest of the image; result is a NEW layer. {strength}.', run: async (p) => { const { canvas } = await _aiEditCanvas('/api/image/harmonize', { strength: Number(p && p.strength) || 0.4 }); return _placeResultLayer(canvas, 'Harmonized', state.wandMask || null); } },
           'ai.generativeUpscale': { description: 'Upscale the image 2x/4x; result is a NEW layer. Falls back to a high-quality canvas upscale labelled "basic upscale" when no Real-ESRGAN model is served. {scale}.', run: async (p) => { const scale = Number(p && p.scale) === 4 ? 4 : 2; try { const { canvas } = await _aiEditCanvas('/api/image/upscale-local', { scale }); return _placeResultLayer(canvas, `Upscaled ${scale}x`, null); } catch (e) { const src = flatten(); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(src.width * scale)); c.height = Math.max(1, Math.round(src.height * scale)); const cx = c.getContext('2d'); cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high'; cx.drawImage(src, 0, 0, c.width, c.height); _saveState('Upscale (basic)'); _resizeCanvasDocument(state, c.width, c.height, { anchorX: 0, anchorY: 0 }); const layerId = _placeResultLayer(c, `Upscaled ${scale}x (basic upscale)`, null); return { layerId, scale, method: 'basic', reason: String(e && e.message || e) }; } } },
           'ai.generateImage': { description: 'Generate an image with the saved generation model and fit it proportionally as a new layer. {prompt,width,height}.', run: (p) => _generateImage(p || {}) },
-          'ai.generativeExpand': { description: 'Generatively expand the canvas to width×height; only the new border is inpainted, the original pixels are kept pixel-identical, and the seam is feathered. {width,height,anchor,prompt}.', run: async (p) => { const tw = Math.max(1, Math.round(Number(p && p.width) || state.imgWidth)); const th = Math.max(1, Math.round(Number(p && p.height) || state.imgHeight)); if (tw <= state.imgWidth && th <= state.imgHeight) throw new Error('target must be larger than the current canvas'); const anchor = (p && p.anchor) || 'center'; const anchorX = anchor === 'left' ? 0 : anchor === 'right' ? 1 : 0.5; const anchorY = anchor === 'top' ? 0 : anchor === 'bottom' ? 1 : 0.5; _saveState('Generative expand'); const steps = Math.max(1, Math.round(Number(p && p.steps) || 4)); const sw = state.imgWidth; const sh = state.imgHeight; _resizeCanvasDocument(state, tw, th, { anchorX, anchorY }); const flat = flatten(); const b = _contentBounds(); const mask = document.createElement('canvas'); mask.width = tw; mask.height = th; const mctx = mask.getContext('2d'); mctx.fillStyle = '#ffffff'; mctx.fillRect(0, 0, tw, th); const prefill = document.createElement('canvas'); prefill.width = tw; prefill.height = th; const pctx = prefill.getContext('2d'); pctx.imageSmoothingEnabled = true; pctx.drawImage(flat, 0, 0, tw, th); if (b) { mctx.clearRect(b.x, b.y, b.w, b.h); const bx = b.x, by = b.y, bw = b.w, bh = b.h, rx = bx + bw, by2 = by + bh; if (bx > 0) pctx.drawImage(flat, bx, by, 1, bh, 0, by, bx, bh); if (rx < tw) pctx.drawImage(flat, rx - 1, by, 1, bh, rx, by, tw - rx, bh); if (by > 0) pctx.drawImage(flat, bx, by, bw, 1, bx, 0, bw, by); if (by2 < th) pctx.drawImage(flat, bx, by2 - 1, bw, 1, bx, by2, bw, th - by2); if (bx > 0 && by > 0) pctx.drawImage(flat, bx, by, 1, 1, 0, 0, bx, by); if (rx < tw && by > 0) pctx.drawImage(flat, rx - 1, by, 1, 1, rx, 0, tw - rx, by); if (bx > 0 && by2 < th) pctx.drawImage(flat, bx, by2 - 1, 1, 1, 0, by2, bx, th - by2); if (rx < tw && by2 < th) pctx.drawImage(flat, rx - 1, by2 - 1, 1, 1, rx, by2, tw - rx, th - by2); } else { const tx = Math.round((tw - sw) * anchorX); const ty = Math.round((th - sh) * anchorY); mctx.clearRect(tx, ty, sw, sh); } const image = prefill.toDataURL('image/png').split(',')[1]; const maskB64 = mask.toDataURL('image/png').split(',')[1]; const res = await fetch('/api/image/inpaint', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, mask: maskB64, prompt: (p && p.prompt) || 'extend the scene seamlessly, continuing the surrounding content and lighting naturally', steps }) }); if (!res.ok) { let err = res.statusText; try { const e = await res.json(); err = e.detail || e.error || err; } catch (_) {} throw new Error(err); } const data = await res.json(); if (data.error) throw new Error(data.error); if (!data.image) throw new Error('No image returned'); const img = await _decodeAIImage(data.image, _aiSignal); const seam = Math.max(12, Math.round(Math.min(tw, th) * 0.02)); let blendMask = _growMaskCanvas(mask, seam, true); blendMask = _featherMaskCanvas((cw, ch) => { const c = document.createElement('canvas'); c.width = cw; c.height = ch; return c; }, blendMask, Math.round(seam * 1.4)); const layer = createLayer('Generative expand', tw, th); layer.ctx.imageSmoothingEnabled = true; layer.ctx.imageSmoothingQuality = 'high'; layer.ctx.drawImage(img, 0, 0, tw, th); if (b) { const edge = _edgeBandAverage(flat, b); if (edge) { layer.ctx.save(); layer.ctx.globalAlpha = 0.14; layer.ctx.fillStyle = `rgb(${edge[0]}, ${edge[1]}, ${edge[2]})`; layer.ctx.fillRect(0, 0, tw, th); layer.ctx.restore(); } } _bakeMaskIntoLayer(layer.ctx, blendMask); state.layers.push(layer); state.activeLayerId = layer.id; state.selectedLayerIds = [layer.id]; composite(); _renderLayerPanel(); return { width: tw, height: th, layerId: layer.id, seam, steps }; } },
+          'ai.generativeExpand': { description: 'Generatively expand the canvas to width×height; only the new border is inpainted, the original pixels are kept pixel-identical, and the seam is feathered. {width,height,anchor,prompt}.', run: async (p) => { const tw = Math.max(1, Math.round(Number(p && p.width) || state.imgWidth)); const th = Math.max(1, Math.round(Number(p && p.height) || state.imgHeight)); if (tw <= state.imgWidth && th <= state.imgHeight) throw new Error('target must be larger than the current canvas'); const anchor = (p && p.anchor) || 'center'; const anchorX = anchor === 'left' ? 0 : anchor === 'right' ? 1 : 0.5; const anchorY = anchor === 'top' ? 0 : anchor === 'bottom' ? 1 : 0.5; _saveState('Generative expand'); const steps = Math.max(1, Math.round(Number(p && p.steps) || 4)); const sw = state.imgWidth; const sh = state.imgHeight; _resizeCanvasDocument(state, tw, th, { anchorX, anchorY }); const flat = flatten(); const b = _contentBounds(); const mask = document.createElement('canvas'); mask.width = tw; mask.height = th; const mctx = mask.getContext('2d'); mctx.fillStyle = '#ffffff'; mctx.fillRect(0, 0, tw, th); const prefill = document.createElement('canvas'); prefill.width = tw; prefill.height = th; const pctx = prefill.getContext('2d'); pctx.imageSmoothingEnabled = true; pctx.drawImage(flat, 0, 0, tw, th); if (b) { mctx.clearRect(b.x, b.y, b.w, b.h); const bx = b.x, by = b.y, bw = b.w, bh = b.h, rx = bx + bw, by2 = by + bh; if (bx > 0) pctx.drawImage(flat, bx, by, 1, bh, 0, by, bx, bh); if (rx < tw) pctx.drawImage(flat, rx - 1, by, 1, bh, rx, by, tw - rx, bh); if (by > 0) pctx.drawImage(flat, bx, by, bw, 1, bx, 0, bw, by); if (by2 < th) pctx.drawImage(flat, bx, by2 - 1, bw, 1, bx, by2, bw, th - by2); if (bx > 0 && by > 0) pctx.drawImage(flat, bx, by, 1, 1, 0, 0, bx, by); if (rx < tw && by > 0) pctx.drawImage(flat, rx - 1, by, 1, 1, rx, 0, tw - rx, by); if (bx > 0 && by2 < th) pctx.drawImage(flat, bx, by2 - 1, 1, 1, 0, by2, bx, th - by2); if (rx < tw && by2 < th) pctx.drawImage(flat, rx - 1, by2 - 1, 1, 1, rx, by2, tw - rx, th - by2); } else { const tx = Math.round((tw - sw) * anchorX); const ty = Math.round((th - sh) * anchorY); mctx.clearRect(tx, ty, sw, sh); } const image = prefill.toDataURL('image/png').split(',')[1]; const maskB64 = mask.toDataURL('image/png').split(',')[1]; const res = await fetch(appUrl('/api/image/inpaint'), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, mask: maskB64, prompt: (p && p.prompt) || 'extend the scene seamlessly, continuing the surrounding content and lighting naturally', steps }) }); if (!res.ok) { let err = res.statusText; try { const e = await res.json(); err = e.detail || e.error || err; } catch (_) {} throw new Error(err); } const data = await res.json(); if (data.error) throw new Error(data.error); if (!data.image) throw new Error('No image returned'); const img = await _decodeAIImage(data.image, _aiSignal); const seam = Math.max(12, Math.round(Math.min(tw, th) * 0.02)); let blendMask = _growMaskCanvas(mask, seam, true); blendMask = _featherMaskCanvas((cw, ch) => { const c = document.createElement('canvas'); c.width = cw; c.height = ch; return c; }, blendMask, Math.round(seam * 1.4)); const layer = createLayer('Generative expand', tw, th); layer.ctx.imageSmoothingEnabled = true; layer.ctx.imageSmoothingQuality = 'high'; layer.ctx.drawImage(img, 0, 0, tw, th); if (b) { const edge = _edgeBandAverage(flat, b); if (edge) { layer.ctx.save(); layer.ctx.globalAlpha = 0.14; layer.ctx.fillStyle = `rgb(${edge[0]}, ${edge[1]}, ${edge[2]})`; layer.ctx.fillRect(0, 0, tw, th); layer.ctx.restore(); } } _bakeMaskIntoLayer(layer.ctx, blendMask); state.layers.push(layer); state.activeLayerId = layer.id; state.selectedLayerIds = [layer.id]; composite(); _renderLayerPanel(); return { width: tw, height: th, layerId: layer.id, seam, steps }; } },
           'layers.rename': { description: 'Rename a layer {id|index|name, name|newName}.', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); const next = String(p.name || p.newName || '').trim(); if (!next) throw new Error('name required'); _saveState('Rename layer'); l.name = next; _renderLayerPanel(); return l.id; } },
           'layers.setVisibility': { description: 'Show/hide a layer {id|index|name, visible}.', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); _saveState('Toggle layer visibility'); l.visible = (p.visible === undefined) ? !l.visible : !!p.visible; composite(); _renderLayerPanel(); return l.visible; } },
           'layers.reorder': { description: 'Move a layer in z-order {id|index|name, direction:up|down|top|bottom}.', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); const i = state.layers.indexOf(l); if (i < 0) throw new Error('layer not in stack'); const dir = p.direction || 'up'; let j = i; if (dir === 'up') j = Math.min(state.layers.length - 1, i + 1); else if (dir === 'down') j = Math.max(0, i - 1); else if (dir === 'top') j = state.layers.length - 1; else if (dir === 'bottom') j = 0; if (j === i) return l.id; _saveState('Reorder layer'); state.layers.splice(i, 1); state.layers.splice(j, 0, l); composite(); _renderLayerPanel(); return l.id; } },
@@ -13337,7 +13337,7 @@ async function _checkRembgInstalled() {
     return;
   }
   try {
-    const r = await fetch('/api/cookbook/packages', { credentials: 'same-origin' });
+    const r = await fetch(appUrl('/api/cookbook/packages'), { credentials: 'same-origin' });
     if (!r.ok) throw new Error('packages query failed');
     const data = await r.json();
     const pkg = (data.packages || []).find(p => (p.name || '').toLowerCase() === 'rembg');

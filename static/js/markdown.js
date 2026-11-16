@@ -61,7 +61,8 @@ let _mathFlushScheduled = false;
 function _loadScript(src) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = src;
+    // Mount prefix (HA ingress panel); scheme-absolute srcs pass through.
+    script.src = appUrl(src);
     script.addEventListener('load', () => resolve(), { once: true });
     script.addEventListener('error', () => reject(new Error('Failed to load ' + src)), { once: true });
     document.head.appendChild(script);
@@ -306,7 +307,13 @@ function imageHtml(alt, url, title) {
   let safeUrl = '';
   try {
     const parsed = new URL(rawUrl, window.location.origin);
-    if (parsed.protocol === 'https:') safeUrl = parsed.href;
+    if (parsed.protocol === 'https:') {
+      // Same-origin paths are app paths — they need the browser-side mount
+      // prefix (HA ingress panel); absolute URLs pass through as-is.
+      safeUrl = parsed.origin === window.location.origin
+        ? new URL(appUrl(parsed.pathname + parsed.search + parsed.hash), window.location.origin).href
+        : parsed.href;
+    }
   } catch (_) {
     safeUrl = '';
   }
@@ -1555,7 +1562,7 @@ async function _registerEndpointFromButton(btn) {
   btn.disabled = true;
   btn.innerHTML = '<span aria-hidden="true">...</span><span>Adding</span>';
   try {
-    const existingRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const existingRes = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
     if (existingRes.ok) {
       const endpoints = await existingRes.json();
       const existing = Array.isArray(endpoints)
@@ -1582,7 +1589,7 @@ async function _registerEndpointFromButton(btn) {
     if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)) {
       fd.append('container_local', 'true');
     }
-    const res = await fetch('/api/model-endpoints', {
+    const res = await fetch(appUrl('/api/model-endpoints'), {
       method: 'POST',
       credentials: 'same-origin',
       body: fd,

@@ -14,7 +14,7 @@ export async function initDocumentWritingStyle() {
   const msg = el('set-document-style-msg');
   if (!styleEl || !saveBtn) return;
   try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    const res = await fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' });
     const data = await res.json();
     styleEl.value = String(data.document_writing_style || '');
   } catch (_) {
@@ -53,7 +53,7 @@ export async function initDocumentWritingStyle() {
     try {
       const body = new FormData();
       body.append('file', file);
-      const res = await fetch('/api/auth/settings/document-style/extract', {
+      const res = await fetch(appUrl('/api/auth/settings/document-style/extract'), {
         method: 'POST', credentials: 'same-origin', body,
       });
       const data = await res.json().catch(() => ({}));

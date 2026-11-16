@@ -84,7 +84,9 @@ export function createApplyImageTool({
       const flatCanvas = removeBackground ? targetLayer.canvas : flatten();
       const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
       const body = { image: imageB64, ...extraPayload };
-      const res = await fetch(endpoint, {
+      // endpoint stays a clean app path (it is compared with ===
+      // elsewhere); the mount prefix (HA ingress panel) is added here.
+      const res = await fetch(appUrl(endpoint), {
         signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

@@ -17,7 +17,7 @@ export async function initImageSettings() {
   const enabledToggle = el('set-imgEnabledToggle');
   const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
   try {
-    const endpointsRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const endpointsRes = await fetch(appUrl('/api/model-endpoints'), { credentials: 'same-origin' });
     const endpoints = await endpointsRes.json();
     const imageModels = new Set();
     const editModels = new Set();

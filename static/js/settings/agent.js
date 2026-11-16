@@ -15,7 +15,7 @@ export async function initAgentSettings() {
   if (!toolsInput) return;
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var res = await fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
     if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;

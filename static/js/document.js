@@ -5740,7 +5740,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       if (!id) continue;
       const img = document.createElement('img');
       img.className = 'richtext-image';
-      img.src = `/api/upload/${id}`;
+      img.src = appUrl(`/api/upload/${id}`);
       img.alt = _markdownImageAlt(file.name || file.filename);
       images.push(img);
     }
@@ -11359,12 +11359,12 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           try {
             const accountId = String(window.__odysseusActiveEmailAccount || '').trim();
             const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
-            const generalResponse = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+            const generalResponse = await fetch(appUrl('/api/auth/settings'), { credentials: 'same-origin' });
             const generalData = await generalResponse.json().catch(() => ({}));
             const generalStyle = String(generalData.document_writing_style || '').trim();
             let emailStyle = '';
             if (isEmailDocument) {
-              const emailResponse = await fetch(`/api/email/style${suffix}`, { credentials: 'same-origin' });
+              const emailResponse = await fetch(appUrl(`/api/email/style${suffix}`), { credentials: 'same-origin' });
               const emailData = await emailResponse.json().catch(() => ({}));
               if (emailResponse.ok) emailStyle = String(emailData.style || '').trim();
             }
@@ -15082,7 +15082,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     if (window.docx) return (_docxReady = Promise.resolve());
     _docxReady = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/static/lib/docx.umd.min.js';
+      s.src = appUrl('/static/lib/docx.umd.min.js');
       s.onload = resolve;
       s.onerror = () => reject(new Error('Failed to load DOCX library'));
       document.head.appendChild(s);

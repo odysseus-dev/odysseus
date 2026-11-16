@@ -1,0 +1,225 @@
+# Odysseus
+
+Self-hosted AI workspace for chat, agents, deep research, documents, email,
+notes, tasks and calendar, packaged for Home Assistant OS.
+
+## Installation
+
+1. In Home Assistant open **Settings → Add-ons → Add-on Store**.
+2. Open the three-dot menu (top right) and choose **Repositories**.
+3. Paste this repository URL and click **Add**:
+
+   ```
+   https://github.com/odysseus-dev/odysseus
+   ```
+4. Close the dialog. **Odysseus** now appears in the store — select it and click
+   **Install**.
+5. Open the **Configuration** tab, set at least your model provider or LLM host,
+   then click **Start**.
+6. Open **Odysseus** from the Home Assistant sidebar (the panel signs you in
+   with your Home Assistant account — see below), or with the **OPEN WEB UI**
+   button at `http://<home-assistant-host>:7000`.
+
+The first build clones and installs the Odysseus application, so installation
+takes a few minutes. Later updates reuse the cached dependency layer.
+
+## Access
+
+| Way in | Address | Authentication |
+| --- | --- | --- |
+| HA sidebar panel | **Odysseus** entry in the sidebar | Home Assistant session (single sign-on) |
+| Direct port | `http://<home-assistant-host>:7000` | Odysseus login (HA username/password works too) |
+
+Set the host port to `null` in the add-on **Network** settings to disable direct
+access; the sidebar panel keeps working.
+
+Serve it over your own reverse proxy or VPN for remote access. Plain HTTP on a
+non-loopback host does not get browser "secure context" features (clipboard,
+camera); use HTTPS if you need those.
+
+## Configuration
+
+```yaml
+auth_enabled: true          # Require login
+hass_auth: true             # Accept Home Assistant username/password in the login form
+admin_user: ""              # Optional initial local admin username
+admin_password: ""          # Optional initial local admin password
+llm_provider: none          # openai | anthropic | openrouter | groq | deepseek | google | mistral | none
+llm_api_key: ""             # API key for the selected provider (stored encrypted)
+llm_model: ""               # Optional model ID to pin (else pick from the list in the app)
+db_type: sqlite             # sqlite | postgres
+db_url: ""                  # Optional full connection string (overrides the fields below)
+db_host: ""                 # PostgreSQL host
+db_port: ""                 # PostgreSQL port (default 5432)
+db_name: ""                 # PostgreSQL database (default odysseus)
+db_user: ""                 # PostgreSQL user
+db_password: ""             # PostgreSQL password
+search_provider: none       # searxng | brave | tavily | serper | google_pse | duckduckgo | disabled | none
+search_url: ""              # SearXNG base URL, e.g. http://searxng:8080
+search_api_key: ""          # API key for brave/tavily/serper/google_pse
+llm_host: localhost         # Default LLM server host
+ollama_base_url: ""         # e.g. http://host.docker.internal:11434
+allowed_origins: []         # Extra CORS origins
+bind_address: ""            # Empty = dual-stack "::" when IPv6 is available
+tool_approval_gate: true    # Ask before side-effecting tools after external content
+response_compression: true  # Gzip response bodies above 1 KiB
+extra_env: []               # Free-form KEY=VALUE entries
+```
+
+### Model provider
+
+Pick your provider in the **Model provider** dropdown and paste the key into
+**Provider API key**. On start the add-on creates a shared model endpoint for
+that provider (`OpenAI (add-on)`, `OpenRouter (add-on)`, …) with the correct
+base URL and the key stored encrypted in `/data`. The model list is discovered
+automatically; optionally pin one with **Default model**:
+
+| Provider | Base URL |
+| --- | --- |
+| OpenAI | `https://api.openai.com/v1` |
+| Anthropic | `https://api.anthropic.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Mistral | `https://api.mistral.ai/v1` |
+
+Local servers (Ollama, LM Studio) are configured with `ollama_base_url` or in
+the app itself. The add-on option is authoritative and rewrites the endpoint key
+on every start.
+
+### Database
+
+By default everything lives in SQLite on the `/data` volume — no configuration
+needed. To use an external **PostgreSQL** server:
+
+```yaml
+db_type: postgres
+db_host: 192.168.1.20
+db_port: "5432"
+db_name: odysseus
+db_user: odysseus
+db_password: "your password"
+```
+
+The user and password are percent-encoded, so special characters are safe. For
+anything more exotic set `db_url` to a full SQLAlchemy string
+(`postgresql+psycopg2://user:pass@host:5432/odysseus`); it overrides the fields.
+
+Switching databases does **not** migrate existing data — point the add-on at an
+empty database or import your SQLite data yourself. The schema is created on
+first start.
+
+### Web search
+
+Pick the backend in **Search provider**:
+
+| Provider | `search_provider` | Needs |
+| --- | --- | --- |
+| SearXNG | `searxng` | `search_url` (or a bundled/host instance) |
+| Brave Search API | `brave` | `search_api_key` |
+| Tavily | `tavily` | `search_api_key` |
+| Serper.dev | `serper` | `search_api_key` |
+| Google Programmable Search | `google_pse` | `search_api_key` |
+| DuckDuckGo (no key) | `duckduckgo` | – |
+| Disabled | `disabled` | – |
+
+The provider is written into the app settings on start (add-on option is
+authoritative). API keys are passed as environment variables, so a key set
+inside the app takes precedence over the add-on option.
+
+Anything Odysseus supports through environment variables can be passed with
+`extra_env`, for example:
+
+```yaml
+extra_env:
+  - TAVILY_API_KEY=...
+  - ODYSSEUS_INPROCESS_TASKS=1
+```
+
+### Home Assistant credentials
+
+`hass_auth` (default on) lets you sign in to Odysseus with your **Home Assistant
+username and password** — no separate Odysseus account needed:
+
+- The Odysseus login form verifies the pair with the Supervisor, which checks
+  it against Home Assistant core (`auth_api` in the add-on manifest grants
+  exactly that endpoint; the Supervisor token injected into the container is
+  used only for this check and is never exposed).
+- **No admin setup required**: leave `admin_user` / `admin_password` empty and
+  sign in with your HA admin account — the first HA login bootstraps the
+  instance and becomes the Odysseus admin. Other HA users get regular
+  accounts on their first login.
+- Local Odysseus passwords keep working and are always checked first; this
+  adds a second way in, it never locks out local accounts. Failures (wrong
+  password, Supervisor unreachable) are refused — an outage can't be
+  mistaken for a successful HA login.
+- Odysseus sessions are separate from Home Assistant's; logging out of
+  Odysseus does not log you out of HA, and HA-side password changes apply on
+  the next Odysseus login.
+- To create a purely local admin instead, turn `hass_auth` off: the login page
+  then offers the regular first-run setup form.
+
+### Home Assistant single sign-on (sidebar panel)
+
+The **Odysseus** sidebar panel (added in add-on 1.3.0) signs you in with the
+Home Assistant account you are already using — no login form at all:
+
+- The panel runs through the Supervisor's ingress proxy, which injects your
+  signed-in HA user's identity headers (`X-Remote-User-*`) into every proxied
+  request and strips any client-supplied versions first.
+- Odysseus trusts those headers **only** when the connection comes from the
+  Supervisor container itself (verified against the `supervisor` hostname on
+  the add-on network). On the directly exposed port the same headers are
+  untrusted and ignored — a LAN client cannot spoof its way in.
+- A trusted panel request provisions the matching Odysseus account (HA admins
+  → Odysseus admins, others → regular accounts) and issues a normal Odysseus
+  session cookie, so everything downstream — sessions, logout, admin gating —
+  behaves exactly like a form login.
+- `panel_admin: false` (default) shows the panel to all HA users; set it to
+  `true` to restrict the sidebar entry to HA admins.
+
+### Agent safety
+
+`tool_approval_gate` (default on) makes the agent pause for approval before it
+runs tools that execute code, mutate stored state or cause external side
+effects, once external content (a web page, email or document) has entered the
+run. This defends against prompt injection and should stay enabled unless this
+add-on is a trusted single-user install. Set `extra_env:
+[ODYSSEUS_TOOL_APPROVAL_GATE=0]` to disable it for unattended automation.
+
+`response_compression` (default on) gzips responses above 1 KiB. Disable it when
+a reverse proxy already compresses, or when debugging streaming responses.
+
+Other knobs from the current Odysseus release can be set through `extra_env`,
+for example `ODYSSEUS_EDITOR_DRAFT_MAX_BYTES`, `ODYSSEUS_MEMORY_IMPORT_MAX_BYTES`,
+`ODYSSEUS_TTS_CACHE_MAX_BYTES`, `ODYSSEUS_FIRST_TOKEN_TIMEOUT` and the
+`ODYSSEUS_LOCAL_MCP_READ_TOOLS` / `ODYSSEUS_LOCAL_MCP_WRITE_TOOLS` declarations.
+
+## Data and backups
+
+All state is stored on the add-on's `/data` volume (Odysseus `data/`, SQLite
+database, uploads, sessions, encryption key). Home Assistant backups include it
+automatically. `/share` is mounted read-write at `/share` for exchanging files
+with other add-ons.
+
+## Local models
+
+To reach an Ollama instance on the Home Assistant host, set:
+
+```yaml
+ollama_base_url: http://host.docker.internal:11434
+```
+
+The add-on runs inside the Supervisor network, so host services are reachable
+via `host.docker.internal` or by IP address.
+
+## Notes and limitations
+
+- The add-on clones the Odysseus source at build time. Build your own fork or a
+  pinned release by changing `ODYSSEUS_REPO` / `ODYSSEUS_REF` in
+  `hass-addon/Dockerfile`.
+- The Cookbook "install Real-ESRGAN" path is not pre-staged in this image
+  (upstream's image builds patched wheels for it). Everything else is unchanged.
+- Cookbook model downloads and some agent features are disk- and memory-heavy;
+  make sure the host has enough resources.

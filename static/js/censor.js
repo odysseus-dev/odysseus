@@ -59,7 +59,7 @@ export function init() {
 
 function _loadState() {
   // Check admin feature flag
-  fetch('/api/auth/features', { credentials: 'same-origin' })
+  fetch(appUrl('/api/auth/features'), { credentials: 'same-origin' })
     .then(r => r.json())
     .then(features => {
       _enabled = features.sensitive_filter !== false && _prefEnabled();

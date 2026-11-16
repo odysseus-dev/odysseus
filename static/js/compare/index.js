@@ -61,7 +61,7 @@ function init(apiBase) {
     if (!state._saveOnClose && state._paneSessionIds.length > 0) {
       // sendBeacon uses POST — use the bulk delete endpoint
       navigator.sendBeacon(
-        `${state.API_BASE}/api/sessions/bulk-delete`,
+        appUrl(`/api/sessions/bulk-delete`),
         new Blob([JSON.stringify({ ids: state._paneSessionIds })], { type: 'application/json' })
       );
     }

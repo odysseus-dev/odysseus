@@ -16,6 +16,12 @@ from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL, username_error
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.auth_helpers import _auth_disabled
+from src.hass_auth import (
+    ensure_ha_user,
+    hass_auth_enabled,
+    hass_user_is_admin,
+    supervisor_check_login,
+)
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src import tool_capabilities
@@ -193,7 +199,38 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # Verify password first
         username = body.username.strip().lower()
         if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
-            raise HTTPException(401, "Invalid credentials")
+            # Home Assistant credential delegation (add-on deployments): the
+            # local password check failed, but the operator may have enabled
+            # signing in with Home Assistant credentials. Supervisor verifies
+            # them against HA core; failures fail closed (401). Local accounts
+            # are unaffected — this only adds a second way in.
+            if not hass_auth_enabled():
+                raise HTTPException(401, "Invalid credentials")
+            ha_ok, ha_groups = await supervisor_check_login(username, body.password)
+            if not ha_ok:
+                raise HTTPException(401, "Invalid credentials")
+            if username_error(username) or username in RESERVED_USERNAMES:
+                # HA allows usernames Odysseus can't host (reserved words).
+                raise HTTPException(403, "Your Home Assistant username cannot be used here")
+            if username not in auth_manager.users:
+                # First HA login: auto-provision (same policy as the panel
+                # SSO path — HA admins become Odysseus admins, the very first
+                # account becomes the initial admin). A random local password
+                # is set so the account has no usable local credential — HA
+                # remains the only way in for it.
+                created = await asyncio.to_thread(
+                    ensure_ha_user,
+                    auth_manager,
+                    username,
+                    hass_user_is_admin(ha_groups),
+                )
+                if not created:
+                    raise HTTPException(401, "Invalid credentials")
+                logger.info(
+                    "Provisioned user '%s' from a Home Assistant login (admin=%s)",
+                    username,
+                    hass_user_is_admin(ha_groups) or not auth_manager.is_configured,
+                )
         # Check 2FA if enabled
         if auth_manager.totp_enabled(username):
             if not body.totp_code:
@@ -231,6 +268,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         token = request.cookies.get(SESSION_COOKIE)
         result = auth_manager.status(token)
         result["signup_enabled"] = auth_manager.signup_enabled
+        # Lets the login page advertise "sign in with your Home Assistant
+        # credentials" only when that actually works in this deployment.
+        result["hass_auth"] = hass_auth_enabled()
         # Include the caller's effective privileges so the frontend can
         # hide / dim UI controls the user isn't allowed to use. Admins get
         # ADMIN_PRIVILEGES (everything on), regular users get their stored
