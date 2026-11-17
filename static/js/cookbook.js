@@ -3999,7 +3999,7 @@ export async function open(opts) {
   _hydrateLocalCookbookState();
   _renderCookbookShell();
   const _initialStateSignature = _cookbookStateSignature();
-  const _stateSync = _syncFromServer();
+  const _stateSync = _syncFromServer({ maxAgeMs: 10000 });
 
   if (_content) {
     _content.classList.add('cookbook-modal-entering');

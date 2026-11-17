@@ -3412,13 +3412,26 @@ async function _pollTaskNotifications() {
 function startNotificationPolling() {
   if (_notifInterval) return;
   setTimeout(_pollTaskNotifications, 1500);
-  _notifInterval = setInterval(_pollTaskNotifications, 30000);
+  // A hidden tab polls every 4th tick (2 min) instead of every 30 s; coming
+  // back to the tab polls immediately so nothing queued is missed.
+  let tick = 0;
+  _notifInterval = setInterval(() => {
+    tick += 1;
+    if (document.visibilityState === 'hidden' && tick % 4 !== 0) return;
+    _pollTaskNotifications();
+  }, 30000);
+  document.addEventListener('visibilitychange', _notifVisibilityHandler);
+}
+
+function _notifVisibilityHandler() {
+  if (document.visibilityState === 'visible' && _notifInterval) _pollTaskNotifications();
 }
 
 function stopNotificationPolling() {
   if (_notifInterval) {
     clearInterval(_notifInterval);
     _notifInterval = null;
+    document.removeEventListener('visibilitychange', _notifVisibilityHandler);
   }
 }
 
