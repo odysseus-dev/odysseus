@@ -35,6 +35,8 @@ const REAL_MODULES = new Set([
   path.join(JS, 'authStatus.js'),
   path.join(JS, 'settings/scope.js'),
   path.join(JS, 'settings/modelDefaults.js'),
+  path.join(JS, 'settings/html.js'),
+  path.join(JS, 'settings/shortcuts.js'),
 ]);
 
 const realModulesLoaded = new Set();
