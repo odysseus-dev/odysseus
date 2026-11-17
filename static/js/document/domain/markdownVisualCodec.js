@@ -1516,13 +1516,15 @@ export function serializeVisualNodesToMarkdown(nodes, context = null) {
 /**
  * Serialize visual nodes while reporting whether all inline formatting was preserved.
  * @param {Array} nodes
- * @returns {{ markdown: string, lossless: boolean, reasons: string[] }}
+ * @returns {{ markdown: string, blocks: string[], lossless: boolean, reasons: string[] }}
  */
 export function serializeVisualNodesWithFidelity(nodes) {
   const context = { lossless: true, reasons: [] };
-  const markdown = serializeVisualNodesToMarkdown(nodes, context);
+  const blocks = serializeVisualNodesToBlocks(nodes, context);
+  const markdown = blocks.join('\n\n').trim();
   return {
     markdown,
+    blocks,
     lossless: context.lossless,
     reasons: context.reasons,
   };

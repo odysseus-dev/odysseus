@@ -158,7 +158,7 @@ export function visualRichToMarkdown(rich) {
 }
 
 export function visualRichToMarkdownWithFidelity(rich) {
-  if (!rich) return { markdown: '', lossless: true, reasons: [] };
+  if (!rich) return { markdown: '', blocks: [], lossless: true, reasons: [] };
   return serializeVisualNodesWithFidelity(domToVisualNodes(rich));
 }
 
@@ -402,7 +402,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     return targetDoc?.content || '';
   }
 
-  const { markdown: serialized, lossless, reasons: fidelityReasons } = visualRichToMarkdownWithFidelity(rich);
+  const { markdown: serialized, blocks: currentBlocks, lossless, reasons: fidelityReasons } = visualRichToMarkdownWithFidelity(rich);
   const blockSync = (reasons) => {
     targetDoc._visualCompatReasons = reasons;
     targetDoc._visualSyncBlocked = true;
@@ -429,7 +429,6 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     const originalSource = typeof targetDoc._visualBaselineMarkdown === 'string'
       ? targetDoc._visualBaselineMarkdown
       : (targetDoc.content || '');
-    const currentBlocks = extractVisualBlocks(rich);
     const baselineBlocks = targetDoc._visualBaselineBlocks;
     const blockSegments = targetDoc._visualBlockSegments || extractBlockSegments(segmentMarkdown(originalSource));
 
@@ -480,7 +479,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   targetDoc._visualSegments = segmentMarkdown(nextMarkdown);
   targetDoc._visualBlockSegments = extractBlockSegments(targetDoc._visualSegments);
   targetDoc._visualBaselineCanonical = serialized;
-  targetDoc._visualBaselineBlocks = extractVisualBlocks(rich);
+  targetDoc._visualBaselineBlocks = currentBlocks;
 
   if (ta && ta.value !== nextMarkdown) {
     _syncingVisualToTextarea = true;
@@ -693,8 +692,8 @@ export function captureVisualBaseline(rich, doc) {
   const rawMarkdown = String(doc._visualBaselineMarkdown ?? doc.content ?? '');
   const segments = segmentMarkdown(rawMarkdown);
   const blockSegments = extractBlockSegments(segments);
-  const canonical = visualRichToMarkdown(rich);
   const visualBlocks = extractVisualBlocks(rich);
+  const canonical = visualBlocks.join('\n\n').trim();
 
   doc._visualBaselineCanonical = canonical;
   doc._visualExpectedRevision = computeSourceRevision(rawMarkdown);
