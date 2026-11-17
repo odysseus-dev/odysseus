@@ -145,7 +145,8 @@ function _createModelDefaultSource(label, onEndpoints) {
  * Load state for a model-default card. The card's controls stay disabled
  * until its stored values load, so a save can never overwrite values the form
  * never showed; a failed load offers Retry. `run()` is also how a card shows
- * the stored values again after a failed save.
+ * the stored values again after a failed save. Controls a card renders itself
+ * (fallback rows) follow through `onDisabledChange`.
  */
 function _createModelDefaultLoader(opts) {
   var loaded = false;
@@ -153,6 +154,7 @@ function _createModelDefaultLoader(opts) {
 
   function setControlsDisabled(disabled) {
     opts.controls().forEach(function(control) { if (control) control.disabled = disabled; });
+    if (typeof opts.onDisabledChange === 'function') opts.onDisabledChange(disabled);
   }
 
   function clearFailure() {
@@ -626,6 +628,7 @@ function _bindFallbackWidget(opts) {
       if (supportsEffort) {
         effS = document.createElement('select');
         effS.className = 'settings-select settings-fallback-effort';
+        effS.disabled = controlsDisabled;
         fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
         fb.reasoning_effort = effS.value;
         effS.addEventListener('change', function() {
@@ -1244,9 +1247,12 @@ async function initUtilityModel() {
       saveList: function(list) {
         return utilitySource.store().save({ utility_model_fallbacks: list });
       },
-      onError: function(error) {
+      onError: async function(error) {
         console.warn('Failed to save utility fallbacks', error);
-        _showCardMessage(msg, modelDefaultSaveError(error), true);
+        // Show the stored list again rather than the change that was not
+        // saved; if that reload fails too, the card turns read-only.
+        var restored = (error && error.serverSaved) ? true : await utilityLoader.run();
+        if (restored) _showCardMessage(msg, modelDefaultSaveError(error), true);
       },
       supportsEffort: true,
       getEffortLevels: function(epId, modelId) {
@@ -1260,6 +1266,9 @@ async function initUtilityModel() {
   var utilityLoader = _createModelDefaultLoader({
     label: 'utility model',
     controls: function() { return [epSel, modelSel, effortSel, el('set-utilityAddFallback')]; },
+    onDisabledChange: function(disabled) {
+      if (fallbackWidget) fallbackWidget.setDisabled(disabled);
+    },
     msgEl: msg,
     load: utilitySource.load,
     apply: function(settings) {

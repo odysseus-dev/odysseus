@@ -616,6 +616,76 @@ async function testMemberScope(instance, cookies) {
   await member.context.close();
 }
 
+async function utilityControls(page) {
+  return page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#set-utilityFallbacks .settings-fallback-row'));
+    const rowControls = Array.from(document.querySelectorAll('#set-utilityFallbacks select, #set-utilityFallbacks button'));
+    return {
+      rows: rows.length,
+      rowModels: rows.map(row => row.querySelectorAll('select')[1]?.value || ''),
+      endpoint: document.querySelector('#set-utilityEpSelect').value,
+      endpointDisabled: document.querySelector('#set-utilityEpSelect').disabled,
+      addDisabled: document.querySelector('#set-utilityAddFallback').disabled,
+      rowControls: rowControls.length,
+      enabledRowControls: rowControls.filter(control => !control.disabled).map(control => control.getAttribute('aria-label') || control.className),
+      message: document.querySelector('#set-utilityChatMsg').textContent,
+      retry: Boolean(document.querySelector('[data-settings-section="utility-model"] .settings-model-default-retry')),
+    };
+  });
+}
+
+async function testMemberUtilityFallbackRecovery(instance, cookies) {
+  const stored = [{ endpoint_id: 'ep-beta', model: 'beta-chat', reasoning_effort: '' }];
+  await api(instance, cookies.memberCookie, '/api/prefs', { method: 'PATCH', body: JSON.stringify({ values: {
+    utility_endpoint_id: 'ep-alpha', utility_model: 'alpha-large', utility_model_fallbacks: stored,
+  } }) });
+  const member = await pageAs(instance, cookies.memberCookie);
+  await openSettings(member.page, 'ai');
+  await member.page.waitForFunction(() => document.querySelectorAll('#set-utilityFallbacks .settings-fallback-row').length === 1
+    && !document.querySelector('#set-utilityEpSelect').disabled, null, { timeout: 15000 });
+
+  // A refused fallback write must not leave the unsaved row on screen.
+  await member.page.route('**/api/prefs', route => (
+    route.request().method() === 'PATCH'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.continue()
+  ));
+  await member.page.click('#set-utilityAddFallback');
+  await member.page.waitForFunction(() => document.querySelector('#set-utilityChatMsg').textContent.startsWith('Failed to save'), null, { timeout: 8000 });
+  await member.page.waitForTimeout(300);
+  const afterFailedAdd = await utilityControls(member.page);
+  const storedAfterAdd = (await api(instance, cookies.memberCookie, '/api/prefs')).body.utility_model_fallbacks || [];
+  check('failed utility fallback save shows the stored list, not the unsaved row', afterFailedAdd.rows === 1 && afterFailedAdd.rowModels[0] === 'beta-chat' && storedAfterAdd.length === 1, JSON.stringify({ afterFailedAdd, storedAfterAdd }));
+  await member.page.unroute('**/api/prefs');
+
+  // A failed save whose reload also fails leaves every utility control read-only.
+  await member.page.route('**/api/prefs', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  await member.page.selectOption('#set-utilityEpSelect', 'ep-beta');
+  await member.page.waitForSelector('[data-settings-section="utility-model"] .settings-model-default-retry', { timeout: 8000 });
+  const lockedAfterReloadFailure = await utilityControls(member.page);
+  // An endpoint refresh re-renders the fallback rows; they must stay read-only.
+  await member.page.click('[data-settings-tab="search"]');
+  await member.page.click('[data-settings-tab="ai"]');
+  await member.page.waitForTimeout(800);
+  const lockedAfterRefresh = await utilityControls(member.page);
+  const fullyLocked = state => state.endpointDisabled && state.addDisabled && state.rowControls > 0 && state.enabledRowControls.length === 0;
+  check('failed utility reload disables the fallback rows as well as the selects', fullyLocked(lockedAfterReloadFailure), JSON.stringify(lockedAfterReloadFailure));
+  check('utility fallback rows stay read-only through an endpoint refresh', fullyLocked(lockedAfterRefresh), JSON.stringify(lockedAfterRefresh));
+  await member.page.unroute('**/api/prefs');
+
+  await member.page.click('[data-settings-section="utility-model"] .settings-model-default-retry');
+  await member.page.waitForFunction(() => !document.querySelector('#set-utilityEpSelect').disabled, null, { timeout: 8000 });
+  const recovered = await utilityControls(member.page);
+  check('utility Retry restores the stored values with the fallback rows editable', recovered.endpoint === 'ep-alpha' && recovered.rows === 1 && recovered.rowModels[0] === 'beta-chat' && recovered.enabledRowControls.length > 0 && !recovered.addDisabled, JSON.stringify(recovered));
+  const storedAfter = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
+  check('failed utility writes left the stored preferences unchanged', storedAfter.utility_endpoint_id === 'ep-alpha' && JSON.stringify(storedAfter.utility_model_fallbacks) === JSON.stringify(stored), JSON.stringify(storedAfter));
+  check('utility recovery page has no script errors', member.errors.length === 0, member.errors.join(' | '));
+  await member.context.close();
+  await api(instance, cookies.memberCookie, '/api/prefs', { method: 'PATCH', body: JSON.stringify({ values: {
+    utility_endpoint_id: null, utility_model: null, utility_model_fallbacks: null,
+  } }) });
+}
+
 async function testMemberStatusRecovery(instance, cookies) {
   let statusAvailable = false;
   let statusRequests = 0;
@@ -841,6 +911,7 @@ async function main() {
   await testMemberScope(authInstance, cookies);
   await testAdminScope(authInstance, cookies);
   await testAdminLoadFailure(authInstance, cookies);
+  await testMemberUtilityFallbackRecovery(authInstance, cookies);
   await testMemberStatusRecovery(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
