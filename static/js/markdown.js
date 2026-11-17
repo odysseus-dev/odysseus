@@ -1179,7 +1179,9 @@ export function mdToHtml(src, opts) {
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
-  // Bold, italic, strikethrough
+  // Bold, italic, strikethrough (supports adjacent and nested emphasis)
+  s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*((?:[^*]|\*[^*]+\*)+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
 

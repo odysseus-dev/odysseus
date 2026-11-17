@@ -8,6 +8,7 @@ import {
   serializeVisualNodesToMarkdown,
   serializeVisualNodesWithFidelity,
 } from '../frontend/src/features/documents/domain/markdownVisualCodec.js';
+import { loadMarkdown } from './streaming/markdownHarness.mjs';
 
 const el = (tag, children = [], { attrs = {}, classes = [], style = {} } = {}) => ({
   type: 'element',
@@ -562,6 +563,124 @@ describe('markdownVisualCodec', () => {
             assert.deepEqual(parsed[0].children[0].children[0].children[0].children, [txt('bar')]);
           },
         },
+        {
+          name: 'italic ends with period immediately followed by bold',
+          nodes: [el('p', [el('i', 'foo.'), el('b', 'bar')])],
+          expectedMd: '*foo.***bar**',
+          expectedHtml: '<p><em>foo.</em><strong>bar</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo.')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'bold ends with period immediately followed by italic',
+          nodes: [el('p', [el('b', 'foo.'), el('i', 'bar')])],
+          expectedMd: '**foo.***bar*',
+          expectedHtml: '<p><strong>foo.</strong><em>bar</em></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo.')]);
+            assert.equal(parsed[0].children[1].tag, 'em');
+            assert.deepEqual(parsed[0].children[1].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'italic immediately followed by bold starting with period',
+          nodes: [el('p', [el('i', 'foo'), el('b', '.bar')])],
+          expectedMd: '*foo***.bar**',
+          expectedHtml: '<p><em>foo</em><strong>.bar</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('.bar')]);
+          },
+        },
+        {
+          name: 'bold immediately followed by italic starting with period',
+          nodes: [el('p', [el('b', 'foo'), el('i', '.bar')])],
+          expectedMd: '**foo***.bar*',
+          expectedHtml: '<p><strong>foo</strong><em>.bar</em></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo')]);
+            assert.equal(parsed[0].children[1].tag, 'em');
+            assert.deepEqual(parsed[0].children[1].children, [txt('.bar')]);
+          },
+        },
+        {
+          name: 'Unicode adjacent formatting: Latin accented',
+          nodes: [el('p', [el('i', 'café'), el('b', 'über')])],
+          expectedMd: '*café***über**',
+          expectedHtml: '<p><em>café</em><strong>über</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('café')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('über')]);
+          },
+        },
+        {
+          name: 'Unicode adjacent formatting: CJK',
+          nodes: [el('p', [el('i', 'こんにちは'), el('b', '世界')])],
+          expectedMd: '*こんにちは***世界**',
+          expectedHtml: '<p><em>こんにちは</em><strong>世界</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('こんにちは')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('世界')]);
+          },
+        },
+        {
+          name: 'adjacent code spans merged into single span',
+          nodes: [el('p', [el('code', 'foo'), el('code', 'bar')])],
+          expectedMd: '`foobar`',
+          expectedHtml: '<p><code>foobar</code></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'code');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foobar')]);
+          },
+        },
+        {
+          name: 'code boundary with backtick adjacent to bold',
+          nodes: [el('p', [el('code', 'foo`bar'), el('b', 'baz')])],
+          expectedMd: '``foo`bar``**baz**',
+          expectedHtml: '<p><code>foo`bar</code><strong>baz</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'code');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo`bar')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('baz')]);
+          },
+        },
+        {
+          name: 'escaped punctuation at end of italic before bold',
+          nodes: [el('p', [el('i', 'hello*'), el('b', 'world')])],
+          expectedMd: '*hello\\****world**',
+          expectedHtml: '<p><em>hello*</em><strong>world</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('hello*')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('world')]);
+          },
+        },
+        {
+          name: 'escaped punctuation at start of bold after italic',
+          nodes: [el('p', [el('i', 'hello'), el('b', '*world')])],
+          expectedMd: '*hello***\\*world**',
+          expectedHtml: '<p><em>hello</em><strong>*world</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('hello')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('*world')]);
+          },
+        },
       ];
 
       for (const tc of cases) {
@@ -614,6 +733,40 @@ describe('markdownVisualCodec', () => {
       const compat = inspectVisualNodesCompatibility(unrepresentableNodes);
       assert.equal(compat.supported, false);
       assert.ok(compat.reasons.length > 0);
+    });
+
+    it('produces semantically equivalent HTML in the Document Preview renderer (static/js/markdown.js)', async () => {
+      const { mdToHtml } = await loadMarkdown();
+      const testCases = [
+        '*foo***bar**',
+        '**foo***bar*',
+        '*foo.***bar**',
+        '**foo.***bar*',
+        '*foo***.bar**',
+        '**foo***.bar*',
+        '**foo *bar* baz**',
+        '*foo **bar** baz*',
+        '***both***',
+        '*café***über**',
+        '*こんにちは***世界**',
+        'foo**~~bar~~**',
+        'foo*~~bar~~*',
+        'foo~~**bar**~~',
+        'foo~~*bar*~~',
+      ];
+      for (const md of testCases) {
+        const codecHtml = markdownToVisualHtml(md);
+        const previewHtml = mdToHtml(md);
+        const codecText = codecHtml.replace(/<[^>]+>/g, '').trim();
+        const previewText = previewHtml.replace(/<[^>]+>/g, '').trim();
+        assert.equal(codecText, previewText, `text content mismatch for ${md}`);
+        if (md.includes('foo') && md.includes('bar') && !md.includes('~~')) {
+          assert.equal(previewHtml.includes('<em>') && previewHtml.includes('<strong>'), true, `previewHtml must have both tags for ${md}`);
+        }
+        if (md.includes('~~')) {
+          assert.equal(previewHtml.includes('<del>'), true, `previewHtml must have del for ${md}`);
+        }
+      }
     });
   });
 });

@@ -488,11 +488,35 @@ function _restoreTokens(text, tokens) {
 }
 
 function _isPunct(ch) {
-  return Boolean(ch && /[!-/:-@[-`{-~]/.test(ch));
+  return Boolean(ch && /[!-/:-@[-`{-~]|\p{P}|\p{S}/u.test(ch));
 }
 
 function _isSpace(ch) {
   return Boolean(ch && /\s/.test(ch));
+}
+
+function _getCharBefore(s, idx, tokens) {
+  if (idx <= 0) return null;
+  if (s[idx - 1] === '\u0000') {
+    const match = s.slice(0, idx).match(/\u0000MDTOK_(\d+)\u0000$/);
+    if (match) {
+      const plain = _htmlToPlainText(tokens[Number(match[1])] ?? '');
+      return plain.length ? plain[plain.length - 1] : null;
+    }
+  }
+  return s[idx - 1];
+}
+
+function _getCharAfter(s, idx, tokens) {
+  if (idx >= s.length) return null;
+  if (s[idx] === '\u0000') {
+    const match = s.slice(idx).match(/^\u0000MDTOK_(\d+)\u0000/);
+    if (match) {
+      const plain = _htmlToPlainText(tokens[Number(match[1])] ?? '');
+      return plain.length ? plain[0] : null;
+    }
+  }
+  return s[idx];
 }
 
 function _renderInlineFormattingOnly(text, tokens) {
@@ -532,18 +556,19 @@ function _renderInlineFormattingOnly(text, tokens) {
 
       const isDelimChar = (c) => c === '*' || c === '_' || c === '~';
 
+      const immPrevChar = _getCharBefore(s, i, tokens);
+      const immNextChar = _getCharAfter(s, i + runLen, tokens);
+
       let leftIdx = i - 1;
       while (leftIdx >= 0 && isDelimChar(s[leftIdx])) leftIdx--;
-      const outerPrevChar = leftIdx >= 0 ? (s[leftIdx] === '\u0000' ? ')' : s[leftIdx]) : null;
-      const immPrevChar = i > 0 ? (s[i - 1] === '\u0000' ? ')' : s[i - 1]) : null;
+      const outerPrevChar = leftIdx >= 0 ? _getCharBefore(s, leftIdx + 1, tokens) : null;
 
       let rightIdx = i + runLen;
       while (rightIdx < s.length && isDelimChar(s[rightIdx])) rightIdx++;
-      const outerNextChar = rightIdx < s.length ? (s[rightIdx] === '\u0000' ? '[' : s[rightIdx]) : null;
-      const immNextChar = i + runLen < s.length ? (s[i + runLen] === '\u0000' ? '[' : s[i + runLen]) : null;
+      const outerNextChar = rightIdx < s.length ? _getCharAfter(s, rightIdx, tokens) : null;
 
-      const nextChar = immNextChar && isDelimChar(immNextChar) ? outerNextChar : immNextChar;
       const prevChar = immPrevChar && isDelimChar(immPrevChar) ? outerPrevChar : immPrevChar;
+      const nextChar = immNextChar && isDelimChar(immNextChar) ? outerNextChar : immNextChar;
 
       const prevIsSpace = !prevChar || _isSpace(prevChar);
       const prevIsPunct = Boolean(immPrevChar && _isPunct(immPrevChar));
@@ -553,15 +578,17 @@ function _renderInlineFormattingOnly(text, tokens) {
       const leftFlanking = !nextIsSpace && (!nextIsPunct || prevIsSpace || prevIsPunct);
       const rightFlanking = !prevIsSpace && (!prevIsPunct || nextIsSpace || nextIsPunct);
 
-      let canOpen = false;
-      let canClose = false;
+      let canOpen = leftFlanking;
+      let canClose = rightFlanking;
 
       if (ch === '_') {
         canOpen = leftFlanking && (!rightFlanking || prevIsPunct);
         canClose = rightFlanking && (!leftFlanking || nextIsPunct);
       } else {
-        canOpen = leftFlanking;
-        canClose = rightFlanking;
+        if (runLen >= 2) {
+          if (!prevIsSpace) canClose = true;
+          if (!nextIsSpace) canOpen = true;
+        }
       }
 
       if (canOpen || canClose) {
@@ -919,7 +946,8 @@ function _escapeInlineText(text) {
 
 function _areMergeableFormattingElements(a, b) {
   if (!a || !b || a.type !== 'element' || b.type !== 'element') return false;
-  if (['br', 'img', 'a', 'code'].includes(a.tag) || ['br', 'img', 'a', 'code'].includes(b.tag)) return false;
+  if (['br', 'img', 'a'].includes(a.tag) || ['br', 'img', 'a'].includes(b.tag)) return false;
+  if (_isInlineCodeNode(a) && _isInlineCodeNode(b)) return true;
   if (_isInlineCodeNode(a) || _isInlineCodeNode(b)) return false;
   return _isBoldNode(a) === _isBoldNode(b)
     && _isItalicNode(a) === _isItalicNode(b)
