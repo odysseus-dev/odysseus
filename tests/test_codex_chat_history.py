@@ -1,5 +1,7 @@
 """Agent chat history uses the same scope as existing chat and history routes."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import APIRouter, HTTPException
 from starlette.requests import Request
@@ -21,6 +23,7 @@ def _request(scopes: list[str]) -> Request:
         "path": "/api/codex/chat/session-test",
         "headers": [],
         "state": {},
+        "app": SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     })
     request.state.current_user = "api"
     request.state.api_token = True
