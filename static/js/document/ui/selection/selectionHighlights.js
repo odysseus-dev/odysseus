@@ -151,12 +151,9 @@ function showSelectionBadge() {
       badge.id = 'doc-selection-badge';
       badge.className = 'doc-selection-badge';
       badge.title = 'Selected regions — type in chat to edit';
-      // Sits directly under the formatting toolbar so it reads as part
-      // of the toolbar row, not buried in the page header. Falls back
-      // to the editor header if the toolbar isn't on screen.
-      const toolbar = document.getElementById('doc-md-toolbar');
-      if (toolbar && toolbar.parentNode) {
-        toolbar.insertAdjacentElement('afterend', badge);
+      const pane = document.getElementById('doc-editor-pane') || document.querySelector('.doc-editor-pane');
+      if (pane) {
+        pane.appendChild(badge);
       } else {
         const header = document.querySelector('.doc-editor-header');
         if (header) header.insertBefore(badge, header.firstChild);

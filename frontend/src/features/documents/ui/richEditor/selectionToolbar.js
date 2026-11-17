@@ -167,7 +167,10 @@ function _renderRichSelectionToolbar(rich) {
     const clearButton = toolbar.querySelector('[data-rich-selection-action="removeformat"]');
     if (clearButton) clearButton.style.display = _richSelectionHasFormatting(rich, range) ? '' : 'none';
 
-    toolbar.style.visibility = 'hidden';
+    const isCurrentlyVisible = toolbar.style.visibility !== 'hidden' && toolbar.style.display !== 'none' && Boolean(toolbar.style.left);
+    if (!isCurrentlyVisible) {
+      toolbar.style.visibility = 'hidden';
+    }
     toolbar.style.zIndex = String(topPortalZ());
     const toolbarRect = toolbar.getBoundingClientRect();
     const richRect = rich.getBoundingClientRect();
@@ -212,7 +215,9 @@ function _renderRichSelectionToolbar(rich) {
         : (below + toolbarRect.height <= safeBottom ? below : Math.min(maxTop, below)));
     toolbar.style.left = `${left}px`;
     toolbar.style.top = `${Math.max(safeTop, top)}px`;
-    toolbar.style.visibility = '';
+    if (!isCurrentlyVisible) {
+      toolbar.style.visibility = '';
+    }
   }
 
 export function _scheduleRichSelectionToolbar(rich) {
@@ -220,12 +225,20 @@ export function _scheduleRichSelectionToolbar(rich) {
     _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
   }
 
-export function _followRichSelectionToolbarLayout(rich, duration = 360) {
+export function _followRichSelectionToolbarLayout(rich, duration = 200) {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      _renderRichSelectionToolbar(rich);
+      return;
+    }
     if (_richSelectionToolbarFollowFrame) cancelAnimationFrame(_richSelectionToolbarFollowFrame);
     const deadline = performance.now() + duration;
-    const follow = () => {
-      _renderRichSelectionToolbar(rich);
-      if (performance.now() < deadline) {
+    let lastRender = 0;
+    const follow = (now) => {
+      if (now - lastRender >= 32) {
+        lastRender = now;
+        _renderRichSelectionToolbar(rich);
+      }
+      if (now < deadline) {
         _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
       } else {
         _richSelectionToolbarFollowFrame = 0;

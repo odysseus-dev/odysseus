@@ -1922,9 +1922,13 @@ mark.doc-find-mark.current {
 
 /* ---- Selection indicator badge ---- */
 .doc-selection-badge {
+  position: absolute;
+  top: 38px;
+  right: 12px;
+  z-index: 25;
   font-size: 10px;
   color: var(--red);
-  background: color-mix(in srgb, var(--red) 12%, transparent);
+  background: color-mix(in srgb, var(--red) 12%, var(--panel, var(--bg)));
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
   border-radius: 4px;
   padding: 1px 4px 1px 6px;
@@ -1932,8 +1936,10 @@ mark.doc-find-mark.current {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 32px;
+  height: 28px;
   box-sizing: border-box;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
 }
 .doc-selection-clear {
   display: inline-flex;
