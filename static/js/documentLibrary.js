@@ -1434,8 +1434,10 @@ function _setLibraryCountChipContent(chip, label, count) {
   }
 
   async function libraryBulkDelete() {
-    if (_librarySelectedIds.size === 0) return;
-    const count = _librarySelectedIds.size;
+    // Keep the confirmed identities stable while the dialog and requests wait.
+    const ids = [..._librarySelectedIds];
+    if (ids.length === 0) return;
+    const count = ids.length;
     if (uiModule && uiModule.styledConfirm) {
       const ok = await uiModule.styledConfirm(
         `Delete ${count} document${count !== 1 ? 's' : ''}?`,
@@ -1449,7 +1451,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     let deleted = 0;
     let failed = 0;
     const deletedIds = [];
-    for (const id of _librarySelectedIds) {
+    for (const id of ids) {
       try {
         const res = await fetch(`${API_BASE}/api/document/${id}`, { method: 'DELETE', credentials: 'same-origin' });
         if (res.ok) {

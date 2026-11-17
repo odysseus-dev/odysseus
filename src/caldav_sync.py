@@ -275,7 +275,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
     # the integrations form still works, sync just no-ops with an error.
     from caldav.lib.error import AuthorizationError, NotFoundError
     from core.database import CalendarCal, CalendarEvent, SessionLocal
-    from routes.calendar_routes import _ensure_positive_duration
+    from routes.calendar_routes import _ensure_positive_duration, _source_tzid
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
@@ -405,6 +405,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                 and isinstance(dtstart_p.dt, datetime)
                                 and dtstart_p.dt.tzinfo is not None
                             )
+                            tzid = None if all_day else _source_tzid(dtstart_p.dt)
 
                             summary = str(comp.get("summary", ""))
                             description = str(comp.get("description", ""))
@@ -428,6 +429,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                 existing.dtend = end_dt
                                 existing.all_day = all_day
                                 existing.is_utc = row_is_utc
+                                existing.tzid = tzid
                                 existing.rrule = rrule
                                 existing.origin = "caldav"
                                 existing.remote_href = str(getattr(obj, "url", "") or "") or None
@@ -445,6 +447,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                     all_day=all_day,
                                     is_utc=row_is_utc,
                                     rrule=rrule,
+                                    tzid=tzid,
                                     origin="caldav",
                                     remote_href=str(getattr(obj, "url", "") or "") or None,
                                     remote_etag=_event_etag(obj) or None,

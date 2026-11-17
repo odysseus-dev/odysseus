@@ -1798,11 +1798,13 @@ body.bg-pattern-ascii-fireflies {
       border-color: var(--fg);
       background-color: var(--panel);
     }
+    /* background-color, not the `background` shorthand: the shorthand also resets
+       background-image, which wiped custom carets off selects in light theme. */
     :root.light input,
     :root.light textarea,
     :root.light button,
     :root.light select {
-      background:#eaeaea;
+      background-color: #eaeaea;
       color-scheme: light;
     }
     input[type="text"] { height:32px; width:100%; }
