@@ -19,7 +19,7 @@ import { _richTextContentToHtml, _scheduleEmailRichbodySave, _syncEmailRichbody,
 import { _activeRichImage, _cleanRichTextPasteHtml, _handleRichChecklistEnter, _handleRichHeadingEnter, _insertSmartRichPasteLink, _normalizeRichChecklists, _normalizeRichInlineCode, _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage, _setRichChecklistItemChecked, setRichInlineCodeTypingArmed } from './richOperations.js';
 import { _followRichSelectionToolbarLayout, _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from './selectionToolbar.js';
 import { _applyRichBlockInputRule, _chooseRichSlashCommand, _hideRichSlashMenu, _renderRichSlashMenu, _richSlashActiveIndex, _richSlashContext, _richSlashMenu, _syncRichSlashMenu, setRichSlashActiveIndex } from './slashMenu.js';
-import { captureVisualBaseline, cleanMarkdownPasteHtml, hideMarkdownCompatBanner, isMarkdownVisualModeActive, isVisualMarkdownDoc, renderMarkdownCompatBanner, renderMarkdownIntoVisualRich, unbindVisualSurface } from './markdownVisualSync.js';
+import { captureVisualBaseline, cleanMarkdownPasteHtml, hideMarkdownCompatBanner, isMarkdownVisualModeActive, isVisualMarkdownDoc, renderMarkdownCompatBanner, renderMarkdownIntoVisualRich, restoreVisualCaret, unbindVisualSurface } from './markdownVisualSync.js';
 
 function _handleMarkdownVisualKeyExit(rich, e) {
   if (!isMarkdownVisualModeActive()) return false;
@@ -55,6 +55,23 @@ function _handleMarkdownVisualKeyExit(rich, e) {
       _scheduleEmailRichbodySave();
       return true;
     }
+    if (e.shiftKey) {
+      const li = startEl.closest('li');
+      if (li && rich.contains(li)) {
+        // Shift+Enter inside a list item inserts a line break (<br>) within the item
+        const br = document.createElement('br');
+        range.deleteContents();
+        range.insertNode(br);
+        range.setStartAfter(br);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        _syncEmailRichbody(rich);
+        _scheduleEmailRichbodySave();
+        rich._syncActive?.();
+        return true;
+      }
+    }
     if (!e.shiftKey && _exitEmptyMarkdownQuoteLine(rich, startEl, selection)) return true;
   }
 
@@ -68,19 +85,41 @@ function _handleMarkdownVisualKeyExit(rich, e) {
       } catch (_) {
         return false;
       }
-      if (prefix.toString().length === 0 && !(block.textContent || '').trim()) {
-        const p = document.createElement('p');
-        p.appendChild(document.createElement('br'));
-        block.replaceWith(p);
-        const caret = document.createRange();
-        caret.selectNodeContents(p);
-        caret.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(caret);
-        _syncEmailRichbody(rich);
-        _scheduleEmailRichbodySave();
-        rich._syncActive?.();
-        return true;
+      if (prefix.toString().length === 0) {
+        if (/^h[1-6]$/i.test(block.tagName)) {
+          // Backspace at the start of a heading converts it to a paragraph while preserving text
+          const p = document.createElement('p');
+          while (block.firstChild) {
+            p.appendChild(block.firstChild);
+          }
+          if (!p.firstChild) {
+            p.appendChild(document.createElement('br'));
+          }
+          block.replaceWith(p);
+          const caret = document.createRange();
+          caret.selectNodeContents(p);
+          caret.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(caret);
+          _syncEmailRichbody(rich);
+          _scheduleEmailRichbodySave();
+          rich._syncActive?.();
+          return true;
+        }
+        if (!(block.textContent || '').trim()) {
+          const p = document.createElement('p');
+          p.appendChild(document.createElement('br'));
+          block.replaceWith(p);
+          const caret = document.createRange();
+          caret.selectNodeContents(p);
+          caret.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(caret);
+          _syncEmailRichbody(rich);
+          _scheduleEmailRichbodySave();
+          rich._syncActive?.();
+          return true;
+        }
       }
     }
   }
@@ -466,6 +505,9 @@ export function _wireEmailRichbody(rich) {
         }
         let inList = false;
         try { inList = document.queryCommandState('insertOrderedList') || document.queryCommandState('insertUnorderedList'); } catch (_) {}
+        if (!inList && anchorEl) {
+          inList = Boolean(anchorEl.closest('li, ul, ol'));
+        }
         if (inList) {
           e.preventDefault();
           applyMdFormat(e.shiftKey ? 'outdent' : 'indent', { bypassDuplicateGuard: !e.repeat });
@@ -538,7 +580,7 @@ export function _showRichTextEditor(doc) {
  * @param {{ focus?: boolean }} [opts]
  * @returns {boolean} true when the visual editor is shown
  */
-export function _showMarkdownVisualEditor(doc, { focus = false } = {}) {
+export function _showMarkdownVisualEditor(doc, { focus = false, targetBlockIndex = null, targetOffset = 0 } = {}) {
     const rich = document.getElementById('doc-email-richbody');
     const source = document.getElementById('doc-editor-wrap');
     const textarea = document.getElementById('doc-editor-textarea');
@@ -574,7 +616,9 @@ export function _showMarkdownVisualEditor(doc, { focus = false } = {}) {
     _syncEmailRichbody(rich);
     _syncRichEmptyImport(rich);
     if (textarea) textarea.spellcheck = true;
-    if (focus) {
+    if (targetBlockIndex !== null) {
+      restoreVisualCaret(rich, targetBlockIndex, targetOffset);
+    } else if (focus) {
       try { rich.focus(); } catch (_) {}
     }
     return true;

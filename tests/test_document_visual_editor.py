@@ -1161,3 +1161,123 @@ def test_visual_markdown_preserves_noncanonical_blocks_byte_identical_after_savi
     assert data["reopened"]["content"] == server_content
 
 
+def test_visual_markdown_interaction_quality_shortcuts_and_caret_mapping():
+    """Verify heading backspace, list soft breaks, and caret restoration across mode switches."""
+    data = _run_browser(r"""
+      await boot('interaction-quality');
+      const id = 'interaction-doc';
+      await open({
+        id,
+        title: 'Interaction Test',
+        language: 'markdown',
+        current_content: '# Heading One\n\n- First Item\n\nParagraph block',
+      });
+      await page.waitForFunction((id) => window.__state.activeDocId === id, id);
+      const initial = await state();
+
+      // 1. Backspace at offset 0 in heading converts it to <p> while retaining text
+      await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        const h1 = rich.querySelector('h1');
+        const range = document.createRange();
+        range.selectNodeContents(h1);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        rich.focus();
+      });
+      await page.keyboard.press('Backspace');
+      await page.waitForTimeout(50);
+      const afterHeadingBackspace = await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        return {
+          h1Count: rich.querySelectorAll('h1').length,
+          firstPText: rich.querySelector('p')?.textContent,
+          firstPTag: rich.firstElementChild?.tagName,
+        };
+      });
+
+      // 2. Shift+Enter in list item inserts <br> soft break rather than splitting list item
+      await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        const li = rich.querySelector('li');
+        const range = document.createRange();
+        range.selectNodeContents(li);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        rich.focus();
+      });
+      await page.keyboard.press('Shift+Enter');
+      await page.keyboard.type('Subline text');
+      await page.waitForTimeout(50);
+      const afterListShiftEnter = await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        const lis = Array.from(rich.querySelectorAll('li'));
+        return {
+          liCount: lis.length,
+          liHtml: lis[0]?.innerHTML,
+          hasBr: Boolean(lis[0]?.querySelector('br')),
+        };
+      });
+
+      // 3. Caret mapping across Visual -> Source -> Visual
+      // Place caret in the Paragraph block (3rd block)
+      await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        const p = Array.from(rich.querySelectorAll('p')).find(el => el.textContent.includes('Paragraph block'));
+        const range = document.createRange();
+        range.selectNodeContents(p);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        rich.focus();
+      });
+
+      // Switch to Source mode
+      await page.locator('[data-mdview="edit"]').click();
+      await page.waitForTimeout(50);
+      const inSource = await page.evaluate(() => {
+        const ta = document.getElementById('doc-editor-textarea');
+        const selStart = ta.selectionStart;
+        const textBefore = ta.value.slice(0, selStart);
+        return {
+          selStart,
+          textBefore,
+          inParagraphBlock: ta.value.indexOf('Paragraph block') <= selStart,
+        };
+      });
+
+      // Switch back to Visual mode
+      await page.locator('[data-mdview="visual"]').click();
+      await page.waitForTimeout(50);
+      const backInVisual = await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        const sel = window.getSelection();
+        const anchorNode = sel?.anchorNode;
+        const anchorEl = anchorNode?.nodeType === Node.ELEMENT_NODE ? anchorNode : anchorNode?.parentElement;
+        return {
+          visualActive: document.querySelector('[data-mdview="visual"]')?.classList.contains('active'),
+          anchorTag: anchorEl?.tagName,
+          anchorText: anchorEl?.textContent,
+        };
+      });
+
+      await finish({ initial, afterHeadingBackspace, afterListShiftEnter, inSource, backInVisual });
+    """)
+    assert data["afterHeadingBackspace"]["h1Count"] == 0
+    assert data["afterHeadingBackspace"]["firstPTag"] == "P"
+    assert "Heading One" in data["afterHeadingBackspace"]["firstPText"]
+
+    assert data["afterListShiftEnter"]["liCount"] == 1
+    assert data["afterListShiftEnter"]["hasBr"] is True
+    assert "Subline text" in data["afterListShiftEnter"]["liHtml"]
+
+    assert data["inSource"]["inParagraphBlock"] is True
+    assert data["backInVisual"]["visualActive"] is True
+
+
+

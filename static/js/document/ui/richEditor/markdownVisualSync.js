@@ -684,3 +684,123 @@ export function captureVisualBaseline(rich, doc) {
 
   return _rewriteReason(rawMarkdown, canonical);
 }
+
+/**
+ * Identify which top-level block inside the visual editor contains the current caret,
+ * along with its character offset within that block.
+ * @param {HTMLElement} rich
+ * @returns {{ blockIndex: number, offsetInBlock: number }|null}
+ */
+export function getVisualCaretBlockInfo(rich) {
+  if (!rich || typeof window === 'undefined') return null;
+  const selection = window.getSelection?.();
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  if (!rich.contains(range.startContainer)) return null;
+
+  let topNode = range.startContainer;
+  while (topNode && topNode.parentNode !== rich) {
+    topNode = topNode.parentNode;
+  }
+  if (!topNode) return null;
+
+  const children = Array.from(rich.childNodes);
+  let blockIndex = 0;
+  let inInlineGroup = false;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const isBlock = child.nodeType === Node.ELEMENT_NODE &&
+      /^(P|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE|HR|DIV)$/i.test(child.tagName);
+    if (isBlock) {
+      if (inInlineGroup) {
+        blockIndex++;
+        inInlineGroup = false;
+      }
+      if (child === topNode) break;
+      blockIndex++;
+    } else {
+      inInlineGroup = true;
+      if (child === topNode) break;
+    }
+  }
+
+  let offsetInBlock = 0;
+  try {
+    const prefix = document.createRange();
+    prefix.selectNodeContents(topNode);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    offsetInBlock = prefix.toString().length;
+  } catch (_) {}
+
+  return { blockIndex, offsetInBlock };
+}
+
+/**
+ * Restore the visual editor caret to the given top-level block index and offset.
+ * @param {HTMLElement} rich
+ * @param {number} blockIndex
+ * @param {number} [offsetInBlock=0]
+ * @returns {boolean}
+ */
+export function restoreVisualCaret(rich, blockIndex, offsetInBlock = 0) {
+  if (!rich || !rich.childNodes.length || typeof window === 'undefined') return false;
+  const children = Array.from(rich.childNodes);
+  const blocks = [];
+  let currentGroup = [];
+  for (const child of children) {
+    const isBlock = child.nodeType === Node.ELEMENT_NODE &&
+      /^(P|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE|HR|DIV)$/i.test(child.tagName);
+    if (isBlock) {
+      if (currentGroup.length) {
+        blocks.push(currentGroup[0]);
+        currentGroup = [];
+      }
+      blocks.push(child);
+    } else {
+      currentGroup.push(child);
+    }
+  }
+  if (currentGroup.length) {
+    blocks.push(currentGroup[0]);
+  }
+
+  const targetBlock = blocks[Math.min(Math.max(0, blockIndex), blocks.length - 1)];
+  if (!targetBlock) return false;
+
+  try {
+    rich.focus();
+  } catch (_) {}
+
+  const selection = window.getSelection?.();
+  if (!selection) return false;
+
+  const walker = document.createTreeWalker(targetBlock, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, offsetInBlock);
+  let textNode = walker.nextNode();
+  let lastText = null;
+  while (textNode) {
+    lastText = textNode;
+    const len = (textNode.nodeValue || '').length;
+    if (remaining <= len) {
+      const range = document.createRange();
+      range.setStart(textNode, remaining);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    }
+    remaining -= len;
+    textNode = walker.nextNode();
+  }
+  const range = document.createRange();
+  if (lastText) {
+    range.setStart(lastText, (lastText.nodeValue || '').length);
+  } else {
+    range.selectNodeContents(targetBlock);
+  }
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+

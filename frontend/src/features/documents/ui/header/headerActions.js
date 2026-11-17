@@ -22,9 +22,11 @@ import { _dismissDocKb, _wireSwipeDismiss } from '../panel/paneLayout.js';
 
 import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from '../richEditor/richBodySync.js';
 import { _hideMarkdownVisualEditor, _showMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import { segmentMarkdownBlocks } from '../../domain/sourceSegmentation.js';
 import {
   assessMarkdownVisualSupport,
   discardVisualDraft,
+  getVisualCaretBlockInfo,
   hideMarkdownCompatBanner,
   isMarkdownVisualModeActive,
   isVisualMarkdownDoc,
@@ -377,9 +379,30 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
     const doc = activeDocId ? docs.get(activeDocId) : null;
     if (!doc || !isVisualMarkdownDoc(doc)) return false;
 
+    const rich = document.getElementById('doc-email-richbody');
     const ta = document.getElementById('doc-editor-textarea');
     const mdPrev = document.getElementById('doc-md-preview');
     const wasPreview = !!(mdPrev && mdPrev.style.display !== 'none');
+
+    let visualCaretInfo = null;
+    if (requestedMode === 'markdown' && rich && rich.classList.contains('markdown-visual-mode')) {
+      visualCaretInfo = getVisualCaretBlockInfo(rich);
+    }
+    let targetBlockIndex = null;
+    let targetOffset = 0;
+    if (requestedMode === 'visual' && ta && (document.activeElement === ta || focus)) {
+      const sourceCaretPos = ta.selectionStart || 0;
+      const currentContent = doc.content || '';
+      const segments = segmentMarkdownBlocks(currentContent);
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (sourceCaretPos >= seg.startOffset && sourceCaretPos <= seg.endOffset) {
+          targetBlockIndex = i;
+          targetOffset = sourceCaretPos - seg.startOffset;
+          break;
+        }
+      }
+    }
 
     saveCurrentToMap();
 
@@ -396,11 +419,21 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
       discardVisualDraft(doc);
     }
     const currentContent = doc.content || '';
-    const showSource = () => {
+    const showSource = (caretInfo = null) => {
       if (!ta) return;
       if (ta.value !== currentContent) ta.value = currentContent;
       syncHighlighting(ta.value, 'markdown');
       updateLineNumbers(ta.value);
+      if (caretInfo) {
+        const segments = segmentMarkdownBlocks(ta.value);
+        const seg = segments[Math.min(caretInfo.blockIndex, segments.length - 1)];
+        if (seg) {
+          const pos = Math.min(seg.endOffset, seg.startOffset + (caretInfo.offsetInBlock || 0));
+          try {
+            ta.setSelectionRange(pos, pos);
+          } catch (_) {}
+        }
+      }
       if (focus) {
         try { ta.focus(); } catch (_) {}
       }
@@ -410,7 +443,7 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
       if (wasPreview) _setMarkdownPreviewActive(false, { remember: true });
       const compat = assessMarkdownVisualSupport(currentContent);
       doc._visualCompatReasons = compat.supported ? [] : compat.reasons;
-      const shown = compat.supported && _showMarkdownVisualEditor(doc, { focus });
+      const shown = compat.supported && _showMarkdownVisualEditor(doc, { focus, targetBlockIndex, targetOffset });
       if (!shown) {
         _hideMarkdownVisualEditor();
         renderMarkdownCompatBanner(doc._visualCompatReasons);
@@ -439,7 +472,7 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
     doc._visualCompatReasons = compat.supported ? [] : compat.reasons;
     if (!compat.supported) renderMarkdownCompatBanner(compat.reasons);
     else hideMarkdownCompatBanner();
-    showSource();
+    showSource(visualCaretInfo);
     _syncHeaderActions();
     _scheduleDocumentHistoryControls();
     return true;

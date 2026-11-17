@@ -483,3 +483,13 @@ export function extractBlockSegments(segments) {
   if (!Array.isArray(segments)) return [];
   return segments.filter(seg => seg.type === 'block');
 }
+
+/**
+ * Convenience helper returning only block segments from source markdown.
+ * @param {string} source
+ * @returns {Array<object>}
+ */
+export function segmentMarkdownBlocks(source) {
+  return extractBlockSegments(segmentMarkdown(source));
+}
+
