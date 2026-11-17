@@ -279,7 +279,7 @@ export function _loadedEmailsHaveVisibleTags() {
 
 export async function _openTasksForEmailTags() {
   try {
-    const mod = await import('../tasks.js?v=20260914taskmodel1');
+    const mod = await import('../tasks.js?v=20261117notifvis1');
     const openTasks = mod.openTasks || mod.default?.openTasks;
     if (typeof openTasks === 'function') {
       openTasks(null, { filter: 'Email', focusAction: 'check_email_urgency' });

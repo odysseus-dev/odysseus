@@ -1842,7 +1842,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     } else if (panel === 'skills') {
       document.getElementById('tool-skills-btn')?.click();
     } else if (panel === 'research') {
-        import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+        import('./research/panel.js?v=20261117researchlib1').then(mod => {
         const open = mod.openPanel || (mod.default && mod.default.openPanel);
         if (open) open();
       }).catch(() => {});
@@ -1936,18 +1936,18 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'task') {
-    import('./tasks.js?v=20260914taskmodel1').then(mod => {
+    import('./tasks.js?v=20261117notifvis1').then(mod => {
       const open = mod.openTasks || (mod.default && mod.default.openTasks);
       if (open) open(id);
       else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
     }).catch(() => { const b = document.getElementById('tasks-btn'); if (b) b.click(); });
   } else if (kind === 'skill') {
-    import('./skills.js?v=20260909kebabconsistency1').then(mod => {
+    import('./skills.js?v=20261117skillsretry1').then(mod => {
       const open = mod.openSkill || (mod.default && mod.default.openSkill);
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'research') {
-    import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+    import('./research/panel.js?v=20261117researchlib1').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
     }).catch(() => {});

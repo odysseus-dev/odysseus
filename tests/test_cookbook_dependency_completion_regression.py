@@ -564,8 +564,8 @@ def test_main_cookbook_control_actions_use_bounded_requests():
 def test_cookbook_opens_from_cached_state_before_background_sync():
     source = _read("static/js/cookbook.js")
 
-    assert "const _stateSync = _syncFromServer();" in source
-    assert source.index("_renderCookbookShell();") < source.index("const _stateSync = _syncFromServer();")
+    assert "const _stateSync = _syncFromServer({ maxAgeMs: 10000 });" in source
+    assert source.index("_renderCookbookShell();") < source.index("const _stateSync = _syncFromServer({ maxAgeMs: 10000 });")
     assert "modal.classList.remove('hidden');" in source
     assert "_stateSync.then((synced) =>" in source
     assert "never replace a form while the" in source

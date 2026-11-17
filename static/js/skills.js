@@ -94,6 +94,23 @@ function _applySectionCollapse(container) {
   });
 }
 
+// A failed load used to leave "Loading…" (or stale cards) with no feedback.
+function _showSkillsLoadError() {
+  if (loaded && skills.length) {
+    uiModule.showError('Could not refresh skills. Showing the last loaded list.');
+    return;
+  }
+  const container = document.getElementById('skills-list');
+  if (!container) return;
+  container.innerHTML = '<div class="skills-load-error" style="text-align:center;padding:24px 0;font-size:11px;">'
+    + '<div style="opacity:0.6;margin-bottom:8px;">Could not load skills.</div>'
+    + '<button type="button" class="skills-retry-btn">Retry</button></div>';
+  container.querySelector('.skills-retry-btn')?.addEventListener('click', () => {
+    container.innerHTML = '<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">Loading…</div>';
+    loadSkills();
+  });
+}
+
 export async function loadSkills(cascade = false) {
   // Play the domino-in entrance on this load (set when the tab is opened,
   // not for the silent re-loads after an edit/delete).
@@ -104,7 +121,11 @@ export async function loadSkills(cascade = false) {
   if (_loadPromise) return _loadPromise;
   _loadPromise = (async () => {
   try {
+    // The approval threshold only tints badges, so it loads alongside the
+    // list instead of delaying the first render behind a second round trip.
+    const _thresholdLoad = _loadSkillApprovalThreshold();
     const res = await fetch(`${API}/api/skills`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     // Dedupe by name (case-insensitive) — the API has occasionally
     // returned the same skill twice (built-in shadow + user copy, or
@@ -120,7 +141,7 @@ export async function loadSkills(cascade = false) {
       _seen.add(k);
       return true;
     });
-    await _loadSkillApprovalThreshold();
+    await _thresholdLoad;
     // Built-in capabilities are no longer surfaced in the Skills menu.
     loaded = true;
     renderSkillsList();
@@ -137,6 +158,7 @@ export async function loadSkills(cascade = false) {
     }
   } catch (e) {
     console.error('Failed to load skills:', e);
+    _showSkillsLoadError();
   } finally {
     _loadPromise = null;
   }

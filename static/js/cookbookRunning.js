@@ -1601,9 +1601,17 @@ async function _syncFromServerImpl() {
 // Boot, modal-open, focus, and visibility refreshes can converge on the same
 // state endpoint. Share the active request so two callers cannot race with
 // different snapshots or trigger duplicate state-sync renders.
-export function _syncFromServer() {
+let _lastSyncOkAt = 0;
+
+// opts.maxAgeMs: reuse a successful sync newer than this instead of refetching
+// (modal open right after boot). Focus/poll/explicit refreshes stay forced.
+export function _syncFromServer(opts = {}) {
   if (_syncFromServerInFlight) return _syncFromServerInFlight;
-  const pending = _syncFromServerImpl();
+  if (opts.maxAgeMs && Date.now() - _lastSyncOkAt < opts.maxAgeMs) return Promise.resolve(true);
+  const pending = _syncFromServerImpl().then((ok) => {
+    if (ok) _lastSyncOkAt = Date.now();
+    return ok;
+  });
   const clearPending = () => {
     if (_syncFromServerInFlight === pending) _syncFromServerInFlight = null;
   };

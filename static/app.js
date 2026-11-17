@@ -34,7 +34,7 @@ import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js?v=20260910promptcopy1';
 import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=20260829chatstyle12';
-import tasksModule from './js/tasks.js?v=20260914taskmodel1';
+import tasksModule from './js/tasks.js?v=20261117notifvis1';
 import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
 import adminModule from './js/admin.js?v=20260929csssplit';
@@ -53,7 +53,7 @@ import themeModule from './js/theme.js?v=20260911organsrain1';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260913researchrailerrors1';
+import * as researchPanelModule from './js/research/panel.js?v=20261117researchlib1';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';
@@ -203,13 +203,35 @@ function initRailHoverLabels() {
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
+// Concurrent identical GETs of these read-only endpoints share one request
+// (startup fired /api/default-chat four times within ~200 ms). Only in-flight
+// requests are shared, nothing is cached, and abortable requests are skipped.
+const _COALESCE_GET = /^(?:https?:\/\/[^/]+)?\/api\/(?:default-chat|models)(?:\?.*)?$/;
+const _coalesceInFlight = new Map();
 window.fetch = async function(...args) {
+  const [input, init] = args;
+  const url = typeof input === 'string' ? input : '';
+  if (url && _COALESCE_GET.test(url) && (!init || ((!init.method || init.method === 'GET') && !init.signal && !init.body))) {
+    const key = url.replace(/^https?:\/\/[^/]+/, '');
+    let pending = _coalesceInFlight.get(key);
+    if (!pending) {
+      pending = _fetchChecked.apply(this, args).finally(() => _coalesceInFlight.delete(key));
+      _coalesceInFlight.set(key, pending);
+    }
+    return (await pending).clone();
+  }
+  return _fetchChecked.apply(this, args);
+};
+async function _fetchChecked(...args) {
   const res = await _origFetch.apply(this, args);
-  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
+  // The toast history log is best-effort. With auth disabled it answers 401
+  // for every toast, which must not bounce the page to /login (that looked
+  // like a random reload after any error/success toast).
+  if (res.status === 401 && !String(args[0]).includes('/api/auth/') && !String(args[0]).includes('/api/tasks/notification-logs')) {
     window.location.href = '/login';
   }
   return res;
-};
+}
 
 // Search settings
 
@@ -243,7 +265,9 @@ async function _refreshDefaultChat() {
 }
 // Prime the cache once at load for initial paint paths that read _defaultChat
 // synchronously; later reads should call _refreshDefaultChat() first.
-_refreshDefaultChat();
+// The inline first-paint script may have just learned that no default exists;
+// asking again within a few seconds can only get the same answer.
+if (!(Date.now() - (window.__odysseusDefaultChatEmptyAt || 0) < 5000)) _refreshDefaultChat();
 
 async function _createDirectChatFromPreferredModel(opts = {}) {
   if (!sessionModule) return false;
