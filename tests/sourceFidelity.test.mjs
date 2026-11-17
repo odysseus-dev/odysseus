@@ -716,3 +716,60 @@ it('retains attempted Markdown in a rejected localized draft', () => {
   assert.equal(result.markdown, 'Original');
   assert.equal(result.draft, 'Recover this edit');
 });
+
+it('honors disabled canonical fallback when all source-specific spelling would be lost', () => {
+  const result = preserveBlockSource({ source: '* Old', baseline: '- Old', edited: 'Fresh', render: markdownToVisualHtml, allowCanonicalFallback: false });
+  assert.equal(result.status, 'unsupported');
+  assert.equal(result.markdown, '* Old');
+  assert.equal(result.draft, 'Fresh');
+});
+
+describe('Canonical fallback permission', () => {
+  const fallbackCases = [
+    { reason: 'diff-limit-exceeded', source: '* Old', baseline: '- Old', edited: '- New', maxEditDistance: 0 },
+    { reason: 'semantic-divergence', source: '* Old', baseline: '- Old', edited: '- OldX', compareSemantics: () => false },
+    { reason: 'source-formatting-lost', source: '* Old', baseline: '- Old', edited: 'Fresh' },
+  ];
+  for (const fixture of fallbackCases) {
+    for (const allowCanonicalFallback of [false, true]) {
+      it(`${fixture.reason} respects allowCanonicalFallback=${allowCanonicalFallback}`, () => {
+        const result = preserveBlockSource({ ...fixture, render: markdownToVisualHtml, allowCanonicalFallback });
+        assert.equal(result.status, allowCanonicalFallback ? 'canonical-fallback' : 'unsupported');
+        assert.equal(result.markdown, allowCanonicalFallback ? fixture.edited : fixture.source);
+        assert.equal(result.draft, fixture.edited);
+        assert.equal(result.reason, fixture.reason);
+      });
+    }
+  }
+
+  it('rejects a large noncanonical list atomically and retains the full attempted document', () => {
+    const list = Array.from({ length: 1000 }, (_, i) => `* Item ${i}`).join('\n');
+    const baseline = list.replace(/^\*/gm, '-');
+    const source = `Untouched\n\n${list}\n\nTail`;
+    const result = applyLocalizedEdits(source, [{ op: 'replace', index: 1, baseline, edited: `${baseline}X` }], {
+      render: markdownToVisualHtml,
+      allowCanonicalFallback: false,
+    });
+    assert.equal(result.status, 'unsupported');
+    assert.equal(result.reason, 'diff-limit-exceeded');
+    assert.equal(result.markdown, source);
+    assert.equal(result.draft, `Untouched\n\n${baseline}X\n\nTail`);
+    assert.deepEqual(result.blockResults, [{ index: 1, status: 'unsupported', reason: 'diff-limit-exceeded' }]);
+  });
+
+  const preservedCases = [
+    { name: 'plus markers and repeated items', source: '+ Same\n+ Same', baseline: '- Same\n- Same', edited: '- Same\n- SameX', expected: '+ Same\n+ SameX' },
+    { name: 'nested asterisk markers', source: '* Parent\n  * Child\n* Tail', baseline: '- Parent\n  - Child\n- Tail', edited: '- Parent\n  - ChildX\n- Tail', expected: '* Parent\n  * ChildX\n* Tail' },
+    { name: 'CRLF list', source: '* First\r\n* Last', baseline: '- First\n- Last', edited: '- First\n- LastX', expected: '* First\r\n* LastX' },
+    { name: 'table spacing', source: '|Name|Value|\n|---|---|\n|Alpha|123|', baseline: '| Name | Value |\n| --- | --- |\n| Alpha | 123 |', edited: '| Name | Value |\n| --- | --- |\n| AlphaX | 123 |', expected: '|Name|Value|\n|---|---|\n|AlphaX|123|' },
+    { name: 'tilde fence', source: '~~~js\nconst x = 1;\n~~~', baseline: '```js\nconst x = 1;\n```', edited: '```js\nconst x = 2;\n```', expected: '~~~js\nconst x = 2;\n~~~' },
+  ];
+  for (const fixture of preservedCases) {
+    it(`preserves ${fixture.name} with fallback disabled`, () => {
+      const result = preserveBlockSource({ ...fixture, render: markdownToVisualHtml, allowCanonicalFallback: false });
+      assert.equal(result.status, 'preserved');
+      assert.equal(result.markdown, fixture.expected);
+      assert.equal(result.reason, null);
+    });
+  }
+});

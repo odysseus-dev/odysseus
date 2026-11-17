@@ -291,3 +291,117 @@ def test_duplicate_visual_blocks_never_delete_a_different_source_spelling():
         assert case['server'] == case['local']['content'] == data['original']
         assert case['local']['bannerVisible'] is True
         assert case['local']['richHtml'].count('<pre>') == 1
+
+
+def test_large_noncanonical_block_never_silently_falls_back_to_canonical_source():
+    data = _run_browser(r"""
+      await boot('audit-no-canonical-fallback');
+      const updateRequests = [];
+      page.on('request', request => {
+        if (request.method() === 'PUT' && new URL(request.url()).pathname.startsWith('/api/document/')) {
+          updateRequests.push(request.url());
+        }
+      });
+      const original=Array.from({length:1000},(_,i)=>`* Item ${i}`).join('\n');
+      await open({id:'large-noncanonical',title:'Large list',language:'markdown',current_content:original});
+      await page.waitForFunction(() => window.__state.activeDocId === 'large-noncanonical');
+      const freshOpen = await state();
+      // The shared preview renderer currently sends asterisk lists to Source.
+      // Mount the production visual adapter directly to exercise reconciliation
+      // of this review corpus, including an already-open visual draft.
+      const admissionReason = await page.evaluate(async () => {
+        const sync = await import('/static/js/document/ui/richEditor/markdownVisualSync.js');
+        const wiring = await import('/static/js/document/ui/richEditor/richBodyWiring.js');
+        const doc = window.__state.docs.get('large-noncanonical');
+        const rich = document.getElementById('doc-email-richbody');
+        document.getElementById('doc-editor-wrap').style.display = 'none';
+        document.getElementById('doc-editor-textarea').style.display = 'none';
+        rich.style.display = '';
+        rich.classList.add('markdown-visual-mode');
+        rich.contentEditable = 'true';
+        doc._markdownEditorMode = 'visual';
+        sync.renderMarkdownIntoVisualRich(rich, doc);
+        const reason = sync.captureVisualBaseline(rich, doc);
+        wiring._wireEmailRichbody(rich);
+        return reason;
+      });
+      await page.waitForSelector('#doc-email-richbody.markdown-visual-mode li');
+      await caretAtEnd();
+      await page.keyboard.type('X');
+      const saved=await page.evaluate(()=>window.__doc.saveDocument({silent:true}));
+      const local = await state();
+      const recovery = await page.evaluate(() => {
+        const doc = window.__state.docs.get('large-noncanonical');
+        return { blocked: doc._visualSyncBlocked, draft: doc._visualDraftHtml, persisted: doc._persistedContent,
+          saveState: doc._saveState, buttonState: document.getElementById('doc-footer-copy-btn').dataset.saveState };
+      });
+      await page.locator('[data-mdview="edit"]').click();
+      const afterSourceAttempt = await state();
+      await open({ id: 'other-doc', title: 'Other', language: 'markdown', current_content: 'Other document' });
+      await page.waitForFunction(() => window.__state.activeDocId === 'other-doc');
+      await page.evaluate(() => window.__doc.loadDocument('large-noncanonical'));
+      await page.waitForFunction(() => window.__state.activeDocId === 'large-noncanonical');
+      const afterNavigation = await state();
+      await page.reload();
+      await boot('audit-no-canonical-fallback-reload');
+      await open({ id: 'large-noncanonical', title: 'Large list', language: 'markdown', current_content: original });
+      await page.waitForSelector('#doc-email-richbody.markdown-visual-mode li');
+      const afterReload = await state();
+      const savedAfterReload = await page.evaluate(() => window.__doc.saveDocument({ silent: true }));
+      await finish({original,saved,local,recovery,freshOpen,admissionReason,afterSourceAttempt,afterNavigation,afterReload,savedAfterReload,
+        puts:api.puts,updateRequests,server:api.store.get('large-noncanonical').current_content});
+    """)
+    assert data['saved'] is False
+    assert data['local']['content'] == data['server'] == data['original']
+    assert data['local']['bannerVisible'] is True
+    assert 'Item 999X' in data['local']['richHtml']
+    assert data['freshOpen']['visual'] is False
+    assert data['freshOpen']['content'] == data['original']
+    assert data['admissionReason'] == 'formatting the visual editor would rewrite'
+    assert data['local']['textarea'] == data['original']
+    assert data['recovery']['blocked'] is True
+    assert 'Item 999X' in data['recovery']['draft']
+    assert data['recovery']['persisted'] == data['original']
+    assert data['recovery']['saveState'] == data['recovery']['buttonState'] == 'error'
+    assert data['puts'] == []
+    assert data['updateRequests'] == []
+    assert data['savedAfterReload'] is False
+    for state in (data['afterSourceAttempt'], data['afterNavigation'], data['afterReload']):
+        assert state['content'] == state['textarea'] == data['original']
+        assert state['bannerVisible'] is True
+        assert state['visual'] is True
+        assert 'Item 999X' in state['richHtml']
+
+
+def test_supported_list_and_paragraph_edits_still_save_without_rewriting_source():
+    data = _run_browser(r"""
+      await boot('audit-supported-localized-edits');
+      const original = '- First\n- Last\n\nUntouched paragraph';
+      await open({ id: 'supported-localized', title: 'Supported', language: 'markdown', current_content: original });
+      await page.waitForSelector('#doc-email-richbody.markdown-visual-mode li');
+      await page.locator('#doc-email-richbody').evaluate(rich => {
+        rich.focus();
+        const text = rich.querySelector('li:last-child').firstChild;
+        const range = document.createRange(); range.setStart(text, text.length); range.collapse(true);
+        getSelection().removeAllRanges(); getSelection().addRange(range);
+      });
+      await page.keyboard.type('X');
+      const listSaved = await page.evaluate(() => window.__doc.saveDocument({ silent: true }));
+      const afterList = await state();
+      await caretAtEnd();
+      await page.keyboard.type('Y');
+      const paragraphSaved = await page.evaluate(() => window.__doc.saveDocument({ silent: true }));
+      const afterParagraph = await state();
+      const saveState = await page.evaluate(() => window.__state.docs.get('supported-localized')._saveState);
+      await finish({ listSaved, paragraphSaved, afterList, afterParagraph, saveState, puts: api.puts,
+        server: api.store.get('supported-localized').current_content });
+    """)
+    assert data['listSaved'] is True
+    assert data['paragraphSaved'] is True
+    assert data['afterList']['content'] == '- First\n- LastX\n\nUntouched paragraph'
+    assert data['afterParagraph']['content'] == data['server'] == '- First\n- LastX\n\nUntouched paragraphY'
+    assert data['afterParagraph']['textarea'] == data['server']
+    assert data['afterList']['bannerVisible'] is False
+    assert data['afterParagraph']['bannerVisible'] is False
+    assert data['saveState'] == 'saved'
+    assert [put['body']['content'] for put in data['puts']] == [data['afterList']['content'], data['server']]

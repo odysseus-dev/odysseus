@@ -604,8 +604,8 @@ export function preserveBlockSource({
   // If source had non-canonical formatting that was lost during patching
   if (source !== baseline && patched === edited) {
     return {
-      status: 'canonical-fallback',
-      markdown: edited,
+      status: allowCanonicalFallback ? 'canonical-fallback' : 'unsupported',
+      markdown: allowCanonicalFallback ? edited : source,
       draft: edited,
       reason: 'source-formatting-lost',
     };

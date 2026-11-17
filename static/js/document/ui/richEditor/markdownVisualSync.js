@@ -477,10 +477,10 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
           expectedRevision: targetDoc._visualExpectedRevision,
           render: markdownToVisualHtml,
           inspectCompatibility: inspectMarkdownVisualCompatibility,
-          allowCanonicalFallback: true,
+          allowCanonicalFallback: false,
         });
 
-        if (localizedResult.status === 'preserved' || localizedResult.status === 'canonical-fallback') {
+        if (localizedResult.status === 'preserved') {
           nextMarkdown = localizedResult.markdown;
           localizedApplied = true;
         }
