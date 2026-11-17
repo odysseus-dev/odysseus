@@ -507,6 +507,10 @@ describe('Document Editor Email Workflows', () => {
       const wrappedText = 'To: bob@example.com\nSubject: Hi\n---\nInner body';
       const b64Wrapped = Buffer.from(wrappedText, 'utf8').toString('base64');
       assert.equal(_sanitizeOutgoingEmailBody(`<div>${b64Wrapped}</div>`), 'Inner body');
+      const htmlWrapped = Buffer.from('To: alice@example.com\n---\n<p>Hello</p><script>bad()</script>', 'utf8').toString('base64');
+      assert.equal(_sanitizeOutgoingEmailBody(`<div>${htmlWrapped}</div>`), 'Hello');
+      assert.equal(_sanitizeOutgoingEmailBody('Use <b>bold</b> literally', { plainText: true }), 'Use <b>bold</b> literally');
+      assert.equal(_sanitizeOutgoingEmailBody(htmlWrapped, { plainText: true }), 'Hello');
       assert.equal(_sanitizeOutgoingEmailBody('Reply to <alice@example.com>\n\nThanks!'), 'Reply to <alice@example.com>\n\nThanks!');
       assert.equal(_sanitizeOutgoingEmailBody('<script>alert(1)</script>Hello\n\nWorld'), 'Hello\n\nWorld');
       assert.equal(
@@ -515,6 +519,15 @@ describe('Document Editor Email Workflows', () => {
       );
       assert.equal(_sanitizeOutgoingEmailBody('<p>Hello</p><p>World</p>'), 'Hello\n\nWorld');
       assert.equal(_sanitizeOutgoingEmailBody('<p>R&eacute;union &euro;5</p>'), 'Réunion €5');
+      assert.equal(_sanitizeOutgoingEmailBody('<p title=">unfinished'), '<p title=">unfinished');
+      assert.equal(
+        _sanitizeOutgoingEmailBody('<p>Use &lt;b&gt;bold&lt;/b&gt; literally</p>'),
+        'Use <b>bold</b> literally'
+      );
+      assert.equal(
+        _sanitizeOutgoingEmailBody('Hi Bob,\n\n\nI think a<b holds.\n\nThanks'),
+        'Hi Bob,\n\nI think a<b holds.\n\nThanks'
+      );
       assert.equal(_sanitizeOutgoingEmailBody(null), '');
     });
   });

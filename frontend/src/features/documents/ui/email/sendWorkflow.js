@@ -5,10 +5,10 @@ import { closePanel, switchToDoc, renderTabs, _syncDocIndicator } from "../../ap
 
 import { _accountCanSend, _ATTACH_RE } from "../../domain/emailMessage.js";
 
-import { _emailBodyToHtml, _emailReplyOwnText } from "./emailBody.js";
+import { _emailReplyOwnText } from "./emailBody.js";
 
 import { _clearEmailLocalDraft, _sanitizeOutgoingEmailBody } from "./localDraft.js";
-import { _emailRichbodyActive, _syncEmailRichbody } from "../richEditor/richBodySync.js";
+import { _emailPlainTextToHtml, _emailRichbodyActive, _syncEmailRichbody } from "../richEditor/richBodySync.js";
 import { _closeWithoutDeleting } from "../documentFlows.js";
 import { closeLibrary, isLibraryOpen, loadEmailLibrary, spinnerModule, uiModule } from "../host.js";
 
@@ -118,9 +118,9 @@ export async function _saveDraft() {
     if (_rich) _syncEmailRichbody(_rich);
     const textarea = document.getElementById('doc-editor-textarea');
     const rawBody = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
-    const body = _sanitizeOutgoingEmailBody(rawBody);
+    const body = _sanitizeOutgoingEmailBody(rawBody, { plainText: Boolean(_rich) });
     let bodyHtml = _rich ? _rich.innerHTML : null;
-    if (_rich && body !== rawBody) bodyHtml = _emailBodyToHtml(body);
+    if (_rich && body !== rawBody) bodyHtml = _emailPlainTextToHtml(body);
     const btn = document.getElementById('doc-email-draft-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
     const controller = new AbortController();
@@ -228,7 +228,7 @@ export async function _scheduleSend(anchorEl = null) {
       ? (_rich.innerText || _rich.textContent || '')
       : (document.getElementById('doc-editor-textarea')?.value || '')
     ).trim();
-    const body = _sanitizeOutgoingEmailBody(rawBody);
+    const body = _sanitizeOutgoingEmailBody(rawBody, { plainText: Boolean(_rich) });
     const attachments = (doc._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
@@ -399,9 +399,9 @@ export async function _sendEmail() {
     if (_rich) _syncEmailRichbody(_rich);
     const textarea = document.getElementById('doc-editor-textarea');
     const rawBody = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
-    const body = _sanitizeOutgoingEmailBody(rawBody);
+    const body = _sanitizeOutgoingEmailBody(rawBody, { plainText: Boolean(_rich) });
     let bodyHtml = _rich ? _rich.innerHTML : null;
-    if (_rich && body !== rawBody) bodyHtml = _emailBodyToHtml(body);
+    if (_rich && body !== rawBody) bodyHtml = _emailPlainTextToHtml(body);
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {

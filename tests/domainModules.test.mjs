@@ -268,6 +268,7 @@ test('_htmlToPlainText and _hasRichHtmlElement convert untrusted HTML safely wit
     'Hi Bob,\n\nI think a<b holds.\n\nThanks'
   );
   assert.equal(_htmlToPlainText('<p>R&eacute;union &euro;5</p>'), 'Réunion €5');
+  assert.equal(_htmlToPlainText('&Lt; &Gt; &Not; &unknown;'), '&Lt; &Gt; &Not; &unknown;', 'unknown case-sensitive names stay intact without a browser decoder');
   assert.equal(_htmlToPlainText('<p>Paragraph 1</p><p>Paragraph 2</p>'), 'Paragraph 1\n\nParagraph 2');
   assert.equal(_htmlToPlainText('Line 1<br>Line 2<br><br>Line 3'), 'Line 1\nLine 2\n\nLine 3');
   assert.equal(_htmlToPlainText('<div>Item 1</div><div>Item 2</div>'), 'Item 1\nItem 2');

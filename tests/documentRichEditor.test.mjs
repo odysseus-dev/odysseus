@@ -5,8 +5,6 @@
  *
  * Conforms to:
  * - tests/TESTING_STANDARD.md
- * - Appendix A module decomposition
- * - Acorn baseline verifier at 087e6c88
  */
 
 import test, { describe, it, beforeEach } from 'node:test';
@@ -728,7 +726,7 @@ describe('Document Editor Rich-Text Subsystem', () => {
       assert.equal(_emailHtmlToPlainText(null), '');
       assert.equal(_emailHtmlToPlainText(''), '');
       assert.equal(_emailHtmlToPlainText('<b>Bold</b> text'), 'Bold text');
-      assert.equal(_emailHtmlToPlainText('<p>Line 1</p><p>Line 2</p>'), 'Line 1Line 2');
+      assert.equal(_emailHtmlToPlainText('<p>Line 1</p><p>Line 2</p>'), 'Line 1\n\nLine 2');
       assert.equal(
         _emailHtmlToPlainText('<p>Hi &amp; bye</p><script>alert("x")</script><style>.a{}</style>'),
         'Hi & bye'

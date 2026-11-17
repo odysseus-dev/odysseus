@@ -138,28 +138,31 @@ export function _persistEmailLocalDraftSoon() {
     _emailLocalDraftDebounce = pending.timer;
   }
 
-export function _sanitizeOutgoingEmailBody(raw) {
-    let text = String(raw || '').replace(/\r\n/g, '\n');
+function unwrapOutgoingEmailBody(text, decodeBody = body => body) {
     const trimmed = text.trim();
     const decodedWhole = _decodeBase64EmailWrapper(trimmed);
-    if (decodedWhole) text = _parseEmailHeader(decodedWhole).body || '';
-    else if (_looksLikeWrappedEmailContent(trimmed)) text = _parseEmailHeader(trimmed).body || '';
+    if (decodedWhole) text = decodeBody(_parseEmailHeader(decodedWhole).body || '');
+    else if (_looksLikeWrappedEmailContent(trimmed)) text = decodeBody(_parseEmailHeader(trimmed).body || '');
 
     const parts = text.split(/(\n{2,})/);
-    let changed = false;
-    const clean = parts.map(part => {
+    return parts.map(part => {
       if (/^\n+$/.test(part)) return part;
       const decoded = _decodeBase64EmailWrapper(part);
       if (!decoded) return part;
-      changed = true;
-      return _parseEmailHeader(decoded).body || '';
+      return decodeBody(_parseEmailHeader(decoded).body || '');
     }).join('');
+  }
 
-    if (changed) text = clean;
-
-    if (_looksLikeHtml(text)) {
-      const plain = _htmlToPlainText(text).trim();
-      return _sanitizeOutgoingEmailBody(plain);
+export function _sanitizeOutgoingEmailBody(raw, { plainText = false } = {}) {
+    const rawText = String(raw || '').replace(/\r\n/g, '\n');
+    let text = plainText
+      ? unwrapOutgoingEmailBody(rawText, _sanitizeOutgoingEmailBody)
+      : unwrapOutgoingEmailBody(rawText);
+    if (!plainText && _looksLikeHtml(text)) {
+      // Conversion produces plain text, including decoded literal angle brackets.
+      // Only a newly decoded wrapper contains raw content needing sanitization.
+      // Recursion here consumes that wrapper, never the already converted text.
+      text = unwrapOutgoingEmailBody(_htmlToPlainText(text), _sanitizeOutgoingEmailBody);
     }
 
     return text

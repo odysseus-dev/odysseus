@@ -174,20 +174,14 @@ function _inspectHtmlText(input) {
   };
 
   let _domParser = null;
-  function decodeNamedEntity(name) {
-    if (Object.prototype.hasOwnProperty.call(namedEntities, name)) {
-      return namedEntities[name];
-    }
-    const lower = name.toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(namedEntities, lower)) {
-      return namedEntities[lower];
-    }
+  function decodeNativeEntity(reference) {
     if (typeof DOMParser !== 'undefined') {
       try {
         if (!_domParser) _domParser = new DOMParser();
-        const doc = _domParser.parseFromString('&' + name + ';', 'text/html');
+        // Only the matched entity reference reaches the parser, never markup.
+        const doc = _domParser.parseFromString(reference, 'text/html');
         const val = doc.body.textContent;
-        if (val && val !== '&' + name + ';') return val;
+        if (val && val !== reference) return val;
       } catch (_) {}
     }
     return null;
@@ -195,7 +189,12 @@ function _inspectHtmlText(input) {
 
   function decodeEntityText(chunk) {
     if (!chunk || !chunk.includes('&')) return chunk;
-    return chunk.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*);/gi, (match, body) => {
+    return chunk.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*)(;?)/gi, (match, body, semicolon) => {
+      if (semicolon && Object.prototype.hasOwnProperty.call(namedEntities, body)) {
+        return namedEntities[body];
+      }
+      const native = decodeNativeEntity(match);
+      if (native !== null) return native;
       if (body.startsWith('#x') || body.startsWith('#X')) {
         const cp = Number.parseInt(body.slice(2), 16);
         if (!Number.isFinite(cp) || cp <= 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
@@ -210,8 +209,7 @@ function _inspectHtmlText(input) {
         }
         return String.fromCodePoint(cp);
       }
-      const decoded = decodeNamedEntity(body);
-      return decoded !== null ? decoded : match;
+      return match;
     });
   }
 
