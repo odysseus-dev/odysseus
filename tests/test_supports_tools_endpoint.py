@@ -10,39 +10,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Ensure heavy deps are stubbed or preserved before importing routes
-for mod in [
-    "src.tls_overrides",
-    "src.llm_core",
-    "src.settings",
-    "src.constants",
-    "core.log_safety",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
-
-if "src.endpoint_resolver" not in sys.modules or isinstance(
-    sys.modules["src.endpoint_resolver"], MagicMock
-):
-    er = MagicMock()
-    er.normalize_base = lambda url: url
-    er.resolve_url = lambda url: url
-    er.build_chat_url = lambda base, **kw: base
-    er.build_models_url = lambda base, **kw: base + "/v1/models"
-    er.build_headers = lambda base, **kw: {}
-    sys.modules["src.endpoint_resolver"] = er
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+
+from tests.helpers.import_state import clear_fake_database_modules, clear_fake_endpoint_resolver_modules
+from tests.helpers.sqlite_db import make_temp_sqlite
+
+# Evict any bare/fake stubs left by previous test modules before importing real modules
+clear_fake_database_modules()
+clear_fake_endpoint_resolver_modules()
 
 import routes.model_routes as mr
 from core.database import Base, ModelEndpoint
 from routes.model_routes import _coerce_supports_tools
-
-
-from sqlalchemy.pool import StaticPool
 
 
 # ── Static JS Syntax Validation ─────────────────────────────────────────────────
@@ -105,14 +85,8 @@ class TestCoerceSupportsTools:
 
 @pytest.fixture
 def test_db(monkeypatch):
-    """In-memory SQLite database isolated per test using StaticPool."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    """File-backed SQLite database isolated per test using make_temp_sqlite."""
+    TestingSessionLocal, engine, tmpfile = make_temp_sqlite(Base.metadata)
 
     monkeypatch.setattr(mr, "SessionLocal", TestingSessionLocal)
     monkeypatch.setattr("core.database.SessionLocal", TestingSessionLocal)
@@ -122,7 +96,11 @@ def test_db(monkeypatch):
         yield session
     finally:
         session.close()
-        Base.metadata.drop_all(engine)
+        engine.dispose()
+        try:
+            os.unlink(tmpfile.name)
+        except OSError:
+            pass
 
 
 @pytest.fixture
@@ -437,3 +415,19 @@ class TestSupportsToolsAndModelToolModesInteraction:
         # For llama3:8b, mode is 'none', suppressing tools
         surface_llama = _configured_model_tool_surface("http://127.0.0.1:11434/v1", "llama3:8b")
         assert surface_llama == "none"
+
+
+def test_import_state_cleanliness():
+    """Verify that sys.modules contains real implementations, not leaked test stubs."""
+    for mod_name in [
+        "src.endpoint_resolver",
+        "src.llm_core",
+        "src.tls_overrides",
+        "src.settings",
+        "src.constants",
+        "core.log_safety",
+    ]:
+        mod = sys.modules.get(mod_name)
+        assert mod is not None, f"Expected {mod_name} to be loaded in sys.modules"
+        assert not isinstance(mod, MagicMock), f"{mod_name} must not be a MagicMock stub"
+        assert getattr(mod, "__file__", None), f"{mod_name} must have a valid on-disk __file__"

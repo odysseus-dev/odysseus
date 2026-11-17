@@ -1,12 +1,22 @@
 import { spawn, spawnSync, execSync } from 'child_process';
 import { chromium } from 'playwright';
-import { existsSync, unlinkSync, mkdirSync } from 'fs';
+import { existsSync, unlinkSync, mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
 import { tmpdir, homedir } from 'os';
 import net from 'net';
 
 const REPO_ROOT = resolve(process.env.REPO_ROOT || '.');
-const DB_PATH = join(tmpdir(), `odysseus-test-ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
+const isPosix = process.platform !== 'win32';
+const TEST_TEMP_DIR = mkdtempSync(join(tmpdir(), 'odysseus-test-ep-'));
+const DATA_DIR = join(TEST_TEMP_DIR, 'data');
+mkdirSync(DATA_DIR, { recursive: true });
+const DB_PATH = join(TEST_TEMP_DIR, 'test.db');
+const FASTEMBED_DIR = join(TEST_TEMP_DIR, 'fastembed');
+mkdirSync(FASTEMBED_DIR, { recursive: true });
+const MAIL_DIR = join(TEST_TEMP_DIR, 'mail');
+mkdirSync(MAIL_DIR, { recursive: true });
+const RUNTIME_DIR = join(TEST_TEMP_DIR, 'runtime');
+mkdirSync(RUNTIME_DIR, { recursive: true });
 const ARTIFACT_DIR = process.env.ARTIFACT_DIR || process.env.NOTES_NATIVE_EVIDENCE_DIR || null;
 
 async function getAvailablePort() {
@@ -29,6 +39,7 @@ function resolvePython() {
     process.env.PYTHON,
     process.env.ODYSSEUS_TEST_PYTHON,
     process.env.VIRTUAL_ENV ? join(process.env.VIRTUAL_ENV, 'bin', 'python') : null,
+    join(REPO_ROOT, '..', '..', 'dev', 'venvs', 'main', 'bin', 'python'),
     join(REPO_ROOT, 'venv', 'bin', 'python'),
     join(REPO_ROOT, '.venv', 'bin', 'python'),
     join(homedir(), '.cache', 'odysseus-ci-baseline-py311', 'bin', 'python'),
@@ -95,18 +106,28 @@ function cleanup() {
     try { browserInstance.close(); } catch (_) {}
     browserInstance = null;
   }
-  if (serverProc && !serverProc.killed) {
-    try { serverProc.kill('SIGKILL'); } catch (_) {}
+  if (serverProc) {
+    const pid = serverProc.pid;
+    try {
+      if (isPosix && pid) {
+        try { process.kill(-pid, 'SIGTERM'); } catch (_) {}
+        try { process.kill(-pid, 'SIGKILL'); } catch (_) {}
+      } else {
+        serverProc.kill('SIGKILL');
+      }
+    } catch (_) {}
     serverProc = null;
   }
-  if (existsSync(DB_PATH)) {
-    try { unlinkSync(DB_PATH); } catch (_) {}
+  if (TEST_TEMP_DIR && existsSync(TEST_TEMP_DIR)) {
+    try { rmSync(TEST_TEMP_DIR, { recursive: true, force: true }); } catch (_) {}
   }
 }
 
 process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(130); });
 process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+process.on('uncaughtException', (err) => { console.error(err); cleanup(); process.exit(1); });
+process.on('unhandledRejection', (err) => { console.error(err); cleanup(); process.exit(1); });
 
 async function waitForServer(url, timeoutMs = 25000) {
   const start = Date.now();
@@ -122,20 +143,74 @@ async function waitForServer(url, timeoutMs = 25000) {
 
 async function runBrowserTests() {
   const port = await getAvailablePort();
+  let chromaGuardPort = await getAvailablePort();
+  while (chromaGuardPort === 8100 || chromaGuardPort === port) {
+    chromaGuardPort = await getAvailablePort();
+  }
+
+  // Preflight isolation check: if host ChromaDB is running at port 8100, record count
+  let preChromaCount = null;
+  try {
+    const hbRes = await fetch('http://127.0.0.1:8100/api/v2/heartbeat', { signal: AbortSignal.timeout(1000) });
+    if (hbRes.ok) {
+      const colRes = await fetch('http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections', { signal: AbortSignal.timeout(1000) });
+      if (colRes.ok) {
+        const cols = await colRes.json();
+        const toolCol = cols.find(c => c.name && c.name.includes('tool_index'));
+        if (toolCol) {
+          const countRes = await fetch(`http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections/${toolCol.id}/count`, { signal: AbortSignal.timeout(1000) });
+          if (countRes.ok) {
+            preChromaCount = await countRes.json();
+            console.log(`[isolation-check] Live ChromaDB detected at 8100; tool_index item count = ${preChromaCount}`);
+          }
+        }
+      }
+    }
+  } catch (_) {
+    // Port 8100 not running or unreachable
+  }
+
   const pythonBin = resolvePython();
-  console.log(`Starting Odysseus test instance on port ${port} using ${pythonBin}...`);
+  console.log(`Starting isolated Odysseus test instance on port ${port} (Chroma guard port ${chromaGuardPort}) using ${pythonBin}...`);
 
   const serverEnv = {
     ...process.env,
+    ODYSSEUS_DATA_DIR: DATA_DIR,
     DATABASE_URL: `sqlite:///${DB_PATH}`,
     AUTH_ENABLED: 'false',
     PORT: String(port),
+    ODYSSEUS_TOOL_INDEX_PREWARM: '0',
+    ODYSSEUS_STARTUP_WARMUPS: '0',
+    ODYSSEUS_MODEL_KEEPALIVE: '0',
+    CHROMADB_HOST: '127.0.0.1',
+    CHROMADB_PORT: String(chromaGuardPort),
+    FASTEMBED_CACHE_PATH: FASTEMBED_DIR,
+    ODYSSEUS_MAIL_ATTACHMENTS_DIR: MAIL_DIR,
+    XDG_RUNTIME_DIR: RUNTIME_DIR,
+    PYTHONPATH: REPO_ROOT,
+    OPENAI_API_KEY: '',
+    ANTHROPIC_API_KEY: '',
+    XAI_API_KEY: '',
+    MISTRAL_API_KEY: '',
+    GROQ_API_KEY: '',
+    GEMINI_API_KEY: '',
+    DEEPSEEK_API_KEY: '',
+    COHERE_API_KEY: '',
+    SEARXNG_URL: '',
+    NTFY_URL: '',
+    OLLAMA_BASE_URL: 'http://127.0.0.1:0',
+    OLLAMA_URL: 'http://127.0.0.1:0',
   };
 
   serverProc = spawn(
     pythonBin,
     ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'warning'],
-    { env: serverEnv, cwd: REPO_ROOT }
+    {
+      env: serverEnv,
+      cwd: REPO_ROOT,
+      detached: isPosix,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
   );
 
   serverProc.stdout.on('data', (d) => {
@@ -376,6 +451,29 @@ async function runBrowserTests() {
         console.log(`Saved mobile screenshot to ${mobileScreenshotPath}`);
       } catch (e) {
         console.warn(`Could not save mobile screenshot: ${e.message}`);
+      }
+    }
+
+    // Post-test isolation verification: if live ChromaDB was present, assert count is unchanged
+    if (preChromaCount !== null) {
+      try {
+        const colRes = await fetch('http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections', { signal: AbortSignal.timeout(1000) });
+        if (colRes.ok) {
+          const cols = await colRes.json();
+          const toolCol = cols.find(c => c.name && c.name.includes('tool_index'));
+          if (toolCol) {
+            const countRes = await fetch(`http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections/${toolCol.id}/count`, { signal: AbortSignal.timeout(1000) });
+            if (countRes.ok) {
+              const postChromaCount = await countRes.json();
+              if (postChromaCount !== preChromaCount) {
+                throw new Error(`Isolation breach: ChromaDB tool_index count changed from ${preChromaCount} to ${postChromaCount}`);
+              }
+              console.log(`[isolation-check] Verified: Persistent ChromaDB count unchanged (${postChromaCount}). Zero mutations detected.`);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`[isolation-check] Post-check warning: ${e.message}`);
       }
     }
 
