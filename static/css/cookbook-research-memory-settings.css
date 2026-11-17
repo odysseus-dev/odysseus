@@ -1433,6 +1433,9 @@ body.settings-sidebar-resize-active {
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
   display: none;
 }
+.settings-sidebar.settings-sidebar-collapsed .settings-nav-search-wrap {
+  display: none;
+}
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-build {
   display: none;
 }
@@ -1464,11 +1467,26 @@ body.settings-sidebar-resize-active {
     overflow-y: hidden;
   }
 
-  .settings-nav-search-wrap,
   .settings-sidebar-resize-handle,
   .settings-sidebar-toggle,
   .settings-sidebar-build {
     display: none;
+  }
+
+  /* The finder stays available above the horizontal tab rail; only the rail
+     scrolls, so the results list is not clipped by it. */
+  .settings-sidebar {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .settings-nav-search-wrap {
+    margin: 0 0 6px;
+  }
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 
   .settings-sidebar.settings-sidebar-collapsed {
@@ -1493,11 +1511,26 @@ body.settings-sidebar-resize-active {
     overflow-y: hidden;
   }
 
-  .settings-nav-search-wrap,
   .settings-sidebar-resize-handle,
   .settings-sidebar-toggle,
   .settings-sidebar-build {
     display: none;
+  }
+
+  /* The finder stays available above the horizontal tab rail; only the rail
+     scrolls, so the results list is not clipped by it. */
+  .settings-sidebar {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .settings-nav-search-wrap {
+    margin: 0 0 6px;
+  }
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 }
 .cookbook-chat-target {

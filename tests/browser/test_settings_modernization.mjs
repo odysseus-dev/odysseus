@@ -178,7 +178,7 @@ async function setupUsers(instance) {
 }
 
 async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 }, colorScheme = 'dark') {
-  const context = await browser.newContext({ viewport, colorScheme });
+  const context = await browser.newContext({ viewport, colorScheme, hasTouch: viewport.width < 600 });
   if (cookie) {
     const [nameValue] = cookie.split(';');
     const [cookieName, ...rest] = nameValue.split('=');
@@ -326,6 +326,13 @@ async function testFinder(instance, cookies) {
     focused: document.activeElement?.dataset?.settingsSection,
   }));
   check('admin-managed panel result routes through the admin controller and reveals the card', adminReveal.activeTab === 'system' && adminReveal.focused === 'backup', JSON.stringify(adminReveal));
+  await admin.page.click('#settings-sidebar-toggle');
+  await admin.page.waitForTimeout(300);
+  const collapsedFinder = await admin.page.isVisible('#settings-nav-search');
+  await admin.page.click('#settings-sidebar-toggle');
+  await admin.page.waitForTimeout(300);
+  const expandedFinder = await admin.page.isVisible('#settings-nav-search');
+  check('collapsing the desktop sidebar hides the finder with the navigation', !collapsedFinder && expandedFinder, JSON.stringify({ collapsedFinder, expandedFinder }));
   check('admin page has no script errors or registry drift', admin.errors.length === 0, admin.errors.join(' | '));
   await admin.context.close();
 }
@@ -560,6 +567,28 @@ async function testMemberScope(instance, cookies) {
   });
   check('mobile Settings has no horizontal overflow with scope badges', overflow <= 1, String(overflow));
   await screenshot(mobile.page, 'scope-member-ai-mobile');
+  // The finder stays usable on a phone: visible above the tab rail, with a
+  // results list that is not clipped by the horizontally scrolling rail.
+  const finderVisible = await mobile.page.isVisible('#settings-nav-search');
+  check('mobile Settings shows the finder', finderVisible);
+  await mobile.page.fill('#settings-nav-search', 'research model');
+  const topResult = await mobile.page.evaluate(() => {
+    const button = document.querySelector('[data-settings-search-section="research-model"]');
+    if (!button) return { found: false };
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return { found: true, height: rect.height, hittable: Boolean(hit && button.contains(hit)) };
+  });
+  check('mobile finder results are on screen and tappable', topResult.found && topResult.height > 20 && topResult.hittable, JSON.stringify(topResult));
+  await screenshot(mobile.page, 'finder-member-mobile');
+  await mobile.page.tap('[data-settings-search-section="research-model"]');
+  await mobile.page.waitForTimeout(800);
+  const mobileReveal = await mobile.page.evaluate(() => {
+    const card = document.querySelector('[data-settings-section="research-model"]');
+    const rect = card.getBoundingClientRect();
+    return { focused: document.activeElement === card, top: rect.top, viewport: window.innerHeight };
+  });
+  check('mobile finder result reveals the card', mobileReveal.focused && mobileReveal.top >= 0 && mobileReveal.top < mobileReveal.viewport, JSON.stringify(mobileReveal));
   check('member scope pages have no script errors', member.errors.length === 0 && mobile.errors.length === 0, [...member.errors, ...mobile.errors].join(' | '));
   check('member session never posts server-wide settings', member.settingsWrites.length === 0 && mobile.settingsWrites.length === 0, [...member.settingsWrites, ...mobile.settingsWrites].join(','));
   forbiddenReport.member = [...new Set([...member.forbidden, ...mobile.forbidden])];
