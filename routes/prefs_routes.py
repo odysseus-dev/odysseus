@@ -2,7 +2,7 @@
 import json
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
-from core.atomic_io import atomic_write_json
+from core.atomic_io import atomic_write_json, store_transaction
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
 
@@ -54,6 +54,66 @@ def _load_for_user(user: Optional[str] = None) -> dict:
     return dict(all_prefs) if user is None else {}
 
 
+@store_transaction(lambda: PREFS_FILE)
+def _update_for_user(user: Optional[str], updates: dict) -> dict:
+    """Transactionally update a subset of preferences for a user."""
+    all_prefs = _load()
+    if user is None:
+        users = all_prefs.get("_users")
+        if isinstance(users, dict):
+            first_key = next(iter(users), None)
+            if first_key is not None:
+                existing_named = users.get(first_key)
+                existing_named = (
+                    dict(existing_named)
+                    if isinstance(existing_named, dict)
+                    else {}
+                )
+                for key, val in updates.items():
+                    if key in _FOREGROUND_POLICY_KEYS:
+                        if val is None:
+                            all_prefs.pop(key, None)
+                        else:
+                            all_prefs[key] = val
+                    else:
+                        if val is None:
+                            existing_named.pop(key, None)
+                        else:
+                            existing_named[key] = val
+                users[first_key] = existing_named
+                _save(all_prefs)
+                res = dict(existing_named)
+                for key in _FOREGROUND_POLICY_KEYS:
+                    res.pop(key, None)
+                    if key in all_prefs:
+                        res[key] = all_prefs[key]
+                return res
+        all_prefs = dict(all_prefs)
+        for key, val in updates.items():
+            if val is None:
+                all_prefs.pop(key, None)
+            else:
+                all_prefs[key] = val
+        _save(all_prefs)
+        return dict(all_prefs)
+
+    if not isinstance(all_prefs.get("_users"), dict):
+        all_prefs = dict(all_prefs)
+        all_prefs["_users"] = {}
+    users = all_prefs["_users"]
+    user_prefs = users.get(user)
+    user_prefs = dict(user_prefs) if isinstance(user_prefs, dict) else {}
+    for key, val in updates.items():
+        if val is None:
+            user_prefs.pop(key, None)
+        else:
+            user_prefs[key] = val
+    users[user] = user_prefs
+    _save(all_prefs)
+    return dict(user_prefs)
+
+
+@store_transaction(lambda: PREFS_FILE)
 def _save_for_user(user: Optional[str], prefs: dict):
     """Save preferences for a specific user."""
     all_prefs = _load()
@@ -118,13 +178,8 @@ def setup_prefs_routes():
     @router.put("/{key}")
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
-        prefs = _load_for_user(user)
-        val = body.get("value")
-        if val is None:
-            prefs.pop(key, None)
-        else:
-            prefs[key] = val
-        _save_for_user(user, prefs)
+        val = body.get("value") if isinstance(body, dict) else None
+        prefs = _update_for_user(user, {key: val})
         return {"key": key, "value": prefs.get(key)}
 
     @router.patch("")
@@ -144,13 +199,7 @@ def setup_prefs_routes():
         if not all(isinstance(key, str) and key.strip() for key in values):
             raise HTTPException(400, "preference keys must be non-empty strings")
         user = get_current_user(request)
-        prefs = _load_for_user(user)
-        for key, val in values.items():
-            if val is None:
-                prefs.pop(key, None)
-            else:
-                prefs[key] = val
-        _save_for_user(user, prefs)
+        prefs = _update_for_user(user, values)
         return {"values": {key: prefs.get(key) for key in values}}
 
     return router
