@@ -1641,3 +1641,113 @@ test('pdf lifecycle: switching to markdown releases transient PDF resources with
     assert.deepEqual(backOnMd.tracker, mdBaselineTracker, `cycle ${cycle}: all transient PDF listeners returned to baseline`);
   }
 });
+
+test('inline tab rename restores the persisted title after a rejected PATCH', async t => {
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (request.method !== 'PATCH') return false;
+    await route.fulfill({ status: 500, json: { detail: 'Rejected rename' } });
+    return true;
+  });
+  await inject(page, 'rename', 'Body', 'markdown', 'Original');
+  await page.locator('.doc-tab[data-doc-id="rename"] .doc-tab-title').dblclick();
+  const input = page.locator('.doc-tab-title-input');
+  await input.fill('Rejected');
+  await input.press('Enter');
+  await page.waitForFunction(() => state.docs.get('rename')._titleRequestSeq === 1
+    && !state.docs.get('rename')._titleAbortController);
+  assert.equal(requests.find(request => request.method === 'PATCH').body.expected_title, 'Original');
+  assert.equal(await page.evaluate(() => state.docs.get('rename').title), 'Original');
+  assert.equal(await page.locator('#doc-title-input').inputValue(), 'Original');
+  assert.equal(await page.locator('.doc-tab[data-doc-id="rename"] .doc-tab-title').textContent(), 'Original');
+});
+
+test('automatic creation completed after navigation preserves document identity and content', async t => {
+  let release;
+  let started;
+  const held = new Promise(resolve => { release = resolve; });
+  const creating = new Promise(resolve => { started = resolve; });
+  t.after(() => release());
+  const { page } = await setup(t, async (route, request) => {
+    if (request.method !== 'POST' || request.path !== '/api/document') return false;
+    started();
+    await held;
+    await route.fulfill({ json: { id: 'created-a', title: '', language: 'richtext', current_content: 'Draft A', session_id: 'session-1' } });
+    return true;
+  });
+  await inject(page, 'existing-b', 'Private B');
+  await page.evaluate(async () => {
+    state.setLastSessionId('session-1');
+    state.setActiveDocId(null);
+    document.getElementById('doc-editor-textarea').value = 'Draft A';
+    const flows = await import('/static/js/document/ui/documentFlows.js');
+    window.pendingCreation = flows._autoCreateFromInput('Draft A');
+  });
+  await creating;
+  await page.evaluate(() => editor.loadDocument('existing-b'));
+  release();
+  await page.evaluate(() => window.pendingCreation);
+  assert.deepEqual(await page.evaluate(() => ({
+    active: state.activeDocId,
+    a: state.docs.get('created-a').content,
+    b: state.docs.get('existing-b').content,
+    session: state.docs.get('created-a').sessionId,
+    editor: document.getElementById('doc-editor-textarea').value,
+    tabCount: document.querySelectorAll('.doc-tab[data-doc-id="created-a"]').length,
+  })), { active: 'existing-b', a: 'Draft A', b: 'Private B', session: 'session-1', editor: 'Private B', tabCount: 1 });
+});
+
+test('email HTML conversion decodes HTML5 references once without executing untrusted content', async t => {
+  const { page } = await setup(t);
+  const result = await page.evaluate(async () => {
+    const { _htmlToPlainText } = await import('/static/js/document/domain/documentKinds.js');
+    const { _sanitizeOutgoingEmailBody } = await import('/static/js/document/ui/email/localDraft.js');
+    window.entityExecuted = false;
+    const input = '<p>&Lt; &Gt; &Not; &NotEqualTilde; &#128; &eacute; &copy</p>';
+    const literal = '<p>Use &lt;b&gt;bold&lt;/b&gt; literally</p><script>window.entityExecuted=true</script>';
+    return {
+      text: _htmlToPlainText(input),
+      literal: _sanitizeOutgoingEmailBody(literal),
+      malformed: _sanitizeOutgoingEmailBody('<p title=">unfinished'),
+      executed: window.entityExecuted,
+    };
+  });
+  assert.deepEqual(result, {
+    text: '≪ ≫ ⫬ ≂̸ € é ©',
+    literal: 'Use <b>bold</b> literally',
+    malformed: '<p title=">unfinished',
+    executed: false,
+  });
+});
+
+test('email actions preserve literal tags from the rich editor in draft, send, and schedule payloads', async t => {
+  const { page, requests } = await setup(t, async (route, request) => {
+    if (!['/api/email/draft', '/api/email/send', '/api/email/schedule'].includes(request.path)) return false;
+    await route.fulfill({ json: { success: true, draft_uid: 'draft-1', draft_folder: 'Drafts', sent_uid: 'sent-1' } });
+    return true;
+  });
+  for (const action of ['draft', 'send', 'schedule']) {
+    await inject(page, `${action}-literals`, 'To: alice@example.com\nSubject: Literal text\n---\nBody', 'email');
+    const expected = await page.evaluate(() => {
+      const rich = document.getElementById('doc-email-richbody');
+      rich.innerHTML = '<p>Use &lt;b&gt;bold&lt;/b&gt; literally</p><p><br></p><p><br></p><p>a&lt;b holds.</p>';
+      return rich.innerText.trim().replace(/\n{3,}/g, '\n\n');
+    });
+    assert.match(expected, /<b>bold<\/b>/);
+    const submitted = page.waitForResponse(response => response.url().endsWith(`/api/email/${action}`));
+    await page.evaluate(async action => {
+      const workflow = await import('/static/js/document/ui/email/sendWorkflow.js');
+      if (action === 'draft') await workflow._saveDraft();
+      else if (action === 'send') await workflow._sendEmail();
+      else await workflow._scheduleSend();
+    }, action);
+    if (action === 'schedule') await page.locator('#sched-confirm').click();
+    await submitted;
+    const payload = requests.filter(request => request.path === `/api/email/${action}`).at(-1)?.body;
+    assert.ok(payload, `${action} must submit its request`);
+    assert.equal(payload.body, expected, `${action} must preserve its plain-text mirror`);
+    if (action !== 'schedule') {
+      assert.match(payload.body_html, /&lt;b&gt;bold&lt;\/b&gt;/);
+      assert.doesNotMatch(payload.body_html, /<b>bold<\/b>/);
+    }
+  }
+});

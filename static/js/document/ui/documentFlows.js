@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/documentFlows.js
 /**
  * Document creation, loading, session moves, and tab lifecycle.
- * Declarations moved from static/js/document.js under Appendix A (ui/documentFlows).
  */
 
 import { _ensureDocChipRegistered, _hideLoadingOverlay, _minimizeNotesForDocumentOpen, _showLoadingOverlay, _syncDocIndicator, closePanel, openPanel, renderTabs, saveCurrentToMap, showEmptyState, switchToDoc } from '../application/documentCommands.js';
@@ -135,16 +134,15 @@ export async function _autoCreateFromInput(content) {
       const doc = await res.json();
       if (!doc || !doc.id) throw new Error('Document create failed: missing id');
 
-      const initialContent = document.getElementById('doc-editor-textarea')?.value ?? content;
       addDocToTabs(doc, sessionId);
-      const d = docs.get(doc.id);
-      if (d) d.content = initialContent;
-
       if (generation !== _documentNavigationGeneration) {
         renderTabs();
         return;
       }
 
+      const initialContent = document.getElementById('doc-editor-textarea')?.value ?? content;
+      const d = docs.get(doc.id);
+      if (d) d.content = initialContent;
       switchToDoc(doc.id);
       // Trigger auto-detect and auto-title
       setTimeout(attemptAutoDetect, 100);

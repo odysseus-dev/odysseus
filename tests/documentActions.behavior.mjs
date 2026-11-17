@@ -172,6 +172,65 @@ describe('documentActions', () => {
     assert.equal(env.state.docs.get('doc-4').title, `${'A'.repeat(48)}...`);
   });
 
+  it('rolls back an optimistic tab rename to the acknowledged title, including an empty title', async () => {
+    for (const previous of ['Original', '']) {
+      const doc = { id: 'rename', title: 'Rejected', language: 'markdown' };
+      env.state.registerDocument(doc);
+      env.state.setActiveDocId(doc.id);
+      const input = mount('doc-title-input', 'input', { value: 'Rejected' });
+      globalThis.fetch = async () => ({ ok: false, status: 500 });
+      await env.api.updateTitle(doc.id, 'Rejected', { expectedTitle: previous });
+      assert.equal(doc.title, previous);
+      assert.equal(input.value, previous);
+    }
+  });
+
+  it('serializes manual renames and rolls back to the last successful write', async () => {
+    for (const firstSucceeds of [false, true]) {
+      for (const secondSucceeds of [false, true]) {
+        const doc = { id: 'rename', title: 'First', language: 'markdown' };
+        env.state.registerDocument(doc);
+        env.state.setActiveDocId(doc.id);
+        mount('doc-title-input', 'input', { value: 'Second' });
+        const pending = [];
+        globalThis.fetch = (_url, options) => new Promise(resolve => pending.push({ options, resolve }));
+        const first = env.api.updateTitle(doc.id, 'First', { expectedTitle: 'Original' });
+        doc.title = 'Second';
+        const second = env.api.updateTitle(doc.id, 'Second', { expectedTitle: 'First' });
+        await Promise.resolve();
+        assert.equal(pending.length, 1, 'only one manual PATCH may be in flight');
+        assert.equal(pending[0].options.signal.aborted, false);
+        await env.api.autoTitleFromContent('# Automatic', doc.id);
+        assert.equal(pending.length, 1, 'automatic titling cannot interrupt manual edits');
+        pending[0].resolve({ ok: firstSucceeds, status: 500, json: async () => ({ title: 'First' }) });
+        await first;
+        await Promise.resolve();
+        assert.equal(pending.length, 2);
+        assert.equal(JSON.parse(pending[1].options.body).expected_title, firstSucceeds ? 'First' : 'Original');
+        assert.equal(doc.title, 'Second', 'earlier completion cannot restore a stale UI title');
+        pending[1].resolve({ ok: secondSucceeds, status: 500, json: async () => ({ title: 'Second' }) });
+        await second;
+        assert.equal(doc.title, secondSucceeds ? 'Second' : (firstSucceeds ? 'First' : 'Original'));
+        assert.equal(doc._titleWrites, undefined, 'the per-document queue is released');
+      }
+    }
+  });
+
+  it('suppresses automatic titling while a manual clear is pending', async () => {
+    const doc = { id: 'clear', title: '', language: 'markdown' };
+    env.state.registerDocument(doc);
+    let resolvePatch;
+    globalThis.fetch = () => new Promise(resolve => { resolvePatch = resolve; });
+    const clear = env.api.updateTitle(doc.id, '', { expectedTitle: 'Original' });
+    await Promise.resolve();
+    await env.api.autoTitleFromContent('# Automatic', doc.id);
+    assert.equal(doc._titleRequestSeq, 1);
+    resolvePatch({ ok: true, json: async () => ({ title: '' }) });
+    await clear;
+    assert.equal(doc.title, '');
+    assert.equal(doc._titleWrites, undefined);
+  });
+
   it('updates the active language through the document record', async () => {
     env.state.registerDocument({ id: 'doc-1', title: 'Notes', language: 'markdown' });
     env.state.setActiveDocId('doc-1');

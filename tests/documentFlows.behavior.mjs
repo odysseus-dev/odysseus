@@ -120,6 +120,25 @@ describe('documentFlows navigation', () => {
     assert.equal(calls.switch.includes('nav-raced'), false);
     assert.ok(calls.tabs > 0);
   });
+  it('registers stale automatic creation with its own content after switching documents', async () => {
+    const textarea = mount('doc-editor-textarea', 'textarea', { value: 'Draft A' });
+    let resolveCreate;
+    globalThis.fetch = () => new Promise(resolve => { resolveCreate = resolve; });
+    const pending = api._autoCreateFromInput('Draft A');
+    stateValues.bumpNavigationGeneration();
+    stateValues.setActiveDocId('doc-b');
+    docs.set('doc-b', { id: 'doc-b', content: 'Private B', sessionId: 'session-1' });
+    textarea.value = 'Private B';
+    resolveCreate({ ok: true, json: async () => ({ id: 'doc-a', content: 'Draft A', session_id: 'session-1' }) });
+    await pending;
+    assert.equal(docs.get('doc-a').content, 'Draft A');
+    assert.equal(docs.get('doc-a').sessionId, 'session-1');
+    assert.equal(docs.get('doc-b').content, 'Private B');
+    assert.equal(textarea.value, 'Private B');
+    assert.equal(stateModule.namespace.activeDocId, 'doc-b');
+    assert.deepEqual(calls.switch, []);
+    assert.deepEqual(calls.adds, ['doc-a']);
+  });
   it('quietly closes a nonempty tab and clears the active document when no tab remains', async () => {
     docs.set('close-me', { id: 'close-me', content: 'keep this draft', sessionId: 'session-1' });
     active = 'close-me'; stateModule.setExport('activeDocId', active);

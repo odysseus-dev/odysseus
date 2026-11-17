@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/documentActions.js
 /**
  * Run, copy, title, language, and automatic title actions.
- * Declarations moved from static/js/document.js under Appendix A (ui/documentActions).
  */
 
 import { renderTabs } from '../application/documentCommands.js';
@@ -95,20 +94,33 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
       title = input ? input.value.trim() : '';
     }
 
-    if (isAutoTitle && (!title || (doc.title && doc.title !== 'Untitled' && doc.title !== '' && doc.title !== title))) {
+    if (isAutoTitle && (doc._titleWrites || !title || (doc.title && doc.title !== 'Untitled' && doc.title !== '' && doc.title !== title))) {
       return;
     }
 
-    const previousTitle = doc.title;
-    doc._titleAbortController?.abort();
+    // Manual edits share an acknowledged title and run in order. Aborting a
+    // manual PATCH cannot establish whether the server already committed it.
+    if (!doc._titleWrites) doc._titleAbortController?.abort();
+    const writes = isAutoTitle ? null : (doc._titleWrites ||= {
+      confirmedTitle: options.expectedTitle !== undefined ? options.expectedTitle : doc.title,
+      tail: Promise.resolve(),
+      pending: 0,
+    });
+    let release;
+    const previousWrite = writes?.tail;
+    if (writes) {
+      writes.pending++;
+      writes.tail = new Promise(resolve => { release = resolve; });
+    }
     const controller = new AbortController();
     doc._titleAbortController = controller;
     const requestSeq = (doc._titleRequestSeq = (doc._titleRequestSeq || 0) + 1);
 
     try {
+      if (previousWrite) await previousWrite;
       const payload = { title };
       if (isAutoTitle) payload.if_untitled = true;
-      if (options.expectedTitle !== undefined) payload.expected_title = options.expectedTitle;
+      if (options.expectedTitle !== undefined) payload.expected_title = writes ? writes.confirmedTitle : options.expectedTitle;
 
       const res = await fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
@@ -119,6 +131,7 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json().catch(() => null);
       const serverTitle = (data && typeof data.title === 'string') ? data.title : title;
+      if (writes) writes.confirmedTitle = serverTitle;
 
       const currentDoc = docs.get(docId);
       if (currentDoc && currentDoc === doc && doc._titleRequestSeq === requestSeq) {
@@ -141,16 +154,23 @@ export async function updateTitle(overrideDocId, overrideTitle, options = {}) {
       if (e?.name === 'AbortError') return;
       const currentDoc = docs.get(docId);
       if (currentDoc && currentDoc === doc && doc._titleRequestSeq === requestSeq && !isAutoTitle) {
-        currentDoc.title = previousTitle;
+        currentDoc.title = writes.confirmedTitle;
         const titleInput = document.getElementById('doc-title-input');
-        if (titleInput && docId === activeDocId && document.activeElement !== titleInput) {
-          titleInput.value = previousTitle || '';
+        const pane = document.getElementById('doc-editor-pane');
+        if (titleInput && docId === activeDocId
+            && (!pane || pane.dataset.activeDocumentId === docId)
+            && document.activeElement !== titleInput) {
+          titleInput.value = writes.confirmedTitle || '';
         }
         renderTabs();
       }
       if (isAutoTitle && e?.message?.includes('409')) return;
       console.error('Failed to update title:', e);
     } finally {
+      if (writes) {
+        release();
+        if (--writes.pending === 0) delete doc._titleWrites;
+      }
       if (doc._titleAbortController === controller) {
         doc._titleAbortController = null;
       }
@@ -161,7 +181,7 @@ export function autoTitleFromContent(content, docId) {
     const id = docId || activeDocId;
     if (!id) return;
     const doc = docs.get(id);
-    if (!doc || (doc.title && doc.title !== '' && doc.title !== 'Untitled')) return;
+    if (!doc || doc._titleWrites || (doc.title && doc.title !== '' && doc.title !== 'Untitled')) return;
 
     const text = (content || '').trimStart();
     if (!text) return;
