@@ -215,24 +215,16 @@ function documentFunction(name, text) {
     assert.equal(ledger.legacyReservedCost, 3);
     assert.equal(ledger.clearedReserved, true);
 
-    const names = ['_unfoldEmailHeaderLines', '_parseEmailHeader', '_looksLikeWrappedEmailContent', '_decodeBase64EmailWrapper',
-      '_inspectHtmlText', '_htmlToPlainText', '_hasRichHtmlElement',
-      '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_emailPlainTextToHtml', '_aiReply',
+    const names = ['_aiReply',
       '_loadOdysseusAttachItems', '_odysseusAttachLabel', '_escHtml',
       '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml'];
     const functions = Object.fromEntries(names.map(name => [name, documentFunction(name)]));
     const email = await page.evaluate(async functions => {
       window.executed = 0;
-      const _unfoldEmailHeaderLines = eval('(' + functions._unfoldEmailHeaderLines + ')');
-      const _parseEmailHeader = eval('(' + functions._parseEmailHeader + ')');
-      const _looksLikeWrappedEmailContent = eval('(' + functions._looksLikeWrappedEmailContent + ')');
-      const _decodeBase64EmailWrapper = eval('(' + functions._decodeBase64EmailWrapper + ')');
-      const _inspectHtmlText = eval('(' + functions._inspectHtmlText + ')');
-      const _htmlToPlainText = eval('(' + functions._htmlToPlainText + ')');
-      const _hasRichHtmlElement = eval('(' + functions._hasRichHtmlElement + ')');
-      const _sanitizeOutgoingEmailBody = eval('(' + functions._sanitizeOutgoingEmailBody + ')');
-      const _emailHtmlToPlainText = eval('(' + functions._emailHtmlToPlainText + ')');
-      const _emailPlainTextToHtml = eval('(' + functions._emailPlainTextToHtml + ')');
+      // Exercise the published modules with their real dependency graph.
+      const { _htmlToPlainText, _hasRichHtmlElement } = await import('/static/js/document/domain/documentKinds.js');
+      const { _sanitizeOutgoingEmailBody } = await import('/static/js/document/ui/email/localDraft.js');
+      const { _emailHtmlToPlainText, _emailPlainTextToHtml } = await import('/static/js/document/ui/richEditor/richBodySync.js');
       const activeDocId = 'fixture';
       const docs = new Map();
       const toasts = [];
@@ -268,6 +260,7 @@ function documentFunction(name, text) {
       const malformedText = _htmlToPlainText('<scr<script>ipt>window.executed++</script><img alt="a > b" src="/inert-probe" onerror="window.executed++">');
       const commentRich = _hasRichHtmlElement('<!-- <img src="/inert-probe"> --><span>[AI reply draft will appear here]</span>');
       const outgoing = _sanitizeOutgoingEmailBody('Hello\n\nworld');
+      const sanitized = _sanitizeOutgoingEmailBody('<p>Safe</p><script>window.executed++</script><img src="/inert-probe" onerror="window.executed++">');
       const wrapped = _sanitizeOutgoingEmailBody(btoa('To: person@example.com\nSubject: Test\n---\nValid reply'));
       const htmlWrapped = _sanitizeOutgoingEmailBody('<div>' + btoa('To: person@example.com\nSubject: Test\n---\nWrapped html reply') + '</div>');
       await new Promise(resolve => setTimeout(resolve, 150));
@@ -279,6 +272,7 @@ function documentFunction(name, text) {
         malformedText,
         commentRich,
         outgoing,
+        sanitized,
         wrapped,
         htmlWrapped,
         toasts,
@@ -292,6 +286,7 @@ function documentFunction(name, text) {
     assert.equal(email.malformedText, 'ipt>window.executed++');
     assert.equal(email.commentRich, false);
     assert.equal(email.outgoing, 'Hello\n\nworld');
+    assert.equal(email.sanitized, 'Safe');
     assert.equal(email.wrapped, 'Valid reply');
     assert.equal(email.htmlWrapped, 'Wrapped html reply');
     assert.deepEqual(email.toasts, Array(9).fill('Reply already has text'));
