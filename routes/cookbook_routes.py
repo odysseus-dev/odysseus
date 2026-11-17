@@ -4086,6 +4086,109 @@ def setup_cookbook_routes() -> APIRouter:
         _vllm_recipe_cache[repo] = (now, normalized)
         return normalized
 
+    from src import model_serving_control as serving_control
+    serving_controller = serving_control.LocalServingController(_cookbook_state_path, TMUX_LOG_DIR)
+
+    class ServingLaunchRequest(BaseModel):
+        engine: str
+        executable: str
+        port: int
+        model_path: str = ""
+        context_length: int = 4096
+        gpu_layers: int = 0
+        model_context_limit: int | None = None
+        kv_bytes_per_token: int | None = None
+        allow_unestimated_context: bool = False
+
+    class ServingStopRequest(BaseModel):
+        session_id: str
+
+    class ServingRestartRequest(ServingStopRequest):
+        allow_unestimated_context: bool = False
+
+    class ServingWaitRequest(ServingStopRequest):
+        timeout_seconds: float = 30
+
+    def serving_admin(request):
+        # Preserve the existing human-admin native-control boundary. A generic
+        # internal tool header is not authority for these new producers.
+        from routes.shell_routes import _require_admin, _reject_cross_site
+        _require_admin(request)
+        _reject_cross_site(request)
+
+    def serving_plan(req):
+        return serving_control.build_launch_plan(
+            **req.model_dump(exclude={"allow_unestimated_context"}),
+            available_memory_bytes=serving_control.available_memory_bytes(),
+        )
+
+    @router.post("/api/cookbook/serving/plan")
+    async def cookbook_serving_plan(request: Request, req: ServingLaunchRequest):
+        serving_admin(request)
+        try:
+            return await asyncio.to_thread(serving_plan, req)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @router.post("/api/cookbook/serving/start")
+    async def cookbook_serving_start(request: Request, req: ServingLaunchRequest):
+        serving_admin(request)
+        try:
+            plan = await asyncio.to_thread(serving_plan, req)
+            result = await asyncio.to_thread(serving_controller.start, plan,
+                                            allow_unestimated_context=req.allow_unestimated_context)
+            _state_get_cache.pop("value", None)
+            _tasks_status_cache.pop("value", None)
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.post("/api/cookbook/serving/stop")
+    async def cookbook_serving_stop(request: Request, req: ServingStopRequest):
+        serving_admin(request)
+        try:
+            result = await asyncio.to_thread(serving_controller.stop, req.session_id)
+            _state_get_cache.pop("value", None)
+            _tasks_status_cache.pop("value", None)
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.post("/api/cookbook/serving/restart")
+    async def cookbook_serving_restart(request: Request, req: ServingRestartRequest):
+        serving_admin(request)
+        try:
+            result = await asyncio.to_thread(serving_controller.restart, req.session_id,
+                                            allow_unestimated_context=req.allow_unestimated_context)
+            if not result['ok']:
+                raise HTTPException(409, result)
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from None
+        finally:
+            _state_get_cache.pop("value", None)
+            _tasks_status_cache.pop("value", None)
+
+    @router.post("/api/cookbook/serving/wait-ready")
+    async def cookbook_serving_wait_ready(request: Request, req: ServingWaitRequest):
+        serving_admin(request)
+        if not 0 < req.timeout_seconds <= 300:
+            raise HTTPException(400, 'Readiness timeout must be positive and at most 300 seconds')
+        from src.model_serving_status import wait_for_managed_runtime
+        try:
+            return await wait_for_managed_runtime(_cookbook_state_path, TMUX_LOG_DIR,
+                                                  req.session_id, req.timeout_seconds)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.get("/api/cookbook/serving/status")
+    async def cookbook_serving_status(request: Request):
+        """Versioned local observation; readiness is never process authority."""
+        require_admin(request)
+        from src.model_serving_status import local_serving_status
+
+        return await local_serving_status(_cookbook_state_path, TMUX_LOG_DIR)
+
     @router.get("/api/cookbook/tasks/status")
     async def cookbook_tasks_status(request: Request):
         """Check status of all active cookbook tmux sessions.
