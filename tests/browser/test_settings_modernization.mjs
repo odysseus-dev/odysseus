@@ -646,6 +646,8 @@ async function testRestrictedNavigation(instance, cookies) {
     return landing.active === tab || landing.shown.some(id => RESTRICTED_PANELS.includes(id)) || landing.shown.length !== 1;
   });
   check('member: explicit open(tab) never activates an admin-only panel', leaked.length === 0, JSON.stringify(memberLandings));
+  const adminEndpointsSeen = member.forbidden.filter(entry => entry.includes('/api/diagnostics/logs') || entry.includes('/api/model-endpoints'));
+  check('member: adminModule.open(services) triggers no privileged requests', adminEndpointsSeen.length === 0, adminEndpointsSeen.join(','));
   const memberAccount = await openViaModule(member.page, 'account', 'two-factor');
   check('member: explicit open(tab) still opens panels the member is offered', memberAccount.active === 'account' && memberAccount.focused === 'two-factor', JSON.stringify(memberAccount));
   check('member restricted-navigation page has no script errors', member.errors.length === 0, member.errors.join(' | '));
@@ -788,6 +790,8 @@ async function testMemberStatusRecovery(instance, cookies) {
   const forcedWrites = requests.slice(forcedFrom).filter(entry => !entry.startsWith('GET '));
   const unknownWrites = requests.filter(entry => !entry.startsWith('GET '));
   check('unknown access selects no store: nothing is written, even on a forced change', forcedWrites.length === 0 && unknownWrites.length === 0, unknownWrites.join(','));
+  const privilegedWhileFailed = requests.filter(entry => entry.includes('/api/model-endpoints'));
+  check('failed status lookup initiates no requests to /api/model-endpoints', privilegedWhileFailed.length === 0, privilegedWhileFailed.join(','));
 
   statusAvailable = true;
   await member.page.click('[data-settings-section="default-chat"] .settings-model-default-retry');
@@ -965,6 +969,142 @@ async function testAuthDisabledOperator(instance) {
   await operator.context.close();
 }
 
+async function testDelayedAuthorizationResolution(instance, cookies) {
+  // Member with delayed status
+  let memberStatusReleased = false;
+  const memberPrivilegedRequests = [];
+  const member = await pageAs(instance, cookies.memberCookie, undefined, undefined, {
+    waitForStatus: false,
+    async beforeGoto(page) {
+      await page.route('**/api/auth/status', async route => {
+        while (!memberStatusReleased) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+        return route.continue();
+      });
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname;
+        if ([
+          '/api/model-endpoints',
+          '/api/contacts/config',
+          '/api/contacts/list',
+          '/api/auth/integrations',
+          '/api/mcp/servers',
+          '/api/vault/config',
+          '/api/tokens',
+          '/api/diagnostics/logs',
+        ].includes(path)) {
+          memberPrivilegedRequests.push(`${request.method()} ${path}`);
+        }
+      });
+    },
+  });
+
+  await openSettings(member.page);
+  await member.page.waitForTimeout(500);
+
+  check(
+    'member: privileged initialization does not begin while access is unknown',
+    memberPrivilegedRequests.length === 0,
+    memberPrivilegedRequests.join(',')
+  );
+
+  memberStatusReleased = true;
+  await member.page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
+  await member.page.waitForTimeout(600);
+
+  const memberLanding = await member.page.evaluate(() => ({
+    active: document.querySelector('[data-settings-tab].active')?.dataset.settingsTab,
+    servicesShown: getComputedStyle(document.querySelector('[data-settings-tab="services"]')).display !== 'none',
+  }));
+  check(
+    'member: Settings resolves to allowed panel after delayed status',
+    memberLanding.active === 'ai' && !memberLanding.servicesShown,
+    JSON.stringify(memberLanding)
+  );
+  check(
+    'member: zero privileged requests made after delayed status resolution',
+    memberPrivilegedRequests.length === 0,
+    memberPrivilegedRequests.join(',')
+  );
+  check('member delayed status page has no script errors', member.errors.length === 0, member.errors.join(' | '));
+  await member.context.close();
+
+  // Admin with delayed status
+  let adminStatusReleased = false;
+  const adminPrivilegedRequests = [];
+  const admin = await pageAs(instance, cookies.adminCookie, undefined, undefined, {
+    waitForStatus: false,
+    async beforeGoto(page) {
+      await page.route('**/api/auth/status', async route => {
+        while (!adminStatusReleased) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+        return route.continue();
+      });
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname;
+        if ([
+          '/api/model-endpoints',
+          '/api/contacts/config',
+          '/api/contacts/list',
+          '/api/auth/integrations',
+          '/api/mcp/servers',
+          '/api/vault/config',
+          '/api/tokens',
+          '/api/diagnostics/logs',
+        ].includes(path)) {
+          adminPrivilegedRequests.push(`${request.method()} ${path}`);
+        }
+      });
+    },
+  });
+
+  await openSettings(admin.page);
+  await admin.page.waitForTimeout(500);
+
+  check(
+    'admin: privileged initialization does not begin while access is unknown',
+    adminPrivilegedRequests.length === 0,
+    adminPrivilegedRequests.join(',')
+  );
+
+  adminStatusReleased = true;
+  await admin.page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
+  await admin.page.waitForTimeout(600);
+
+  const adminVisibility = await admin.page.evaluate(() => ({
+    servicesShown: getComputedStyle(document.querySelector('[data-settings-tab="services"]')).display !== 'none',
+  }));
+  check(
+    'admin: admin panels become available after status resolves',
+    adminVisibility.servicesShown,
+    JSON.stringify(adminVisibility)
+  );
+
+  await admin.page.click('[data-settings-tab="services"]');
+  await admin.page.waitForTimeout(600);
+
+  const adminActive = await admin.page.evaluate(() => document.querySelector('[data-settings-tab].active')?.dataset.settingsTab);
+  check(
+    'admin: navigating to admin panel activates services',
+    adminActive === 'services',
+    String(adminActive)
+  );
+
+  await admin.page.waitForFunction(() => {
+    const sel = document.querySelector('#set-defaultEpSelect');
+    return sel && sel.options.length > 0;
+  }, null, { timeout: 15000 }).catch(() => {});
+  check(
+    'admin: privileged requests occurred after status resolved',
+    adminPrivilegedRequests.length > 0,
+    adminPrivilegedRequests.join(',')
+  );
+  check('admin delayed status page has no script errors', admin.errors.length === 0, admin.errors.join(' | '));
+  await admin.context.close();
+}
+
 async function main() {
   browser = await chromium.launch({ headless: true });
   const authInstance = await launchInstance('auth', { authEnabled: true });
@@ -979,6 +1119,7 @@ async function main() {
   await testRestrictedNavigation(authInstance, cookies);
   await testMemberUtilityFallbackRecovery(authInstance, cookies);
   await testMemberStatusRecovery(authInstance, cookies);
+  await testDelayedAuthorizationResolution(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
   seedEndpoints(openInstance);

@@ -307,7 +307,7 @@ export async function initEmailAccountsSettings({ openSettings }) {
   await renderList();
 }
 
-export async function initEmailSettings() {
+export async function initEmailSettings({ restricted = () => false } = {}) {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
 
@@ -357,8 +357,17 @@ export async function initEmailSettings() {
 
   // Load contacts config
   try {
-    const res = await fetch('/api/contacts/config');
-    const cfg = await res.json();
+    // The contacts sync account is admin-managed.
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    let cfg = {};
+    if (!isRestricted) {
+      const res = await fetch('/api/contacts/config');
+      if (res.ok) {
+        cfg = await res.json();
+      } else if (res.status !== 401 && res.status !== 403) {
+        console.warn('[settings] unexpected response from /api/contacts/config: HTTP ' + res.status);
+      }
+    }
     if (el('set-carddav-url')) el('set-carddav-url').value = cfg.url || '';
     if (el('set-carddav-user')) el('set-carddav-user').value = cfg.username || '';
     if (el('set-carddav-pass')) el('set-carddav-pass').value = '';

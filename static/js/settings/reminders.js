@@ -7,7 +7,7 @@ import { postSettings as _postSettings } from './api.js';
 import { esc } from './html.js';
 import uiModule from '../ui.js?v=20260916largetoolscroll1';
 
-export async function initReminderSettings(modalEl, { canManage }) {
+export async function initReminderSettings(modalEl, { canManage, restricted = () => false }) {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="reminders"]')) return;
 
@@ -84,16 +84,23 @@ export async function initReminderSettings(modalEl, { canManage }) {
     emailOpt.textContent = 'Email (add an account in Integrations)';
   }
 
-  // Detect whether ntfy integration exists — try admin endpoint, fall back to
+  // Detect whether ntfy integration exists: try admin endpoint, fall back to
   // checking if an ntfy integration was saved in settings (non-admin users).
+  // A caller already known not to manage settings skips the admin request.
   let ntfyConfigured = false;
   try {
-    const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-    if (res.ok) {
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    let res = null;
+    if (!isRestricted) {
+      res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
+    }
+    if (res && res.ok) {
       const data = await res.json();
       ntfyConfigured = (data.integrations || []).some(
         i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
       );
+    } else if (res && !res.ok && res.status !== 401 && res.status !== 403) {
+      console.warn('[settings] unexpected response from /api/auth/integrations: HTTP ' + res.status);
     }
   } catch (_) {}
   // If admin check failed, check if ntfy was previously selected (trust the saved setting)
@@ -115,11 +122,17 @@ export async function initReminderSettings(modalEl, { canManage }) {
   let allIntegrations = [];
   let webhookConfigured = false;
   try {
-    const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-    if (res.ok) {
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    let res = null;
+    if (!isRestricted) {
+      res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
+    }
+    if (res && res.ok) {
       const data = await res.json();
       allIntegrations = (data.integrations || []).filter(i => i.base_url && i.enabled !== false);
       webhookConfigured = allIntegrations.length > 0;
+    } else if (res && !res.ok && res.status !== 401 && res.status !== 403) {
+      console.warn('[settings] unexpected response from /api/auth/integrations: HTTP ' + res.status);
     }
   } catch (_) {}
   if (!webhookConfigured && webhookOpt) {

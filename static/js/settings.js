@@ -128,10 +128,10 @@ function initAll() {
   initDefaultChat({ catalog: _catalog, cards: _cards });
   initTeacherModel({ catalog: _catalog });
   initUtilityModel({ catalog: _catalog, cards: _cards });
-  initImageSettings();
+  initImageSettings({ restricted: _access.restricted });
   initVisionSettings({ catalog: _catalog });
-  initTtsSettings();
-  initSttSettings();
+  initTtsSettings({ restricted: _access.restricted });
+  initSttSettings({ restricted: _access.restricted });
   initSearchSettings();
   initResearchSettings({ catalog: _catalog, cards: _cards });
   initResearchSearchSettings();
@@ -140,9 +140,9 @@ function initAll() {
   initShortcuts();
   initAccount();
   initIntegrations();
-  initEmailSettings();
+  initEmailSettings({ restricted: _access.restricted });
   initEmailAccountsSettings({ openSettings: open });
-  initReminderSettings(modalEl, { canManage: _access.canManage });
+  initReminderSettings(modalEl, { canManage: _access.canManage, restricted: _access.restricted });
   initUnifiedIntegrations();
   initDocumentWritingStyle();
 }
@@ -155,7 +155,9 @@ export function close() { _shell.close(); }
 export function refreshAiModelEndpoints() { return _catalog.refresh(); }
 // The integrations entry points keep their no-argument contract; the unified
 // panel is handed open() so it never imports this module back.
-function initUnifiedIntegrations() { return _initUnifiedIntegrations({ openSettings: open }); }
+function initUnifiedIntegrations() {
+  return _initUnifiedIntegrations({ openSettings: open, restricted: _access.restricted });
+}
 function syncAdminVisibility() { _shell.syncAdminVisibility(); }
 
 handleSettingsOauthReturn({ openSettings: open });

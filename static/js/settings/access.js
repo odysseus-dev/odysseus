@@ -35,6 +35,26 @@ export function createSettingsAccess({ onResolved }) {
   }
 
   /**
+   * Whether the caller may not manage server-wide settings.
+   * If capability is already established, resolves immediately. While access is
+   * unknown, awaits /api/auth/status resolution so privileged initialization
+   * never starts prematurely before the caller's role is known. If resolution
+   * fails, treats the caller as restricted to prevent unauthorized requests;
+   * when resolution recovers, the next call or listener reflects the newly
+   * established access.
+   */
+  async function restricted() {
+    if (!known()) {
+      try {
+        await resolve();
+      } catch (_) {
+        return true;
+      }
+    }
+    return !canManage();
+  }
+
+  /**
    * Resolve what this caller may change. Rejects while /api/auth/status is
    * unavailable; the next call asks again (authStatus.js does not keep a
    * failure). Concurrent calls share one request.
@@ -55,5 +75,5 @@ export function createSettingsAccess({ onResolved }) {
     return request;
   }
 
-  return { canManage, accountsEnabled, known, resolve, isResolved: function() { return Boolean(access); } };
+  return { canManage, accountsEnabled, known, restricted, resolve, isResolved: function() { return Boolean(access); } };
 }

@@ -27,7 +27,7 @@ const INTG_TYPES = {
 
 let _unifiedInited = false;
 
-export async function initUnifiedIntegrations({ openSettings }) {
+export async function initUnifiedIntegrations({ openSettings, restricted = () => false }) {
   if (_unifiedInited) return;
   _unifiedInited = true;
 
@@ -57,16 +57,36 @@ export async function initUnifiedIntegrations({ openSettings }) {
     openSettings('email');
   }
 
+  // Admin-managed routes: a caller who may not manage settings gets the empty
+  // answer without asking (the server would refuse the request anyway).
+  const adminJson = async (url, empty) => {
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    if (isRestricted) return empty;
+    try {
+      const r = await fetch(url, { credentials: 'same-origin' });
+      if (!r.ok) {
+        if (r.status !== 401 && r.status !== 403) {
+          console.warn('[settings] unexpected response from ' + url + ': HTTP ' + r.status);
+        }
+        return empty;
+      }
+      return await r.json();
+    } catch (e) {
+      console.warn('[settings] network failure fetching ' + url, e);
+      return empty;
+    }
+  };
+
   async function fetchAll() {
     const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
-      fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
+      adminJson('/api/auth/integrations', { integrations: [] }),
       fetch('/api/calendar/config/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
-      fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('/api/contacts/list', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { contacts: [], count: 0 }).catch(() => ({ contacts: [], count: 0 })),
+      adminJson('/api/contacts/config', {}),
+      adminJson('/api/contacts/list', { contacts: [], count: 0 }),
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
-      fetch('/api/mcp/servers', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('/api/tokens', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
+      adminJson('/api/mcp/servers', []),
+      adminJson('/api/vault/config', {}),
+      adminJson('/api/tokens', []),
       fetch('/api/calendar/calendars', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { calendars: [] }).catch(() => ({ calendars: [] })),
     ]);
     const items = [];
