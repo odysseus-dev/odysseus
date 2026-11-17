@@ -1075,3 +1075,89 @@ def test_blocked_visual_edit_recovery_lifecycle_and_markdown_save():
     assert data["docSaveState2"] == "saved"
     assert data["putCount"] == 1, "Only the single valid save after recovery should issue a PUT"
 
+
+def test_visual_markdown_preserves_noncanonical_blocks_byte_identical_after_saving():
+    """Verify that editing a single block in a non-canonical Markdown document leaves
+
+    every other block byte-identical after saving and reopening across fresh browser sessions.
+    Covering:
+    - Non-canonical list markers (* instead of -)
+    - Custom table column padding and alignment
+    - Code fence delimiters (~~~ instead of ```)
+    - Untouched surrounding blocks preserved byte-for-byte
+    """
+    raw_content = (
+        "* Non-canonical list marker\n"
+        "\n"
+        "| Custom | Table | Padding |\n"
+        "|:-------|:-----:|--------:|\n"
+        "| Alpha  |  123  |     456 |\n"
+        "\n"
+        "Original paragraph.\n"
+        "\n"
+        "~~~python\n"
+        "# Tilde fence delimiter\n"
+        "print(\"Hello\")\n"
+        "~~~\n"
+    )
+    doc_json = json.dumps({"raw": raw_content})
+
+    data = _run_browser(r"""
+      await boot('noncanonical-preservation');
+      const docData = __DOC_JSON__;
+      const id = 'noncanonical-doc';
+      await open({ id, title: 'Non-canonical Test', language: 'markdown', current_content: docData.raw });
+      await page.waitForFunction((id) => window.__state.activeDocId === id, id);
+      const opened = await state();
+
+      // Edit ONLY the paragraph block in the visual editor
+      await page.evaluate(() => {
+        const rich = document.getElementById('doc-email-richbody');
+        const p = Array.from(rich.querySelectorAll('p')).find(el => el.textContent.includes('Original paragraph'));
+        if (p) {
+          p.textContent = 'Updated paragraph.';
+        }
+      });
+      const savedOk = await page.evaluate(() => window.__doc.saveDocument({ silent: true }));
+      const afterSave = await state();
+      const serverSaved = api.store.get(id)?.current_content;
+
+      // Reopen in a fresh browser session to ensure persistence round-trips byte-for-byte
+      await boot('noncanonical-reopen');
+      await open({ id, title: 'Non-canonical Test', language: 'markdown', current_content: serverSaved });
+      await page.waitForFunction((id) => window.__state.activeDocId === id, id);
+      const reopened = await state();
+
+      await finish({ opened, savedOk, afterSave, serverSaved, reopened });
+    """.replace("__DOC_JSON__", doc_json))
+
+    assert data["opened"]["visual"] is True, "Document with non-canonical list, table and tilde fences must open in Visual mode"
+    assert data["savedOk"] is True, "Saving edited visual document must succeed"
+
+    server_content = data["serverSaved"]
+    assert "Updated paragraph." in server_content
+    assert "Original paragraph." not in server_content
+
+    assert "* Non-canonical list marker" in server_content, "List marker * must not be rewritten to -"
+    assert "- Non-canonical list marker" not in server_content
+
+    table_expected = (
+        "| Custom | Table | Padding |\n"
+        "|:-------|:-----:|--------:|\n"
+        "| Alpha  |  123  |     456 |"
+    )
+    assert table_expected in server_content, "Custom table formatting and padding must be byte-identical"
+
+    code_expected = (
+        "~~~python\n"
+        "# Tilde fence delimiter\n"
+        "print(\"Hello\")\n"
+        "~~~"
+    )
+    assert code_expected in server_content, "Tilde code fence must not be rewritten to backticks"
+    assert "```python" not in server_content
+
+    assert data["reopened"]["visual"] is True
+    assert data["reopened"]["content"] == server_content
+
+

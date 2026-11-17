@@ -20,9 +20,19 @@ import { activeDocId, docs } from '../../application/documentState.js';
 import {
   inspectMarkdownVisualCompatibility,
   markdownToVisualHtml,
+  serializeVisualNodesToBlocks,
   serializeVisualNodesToMarkdown,
   serializeVisualNodesWithFidelity,
 } from '../../domain/markdownVisualCodec.js';
+import {
+  applyLocalizedEdits,
+  computeSourceRevision,
+  matches,
+} from '../../domain/sourceFidelity.js';
+import {
+  extractBlockSegments,
+  segmentMarkdown,
+} from '../../domain/sourceSegmentation.js';
 import { _isFormBackedDoc } from '../pdf/annotations.js';
 
 export const MD_EDITOR_MODE_KEY = 'odysseus-doc-md-editor-mode';
@@ -146,6 +156,108 @@ export function visualRichToMarkdown(rich) {
 export function visualRichToMarkdownWithFidelity(rich) {
   if (!rich) return { markdown: '', lossless: true, reasons: [] };
   return serializeVisualNodesWithFidelity(domToVisualNodes(rich));
+}
+
+/**
+ * Extract an array of individual canonical Markdown block strings from the live visual DOM.
+ * Each top-level element in `rich` represents one visual Markdown block.
+ * @param {HTMLElement|null} rich
+ * @returns {string[]}
+ */
+export function extractVisualBlocks(rich) {
+  if (!rich) return [];
+  return serializeVisualNodesToBlocks(domToVisualNodes(rich));
+}
+
+/**
+ * Compute the minimal set of block operations (replace, delete, insert) between
+ * the baseline canonical blocks and the current visual blocks.
+ * @param {string[]} baselineBlocks
+ * @param {string[]} currentBlocks
+ * @param {Array<object>} [blockSegments]
+ * @returns {Array<object>|null}
+ */
+export function diffBlockOperations(baselineBlocks, currentBlocks, blockSegments = null) {
+  if (!Array.isArray(baselineBlocks) || !Array.isArray(currentBlocks)) return null;
+
+  // Identity check
+  if (baselineBlocks.length === currentBlocks.length) {
+    let same = true;
+    for (let i = 0; i < baselineBlocks.length; i++) {
+      if (baselineBlocks[i] !== currentBlocks[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return [];
+  }
+
+  // 1-to-1 replacements when block counts match
+  if (baselineBlocks.length === currentBlocks.length) {
+    const ops = [];
+    for (let i = 0; i < baselineBlocks.length; i++) {
+      if (baselineBlocks[i] !== currentBlocks[i]) {
+        const seg = blockSegments && blockSegments[i];
+        ops.push({
+          op: 'replace',
+          index: i,
+          baseline: baselineBlocks[i],
+          edited: currentBlocks[i],
+          range: seg ? [seg.startOffset, seg.endOffset] : undefined,
+          blockId: seg ? seg.blockId : undefined,
+        });
+      }
+    }
+    return ops;
+  }
+
+  // Different counts: Myers diff alignment
+  const pairs = matches(baselineBlocks, currentBlocks);
+  if (!pairs) return null;
+
+  const ops = [];
+  let lastB = -1;
+  let lastC = -1;
+
+  for (const [b, c] of [...pairs, [baselineBlocks.length, currentBlocks.length]]) {
+    const gapB = b - lastB - 1;
+    const gapC = c - lastC - 1;
+
+    if (gapB === 1 && gapC === 1) {
+      const seg = blockSegments && blockSegments[lastB + 1];
+      ops.push({
+        op: 'replace',
+        index: lastB + 1,
+        baseline: baselineBlocks[lastB + 1],
+        edited: currentBlocks[lastC + 1],
+        range: seg ? [seg.startOffset, seg.endOffset] : undefined,
+        blockId: seg ? seg.blockId : undefined,
+      });
+    } else {
+      for (let delIdx = lastB + 1; delIdx < b; delIdx++) {
+        const seg = blockSegments && blockSegments[delIdx];
+        ops.push({
+          op: 'delete',
+          index: delIdx,
+          baseline: baselineBlocks[delIdx],
+          range: seg ? [seg.startOffset, seg.endOffset] : undefined,
+          blockId: seg ? seg.blockId : undefined,
+        });
+      }
+      for (let insIdx = lastC + 1; insIdx < c; insIdx++) {
+        ops.push({
+          op: 'insert',
+          afterIndex: lastB >= 0 ? lastB : -1,
+          text: currentBlocks[insIdx],
+        });
+      }
+    }
+
+    lastB = b;
+    lastC = c;
+  }
+
+  return ops;
 }
 
 function _canonicalizeMarkdown(markdown) {
@@ -290,9 +402,12 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   const unchanged = typeof targetDoc._visualBaselineMarkdown === 'string'
     && typeof targetDoc._visualBaselineCanonical === 'string'
     && serialized === targetDoc._visualBaselineCanonical;
-  const nextMarkdown = unchanged ? targetDoc._visualBaselineMarkdown : serialized;
 
-  if (!unchanged) {
+  let nextMarkdown = targetDoc._visualBaselineMarkdown;
+
+  if (unchanged) {
+    nextMarkdown = targetDoc._visualBaselineMarkdown;
+  } else {
     if (!lossless) {
       targetDoc._visualCompatReasons = fidelityReasons.length
         ? fidelityReasons
@@ -302,13 +417,47 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
       renderMarkdownSyncWarningBanner(targetDoc._visualCompatReasons);
       return targetDoc.content;
     }
-    const compat = assessMarkdownVisualSupport(nextMarkdown);
-    if (!compat.supported) {
-      targetDoc._visualCompatReasons = compat.reasons;
-      targetDoc._visualSyncBlocked = true;
-      targetDoc._visualDraftHtml = rich.innerHTML;
-      renderMarkdownSyncWarningBanner(targetDoc._visualCompatReasons);
-      return targetDoc.content;
+
+    // Attempt localized block-level source preservation
+    const originalSource = typeof targetDoc._visualBaselineMarkdown === 'string'
+      ? targetDoc._visualBaselineMarkdown
+      : (targetDoc.content || '');
+    const currentBlocks = extractVisualBlocks(rich);
+    const baselineBlocks = targetDoc._visualBaselineBlocks;
+    const blockSegments = targetDoc._visualBlockSegments || extractBlockSegments(segmentMarkdown(originalSource));
+
+    let localizedApplied = false;
+
+    if (Array.isArray(baselineBlocks) && Array.isArray(blockSegments)) {
+      const ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments);
+      if (ops && ops.length > 0) {
+        const localizedResult = applyLocalizedEdits(originalSource, ops, {
+          expectedRevision: targetDoc._visualExpectedRevision,
+          render: markdownToVisualHtml,
+          inspectCompatibility: inspectMarkdownVisualCompatibility,
+          allowCanonicalFallback: true,
+        });
+
+        if (localizedResult.status === 'preserved' || localizedResult.status === 'canonical-fallback') {
+          nextMarkdown = localizedResult.markdown;
+          localizedApplied = true;
+        }
+      } else if (ops && ops.length === 0) {
+        nextMarkdown = originalSource;
+        localizedApplied = true;
+      }
+    }
+
+    if (!localizedApplied) {
+      const compat = assessMarkdownVisualSupport(serialized);
+      if (!compat.supported) {
+        targetDoc._visualCompatReasons = compat.reasons;
+        targetDoc._visualSyncBlocked = true;
+        targetDoc._visualDraftHtml = rich.innerHTML;
+        renderMarkdownSyncWarningBanner(targetDoc._visualCompatReasons);
+        return targetDoc.content;
+      }
+      nextMarkdown = serialized;
     }
   }
 
@@ -317,6 +466,15 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   targetDoc._visualDraftHtml = null;
   hideMarkdownSyncWarningBanner();
   targetDoc.content = nextMarkdown;
+
+  // Advance baseline for subsequent visual edits
+  targetDoc._visualBaselineMarkdown = nextMarkdown;
+  targetDoc._visualExpectedRevision = computeSourceRevision(nextMarkdown);
+  targetDoc._visualSegments = segmentMarkdown(nextMarkdown);
+  targetDoc._visualBlockSegments = extractBlockSegments(targetDoc._visualSegments);
+  targetDoc._visualBaselineCanonical = serialized;
+  targetDoc._visualBaselineBlocks = extractVisualBlocks(rich);
+
   if (ta && ta.value !== nextMarkdown) {
     _syncingVisualToTextarea = true;
     try {
@@ -498,6 +656,9 @@ export function renderMarkdownIntoVisualRich(rich, doc) {
   rich.dataset.visualDocId = String(doc.id);
   doc._visualBaselineMarkdown = rawMarkdown;
   doc._visualBaselineCanonical = null;
+  doc._visualBaselineBlocks = null;
+  doc._visualBlockSegments = null;
+  doc._visualExpectedRevision = computeSourceRevision(rawMarkdown);
 }
 
 /**
@@ -509,7 +670,17 @@ export function renderMarkdownIntoVisualRich(rich, doc) {
  */
 export function captureVisualBaseline(rich, doc) {
   if (!rich || !doc) return '';
+  const rawMarkdown = String(doc._visualBaselineMarkdown ?? doc.content ?? '');
+  const segments = segmentMarkdown(rawMarkdown);
+  const blockSegments = extractBlockSegments(segments);
   const canonical = visualRichToMarkdown(rich);
+  const visualBlocks = extractVisualBlocks(rich);
+
   doc._visualBaselineCanonical = canonical;
-  return _rewriteReason(String(doc._visualBaselineMarkdown ?? ''), canonical);
+  doc._visualExpectedRevision = computeSourceRevision(rawMarkdown);
+  doc._visualSegments = segments;
+  doc._visualBlockSegments = blockSegments;
+  doc._visualBaselineBlocks = visualBlocks;
+
+  return _rewriteReason(rawMarkdown, canonical);
 }

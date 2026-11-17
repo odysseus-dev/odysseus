@@ -1450,8 +1450,15 @@ function _serializeBlockNode(node, context = null) {
  * @param {object|null} [context]
  * @returns {string}
  */
-export function serializeVisualNodesToMarkdown(nodes, context = null) {
-  if (!Array.isArray(nodes) || !nodes.length) return '';
+/**
+ * Serialize visual descriptor nodes into an ordered array of Markdown block strings.
+ * Groups consecutive inline nodes into paragraph blocks and preserves block boundaries.
+ * @param {Array} nodes
+ * @param {object|null} [context]
+ * @returns {string[]}
+ */
+export function serializeVisualNodesToBlocks(nodes, context = null) {
+  if (!Array.isArray(nodes) || !nodes.length) return [];
   const blocks = [];
   let inlineBuffer = [];
 
@@ -1474,6 +1481,17 @@ export function serializeVisualNodesToMarkdown(nodes, context = null) {
   }
   flushInline();
 
+  return blocks;
+}
+
+/**
+ * Serialize visual descriptor nodes back into a canonical Markdown document string.
+ * @param {Array} nodes
+ * @param {object|null} [context]
+ * @returns {string}
+ */
+export function serializeVisualNodesToMarkdown(nodes, context = null) {
+  const blocks = serializeVisualNodesToBlocks(nodes, context);
   return blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
