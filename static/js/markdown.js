@@ -1202,10 +1202,10 @@ export function mdToHtml(src, opts) {
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
   // Bold, italic, strikethrough (supports adjacent and nested emphasis)
-  s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
-  s = s.replace(/\*\*((?:[^*]|\*[^*]+\*)+)\*\*/g, '<strong>$1</strong>');
-  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  s = s.replace(/(?<!\\)\*\*\*([^*\n]+)(?<!\\)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/(?<!\\)\*\*((?:[^*\n]|(?<!\\)\*(?!\s)[^*\n]+(?<!\s)(?<!\\)\*)+)(?<!\\)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(?<!\\)\*\*([^*\n]+)(?<!\\)\*\*/g, '<strong>$1</strong>').replace(/(?<!\\)\*(?!\s)([^*\n]+?)(?<!\s)(?<!\\)\*/g, '<em>$1</em>');
+  s = s.replace(/(?<!\\)~~([^~\n]+)(?<!\\)~~/g, '<del>$1</del>');
 
   // Headers
   s = s.replace(/^###### (.*)$/gm, '<h6>$1</h6>')
@@ -1216,21 +1216,21 @@ export function mdToHtml(src, opts) {
        .replace(/^# (.*)$/gm, '<h1>$1</h1>');
 
   // Ordered lists (1. 2. 3. etc.)
-  s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
+  s = s.replace(/^[ \t]*(\d+)\. (.*)$/gm, '<oli>$2</oli>');
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
   // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
   // the generic unordered-list rule so the "- " prefix isn't consumed first.
   // Emits <uli> (with a class) so the unordered-list wrapper below treats it
   // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
+  s = s.replace(/^[ \t]*(?:[-*+] )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
     const done = mark.toLowerCase() === 'x';
     return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
   });
 
   // Unordered lists. <uli> may carry attributes (task-item class), so the
   // wrapper preserves them when converting <uli ...> → <li ...>.
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
+  s = s.replace(/^[ \t]*(?:[-*+] )(.*)$/gm, '<uli>$1</uli>');
   s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
     `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
 

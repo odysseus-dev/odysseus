@@ -355,9 +355,9 @@ def test_large_noncanonical_block_never_silently_falls_back_to_canonical_source(
     assert data['local']['content'] == data['server'] == data['original']
     assert data['local']['bannerVisible'] is True
     assert 'Item 999X' in data['local']['richHtml']
-    assert data['freshOpen']['visual'] is False
+    assert data['freshOpen']['visual'] is True
     assert data['freshOpen']['content'] == data['original']
-    assert data['admissionReason'] == 'formatting the visual editor would rewrite'
+    assert data['admissionReason'] == ''
     assert data['local']['textarea'] == data['original']
     assert data['recovery']['blocked'] is True
     assert 'Item 999X' in data['recovery']['draft']

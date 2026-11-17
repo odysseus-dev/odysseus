@@ -541,3 +541,120 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+def test_markdown_asterisk_lists_render_equivalent_to_dash_and_plus_lists(node_available):
+    asterisk_html = _run_markdown_case("* First item\n* Second item\n* Third item")
+    dash_html = _run_markdown_case("- First item\n- Second item\n- Third item")
+    plus_html = _run_markdown_case("+ First item\n+ Second item\n+ Third item")
+
+    expected = "<ul><li>First item</li>\n<li>Second item</li>\n<li>Third item</li></ul>"
+    assert asterisk_html == expected
+    assert dash_html == expected
+    assert plus_html == expected
+    assert "<em>" not in asterisk_html
+    assert "<p>" not in asterisk_html
+
+
+def test_markdown_nested_and_task_lists(node_available):
+    # Nested lists
+    nested_ast = _run_markdown_case("* Parent\n  * Child\n* Tail")
+    nested_dash = _run_markdown_case("- Parent\n  - Child\n- Tail")
+    nested_plus = _run_markdown_case("+ Parent\n  + Child\n+ Tail")
+
+    assert "<em>" not in nested_ast
+    assert nested_ast == nested_dash == nested_plus
+    assert "<li>Parent</li>" in nested_ast
+    assert "<li>Child</li>" in nested_ast
+    assert "<li>Tail</li>" in nested_ast
+
+    # Task lists across marker styles
+    task_ast = _run_markdown_case("* [ ] Open\n* [x] Done")
+    task_dash = _run_markdown_case("- [ ] Open\n- [x] Done")
+    task_plus = _run_markdown_case("+ [ ] Open\n+ [x] Done")
+
+    assert task_ast == task_dash == task_plus
+    assert 'class="task-item"' in task_ast
+    assert 'class="task-item task-done"' in task_ast
+
+
+def test_markdown_emphasis_inside_list_items(node_available):
+    html = _run_markdown_case(
+        "* First with *italic* text\n"
+        "* Second with **bold** text\n"
+        "* Third with ***both*** text\n"
+        "- Dash with *italic* text\n"
+        "+ Plus with *italic* text"
+    )
+
+    assert "<em>italic</em>" in html
+    assert "<strong>bold</strong>" in html
+    assert "<strong><em>both</em></strong>" in html
+    assert "<em> First with" not in html
+    assert html.count("<ul>") == 1
+    assert html.count("</ul>") == 1
+    assert html.count("<li>") == 5
+
+
+def test_markdown_adjacent_emphasis_and_multiline_constructs(node_available):
+    # Adjacent bold and italic
+    adj_html = _run_markdown_case("*foo***bar** and **foo***bar* and ***both***")
+    assert "<em>foo</em><strong>bar</strong>" in adj_html
+    assert "<strong>foo</strong><em>bar</em>" in adj_html
+    assert "<strong><em>both</em></strong>" in adj_html
+
+    # Strikethrough
+    strike_html = _run_markdown_case("~~strikethrough text~~")
+    assert "<del>strikethrough text</del>" in strike_html
+
+    # Legitimate multiline Markdown constructs
+    # Multiline blockquote
+    bq_html = _run_markdown_case("> First line of quote\n> Second line of quote")
+    assert "<blockquote>" in bq_html
+    assert "First line of quote" in bq_html
+    assert "Second line of quote" in bq_html
+
+    # Multiline pipe table
+    tbl_html = _run_markdown_case("| Col1 | Col2 |\n| --- | --- |\n| A | B |\n| C | D |")
+    assert "<table" in tbl_html
+    assert ">Col1</th>" in tbl_html
+    assert ">A</td>" in tbl_html
+
+
+def test_markdown_escaped_asterisks_and_arithmetic(node_available):
+    # Escaped asterisks must remain literal and not trigger emphasis
+    escaped_html = _run_markdown_case("Literal \\*stars\\* stay and \\*\\*bold\\*\\* stay")
+    assert "<em>" not in escaped_html
+    assert "<strong>" not in escaped_html
+    assert "\\*stars\\*" in escaped_html
+    assert "\\*\\*bold\\*\\*" in escaped_html
+
+    # Arithmetic expressions with space-flanked asterisks
+    math_html = _run_markdown_case("Calculation: 4 * 5 = 20 and 6 * 7 = 42")
+    assert "<em>" not in math_html
+    assert "4 * 5 = 20 and 6 * 7 = 42" in math_html
+
+
+def test_markdown_fenced_code_and_security_sanitization(node_available):
+    # Fenced code block preserving asterisks and newlines
+    code_html = _run_markdown_case(
+        "```python\n"
+        "def multiply(x, y):\n"
+        "    *nums = [x, y]  # asterisk unpack\n"
+        "    return nums[0] * nums[1]\n"
+        "```"
+    )
+    assert "<pre><code" in code_html
+    assert "nums[0] * nums[1]" in code_html
+    assert "<em>" not in code_html
+
+    # Security: raw script tags escaped, javascript: URLs rejected
+    sec_html = _run_markdown_case(
+        "<script>alert('xss')</script>\n\n"
+        "[Click here](javascript:alert(1))\n\n"
+        "![Alt](javascript:alert(2))"
+    )
+    assert "<script>" not in sec_html
+    assert "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;" in sec_html or "&lt;script&gt;" in sec_html
+    assert 'href="javascript:' not in sec_html
+    assert 'src="javascript:' not in sec_html

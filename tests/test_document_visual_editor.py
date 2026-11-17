@@ -453,6 +453,9 @@ DATA_INTEGRITY_CASES = [
     ("nested-list", "# N\n\n1. One\n   - a\n   - b\n2. Two", "visual", "# N\n\n1. One\n   - a\n   - b\n2. Two edited"),
     ("fenced-code", "Intro\n\n```js\nconst x = `y`;\n```", "visual", "Intro\n\n```js\nconst x = `y`; edited\n```"),
     ("escaped-markdown", "Literal \\*stars\\* stay", "visual", "Literal \\*stars\\* stay edited"),
+    ("asterisk-list", "* Alpha\n* Beta\n* Gamma", "visual", "* Alpha\n* Beta\n* Gamma edited"),
+    ("plus-list", "+ Alpha\n+ Beta\n+ Gamma", "visual", "+ Alpha\n+ Beta\n+ Gamma edited"),
+    ("nested-asterisk-list", "# N\n\n1. One\n   * a\n   * b\n2. Two", "visual", "# N\n\n1. One\n   * a\n   * b\n2. Two edited"),
     ("table", "| Name | Score |\n| :--- | ---: |\n| a | 1 |", "visual", "| Name | Score |\n| :--- | ---: |\n| a | 1 edited |"),
     # Mode transitions and localized visual edits retain untouched CRLF bytes.
     ("crlf-line-endings", "# T\r\n\r\nBody\r\n\r\n- a\r\n- b", "visual", "# T\r\n\r\nBody\r\n\r\n- a\r\n- b edited"),
