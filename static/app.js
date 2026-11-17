@@ -203,13 +203,32 @@ function initRailHoverLabels() {
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
+// Concurrent identical GETs of these read-only endpoints share one request
+// (startup fired /api/default-chat four times within ~200 ms). Only in-flight
+// requests are shared, nothing is cached, and abortable requests are skipped.
+const _COALESCE_GET = /^(?:https?:\/\/[^/]+)?\/api\/(?:default-chat|models)(?:\?.*)?$/;
+const _coalesceInFlight = new Map();
 window.fetch = async function(...args) {
+  const [input, init] = args;
+  const url = typeof input === 'string' ? input : '';
+  if (url && _COALESCE_GET.test(url) && (!init || ((!init.method || init.method === 'GET') && !init.signal && !init.body))) {
+    const key = url.replace(/^https?:\/\/[^/]+/, '');
+    let pending = _coalesceInFlight.get(key);
+    if (!pending) {
+      pending = _fetchChecked.apply(this, args).finally(() => _coalesceInFlight.delete(key));
+      _coalesceInFlight.set(key, pending);
+    }
+    return (await pending).clone();
+  }
+  return _fetchChecked.apply(this, args);
+};
+async function _fetchChecked(...args) {
   const res = await _origFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
     window.location.href = '/login';
   }
   return res;
-};
+}
 
 // Search settings
 
