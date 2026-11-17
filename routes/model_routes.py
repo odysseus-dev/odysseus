@@ -473,6 +473,37 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("true", "1", "yes", "on")
 
 
+def _coerce_supports_tools(value: Any) -> Optional[bool]:
+    """Map a PATCH or POST `supports_tools` value to True, False, or None.
+
+    Accepts booleans, integers (1/0), and normalized strings:
+      - True: True, 1, 'true', 'on', 'yes', '1'
+      - False: False, 0, 'false', 'off', 'no', '0'
+      - None (Auto): None, 'null', 'auto', 'none', ''
+    Raises ValueError for unrecognized or malformed inputs.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        raise ValueError("Invalid integer for supports_tools; expected 0 or 1")
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off"):
+            return False
+        if s in ("null", "auto", "none", ""):
+            return None
+        raise ValueError(f"Unrecognized supports_tools value: {value!r}")
+    raise ValueError(f"Unsupported type for supports_tools: {type(value).__name__}")
+
+
 _ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
 _REFRESH_MODES = {"auto", "manual", "disabled"}
 _MODEL_TOOL_MODES = {"none", "compact", "full", "spec"}
@@ -2327,8 +2358,10 @@ def setup_model_routes(model_discovery):
         ep_id = str(uuid.uuid4())[:8]
         db = SessionLocal()
         try:
-            _st_raw = (supports_tools or "").strip().lower()
-            _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            try:
+                _st = _coerce_supports_tools(supports_tools)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
             from src.chatgpt_subscription import is_chatgpt_subscription_base
             if is_chatgpt_subscription_base(base_url):
                 _st = False
@@ -2862,15 +2895,17 @@ def setup_model_routes(model_discovery):
     @router.patch("/model-endpoints/{ep_id}")
     async def toggle_model_endpoint(ep_id: str, request: Request):
         require_admin(request)
-        # Optional JSON body for field-targeted updates. No body → toggle is_enabled (legacy behaviour).
+        # Optional JSON body for field-targeted updates. No body -> toggle is_enabled (legacy behavior).
+        raw_body = await request.body()
         body: Dict[str, Any] = {}
-        try:
-            if int(request.headers.get("content-length") or 0) > 0:
-                body = await request.json()
-                if not isinstance(body, dict):
-                    body = {}
-        except Exception:
-            body = {}
+        if raw_body and raw_body.strip():
+            try:
+                parsed = json.loads(raw_body)
+                if not isinstance(parsed, dict):
+                    raise HTTPException(400, "JSON body must be an object")
+                body = parsed
+            except json.JSONDecodeError as exc:
+                raise HTTPException(400, f"Invalid JSON body: {exc}")
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
@@ -2878,8 +2913,10 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(404, "Endpoint not found")
             if body:
                 if "supports_tools" in body:
-                    v = body["supports_tools"]
-                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
+                    try:
+                        ep.supports_tools = _coerce_supports_tools(body["supports_tools"])
+                    except ValueError as exc:
+                        raise HTTPException(400, str(exc))
                 if "is_enabled" in body:
                     v_ie = body['is_enabled']
                     ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)

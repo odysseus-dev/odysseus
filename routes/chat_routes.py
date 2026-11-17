@@ -33,6 +33,7 @@ from src.agent_loop import (
 )
 from src.agent_loop import _normalize_ody_qwen_text_artifacts
 from src import agent_runs
+from src.model_customization import resolve_temperature
 from src import shutdown as _shutdown
 from src.model_context import estimate_tokens
 from src.context_compactor import (
@@ -2406,7 +2407,7 @@ def setup_chat_routes(
             request_messages,
             fallback_statuses=foreground_policy.eligible_statuses,
             candidate_request_factory=candidate_request_factory,
-            temperature=(sess.temperature_override if getattr(sess, "temperature_override", None) is not None else 1.0),
+            temperature=getattr(sess, "temperature_override", None),
             max_tokens=(sess.max_tokens_override if getattr(sess, "max_tokens_override", None) is not None else 0),
             prompt_type=preset_id,
             session_id=session,
@@ -4273,7 +4274,7 @@ def setup_chat_routes(
                     async for chunk in stream_llm_with_fallback(
                         _foreground_candidates,
                         messages,
-                        temperature=(temperature_override if temperature_override is not None else 1.0),
+                        temperature=temperature_override,
                         # Respect the preset; 0/unset = let the server decide (no
                         # cap), matching agent mode. The old hard 4096 fallback
                         # truncated reasoning models mid-<think> — they'd burn the
@@ -4696,7 +4697,7 @@ def setup_chat_routes(
                         sess.model,
                         messages,
                         headers=sess.headers,
-                        temperature=(temperature_override if temperature_override is not None else 1.0),
+                        temperature=(temperature_override if temperature_override is not None else resolve_temperature(sess.endpoint_url, sess.model, None)),
                         max_tokens=_max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,
