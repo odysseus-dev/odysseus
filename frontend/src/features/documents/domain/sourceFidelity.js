@@ -283,7 +283,19 @@ export function parseHtmlTokens(html) {
         }
       }
 
-      const closeIdx = html.indexOf('>', i);
+      let closeIdx = -1;
+      let quote = '';
+      for (let cursor = i + 1; cursor < len; cursor++) {
+        const char = html[cursor];
+        if (quote) {
+          if (char === quote) quote = '';
+        } else if (char === '"' || char === "'") {
+          quote = char;
+        } else if (char === '>') {
+          closeIdx = cursor;
+          break;
+        }
+      }
       if (closeIdx !== -1) {
         const rawTagContent = html.slice(i + 1, closeIdx).trim();
         i = closeIdx + 1;
@@ -313,7 +325,7 @@ export function parseHtmlTokens(html) {
       }
     }
 
-    let nextOpen = html.indexOf('<', i);
+    let nextOpen = html.indexOf('<', i + 1);
     if (nextOpen === -1) nextOpen = len;
     tokens.push({ type: 'text', text: html.slice(i, nextOpen) });
     i = nextOpen;
@@ -329,14 +341,27 @@ export function parseHtmlTokens(html) {
  */
 export function decodeHtmlEntities(text) {
   if (!text) return '';
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&nbsp;|\u00a0/g, ' ');
+  const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+  // Decode once: &amp;lt; represents literal &lt;, not an HTML delimiter.
+  return text.replace(/&(#(?:[xX][0-9a-fA-F]+|[0-9]+)|amp|lt|gt|quot|apos|nbsp);/g, (entity, name) => {
+    if (name[0] !== '#') return named[name];
+    const hex = name[1]?.toLowerCase() === 'x';
+    const value = Number.parseInt(name.slice(hex ? 2 : 1), hex ? 16 : 10);
+    return value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff)
+      ? String.fromCodePoint(value) : entity;
+  }).replace(/\u00a0/g, ' ');
+}
+
+function escapeSemanticText(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function verifiedRender(render, markdown) {
+  const html = render(markdown);
+  if (typeof html !== 'string' || (markdown.trim() && !html.trim())) {
+    throw new Error('Renderer returned no semantic evidence');
+  }
+  return html;
 }
 
 /**
@@ -385,7 +410,7 @@ export function normalizeSemanticHtml(html) {
           // Sort class names deterministically
           v = v.split(/\s+/).map(c => c.trim()).filter(Boolean).sort().join(' ');
         }
-        attrStr += ` ${k}="${v}"`;
+        attrStr += ` ${k}="${escapeSemanticText(v).replace(/"/g, '&quot;')}"`;
       }
       out += `<${tok.tag}${attrStr}>`;
     } else if (tok.type === 'close') {
@@ -394,12 +419,8 @@ export function normalizeSemanticHtml(html) {
       }
       out += `</${tok.tag}>`;
     } else if (tok.type === 'text') {
-      if (codeDepth > 0) {
-        out += tok.text;
-      } else {
-        const decoded = decodeHtmlEntities(tok.text);
-        out += decoded.replace(/\s+/g, ' ');
-      }
+      const decoded = decodeHtmlEntities(tok.text);
+      out += escapeSemanticText(codeDepth > 0 ? decoded : decoded.replace(/\s+/g, ' '));
     }
   }
 
@@ -521,7 +542,7 @@ export function preserveBlockSource({
     }
     // Verify edited text before allowing canonical fallback
     try {
-      render(edited);
+      verifiedRender(render, edited);
     } catch (err) {
       return {
         status: 'unsupported',
@@ -542,8 +563,8 @@ export function preserveBlockSource({
   let renderedPatched;
   let renderedEdited;
   try {
-    renderedPatched = render(patched);
-    renderedEdited = render(edited);
+    renderedPatched = verifiedRender(render, patched);
+    renderedEdited = verifiedRender(render, edited);
   } catch (err) {
     // Renderer failure must never authorize persistence
     return {
@@ -554,7 +575,12 @@ export function preserveBlockSource({
     };
   }
 
-  const isEquivalent = compareSemantics(renderedPatched, renderedEdited);
+  let isEquivalent;
+  try {
+    isEquivalent = compareSemantics(renderedPatched, renderedEdited) === true;
+  } catch (_) {
+    return { status: 'unsupported', markdown: source, draft: edited, reason: 'semantic-verification-error' };
+  }
   if (!isEquivalent) {
     if (!allowCanonicalFallback) {
       return {
@@ -662,6 +688,11 @@ export function applyLocalizedEdits(source, edits, options = {}) {
   const compare = options.compareSemantics || compareSemanticHtml;
 
   for (const op of operations) {
+    if (!op || !['replace', 'delete', 'insert'].includes(op.op)
+        || (op.op === 'replace' && typeof op.edited !== 'string')
+        || (op.op === 'insert' && typeof op.text !== 'string')) {
+      return { status: 'unsupported', markdown: source, draft: '', reason: 'invalid-operation', blockResults: [] };
+    }
     if (op.op === 'replace' || op.op === 'delete') {
       if (!Number.isInteger(op.index) || op.index < 0 || op.index >= blockCount) {
         return {
@@ -714,8 +745,8 @@ export function applyLocalizedEdits(source, edits, options = {}) {
         let baselineMatches = (op.baseline === targetSeg.raw);
         if (!baselineMatches && typeof options.render === 'function') {
           try {
-            const hBase = options.render(op.baseline);
-            const hTarget = options.render(targetSeg.raw);
+            const hBase = verifiedRender(options.render, op.baseline);
+            const hTarget = verifiedRender(options.render, targetSeg.raw);
             baselineMatches = compare(hBase, hTarget);
           } catch {
             baselineMatches = false;
@@ -815,49 +846,34 @@ export function applyLocalizedEdits(source, edits, options = {}) {
     }
   }
 
-  // 6. Handle insert operations with boundary preservation
-  const insertOps = operations.filter(o => o.op === 'insert');
-  if (insertOps.length > 0) {
-    const eol = detectLineEnding(source);
-    const standardSep = `${eol}${eol}`;
-
-    for (const op of insertOps) {
-      const newBlockSeg = {
-        type: 'block',
-        blockType: 'paragraph',
-        raw: op.text,
-        modified: true,
-        text: op.text,
-      };
-
-      if (op.afterIndex === -1) {
-        // Insert at beginning of document
-        if (segments.length > 0) {
-          segments.unshift(newBlockSeg, { type: 'separator', raw: standardSep });
-        } else {
-          segments.push(newBlockSeg);
-        }
-      } else {
-        const targetSeg = blockSegments[op.afterIndex];
-        const segIdx = segments.indexOf(targetSeg);
-        const hasNextSep = (segIdx + 1 < segments.length && segments[segIdx + 1].type === 'separator');
-
-        if (hasNextSep) {
-          // An existing separator exists between this block and next block
-          // Ensure both before and after inserted block have valid blank line separation
-          const nextSep = segments[segIdx + 1];
-          if (!nextSep.raw.includes('\n\n') && !nextSep.raw.includes('\r\n\r\n')) {
-            nextSep.modified = true;
-            nextSep.text = standardSep;
-          }
-          segments.splice(segIdx + 1, 0, { type: 'separator', raw: standardSep }, newBlockSeg);
-        } else {
-          // No separator between blocks; insert separators on both sides
-          segments.splice(segIdx + 1, 0, { type: 'separator', raw: standardSep }, newBlockSeg, { type: 'separator', raw: standardSep });
+  // Group insertions by their original anchor so array order is retained.
+  const insertGroups = new Map();
+  for (const op of operations.filter(o => o.op === 'insert')) {
+    if (!insertGroups.has(op.afterIndex)) insertGroups.set(op.afterIndex, []);
+    insertGroups.get(op.afterIndex).push(op.text);
+  }
+  const eol = detectLineEnding(source);
+  const standardSep = `${eol}${eol}`;
+  for (const [afterIndex, texts] of insertGroups) {
+    const newBlock = { type: 'block', raw: texts.join(standardSep) };
+    if (afterIndex === -1) {
+      const first = segments.findIndex(seg => seg.type === 'block');
+      segments.splice(first < 0 ? segments.length : first, 0, newBlock, ...(first < 0 ? [] : [{ type: 'separator', raw: standardSep }]));
+    } else {
+      const index = segments.indexOf(blockSegments[afterIndex]);
+      const next = segments[index + 1];
+      const followingContent = segments.slice(index + 1).some(seg => seg.type === 'block' && (seg.modified ? seg.text : seg.raw).trim());
+      if (followingContent && next?.type === 'separator') {
+        const effective = next.modified ? next.text : next.raw;
+        if (!/\n[ \t]*\r?\n/.test(effective)) {
+          next.modified = true;
+          next.text = standardSep;
         }
       }
-      blockResults.push({ index: -1, status: 'preserved', reason: 'inserted' });
+      segments.splice(index + 1, 0, { type: 'separator', raw: standardSep }, newBlock,
+        ...(followingContent && next?.type !== 'separator' ? [{ type: 'separator', raw: standardSep }] : []));
     }
+    for (const _ of texts) blockResults.push({ index: -1, status: 'preserved', reason: 'inserted' });
   }
 
   const candidateMarkdown = joinSegments(segments);
@@ -872,28 +888,42 @@ export function applyLocalizedEdits(source, edits, options = {}) {
     };
   }
 
-  // 7. Verify post-edit boundary isolation
-  const verifySegments = segmentMarkdown(candidateMarkdown);
-  const verifyBlocks = extractBlockSegments(verifySegments);
+  // Compare the complete ordered block sequence, including multiplicity. A
+  // presence-only search cannot prove that repeated untouched blocks survived.
+  const expectedBlocks = segments.filter(seg => seg.type === 'block')
+    .flatMap(seg => extractBlockSegments(segmentMarkdown(seg.modified ? seg.text : seg.raw)).map(b => b.raw));
+  const actualBlocks = extractBlockSegments(segmentMarkdown(candidateMarkdown));
+  if (expectedBlocks.length !== actualBlocks.length
+      || expectedBlocks.some((raw, index) => raw !== actualBlocks[index].raw)) {
+    return { status: 'unsupported', markdown: source, draft: candidateMarkdown,
+      reason: 'insertion-boundary-collision', blockResults };
+  }
 
-  // Check that untouched blocks were not altered or merged
-  let vIdx = 0;
-  for (let i = 0; i < blockCount; i++) {
-    const originalBlock = blockSegments[i];
-    const op = operations.find(o => o.index === i);
-    if (!op) {
-      // Untouched block: find it in verifyBlocks
-      const match = verifyBlocks.find(b => b.raw === originalBlock.raw);
-      if (!match) {
-        // Untouched block was merged or corrupted
-        return {
-          status: 'unsupported',
-          markdown: source,
-          draft: candidateMarkdown,
-          reason: 'insertion-boundary-collision',
-          blockResults,
-        };
+  if (hasMutations) {
+    try {
+      // Verify all operations, including insert/delete, against the intended
+      // canonical sequence. Renderer failure never authorizes persistence.
+      const intended = [];
+      intended.push(...(insertGroups.get(-1) || []));
+      for (let index = 0; index < blockCount; index++) {
+        const op = operations.find(o => o.index === index);
+        if (op?.op !== 'delete') intended.push(op?.op === 'replace' ? op.edited : blockSegments[index].raw);
+        intended.push(...(insertGroups.get(index) || []));
       }
+      for (const texts of insertGroups.values()) {
+        for (const text of texts) {
+          if (options.inspectCompatibility && !options.inspectCompatibility(text)?.supported) {
+            throw new Error('Unsupported inserted content');
+          }
+        }
+      }
+      if (compare(verifiedRender(options.render, candidateMarkdown),
+        verifiedRender(options.render, (source.startsWith('\uFEFF') ? '\uFEFF' : '') + intended.join('\n\n'))) !== true) {
+        throw new Error('Semantic divergence');
+      }
+    } catch (_) {
+      return { status: 'unsupported', markdown: source, draft: candidateMarkdown,
+        reason: 'semantic-verification-error', blockResults };
     }
   }
 

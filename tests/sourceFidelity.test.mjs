@@ -632,3 +632,72 @@ console.log("unchanged");
     });
   });
 });
+
+// Independent audit regressions: verify meaning and identity, not text presence.
+describe('Independent source-fidelity regressions', () => {
+  for (const afterIndex of [-1, 0, 1]) {
+    it(`keeps ordered multi-block insertions after ${afterIndex}`, () => {
+      const source = 'A\n\nZ';
+      const result = applyLocalizedEdits(source, [
+        { op: 'insert', afterIndex, text: 'B' },
+        { op: 'insert', afterIndex, text: 'C' },
+      ], { render: markdownToVisualHtml });
+      const blocks = ['A', 'Z'];
+      blocks.splice(afterIndex + 1, 0, 'B', 'C');
+      assert.notEqual(result.status, 'unsupported');
+      assert.equal(markdownToVisualHtml(result.markdown), markdownToVisualHtml(blocks.join('\n\n')));
+    });
+  }
+
+  it('segments consecutive nested quote lines as one block', () => {
+    const source = '> > nested\r\n> > next\n> outer';
+    assert.deepEqual(extractBlockSegments(segmentMarkdown(source)).map(b => b.raw), [source]);
+  });
+
+  for (const render of [() => undefined, () => null, () => '', () => { throw Error('renderer failed'); }]) {
+    it(`fails closed for invalid rendering: ${String(render)}`, () => {
+      const block = preserveBlockSource({ source: '*A*', baseline: '_A_', edited: '_B_', render });
+      assert.equal(block.status, 'unsupported');
+      assert.equal(block.markdown, '*A*');
+      for (const operation of [{ op: 'insert', afterIndex: 0, text: 'B' }, { op: 'delete', index: 0 }]) {
+        const result = applyLocalizedEdits('A\n\nZ', [operation], { render });
+        assert.equal(result.status, 'unsupported');
+        assert.equal(result.markdown, 'A\n\nZ');
+      }
+    });
+  }
+
+  it('fails closed when the semantic comparator throws', () => {
+    const result = preserveBlockSource({
+      source: '*A*', baseline: '_A_', edited: '_B_', render: markdownToVisualHtml,
+      compareSemantics() { throw Error('comparison failed'); },
+    });
+    assert.equal(result.status, 'unsupported');
+    assert.equal(result.markdown, '*A*');
+  });
+
+  it('does not confuse literal encoded markup with actual formatting', () => {
+    assert.equal(compareSemanticHtml('<p>&lt;strong&gt;A&lt;/strong&gt;</p>', '<p><strong>A</strong></p>'), false);
+    assert.equal(compareSemanticHtml('<p>&amp;lt;</p>', '<p>&lt;</p>'), false);
+  });
+
+  it('preserves quoted tag boundaries and literal less-than text', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const script = `import { parseHtmlTokens } from ${JSON.stringify(new URL('../frontend/src/features/documents/domain/sourceFidelity.js', import.meta.url).href)}; console.log(JSON.stringify(parseHtmlTokens('<')));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 2000, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.error?.message);
+    assert.deepEqual(JSON.parse(result.stdout), [{ type: 'text', text: '<' }]);
+    const tokens = parseHtmlTokens('<a title="1 > 0">A</a>');
+    assert.equal(tokens[0].attrs.title, '1 > 0');
+  });
+
+  for (const index of [0, 1, 2]) {
+    it(`deletes repeated block ${index} without changing adjacent source`, () => {
+      const source = '\uFEFF*same*\r\n\r\n_same_\n\n*same*  \n';
+      const blocks = extractBlockSegments(segmentMarkdown(source));
+      const result = applyLocalizedEdits(source, [{ op: 'delete', index, range: [blocks[index].startOffset, blocks[index].endOffset], blockId: blocks[index].blockId }], { render: markdownToVisualHtml, expectedRevision: computeSourceRevision(source) });
+      assert.notEqual(result.status, 'unsupported');
+      for (let i = 0; i < blocks.length; i++) if (i !== index) assert.ok(result.markdown.includes(blocks[i].raw));
+    });
+  }
+});

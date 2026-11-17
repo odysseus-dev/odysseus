@@ -326,7 +326,7 @@ export function segmentMarkdown(source) {
         if (isBlank(cur)) break;
         const curTrim = lineContent(cur);
         const next = i + 1 < rawLines.length ? rawLines[i + 1] : null;
-        if (interruptsParagraph(cur, next)) break;
+        if (!BLOCKQUOTE_RE.test(lineContent(cur)) && interruptsParagraph(cur, next)) break;
         blockLines[blockLines.length - 1] += lastEnding;
         blockLines.push(curTrim);
         lastEnding = lineEnding(cur);
@@ -339,6 +339,9 @@ export function segmentMarkdown(source) {
 
     // 7. List (tight, loose, and continuation lines)
     if (parseListItemLine(startLine)) {
+      const firstItem = parseListItemLine(startLine);
+      const listKind = item => item[3] !== undefined ? 'ordered'
+        : /^\[[ xX]\](?:[ \t]|$)/.test(item[5] || '') ? 'task' : 'unordered';
       let blockLines = [trimmed];
       let lastEnding = lineEnding(startLine);
       i++;
@@ -353,7 +356,8 @@ export function segmentMarkdown(source) {
           if (lookAhead < rawLines.length) {
             const nextNonBlank = rawLines[lookAhead];
             const nextTrim = lineContent(nextNonBlank);
-            if (parseListItemLine(nextNonBlank) || /^[ \t]{2,}/.test(nextTrim)) {
+            const followingItem = parseListItemLine(nextNonBlank);
+            if ((followingItem && listKind(followingItem) === listKind(firstItem)) || /^[ \t]{2,}/.test(nextTrim)) {
               // Internal blank lines of a loose list
               while (i < lookAhead) {
                 blockLines[blockLines.length - 1] += lastEnding;
@@ -370,7 +374,9 @@ export function segmentMarkdown(source) {
 
         const curTrim = lineContent(cur);
         const next = i + 1 < rawLines.length ? rawLines[i + 1] : null;
-        if (interruptsParagraph(cur, next) && !parseListItemLine(cur)) break;
+        const item = parseListItemLine(cur);
+        if (item && item[1].length === firstItem[1].length && listKind(item) !== listKind(firstItem)) break;
+        if (interruptsParagraph(cur, next) && !item) break;
 
         blockLines[blockLines.length - 1] += lastEnding;
         blockLines.push(curTrim);

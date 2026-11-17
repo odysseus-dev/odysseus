@@ -289,10 +289,13 @@ export function inspectMarkdownVisualCompatibility(markdown) {
 
     const item = _parseListItemLine(line);
     const indented = /^[ \t]/.test(line);
+    const softBreakContinuation = Boolean(listOffsets && !item && indented
+      && /(?: {2,}|\\)$/.test(lines[i - 1] || '')
+      && _columns(line.match(/^[ \t]*/)[0]) >= listOffsets[listOffsets.length - 1]);
 
     // Content that belongs to a list item beyond its first line is restructured by
     // the visual list model, so it is rejected instead of silently moved.
-    if (listOffsets && !item) {
+    if (listOffsets && !item && !softBreakContinuation) {
       if (!prevBlank && (prevWasListItem || indented) && (!_interruptsParagraph(line) || indented)) {
         reasons.add('multi-line list item');
       } else if (prevBlank && indented) {
@@ -347,7 +350,7 @@ export function inspectMarkdownVisualCompatibility(markdown) {
       }
       if (item.gap > 4 && item.text) reasons.add('irregular list indentation');
       listOffsets.push(item.offset);
-    } else if (/^(?: {4}|\t)\S/.test(line) && (prevBlank || !prevLinePlainText)) {
+    } else if (!softBreakContinuation && /^(?: {4}|\t)\S/.test(line) && (prevBlank || !prevLinePlainText)) {
       reasons.add('indented code block');
     }
 
@@ -386,9 +389,9 @@ export function inspectMarkdownVisualCompatibility(markdown) {
 
     const isQuote = BLOCKQUOTE_RE.test(line);
     inQuote = isQuote;
-    prevWasListItem = Boolean(item);
+    prevWasListItem = Boolean(item) || softBreakContinuation;
     prevBlank = false;
-    prevLinePlainText = !item
+    prevLinePlainText = !item && !softBreakContinuation
       && !ATX_START_RE.test(line)
       && !HR_RE.test(line)
       && !isQuote
@@ -728,7 +731,7 @@ function _renderListTree(list) {
       ? ` data-checked="${item.checked ? 'true' : 'false'}" aria-checked="${item.checked ? 'true' : 'false'}"`
       : '';
     const nested = lists.map(_renderListTree).join('');
-    const body = item.text ? _renderInlineMarkdown(item.text) : (nested ? '' : '<br>');
+    const body = item.text ? item.text.split('\n').map(line => _renderInlineMarkdown(line.replace(/(?: {2,}|\\)$/, ''))).join('<br>') : (nested ? '' : '<br>');
     return `<li${checkedAttrs}>${body}${nested}</li>`;
   }).join('');
   return `<${tag}${classAttr}${startAttr}>${items}</${tag}>`;
@@ -849,7 +852,17 @@ export function markdownToVisualHtml(markdown) {
       const items = [];
       while (i < lines.length) {
         const item = _parseListItemLine(lines[i]);
-        if (!item) break;
+        if (!item) {
+          const previous = items[items.length - 1];
+          const continuation = lines[i];
+          if (previous && /(?: {2,}|\\)$/.test(previous.text)
+              && _columns(continuation.match(/^[ \t]*/)[0]) >= previous.offset && continuation.trim()) {
+            previous.text += '\n' + continuation.trimStart();
+            i++;
+            continue;
+          }
+          break;
+        }
         items.push(item);
         i++;
       }
@@ -1310,7 +1323,7 @@ function _serializeListNode(listNode, indent = '', context = null) {
         inlineParts.push(liChild);
       }
     }
-    const rawText = _serializeInlineBlock(inlineParts, context).replace(/\n+/g, ' ').trim();
+    const rawText = _serializeInlineBlock(inlineParts, context).trim();
     const text = _escapeBlockStart(rawText, { bulletItem: !isChecklist && !isOrdered });
     let prefix;
     if (isChecklist) {
@@ -1322,7 +1335,8 @@ function _serializeListNode(listNode, indent = '', context = null) {
     }
     // Nested content must start at the parent's content offset (CommonMark).
     childIndent = indent + ' '.repeat(isChecklist ? 2 : prefix.length);
-    lines.push(text ? `${indent}${prefix}${text}` : `${indent}${prefix.trimEnd()}`);
+    const continued = text.split('\n').join(`  \n${childIndent}`);
+    lines.push(text ? `${indent}${prefix}${continued}` : `${indent}${prefix.trimEnd()}`);
     for (const nested of nestedLists) {
       const nestedText = _serializeListNode(nested, childIndent, context);
       if (nestedText) lines.push(nestedText);
@@ -1398,7 +1412,7 @@ function _serializeBlockNode(node, context = null) {
     const langFromClass = ((codeChild?.classes || node.classes || []).find(c => c.startsWith('language-')) || '').slice('language-'.length);
     const lang = (langFromData || langFromClass || '').trim();
     let raw = _nodePlainText(codeChild || node).replace(/\r\n?/g, '\n');
-    if (raw.endsWith('\n')) raw = raw.slice(0, -1);
+    if ((codeChild || node).children?.length === 1 && (codeChild || node).children[0]?.tag === 'br') raw = '';
     let maxRun = 0;
     let cur = 0;
     for (let i = 0; i < raw.length; i++) {
@@ -1473,6 +1487,10 @@ export function serializeVisualNodesToBlocks(nodes, context = null) {
     if (!node) continue;
     if (_isBlockElement(node)) {
       flushInline();
+      if ((node.tag === 'p' || node.tag === 'div') && (node.children || []).some(_isBlockElement)) {
+        blocks.push(...serializeVisualNodesToBlocks(node.children, context));
+        continue;
+      }
       const serialized = _serializeBlockNode(node, context);
       if (serialized) blocks.push(serialized);
     } else {
@@ -1492,7 +1510,7 @@ export function serializeVisualNodesToBlocks(nodes, context = null) {
  */
 export function serializeVisualNodesToMarkdown(nodes, context = null) {
   const blocks = serializeVisualNodesToBlocks(nodes, context);
-  return blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  return blocks.join('\n\n').trim();
 }
 
 /**

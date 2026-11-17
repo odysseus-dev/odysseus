@@ -770,3 +770,19 @@ describe('markdownVisualCodec', () => {
     });
   });
 });
+
+it('serialization preserves repeated blank lines inside fenced code', () => {
+  const raw = 'first\n\n\nlast';
+  const nodes = [{ type: 'element', tag: 'pre', children: [{ type: 'element', tag: 'code', children: [{ type: 'text', text: raw }] }] }];
+  assert.equal(serializeVisualNodesToMarkdown(nodes), '```\n' + raw + '\n```');
+});
+
+it('preserves code trailing newlines and list soft breaks through serialization and rendering', () => {
+  const code = [{ type: 'element', tag: 'pre', children: [{ type: 'element', tag: 'code', children: [{ type: 'text', text: 'last\n' }] }] }];
+  assert.equal(serializeVisualNodesToMarkdown(code), '```\nlast\n\n```');
+  const list = [el('ul', [el('li', [txt('One'), el('br'), txt('Two')])])];
+  const result = serializeVisualNodesWithFidelity(list);
+  assert.equal(result.lossless, true);
+  assert.match(markdownToVisualHtml(result.markdown), /<li>One<br>Two<\/li>/);
+  assert.equal(inspectMarkdownVisualCompatibility(result.markdown).supported, true);
+});
