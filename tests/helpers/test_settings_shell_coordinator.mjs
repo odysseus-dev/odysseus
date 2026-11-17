@@ -37,6 +37,7 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/modelDefaults.js'),
   path.join(JS, 'settings/html.js'),
   path.join(JS, 'settings/shortcuts.js'),
+  path.join(JS, 'settings/searchProviders.js'),
 ]);
 
 const realModulesLoaded = new Set();
