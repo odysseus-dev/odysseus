@@ -1,3 +1,5 @@
+import { sharedJson, nextDelay } from './hermes-http.js';
+
 const endpoint = '/api/application-modes';
 const snapshotKey = 'odysseus-mode-navigation-v1';
 
@@ -54,8 +56,11 @@ async function restoreChatState(message) {
 }
 
 async function request(path, method = 'GET') {
-  const response = await fetch(path, { method, credentials: 'same-origin', signal: AbortSignal.timeout(5000) });
-  const result = await response.json();
+  // Reads share one in-flight request and retry a bounded number of times (hermes-http.js). Actions are never retried; starting Hermes can
+  // legitimately take over ten seconds to answer, which the former 5 s limit reported as a failure.
+  if (method === 'GET') return sharedJson(path, path, { label: 'The Odysseus status check' });
+  const response = await fetch(path, { method, credentials: 'same-origin', signal: AbortSignal.timeout(30000) });
+  const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.detail || 'Application mode request failed');
   return result;
 }
@@ -215,9 +220,30 @@ function destination(status) {
   return hermesURL(status.url);
 }
 
-async function initialize() {
+// The first status read failed (after its own bounded retries). Say so, instead of showing nothing until a manual refresh, and try again a few
+// times with growing delays; after that only the button remains.
+function offerRetry(error, attempt) {
+  let note = document.getElementById('application-mode-unavailable');
+  if (!note) {
+    note = document.createElement('nav');
+    note.id = 'application-mode-unavailable';
+    note.setAttribute('role', 'status');
+    note.style.cssText = 'padding:4px 8px;font-size:.85em;opacity:.85';
+    document.querySelector('#chat-container')?.prepend(note);
+  }
+  const again = () => { clearTimeout(note.autoTimer); note.textContent = 'Checking Hermes…'; initialize(0); };
+  const button = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Retry' });
+  button.style.marginLeft = '6px';
+  button.addEventListener('click', again);
+  note.replaceChildren(`Hermes status is unavailable (${error.message}) `, button);
+  clearTimeout(note.autoTimer);
+  if (attempt < 3) note.autoTimer = setTimeout(() => initialize(attempt + 1), nextDelay(attempt + 1));
+}
+
+async function initialize(attempt = 0) {
   let status;
-  try { status = await request(endpoint); } catch (_) { return; }
+  try { status = await request(endpoint); } catch (error) { if (error.retryable) offerRetry(error, attempt); return; }
+  document.getElementById('application-mode-unavailable')?.remove();
   if (!status.enabled) return;
   const stylesheet = document.createElement('link');
   stylesheet.rel = 'stylesheet';
@@ -263,11 +289,53 @@ async function initialize() {
   health.id = 'application-mode-hermes-state';
   health.setAttribute('aria-live', 'polite');
   health.style.cssText = 'margin-left:8px;opacity:.75;font-size:.85em';
-  const refreshHealth = async () => {
-    if (document.hidden) return;
-    try { health.textContent = describe(await request(endpoint)); } catch (_) { health.textContent = ''; }
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.id = 'application-mode-hermes-retry';
+  retry.hidden = true;
+  retry.style.cssText = 'margin-left:6px;font-size:.85em';
+  let failures = 0, timer = null, running = null, lastGood = status;
+  const show = (state, text) => {
+    health.dataset.state = state;
+    health.textContent = text;
+    retry.hidden = !['degraded', 'disconnected', 'unauthorized'].includes(state);
+    retry.textContent = state === 'unauthorized' ? 'Sign in' : 'Retry';
   };
-  if (gateway) { health.textContent = describe(status); setInterval(refreshHealth, 15000); document.addEventListener('hermes-state-changed', refreshHealth); }
+  const stateOf = current => current.state === 'ready' ? 'connected' : current.state === 'starting' ? 'connecting'
+    : (current.state === 'error' || current.state === 'conflict') ? 'degraded' : 'disconnected';
+  const schedule = () => {
+    clearTimeout(timer);
+    if (health.dataset.state !== 'unauthorized') timer = setTimeout(refreshHealth, nextDelay(failures));    // slow and bounded: backs off while failing, stops on sign-in loss
+  };
+  const refreshHealth = () => {
+    if (running) return running;
+    if (document.hidden) { schedule(); return null; }
+    running = (async () => {
+      try {
+        lastGood = await request(endpoint);
+        failures = 0;
+        show(stateOf(lastGood), describe(lastGood));
+      } catch (error) {
+        failures += 1;
+        if (error.kind === 'unauthorized') show('unauthorized', 'Your Odysseus sign-in has ended.');
+        else show('degraded', `Hermes status is not updating (${error.kind === 'timeout' ? 'timed out' : error.kind === 'invalid' ? 'bad reply' : 'unreachable'}); last known: ${describe(lastGood)}`);
+      } finally { running = null; schedule(); }
+    })();
+    return running;
+  };
+  retry.addEventListener('click', () => {
+    if (health.dataset.state === 'unauthorized') { location.reload(); return; }
+    failures = 0;
+    show('connecting', 'Checking Hermes…');
+    refreshHealth();
+  });
+  if (gateway) {
+    show(stateOf(status), describe(status));
+    schedule();
+    document.addEventListener('hermes-state-changed', () => { failures = 0; refreshHealth(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshHealth(); });
+    window.addEventListener('online', () => { failures = 0; refreshHealth(); });
+  }
   // Optional convenience: Projects in its own tab. A noopener link to this page with ?open=projects; the new tab runs the same switch below, so the
   // start-on-demand logic exists once, nothing waits on a click gesture, and this tab (its draft lives in per-tab sessionStorage) is not touched.
   const newTab = document.createElement('a');
@@ -278,7 +346,7 @@ async function initialize() {
   newTab.textContent = 'Open Projects in new tab';
   newTab.title = 'Keep Personal here and open Projects in another tab';
   newTab.style.cssText = 'margin-left:8px;color:inherit;font-size:.85em;opacity:.75;white-space:nowrap';
-  bar.append(selector, ...(gateway ? [] : [dashboard, providers]), ...(services ? [services] : []), ...(gateway ? [health, newTab] : []), message);
+  bar.append(selector, ...(gateway ? [] : [dashboard, providers]), ...(services ? [services] : []), ...(gateway ? [health, retry, newTab] : []), message);
   document.querySelector('#chat-container').prepend(bar);
   try { await restoreChatState(message); }
   catch (_) { message.textContent = 'The saved draft could not be restored. Your current composer was not changed.'; }
@@ -327,7 +395,7 @@ window.addEventListener('pageshow', async event => {
   if (!event.persisted) return;
   sessionStorage.removeItem(snapshotKey);          // this IS the original page with its draft intact: nothing is waiting to be restored, and a leftover snapshot would block the next switch
   try {
-    const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (response.status === 401 || response.status === 403 || response.redirected) { location.reload(); return; }
     document.dispatchEvent(new Event('hermes-state-changed'));
     const selector = document.getElementById('application-mode-selector');
@@ -335,7 +403,7 @@ window.addEventListener('pageshow', async event => {
     const note = document.getElementById('application-mode-status');
     if (note) note.textContent = '';
   } catch (_) {
-    location.reload();
+    document.dispatchEvent(new Event('hermes-state-changed'));    // a slow or failed check does not prove the session ended; 401/403/redirect above still reload
   }
 });
 

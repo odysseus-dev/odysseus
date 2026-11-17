@@ -20,6 +20,8 @@ _HEADERS = [(b'content-type', b'application/json; charset=utf-8'), (b'cache-cont
             (b'referrer-policy', b'no-referrer')]
 TIMEOUT_S = 25
 COSTS_CACHE_S = 30.0
+RESULT_TTL_S = 3.0
+RECENT_MAX = 64
 
 
 class LocalProjectsApi:
@@ -28,6 +30,8 @@ class LocalProjectsApi:
         self._slots = None
         self._concurrency = concurrency
         self._costs = (0.0, None)
+        self._flights = {}          # key -> the one running read; identical concurrent requests wait for it instead of repeating the work
+        self._recent = {}           # key -> (monotonic time, result): a few seconds of reuse, so a page that fires several reads at once pays once
 
     async def _reply(self, send, status, body, extra=()):
         data = json.dumps(body, default=str).encode()
@@ -41,6 +45,33 @@ class LocalProjectsApi:
                 tail = value.decode('latin-1').rsplit(':', 1)
                 return int(tail[1]) if len(tail) == 2 and tail[1].isdigit() else 80
         return 80
+
+    async def _shared(self, key, work, ttl):
+        """Run ``work`` in a thread once per key at a time. No global lock: different keys run in parallel (bounded by the concurrency slots, taken
+        only while a read actually runs), identical ones are deduplicated, and a finished result is reused for ``ttl`` seconds. A waiter that times
+        out or disconnects abandons only its own wait; the shared read carries on for the others."""
+        cached = self._recent.get(key)
+        if ttl and cached and time.monotonic() - cached[0] < ttl:
+            return cached[1]
+        flight = self._flights.get(key)
+        if flight is None:
+            async def run():
+                async with self._slots:
+                    value = await asyncio.to_thread(work)
+                if ttl and value is not None:
+                    if len(self._recent) >= RECENT_MAX:
+                        self._recent.clear()
+                    self._recent[key] = (time.monotonic(), value)
+                return value
+            flight = asyncio.ensure_future(run())
+            self._flights[key] = flight
+
+            def done(task):
+                self._flights.pop(key, None)
+                if not task.cancelled():
+                    task.exception()                       # retrieved, so an error nobody is waiting for is not reported as unhandled
+            flight.add_done_callback(done)
+        return await asyncio.shield(flight)
 
     def costs(self, dash):
         """Usage costs from Hermes' own stored accounting (read-only SQLite), cached briefly so a page reload never rereads the store."""
@@ -88,9 +119,9 @@ class LocalProjectsApi:
                 return dash.related_detail(project_id, port=port)
             return dash.detail(project_id, port=port, related=False)
 
+        key = (scope['path'], scope.get('query_string') or b'')
         try:
-            async with self._slots:
-                result = await asyncio.wait_for(asyncio.to_thread(work), TIMEOUT_S)
+            result = await asyncio.wait_for(self._shared(key, work, 0 if fs else RESULT_TTL_S), TIMEOUT_S)
         except asyncio.TimeoutError:
             return await self._reply(send, 504, {'detail': 'The project data took too long to read; try again.'})
         except Exception:

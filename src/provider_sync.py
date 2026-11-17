@@ -21,6 +21,7 @@ from src.provider_catalog import (AUTH_KEY, AUTH_NONE, CONNECTED, OFFLINE, REQUI
                                   build_catalog, canonical_url, connection_state, is_loopback, key_copy_status)
 
 CACHE_SECONDS = 15
+FAILURE_CACHE_SECONDS = 3
 
 
 class SyncError(RuntimeError):
@@ -70,7 +71,7 @@ class ProviderSync:
     def snapshot(self, refresh=False):
         with self._lock:
             now = self._clock()
-            if not refresh and self._cache and now - self._cache[0] < CACHE_SECONDS:
+            if not refresh and self._fresh(self._cache, now):
                 return self._cache[1]
             od, he, hermes_state = self._gather()
             state = self._reconcile(od, he)
@@ -78,6 +79,14 @@ class ProviderSync:
                 'odysseus': 'ready', 'hermes': hermes_state}, 'refreshed': True}
             self._cache = (now, result)
             return result
+
+    def _fresh(self, entry, now):
+        """A good answer is reused for CACHE_SECONDS; a Hermes that was unreachable or not ready only for FAILURE_CACHE_SECONDS, so a gateway that
+        has just come back is seen quickly instead of after the full interval."""
+        if not entry:
+            return False
+        age = now - entry[0]
+        return age < (CACHE_SECONDS if entry[1]['applications']['hermes'] == 'ready' else FAILURE_CACHE_SECONDS)
 
     def _reconcile(self, od, he):
         """Detect mirrors the user deleted from the target; remember so they are never re-created."""

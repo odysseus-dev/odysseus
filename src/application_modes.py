@@ -121,6 +121,7 @@ class ModeConfig:
 
 PROJECTS_HOST = 'hermes.localhost'
 _LAUNCH_TIMEOUT = 20
+STATUS_TTL = 2.0
 
 
 RESUME_ID = re.compile(r'[A-Za-z0-9._-]{1,200}')
@@ -177,6 +178,8 @@ class ModeService:
         self._starter = None                   # background thread running the component's start (managed gateway only)
         self._start_error = None
         self._component_cache = None
+        self._status_lock = threading.Lock()   # single-flight: concurrent status reads share one probe instead of each spawning their own
+        self._status_cache = None              # (monotonic time, result)
 
     @property
     def managed(self):
@@ -191,6 +194,7 @@ class ModeService:
 
     def _start_managed(self):
         component = self._component()
+        self._invalidate_status()
         with self._lock:
             raw = component.status().get('state')           # decide on the component's own answer, not on the 'starting'/'error' decoration
             current = self._managed_status()
@@ -213,6 +217,26 @@ class ModeService:
             self._starter = threading.Thread(target=run, name='hermes-webapp-start', daemon=True)
             self._starter.start()
             return {**current, 'state': 'starting'}
+
+    def _shared_managed_status(self):
+        """_managed_status() for read-only status requests: identical concurrent reads wait for one probe, and its answer is reused for
+        STATUS_TTL seconds. Lifecycle actions invalidate it, and _start_managed/_managed_status always probe afresh."""
+        cached = self._status_cache
+        if cached and time.monotonic() - cached[0] < STATUS_TTL:
+            return dict(cached[1])
+        with self._status_lock:
+            cached = self._status_cache
+            if cached and time.monotonic() - cached[0] < STATUS_TTL:
+                return dict(cached[1])
+            started = time.monotonic()
+            result = self._managed_status()
+            result['probe_ms'] = int((time.monotonic() - started) * 1000)
+            result['checked_at'] = time.time()
+            self._status_cache = (time.monotonic(), result)
+            return dict(result)
+
+    def _invalidate_status(self):
+        self._status_cache = None
 
     def _managed_status(self):
         info = self._component().status()
@@ -335,7 +359,11 @@ class ModeService:
             if self._starter is not None and self._starter.is_alive():
                 raise controls.Unavailable('Hermes is still starting; wait for it to finish before stopping it.')
             self._start_error = None
-            self._component().stop(force=force)             # raises ActiveRuns unless force; only ever the process Odysseus provisioned
+            self._invalidate_status()
+            try:
+                self._component().stop(force=force)             # raises ActiveRuns unless force; only ever the process Odysseus provisioned
+            finally:
+                self._invalidate_status()
             return self._managed_status()
         with self._lock:
             if self.error or not self.config:
@@ -385,7 +413,7 @@ class ModeService:
             from src.hermes_proxy import hostname_resolves
             result['proxy'] = hostname_resolves()
         if self.managed:
-            return self._managed_status()
+            return self._shared_managed_status()
         if self.config.backend == 'gateway':
             return self._gateway_status(result, port)
         connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)

@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -354,6 +355,8 @@ class WebappComponent:
         self.directory = self.root / 'managed' / 'webapp'
         self.config_path = self.directory / 'component.json'
         self.last_actions = []                                  # what the last ensure/repair did besides returning the config
+        self._guard_lock = threading.Lock()                     # single-flight for the (git-heavy) patch-state check shown in status()
+        self._guard_cache = None                                # (key, monotonic time, state)
 
     # -- reading ---------------------------------------------------------------------------
     def config(self):
@@ -973,7 +976,7 @@ class WebappComponent:
             return {'enabled': False, 'state': 'not_installed'}
         result = {'enabled': config['enabled'], 'origin': config['origin'], 'url': config['url'], 'release': config.get('release'),
                   'previous': config.get('previous'), 'revision': (config.get('revisions') or {}).get('webapp')}
-        result['route_guard'] = self.route_guard_state(config)
+        result['route_guard'] = self.cached_route_guard_state(config)
         result['write_roots'] = config.get('write_roots')            # None: inherited from the operator's HERMES_WRITE_SAFE_ROOT
         result['logins'] = self.logins()
         if not config['enabled']:
@@ -1321,6 +1324,34 @@ class WebappComponent:
             if patch_state(agent, patches) == 'applied':
                 return patches
         return self.webapp_patches()
+
+    GUARD_CACHE_SECONDS = 60.0
+
+    def _guard_key(self, config):
+        try:
+            stamp = self.config_path.stat().st_mtime_ns          # every config write (ensure, rollback, roots, logins) changes this
+        except OSError:
+            stamp = None
+        return (config.get('origin'), config.get('agent'), config.get('release'), (config.get('revisions') or {}).get('webapp'), stamp)
+
+    def invalidate_route_guard(self):
+        self._guard_cache = None
+
+    def cached_route_guard_state(self, config):
+        """Display-only variant of route_guard_state for status(): the answer costs dozens of git processes, so it is reused for a short time,
+        keyed on the component config, and computed by one caller at a time. Start-up and security checks call route_guard_state() directly."""
+        key = self._guard_key(config)
+        cached = self._guard_cache
+        if cached and cached[0] == key and time.monotonic() - cached[1] < self.GUARD_CACHE_SECONDS:
+            return cached[2]
+        with self._guard_lock:
+            cached = self._guard_cache                          # another caller may have filled it while this one waited
+            if cached and cached[0] == key and time.monotonic() - cached[1] < self.GUARD_CACHE_SECONDS:
+                return cached[2]
+            state = self.route_guard_state(config)
+            if state != 'unknown':                              # an unreadable state is retried, never remembered
+                self._guard_cache = (key, time.monotonic(), state)
+            return state
 
     def route_guard_state(self, config):
         """'applied' for a managed source carrying exactly a reviewed patch set, else 'absent' (adopted gateways run the user's unpatched code)."""

@@ -1,4 +1,5 @@
 import { resolveReturn } from '/static/js/provider-return.js';
+import { sharedJson } from '/static/js/hermes-http.js';
 
 const endpoint = '/api/provider-sync';
 
@@ -7,7 +8,7 @@ const endpoint = '/api/provider-sync';
   if (!raw) return;
   let hermesOrigin = null;
   try {
-    const status = await (await fetch('/api/application-modes/status', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) })).json();
+    const status = await sharedJson('modes', '/api/application-modes', { timeout: 10000, retries: 1, label: 'The Hermes status check' });
     if (status && status.enabled && status.url) hermesOrigin = new URL(status.url).origin;
   } catch (_) { /* the proxied Hermes address and same-origin returns still work */ }
   const target = resolveReturn(raw, location.origin, location.port, hermesOrigin);
@@ -34,6 +35,8 @@ const banner = document.getElementById('banner');
 const busy = new Set();
 
 async function call(path, method = 'GET', payload) {
+  // Reading the catalogue is idempotent: identical concurrent reads share one request and transient failures are retried a bounded number of times.
+  if (method === 'GET') return sharedJson('catalog' + path, endpoint + path, { timeout: 20000, retries: 2, label: 'The provider list' });
   const response = await fetch(endpoint + path, {
     method, credentials: 'same-origin', signal: AbortSignal.timeout(60000),
     headers: payload ? { 'Content-Type': 'application/json' } : undefined,
@@ -161,9 +164,24 @@ function render(data) {
     ? 'Hermes asks for a login, so its providers cannot be read here.' : 'Hermes is not reachable. Odysseus providers are shown; nothing can be added to Hermes.';
 }
 
+let loading = null;
 async function load(refresh) {
-  try { render(await call(refresh ? '/refresh' : '', refresh ? 'POST' : 'GET')); }
-  catch (error) { banner.textContent = error.message; }
+  if (loading && !refresh) return loading;                 // one catalogue read at a time; a manual refresh (a POST) is always honoured
+  const run = (async () => {
+    try { render(await call(refresh ? '/refresh' : '', refresh ? 'POST' : 'GET')); }
+    catch (error) {
+      // Rows already on screen stay (render() is only called with a good answer); say what failed and offer a retry. A sign-in problem is not retried.
+      const had = body.children.length > 0;
+      banner.replaceChildren(`${error.message}${had ? ' Showing the last loaded list.' : ''} `);
+      if (error.kind !== 'unauthorized') {
+        const button = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Retry' });
+        button.addEventListener('click', () => load(false));
+        banner.append(button);
+      }
+    }
+  })();
+  if (!refresh) loading = run;
+  try { await run; } finally { if (loading === run) loading = null; }
 }
 
 document.getElementById('refresh').addEventListener('click', () => load(true));
