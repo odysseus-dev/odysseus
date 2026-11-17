@@ -701,3 +701,18 @@ describe('Independent source-fidelity regressions', () => {
     });
   }
 });
+
+it('does not erase CSS cascade order when verifying rendered semantics', () => {
+  assert.equal(compareSemanticHtml('<p style="color: red; color: blue">A</p>', '<p style="color: blue; color: red">A</p>'), false);
+  assert.equal(compareSemanticHtml('<p style="margin: 0; margin-left: 1px">A</p>', '<p style="margin-left: 1px; margin: 0">A</p>'), false);
+});
+
+it('retains attempted Markdown in a rejected localized draft', () => {
+  const result = applyLocalizedEdits('Original', [{ op: 'replace', index: 0, baseline: 'Original', edited: 'Recover this edit' }], {
+    render: markdownToVisualHtml,
+    inspectCompatibility: () => ({ supported: false, reasons: ['unsupported'] }),
+  });
+  assert.equal(result.status, 'unsupported');
+  assert.equal(result.markdown, 'Original');
+  assert.equal(result.draft, 'Recover this edit');
+});

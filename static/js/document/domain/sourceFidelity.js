@@ -395,7 +395,8 @@ export function normalizeSemanticHtml(html) {
 
         let v = tok.attrs[k];
         if (k === 'style') {
-          // Sort CSS styles deterministically
+          // Reorder only independent declarations with no repeated property.
+          // Duplicate and shorthand declarations depend on their cascade order.
           const styleRules = v.split(';')
             .map(s => s.trim())
             .filter(Boolean)
@@ -403,8 +404,10 @@ export function normalizeSemanticHtml(html) {
               const colonIdx = s.indexOf(':');
               if (colonIdx === -1) return s;
               return `${s.slice(0, colonIdx).trim()}: ${s.slice(colonIdx + 1).trim()}`;
-            })
-            .sort();
+            });
+          const properties = styleRules.map(rule => rule.slice(0, rule.indexOf(':')).toLowerCase());
+          if (properties.every(property => ['color', 'font-size', 'text-align'].includes(property))
+              && new Set(properties).size === properties.length) styleRules.sort();
           v = styleRules.join('; ') + (styleRules.length ? ';' : '');
         } else if (k === 'class') {
           // Sort class names deterministically
@@ -826,7 +829,7 @@ export function applyLocalizedEdits(source, edits, options = {}) {
       }
 
       targetSeg.modified = true;
-      targetSeg.text = res.markdown;
+      targetSeg.text = res.status === 'unsupported' ? res.draft : res.markdown;
     } else if (op.op === 'delete') {
       const targetSeg = blockSegments[op.index];
       targetSeg.modified = true;
