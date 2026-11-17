@@ -1166,6 +1166,311 @@ async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
   await session.context.close();
 }
 
+async function testIntegrationForms(instance, cookies) {
+  const admin = await pageAs(instance, cookies.adminCookie);
+  await openSettings(admin.page, 'integrations');
+
+  // Verify Add Integration button attributes
+  const addBtnAttrs = await admin.page.$eval('#unified-intg-add-btn', btn => ({
+    hasPopup: btn.getAttribute('aria-haspopup'),
+    expanded: btn.getAttribute('aria-expanded'),
+  }));
+  check('Add Integration button exposes menu popup and collapsed state', addBtnAttrs.hasPopup === 'menu' && addBtnAttrs.expanded === 'false', JSON.stringify(addBtnAttrs));
+
+  // Open menu
+  await admin.page.click('#unified-intg-add-btn');
+  const menuAttrs = await admin.page.$eval('.uf-add-menu', menu => ({
+    role: menu.getAttribute('role'),
+    optionsCount: menu.querySelectorAll('.uf-type-option').length,
+    firstRole: menu.querySelector('.uf-type-option')?.getAttribute('role'),
+  }));
+  check('Add Integration menu has role menu with menuitem options', menuAttrs.role === 'menu' && menuAttrs.optionsCount >= 8 && menuAttrs.firstRole === 'menuitem', JSON.stringify(menuAttrs));
+
+  // Dismiss menu with Escape
+  await admin.page.keyboard.press('Escape');
+  const menuDismissed = await admin.page.$eval('.uf-add-menu', () => false).catch(() => true);
+  check('Escape closes Add Integration menu without closing Settings', menuDismissed);
+
+  // Test every integration form type
+  const types = ['api', 'caldav', 'claude', 'codex', 'carddav', 'contacts', 'email', 'mcp'];
+  for (const type of types) {
+    await admin.page.click('#unified-intg-add-btn');
+    await admin.page.click(`.uf-type-option[data-value="${type}"]`);
+    await admin.page.waitForTimeout(300);
+
+    const formState = await admin.page.evaluate(() => {
+      const form = document.querySelector('#unified-intg-form');
+      const isVisible = form && getComputedStyle(form).display !== 'none';
+      const inputs = Array.from(form.querySelectorAll('input:not([type="hidden"]), select, button'));
+      const activeEl = document.activeElement;
+      const focusedInside = form.contains(activeEl);
+      return {
+        isVisible,
+        inputsCount: inputs.length,
+        focusedInside,
+        activeTag: activeEl?.tagName.toLowerCase(),
+        activeId: activeEl?.id || activeEl?.className,
+      };
+    });
+    check(`integration form for ${type} opens visibly`, formState.isVisible && formState.inputsCount > 0, JSON.stringify(formState));
+    check(`keyboard focus enters the ${type} form on open`, formState.focusedInside, JSON.stringify(formState));
+
+    // Check specific form fields & accessible labels
+    if (type === 'api') {
+      const apiCheck = await admin.page.evaluate(() => {
+        const nameInput = document.querySelector('#uf-api-name');
+        const urlInput = document.querySelector('#uf-api-url');
+        const nameLabel = document.querySelector('label[for="uf-api-name"]');
+        const urlLabel = document.querySelector('label[for="uf-api-url"]');
+        return {
+          nameLabel: Boolean(nameLabel && nameLabel.textContent.includes('Name')),
+          urlLabel: Boolean(urlLabel && urlLabel.textContent.includes('Base URL')),
+          nameRequired: nameInput?.hasAttribute('required') || nameInput?.getAttribute('aria-required') === 'true',
+          urlRequired: urlInput?.hasAttribute('required') || urlInput?.getAttribute('aria-required') === 'true',
+        };
+      });
+      check('API form controls are labelled and identify required fields', apiCheck.nameLabel && apiCheck.urlLabel && apiCheck.nameRequired && apiCheck.urlRequired, JSON.stringify(apiCheck));
+    } else if (type === 'caldav') {
+      const caldavCheck = await admin.page.evaluate(() => {
+        const urlInput = document.querySelector('#uf-caldav-url');
+        const urlLabel = document.querySelector('label[for="uf-caldav-url"]');
+        return {
+          urlLabel: Boolean(urlLabel && urlLabel.textContent.includes('Server URL')),
+          urlRequired: urlInput?.hasAttribute('required') || urlInput?.getAttribute('aria-required') === 'true',
+        };
+      });
+      check('CalDAV form controls are labelled and identify required fields', caldavCheck.urlLabel && caldavCheck.urlRequired, JSON.stringify(caldavCheck));
+    } else if (type === 'email') {
+      const emailCheck = await admin.page.evaluate(() => {
+        const fromInput = document.querySelector('#uf-email-from');
+        const fromLabel = document.querySelector('label[for="uf-email-from"]');
+        const imapLabel = document.querySelector('label[for="uf-imap-host"]');
+        return {
+          fromLabel: Boolean(fromLabel && fromLabel.textContent.includes('Email')),
+          imapLabel: Boolean(imapLabel && imapLabel.textContent.includes('Host')),
+          fromRequired: fromInput?.hasAttribute('required') || fromInput?.getAttribute('aria-required') === 'true',
+        };
+      });
+      check('Email form controls are labelled and identify required fields', emailCheck.fromLabel && emailCheck.imapLabel && emailCheck.fromRequired, JSON.stringify(emailCheck));
+    } else if (type === 'mcp') {
+      const mcpCheck = await admin.page.evaluate(() => {
+        const nameInput = document.querySelector('#uf-mcp-name');
+        const nameLabel = document.querySelector('label[for="uf-mcp-name"]');
+        return {
+          nameLabel: Boolean(nameLabel && nameLabel.textContent.includes('Name')),
+          nameRequired: nameInput?.hasAttribute('required') || nameInput?.getAttribute('aria-required') === 'true',
+        };
+      });
+      check('MCP form controls are labelled and identify required fields', mcpCheck.nameLabel && mcpCheck.nameRequired, JSON.stringify(mcpCheck));
+    } else if (type === 'claude' || type === 'codex') {
+      const agentCheck = await admin.page.evaluate(() => {
+        const nameInput = document.querySelector('#uf-codex-name-input');
+        return {
+          hasAriaLabel: Boolean(nameInput?.getAttribute('aria-label')),
+          placeholder: nameInput?.getAttribute('placeholder'),
+        };
+      });
+      check(`${type} agent form has accessible label on name input`, agentCheck.hasAriaLabel && agentCheck.placeholder?.toLowerCase().includes(type), JSON.stringify(agentCheck));
+    }
+
+    await screenshot(admin.page, `integration-form-${type}`);
+
+    // Click Cancel
+    const cancelSelector = (type === 'claude' || type === 'codex')
+      ? '#uf-codex-cancel'
+      : (type === 'caldav' ? '#uf-caldav-cancel'
+        : type === 'carddav' || type === 'contacts' ? '#uf-carddav-cancel'
+        : type === 'email' ? '#uf-email-cancel'
+        : type === 'mcp' ? '#uf-mcp-cancel'
+        : '#uf-api-cancel');
+
+    await admin.page.click(cancelSelector);
+    await admin.page.waitForTimeout(200);
+
+    const closedState = await admin.page.evaluate(() => {
+      const form = document.querySelector('#unified-intg-form');
+      return {
+        displayNone: getComputedStyle(form).display === 'none',
+        innerHTML: form.innerHTML,
+        activeCardCount: document.querySelectorAll('.intg-card.intg-card-active').length,
+      };
+    });
+    check(`cancelling ${type} form clears form DOM and active card highlight`, closedState.displayNone && closedState.innerHTML === '' && closedState.activeCardCount === 0, JSON.stringify(closedState));
+  }
+
+  // Safe save & delete lifecycle using an isolated API integration
+  await admin.page.click('#unified-intg-add-btn');
+  await admin.page.click('.uf-type-option[data-value="api"]');
+  await admin.page.fill('#uf-api-name', 'Phase4 Automated Service');
+  await admin.page.fill('#uf-api-url', 'http://127.0.0.1:8080');
+  await admin.page.click('#uf-api-save');
+  await admin.page.waitForFunction(() => document.querySelector('#uf-api-msg')?.textContent === 'Saved', null, { timeout: 8000 });
+  check('saving API integration displays Saved confirmation', true);
+
+  await admin.page.waitForSelector('.intg-card[data-intg-type="api"]');
+  const createdCard = await admin.page.$eval('.intg-card[data-intg-type="api"]', card => card.textContent);
+  check('saved API integration appears in integrations list', createdCard.includes('Phase4 Automated Service'));
+
+  // Test clicking the card to open edit view and verify populated values
+  await admin.page.click('.intg-card[data-intg-type="api"]');
+  await admin.page.waitForSelector('#uf-api-name');
+  const editVals = await admin.page.evaluate(() => ({
+    name: document.querySelector('#uf-api-name').value,
+    url: document.querySelector('#uf-api-url').value,
+  }));
+  check('editing API integration populates existing values', editVals.name === 'Phase4 Automated Service' && editVals.url === 'http://127.0.0.1:8080', JSON.stringify(editVals));
+
+  // Cancel edit view
+  await admin.page.click('#uf-api-cancel');
+
+  // Delete the test integration safely
+  await admin.page.evaluate(() => {
+    window.styledConfirm = async () => true;
+  });
+  await admin.page.click('.intg-card[data-intg-type="api"] .intg-del-btn');
+  await admin.page.waitForTimeout(600);
+  const deletedCard = await admin.page.evaluate(() => Boolean(document.querySelector('.intg-card[data-intg-type="api"]')));
+  check('deleting API integration removes it from the list', !deletedCard);
+
+  check('admin integration forms session has no script errors', admin.errors.length === 0, admin.errors.join(' | '));
+  await admin.context.close();
+
+  // Mobile layout check for integration form
+  const mobile = await pageAs(instance, cookies.adminCookie, { width: 390, height: 844 });
+  await openSettings(mobile.page, 'integrations');
+  await mobile.page.click('#unified-intg-add-btn');
+  await mobile.page.click('.uf-type-option[data-value="api"]');
+  await mobile.page.waitForTimeout(300);
+  const mobileFormLayout = await mobile.page.evaluate(() => {
+    const form = document.querySelector('#unified-intg-form');
+    return {
+      fits: form ? form.scrollWidth <= 390 : false,
+      docWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    };
+  });
+  check('mobile integration form fits viewport without horizontal overflow', mobileFormLayout.fits && mobileFormLayout.docWidth <= 390, JSON.stringify(mobileFormLayout));
+  await screenshot(mobile.page, 'integration-mobile-api-dark');
+  await mobile.context.close();
+}
+
+async function testUnknownTabAndRepeatedOpen(instance, cookies) {
+  const member = await pageAs(instance, cookies.memberCookie);
+  await member.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    (await import(src)).open('completely-unknown-panel-xyz');
+  });
+  await member.page.waitForSelector('#settings-modal:not(.hidden)');
+  const memberLanding = await member.page.$eval('[data-settings-tab].active', btn => btn.dataset.settingsTab);
+  check('member open with unknown panel id lands safely on an offered panel', memberLanding === 'ai', memberLanding);
+
+  await member.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    (await import(src)).close();
+  });
+  await member.page.waitForSelector('#settings-modal.hidden', { state: 'attached' });
+  check('closing Settings with close() adds hidden class', true);
+
+  await member.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    (await import(src)).open('appearance');
+  });
+  await member.page.waitForSelector('#settings-modal:not(.hidden)');
+  const appearanceOpen = await member.page.evaluate(() => document.body.classList.contains('settings-appearance-open'));
+  check('opening appearance panel activates appearance-open on body', appearanceOpen);
+
+  await member.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    (await import(src)).close();
+  });
+  await member.page.waitForSelector('#settings-modal.hidden', { state: 'attached' });
+  const appearanceClosed = await member.page.evaluate(() => !document.body.classList.contains('settings-appearance-open'));
+  check('closing Settings clears appearance-open from body', appearanceClosed);
+
+  for (let i = 0; i < 5; i++) {
+    await member.page.evaluate(async () => {
+      const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+      const mod = await import(src);
+      mod.open('account');
+      mod.close();
+    });
+  }
+  check('repeated rapid open and close does not throw or crash', member.errors.length === 0, member.errors.join(' | '));
+
+  await member.context.close();
+}
+
+async function testAccessibilityAndThemes(instance, cookies) {
+  const viewports = [
+    { name: 'desktop', width: 1280, height: 860 },
+    { name: 'laptop', width: 1024, height: 768 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'mobile', width: 390, height: 844 },
+  ];
+
+  for (const vp of viewports) {
+    for (const scheme of ['dark', 'light']) {
+      const s = await pageAs(instance, cookies.adminCookie, { width: vp.width, height: vp.height }, scheme);
+      await openSettings(s.page, 'ai');
+      await s.page.waitForTimeout(300);
+      await screenshot(s.page, `settings-${vp.name}-${scheme}`);
+      check(`responsive settings renders without overflow on ${vp.name} (${scheme})`, s.errors.length === 0, s.errors.join(' | '));
+      await s.context.close();
+    }
+  }
+
+  const member = await pageAs(instance, cookies.memberCookie);
+  await openSettings(member.page, 'ai');
+  await waitForAiDefaults(member.page);
+
+  const lockedA11y = await member.page.evaluate(() => {
+    const card = document.querySelector('[data-settings-section="vision"]');
+    if (!card) return null;
+    const badge = card.querySelector('.settings-scope-badge');
+    const note = card.querySelector('.settings-scope-note');
+    const subtitle = card.querySelector('.admin-toggle-sub');
+    const modelLabel = card.querySelector('label.settings-label');
+    const select = card.querySelector('#set-vlModelSelect');
+    const toggle = card.querySelector('#set-visionEnabledToggle');
+
+    return {
+      cardLocked: card.classList.contains('settings-scope-locked'),
+      badgeText: badge?.textContent,
+      badgeTitle: badge?.getAttribute('title'),
+      noteRole: note?.getAttribute('role'),
+      noteText: note?.textContent,
+      subtitleInert: subtitle ? Boolean(subtitle.closest('[inert]')) : null,
+      modelLabelInert: modelLabel ? Boolean(modelLabel.closest('[inert]')) : null,
+      selectDisabled: select?.disabled,
+      selectAriaDisabled: select?.getAttribute('aria-disabled'),
+      selectInert: select ? Boolean(select.closest('[inert]')) : null,
+      toggleInert: toggle ? Boolean(toggle.closest('[inert]')) : null,
+    };
+  });
+
+  check('locked vision card has explanatory scope badge and note', lockedA11y && lockedA11y.badgeText === 'Set by admin' && lockedA11y.noteRole === 'note' && lockedA11y.noteText.includes('Only an administrator can change this'), JSON.stringify(lockedA11y));
+  check('locked card explanatory labels and descriptions are NOT inert (remain accessible)', lockedA11y && lockedA11y.subtitleInert === false && lockedA11y.modelLabelInert === false, JSON.stringify(lockedA11y));
+  check('locked card interactive controls are disabled and inert', lockedA11y && lockedA11y.selectDisabled === true && lockedA11y.selectInert === true && lockedA11y.toggleInert === true, JSON.stringify(lockedA11y));
+
+  await member.page.fill('#settings-nav-search', 'chat');
+  await member.page.waitForTimeout(300);
+  const searchA11y = await member.page.evaluate(() => {
+    const live = document.querySelector('#settings-nav-search-results .a11y-visually-hidden');
+    const results = document.querySelectorAll('[data-settings-search-result]');
+    const input = document.querySelector('#settings-nav-search');
+    return {
+      liveText: live?.textContent,
+      liveRole: live?.getAttribute('role'),
+      expanded: input.getAttribute('aria-expanded'),
+      resultsCount: results.length,
+    };
+  });
+  check('search results announce match count via live status region', searchA11y.liveRole === 'status' && searchA11y.liveText?.includes('available') && searchA11y.resultsCount > 0, JSON.stringify(searchA11y));
+  await screenshot(member.page, 'settings-search-results-announced');
+
+  await member.context.close();
+}
+
 async function main() {
   browser = await chromium.launch({ headless: true });
   const authInstance = await launchInstance('auth', { authEnabled: true });
@@ -1182,6 +1487,9 @@ async function main() {
   await testMemberStatusRecovery(authInstance, cookies);
   await testDelayedAuthorizationResolution(authInstance, cookies);
   await testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies);
+  await testIntegrationForms(authInstance, cookies);
+  await testUnknownTabAndRepeatedOpen(authInstance, cookies);
+  await testAccessibilityAndThemes(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
   seedEndpoints(openInstance);
