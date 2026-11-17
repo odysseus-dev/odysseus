@@ -1278,7 +1278,17 @@ function _escapeBlockStart(line, { bulletItem = false } = {}) {
   return s;
 }
 
+function _isEmptyParagraphPlaceholder(nodes) {
+  if (nodes.length !== 1 || nodes[0]?.type !== 'element') return false;
+  const { tag, children = [] } = nodes[0];
+  if (tag === 'br') return children.length === 0;
+  // Native Enter can carry active inline marks into the new, empty paragraph.
+  return ['b', 'strong', 'i', 'em', 's', 'strike', 'del'].includes(tag)
+    && _isEmptyParagraphPlaceholder(children);
+}
+
 function _serializeParagraphLines(nodes, context = null) {
+  if (_isEmptyParagraphPlaceholder(nodes)) return '';
   return _serializeInlineBlock(nodes, context)
     .split('\n')
     .map(line => _escapeBlockStart(line).replace(/[ \t]+$/, ''))

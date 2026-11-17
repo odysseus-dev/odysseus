@@ -22,6 +22,13 @@ const suiteResults = {
   unauthorizedResponses: [],
 };
 
+function writeResults() {
+  fs.writeFileSync(
+    path.join(resultsDir, 'playwright-validation-results.json'),
+    JSON.stringify(suiteResults, null, 2)
+  );
+}
+
 function log(scenario, message) {
   const line = `[${scenario}] ${message}`;
   console.log(line);
@@ -56,6 +63,7 @@ async function waitForSaveState(page, expectedState = 'saved', timeout = 15000) 
 // CHROMIUM MAIN SUITE (SCENARIOS 1 - 10)
 // -------------------------------------------------------------
 const browser = await chromium.launch({ headless: true });
+suiteResults.chromiumVersion = browser.version();
 
 function wirePage(p) {
   p.setDefaultTimeout(60000);
@@ -146,85 +154,122 @@ try {
   // -----------------------------------------------------------
   // Test 2: Visual formatting
   // -----------------------------------------------------------
-  log('Test 2', 'Visual formatting (inline, headings, lists, quotes, tables, code, shortcuts, toolbar)');
+  log('Test 2', 'Bold shortcut, italic toolbar, paragraph break and formatting persistence');
   const t2Start = Date.now();
 
-  // Create structured markdown document to test visual rendering and localized formatting controls
+  const t2Source = [
+    '# Heading 1 Title',
+    '',
+    '* Bullet item 1',
+    '* Bullet item 2',
+    '',
+    '1. Ordered item 1',
+    '2. Ordered item 2',
+    '',
+    '> Blockquote quotation text',
+    '',
+    '~~~python',
+    'def hello():',
+    '    return "world"',
+    '~~~',
+    '',
+    '| Header 1 | Header 2 |',
+    '| --- | --- |',
+    '| Data 1 | Data 2 |',
+    '',
+    'Normal text and bold and italic words.',
+  ].join('\n');
   const t2DocRes = await context.request.post(`${origin}/api/document`, {
-    data: {
-      title: 'Formatting Test Document',
-      content: [
-        '# Heading 1 Title',
-        '',
-        'Normal text and bold and italic',
-        '',
-        '* Bullet item 1',
-        '* Bullet item 2',
-        '',
-        '1. Ordered item 1',
-        '2. Ordered item 2',
-        '',
-        '> Blockquote quotation text',
-        '',
-        '```python',
-        'def hello():',
-        '    return "world"',
-        '```',
-        '',
-        '| Header 1 | Header 2 |',
-        '| --- | --- |',
-        '| Data 1 | Data 2 |',
-      ].join('\n'),
-      language: 'markdown',
-    },
+    data: { title: 'Formatting Test Document', content: t2Source, language: 'markdown' },
   });
+  assert.ok(t2DocRes.ok());
   const t2Doc = await t2DocRes.json();
-  await page.evaluate(async (id) => {
+  const openFormattingDoc = () => page.evaluate(async (id) => {
     const docMod = await import('/static/js/document.js');
+    await docMod.openPanel();
     await docMod.loadDocument(id);
   }, t2Doc.id);
+  await openFormattingDoc();
 
-  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
-
-  // Exercise real keyboard shortcut: select 'bold' and press Ctrl+B
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
-    const paras = Array.from(rich.querySelectorAll('p'));
-    const p = paras.find((el) => el.textContent.includes('bold'));
-    if (p) {
-      const textNode = Array.from(p.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.includes('bold'));
-      if (textNode) {
-        const idx = textNode.textContent.indexOf('bold');
-        const range = document.createRange();
-        range.setStart(textNode, idx);
-        range.setEnd(textNode, idx + 4);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
+  const formattingSurface = page.locator('#doc-email-richbody.markdown-visual-mode');
+  await formattingSurface.waitFor({ state: 'visible' });
+  const assertFormattingSync = async (expected) => {
+    const state = await page.evaluate(async (id) => {
+      const { docs } = await import('/static/js/document/application/documentState.js');
+      const doc = docs.get(id);
+      return { blocked: Boolean(doc._visualSyncBlocked), reasons: doc._visualCompatReasons, content: doc.content };
+    }, t2Doc.id);
+    assert.equal(state.blocked, false, JSON.stringify(state.reasons));
+    assert.equal(state.content, expected, 'Visual edit synchronizes to the exact Markdown');
+    assert.equal(await page.locator('#doc-visual-compat-banner').isVisible(), false);
+  };
+  const selectFormattingText = async (word) => {
+    await formattingSurface.evaluate((rich, word) => {
+      rich.focus();
+      const walker = document.createTreeWalker(rich.lastElementChild, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const index = node.data.indexOf(word);
+        if (index !== -1) {
+          const range = document.createRange();
+          range.setStart(node, index);
+          range.setEnd(node, index + word.length);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
       }
-    }
-  });
+      throw new Error(`Formatting text not found: ${word}`);
+    }, word);
+  };
+
+  await selectFormattingText('bold');
   await page.keyboard.press('Control+b');
+  const boldSource = t2Source.replace('and bold', 'and **bold**');
+  await assertFormattingSync(boldSource);
 
-  // Exercise toolbar control: select 'italic' and click [data-md="italic"]
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
-    const paras = Array.from(rich.querySelectorAll('p'));
-    const p = paras.find((el) => el.textContent.includes('italic'));
-    if (p) {
-      const textNode = Array.from(p.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.includes('italic'));
-      if (textNode) {
-        const idx = textNode.textContent.indexOf('italic');
-        const range = document.createRange();
-        range.setStart(textNode, idx);
-        range.setEnd(textNode, idx + 6);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
-    }
-  });
+  await selectFormattingText('italic');
   await page.locator('button[data-md="italic"]').click();
+  const formattedSource = boldSource.replace('and italic', 'and *italic*');
+  await assertFormattingSync(formattedSource);
+
+  // The original recording pressed Enter at the end of the rich surface.
+  // Chromium inserts an empty block with a caret placeholder before any text is typed.
+  await formattingSurface.evaluate((rich) => {
+    const range = document.createRange();
+    range.selectNodeContents(rich);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.keyboard.press('Enter');
+  assert.match(await formattingSurface.innerHTML(), /<(div|p)><br><\/\1>$/);
+  await assertFormattingSync(formattedSource);
+  await page.keyboard.type('A new paragraph');
+  const persistedFormatting = `${formattedSource}\n\nA new paragraph`;
+  await assertFormattingSync(persistedFormatting);
+
+  const [formattingPut] = await Promise.all([
+    page.waitForResponse((res) => res.request().method() === 'PUT'
+      && new URL(res.url()).pathname === `/api/document/${t2Doc.id}`
+      && res.request().postDataJSON()?.content === persistedFormatting),
+    page.locator('#doc-footer-copy-btn').click(),
+  ]);
+  assert.ok(formattingPut.ok(), 'Backend acknowledges the formatted Markdown write');
+  await waitForSaveState(page);
+  const formattedRead = await context.request.get(`${origin}/api/document/${t2Doc.id}`);
+  assert.ok(formattedRead.ok());
+  assert.equal((await formattedRead.json()).current_content, persistedFormatting);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => !document.getElementById('app-loader'));
+  await openFormattingDoc();
+  await formattingSurface.waitFor({ state: 'visible' });
+  await assertFormattingSync(persistedFormatting);
+  assert.equal(await formattingSurface.locator('b, strong').textContent(), 'bold');
+  assert.equal(await formattingSurface.locator('i, em').textContent(), 'italic');
 
   // Verify all DOM structures present
   const t2Dom = await page.evaluate(() => {
@@ -255,7 +300,7 @@ try {
     name: 'Visual formatting',
     status: 'PASSED',
     durationMs: Date.now() - t2Start,
-    details: 'Verified H1, bold, italic, bullet lists, ordered lists, blockquotes, code blocks, and tables.',
+    details: 'Bold shortcut, italic toolbar control and native Enter synchronized without blocking. A successful PUT and Saved state preceded exact API readback and reload verification. Other Markdown structures were seeded and checked after reopening.',
   });
 
   // -----------------------------------------------------------
@@ -310,7 +355,7 @@ try {
     name: 'Source mode round-trip',
     status: 'PASSED',
     durationMs: Date.now() - t3Start,
-    details: 'Verified flawless transition to Source mode Markdown representation and back to Visual mode.',
+    details: 'Switched to Source, checked Markdown syntax, then returned to Visual.',
   });
 
   // -----------------------------------------------------------
@@ -508,7 +553,7 @@ try {
     name: 'Persistence',
     status: 'PASSED',
     durationMs: Date.now() - t5Start,
-    details: 'Verified real autosave throttling, manual save acknowledgement, reload recovery, and DB consistency.',
+    details: 'Verified debounced autosave, acknowledged manual save, API readback, and reopening saved content in a fresh tab.',
   });
 
   // -----------------------------------------------------------
@@ -544,6 +589,24 @@ try {
   };
   page.on('request', onPutRequest);
 
+  // A failed background log POST must leave the blocked draft and editor in place.
+  const notificationPath = '/api/tasks/notification-logs';
+  const notificationRoute = '**' + notificationPath;
+  const onNotificationLog = (route) => route.request().method() === 'POST'
+    ? route.fulfill({ status: 401, json: { error: 'Not authenticated' } })
+    : route.fallback();
+  await page.route(notificationRoute, onNotificationLog);
+  const notificationFailure = page.waitForResponse((res) =>
+    new URL(res.url()).pathname === notificationPath
+    && res.request().method() === 'POST'
+    && res.status() === 401
+    && Boolean(res.request().postDataJSON()?.body?.startsWith('Cannot save document')));
+  const navigations = [];
+  const onNavigation = (frame) => {
+    if (frame === page.mainFrame()) navigations.push(frame.url());
+  };
+  page.on('framenavigated', onNavigation);
+
   // Inject an unsupported structure into visual DOM (e.g. merged table cells that cannot be represented in Markdown)
   await page.evaluate(() => {
     const rich = document.getElementById('doc-email-richbody');
@@ -554,14 +617,16 @@ try {
   });
 
   // Trigger sync and attempt manual save
-  await page.evaluate(async (id) => {
+  const rejectedSave = await page.evaluate(async (id) => {
     const sync = await import('/static/js/document/ui/richEditor/markdownVisualSync.js');
     const persistence = await import('/static/js/document/application/persistence.js');
     const rich = document.getElementById('doc-email-richbody');
     sync.syncVisualMarkdownToDoc(rich);
     // Explicit save attempt while blocked
-    await persistence.saveDocument({ silent: false, docId: id }).catch(() => {});
+    return persistence.saveDocument({ silent: false, docId: id });
   }, t6Doc.id);
+  assert.equal(rejectedSave, false);
+  await notificationFailure;
 
   // Wait beyond the autosave debounce interval (2600ms+)
   await page.waitForTimeout(3000);
@@ -584,6 +649,9 @@ try {
   }, t6Doc.id);
 
   page.off('request', onPutRequest);
+  page.off('framenavigated', onNavigation);
+  await page.unroute(notificationRoute, onNotificationLog);
+  assert.deepEqual(navigations, [], 'Notification 401 must not navigate or reload the editor');
 
   // Assert blocked state, visible warning, retained draft, and unsuccessful save
   assert.equal(t6BlockedState.blocked, true, 'Visual sync must be marked blocked');
@@ -603,7 +671,7 @@ try {
     name: 'Rejected edits safeguard',
     status: 'PASSED',
     durationMs: Date.now() - t6Start,
-    details: 'Verified that unsupported visual mutations block sync, retain draft, display warning, and issue zero PUTs.',
+    details: 'An unsupported merged table blocked sync, retained the draft, and issued zero PUTs. A controlled notification POST 401 caused no editor navigation or reload.',
   });
 
   // -----------------------------------------------------------
@@ -697,9 +765,12 @@ try {
     window.__xssExecuted = false;
   });
 
-  // Exercise real paste pipeline on active visual ContentEditable surface
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
+  // Exercise the paste handler with synthetic clipboard data and an active caret.
+  const pasteSurface = page.locator('#doc-email-richbody.markdown-visual-mode');
+  const pasteHandled = await pasteSurface.evaluate((rich) => {
+    rich.focus();
+    const selection = window.getSelection();
+    selection.collapse(rich.querySelector('p').firstChild, 0);
     const dt = new DataTransfer();
     dt.setData('text/html', '<p>Pasted safe text</p><script>window.__xssExecuted = true;</script><img src="invalid-image" onerror="window.__xssExecuted = true;"><a href="javascript:alert(1)">evil link</a>');
     dt.setData('text/plain', 'Pasted safe text');
@@ -708,16 +779,16 @@ try {
       cancelable: true,
       clipboardData: dt,
     });
-    rich.dispatchEvent(pasteEvent);
+    return !rich.dispatchEvent(pasteEvent);
   });
-
-  await page.waitForTimeout(1000);
+  assert.equal(pasteHandled, true, 'The editor paste handler canceled the default action');
+  await pasteSurface.getByText('Pasted safe text', { exact: false }).waitFor({ state: 'visible' });
 
   const secState = await page.evaluate(() => {
     const rich = document.getElementById('doc-email-richbody');
     const xssTriggered = window.__xssExecuted === true;
     const scriptTags = rich ? rich.querySelectorAll('script').length : 0;
-    const handlers = rich ? Array.from(rich.querySelectorAll('*')).filter((el) => el.hasAttribute('onerror') || el.hasAttribute('onload')) : [];
+    const handlers = rich ? Array.from(rich.querySelectorAll('*')).filter((el) => el.getAttributeNames().some((name) => name.startsWith('on'))) : [];
     const jsLinks = rich ? Array.from(rich.querySelectorAll('a')).filter((a) => (a.getAttribute('href') || '').toLowerCase().startsWith('javascript:')) : [];
     const isVisualActive = rich?.classList.contains('markdown-visual-mode') && getComputedStyle(rich).display !== 'none';
     return {
@@ -740,7 +811,7 @@ try {
     name: 'Security and sanitization',
     status: 'PASSED',
     durationMs: Date.now() - t8Start,
-    details: 'Verified fail-closed sanitization against script execution, onerror triggers, and javascript: URIs on active visual editor surface.',
+    details: 'Dispatched a synthetic ClipboardEvent and verified the handler inserted harmless text while stripping scripts, inline handlers and JavaScript URLs. The OS clipboard was outside scope.',
   });
 
   // -----------------------------------------------------------
@@ -832,13 +903,19 @@ try {
 
   suiteResults.scenarios.push({
     id: 10,
-    name: 'Accessibility standards',
+    name: 'Accessibility attributes and focus',
     status: 'PASSED',
     durationMs: Date.now() - t10Start,
-    details: 'Verified role="textbox", aria-multiline, aria-live status updates, and keyboard focus.',
+    details: 'Checked textbox role, multiline state, save button label and polite live region attributes, and that the visual editor receives focus.',
   });
 
   await context.close();
+  suiteResults.chromiumStatus = 'PASSED';
+} catch (err) {
+  suiteResults.chromiumStatus = 'FAILED';
+  suiteResults.chromiumFailure = err.message;
+  writeResults();
+  throw err;
 } finally {
   await browser.close();
 }
@@ -850,7 +927,7 @@ log('Multi-Browser', 'Executing Firefox and WebKit smoke verification');
 
 // Firefox Smoke Test
 try {
-  log('Firefox', 'Launching Firefox 153.0 smoke test');
+  log('Firefox', 'Launching visual-admission smoke test');
   const ffBrowser = await firefox.launch({ headless: true });
   const ffContext = await ffBrowser.newContext({ viewport: { width: 1440, height: 900 } });
   const ffPage = await ffContext.newPage();
@@ -874,8 +951,8 @@ try {
   });
   assert.equal(ffRichVisible, true, 'Firefox renders visual mode');
 
+  suiteResults.browserSmoke.firefox = { status: 'PASSED', engine: 'Gecko', version: ffBrowser.version() };
   await ffBrowser.close();
-  suiteResults.browserSmoke.firefox = { status: 'PASSED', engine: 'Gecko', version: '153.0' };
   log('Firefox', 'Smoke test PASSED');
 } catch (err) {
   log('Firefox', `Smoke test failed: ${err.message}`);
@@ -885,7 +962,7 @@ try {
 
 // WebKit Smoke Test
 try {
-  log('WebKit', 'Launching WebKit 26.5 smoke test');
+  log('WebKit', 'Launching visual-admission smoke test');
   const wkBrowser = await webkit.launch({ headless: true });
   const wkContext = await wkBrowser.newContext({ viewport: { width: 1440, height: 900 } });
   const wkPage = await wkContext.newPage();
@@ -909,8 +986,8 @@ try {
   });
   assert.equal(wkRichVisible, true, 'WebKit renders visual mode');
 
+  suiteResults.browserSmoke.webkit = { status: 'PASSED', engine: 'WebKit (Safari engine)', version: wkBrowser.version() };
   await wkBrowser.close();
-  suiteResults.browserSmoke.webkit = { status: 'PASSED', engine: 'WebKit (Safari engine)', version: '26.5' };
   log('WebKit', 'Smoke test PASSED');
 } catch (err) {
   log('WebKit', `Smoke test failed: ${err.message}`);
@@ -918,11 +995,7 @@ try {
   process.exitCode = 1;
 }
 
-// Save test summary JSON
-fs.writeFileSync(
-  path.join(resultsDir, 'playwright-validation-results.json'),
-  JSON.stringify(suiteResults, null, 2)
-);
+writeResults();
 
 console.log('\n======================================================');
 console.log('REAL APPLICATION PLAYWRIGHT VALIDATION COMPLETE');

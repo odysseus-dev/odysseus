@@ -777,6 +777,32 @@ it('serialization preserves repeated blank lines inside fenced code', () => {
   assert.equal(serializeVisualNodesToMarkdown(nodes), '```\n' + raw + '\n```');
 });
 
+it('ignores empty paragraph caret placeholders without ignoring actual breaks', () => {
+  const paragraph = el('p', [el('strong', 'Bold'), txt(' and '), el('em', 'italic')]);
+  const empty = el('div', [el('br')]);
+  const emptyWithMarks = el('p', [el('b', [el('i', [el('br')])])]);
+  assert.deepEqual(serializeVisualNodesWithFidelity([paragraph, empty, emptyWithMarks]), {
+    markdown: '**Bold** and *italic*',
+    blocks: ['**Bold** and *italic*'],
+    lossless: true,
+    reasons: [],
+  });
+  const quote = el('blockquote', [el('p', 'Quote'), empty]);
+  assert.equal(serializeVisualNodesWithFidelity([quote]).markdown, '> Quote');
+  assert.equal(serializeVisualNodesWithFidelity([quote]).lossless, true);
+
+  for (const node of [
+    el('p', [txt('Visible'), el('br')]),
+    el('p', [txt('Visible'), el('br'), el('br')]),
+    el('div', [el('br'), el('br')]),
+    el('h1', [el('br')]),
+    el('ul', [el('li', [el('br')])]),
+    el('table', [el('tr', [el('td', [el('br')])])]),
+  ]) {
+    assert.equal(serializeVisualNodesWithFidelity([node]).lossless, false);
+  }
+});
+
 it('preserves code trailing newlines and list soft breaks through serialization and rendering', () => {
   const code = [{ type: 'element', tag: 'pre', children: [{ type: 'element', tag: 'code', children: [{ type: 'text', text: 'last\n' }] }] }];
   assert.equal(serializeVisualNodesToMarkdown(code), '```\nlast\n\n```');
