@@ -666,6 +666,20 @@ def _detect_windows():
             "gpu_error": None,
             "platform": "windows",
         }
+        # WMI cannot tell CUDA from other GPUs, and nvidia-smi fails on hosts where
+        # NVML does not initialise. The CUDA driver API still works there, so use it
+        # to confirm an NVIDIA GPU and take the true VRAM (WMI AdapterRAM caps at 4 GiB).
+        if not _remote_host and result["has_gpu"] and result["backend"] == "cpu_x86":
+            try:
+                from src.gpu_runtime import probe_cuda_driver
+                cuda = probe_cuda_driver()
+                if cuda.get("available"):
+                    result["backend"] = "cuda"
+                    result["gpu_name"] = cuda["name"]
+                    result["gpu_vram_gb"] = round(cuda["total_bytes"] / 1073741824, 1)
+                    result["gpu_count"] = cuda.get("device_count") or result["gpu_count"]
+            except Exception:
+                pass
         # PowerShell only reports aggregate GPU info, not per-card detail, so we
         # can't tell a mixed box from a uniform one here — assume one homogeneous
         # pool spanning all reported GPUs (the common Windows case).

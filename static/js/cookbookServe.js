@@ -3851,6 +3851,7 @@ function _rerenderCachedModels() {
             // Pass the exact form values so the running task can be re-opened
             // in the Serve panel pre-filled with these settings (Edit button).
             const taskDisplayName = _serveTaskDisplayName(shortName, m, serveState);
+            if (!serveHost && !_cmdManuallyEdited && await _launchManagedLlama(taskDisplayName, repo, m, serveState)) return;
             await _launchServeTask(taskDisplayName, repo, launchCmd, serveState, serveHost, { serverKey: serveServerKey, serverName: serveServerName, launchAnyway });
           });
         } finally {
@@ -3879,6 +3880,48 @@ function _rerenderCachedModels() {
       });
     });
   });
+}
+
+// ── Managed local llama.cpp serving (native Windows) ──
+// Uses the typed serving API (/api/cookbook/serving/*): app-managed CUDA runtime,
+// VRAM-safe layer/context planning and ownership-verified stop. Returns true when
+// it handled the launch (started, or showed why not); false to use the legacy runner.
+async function _launchManagedLlama(name, repo, m, st) {
+  if (_envState.hostPlatform !== 'windows' || st.backend !== 'llamacpp' || st.llama_mode === 'unified') return false;
+  const rel = String(st.gguf_file || '').replace(/^[\\/]+/, '');
+  if (!rel || !m || !m.path) return false;
+  const base = String(m.path).replace(/[\\/]+$/, '');
+  const modelPath = (m.is_local_dir ? `${base}/${repo}/${rel}` : `${base}/models--${repo.replace(/\//g, '--')}/snapshots/${rel}`).replace(/\//g, '\\');
+  const cpu = st.llama_mode === 'cpu';
+  let exe = '';
+  try {
+    const g = await (await _fetchCookbookWithTimeout('/api/cookbook/serving/gpu', { credentials: 'same-origin' }, 30000)).json();
+    if (!cpu) exe = g.selected_runtime || '';
+    if (!exe) exe = ((g.runtimes || []).find(r => r.build === 'cpu') || {}).executable || '';
+  } catch { return false; }
+  if (!exe) return false;
+  const body = {
+    engine: 'llamacpp', executable: exe, model_path: modelPath,
+    port: parseInt(st.port, 10) || 8000, context_length: parseInt(st.ctx, 10) || 4096,
+    gpu_layers: cpu ? 0 : 999,
+  };
+  const res = await _fetchCookbookWithTimeout('/api/cookbook/serving/start', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, 60000);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    const why = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data);
+    uiModule.showToast('Could not start ' + name + ': ' + why.slice(0, 240), 9000);
+    return true;
+  }
+  uiModule.showToast(`Starting ${name} (managed)...`);
+  try {
+    const running = await import('./cookbookRunning.js');
+    await running._syncFromServer({ force: true });
+    running._renderRunningTab();
+  } catch {}
+  return true;
 }
 
 // ── Delete / retry cached model ──
