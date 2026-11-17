@@ -177,7 +177,7 @@ async function setupUsers(instance) {
   return { adminCookie, memberCookie: await apiLogin(instance, MEMBER) };
 }
 
-async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 }, colorScheme = 'dark') {
+async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 }, colorScheme = 'dark', options = {}) {
   const context = await browser.newContext({ viewport, colorScheme, hasTouch: viewport.width < 600 });
   if (cookie) {
     const [nameValue] = cookie.split(';');
@@ -205,8 +205,13 @@ async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 },
     }
   });
   await page.route('**/api/tasks/notification-logs', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  if (typeof options.beforeGoto === 'function') await options.beforeGoto(page);
   await page.goto(`${instance.baseUrl}/`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
+  if (options.waitForStatus !== false) {
+    await page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
+  } else {
+    await page.waitForSelector('#user-bar-settings', { state: 'attached', timeout: 15000 });
+  }
   await page.waitForTimeout(400);
   return { page, context, errors, forbidden, settingsWrites };
 }
@@ -611,6 +616,108 @@ async function testMemberScope(instance, cookies) {
   await member.context.close();
 }
 
+async function testMemberStatusRecovery(instance, cookies) {
+  let statusAvailable = false;
+  let statusRequests = 0;
+  const requests = [];
+  const member = await pageAs(instance, cookies.memberCookie, undefined, undefined, {
+    waitForStatus: false,
+    async beforeGoto(page) {
+      await page.route('**/api/auth/status', route => {
+        statusRequests += 1;
+        return statusAvailable ? route.continue() : route.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"unavailable"}' });
+      });
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname;
+        if (['/api/prefs', '/api/auth/settings', '/api/model-endpoints'].includes(path)) requests.push(`${request.method()} ${path}`);
+      });
+    },
+  });
+  const globalBefore = (await api(instance, cookies.adminCookie, '/api/auth/settings')).body;
+  await openSettings(member.page, 'ai');
+  await member.page.waitForFunction(() => document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry')
+    || !document.querySelector('#set-defaultEpSelect').disabled, null, { timeout: 15000 });
+  await member.page.waitForTimeout(300);
+  if (!(await member.page.$('[data-settings-section="default-chat"] .settings-model-default-retry'))) {
+    // The card loaded from a store chosen without knowing who the caller is.
+    // Record where a member's choice would then be written.
+    const probeFrom = requests.length;
+    await member.page.selectOption('#set-defaultEpSelect', 'ep-beta').catch(() => {});
+    await member.page.waitForTimeout(1500);
+    check('unknown access keeps the model-default cards read-only with Retry', false,
+      `card editable; requests while unknown: ${requests.slice(0, probeFrom).join(',')}; after a choice: ${requests.slice(probeFrom).join(',') || 'none'}`);
+    await member.context.close();
+    return;
+  }
+  const unknown = await member.page.evaluate(() => ({
+    defaultDisabled: document.querySelector('#set-defaultEpSelect').disabled,
+    utilityDisabled: document.querySelector('#set-utilityEpSelect').disabled,
+    researchDisabled: document.querySelector('#set-researchEndpoint').disabled,
+  }));
+  check('unknown access keeps the model-default cards read-only with Retry', unknown.defaultDisabled && unknown.utilityDisabled && unknown.researchDisabled, JSON.stringify(unknown));
+  // Even a change event forced onto the read-only select must not write to
+  // any store while it is unknown which one belongs to this caller.
+  const forcedFrom = requests.length;
+  await member.page.evaluate(() => {
+    const select = document.querySelector('#set-defaultEpSelect');
+    const option = document.createElement('option');
+    option.value = 'ep-forced';
+    select.appendChild(option);
+    select.value = 'ep-forced';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    option.remove();
+  });
+  await member.page.waitForTimeout(800);
+  const forcedWrites = requests.slice(forcedFrom).filter(entry => !entry.startsWith('GET '));
+  const unknownWrites = requests.filter(entry => !entry.startsWith('GET '));
+  check('unknown access selects no store: nothing is written, even on a forced change', forcedWrites.length === 0 && unknownWrites.length === 0, unknownWrites.join(','));
+
+  statusAvailable = true;
+  await member.page.click('[data-settings-section="default-chat"] .settings-model-default-retry');
+  await member.page.waitForFunction(() => !document.querySelector('#set-defaultEpSelect').disabled, null, { timeout: 10000 });
+  const recovered = await member.page.evaluate(() => ({
+    badges: document.querySelectorAll('[data-settings-section="default-chat"] .settings-scope-badge').length,
+    badge: document.querySelector('[data-settings-section="default-chat"] .settings-scope-badge')?.textContent || null,
+    unsetOption: document.querySelector('#set-defaultEpSelect').options[0]?.value === '',
+    offersBeta: Array.from(document.querySelector('#set-defaultEpSelect').options).some(option => option.value === 'ep-beta'),
+  }));
+  check('Retry after a failed status lookup recovers the personal store', recovered.badges === 1 && recovered.badge === 'Just you' && recovered.unsetOption && recovered.offersBeta, JSON.stringify(recovered));
+
+  const before = requests.length;
+  await member.page.selectOption('#set-defaultEpSelect', 'ep-beta');
+  await member.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
+  await member.page.waitForTimeout(300);
+  const saveRequests = requests.slice(before).filter(entry => entry !== 'GET /api/prefs');
+  check('member write after recovery is one personal preference write', saveRequests.join(',') === 'PATCH /api/prefs', saveRequests.join(','));
+
+  await member.page.click('[data-settings-section="utility-model"] .settings-model-default-retry');
+  await member.page.waitForFunction(() => !document.querySelector('#set-utilityEpSelect').disabled, null, { timeout: 10000 });
+  const beforeUtility = requests.length;
+  await member.page.selectOption('#set-utilityEpSelect', 'ep-alpha');
+  await member.page.waitForFunction(() => document.querySelector('#set-utilityChatMsg').textContent === 'Saved', null, { timeout: 8000 });
+  await member.page.waitForTimeout(300);
+  const utilityRequests = requests.slice(beforeUtility).filter(entry => entry !== 'GET /api/prefs');
+  check('utility card recovers on Retry and writes the member preference once', utilityRequests.join(',') === 'PATCH /api/prefs', utilityRequests.join(','));
+
+  // Closing and reopening Settings must not bind or label anything twice.
+  await member.page.click('#settings-modal .close-btn').catch(() => {});
+  await openSettings(member.page, 'ai');
+  await member.page.waitForTimeout(400);
+  const reopenedBadges = await member.page.$$eval('[data-settings-section="default-chat"] .settings-scope-badge', nodes => nodes.length);
+  const prefs = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
+  const globalAfter = (await api(instance, cookies.adminCookie, '/api/auth/settings')).body;
+  check('recovered member choices are stored in the member preferences', prefs.default_endpoint_id === 'ep-beta' && prefs.utility_endpoint_id === 'ep-alpha', JSON.stringify(prefs));
+  check('recovered member session never writes server-wide settings', member.settingsWrites.length === 0 && globalAfter.default_endpoint_id === globalBefore.default_endpoint_id && globalAfter.utility_endpoint_id === globalBefore.utility_endpoint_id, JSON.stringify({ writes: member.settingsWrites, before: globalBefore.default_endpoint_id, after: globalAfter.default_endpoint_id }));
+  check('status recovery adds no duplicate scope labels', reopenedBadges === 1, String(reopenedBadges));
+  check('status was requested again after the failure', statusRequests >= 2, String(statusRequests));
+  await screenshot(member.page, 'member-status-recovered');
+  check('status recovery page has no script errors', member.errors.length === 0, member.errors.join(' | '));
+  await member.context.close();
+  await api(instance, cookies.memberCookie, '/api/prefs', { method: 'PATCH', body: JSON.stringify({ values: {
+    default_endpoint_id: null, default_model: null, utility_endpoint_id: null, utility_model: null, utility_reasoning_effort: null,
+  } }) });
+}
+
 async function testAdminLoadFailure(instance, cookies) {
   const admin = await pageAs(instance, cookies.adminCookie);
   await admin.page.route('**/api/auth/settings', route => (
@@ -734,6 +841,7 @@ async function main() {
   await testMemberScope(authInstance, cookies);
   await testAdminScope(authInstance, cookies);
   await testAdminLoadFailure(authInstance, cookies);
+  await testMemberStatusRecovery(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
   seedEndpoints(openInstance);

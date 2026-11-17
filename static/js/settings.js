@@ -48,9 +48,10 @@ let modalEl = null;
 let _authPolicy = { password_min_length: 8 };
 
 // What this caller may change, from /api/auth/status (see authStatus.js).
-// null until that answer arrives, or if it fails; Settings then keeps its
-// server-wide behavior, which the server authorizes on every write.
+// null until that answer arrives. While it is unknown, Settings offers only
+// what every caller may use and stores no per-account choice anywhere.
 let _settingsAccess = null;
+let _settingsAccessRequest = null;
 function _canManageSettings() {
   if (_settingsAccess) return _settingsAccess.canManage;
   return window._canManageSettings === true || !!window._isAdmin;
@@ -58,21 +59,52 @@ function _canManageSettings() {
 function _accountsEnabled() {
   return !_settingsAccess || _settingsAccess.authEnabled;
 }
-// Resolves to the access summary (or null) once /api/auth/status answers.
-// Panels that store per account wait on it before loading or saving.
-let _accessReady = Promise.resolve(null);
+// Show the caller's access in the modal: offered panels and scope labels.
+// Safe to repeat; scope labels are replaced, not added.
+function _applySettingsAccess(access) {
+  if (!modalEl) return;
+  _shell.syncAdminVisibility();
+  applySettingsSectionScopes(modalEl, access);
+}
+/**
+ * Resolve what this caller may change. Rejects while /api/auth/status is
+ * unavailable; the next call asks again (authStatus.js does not keep a
+ * failure). The first answer is shown in the modal if it is already built.
+ */
+function _resolveSettingsAccess() {
+  if (_settingsAccess) return Promise.resolve(_settingsAccess);
+  if (!_settingsAccessRequest) {
+    _settingsAccessRequest = loadSettingsAccess()
+      .then(function(access) {
+        if (!_settingsAccess) {
+          _settingsAccess = access;
+          _applySettingsAccess(access);
+        }
+        return _settingsAccess;
+      })
+      .finally(function() { _settingsAccessRequest = null; });
+  }
+  return _settingsAccessRequest;
+}
 let _modelDefaultsStorePromise = null;
 function _personalModelDefaults(access) {
   return Boolean(access && access.personalModelDefaults);
 }
+/**
+ * The model-defaults store for this caller. Which store (the caller's own
+ * preferences or the server-wide settings) depends on who the caller is, so
+ * none is chosen until that is known: this rejects instead, and the cards
+ * stay read-only with Retry.
+ */
 function _getModelDefaultsStore() {
   if (!_modelDefaultsStorePromise) {
-    _modelDefaultsStorePromise = _accessReady.then(function(access) {
+    _modelDefaultsStorePromise = _resolveSettingsAccess().then(function(access) {
       return createModelDefaultsStore({
         personal: _personalModelDefaults(access),
-        clearOwnOverrides: Boolean(access && access.authEnabled && access.canManage),
+        clearOwnOverrides: Boolean(access.authEnabled && access.canManage),
       });
     });
+    _modelDefaultsStorePromise.catch(function() { _modelDefaultsStorePromise = null; });
   }
   return _modelDefaultsStorePromise;
 }
@@ -85,6 +117,30 @@ function _ensureBlankOption(selectEl, text) {
   blank.textContent = text;
   selectEl.insertBefore(blank, first || null);
 }
+/**
+ * Where a model-default card reads and writes, resolved on each load until it
+ * succeeds: the store for this caller (none while access is unknown) and,
+ * once, the endpoints offered to them. A Retry therefore recovers from a
+ * failed status lookup without binding anything again.
+ */
+function _createModelDefaultSource(label, onEndpoints) {
+  var store = null;
+  var endpointsLoaded = false;
+  return {
+    store: function() { return store; },
+    load: async function() {
+      if (!store) store = await _getModelDefaultsStore();
+      if (!endpointsLoaded) {
+        try {
+          onEndpoints(await _fetchModelDefaultEndpoints(), store);
+          endpointsLoaded = true;
+        } catch (e) { console.warn('Failed to load endpoints for ' + label, e); }
+      }
+      return store.load();
+    },
+  };
+}
+
 /**
  * Load state for a model-default card. The card's controls stay disabled
  * until its stored values load, so a save can never overwrite values the form
@@ -181,7 +237,11 @@ function safeRasterDataUrl(raw) {
    supplies the panel-owned pieces the shell needs. */
 const _shell = createSettingsShell({
   getModal: () => modalEl,
-  ensureInitialized: () => { if (!initialized) initAll(); },
+  ensureInitialized: () => {
+    if (!initialized) initAll();
+    // Reopening Settings asks again after a failed status lookup.
+    else if (!_settingsAccess) _resolveSettingsAccess().catch(function() {});
+  },
   syncAppearanceCheckboxes: () => syncAppearanceCheckboxes(),
   refreshAiModelEndpoints: () => refreshAiModelEndpoints(),
   isAdmin: () => _canManageSettings(),
@@ -217,7 +277,7 @@ function _selectableEndpointModels(endpoint) {
 // the owner-scoped, allowlist-filtered chat catalog the runtime resolver
 // honors for them.
 async function _fetchModelDefaultEndpoints() {
-  const access = await _accessReady;
+  const access = await _resolveSettingsAccess();
   return _personalModelDefaults(access)
     ? _fetchForegroundFallbackEndpoints()
     : _fetchModelEndpoints();
@@ -875,16 +935,15 @@ async function initDefaultChat() {
     _fillModelSelect(selectEl, _selectableEndpointModels(ep), selected, false);
   }
 
-  var modelDefaults = await _getModelDefaultsStore();
-  var personalDefault = modelDefaults.personal;
-  // A personal default can be left unset; the server then applies its own
-  // default for this account.
-  if (personalDefault) _ensureBlankOption(epSel, 'Not set (server default)');
-
-  try {
-    _endpoints = await _fetchModelDefaultEndpoints();
+  var personalDefault = false;
+  var defaultSource = _createModelDefaultSource('default chat', function(endpoints, store) {
+    personalDefault = store.personal;
+    // A personal default can be left unset; the server then applies its own
+    // default for this account.
+    if (personalDefault) _ensureBlankOption(epSel, 'Not set (server default)');
+    _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, personalDefault);
-  } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
+  });
 
   await loadForegroundEndpointCatalog();
 
@@ -915,7 +974,7 @@ async function initDefaultChat() {
     label: 'default chat model',
     controls: function() { return [epSel, modelSel]; },
     msgEl: msg,
-    load: function() { return modelDefaults.load(); },
+    load: defaultSource.load,
     apply: applyStoredDefault,
   });
   await defaultLoader.run();
@@ -1014,7 +1073,7 @@ async function initDefaultChat() {
   async function saveDefault() {
     if (!defaultLoader.isLoaded()) return;
     try {
-      await modelDefaults.save({
+      await defaultSource.store().save({
         default_endpoint_id: epSel.value,
         default_model: modelSel.value
       });
@@ -1070,12 +1129,10 @@ async function initUtilityModel() {
   if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
   if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
 
-  var modelDefaults = await _getModelDefaultsStore();
-
-  try {
-    _endpoints = await _fetchModelDefaultEndpoints();
+  var utilitySource = _createModelDefaultSource('utility model', function(endpoints) {
+    _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
-  } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
+  });
 
   // Effort levels come from /api/models `models_metadata` (same evidence the
   // chat composer uses); /api/model-endpoints does not carry them.
@@ -1185,7 +1242,7 @@ async function initUtilityModel() {
       endpoints: function() { return _endpoints; },
       settingKey: 'utility_model_fallbacks',
       saveList: function(list) {
-        return modelDefaults.save({ utility_model_fallbacks: list });
+        return utilitySource.store().save({ utility_model_fallbacks: list });
       },
       onError: function(error) {
         console.warn('Failed to save utility fallbacks', error);
@@ -1204,7 +1261,7 @@ async function initUtilityModel() {
     label: 'utility model',
     controls: function() { return [epSel, modelSel, effortSel, el('set-utilityAddFallback')]; },
     msgEl: msg,
-    load: function() { return modelDefaults.load(); },
+    load: utilitySource.load,
     apply: function(settings) {
       applyStoredUtility(settings);
       bindUtilityFallbacks(settings);
@@ -1218,7 +1275,7 @@ async function initUtilityModel() {
   async function saveUtility() {
     if (!utilityLoader.isLoaded()) return;
     try {
-      await modelDefaults.save({
+      await utilitySource.store().save({
         utility_endpoint_id: epSel.value || '',
         utility_model: modelSel.value || '',
         utility_reasoning_effort: effortSel ? (effortSel.value || '') : ''
@@ -1829,12 +1886,10 @@ async function initResearchSettings() {
   var runTimeoutInput = el('set-researchRunTimeout');
   var msg = el('set-researchMsg');
   var endpoints = [];
-  var modelDefaults = await _getModelDefaultsStore();
-
-  try {
-    endpoints = await _fetchModelDefaultEndpoints();
+  var researchSource = _createModelDefaultSource('research', function(nextEndpoints) {
+    endpoints = nextEndpoints;
     _fillEndpointSelect(epSel, endpoints, epSel.value, true);
-  } catch (e) { console.warn('Failed to load endpoints for research', e); }
+  });
 
   function refreshModels(selectedModel) {
     var epId = epSel.value;
@@ -1853,7 +1908,7 @@ async function initResearchSettings() {
     label: 'research model',
     controls: function() { return [epSel, modelSel]; },
     msgEl: msg,
-    load: function() { return modelDefaults.load(); },
+    load: researchSource.load,
     apply: applyStoredResearchModel,
   });
   await researchLoader.run();
@@ -1911,7 +1966,7 @@ async function initResearchSettings() {
   async function saveResearchModel() {
     if (!researchLoader.isLoaded()) return;
     try {
-      await modelDefaults.save({
+      await researchSource.store().save({
         research_endpoint_id: epSel.value,
         research_model: modelSel.value,
       });
@@ -2781,17 +2836,12 @@ function initAccount() {
 function initAll() {
   modalEl = el('settings-modal');
 
-  // Who may change what is decided once, from the server, before panels that
-  // store per account load. A failed lookup keeps the server-wide behavior.
-  _accessReady = loadSettingsAccess()
-    .then(function(access) { _settingsAccess = access; return access; })
-    .catch(function(error) {
-      console.warn('Settings access is unknown; keeping server-wide behavior', error);
-      return null;
-    });
-  _accessReady.then(function(access) {
-    _shell.syncAdminVisibility();
-    applySettingsSectionScopes(modalEl, access);
+  // Who may change what comes from the server. Until it answers, the
+  // model-default cards stay read-only; their Retry (or reopening Settings)
+  // asks again. Access may already be known (an endpoint refresh can run
+  // before Settings is first opened), so apply it here as well.
+  _resolveSettingsAccess().then(_applySettingsAccess, function(error) {
+    console.warn('Settings access is unknown until /api/auth/status answers', error);
   });
 
   bindSettingsNavigation(modalEl, {

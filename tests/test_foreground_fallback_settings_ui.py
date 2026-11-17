@@ -114,8 +114,8 @@ def test_default_chat_controls_use_only_owner_scoped_new_preferences():
     # The default endpoint/model come from the model-defaults store (per
     # account for signed-in users, server-wide for admins); the fallback
     # policy never does.
-    assert "modelDefaults.load()" in source
-    assert "modelDefaults.save({" in source
+    assert "load: defaultSource.load" in source
+    assert "defaultSource.store().save({" in source
     model_defaults_source = (
         _REPO / "static" / "js" / "settings" / "modelDefaults.js"
     ).read_text(encoding="utf-8")
