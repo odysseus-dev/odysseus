@@ -53,6 +53,7 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/integrations/forms/email.js'),
   path.join(JS, 'settings/integrations/forms/mcp.js'),
   path.join(JS, 'settings/integrations/forms/vault.js'),
+  path.join(JS, 'settings/access.js'),
 ]);
 
 const realModulesLoaded = new Set();

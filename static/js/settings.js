@@ -22,7 +22,7 @@ import { createSettingsShell } from './settings/shell.js';
 import { handleSettingsOauthReturn } from './settings/oauthReturn.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
-import { loadSettingsAccess } from './authStatus.js';
+import { createSettingsAccess, personalModelDefaults } from './settings/access.js';
 import { applySettingsSectionScopes } from './settings/scope.js';
 import { createModelDefaultsStore, modelDefaultSaveError } from './settings/modelDefaults.js';
 import {
@@ -48,21 +48,6 @@ import { initUnifiedIntegrations as _initUnifiedIntegrations } from './settings/
 
 let initialized = false;
 let modalEl = null;
-// What this caller may change, from /api/auth/status (see authStatus.js).
-// null until that answer arrives. While it is unknown, Settings offers only
-// what every caller may use and stores no per-account choice anywhere.
-let _settingsAccess = null;
-let _settingsAccessRequest = null;
-function _canManageSettings() {
-  if (_settingsAccess) return _settingsAccess.canManage;
-  return window._canManageSettings === true || !!window._isAdmin;
-}
-function _accountsEnabled() {
-  return !_settingsAccess || _settingsAccess.authEnabled;
-}
-function _settingsAccessKnown() {
-  return Boolean(_settingsAccess) || typeof window._canManageSettings === 'boolean';
-}
 // Show the caller's access in the modal: offered panels and scope labels.
 // Safe to repeat; scope labels are replaced, not added.
 function _applySettingsAccess(access) {
@@ -70,30 +55,11 @@ function _applySettingsAccess(access) {
   _shell.syncAdminVisibility();
   applySettingsSectionScopes(modalEl, access);
 }
-/**
- * Resolve what this caller may change. Rejects while /api/auth/status is
- * unavailable; the next call asks again (authStatus.js does not keep a
- * failure). The first answer is shown in the modal if it is already built.
- */
-function _resolveSettingsAccess() {
-  if (_settingsAccess) return Promise.resolve(_settingsAccess);
-  if (!_settingsAccessRequest) {
-    _settingsAccessRequest = loadSettingsAccess()
-      .then(function(access) {
-        if (!_settingsAccess) {
-          _settingsAccess = access;
-          _applySettingsAccess(access);
-        }
-        return _settingsAccess;
-      })
-      .finally(function() { _settingsAccessRequest = null; });
-  }
-  return _settingsAccessRequest;
-}
+// What this caller may change (see settings/access.js). Unknown until
+// /api/auth/status answers; the first answer is shown in the modal if it is
+// already built.
+const _access = createSettingsAccess({ onResolved: _applySettingsAccess });
 let _modelDefaultsStorePromise = null;
-function _personalModelDefaults(access) {
-  return Boolean(access && access.personalModelDefaults);
-}
 /**
  * The model-defaults store for this caller. Which store (the caller's own
  * preferences or the server-wide settings) depends on who the caller is, so
@@ -102,9 +68,9 @@ function _personalModelDefaults(access) {
  */
 function _getModelDefaultsStore() {
   if (!_modelDefaultsStorePromise) {
-    _modelDefaultsStorePromise = _resolveSettingsAccess().then(function(access) {
+    _modelDefaultsStorePromise = _access.resolve().then(function(access) {
       return createModelDefaultsStore({
-        personal: _personalModelDefaults(access),
+        personal: personalModelDefaults(access),
         clearOwnOverrides: Boolean(access.authEnabled && access.canManage),
       });
     });
@@ -241,13 +207,13 @@ const _shell = createSettingsShell({
   ensureInitialized: () => {
     if (!initialized) initAll();
     // Reopening Settings asks again after a failed status lookup.
-    else if (!_settingsAccess) _resolveSettingsAccess().catch(function() {});
+    else if (!_access.isResolved()) _access.resolve().catch(function() {});
   },
   syncAppearanceCheckboxes: () => syncAppearanceCheckboxes(modalEl),
   refreshAiModelEndpoints: () => refreshAiModelEndpoints(),
-  isAdmin: () => _canManageSettings(),
-  accountsEnabled: () => _accountsEnabled(),
-  accessKnown: () => _settingsAccessKnown(),
+  isAdmin: () => _access.canManage(),
+  accountsEnabled: () => _access.accountsEnabled(),
+  accessKnown: () => _access.known(),
   getAdminModule: () => window.adminModule,
 });
 
@@ -279,8 +245,8 @@ function _selectableEndpointModels(endpoint) {
 // the owner-scoped, allowlist-filtered chat catalog the runtime resolver
 // honors for them.
 async function _fetchModelDefaultEndpoints() {
-  const access = await _resolveSettingsAccess();
-  return _personalModelDefaults(access)
+  const access = await _access.resolve();
+  return personalModelDefaults(access)
     ? _fetchForegroundFallbackEndpoints()
     : _fetchModelEndpoints();
 }
@@ -1658,7 +1624,7 @@ function initAll() {
   // model-default cards stay read-only; their Retry (or reopening Settings)
   // asks again. Access may already be known (an endpoint refresh can run
   // before Settings is first opened), so apply it here as well.
-  _resolveSettingsAccess().then(_applySettingsAccess, function(error) {
+  _access.resolve().then(_applySettingsAccess, function(error) {
     console.warn('Settings access is unknown until /api/auth/status answers', error);
   });
 
@@ -1668,8 +1634,8 @@ function initAll() {
   });
 
   bindSettingsSearch(modalEl, {
-    isAdmin: () => _canManageSettings(),
-    accountsEnabled: () => _accountsEnabled(),
+    isAdmin: () => _access.canManage(),
+    accountsEnabled: () => _access.accountsEnabled(),
     openPanel(tab) {
       const button = modalEl.querySelector(`[data-settings-tab="${tab}"]`);
       if (button) button.click();
@@ -1708,13 +1674,13 @@ function initAll() {
   initResearchSettings();
   initResearchSearchSettings();
   initAgentSettings();
-  initAppearance(modalEl, { canManage: _canManageSettings });
+  initAppearance(modalEl, { canManage: _access.canManage });
   initShortcuts();
   initAccount();
   initIntegrations();
   initEmailSettings();
   initEmailAccountsSettings({ openSettings: open });
-  initReminderSettings(modalEl, { canManage: _canManageSettings });
+  initReminderSettings(modalEl, { canManage: _access.canManage });
   initUnifiedIntegrations();
   initDocumentWritingStyle();
 }
