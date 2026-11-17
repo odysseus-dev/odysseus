@@ -127,10 +127,12 @@ def _check_value(name: str, value: Any) -> Any:
         return value
     kind, low, high, low_exclusive = _RANGES[name]
     is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
-    if not is_number or (kind == "integer" and value != int(value)):
+    if not is_number:
         raise ValueError(f"{name} must be {'an integer' if kind == 'integer' else 'a number'}")
     if not math.isfinite(value):
         raise ValueError(f"{name} must be a finite number")
+    if kind == "integer" and value != int(value):
+        raise ValueError(f"{name} must be an integer")
     too_low = value <= low if low_exclusive else value < low
     if too_low or value > high:
         bound = f"above {low}" if low_exclusive else f"from {low}"
@@ -440,7 +442,10 @@ def context_window_override(url: str, model: str) -> Optional[int]:
 
 
 def seed_thinking_mode(url: str, model: str) -> Optional[str]:
-    """Stored thinking choice for any model, or None when unset."""
+    """Stored thinking choice for supported models, or None when unset or unsupported."""
+    from src.model_profiles import supports_user_thinking_toggle
+    if not supports_user_thinking_toggle(model):
+        return None
     return (lookup(url, model) or {}).get("thinking")
 
 
@@ -466,6 +471,7 @@ def cascade() -> list:
     """
     from core.database import ModelEndpoint
     from src.endpoint_resolver import _endpoint_enabled_models
+    from src.model_profiles import supports_user_thinking_toggle
 
     stored = {(e["endpoint_id"], e["model"]): e["settings"] for e in load_entries()}
     listing = []
@@ -482,6 +488,7 @@ def cascade() -> list:
                     "format": fmt,
                     "carried": _ordered(carried_fields(fmt)),
                     "settings": dict(stored.get((ep.id, model), {})),
+                    "thinking_supported": supports_user_thinking_toggle(model),
                 }
                 for model in _endpoint_enabled_models(ep)
             ]

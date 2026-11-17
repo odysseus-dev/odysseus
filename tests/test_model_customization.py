@@ -158,9 +158,10 @@ def test_unknown_setting_names_are_rejected():
 
 
 def test_a_non_finite_value_is_rejected():
-    for name in ("temperature", "top_p"):
-        with pytest.raises(ValueError, match="finite"):
-            mc.validate_settings({name: float("nan")})
+    for name in ("temperature", "top_p", "top_k", "num_ctx"):
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(ValueError, match="finite"):
+                mc.validate_settings({name: non_finite})
 
 
 def test_a_blank_unknown_setting_name_is_still_rejected():
@@ -585,6 +586,9 @@ def test_context_window_override_is_ollama_native_only(lab_entry):
 def test_seed_thinking_mode_returns_the_saved_choice(lab_entry):
     assert mc.seed_thinking_mode(lab_entry, "qwen3:8b") == "on"
     assert mc.seed_thinking_mode(lab_entry, "other") is None
+    # Model without user thinking toggle support must return None even if saved
+    mc.save_entry("lab-ollama", LAB_URL, "llama-3.3-70b", {"thinking": "on"})
+    assert mc.seed_thinking_mode(lab_entry, "llama-3.3-70b") is None
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file locks only")

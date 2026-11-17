@@ -56,11 +56,11 @@ def test_a_new_chat_starts_with_thinking_on(db):
     assert _stored_mode(db, "s1") == "on"
 
 
-def test_models_without_the_thinking_toggle_still_seed_the_value(db):
+def test_models_without_the_thinking_toggle_do_not_seed_thinking_on(db):
     mc.save_entry("groq", GROQ, PLAIN, {"thinking": "on"})
     session = _new_chat("s2", PLAIN)
-    assert session.thinking_mode == "on"
-    assert _stored_mode(db, "s2") == "on"
+    assert session.thinking_mode == "off"
+    assert _stored_mode(db, "s2") == "off"
 
 
 def test_uncustomized_models_start_with_thinking_off(db):

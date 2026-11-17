@@ -65,6 +65,9 @@ def _parse_msg_content(raw):
 def _seeded_thinking_mode(endpoint_url: str, model: str) -> str:
     """Starting thinking mode for a new chat: the model's saved setting, else "off"."""
     try:
+        from src.model_profiles import supports_user_thinking_toggle
+        if not supports_user_thinking_toggle(model):
+            return "off"
         from src.model_customization import seed_thinking_mode
         return seed_thinking_mode(endpoint_url, model) or "off"
     except Exception:
@@ -513,6 +516,9 @@ class SessionManager:
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
             session.cwd = getattr(db_session, "cwd", None) or None
+            session.thinking_mode = getattr(db_session, "thinking_mode", "") or "off"
+            session.temperature_override = getattr(db_session, "temperature_override", None)
+            session.max_tokens_override = getattr(db_session, "max_tokens_override", None)
             session.message_count = (
                 db.query(DbChatMessage)
                 .filter(DbChatMessage.session_id == session_id)

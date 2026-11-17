@@ -215,6 +215,20 @@ def test_supported_settings_are_reported_per_provider_format(client_for, endpoin
             "presence_penalty", "repeat_penalty"} <= lab
     assert {"temperature", "top_p", "presence_penalty"} <= groq
     assert not groq & {"num_ctx", "top_k", "min_p", "repeat_penalty"}
+    assert listed["lab-ollama"]["qwen3:8b"]["thinking_supported"] is True
+    assert listed["groq-cloud"]["llama-3.3-70b"]["thinking_supported"] is False
+
+
+def test_non_finite_integer_setting_returns_400_not_500(client_for, endpoints, store):
+    endpoints("lab-ollama", LAB_URL, ["qwen3:8b"])
+    response = client_for("ada").put(
+        "/api/model-customizations",
+        content='{"endpoint_id": "lab-ollama", "model": "qwen3:8b", "settings": {"top_k": 1e9999}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert "finite" in response.json()["detail"]
+    assert not store.exists()
 
 
 def test_stored_settings_are_reported_with_the_model(client_for, endpoints):

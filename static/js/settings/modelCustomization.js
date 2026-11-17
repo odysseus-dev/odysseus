@@ -90,6 +90,13 @@ function renderModel() {
   showMessage('', false);
   fillControls(controls, entry ? entry.settings : {});
   applyReadOnly(controls, byId('adm-mcSaveBtn'), !entry || Boolean(selectedEndpoint()?.read_only));
+  if (entry && controls.thinking) {
+    const thinkingSupported = entry.thinking_supported !== false;
+    controls.thinking.disabled = !thinkingSupported || Boolean(selectedEndpoint()?.read_only);
+    if (!thinkingSupported) {
+      controls.thinking.value = '';
+    }
+  }
 }
 
 function renderEndpoint() {

@@ -68,8 +68,8 @@ def test_context_payload_reports_the_model_temperature(session_route):
     body = session_route.client.get("/api/session/chat-1/context").json()
     assert body["effective_temperature"] == 0.6
     assert body["temperature_source"] == "model"
-    assert body["thinking_supported"] is True
-    assert body["thinking_mode"] == "on"
+    assert body["thinking_supported"] is False
+    assert body["thinking_mode"] == "off"
 
 
 def test_context_payload_prefers_the_session_override(session_route):
@@ -86,7 +86,17 @@ def test_context_payload_falls_back_to_the_builtin_default(session_route):
     assert body["temperature_source"] == "default"
 
 
-def test_saving_thinking_is_accepted_for_a_model_outside_the_old_list(session_route):
+def test_saving_thinking_is_clamped_to_off_for_unsupported_model(session_route):
+    response = session_route.client.post(
+        "/api/session/chat-1/generation-settings", json={"thinking_mode": "on"})
+    assert response.status_code == 200, response.text
+    assert session_route.session.thinking_mode == "off"
+
+
+def test_context_payload_and_saving_thinking_for_supported_model(session_route):
+    session_route.session.model = "qwen3-32b"
+    body = session_route.client.get("/api/session/chat-1/context").json()
+    assert body["thinking_supported"] is True
     response = session_route.client.post(
         "/api/session/chat-1/generation-settings", json={"thinking_mode": "on"})
     assert response.status_code == 200, response.text
