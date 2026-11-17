@@ -326,6 +326,21 @@ async function testFinder(instance, cookies) {
     focused: document.activeElement?.dataset?.settingsSection,
   }));
   check('admin-managed panel result routes through the admin controller and reveals the card', adminReveal.activeTab === 'system' && adminReveal.focused === 'backup', JSON.stringify(adminReveal));
+  // A failed server-wide save is reported, not only logged.
+  await admin.page.click('[data-settings-tab="reminders"]');
+  await admin.page.waitForTimeout(600);
+  await admin.page.route('**/api/auth/settings', route => (
+    route.request().method() === 'POST'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.continue()
+  ));
+  await admin.page.click('label.admin-switch:has(#set-reminder-llm-toggle)');
+  await admin.page.waitForFunction(() => {
+    const toast = document.getElementById('toast');
+    return toast && toast.classList.contains('show') && toast.textContent.includes('Could not save reminder settings');
+  }, null, { timeout: 8000 }).then(() => true, () => false).then(shown => check('failed reminder save shows an error', shown));
+  await admin.page.unroute('**/api/auth/settings');
+
   await admin.page.click('#settings-sidebar-toggle');
   await admin.page.waitForTimeout(300);
   const collapsedFinder = await admin.page.isVisible('#settings-nav-search');

@@ -3164,7 +3164,10 @@ async function initReminderSettings() {
     if (emailAcctSel) {
       const savedId = s.reminder_email_account_id;
       populateReminderEmailAccounts(savedId || '');
-      if (emailAcctSel.value && emailAcctSel.value !== (savedId || '')) {
+      // Opening Settings may adopt the default account, but only for someone
+      // who can change this server-wide setting; anyone else would trigger a
+      // refused write (and an error toast) just by looking at the panel.
+      if (_canManageSettings() && emailAcctSel.value && emailAcctSel.value !== (savedId || '')) {
         save({ reminder_email_account_id: emailAcctSel.value || null });
       }
     }
@@ -3175,7 +3178,13 @@ async function initReminderSettings() {
   async function save(patch) {
     try {
       await _postSettings(patch);
-    } catch (e) { console.warn('Failed to save reminder settings', e); }
+    } catch (e) {
+      console.warn('Failed to save reminder settings', e);
+      // postSettings already reports a refused (403) write.
+      if (e && e.status !== 403 && uiModule && uiModule.showError) {
+        uiModule.showError('Could not save reminder settings. Reopen Settings to see what is stored.');
+      }
+    }
   }
 
   channelSel.addEventListener('change', () => {
