@@ -234,6 +234,8 @@ function mockEvaluate(fileName, module) {
   }
   if (fileName === 'richBodyWiring.js') {
     set('_showRichTextEditor', (...args) => { calls.showRich.push(args); });
+    set('_showMarkdownVisualEditor', () => {});
+    set('_hideMarkdownVisualEditor', () => {});
     return;
   }
   if (fileName === 'suggestions.js') {
@@ -298,7 +300,7 @@ async function loadDocumentUpdate() {
         'previewModes.js': ['_setMarkdownPreviewActive', '_isMarkdownPreviewVisible', 'toggleCsvPreview', 'toggleHtmlPreview', '_themedRenderSrcdoc', '_htmlPreviewActive'],
         'sourceEditor.js': ['syncHighlighting', 'attemptAutoDetect', '_refreshMarkdownPreviewIfVisible'],
         'composerFields.js': ['_showEmailFields'],
-        'richBodyWiring.js': ['_showRichTextEditor'],
+        'richBodyWiring.js': ['_showRichTextEditor', '_showMarkdownVisualEditor', '_hideMarkdownVisualEditor'],
         'suggestions.js': ['suspendSuggestions', '_restoreSuggestionsFromStorage'],
         'pdfTools.js': ['_isFormBackedDoc', '_pdfViewState', '_refreshPdfPreviewIframe'],
         'localDraft.js': ['_clearEmailLocalDraft', '_persistEmailLocalDraftSoon'],

@@ -130,7 +130,11 @@ export function _installMarkdownPreviewEditButton(preview) {
     event.preventDefault();
     event.stopPropagation();
     _setMarkdownPreviewActive(false, { remember: true });
-    requestAnimationFrame(() => document.getElementById('doc-editor-textarea')?.focus());
+    requestAnimationFrame(() => {
+      const rich = document.getElementById('doc-email-richbody');
+      if (rich && rich.style.display !== 'none') rich.focus();
+      else document.getElementById('doc-editor-textarea')?.focus();
+    });
   });
   preview.prepend(button);
 }
@@ -152,6 +156,12 @@ export function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     // The import action belongs to the empty editor, not the preview. Keep
     // the preview surface to a single Edit action.
     if (emptyImport) emptyImport.style.display = 'none';
+    const rich = typeof document !== 'undefined' ? document.getElementById('doc-email-richbody') : null;
+    if (!richMode && rich && rich.style.display !== 'none' && rich.classList.contains('markdown-visual-mode')) {
+      _deps.syncEmailRichbody?.(rich);
+      rich.style.display = 'none';
+    }
+    _deps.hideMarkdownCompatBanner?.();
     const md = textarea.value || '';
     if (richMode) {
       const sanitized = typeof mdMod?.sanitizeAllowedHtml === 'function'
@@ -174,24 +184,30 @@ export function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     _installMarkdownPreviewEditButton(preview);
     preview.style.display = '';
     wrap.style.display = 'none';
-    const rich = typeof document !== 'undefined' ? document.getElementById('doc-email-richbody') : null;
     if (richMode && rich) rich.style.display = 'none';
   } else {
     preview.style.display = 'none';
     preview.innerHTML = '';
     preview.classList.remove('doc-rich-preview');
-    const isEmailDoc = docMap && docId && docMap.get(docId)?.language === 'email';
+    const activeDoc = docMap && docId ? docMap.get(docId) : null;
+    const isEmailDoc = activeDoc?.language === 'email';
     const richEmailBody = typeof document !== 'undefined' ? document.getElementById('doc-email-richbody') : null;
     if (richMode && richEmailBody) {
       richEmailBody.style.display = '';
-    }
-    if (richMode) {
-      // Rich Text edits through the contenteditable surface; its mirrored
-      // textarea and line-number wrapper must stay hidden when returning
-      // from preview.
       wrap.style.display = 'none';
-    } else if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
-      wrap.style.display = '';
+    } else if (!isEmailDoc && activeDoc && _deps.isVisualMarkdownDoc?.(activeDoc) && _deps.resolveMarkdownEditorMode?.(activeDoc) === 'visual') {
+      _deps.showMarkdownVisualEditor?.(activeDoc);
+    } else {
+      if (!isEmailDoc && richEmailBody) {
+        richEmailBody.classList.remove('markdown-visual-mode');
+        richEmailBody.style.display = 'none';
+      }
+      if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
+        wrap.style.display = '';
+      }
+      if (!isEmailDoc && activeDoc?._visualCompatReasons?.length) {
+        _deps.renderMarkdownCompatBanner?.(activeDoc._visualCompatReasons);
+      }
     }
     _syncRichEmptyImport(richEmailBody);
   }

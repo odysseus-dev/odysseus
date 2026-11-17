@@ -26,16 +26,25 @@ import { _activeDocLanguage, _openDocumentOutline, _refreshDocumentOutline, _sch
 
 import { uiModule } from '../host.js';
 
-import { closePanel, saveCurrentToMap } from '../../application/documentCommands.js';
+import { closePanel, saveCurrentToMap, _syncHeaderActions } from '../../application/documentCommands.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
 import { _openFindBar, onFindTextareaScroll } from '../findReplace.js';
 import { initRichTables } from '../richTables.js';
+import { _hideMarkdownVisualEditor, _showMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import {
+  isMarkdownVisualModeActive,
+  isSyncingVisualToTextarea,
+  isVisualMarkdownDoc,
+  renderMarkdownCompatBanner,
+  resolveMarkdownEditorMode,
+} from '../richEditor/markdownVisualSync.js';
 
 export function bindSourceEditor({ pane, paneLifetime }) {
 const ta = document.getElementById('doc-editor-textarea');
 const pre = document.getElementById('doc-editor-highlight');
 if (ta && pre) {
       ta.addEventListener('input', () => {
+        if (isSyncingVisualToTextarea()) return;
         // Typing invalidates any pinned selection highlight
         if (_selections.length) clearSelection({ preserveCaret: true });
         // Auto-create a document if user types/pastes with no active doc.
@@ -44,6 +53,18 @@ if (ta && pre) {
         if (!activeDocId && !_creatingDoc && ta.value.trim()) {
           _autoCreateFromInput(ta.value);
           return;
+        }
+        // A programmatic source write (tools, insertions) while the visual editor
+        // is shown: adopt the source as the document, re-render the visual view
+        // from it, then run the normal source pipeline below.
+        const activeDoc = activeDocId && docs.get(activeDocId);
+        if (activeDoc && isVisualMarkdownDoc(activeDoc) && isMarkdownVisualModeActive()) {
+          _hideMarkdownVisualEditor();
+          saveCurrentToMap();
+          if (resolveMarkdownEditorMode(activeDoc) !== 'visual' || !_showMarkdownVisualEditor(activeDoc)) {
+            renderMarkdownCompatBanner(activeDoc._visualCompatReasons);
+          }
+          _syncHeaderActions();
         }
         _markDocumentDirty(activeDocId);
         saveCurrentToMap();
@@ -142,9 +163,10 @@ if (ta && pre) {
         // Markdown shortcuts (only when language is markdown)
         const lang = document.getElementById('doc-language-select')?.value;
         if (lang === 'markdown' && (e.ctrlKey || e.metaKey)) {
-          if (e.key === 'b') { e.preventDefault(); applyMdFormat('bold'); }
-          else if (e.key === 'i') { e.preventDefault(); applyMdFormat('italic'); }
-          else if (e.key === 'k') { e.preventDefault(); applyMdFormat('link'); }
+          const formatOptions = { bypassDuplicateGuard: !e.repeat };
+          if (e.key === 'b') { e.preventDefault(); applyMdFormat('bold', formatOptions); }
+          else if (e.key === 'i') { e.preventDefault(); applyMdFormat('italic', formatOptions); }
+          else if (e.key === 'k') { e.preventDefault(); applyMdFormat('link', formatOptions); }
         }
       });
 

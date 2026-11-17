@@ -19,6 +19,104 @@ import { _richTextContentToHtml, _scheduleEmailRichbodySave, _syncEmailRichbody,
 import { _activeRichImage, _cleanRichTextPasteHtml, _handleRichChecklistEnter, _handleRichHeadingEnter, _insertSmartRichPasteLink, _normalizeRichChecklists, _normalizeRichInlineCode, _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage, _setRichChecklistItemChecked, setRichInlineCodeTypingArmed } from './richOperations.js';
 import { _followRichSelectionToolbarLayout, _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from './selectionToolbar.js';
 import { _applyRichBlockInputRule, _chooseRichSlashCommand, _hideRichSlashMenu, _renderRichSlashMenu, _richSlashActiveIndex, _richSlashContext, _richSlashMenu, _syncRichSlashMenu, setRichSlashActiveIndex } from './slashMenu.js';
+import { captureVisualBaseline, cleanMarkdownPasteHtml, hideMarkdownCompatBanner, isMarkdownVisualModeActive, isVisualMarkdownDoc, renderMarkdownCompatBanner, renderMarkdownIntoVisualRich, unbindVisualSurface } from './markdownVisualSync.js';
+
+function _handleMarkdownVisualKeyExit(rich, e) {
+  if (!isMarkdownVisualModeActive()) return false;
+  const selection = window.getSelection?.();
+  if (!selection?.rangeCount || !selection.isCollapsed) return false;
+  const range = selection.getRangeAt(0);
+  if (!rich.contains(range.startContainer)) return false;
+  const startEl = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer
+    : range.startContainer.parentElement;
+  if (!startEl) return false;
+
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const pre = startEl.closest('pre');
+    if (pre && rich.contains(pre)) {
+      if (e.shiftKey) {
+        // Shift+Enter exits fenced code block into a clean paragraph below
+        const nextP = document.createElement('p');
+        nextP.appendChild(document.createElement('br'));
+        pre.after(nextP);
+        const nextRange = document.createRange();
+        nextRange.selectNodeContents(nextP);
+        nextRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        _syncEmailRichbody(rich);
+        _scheduleEmailRichbodySave();
+        rich._syncActive?.();
+        return true;
+      }
+      document.execCommand('insertText', false, '\n');
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+      return true;
+    }
+    if (!e.shiftKey && _exitEmptyMarkdownQuoteLine(rich, startEl, selection)) return true;
+  }
+
+  if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    const block = startEl.closest('h1,h2,h3,h4,h5,h6,blockquote,pre');
+    if (block && rich.contains(block)) {
+      const prefix = document.createRange();
+      try {
+        prefix.selectNodeContents(block);
+        prefix.setEnd(range.startContainer, range.startOffset);
+      } catch (_) {
+        return false;
+      }
+      if (prefix.toString().length === 0 && !(block.textContent || '').trim()) {
+        const p = document.createElement('p');
+        p.appendChild(document.createElement('br'));
+        block.replaceWith(p);
+        const caret = document.createRange();
+        caret.selectNodeContents(p);
+        caret.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(caret);
+        _syncEmailRichbody(rich);
+        _scheduleEmailRichbodySave();
+        rich._syncActive?.();
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Enter on an empty last line of a block quote leaves the quote (as with lists),
+ * instead of the browser default of starting yet another empty quote.
+ */
+function _exitEmptyMarkdownQuoteLine(rich, startEl, selection) {
+  const quote = startEl.closest('blockquote');
+  if (!quote || !rich.contains(quote)) return false;
+  const line = startEl.closest('p, div');
+  const emptyLine = line && quote.contains(line) && line !== quote ? line : quote;
+  const isEmpty = (node) => !(node.textContent || '').replace(/\u200b/g, '').trim() && !node.querySelector('img, hr, table');
+  if (!isEmpty(emptyLine)) return false;
+  if (emptyLine !== quote && emptyLine !== quote.lastElementChild) return false;
+  const paragraph = document.createElement('p');
+  paragraph.appendChild(document.createElement('br'));
+  if (emptyLine === quote || isEmpty(quote)) {
+    quote.replaceWith(paragraph);
+  } else {
+    emptyLine.remove();
+    quote.after(paragraph);
+  }
+  const caret = document.createRange();
+  caret.selectNodeContents(paragraph);
+  caret.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(caret);
+  _syncEmailRichbody(rich);
+  _scheduleEmailRichbodySave();
+  rich._syncActive?.();
+  return true;
+}
 
 export function _wireEmailRichbody(rich) {
     if (rich._wired) { _syncEmailRichbody(rich); return; }
@@ -43,7 +141,7 @@ export function _wireEmailRichbody(rich) {
       const docId = activeDocId;
       const doc = docId && docs.get(docId);
       const pane = rich.closest('#doc-editor-pane');
-      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()
+      if (doc && (_isRichTextLang(doc.language) || isVisualMarkdownDoc(doc)) && !(doc.title || '').trim()
           && rich.isConnected && (!pane || (pane.isConnected && pane.dataset.activeDocumentId === docId))) {
         scheduleAutoTitle(rich.innerText || '', docId, 500);
       }
@@ -166,7 +264,8 @@ export function _wireEmailRichbody(rich) {
     });
     rich.addEventListener('paste', (e) => {
       const doc = activeDocId && docs.get(activeDocId);
-      if (!doc || !_isRichTextLang(doc.language)) return;
+      const mdVisual = Boolean(doc && isVisualMarkdownDoc(doc) && rich.classList.contains('markdown-visual-mode'));
+      if (!doc || (!_isRichTextLang(doc.language) && !mdVisual)) return;
       const images = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
       if (images.length) {
         e.preventDefault();
@@ -186,22 +285,28 @@ export function _wireEmailRichbody(rich) {
       rich.focus();
       if (!html && _insertSmartRichPasteLink(rich, text)) {
         // Smart URL paste is already inserted through the native undo stack.
-      } else if (html) document.execCommand('insertHTML', false, _cleanRichTextPasteHtml(html));
-      else document.execCommand('insertText', false, text);
+      } else if (html) {
+        const cleaned = _cleanRichTextPasteHtml(html);
+        document.execCommand('insertHTML', false, mdVisual ? cleanMarkdownPasteHtml(cleaned) : cleaned);
+      } else {
+        document.execCommand('insertText', false, text);
+      }
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
       e.stopPropagation();
     });
     rich.addEventListener('dragover', (e) => {
       const doc = activeDocId && docs.get(activeDocId);
-      if (!doc || !_isRichTextLang(doc.language)) return;
+      const mdVisual = Boolean(doc && isVisualMarkdownDoc(doc) && rich.classList.contains('markdown-visual-mode'));
+      if (!doc || (!_isRichTextLang(doc.language) && !mdVisual)) return;
       if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     });
     rich.addEventListener('drop', (e) => {
       const doc = activeDocId && docs.get(activeDocId);
-      if (!doc || !_isRichTextLang(doc.language)) return;
+      const mdVisual = Boolean(doc && isVisualMarkdownDoc(doc) && rich.classList.contains('markdown-visual-mode'));
+      if (!doc || (!_isRichTextLang(doc.language) && !mdVisual)) return;
       const images = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
       if (!images.length) return;
       e.preventDefault();
@@ -298,29 +403,37 @@ export function _wireEmailRichbody(rich) {
         e.stopPropagation();
         return;
       }
+      if (_handleMarkdownVisualKeyExit(rich, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const mdVisual = isMarkdownVisualModeActive();
       let action = '';
       if (mod && e.altKey && !e.shiftKey && /^[0-6]$/.test(key)) action = key === '0' ? 'paragraph' : `h${key}`;
       else if (mod && !e.altKey && key === 'b') action = 'bold';
       else if (mod && !e.altKey && key === 'i') action = 'italic';
-      else if (mod && !e.altKey && key === 'u') action = 'underline';
+      else if (!mdVisual && mod && !e.altKey && key === 'u') action = 'underline';
       else if (mod && !e.altKey && key === 'k') action = 'link';
       else if (mod && e.shiftKey && key === 'x') action = 'strike';
       else if (mod && e.shiftKey && key === '5') action = 'strike';
       else if (mod && e.shiftKey && key === '7') action = 'ol';
       else if (mod && e.shiftKey && key === '8') action = 'ul';
-      else if (mod && e.shiftKey && !e.altKey && key === 'l') action = 'alignleft';
-      else if (mod && e.shiftKey && !e.altKey && key === 'e') action = 'aligncenter';
-      else if (mod && e.shiftKey && !e.altKey && key === 'j') action = 'alignjustify';
-      else if (mod && !e.altKey && key === '[') action = 'outdent';
-      else if (mod && !e.altKey && key === ']') action = 'indent';
-      else if (mod && !e.altKey && key === '.') action = 'superscript';
-      else if (mod && !e.altKey && key === ',') action = 'subscript';
+      else if (!mdVisual && mod && e.shiftKey && !e.altKey && key === 'l') action = 'alignleft';
+      else if (!mdVisual && mod && e.shiftKey && !e.altKey && key === 'e') action = 'aligncenter';
+      else if (!mdVisual && mod && e.shiftKey && !e.altKey && key === 'j') action = 'alignjustify';
+      else if (!mdVisual && mod && !e.altKey && key === '[') action = 'outdent';
+      else if (!mdVisual && mod && !e.altKey && key === ']') action = 'indent';
+      else if (!mdVisual && mod && !e.altKey && key === '.') action = 'superscript';
+      else if (!mdVisual && mod && !e.altKey && key === ',') action = 'subscript';
       else if (mod && !e.altKey && key === '\\') action = 'removeformat';
       else if (mod && e.shiftKey && key === '`') action = 'codeblock';
       else if (mod && !e.altKey && key === '`') action = 'code';
       if (action) {
         e.preventDefault();
-        applyMdFormat(action);
+        // A deliberate keypress is never a duplicate click; held-key auto-repeat
+        // keeps the toolbar's duplicate guard.
+        applyMdFormat(action, { bypassDuplicateGuard: !e.repeat });
         return;
       }
       if (e.key === 'Tab') {
@@ -355,7 +468,7 @@ export function _wireEmailRichbody(rich) {
         try { inList = document.queryCommandState('insertOrderedList') || document.queryCommandState('insertUnorderedList'); } catch (_) {}
         if (inList) {
           e.preventDefault();
-          applyMdFormat(e.shiftKey ? 'outdent' : 'indent');
+          applyMdFormat(e.shiftKey ? 'outdent' : 'indent', { bypassDuplicateGuard: !e.repeat });
         }
       }
     });
@@ -397,7 +510,10 @@ export function _showRichTextEditor(doc) {
     // Keep the plain-text mirror available to save/send code, but never show
     // its second "Start writing" surface alongside the rich editor.
     if (textarea) textarea.style.display = 'none';
+    unbindVisualSurface(rich);
+    rich.classList.remove('markdown-visual-mode');
     rich.classList.add('richtext-mode');
+    hideMarkdownCompatBanner();
     // The rich editor is a formatting surface, not a browser spellcheck
     // field. Disable native red underlines, which are especially distracting
     // for names, code, and mixed-language email text.
@@ -411,4 +527,74 @@ export function _showRichTextEditor(doc) {
     _syncEmailRichbody(rich);
     _syncRichEmptyImport(rich);
     if (textarea) textarea.spellcheck = true;
+  }
+
+/**
+ * Mount the visual WYSIWYG editing surface for a supported Markdown document
+ * without rewriting the underlying Markdown source on initial render.
+ * Falls back to the Markdown source editor (with the compatibility banner) when the
+ * normalized visual content would rewrite the document on its first edit.
+ * @param {object} doc
+ * @param {{ focus?: boolean }} [opts]
+ * @returns {boolean} true when the visual editor is shown
+ */
+export function _showMarkdownVisualEditor(doc, { focus = false } = {}) {
+    const rich = document.getElementById('doc-email-richbody');
+    const source = document.getElementById('doc-editor-wrap');
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (!rich || !source || !doc) return false;
+
+    _clearRichImageSelection();
+    setRichInlineCodeTypingArmed(false);
+    try { document.execCommand?.('styleWithCSS', false, false); } catch (_) {}
+    hideMarkdownCompatBanner();
+    source.style.display = 'none';
+    rich.style.display = '';
+    if (textarea) textarea.style.display = 'none';
+    rich.classList.remove('richtext-mode');
+    rich.classList.add('markdown-visual-mode');
+    rich.contentEditable = 'true';
+    rich.spellcheck = false;
+    rich.setAttribute('aria-label', 'Visual document editor');
+    rich.dataset.placeholder = "Start writing, or type '/' for commands...";
+
+    renderMarkdownIntoVisualRich(rich, doc);
+    _normalizeRichTextImages(rich);
+    _normalizeRichChecklists(rich);
+    _normalizeRichInlineCode(rich);
+    const rewriteReason = doc._visualSyncBlocked ? '' : captureVisualBaseline(rich, doc);
+    if (rewriteReason) {
+      doc._visualCompatReasons = [rewriteReason];
+      _hideMarkdownVisualEditor();
+      rich.innerHTML = '';
+      renderMarkdownCompatBanner(doc._visualCompatReasons);
+      return false;
+    }
+    _wireEmailRichbody(rich);
+    _syncEmailRichbody(rich);
+    _syncRichEmptyImport(rich);
+    if (textarea) textarea.spellcheck = true;
+    if (focus) {
+      try { rich.focus(); } catch (_) {}
+    }
+    return true;
+  }
+
+/**
+ * Exit Visual Markdown mode back to the Markdown source container (`#doc-editor-wrap`).
+ */
+export function _hideMarkdownVisualEditor() {
+    const rich = document.getElementById('doc-email-richbody');
+    const source = document.getElementById('doc-editor-wrap');
+    const textarea = document.getElementById('doc-editor-textarea');
+    _hideRichSlashMenu();
+    _hideRichSelectionToolbar();
+    _clearRichImageSelection();
+    if (rich) {
+      unbindVisualSurface(rich);
+      rich.classList.remove('markdown-visual-mode');
+      rich.style.display = 'none';
+    }
+    if (source) source.style.display = '';
+    if (textarea) textarea.style.display = '';
   }

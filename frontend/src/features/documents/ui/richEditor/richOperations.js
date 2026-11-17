@@ -259,8 +259,34 @@ export function _toggleRichChecklist(rich) {
     const insertedItem = _richSelectionListItem(rich);
     const insertedList = insertedItem?.parentElement;
     if (!insertedList) return false;
-    insertedList.classList.add('rich-checklist');
-    _normalizeRichChecklists(insertedList);
+    const siblings = _richChecklistItems(insertedList).filter(item => item !== insertedItem);
+    if (!siblings.length) {
+      insertedList.classList.add('rich-checklist');
+      _normalizeRichChecklists(insertedList);
+      return true;
+    }
+    // The browser merged the new item into an adjacent list. Only the new item
+    // becomes a checklist; the neighbouring items keep their list type.
+    const items = _richChecklistItems(insertedList);
+    const position = items.indexOf(insertedItem);
+    const following = items.slice(position + 1);
+    const checklist = document.createElement('ul');
+    checklist.className = 'rich-checklist';
+    insertedList.after(checklist);
+    checklist.appendChild(insertedItem);
+    if (following.length) {
+      const tail = insertedList.cloneNode(false);
+      checklist.after(tail);
+      following.forEach(item => tail.appendChild(item));
+    }
+    if (position === 0) insertedList.remove();
+    _normalizeRichChecklists(checklist);
+    const caret = document.createRange();
+    caret.selectNodeContents(insertedItem);
+    caret.collapse(false);
+    const selection = window.getSelection?.();
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
     return true;
   }
 

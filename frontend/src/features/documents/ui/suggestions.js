@@ -575,6 +575,9 @@ const _positionCard = (card, sugg = _activeSuggestions[0]) => {
     } else if (textarea) {
       textarea.value = content;
       _syncHighlighting();
+      if (typeof _deps.refreshVisualMarkdownIfActive === 'function') {
+        _deps.refreshVisualMarkdownIfActive(doc);
+      }
       if (typeof _deps.refreshMarkdownPreviewIfVisible === 'function') {
         _deps.refreshMarkdownPreviewIfVisible(doc.id, content);
       }
@@ -616,6 +619,11 @@ const _positionCard = (card, sugg = _activeSuggestions[0]) => {
     const textarea = _getTextarea();
     if (textarea && sugg.find && typeof textarea.value === 'string' && textarea.value.includes(sugg.find)) {
       textarea.value = textarea.value.replace(sugg.find, sugg.replace);
+      const docId = _getActiveDocId();
+      const doc = docId ? _getDocs().get(docId) : null;
+      if (doc && typeof _deps.refreshVisualMarkdownIfActive === 'function') {
+        _deps.refreshVisualMarkdownIfActive(doc);
+      }
       _syncHighlighting();
       _saveDocument({ silent: true });
     }

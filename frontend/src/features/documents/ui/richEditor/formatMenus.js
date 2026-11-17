@@ -210,6 +210,21 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
     if (kind === 'list' && activeDoc?.language === 'email') {
       items = items?.filter(([action]) => action !== 'check');
     }
+    if (kind === 'separator' && String(activeDoc?.language || '').toLowerCase() === 'markdown') {
+      items = items?.filter(([action]) => action === 'separator:solid');
+    }
+    if (kind === 'table' && String(activeDoc?.language || '').toLowerCase() === 'markdown') {
+      items = items?.filter(([action]) => (
+        action.startsWith('table:insert:')
+        || action === 'table:row-above'
+        || action === 'table:row-below'
+        || action === 'table:column-left'
+        || action === 'table:column-right'
+        || action === 'table:delete-row'
+        || action === 'table:delete-column'
+        || action === 'table:delete'
+      ));
+    }
     if (!items) return;
 
     const rect = toggleBtn.getBoundingClientRect();

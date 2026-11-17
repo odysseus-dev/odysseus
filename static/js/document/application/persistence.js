@@ -244,6 +244,15 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
   // Choose the authoritative draft when this write gets its turn. A save
   // queued behind a restore must not replay the pre-restore document.
   if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
+  if (localDoc._visualSyncBlocked) {
+    _setDocumentSaveState('error', savingDocId);
+    if (uiModule) {
+      const reason = localDoc._visualCompatReasons?.[0] || 'formatting cannot be represented in Markdown';
+      uiModule.showError(silent ? 'Autosave paused: unsupported formatting' : `Cannot save document: ${reason}`);
+    }
+    releaseSaveTurn();
+    return false;
+  }
   const contentToSave = localDoc.content ?? '';
   const saveRevision = localDoc._editRevision || 0;
   if (localDoc._saveRequest === saveRequest) _setDocumentSaveState('saving', savingDocId);

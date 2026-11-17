@@ -17,6 +17,7 @@ import { _closeVersionPanel } from './history/versionHistory.js';
 import { _syncEditorPlaceholder } from './status/documentStatus.js';
 import { _cancelPdfPaneSave, _cleanupPdfDocState, _hasPendingPdfPaneSave, _releasePdfPane, _syncPdfPaneToDoc } from './pdfTools.js';
 import { _emailRichbodyActive, _richTextContentToHtml, _syncEmailRichbody } from './richEditor/richBodySync.js';
+import { isVisualMarkdownDoc } from './richEditor/markdownVisualSync.js';
 import { suspendSuggestions } from './suggestions.js';
 
 export function _rememberActiveDoc(docId) {
@@ -128,7 +129,7 @@ export async function _autoCreateFromInput(content) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ session_id: sessionId, title: '', content, language: 'richtext' }),
+        body: JSON.stringify({ session_id: sessionId, title: '', content, language: 'markdown' }),
       });
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
@@ -173,7 +174,7 @@ export async function createDocument(sessionId) {
           session_id: sessionId,
           title: '',
           content: '',
-          language: 'richtext',
+          language: 'markdown',
         }),
       });
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
@@ -207,6 +208,8 @@ export async function createDocument(sessionId) {
         if (rich && d && _isRichTextLang(d.language)) {
           rich.innerHTML = _richTextContentToHtml(typed);
           _syncEmailRichbody(rich);
+        } else if (d && isVisualMarkdownDoc(d)) {
+          switchToDoc(doc.id, { captureCurrent: false });
         }
         syncHighlighting();
         _scheduleAutoSave(doc.id, 800);

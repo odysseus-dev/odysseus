@@ -3233,3 +3233,189 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   cursor: pointer;
   transition: background 0.08s;
 }
+
+/* Visual-first Markdown editor surface & compatibility banner */
+.doc-visual-compat-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--sidebar-bg, var(--panel)) 88%, var(--accent, var(--red)) 12%);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.doc-visual-compat-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+}
+.doc-visual-compat-text {
+  flex: 1;
+  min-width: 0;
+}
+#doc-md-view-toggle .md-view-opt.is-compat-blocked {
+  opacity: 0.55;
+}
+.doc-email-richbody.markdown-visual-mode {
+  background: var(--bg);
+  color: var(--fg);
+  padding: 20px 28px 36px;
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.doc-email-richbody.markdown-visual-mode:empty::before {
+  content: attr(data-placeholder);
+  color: color-mix(in srgb, var(--fg) 42%, transparent);
+  pointer-events: none;
+  display: block;
+}
+.doc-email-richbody.markdown-visual-mode h1,
+.doc-email-richbody.markdown-visual-mode h2,
+.doc-email-richbody.markdown-visual-mode h3,
+.doc-email-richbody.markdown-visual-mode h4,
+.doc-email-richbody.markdown-visual-mode h5,
+.doc-email-richbody.markdown-visual-mode h6 {
+  margin: 1.15em 0 0.45em;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.doc-email-richbody.markdown-visual-mode > :first-child {
+  margin-top: 0;
+}
+.doc-email-richbody.markdown-visual-mode h1 { font-size: 1.75em; }
+.doc-email-richbody.markdown-visual-mode h2 { font-size: 1.4em; }
+.doc-email-richbody.markdown-visual-mode h3 { font-size: 1.18em; }
+.doc-email-richbody.markdown-visual-mode p {
+  margin: 0.5em 0;
+}
+.doc-email-richbody.markdown-visual-mode blockquote {
+  margin: 0.85em 0;
+  padding: 6px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red)) 65%, var(--border));
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-radius: 0 4px 4px 0;
+  color: color-mix(in srgb, var(--fg) 88%, transparent);
+}
+.doc-email-richbody.markdown-visual-mode ul,
+.doc-email-richbody.markdown-visual-mode ol {
+  margin: 0.55em 0;
+  padding-left: 1.65em;
+}
+.doc-email-richbody.markdown-visual-mode li {
+  margin: 0.22em 0;
+}
+.doc-email-richbody.markdown-visual-mode ul.rich-checklist {
+  list-style: none;
+  padding-left: 1.8em;
+}
+.doc-email-richbody.markdown-visual-mode ul.rich-checklist > li {
+  position: relative;
+  min-height: 1.6em;
+}
+.doc-email-richbody.markdown-visual-mode ul.rich-checklist > li::before {
+  content: "";
+  position: absolute;
+  left: -1.55em;
+  top: 0.34em;
+  width: 0.95em;
+  height: 0.95em;
+  box-sizing: border-box;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 48%, transparent);
+  border-radius: 3px;
+  background: var(--sidebar-bg, var(--panel));
+  cursor: pointer;
+}
+.doc-email-richbody.markdown-visual-mode ul.rich-checklist > li[data-checked="true"]::before {
+  border-color: var(--accent, var(--red));
+  background: var(--accent, var(--red));
+}
+.doc-email-richbody.markdown-visual-mode ul.rich-checklist > li[data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: -1.27em;
+  top: 0.48em;
+  width: 0.28em;
+  height: 0.5em;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.doc-email-richbody.markdown-visual-mode ul.rich-checklist > li[data-checked="true"] {
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  text-decoration: line-through;
+}
+.doc-email-richbody.markdown-visual-mode a {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.doc-email-richbody.markdown-visual-mode hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.25em 0;
+}
+.doc-email-richbody.markdown-visual-mode code,
+.doc-email-richbody.markdown-visual-mode span[style*="OdysseusInlineCode"] {
+  padding: 0.12em 0.35em;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  white-space: break-spaces;
+}
+.doc-email-richbody.markdown-visual-mode pre {
+  margin: 1em 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sidebar-bg, var(--panel)) 82%, #000 18%) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  tab-size: 2;
+}
+.doc-email-richbody.markdown-visual-mode pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+}
+.doc-email-richbody.markdown-visual-mode table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.doc-email-richbody.markdown-visual-mode th,
+.doc-email-richbody.markdown-visual-mode td {
+  min-width: 48px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.doc-email-richbody.markdown-visual-mode th {
+  background: color-mix(in srgb, var(--sidebar-bg, var(--panel)) 85%, var(--fg) 15%);
+  font-weight: 600;
+}
+@media (max-width: 768px) {
+  .doc-email-richbody.markdown-visual-mode {
+    padding: 14px 16px 28px;
+    font-size: 14.5px;
+  }
+  .doc-visual-compat-banner {
+    padding: 7px 12px;
+    font-size: 11.5px;
+  }
+}

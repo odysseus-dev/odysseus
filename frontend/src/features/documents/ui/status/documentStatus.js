@@ -5,6 +5,7 @@
 
 import { activeDocId, docs, _closingDocs } from '../../application/documentState.js';
 import { _DOC_SAVE_STATE, _isRichTextLang } from '../../domain/documentKinds.js';
+import { isMarkdownVisualModeActive } from '../richEditor/markdownVisualSync.js';
 import {
   bindMenuDismiss,
   getDocumentStats,
@@ -182,12 +183,21 @@ export function _documentOutlineEntries() {
     const textarea = document.getElementById('doc-editor-textarea');
     const entries = parseMarkdownOutline(textarea?.value || doc.content || '');
     const preview = document.getElementById('doc-md-preview');
+    const rich = document.getElementById('doc-email-richbody');
     if (preview && preview.style.display !== 'none') {
       const nodes = Array.from(preview.querySelectorAll('h1, h2, h3, h4, h5, h6'));
       entries.forEach((entry, index) => {
         if (nodes[index]) {
           entry.node = nodes[index];
           entry.mode = 'preview';
+        }
+      });
+    } else if (rich && rich.style.display !== 'none' && isMarkdownVisualModeActive()) {
+      const nodes = Array.from(rich.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+      entries.forEach((entry, index) => {
+        if (nodes[index]) {
+          entry.node = nodes[index];
+          entry.mode = 'visual';
         }
       });
     }
@@ -204,9 +214,15 @@ function _flashOutlineTarget(element) {
 
 function _jumpToDocumentOutlineEntry(entry) {
     if (entry.node?.isConnected) {
+      if (entry.mode === 'visual') {
+        const textarea = document.getElementById('doc-editor-textarea');
+        if (textarea && typeof entry.start === 'number' && typeof entry.end === 'number') {
+          textarea.setSelectionRange(entry.start, entry.end);
+        }
+      }
       entry.node.scrollIntoView({ behavior: 'smooth', block: 'center' });
       _flashOutlineTarget(entry.node);
-      if (entry.mode === 'richtext') {
+      if (entry.mode === 'richtext' || entry.mode === 'visual') {
         const rich = document.getElementById('doc-email-richbody');
         const selection = window.getSelection?.();
         if (rich && selection) {

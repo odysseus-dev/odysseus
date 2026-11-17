@@ -7,6 +7,7 @@ import { activeDocId, docs } from '../../application/documentState.js';
 import { _isRichTextLang } from '../../domain/documentKinds.js';
 import { _ensureDocPaneMounted, loadDocument } from '../documentFlows.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
+import { isMarkdownVisualModeActive } from '../richEditor/markdownVisualSync.js';
 import { _scheduleDocumentStats } from '../status/documentStatus.js';
 
 export let _selections = [];
@@ -513,7 +514,7 @@ export async function restoreSelectionReference(reference, options = {}) {
 
     _ensureDocPaneMounted();
     const doc = docs.get(activeDocId);
-    const rich = _isRichTextLang(doc.language) ? _emailRichbodyActive() : null;
+    const rich = (_isRichTextLang(doc.language) || isMarkdownVisualModeActive()) ? _emailRichbodyActive() : null;
     const textarea = document.getElementById('doc-editor-textarea');
     const source = rich ? _richRootText(rich) : (textarea?.value || doc.content || '');
     const supplied = Array.isArray(options.selections)

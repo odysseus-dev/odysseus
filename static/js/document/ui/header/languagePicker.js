@@ -19,7 +19,15 @@ import { _hideEmailFields, _showEmailFields } from '../email/composerFields.js';
 
 import { _emailRichbodyActive, _syncEmailRichbody, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
 
-import { _showRichTextEditor } from '../richEditor/richBodyWiring.js';
+import { _showRichTextEditor, _showMarkdownVisualEditor, _hideMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import {
+  hideMarkdownCompatBanner,
+  isMarkdownVisualModeActive,
+  isVisualMarkdownDoc,
+  renderMarkdownCompatBanner,
+  resolveMarkdownEditorMode,
+  syncVisualMarkdownToDoc,
+} from '../richEditor/markdownVisualSync.js';
 
 import { _syncEditorPlaceholder } from '../status/documentStatus.js';
 
@@ -213,6 +221,11 @@ document.getElementById('doc-language-select').addEventListener('change', () => 
       if (_isRichTextLang(previousLanguage)) {
         const rich = _emailRichbodyActive();
         if (rich) _syncEmailRichbody(rich);
+      } else if (changingDoc && isMarkdownVisualModeActive()) {
+        const rich = document.getElementById('doc-email-richbody');
+        syncVisualMarkdownToDoc(rich, { doc: changingDoc });
+        _hideMarkdownVisualEditor();
+        hideMarkdownCompatBanner();
       } else if (changingDoc && previousLanguage === 'email') {
         const rich = _emailRichbodyActive();
         const fields = _parseEmailHeader(changingDoc.content || '');
@@ -266,10 +279,13 @@ document.getElementById('doc-language-select').addEventListener('change', () => 
       if (!_isRenderLang(lang)) exitHtmlPreview();
       // Show/hide email fields
       if (lang === 'email') {
+        hideMarkdownCompatBanner();
+        document.getElementById('doc-email-richbody')?.classList.remove('markdown-visual-mode');
         const doc = activeDocId && docs.get(activeDocId);
         if (doc) _showEmailFields(doc);
       } else if (_isRichTextLang(lang)) {
         _hideEmailFields();
+        hideMarkdownCompatBanner();
         const doc = activeDocId && docs.get(activeDocId);
         if (doc) {
           doc.language = lang;
@@ -278,6 +294,19 @@ document.getElementById('doc-language-select').addEventListener('change', () => 
         }
       } else {
         _hideEmailFields();
+        const doc = activeDocId && docs.get(activeDocId);
+        if (doc && isVisualMarkdownDoc(doc)) {
+          if (resolveMarkdownEditorMode(doc) === 'visual') {
+            _showMarkdownVisualEditor(doc);
+          } else {
+            _hideMarkdownVisualEditor();
+            if (doc._visualCompatReasons?.length) renderMarkdownCompatBanner(doc._visualCompatReasons);
+            else hideMarkdownCompatBanner();
+          }
+        } else {
+          _hideMarkdownVisualEditor();
+          hideMarkdownCompatBanner();
+        }
       }
       _syncRichEmptyImport();
       // Sync header action buttons for new language

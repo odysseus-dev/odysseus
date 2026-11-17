@@ -10,6 +10,39 @@ import { _RICH_FONT_SIZE_PX } from '../../domain/richTextRules.js';
 import { _applyRichImageAction, _editRichImageAlt, _editRichImageCaption, _removeRichLink, _richLinkAtRange, _wysiwygInsertLink } from './links.js';
 import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from './richBodySync.js';
 import { _applyRichLineSpacing, _toggleRichChecklist, _toggleRichInlineCode } from './richOperations.js';
+import { isMarkdownVisualModeActive } from './markdownVisualSync.js';
+
+function _isMarkdownVisualUnsupportedAction(action) {
+  if (!action) return false;
+  if (
+    action === 'underline'
+    || action === 'superscript'
+    || action === 'subscript'
+    || action === 'alignleft'
+    || action === 'aligncenter'
+    || action === 'alignright'
+    || action === 'alignjustify'
+    || action === 'pagebreak'
+    || action === 'image:alt'
+    || action === 'image:caption'
+  ) {
+    return true;
+  }
+  return (
+    action.startsWith('fontname:')
+    || action.startsWith('fontsize:')
+    || action.startsWith('forecolor:')
+    || action.startsWith('highlight:')
+    || action.startsWith('linespacing:')
+    || action.startsWith('image:size:')
+    || action.startsWith('image:align:')
+    || action === 'table:merge-right'
+    || action === 'table:merge-down'
+    || action === 'table:split-cell'
+    || action.startsWith('table:cell-align:')
+    || action === 'table:toggle-header-column'
+  );
+}
 
 export function _richSelectionHasFormatting(rich, range) {
     if (!rich || !range) return false;
@@ -115,20 +148,33 @@ function _applyRichFontFamily(rich, family) {
     selection.addRange(range);
   }
 
-export function applyMdFormat(action) {
+export function applyMdFormat(action, { bypassDuplicateGuard = false } = {}) {
     // Guard against a duplicate/"ghost" click firing the same toggle twice in
     // quick succession — that would wrap then immediately unwrap, so the
-    // markers appear for a split second and vanish.
+    // markers appear for a split second and vanish. Keyboard shortcuts pass
+    // bypassDuplicateGuard for deliberate (non-repeat) keypresses: two quick
+    // Ctrl+B presses are an intended on/off toggle, not a ghost click.
     const _now = Date.now();
     // Keep this short: a longer window swallows legitimate repeated use of
     // the same color on separate selections.
     const isPaletteAction = action.startsWith('highlight:') || action.startsWith('forecolor:');
-    if (!isPaletteAction && _lastMdFormat.action === action && _now - _lastMdFormat.t < 120) return;
-    _lastMdFormat = { action, t: _now };
+    if (!bypassDuplicateGuard) {
+      if (!isPaletteAction && _lastMdFormat.action === action && _now - _lastMdFormat.t < 120) return;
+      // Only pointer-originated calls arm the guard: a keypress followed by a
+      // toolbar click is two deliberate actions, never one ghost click.
+      _lastMdFormat = { action, t: _now };
+    }
     // Email WYSIWYG: format the live rich text via execCommand instead of
     // inserting markdown markers into the (hidden) source textarea.
     const _rich = _emailRichbodyActive();
     if (_rich) {
+      const mdVisual = isMarkdownVisualModeActive();
+      if (mdVisual && _isMarkdownVisualUnsupportedAction(action)) return;
+      if (mdVisual && (action === 'indent' || action === 'outdent')) {
+        const anchor = window.getSelection?.()?.anchorNode;
+        const el = anchor?.nodeType === Node.ELEMENT_NODE ? anchor : anchor?.parentElement;
+        if (!el?.closest?.('li')) return;
+      }
       let _richFormatRange = null;
       const _selection = window.getSelection?.();
       const _range = _savedFormatRichRange || (_selection?.rangeCount ? _selection.getRangeAt(0) : null);
@@ -139,7 +185,9 @@ export function applyMdFormat(action) {
         _richFormatRange = _range.cloneRange();
       }
       _savedFormatRichRange = null;
-      _rich.focus();
+      if (document.activeElement !== _rich) {
+        _rich.focus();
+      }
       if (_richFormatRange && _selection) {
         try {
           _selection.removeAllRanges();
@@ -171,7 +219,9 @@ export function applyMdFormat(action) {
         }
         document.execCommand('removeFormat');
         // Reset explicit text sizing along with the other inline formatting.
-        _applyRichPixelFontSize(_rich, _RICH_FONT_SIZE_PX[3]);
+        if (!mdVisual) {
+          _applyRichPixelFontSize(_rich, _RICH_FONT_SIZE_PX[3]);
+        }
         document.execCommand('unlink');
         // Clear the block style too, so H1-H6 become a normal paragraph.
         document.execCommand('formatBlock', false, 'p');
@@ -226,15 +276,17 @@ export function applyMdFormat(action) {
           if (!_applyRichTableAction(_rich, action)) return;
         } else if (action.startsWith('linespacing:')) {
           if (!_applyRichLineSpacing(_rich, action.slice('linespacing:'.length))) return;
-        } else if (action.startsWith('separator:')) {
-          const style = action.slice('separator:'.length);
+        } else if (action === 'hr' || action.startsWith('separator:')) {
+          const style = action.startsWith('separator:') ? action.slice('separator:'.length) : 'solid';
           const border = style === 'double' ? '3px double currentColor' : `1px ${style} currentColor`;
           // Always create a real paragraph after the divider and put the caret
           // there. Without this, browsers leave the caret on the HR's row,
           // making the next text appear beside the line instead of below it.
           const token = `doc-separator-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          document.execCommand('insertHTML', false,
-            `<hr class="richtext-separator" data-editor-separator-token="${token}" style="border:0;border-top:${border};margin:1em 0;" /><p data-editor-separator-caret="${token}"><br></p>`);
+          const hrTag = mdVisual
+            ? `<hr data-editor-separator-token="${token}" />`
+            : `<hr class="richtext-separator" data-editor-separator-token="${token}" style="border:0;border-top:${border};margin:1em 0;" />`;
+          document.execCommand('insertHTML', false, `${hrTag}<p data-editor-separator-caret="${token}"><br></p>`);
           const nextParagraph = _rich.querySelector(`[data-editor-separator-caret="${token}"]`);
           if (nextParagraph) {
             nextParagraph.removeAttribute('data-editor-separator-caret');
@@ -259,10 +311,10 @@ export function applyMdFormat(action) {
           if (!_toggleRichInlineCode(_rich)) return;
         } else if (action === 'codeblock') {
           const cur = _currentBlockTag(_rich);
-          document.execCommand('formatBlock', false, (cur === 'pre') ? 'div' : 'pre');
+          document.execCommand('formatBlock', false, (cur === 'pre') ? (mdVisual ? 'p' : 'div') : 'pre');
         } else if (action === 'quote') {
           const cur = _currentBlockTag(_rich);
-          document.execCommand('formatBlock', false, (cur === 'blockquote') ? 'div' : 'blockquote');
+          document.execCommand('formatBlock', false, (cur === 'blockquote') ? (mdVisual ? 'p' : 'div') : 'blockquote');
         }
       } catch (_) {}
       _syncEmailRichbody(_rich);

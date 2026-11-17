@@ -71,7 +71,7 @@ def test_line_spacing_preserves_selection_and_uses_one_undoable_snapshot():
 
 
 def test_rich_text_commands_sync_and_schedule_save():
-    apply_format = DOC_JS.split("function applyMdFormat(action)", 1)[1]
+    apply_format = DOC_JS.split("function applyMdFormat(action", 1)[1]
     command_branch = apply_format.split("const _rich = _emailRichbodyActive();", 1)[1].split(
         "const ta = document.getElementById('doc-editor-textarea');", 1
     )[0]
@@ -258,7 +258,7 @@ def test_existing_figure_wrapped_images_are_normalized_on_load():
 
 
 def test_inline_code_and_code_blocks_use_distinct_rich_text_commands():
-    apply_format = DOC_JS.split("function applyMdFormat(action)", 1)[1]
+    apply_format = DOC_JS.split("function applyMdFormat(action", 1)[1]
     rich_branch = apply_format.split("const _rich = _emailRichbodyActive();", 1)[1].split(
         "const ta = document.getElementById('doc-editor-textarea');", 1
     )[0]
@@ -417,9 +417,10 @@ def test_rich_find_replace_preserves_structure_and_uses_native_undo_commands():
     assert "function _replaceFindCurrent()" in replace_section
     assert "document.execCommand('insertText'" in replace_section
     assert "function _replaceFindAll()" in replace_section
-    assert "const clone = rich.cloneNode(true)" in replace_section
+    # Behavior (block structure, undo) is covered in Chromium by
+    # tests/test_document_visual_editor.py::test_visual_lifecycle_switching_history_preview_and_find_replace.
     assert "[...ranges].reverse()" in replace_section
-    assert "document.execCommand('insertHTML', false, clone.innerHTML)" in replace_section
+    assert "document.execCommand('insertHTML', false, clone.innerHTML)" not in replace_section
     assert "_syncEmailRichbody(rich)" in replace_section
     assert "_scheduleEmailRichbodySave()" in replace_section
 

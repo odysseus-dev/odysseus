@@ -65,6 +65,7 @@ import { _ensureDocChipRegistered, _hideLoadingOverlay, _minimizeNotesForDocumen
 import { saveCurrentToMap, switchToDoc } from './document/ui/panel/documentPresenter.js';
 
 import { _syncHeaderActions } from './document/ui/header/headerActions.js';
+import { discardVisualDraft } from './document/ui/richEditor/markdownVisualSync.js';
 import { activateModuleWiring, _wireDiffViewer, _wireExportDocx, _wirePreviewModes, _wireSuggestions } from './document/ui/moduleWiring.js';
 import { installEscapeLayering } from './document/ui/panel/panelLifecycle.js';
 
@@ -236,9 +237,10 @@ const documentModule = {
   openLibrary,
   closeLibrary,
   isLibraryOpen,
+  discardVisualDraft,
 };
 
-export { createDocument, injectFreshDoc, loadDocument, getChatDocumentId };
+export { createDocument, injectFreshDoc, loadDocument, getChatDocumentId, discardVisualDraft };
 export { closePanel, newDocument, openPanel, prepareDocumentOpen, swapSide };
 export { handleDocSuggestions, isPanelOpen, saveDocument };
 

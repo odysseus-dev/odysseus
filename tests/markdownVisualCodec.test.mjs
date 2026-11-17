@@ -1,0 +1,619 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  inspectMarkdownVisualCompatibility,
+  inspectVisualNodesCompatibility,
+  markdownToVisualHtml,
+  serializeVisualNodesToMarkdown,
+  serializeVisualNodesWithFidelity,
+} from '../frontend/src/features/documents/domain/markdownVisualCodec.js';
+
+const el = (tag, children = [], { attrs = {}, classes = [], style = {} } = {}) => ({
+  type: 'element',
+  tag,
+  attrs,
+  classes,
+  style,
+  children: typeof children === 'string' ? [{ type: 'text', text: children }] : children,
+});
+
+const txt = (text) => ({ type: 'text', text });
+
+const VOID_TAGS = new Set(['br', 'hr', 'img']);
+const ENTITY_TEXT = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+const decodeEntities = (value) => value.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name) => ENTITY_TEXT[name]);
+
+/**
+ * Parse the codec's own well-formed HTML output into the descriptor shape that
+ * markdownVisualSync.domToVisualNodes produces from a live DOM. Test-only: it
+ * supports exactly the markup markdownToVisualHtml emits.
+ */
+function parseCodecHtml(html) {
+  const root = { children: [] };
+  const stack = [root];
+  const tagRe = /<(\/?)([a-z0-9]+)((?:\s+[a-z-]+="[^"]*")*)\s*\/?>/g;
+  let last = 0;
+  let match;
+  const pushText = (raw) => {
+    if (raw) stack.at(-1).children.push(txt(decodeEntities(raw)));
+  };
+  while ((match = tagRe.exec(html))) {
+    pushText(html.slice(last, match.index));
+    last = tagRe.lastIndex;
+    const [, closing, tag, rawAttrs] = match;
+    if (closing) {
+      assert.equal(stack.at(-1).tag, tag, `Mismatched closing tag: expected </${stack.at(-1).tag}> but found </${tag}> in ${html}`);
+      stack.pop();
+      continue;
+    }
+    const attrs = {};
+    const style = {};
+    let classes = [];
+    for (const [, name, value] of rawAttrs.matchAll(/([a-z-]+)="([^"]*)"/g)) {
+      const decoded = decodeEntities(value);
+      if (name === 'class') classes = decoded.split(/\s+/).filter(Boolean);
+      else if (name === 'style') {
+        const align = decoded.match(/text-align:\s*([a-z]+)/);
+        if (align) style.textAlign = align[1];
+      } else attrs[name] = decoded;
+    }
+    const node = { type: 'element', tag, attrs, classes, style, children: [] };
+    stack.at(-1).children.push(node);
+    if (!VOID_TAGS.has(tag)) stack.push(node);
+  }
+  pushText(html.slice(last));
+  assert.equal(stack.length, 1, `Unclosed tags remaining in ${html}`);
+  return root.children;
+}
+
+const roundTrip = (md) => serializeVisualNodesToMarkdown(parseCodecHtml(markdownToVisualHtml(md)));
+const paragraphOf = (text) => [el('p', text)];
+
+describe('markdownVisualCodec', () => {
+  describe('inspectMarkdownVisualCompatibility', () => {
+    it('accepts supported Markdown features', () => {
+      const md = [
+        '# Heading 1',
+        '',
+        'Paragraph with **bold**, *italic*, ~~strike~~, `code`, and [link](https://example.com).',
+        '',
+        '- Bullet item',
+        '  - Nested bullet',
+        '',
+        '1. First',
+        '2. Second',
+        '',
+        '- [ ] Open task',
+        '- [x] Done task',
+        '',
+        '> Quote line',
+        '',
+        '---',
+        '',
+        '```js',
+        'const x = 1;',
+        '```',
+        '',
+        '| Col A | Col B |',
+        '| :--- | ---: |',
+        '| one | two |',
+      ].join('\n');
+
+      const result = inspectMarkdownVisualCompatibility(md);
+      assert.equal(result.supported, true);
+      assert.deepEqual(result.reasons, []);
+    });
+
+    it('ignores special tokens inside inline code spans and regular code fences', () => {
+      const md = [
+        'Inline `$math$` and `<div>html</div>` and `[^1]` are literal.',
+        '',
+        '```html',
+        '<div data-test="1">$not math$</div>',
+        '```',
+      ].join('\n');
+
+      const result = inspectMarkdownVisualCompatibility(md);
+      assert.equal(result.supported, true);
+      assert.deepEqual(result.reasons, []);
+    });
+
+    it('detects unsupported and non-round-trippable constructs', () => {
+      assert.equal(inspectMarkdownVisualCompatibility('---\ntitle: Doc\n---\n\n# Hi').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('<div>raw</div>').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('<!-- hidden -->').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('Value is $x^2 + y^2$.').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('$$\n\\int_0^1 x dx\n$$').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('```mermaid\ngraph TD;\nA-->B;\n```').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('See [docs][ref].\n\n[ref]: https://example.com').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('Claim[^1]\n\n[^1]: Source').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('Setext\n======').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('    indented code()').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('> > nested quote').supported, false);
+      // Backslash escapes are supported (see round-trip fidelity), but `\[` and `\(`
+      // are LaTeX delimiters in the application renderer.
+      assert.equal(inspectMarkdownVisualCompatibility('Display \\[x^2\\] math').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('Inline \\(x\\) math').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('![img](https://example.com/a.png "Title")').supported, false);
+      assert.equal(inspectMarkdownVisualCompatibility('```js\nunclosed()').supported, false);
+    });
+  });
+
+  describe('markdownToVisualHtml', () => {
+    it('renders headings, inline styles, lists, checklists, quotes, code fences, hr, and tables', () => {
+      const md = [
+        '# Title',
+        '',
+        'Text **b** *i* ~~s~~ `c` [Odysseus](https://example.com)',
+        '',
+        '- [ ] Todo',
+        '- [x] Done',
+        '',
+        '> Quoted text',
+        '',
+        '---',
+        '',
+        '```py',
+        'print("<tag>")',
+        '```',
+        '',
+        '| A | B |',
+        '| :--- | :---: |',
+        '| x | y |',
+      ].join('\n');
+
+      const html = markdownToVisualHtml(md);
+      assert.match(html, /<h1>Title<\/h1>/);
+      assert.match(html, /<strong>b<\/strong>/);
+      assert.match(html, /<em>i<\/em>/);
+      assert.match(html, /<del>s<\/del>/);
+      assert.match(html, /<code>c<\/code>/);
+      assert.match(html, /<a href="https:\/\/example\.com" rel="noopener noreferrer">Odysseus<\/a>/);
+      assert.match(html, /<ul class="rich-checklist">/);
+      assert.match(html, /<li data-checked="true" aria-checked="true">Done<\/li>/);
+      assert.match(html, /<blockquote><p>Quoted text<\/p><\/blockquote>/);
+      assert.match(html, /<hr>/);
+      assert.match(html, /<pre><code class="language-py" data-lang="py">print\(&quot;&lt;tag&gt;&quot;\)<\/code><\/pre>/);
+      assert.match(html, /<table><thead><tr><th style="text-align: left;">A<\/th><th style="text-align: center;">B<\/th><\/tr><\/thead>/);
+    });
+
+    it('blocks unsafe link and image URL schemes', () => {
+      const md = '[bad](javascript:alert(1)) and ![xss](javascript:alert(2))';
+      const html = markdownToVisualHtml(md);
+      assert.equal(html.includes('javascript:'), false);
+      assert.equal(html.includes('<a '), false);
+      assert.equal(html.includes('<img '), false);
+      assert.match(html, /bad/);
+    });
+  });
+
+  describe('serializeVisualNodesToMarkdown', () => {
+    it('serializes descriptor nodes cleanly back to canonical Markdown', () => {
+      const nodes = [
+        el('h1', 'Project Spec'),
+        el('p', [
+          txt('Hello '),
+          el('strong', 'world'),
+          txt(' and '),
+          el('span', 'browser-italic', { style: { fontStyle: 'italic' } }),
+          txt(' and '),
+          el('span', 'inline()', { style: { fontFamily: 'OdysseusInlineCode, monospace' } }),
+          txt(' '),
+          el('a', 'Ref', { attrs: { href: 'https://example.com/a(1)' } }),
+        ]),
+        el('ul', [
+          el('li', 'Item one', { attrs: { 'data-checked': 'false' } }),
+          el('li', 'Item two', { attrs: { 'data-checked': 'true' } }),
+        ], { classes: ['rich-checklist'] }),
+        el('blockquote', [el('p', 'Note')]),
+        el('pre', [el('code', 'const ok = "`code`";', { attrs: { 'data-lang': 'ts' } })]),
+        el('table', [
+          el('thead', [
+            el('tr', [
+              el('th', 'Name', { style: { textAlign: 'left' } }),
+              el('th', 'Score', { style: { textAlign: 'right' } }),
+            ]),
+          ]),
+          el('tbody', [
+            el('tr', [
+              el('td', 'a | b'),
+              el('td', '100'),
+            ]),
+          ]),
+        ]),
+        el('hr'),
+      ];
+
+      const md = serializeVisualNodesToMarkdown(nodes);
+      assert.equal(md, [
+        '# Project Spec',
+        '',
+        'Hello **world** and *browser-italic* and `inline()` [Ref](https://example.com/a(1%29)',
+        '',
+        '- [ ] Item one',
+        '- [x] Item two',
+        '',
+        '> Note',
+        '',
+        '```ts',
+        'const ok = "`code`";',
+        '```',
+        '',
+        '| Name | Score |',
+        '| :--- | ---: |',
+        '| a \\| b | 100 |',
+        '',
+        '---',
+      ].join('\n'));
+    });
+
+    it('ignores trailing placeholder br elements and rejects unsafe hrefs during serialization', () => {
+      const nodes = [
+        el('p', [
+          el('a', 'Click', { attrs: { href: 'javascript:alert(1)' } }),
+          el('br'),
+        ]),
+        el('p', [el('br')]),
+      ];
+      assert.equal(serializeVisualNodesToMarkdown(nodes), 'Click');
+    });
+  });
+
+  describe('round-trip fidelity', () => {
+    it('keeps literal Markdown characters typed in the visual editor literal after reload', () => {
+      const literals = [
+        '*.js and *.py globs',
+        'use `npm test` literally',
+        '[not](a link)',
+        '<b>not html</b>',
+        '# not a heading',
+        '1. not a list',
+        '- not a list',
+        '> not a quote',
+        'a ~~not struck~~ word',
+        'C:\\path\\*',
+        '_leading underscore_',
+        '---',
+        'trailing backslash \\',
+        'entity-like &amp; text',
+      ];
+      for (const literal of literals) {
+        const md = serializeVisualNodesToMarkdown(paragraphOf(literal));
+        const reparsed = parseCodecHtml(markdownToVisualHtml(md));
+        assert.equal(reparsed.length, 1, `${JSON.stringify(literal)} -> ${JSON.stringify(md)} must stay one block`);
+        assert.equal(reparsed[0].tag, 'p', `${JSON.stringify(literal)} -> ${JSON.stringify(md)} must stay a paragraph`);
+        assert.deepEqual(reparsed[0].children, [txt(literal)], `${JSON.stringify(literal)} -> ${JSON.stringify(md)} must stay literal text`);
+        assert.equal(inspectMarkdownVisualCompatibility(md).supported, true, `${JSON.stringify(md)} must stay visually editable`);
+      }
+    });
+
+    it('does not add escapes to ordinary prose', () => {
+      for (const prose of ['2 * 3 * 4 = 24', 'snake_case_name stays', "Don't panic.", 'Price: $5 and $6', 'A - B - C', 'Q&A section', '1.5 litres']) {
+        assert.equal(serializeVisualNodesToMarkdown(paragraphOf(prose)), prose);
+      }
+    });
+
+    it('renders backslash escapes literally and re-emits them', () => {
+      const md = 'Escaped \\*stars\\* and \\_under\\_ stay literal';
+      assert.equal(inspectMarkdownVisualCompatibility(md).supported, true);
+      const html = markdownToVisualHtml(md);
+      assert.equal(html, '<p>Escaped *stars* and _under_ stay literal</p>');
+      assert.equal(roundTrip(md), md);
+    });
+
+    it('does not treat whitespace-flanked asterisks as emphasis', () => {
+      assert.equal(markdownToVisualHtml('2 * 3 * 4'), '<p>2 * 3 * 4</p>');
+    });
+
+    it('preserves list nesting under ordered items and ordered start numbers', () => {
+      assert.equal(roundTrip('1. Parent\n   - Child'), '1. Parent\n   - Child');
+      assert.equal(roundTrip('10. Ten\n    - Child'), '10. Ten\n    - Child');
+      assert.equal(roundTrip('- Parent\n  1. Child'), '- Parent\n  1. Child');
+      assert.equal(roundTrip('3. Three\n4. Four'), '3. Three\n4. Four');
+    });
+
+    it('keeps multi-line blockquote paragraphs together', () => {
+      assert.equal(roundTrip('> line one\n> line two'), '> line one\n> line two');
+      assert.equal(roundTrip('> para one\n>\n> para two'), '> para one\n>\n> para two');
+    });
+
+    it('round-trips a realistic corpus without changing rendered meaning, idempotently', () => {
+      const corpus = [
+        '# Plan\n\nIntro with **bold**, *italic*, ~~old~~ and `code`.\n\n## Steps\n\n1. First\n2. Second\n   - Detail a\n   - Detail b\n3. Third\n\n- [ ] Open\n- [x] Done\n\n> Quoted line one\n> quoted line two\n\n---\n\n```js\nconst a = 1;\n```\n\n| Name | Value |\n| --- | ---: |\n| a | 1 |\n| b `x\\|y` | 2 |',
+        '* star bullets\n* second\n\n+ plus bullets',
+        '1) paren ordered\n2) second',
+        '__underscore bold__ and _underscore italic_',
+        'Line one\nline two of the same paragraph',
+        '### Heading with closing hashes ###',
+        'Link [docs](https://example.com/a_b) and image ![alt](/api/upload/x.png)',
+        'Escaped \\*literal\\* and C:\\\\dir',
+        '- item\n\n- separate list after blank',
+        'Price $5 and 2 * 3 * 4.',
+        '~~~py\nprint(1)\n~~~',
+        '*foo***bar**',
+        '**foo***bar*',
+        '*foo***bar***baz*',
+        '**foo***bar***baz**',
+        '**foo *bar* baz**',
+        '*foo **bar** baz*',
+        '*foo*`bar` and `code`**bold**',
+        '*foo*[link](https://example.com) and [link](https://example.com)**bold**',
+        'foo**~~bar~~**',
+        'foo*~~bar~~*',
+        'foo~~**bar**~~',
+        'foo~~*bar*~~',
+        'foo.**~~bar~~**',
+        '***~~bar~~***',
+      ];
+      for (const md of corpus) {
+        assert.equal(inspectMarkdownVisualCompatibility(md).supported, true, JSON.stringify(md));
+        const once = roundTrip(md);
+        assert.equal(markdownToVisualHtml(once), markdownToVisualHtml(md), `render changed for ${JSON.stringify(md)} -> ${JSON.stringify(once)}`);
+        assert.equal(roundTrip(once), once, `not idempotent for ${JSON.stringify(md)}`);
+        assert.equal(inspectMarkdownVisualCompatibility(once).supported, true, `canonical form rejected: ${JSON.stringify(once)}`);
+      }
+    });
+
+    it('preserves semantics and balanced DOM structure for adjacent and nested formatting', () => {
+      const cases = [
+        {
+          name: 'italic immediately followed by bold',
+          nodes: [el('p', [el('i', 'foo'), el('b', 'bar')])],
+          expectedMd: '*foo***bar**',
+          expectedHtml: '<p><em>foo</em><strong>bar</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed.length, 1);
+            assert.equal(parsed[0].tag, 'p');
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'bold immediately followed by italic',
+          nodes: [el('p', [el('b', 'foo'), el('i', 'bar')])],
+          expectedMd: '**foo***bar*',
+          expectedHtml: '<p><strong>foo</strong><em>bar</em></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo')]);
+            assert.equal(parsed[0].children[1].tag, 'em');
+            assert.deepEqual(parsed[0].children[1].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'adjacent formatting in both directions: italic-bold-italic',
+          nodes: [el('p', [el('i', 'foo'), el('b', 'bar'), el('i', 'baz')])],
+          expectedMd: '*foo***bar***baz*',
+          expectedHtml: '<p><em>foo</em><strong>bar</strong><em>baz</em></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo')]);
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children, [txt('bar')]);
+            assert.equal(parsed[0].children[2].tag, 'em');
+            assert.deepEqual(parsed[0].children[2].children, [txt('baz')]);
+          },
+        },
+        {
+          name: 'adjacent formatting in both directions: bold-italic-bold',
+          nodes: [el('p', [el('b', 'foo'), el('i', 'bar'), el('b', 'baz')])],
+          expectedMd: '**foo***bar***baz**',
+          expectedHtml: '<p><strong>foo</strong><em>bar</em><strong>baz</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            assert.deepEqual(parsed[0].children[0].children, [txt('foo')]);
+            assert.equal(parsed[0].children[1].tag, 'em');
+            assert.deepEqual(parsed[0].children[1].children, [txt('bar')]);
+            assert.equal(parsed[0].children[2].tag, 'strong');
+            assert.deepEqual(parsed[0].children[2].children, [txt('baz')]);
+          },
+        },
+        {
+          name: 'nested bold in italic',
+          nodes: [el('p', [el('i', [txt('foo '), el('b', 'bar'), txt(' baz')])])],
+          expectedMd: '*foo **bar** baz*',
+          expectedHtml: '<p><em>foo <strong>bar</strong> baz</em></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            const emChildren = parsed[0].children[0].children;
+            assert.equal(emChildren[0].text, 'foo ');
+            assert.equal(emChildren[1].tag, 'strong');
+            assert.deepEqual(emChildren[1].children, [txt('bar')]);
+            assert.equal(emChildren[2].text, ' baz');
+          },
+        },
+        {
+          name: 'nested italic in bold',
+          nodes: [el('p', [el('b', [txt('foo '), el('i', 'bar'), txt(' baz')])])],
+          expectedMd: '**foo *bar* baz**',
+          expectedHtml: '<p><strong>foo <em>bar</em> baz</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            const strongChildren = parsed[0].children[0].children;
+            assert.equal(strongChildren[0].text, 'foo ');
+            assert.equal(strongChildren[1].tag, 'em');
+            assert.deepEqual(strongChildren[1].children, [txt('bar')]);
+            assert.equal(strongChildren[2].text, ' baz');
+          },
+        },
+        {
+          name: 'combined bold and italic',
+          nodes: [el('p', [el('strong', [el('em', 'foobar')])])],
+          expectedMd: '***foobar***',
+          expectedHtml: '<p><strong><em>foobar</em></strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            assert.equal(parsed[0].children[0].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[0].children[0].children, [txt('foobar')]);
+          },
+        },
+        {
+          name: 'italic adjacent to inline code',
+          nodes: [el('p', [el('i', 'foo'), el('code', 'bar')])],
+          expectedMd: '*foo*`bar`',
+          expectedHtml: '<p><em>foo</em><code>bar</code></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.equal(parsed[0].children[1].tag, 'code');
+          },
+        },
+        {
+          name: 'inline code adjacent to bold',
+          nodes: [el('p', [el('code', 'foo'), el('b', 'bar')])],
+          expectedMd: '`foo`**bar**',
+          expectedHtml: '<p><code>foo</code><strong>bar</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'code');
+            assert.equal(parsed[0].children[1].tag, 'strong');
+          },
+        },
+        {
+          name: 'italic adjacent to link',
+          nodes: [el('p', [el('i', 'foo'), el('a', 'bar', { attrs: { href: 'https://example.com' } })])],
+          expectedMd: '*foo*[bar](https://example.com)',
+          expectedHtml: '<p><em>foo</em><a href="https://example.com" rel="noopener noreferrer">bar</a></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'em');
+            assert.equal(parsed[0].children[1].tag, 'a');
+          },
+        },
+        {
+          name: 'link adjacent to bold',
+          nodes: [el('p', [el('a', 'foo', { attrs: { href: 'https://example.com' } }), el('b', 'bar')])],
+          expectedMd: '[foo](https://example.com)**bar**',
+          expectedHtml: '<p><a href="https://example.com" rel="noopener noreferrer">foo</a><strong>bar</strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'a');
+            assert.equal(parsed[0].children[1].tag, 'strong');
+          },
+        },
+        {
+          name: 'bold containing strikethrough after text',
+          nodes: [el('p', [txt('foo'), el('b', [el('s', 'bar')])])],
+          expectedMd: 'foo**~~bar~~**',
+          expectedHtml: '<p>foo<strong><del>bar</del></strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].text, 'foo');
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.equal(parsed[0].children[1].children[0].tag, 'del');
+            assert.deepEqual(parsed[0].children[1].children[0].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'italic containing strikethrough after text',
+          nodes: [el('p', [txt('foo'), el('i', [el('s', 'bar')])])],
+          expectedMd: 'foo*~~bar~~*',
+          expectedHtml: '<p>foo<em><del>bar</del></em></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].text, 'foo');
+            assert.equal(parsed[0].children[1].tag, 'em');
+            assert.equal(parsed[0].children[1].children[0].tag, 'del');
+            assert.deepEqual(parsed[0].children[1].children[0].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'strikethrough containing bold after text',
+          nodes: [el('p', [txt('foo'), el('s', [el('b', 'bar')])])],
+          expectedMd: 'foo~~**bar**~~',
+          expectedHtml: '<p>foo<del><strong>bar</strong></del></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].text, 'foo');
+            assert.equal(parsed[0].children[1].tag, 'del');
+            assert.equal(parsed[0].children[1].children[0].tag, 'strong');
+            assert.deepEqual(parsed[0].children[1].children[0].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'strikethrough containing italic after text',
+          nodes: [el('p', [txt('foo'), el('s', [el('i', 'bar')])])],
+          expectedMd: 'foo~~*bar*~~',
+          expectedHtml: '<p>foo<del><em>bar</em></del></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].text, 'foo');
+            assert.equal(parsed[0].children[1].tag, 'del');
+            assert.equal(parsed[0].children[1].children[0].tag, 'em');
+            assert.deepEqual(parsed[0].children[1].children[0].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'bold containing strikethrough after punctuation',
+          nodes: [el('p', [txt('foo.'), el('b', [el('s', 'bar')])])],
+          expectedMd: 'foo.**~~bar~~**',
+          expectedHtml: '<p>foo.<strong><del>bar</del></strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].text, 'foo.');
+            assert.equal(parsed[0].children[1].tag, 'strong');
+            assert.equal(parsed[0].children[1].children[0].tag, 'del');
+            assert.deepEqual(parsed[0].children[1].children[0].children, [txt('bar')]);
+          },
+        },
+        {
+          name: 'nested bold, italic and strikethrough',
+          nodes: [el('p', [el('b', [el('i', [el('s', 'bar')])])])],
+          expectedMd: '***~~bar~~***',
+          expectedHtml: '<p><strong><em><del>bar</del></em></strong></p>',
+          validateDOM: (parsed) => {
+            assert.equal(parsed[0].children[0].tag, 'strong');
+            assert.equal(parsed[0].children[0].children[0].tag, 'em');
+            assert.equal(parsed[0].children[0].children[0].children[0].tag, 'del');
+            assert.deepEqual(parsed[0].children[0].children[0].children[0].children, [txt('bar')]);
+          },
+        },
+      ];
+
+      for (const tc of cases) {
+        const md = serializeVisualNodesToMarkdown(tc.nodes);
+        assert.equal(md, tc.expectedMd, `${tc.name}: serialized markdown mismatch`);
+        const html = markdownToVisualHtml(md);
+        assert.equal(html, tc.expectedHtml, `${tc.name}: rendered html mismatch`);
+        const parsed = parseCodecHtml(html);
+        tc.validateDOM(parsed);
+        const roundTrippedMd = serializeVisualNodesToMarkdown(parsed);
+        assert.equal(roundTrippedMd, tc.expectedMd, `${tc.name}: round-tripped markdown mismatch`);
+        assert.equal(inspectMarkdownVisualCompatibility(md).supported, true, `${tc.name}: must be compatible`);
+      }
+    });
+
+    it('rejects constructs the codec would restructure on the first edit', () => {
+      const cases = {
+        'lazy list continuation': '- item\ncontinued text',
+        'multi-paragraph list item': '- item\n\n  second paragraph',
+        'lazy blockquote continuation': '> quoted\nlazy line',
+        'HTML entity': 'Fish &amp; chips',
+        'titled link': '[t](https://example.com "Title")',
+        'unsafe link URL': '[x](javascript:alert(1))',
+        'unsafe image URL': '![x](javascript:alert(1))',
+      };
+      for (const [label, md] of Object.entries(cases)) {
+        assert.equal(inspectMarkdownVisualCompatibility(md).supported, false, `${label}: ${JSON.stringify(md)}`);
+      }
+    });
+
+    it('verifies visual node fidelity and rejects unrepresentable formatting combinations', () => {
+      // 1. Supported nested formatting is reported lossless
+      const supportedNodes = [
+        el('p', [txt('foo'), el('b', [el('s', 'bar')])]),
+      ];
+      const supportedResult = serializeVisualNodesWithFidelity(supportedNodes);
+      assert.equal(supportedResult.lossless, true);
+      assert.equal(supportedResult.markdown, 'foo**~~bar~~**');
+      assert.equal(inspectVisualNodesCompatibility(supportedNodes).supported, true);
+
+      // 2. Unrepresentable formatting (nested links) is flagged as lossy and unsupported
+      const unrepresentableNodes = [
+        el('p', [
+          el('a', [txt('outer '), el('a', 'inner', { attrs: { href: 'https://inner.com' } })], { attrs: { href: 'https://outer.com' } }),
+        ]),
+      ];
+      const lossyResult = serializeVisualNodesWithFidelity(unrepresentableNodes);
+      assert.equal(lossyResult.lossless, false);
+      assert.ok(lossyResult.reasons.length > 0);
+      const compat = inspectVisualNodesCompatibility(unrepresentableNodes);
+      assert.equal(compat.supported, false);
+      assert.ok(compat.reasons.length > 0);
+    });
+  });
+});

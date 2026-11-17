@@ -11,6 +11,8 @@ import { syncHighlighting } from '../editor/sourceEditor.js';
 import { exitDiffMode, _diffModeActive } from '../diffViewer.js';
 import { _releasePdfPane } from '../pdfTools.js';
 import { uiModule } from '../host.js';
+import { markdownToVisualHtml } from '../../domain/markdownVisualCodec.js';
+import { assessMarkdownVisualSupport, isMarkdownVisualModeActive, isVisualMarkdownDoc, unbindVisualSurface } from '../richEditor/markdownVisualSync.js';
 
 let _versionClickOutside = null;
 
@@ -74,7 +76,14 @@ export function _closeVersionPanel({ restoreFocus = false } = {}) {
         if (state.previewing) textarea.value = state.doc.content || '';
         textarea.readOnly = state.readOnly;
       }
-      if (state.previewing) syncHighlighting();
+      if (state.previewing) {
+        if (state.wasVisualMarkdown && isVisualMarkdownDoc(state.doc)) {
+          const rich = document.getElementById('doc-email-richbody');
+          if (rich) rich.contentEditable = 'true';
+          switchToDoc(state.docId, { captureCurrent: false, preserveHistory: true });
+        }
+        syncHighlighting();
+      }
     }
     if (_versionClickOutside) document.removeEventListener('click', _versionClickOutside, true);
     _versionClickOutside = null;
@@ -150,11 +159,32 @@ async function previewVersion(num) {
       const ver = await res.json();
       if (!_historyOwnsView(state) || state.operation !== operation
           || (state.doc._editRevision || 0) !== revision) return;
+      const verContent = ver.content || '';
+      const rich = document.getElementById('doc-email-richbody');
+      const wasVisual = state.wasVisualMarkdown || isMarkdownVisualModeActive();
+      if (wasVisual) state.wasVisualMarkdown = true;
       const textarea = document.getElementById('doc-editor-textarea');
       if (textarea) {
         state.previewing = true;
         textarea.readOnly = true;
-        textarea.value = ver.content || '';
+        textarea.value = verContent;
+      }
+      if (state.wasVisualMarkdown && rich) {
+        // The preview is read-only and detached from the document, so no sync
+        // path can write the previewed version into the live document.
+        unbindVisualSurface(rich);
+        const wrap = document.getElementById('doc-editor-wrap');
+        if (assessMarkdownVisualSupport(verContent).supported) {
+          if (wrap) wrap.style.display = 'none';
+          rich.style.display = '';
+          rich.classList.add('markdown-visual-mode');
+          rich.contentEditable = 'false';
+          rich.innerHTML = markdownToVisualHtml(verContent);
+        } else {
+          rich.classList.remove('markdown-visual-mode');
+          rich.style.display = 'none';
+          if (wrap) wrap.style.display = '';
+        }
       }
       syncHighlighting();
     } catch (e) {

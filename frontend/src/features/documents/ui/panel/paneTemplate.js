@@ -83,9 +83,9 @@ pane.innerHTML = `
       <input type="file" id="doc-md-image-input" accept="image/*" multiple style="display:none" />
       <div class="doc-md-toolbar" id="doc-md-toolbar" style="display:none">
         <div class="md-toolbar-leading-controls">
-          <span class="md-view-toggle" id="doc-md-view-toggle" style="display:none" role="group" aria-label="Edit or preview">
-            <button type="button" class="md-view-opt" data-mdview="edit" title="Edit source (Ctrl+Alt+M to toggle)"><span class="md-view-label">Write</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-            <button type="button" class="md-view-opt" data-mdview="preview" title="Preview (Ctrl+Alt+M to toggle)"><span class="md-view-label">Preview</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <span class="md-view-toggle" id="doc-md-view-toggle" style="display:none" role="group" aria-label="Editor mode">
+            <button type="button" class="md-view-opt" data-mdview="visual" title="Visual editor"><span class="md-view-label">Visual</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+            <button type="button" class="md-view-opt" data-mdview="edit" title="Markdown source"><span class="md-view-label">Markdown</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
           </span>
           <span class="md-view-toggle" id="doc-render-view-toggle" style="display:none" role="group" aria-label="Code or run">
             <button type="button" class="md-view-opt" data-renderview="code" title="Edit code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
@@ -165,6 +165,7 @@ pane.innerHTML = `
         </div>
       </div>
       <div id="doc-editor-surface" role="tabpanel" class="doc-editor-surface">
+      <div id="doc-visual-compat-banner" class="doc-visual-compat-banner" style="display:none" role="status"></div>
       <div id="doc-editor-wrap" class="doc-editor-wrap">
         <div id="doc-line-numbers" class="doc-line-numbers">1</div>
         <pre id="doc-editor-highlight" class="doc-editor-highlight"><code id="doc-editor-code"></code></pre>
