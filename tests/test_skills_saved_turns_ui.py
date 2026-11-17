@@ -30,7 +30,7 @@ def test_skills_can_sort_by_saved_turns():
 
 def test_skills_summary_surfaces_audit_health_and_quick_filters():
     assert '<div id="skills-summary" class="skills-summary-strip"' in INDEX
-    assert "await _loadSkillApprovalThreshold();" in SKILLS_JS
+    assert "const _thresholdLoad = _loadSkillApprovalThreshold();" in SKILLS_JS and "await _thresholdLoad;" in SKILLS_JS
     assert "skillsSummaryMetrics(userSkills, _skillApprovalThreshold)" in SKILLS_JS
     assert "_summaryChip('all', 'All'" in SKILLS_JS
     assert "_summaryChip('approved', 'Approved'" in SKILLS_JS

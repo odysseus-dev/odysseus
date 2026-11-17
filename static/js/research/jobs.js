@@ -260,7 +260,15 @@ export async function cancelJob(id) {
   const job = _jobs.find(j => j.id === id);
   if (!job) return;
   if (job.status === 'queued') { job.status = 'cancelled'; _notify(); return; }
-  try { await fetch(`${_apiBase}/api/research/cancel/${id}`, { method: 'POST', credentials: 'same-origin' }); } catch {}
+  // Only mark it cancelled once the server accepted the cancel; otherwise the
+  // run keeps going unseen. A 404 means the run is already gone.
+  try {
+    const res = await fetch(`${_apiBase}/api/research/cancel/${id}`, { method: 'POST', credentials: 'same-origin' });
+    if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    if (window.uiModule) window.uiModule.showError('Could not cancel the research run (' + (e?.message || 'network error') + '). It is still running; try again.');
+    return;
+  }
   _finishJob(job, 'cancelled');
 }
 
@@ -395,11 +403,17 @@ function _connectStream(job) {
   };
 }
 
+// A dropped connection must not fail a run the server is still working on:
+// retry transient failures a few times before giving up on the status poll.
+const _POLL_MAX_FAILURES = 5;
+
 async function _pollFallback(job) {
   if (job.status !== 'running') return;
   try {
     const res = await fetch(`${_apiBase}/api/research/status/${job.id}`, { credentials: 'same-origin' });
-    if (!res.ok) { _finishJob(job, 'error'); return; }
+    if (res.status === 404 || res.status === 401) { _finishJob(job, 'error'); return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    job._pollFailures = 0;
     const d = await res.json();
     job.progress = d.progress || {};
     if (d.source_state) job.source_state = d.source_state;
@@ -415,7 +429,15 @@ async function _pollFallback(job) {
       return;
     }
     setTimeout(() => _pollFallback(job), 2000);
-  } catch { _finishJob(job, 'error'); }
+  } catch {
+    job._pollFailures = (job._pollFailures || 0) + 1;
+    if (job._pollFailures >= _POLL_MAX_FAILURES) {
+      job.errorMsg = job.errorMsg || 'Lost contact with the server while the run was in progress.';
+      _finishJob(job, 'error');
+      return;
+    }
+    setTimeout(() => _pollFallback(job), Math.min(2000 * job._pollFailures, 10000));
+  }
 }
 
 function _finishJob(job, status) {

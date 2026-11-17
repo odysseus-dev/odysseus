@@ -1,7 +1,7 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
-import * as jobs from './jobs.js?v=20260910researcherrorpersist1';
+import * as jobs from './jobs.js?v=20261117researchretry1';
 import themeModule from '../theme.js?v=20260911organsrain1';
 import createResearchSynapse from '../researchSynapse.js?v=20260910roundlabels2';
 import spinnerModule from '../spinner.js';
