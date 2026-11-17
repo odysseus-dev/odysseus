@@ -1,4 +1,4 @@
-// static/js/settings.js — Settings entry point and coordinator (ES6)
+// static/js/settings.js - Settings entry point and coordinator (ES6)
 //
 // The panels live in ./settings/*. This module builds the shared services
 // (access resolution, the endpoint catalog, the model-default plumbing), wires
