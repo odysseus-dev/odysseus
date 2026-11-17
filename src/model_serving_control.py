@@ -91,7 +91,7 @@ def build_launch_plan(*, engine: str, executable: str, port: int, model_path: st
             context = min(context, declared_context)
         if available_memory_bytes and gpu_layers == 0:
             usable = max(0, available_memory_bytes - max(2 * 1024**3, available_memory_bytes // 5))
-            remaining = usable - source.stat().st_size
+            remaining = usable - source.stat().st_size - (kv_estimate or {}).get('fixed_bytes', 0)
             if remaining <= 0:
                 raise ValueError('Model exceeds the available RAM planning margin')
             if planning_kv:
@@ -113,14 +113,19 @@ def build_launch_plan(*, engine: str, executable: str, port: int, model_path: st
                 gpu_plan = gpu_runtime.plan_gpu_offload(
                     requested_layers=gpu_layers, model_bytes=source.stat().st_size,
                     layers=kv_estimate['layers'], kv_bytes_per_token=derived_kv, context=context,
-                    free_vram=gpu['free_bytes'], total_vram=gpu['total_bytes'])
+                    free_vram=gpu['free_bytes'], total_vram=gpu['total_bytes'],
+                    fixed_bytes=kv_estimate.get('fixed_bytes', 0))
+                if gpu_plan['gpu_layers'] == 0:
+                    raise ValueError('Not enough free VRAM headroom to offload any layer at this context; '
+                                     'lower the context or use gpu_layers=0')
                 if gpu_plan['clamped']:
                     warnings.append(f"GPU offload reduced to {gpu_plan['gpu_layers']} of {gpu_plan['model_layers']} "
                                     "layers to leave VRAM headroom for Windows and compute buffers")
                 gpu_layers = gpu_plan['gpu_layers']
                 memory_validation = 'estimated'
             else:
-                warnings.append('GPU layer count could not be checked against VRAM: model layer geometry unknown')
+                raise ValueError('Cannot size GPU offload: this model\'s layer geometry is not recognised, so VRAM '
+                                 'fit cannot be checked. Use gpu_layers=0 or a model with known geometry')
         if kv_estimate:
             kv_estimate['bytes_at_planned_context'] = context * derived_kv
             kv_estimate['used_for_memory_limit'] = bool(available_memory_bytes and gpu_layers == 0)

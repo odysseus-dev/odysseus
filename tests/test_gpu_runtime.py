@@ -99,7 +99,7 @@ def test_small_model_is_fully_offloaded():
     plan = gpu_runtime.plan_gpu_offload(
         requested_layers=999, model_bytes=int(2 * GIB), layers=28, kv_bytes_per_token=28 * 1024,
         context=4096, free_vram=int(7 * GIB), total_vram=8 * GIB)
-    assert plan['fully_offloaded'] and not plan['clamped'] and plan['gpu_layers'] == 28
+    assert plan['fully_offloaded'] and not plan['clamped'] and plan['gpu_layers'] == 29, 'output layer is one more unit'
 
 
 def test_plan_refuses_gpu_layers_on_cpu_only_runtime(tmp_path):
@@ -171,3 +171,78 @@ def test_cuda13_warning_is_dropped_when_driver_reports_cuda13():
     name = 'llama-b1-bin-win-cuda-13.5-x64.zip'
     assert 'newer NVIDIA driver' in cuda_driver_warning(name, '32.0.16.2101')
     assert cuda_driver_warning(name, '621.01', 13) == ''
+
+
+def hybrid_gguf(tmp_path, with_vocab=True):
+    entries = [
+        ('general.architecture', 8, text('qwen35')),
+        ('qwen35.block_count', 4, struct.pack('<I', 33)),
+        ('qwen35.context_length', 4, struct.pack('<I', 262144)),
+        ('qwen35.embedding_length', 4, struct.pack('<I', 4096)),
+        ('qwen35.attention.head_count', 4, struct.pack('<I', 16)),
+        ('qwen35.attention.head_count_kv', 4, struct.pack('<I', 4)),
+        ('qwen35.attention.key_length', 4, struct.pack('<I', 256)),
+        ('qwen35.attention.value_length', 4, struct.pack('<I', 256)),
+        ('qwen35.nextn_predict_layers', 4, struct.pack('<I', 1)),
+        ('qwen35.full_attention_interval', 4, struct.pack('<I', 4)),
+    ]
+    if with_vocab:  # a vocabulary far beyond the metadata budget must never be read
+        entries.append(('tokenizer.ggml.tokens', 9, struct.pack('<IQ', 8, 300000) + b''))
+    return metadata_file(tmp_path / 'h.gguf', entries)
+
+
+def test_hybrid_metadata_is_read_without_touching_the_vocabulary(tmp_path):
+    from src.gguf_context import planning_metadata
+    estimate = planning_metadata(hybrid_gguf(tmp_path))['kv_cache_estimate']
+    assert estimate['attention_layers'] == 8  # (33 - 1 MTP) // 4
+    assert estimate['bytes_per_token'] == 2 * 8 * 4 * 512 == 32768
+    assert estimate['fixed_bytes'] == 24 * 8 * 1024 ** 2
+    assert estimate['source'] == 'gguf-hybrid-f16-assumption'
+
+
+def test_hybrid_without_interval_is_unknown_not_dense(tmp_path):
+    from src.gguf_context import planning_metadata
+    path = metadata_file(tmp_path / 'x.gguf', [
+        ('general.architecture', 8, text('qwen35')),
+        ('qwen35.block_count', 4, struct.pack('<I', 33)),
+        ('qwen35.embedding_length', 4, struct.pack('<I', 4096)),
+        ('qwen35.attention.head_count', 4, struct.pack('<I', 16)),
+    ])
+    assert planning_metadata(path)['kv_cache_estimate'] is None
+
+
+def test_unrecognised_geometry_refuses_gpu_offload(tmp_path):
+    from src.model_serving_control import build_launch_plan
+    cuda_dir(tmp_path, present=('cudart64_13.dll', 'cublas64_13.dll'))
+    model = metadata_file(tmp_path / 'u.gguf', [('general.architecture', 8, text('mystery'))])
+    with pytest.raises(ValueError, match='not recognised'):
+        build_launch_plan(engine='llamacpp', executable=str(tmp_path / EXE), model_path=str(model),
+                          port=free_port(), gpu_layers=999,
+                          gpu={'available': True, 'cuda_driver_major': 13, 'free_bytes': 7 * GIB, 'total_bytes': 8 * GIB})
+
+
+def test_hybrid_plan_offloads_fully_when_it_fits_and_keeps_headroom(tmp_path):
+    from src.model_serving_control import build_launch_plan
+    cuda_dir(tmp_path, present=('cudart64_13.dll', 'cublas64_13.dll'))
+    model = hybrid_gguf(tmp_path)
+    with model.open('ab') as handle:
+        handle.truncate(int(5.4 * GIB))
+    plan = build_launch_plan(engine='llamacpp', executable=str(tmp_path / EXE), model_path=str(model),
+                             port=free_port(), gpu_layers=999, context_length=2048,
+                             gpu={'available': True, 'cuda_driver_major': 13,
+                                  'free_bytes': int(7.1 * GIB), 'total_bytes': int(7.999 * GIB)})
+    assert plan['gpu_layers'] == 34 and plan['context_length'] == 2048
+    tight = build_launch_plan(engine='llamacpp', executable=str(tmp_path / EXE), model_path=str(model),
+                              port=free_port(), gpu_layers=999, context_length=2048,
+                              gpu={'available': True, 'cuda_driver_major': 13,
+                                   'free_bytes': int(5.5 * GIB), 'total_bytes': int(7.999 * GIB)})
+    assert 0 < tight['gpu_layers'] < 34 and any('reduced' in w for w in tight['warnings'])
+
+
+@pytest.mark.skipif(not os.path.exists('D:/odysseus-models/ornith-gguf/Ornith-1.5-9B-Q4_K_M.gguf'),
+                    reason='local Ornith model not present')
+def test_real_ornith_file_yields_geometry():
+    from pathlib import Path
+    from src.gguf_context import planning_metadata
+    meta = planning_metadata(Path('D:/odysseus-models/ornith-gguf/Ornith-1.5-9B-Q4_K_M.gguf'))
+    assert meta['kv_cache_estimate']['attention_layers'] == 8 and meta['declared_context_length'] == 262144

@@ -68,9 +68,16 @@ class _Metadata:
         return value if keep else None
 
 
+# Empirical upper bound for llama.cpp's recurrent (SSM/delta-net) state per recurrent layer,
+# measured on a qwen35 9B model (about 7.8 MiB/layer). Deliberately rounded up.
+_RECURRENT_STATE_BYTES_PER_LAYER = 8 * 1024 * 1024
+_HYBRID_ARCHITECTURES = {'qwen35'}
+
+
 def _dense_kv_estimate(values, architecture):
-    if architecture not in {'llama', 'qwen2', 'qwen3', 'gemma', 'gemma2', 'gemma3'}:
-        return None  # Never apply ordinary attention geometry to MLA/hybrid/SSM.
+    hybrid = architecture in _HYBRID_ARCHITECTURES
+    if architecture not in {'llama', 'qwen2', 'qwen3', 'gemma', 'gemma2', 'gemma3'} and not hybrid:
+        return None  # Never apply ordinary attention geometry to MLA/unknown SSM.
     def field(name, default=None):
         return values.get(architecture + '.' + name, default)
     layers, embedding, heads = field('block_count'), field('embedding_length'), field('attention.head_count')
@@ -83,8 +90,20 @@ def _dense_kv_estimate(values, architecture):
     key, value = field('attention.key_length', default_dim), field('attention.value_length', default_dim)
     if any(type(size) is not int or not 0 < size <= 1048576 for size in (key, value)):
         return None
+    if hybrid:
+        interval, mtp = field('full_attention_interval'), field('nextn_predict_layers', 0)
+        if any(type(v) is not int or v < 0 for v in (interval, mtp)) or not 0 < (interval or 0) <= layers:
+            return None
+        repeating = layers - mtp
+        attention = repeating // interval
+        if repeating <= 0 or attention <= 0:
+            return None
+        return {'source': 'gguf-hybrid-f16-assumption', 'architecture': architecture,
+                'bytes_per_token': 2 * attention * kv_heads * (key + value), 'layers': layers,
+                'attention_layers': attention,
+                'fixed_bytes': (repeating - attention) * _RECURRENT_STATE_BYTES_PER_LAYER}
     return {'source': 'gguf-dense-f16-assumption', 'architecture': architecture,
-            'bytes_per_token': 2 * layers * kv_heads * (key + value), 'layers': layers}
+            'bytes_per_token': 2 * layers * kv_heads * (key + value), 'layers': layers, 'fixed_bytes': 0}
 
 
 def planning_metadata(path: Path, *, max_bytes=8 * 1024 * 1024) -> dict:
@@ -92,7 +111,8 @@ def planning_metadata(path: Path, *, max_bytes=8 * 1024 * 1024) -> dict:
     if type(max_bytes) is not int or not 0 < max_bytes <= 8 * 1024 * 1024:
         return {}
     suffixes = ('.context_length', '.block_count', '.embedding_length', '.attention.head_count',
-                '.attention.head_count_kv', '.attention.key_length', '.attention.value_length')
+                '.attention.head_count_kv', '.attention.key_length', '.attention.value_length',
+                '.full_attention_interval', '.nextn_predict_layers')
     try:
         with Path(path).open('rb') as handle:
             reader = _Metadata(handle, max_bytes)
@@ -109,6 +129,13 @@ def planning_metadata(path: Path, *, max_bytes=8 * 1024 * 1024) -> dict:
                     return {}
                 seen.add(key)
                 kind = reader.number('I')
+                if key.startswith('tokenizer.') and architecture and kind == 9:
+                    # Hyperparameters precede the multi-MB vocabulary; a sane-looking
+                    # array header ends the scan, an absurd one makes everything unknown.
+                    subtype, count = reader.number('I'), reader.number('Q')
+                    if subtype not in {*_FORMATS, 8} or count > 2 ** 24:
+                        return {}
+                    break
                 value = reader.value(kind, keep=key == 'general.architecture' or key.endswith(suffixes))
                 if key == 'general.architecture':
                     architecture = value if kind == 8 else None

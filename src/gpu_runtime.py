@@ -164,22 +164,26 @@ def verify_runtime_devices(exe: Path, *, timeout: float = 60) -> dict:
 
 def plan_gpu_offload(*, requested_layers: int, model_bytes: int, layers: int,
                      kv_bytes_per_token: int, context: int, free_vram: int,
-                     total_vram: int) -> dict:
-    """Largest layer count that fits VRAM with headroom for the desktop and scratch.
+                     total_vram: int, fixed_bytes: int = 0) -> dict:
+    """Largest ``-ngl`` value that fits VRAM with headroom for the desktop and scratch.
 
-    Reserve max(1.25 GiB, 15% of total) for the display driver and compute
-    buffers. Output/embedding tensors are folded into the per-layer average.
+    ``layers`` is the model's repeating-block count; llama.cpp counts the output
+    layer as one more offload unit, so a full offload is ``layers + 1``. Reserve
+    max(1.25 GiB, 15% of total) for the display driver and compute buffers.
+    Weights, KV and fixed recurrent state are spread evenly over the units, so
+    the result is an estimate that errs by at most about one layer.
     """
+    units = layers + 1
     reserve = max(int(1.25 * _GIB), total_vram * 15 // 100)
     budget = max(0, free_vram - reserve)
-    per_layer = (model_bytes + kv_bytes_per_token * context) / layers
-    fit = min(layers, int(budget // per_layer)) if per_layer > 0 else 0
-    want = layers if requested_layers >= layers else requested_layers
+    per_unit = (model_bytes + kv_bytes_per_token * context + fixed_bytes) / units
+    fit = min(units, int(budget // per_unit)) if per_unit > 0 else 0
+    want = min(requested_layers, units)
     chosen = min(want, fit)
-    return {"gpu_layers": chosen, "model_layers": layers, "max_fitting_layers": fit,
+    return {"gpu_layers": chosen, "model_layers": units, "max_fitting_layers": fit,
             "reserve_bytes": reserve, "budget_bytes": budget, "free_vram_bytes": free_vram,
-            "per_layer_bytes": int(per_layer), "clamped": chosen < want,
-            "fully_offloaded": chosen >= layers}
+            "per_layer_bytes": int(per_unit), "clamped": chosen < want,
+            "fully_offloaded": chosen >= units}
 
 
 def gpu_status(runtime_root: Path, *, driver_loader=None) -> dict:
