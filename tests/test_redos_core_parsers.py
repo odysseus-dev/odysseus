@@ -76,6 +76,8 @@ from src.tool_parsing import (
     _QWEN_PARAMETER_CLOSE_RE,
     _iter_named_blocks,
     _iter_qwen_python_args,
+    _match_qwen_python_call,
+    _parse_qwen3_native_text_call,
     _strip_delimited,
     parse_tool_blocks,
     strip_tool_blocks,
@@ -90,6 +92,7 @@ _GEMMA = re.compile(
 )
 _QWEN_FUNCTION = re.compile(r"<function=([A-Za-z_][\w:.-]*)>\s*([\s\S]*?)\s*</function>")
 _QWEN_PARAMETER = re.compile(r"<parameter=([A-Za-z_]\w*)>\s*([\s\S]*?)\s*</parameter>")
+_QWEN_PYTHON_CALL = re.compile(r"\b([A-Za-z_][\w:.-]*)\s*\(([^()]*)\)")
 _QWEN_ARGS = re.compile(r"([A-Za-z_]\w*)\s*=\s*(['\"].*?['\"]|[^,]+)")
 _WORKSPACE_SCRIPT = re.compile(
     r"/workspace/[^\s`\"']+\.(?:py|pyw|sh|bash|js|mjs|ts|rb|pl)\b", re.I
@@ -192,6 +195,29 @@ def test_qwen_delimiters_preserve_names_and_stripped_values(reference, opener, c
         expected = [(name, body.strip()) for name, body in reference.findall(text)]
         actual = [(name, body.strip()) for name, body in _iter_named_blocks(text, opener, closer)]
         assert actual == expected
+
+
+def test_qwen_python_call_preserves_legacy_boundary_and_nested_semantics():
+    cases = [
+        'manage_notes(action="list")',
+        '1.web_search(query="rust")',
+        '000manage_notes(action="list")',
+        '9a.manage_notes(action="list")',
+        'mcp__srv__tool.name:sub-op(a=1)',
+        'outer(manage_notes(action="list"))',
+        'prose before\nmanage_notes  ( action="list" )\nafter',
+        'a.b.c-d:e',
+    ]
+    rng = random.Random(7027)
+    tokens = ["a", "b", "0", "9", "_", ".", ":", "-", "(", ")", " ", "\t", "\n", "manage_notes", "action='list'"]
+    cases += ["".join(rng.choices(tokens, k=20)) for _ in range(5000)]
+    for text in cases:
+        match = _QWEN_PYTHON_CALL.search(text)
+        expected = match.groups() if match else None
+        assert _match_qwen_python_call(text) == expected, text
+    block = _parse_qwen3_native_text_call('1.manage_notes(action="list")')
+    assert block is not None and block.tool_type == "manage_notes"
+    assert _parse_qwen3_native_text_call('000manage_notes(action="list")') is None
 
 
 def test_qwen_python_arguments_preserve_permissive_legacy_grammar():
@@ -763,7 +789,7 @@ strip_tool_blocks(text)
 ''',
     r'''
 from src.tool_parsing import (_iter_named_blocks, _iter_qwen_python_args,
-    _QWEN_FUNCTION_OPEN_RE, _QWEN_FUNCTION_CLOSE_RE,
+    _match_qwen_python_call, _QWEN_FUNCTION_OPEN_RE, _QWEN_FUNCTION_CLOSE_RE,
     _QWEN_PARAMETER_OPEN_RE, _QWEN_PARAMETER_CLOSE_RE, parse_tool_blocks)
 for opener, closer, text in (
     (_QWEN_FUNCTION_OPEN_RE, _QWEN_FUNCTION_CLOSE_RE, "<function=manage_notes>" * 20_000),
@@ -772,6 +798,10 @@ for opener, closer, text in (
 ):
     assert list(_iter_named_blocks(text, opener, closer)) == []
 assert list(_iter_qwen_python_args("a" * 100_000)) == []
+for unit in ("a.", "a-", "a:", "a("):
+    flood = unit * 20_000
+    assert _match_qwen_python_call(flood) is None
+    assert parse_tool_blocks(flood) == []
 assert parse_tool_blocks("<function=manage_notes>" * 3000) == []
 assert parse_tool_blocks("manage_notes(" + "a" * 100_000 + ")")
 ''',
