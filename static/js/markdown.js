@@ -925,6 +925,28 @@ function replaceRawSvgBlocks(source, makePlaceholder) {
   return output;
 }
 
+function replaceFencedBlocks(source, render) {
+  const lines = source.split('\n');
+  const output = [];
+  for (let index = 0; index < lines.length; index++) {
+    const opening = lines[index].match(/^[ ]{0,3}(`{3,}|~{3,})([^\n]*)$/);
+    if (!opening || (opening[1][0] === '`' && opening[2].includes('`'))) {
+      output.push(lines[index]);
+      continue;
+    }
+    const marker = opening[1];
+    const code = [];
+    while (++index < lines.length) {
+      const closing = lines[index].match(/^[ ]{0,3}(`{3,}|~{3,})[ \t]*\r?$/);
+      if (closing && closing[1][0] === marker[0] && closing[1].length >= marker.length) break;
+      code.push(lines[index]);
+    }
+    const lang = opening[2].trim().match(/^[a-zA-Z0-9_-]+/)?.[0] || '';
+    output.push(render(marker, lang, code.join('\n') + (index < lines.length ? '\n' : '')));
+  }
+  return output.join('\n');
+}
+
 export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
@@ -938,7 +960,7 @@ export function mdToHtml(src, opts) {
   // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
   // placeholder gets captured as literal code content and never restored inside
   // the final <pre><code> block.
-  s = s.replace(/(```|~~~)([a-zA-Z0-9_-]+)?\n([\s\S]*?)\1/g, (_, _fence, lang, code) => {
+  s = replaceFencedBlocks(s, (_fence, lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+$/gm, '')
@@ -964,7 +986,7 @@ export function mdToHtml(src, opts) {
       return placeholder;
     }
 
-    const escaped = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const escaped = code.replace(/\r\n/g, '\n').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
     const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
 
     const langClass = lang ? ` class="language-${lang}"` : '';
