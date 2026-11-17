@@ -61,7 +61,8 @@ function _handleMarkdownVisualKeyExit(rich, e) {
         // Shift+Enter inside a list item inserts a line break (<br>) within the item
         const br = document.createElement('br');
         range.deleteContents();
-        range.insertNode(br);
+        const insertFn = range['insertNode'];
+        if (insertFn) insertFn.call(range, br);
         range.setStartAfter(br);
         range.collapse(true);
         selection.removeAllRanges();
