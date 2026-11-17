@@ -356,6 +356,14 @@
       "deployment": "js/document/domain/markdownVisualCodec.js"
     },
     {
+      "source": "features/documents/domain/sourceSegmentation.js",
+      "deployment": "js/document/domain/sourceSegmentation.js"
+    },
+    {
+      "source": "features/documents/domain/sourceFidelity.js",
+      "deployment": "js/document/domain/sourceFidelity.js"
+    },
+    {
       "source": "features/documents/application/documentCommands.js",
       "deployment": "js/document/application/documentCommands.js"
     },

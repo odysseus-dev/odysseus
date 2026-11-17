@@ -93,6 +93,8 @@ const PRECACHE = [
   '/static/js/document/domain/emailMessage.js',
   '/static/js/document/domain/richTextRules.js',
   '/static/js/document/domain/markdownVisualCodec.js',
+  '/static/js/document/domain/sourceSegmentation.js',
+  '/static/js/document/domain/sourceFidelity.js',
   '/static/js/document/ui/host.js',
   '/static/js/document/ui/findReplace.js',
   '/static/js/document/ui/diffViewer.js',
