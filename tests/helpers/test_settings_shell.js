@@ -444,9 +444,11 @@ function moduleSource(relativePath) {
 
   check(
     'Settings registry distinguishes admin-only visibility from admin-controlled routing',
-    ['tools', 'users', 'system'].every(id => context.isAdminOnlySettingsTab(id))
-      && ['services', 'added-models', 'integrations']
-        .every(id => !context.isAdminOnlySettingsTab(id)),
+    // Endpoint management is admin-only on the server; Integrations also
+    // holds personal email and calendar accounts.
+    ['services', 'added-models', 'tools', 'users', 'system'].every(id => context.isAdminOnlySettingsTab(id))
+      && ['integrations'].every(id => !context.isAdminOnlySettingsTab(id))
+      && ['services', 'added-models', 'integrations'].every(id => context.isAdminManagedSettingsTab(id)),
   );
 
   check(

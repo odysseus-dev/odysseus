@@ -22,6 +22,7 @@ const ADMIN = { username: 'settingsadmin', password: 'admin-password-123' };
 const MEMBER = { username: 'settingsmember', password: 'member-password-123' };
 
 const instances = [];
+const forbiddenReport = {};
 let browser = null;
 const results = [];
 
@@ -91,6 +92,9 @@ async function launchInstance(name, { authEnabled }) {
     ODYSSEUS_TOOL_INDEX_PREWARM: '0',
     ODYSSEUS_STARTUP_WARMUPS: '0',
     ODYSSEUS_MODEL_KEEPALIVE: '0',
+    // Settings tests need no MCP servers; this also keeps the instance from
+    // fetching the browser MCP package from the network.
+    ODYSSEUS_DISABLE_MCP: '1',
     CHROMADB_HOST: '127.0.0.1',
     CHROMADB_PORT: String(chromaGuardPort),
     FASTEMBED_CACHE_PATH: join(root, 'fastembed'),
@@ -182,6 +186,18 @@ async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 },
   }
   const page = await context.newPage();
   const errors = [];
+  const forbidden = [];
+  const settingsWrites = [];
+  page.on('response', response => {
+    if ([401, 403].includes(response.status()) && response.url().includes('/api/')) {
+      forbidden.push(`${response.request().method()} ${new URL(response.url()).pathname} ${response.status()}`);
+    }
+  });
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/auth/settings') {
+      settingsWrites.push(request.url());
+    }
+  });
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'warning' && message.text().includes('Settings registry/DOM mismatch')) {
@@ -192,7 +208,7 @@ async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 },
   await page.goto(`${instance.baseUrl}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
   await page.waitForTimeout(400);
-  return { page, context, errors };
+  return { page, context, errors, forbidden, settingsWrites };
 }
 
 async function openSettings(page, tab) {
@@ -225,6 +241,12 @@ async function testFinder(instance, cookies) {
   // ── Non-admin member ──
   const member = await pageAs(instance, cookies.memberCookie);
   await openSettings(member.page);
+  const landing = await member.page.evaluate(() => ({
+    active: document.querySelector('[data-settings-tab].active')?.dataset.settingsTab,
+    servicesShown: getComputedStyle(document.querySelector('[data-settings-tab="services"]')).display !== 'none',
+    addedShown: getComputedStyle(document.querySelector('[data-settings-tab="added-models"]')).display !== 'none',
+  }));
+  check('member opens Settings on a panel they can use, without admin endpoint panels', landing.active === 'ai' && !landing.servicesShown && !landing.addedShown, JSON.stringify(landing));
   const memberFallback = await searchResults(member.page, 'fallback');
   check('finder lists cards that own a fallback control', memberFallback.includes('ai/default-chat') && memberFallback.includes('ai/utility-model'), memberFallback.join(','));
   const memberAdminTerms = await searchResults(member.page, 'backup');
@@ -293,6 +315,8 @@ async function testFinder(instance, cookies) {
   // ── Admin ──
   const admin = await pageAs(instance, cookies.adminCookie);
   await openSettings(admin.page);
+  const adminLanding = await admin.page.evaluate(() => document.querySelector('[data-settings-tab].active')?.dataset.settingsTab);
+  check('admin still opens Settings on Add Models', adminLanding === 'services', String(adminLanding));
   const adminBackup = await searchResults(admin.page, 'backup');
   check('finder offers admin sections to an admin', adminBackup.includes('system/backup'), adminBackup.join(','));
   await admin.page.click('[data-settings-search-section="backup"]');
@@ -340,6 +364,103 @@ async function waitForAiDefaults(page) {
   await page.waitForFunction(() => document.querySelector('[data-settings-section="vision"] .settings-scope-badge'), null, { timeout: 15000 });
 }
 
+async function lockedControlsOutsideInert(page) {
+  return page.evaluate(() => {
+    const leaks = [];
+    document.querySelectorAll('.settings-scope-locked').forEach(card => {
+      card.querySelectorAll('input, select, textarea, button, label.admin-switch').forEach(control => {
+        if (control.closest('.settings-scope-badge')) return;
+        if (!control.closest('[inert]')) {
+          leaks.push(`${card.dataset.settingsSection}:${control.tagName.toLowerCase()}#${control.id || control.className}`);
+        }
+      });
+    });
+    return { lockedCards: document.querySelectorAll('.settings-scope-locked').length, leaks };
+  });
+}
+
+async function testMemberLoadFailureAndFallbackCompatibility(instance, cookies) {
+  const member = await pageAs(instance, cookies.memberCookie);
+  // Seed a stored personal default so a failed load has something to hide.
+  await api(instance, cookies.memberCookie, '/api/prefs', { method: 'PATCH', body: JSON.stringify({ values: { default_endpoint_id: 'ep-beta', default_model: 'beta-chat' } }) });
+  const writes = [];
+  member.page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() !== 'GET' && (path.startsWith('/api/prefs') || path === '/api/auth/settings')) writes.push(`${request.method()} ${path}`);
+  });
+  await member.page.route('**/api/prefs', route => (
+    route.request().method() === 'GET'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"down"}' })
+      : route.continue()
+  ));
+  await openSettings(member.page, 'ai');
+  await member.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
+  const failed = await member.page.evaluate(() => ({
+    message: document.querySelector('#set-defaultChatMsg').textContent,
+    endpointDisabled: document.querySelector('#set-defaultEpSelect').disabled,
+    modelDisabled: document.querySelector('#set-defaultModelSelect').disabled,
+    utilityDisabled: document.querySelector('#set-utilityEpSelect').disabled
+      && document.querySelector('#set-utilityAddFallback').disabled,
+    researchDisabled: document.querySelector('#set-researchEndpoint').disabled,
+    fallbackRetryShown: !document.querySelector('#set-foregroundFallbackRetry').hidden,
+    fallbackToggleDisabled: document.querySelector('#set-foregroundFallbackToggle').disabled,
+  }));
+  check('failed model-default load keeps the cards read-only with Retry', failed.message.startsWith('Could not load the saved choice') && failed.endpointDisabled && failed.modelDisabled && failed.utilityDisabled && failed.researchDisabled, JSON.stringify(failed));
+  check('PR #5812 fallback editor reports its own load failure', failed.fallbackRetryShown && failed.fallbackToggleDisabled, JSON.stringify(failed));
+  await screenshot(member.page, 'member-load-failed');
+
+  await member.page.unroute('**/api/prefs');
+  await member.page.click('[data-settings-section="default-chat"] .settings-model-default-retry');
+  await member.page.click('#set-foregroundFallbackRetry');
+  await member.page.waitForFunction(() => !document.querySelector('#set-defaultEpSelect').disabled && !document.querySelector('#set-foregroundFallbackToggle').disabled, null, { timeout: 10000 });
+  const recovered = await member.page.evaluate(() => ({
+    endpoint: document.querySelector('#set-defaultEpSelect').value,
+    model: document.querySelector('#set-defaultModelSelect').value,
+    retryGone: !document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry'),
+    fallbackRetryHidden: document.querySelector('#set-foregroundFallbackRetry').hidden,
+  }));
+  check('Retry restores the stored personal default and re-enables the card', recovered.endpoint === 'ep-beta' && recovered.model === 'beta-chat' && recovered.retryGone, JSON.stringify(recovered));
+  check('PR #5812 fallback Retry recovers with the editor enabled', recovered.fallbackRetryHidden, JSON.stringify(recovered));
+  check('no write was issued while values were unknown', writes.length === 0, writes.join(','));
+
+  // PR #5812 runtime behavior: enable fallback, add two candidates, reorder.
+  await member.page.click('label.admin-switch:has(#set-foregroundFallbackToggle)');
+  await member.page.waitForFunction(() => !document.querySelector('#set-foregroundFallbackEditor').hidden, null, { timeout: 8000 });
+  await member.page.click('#set-foregroundAddFallback');
+  await member.page.waitForSelector('#set-foregroundFallbacks .settings-fallback-row');
+  await member.page.click('#set-foregroundAddFallback');
+  await member.page.waitForFunction(() => document.querySelectorAll('#set-foregroundFallbacks .settings-fallback-row').length === 2, null, { timeout: 8000 });
+  await member.page.waitForTimeout(400);
+  const beforeMove = (await api(instance, cookies.memberCookie, '/api/prefs')).body.foreground_model_fallbacks || [];
+  await member.page.click('#set-foregroundFallbacks .settings-fallback-row:nth-child(2) [data-move-offset="-1"]');
+  await member.page.waitForTimeout(600);
+  const prefsAfterMove = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
+  const afterMove = prefsAfterMove.foreground_model_fallbacks || [];
+  check('PR #5812 fallback consent and candidates persist per account', prefsAfterMove.foreground_fallback_enabled === true && beforeMove.length === 2, JSON.stringify(prefsAfterMove));
+  check('PR #5812 fallback reorder persists', afterMove.length === 2 && afterMove[0].model === beforeMove[1].model && afterMove[1].model === beforeMove[0].model, JSON.stringify({ beforeMove, afterMove }));
+
+  // A failed model-default save leaves the fallback policy alone.
+  await member.page.route('**/api/prefs', route => (
+    route.request().method() === 'PATCH'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.continue()
+  ));
+  await member.page.selectOption('#set-defaultEpSelect', 'ep-alpha');
+  await member.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent.startsWith('Failed to save'), null, { timeout: 8000 });
+  await member.page.unroute('**/api/prefs');
+  const afterFailure = await member.page.evaluate(() => ({
+    toggle: document.querySelector('#set-foregroundFallbackToggle').checked,
+    rows: document.querySelectorAll('#set-foregroundFallbacks .settings-fallback-row').length,
+    editorShown: !document.querySelector('#set-foregroundFallbackEditor').hidden,
+  }));
+  const storedAfterFailure = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
+  check('failed model-default save leaves the fallback policy intact', afterFailure.toggle && afterFailure.rows === 2 && afterFailure.editorShown && JSON.stringify(storedAfterFailure.foreground_model_fallbacks) === JSON.stringify(afterMove), JSON.stringify({ afterFailure, stored: storedAfterFailure.foreground_model_fallbacks }));
+  check('load-failure page has no script errors', member.errors.length === 0, member.errors.join(' | '));
+  await member.context.close();
+  // Reset the member state the next scenario expects.
+  await api(instance, cookies.memberCookie, '/api/prefs', { method: 'PATCH', body: JSON.stringify({ values: { default_endpoint_id: null, default_model: null, foreground_fallback_enabled: null, foreground_model_fallbacks: null } }) });
+}
+
 async function testMemberScope(instance, cookies) {
   const member = await pageAs(instance, cookies.memberCookie);
   await openSettings(member.page, 'ai');
@@ -356,6 +477,16 @@ async function testMemberScope(instance, cookies) {
   }
   const visionToggleInert = await member.page.$eval('#set-visionEnabledToggle', node => Boolean(node.closest('[inert]')));
   check('locked card heading switch is not operable', visionToggleInert);
+  await member.page.waitForTimeout(800);
+  const aiLocks = await lockedControlsOutsideInert(member.page);
+  check('every control in locked AI cards is inert after load', aiLocks.lockedCards >= 2 && aiLocks.leaks.length === 0, JSON.stringify(aiLocks));
+  for (const tab of ['search', 'reminders']) {
+    await member.page.click(`[data-settings-tab="${tab}"]`);
+    await member.page.waitForTimeout(800);
+    const locks = await lockedControlsOutsideInert(member.page);
+    check(`every control in locked ${tab} cards is inert after load`, locks.lockedCards >= 1 && locks.leaks.length === 0, JSON.stringify(locks));
+  }
+  await member.page.click('[data-settings-tab="ai"]');
   const utilityCard = await cardState(member.page, 'utility-model');
   check('member utility card is personal and editable', utilityCard.badge === 'Just you' && utilityCard.firstSelectInert === false, JSON.stringify(utilityCard));
   await screenshot(member.page, 'scope-member-ai-dark');
@@ -430,6 +561,8 @@ async function testMemberScope(instance, cookies) {
   check('mobile Settings has no horizontal overflow with scope badges', overflow <= 1, String(overflow));
   await screenshot(mobile.page, 'scope-member-ai-mobile');
   check('member scope pages have no script errors', member.errors.length === 0 && mobile.errors.length === 0, [...member.errors, ...mobile.errors].join(' | '));
+  check('member session never posts server-wide settings', member.settingsWrites.length === 0 && mobile.settingsWrites.length === 0, [...member.settingsWrites, ...mobile.settingsWrites].join(','));
+  forbiddenReport.member = [...new Set([...member.forbidden, ...mobile.forbidden])];
   await mobile.context.close();
   await member.context.close();
 }
@@ -458,6 +591,7 @@ async function testAdminScope(instance, cookies) {
   check('admin save does not touch member preferences', memberPrefs.utility_endpoint_id === 'ep-alpha', JSON.stringify(memberPrefs));
   await screenshot(admin.page, 'scope-admin-ai-dark');
   check('admin scope page has no script errors', admin.errors.length === 0, admin.errors.join(' | '));
+  forbiddenReport.admin = [...new Set(admin.forbidden)];
   await admin.context.close();
 }
 
@@ -487,6 +621,21 @@ async function testAuthDisabledOperator(instance) {
   const perModel = await operator.page.$eval('#adm-modelCustomCard', node => getComputedStyle(node).display !== 'none');
   check('auth-disabled operator can reach per-model settings', perModel);
   await screenshot(operator.page, 'operator-added-models');
+  await operator.page.click('[data-settings-tab="tools"]');
+  await operator.page.waitForFunction(() => document.querySelectorAll('#adm-builtin-tools-list > *').length > 0, null, { timeout: 15000 }).catch(() => {});
+  const tools = await operator.page.evaluate(() => ({
+    builtinTools: document.querySelectorAll('#adm-builtin-tools-list > *').length,
+    approval: document.querySelector('#set-toolApprovalMode').value,
+  }));
+  check('auth-disabled operator Agent Tools panel loads its content', tools.builtinTools > 0 && Boolean(tools.approval), JSON.stringify(tools));
+  await operator.page.click('[data-settings-tab="system"]');
+  await operator.page.waitForTimeout(800);
+  const system = await operator.page.evaluate(() => ({
+    backupShown: getComputedStyle(document.querySelector('[data-settings-section="backup"]')).display !== 'none',
+    dangerShown: getComputedStyle(document.querySelector('[data-settings-section="danger-zone"]')).display !== 'none',
+  }));
+  check('auth-disabled operator System panel shows backup and danger zone', system.backupShown && system.dangerShown, JSON.stringify(system));
+  forbiddenReport.operator = [...new Set(operator.forbidden)];
   check('operator page has no script errors', operator.errors.length === 0, operator.errors.join(' | '));
   await operator.context.close();
 }
@@ -498,6 +647,7 @@ async function main() {
   const cookies = await setupUsers(authInstance);
 
   await testFinder(authInstance, cookies);
+  await testMemberLoadFailureAndFallbackCompatibility(authInstance, cookies);
   await testMemberScope(authInstance, cookies);
   await testAdminScope(authInstance, cookies);
 
@@ -505,6 +655,7 @@ async function main() {
   seedEndpoints(openInstance);
   await testAuthDisabledOperator(openInstance);
 
+  console.log(`\n401/403 responses seen per persona: ${JSON.stringify(forbiddenReport)}`);
   const failed = results.filter(result => !result.pass);
   console.log(`\n${results.length - failed.length}/${results.length} browser checks passed`);
   if (failed.length) {

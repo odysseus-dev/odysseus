@@ -1357,6 +1357,11 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
 .settings-scope-locked [inert] {
   opacity: 0.55;
 }
+.settings-model-default-retry {
+  margin-left: 6px;
+  padding: 2px 10px;
+  font-size: 11px;
+}
 .settings-search-empty {
   padding: 8px;
   color: var(--fg);

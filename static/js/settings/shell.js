@@ -16,7 +16,12 @@ import {
   revealSettingsSection,
 } from './navigation.js';
 import { showSettingsModal, hideSettingsModal } from './lifecycle.js';
-import { getSettingsPanel, isAdminManagedSettingsTab } from './registry.js';
+import {
+  getFirstOfferedSettingsPanelId,
+  getSettingsPanel,
+  isAdminManagedSettingsTab,
+  isSettingsPanelOffered,
+} from './registry.js';
 import { syncSettingsPeek } from './peek.js';
 
 /**
@@ -92,6 +97,17 @@ export function createSettingsShell(options = {}) {
 
     if (tab) {
       activateSettingsPanel(modalEl, tab);
+    } else {
+      // Never land on a panel this caller is not offered (for example the
+      // admin-only Add Models default for a signed-in user).
+      const access = {
+        isAdmin: typeof isAdmin === 'function' ? !!isAdmin() : false,
+        accountsEnabled: typeof accountsEnabled === 'function' ? accountsEnabled() !== false : true,
+      };
+      const current = getActiveSettingsTab(modalEl);
+      if (!isSettingsPanelOffered(current, access)) {
+        activateSettingsPanel(modalEl, getFirstOfferedSettingsPanelId(access));
+      }
     }
 
     // Preserve existing panel-specific side effects when Settings is opened

@@ -85,6 +85,67 @@ function _ensureBlankOption(selectEl, text) {
   blank.textContent = text;
   selectEl.insertBefore(blank, first || null);
 }
+/**
+ * Load state for a model-default card. The card's controls stay disabled
+ * until its stored values load, so a save can never overwrite values the form
+ * never showed; a failed load offers Retry. `run()` is also how a card shows
+ * the stored values again after a failed save.
+ */
+function _createModelDefaultLoader(opts) {
+  var loaded = false;
+  var retryBtn = null;
+
+  function setControlsDisabled(disabled) {
+    opts.controls().forEach(function(control) { if (control) control.disabled = disabled; });
+  }
+
+  function clearFailure() {
+    if (!retryBtn) return;
+    retryBtn.remove();
+    retryBtn = null;
+    if (opts.msgEl) opts.msgEl.textContent = '';
+  }
+
+  function showFailure() {
+    if (!opts.msgEl) return;
+    opts.msgEl.textContent = 'Could not load the saved choice. ';
+    opts.msgEl.style.color = 'var(--red)';
+    retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'settings-fallback-add settings-model-default-retry';
+    retryBtn.textContent = 'Retry';
+    retryBtn.addEventListener('click', async function() {
+      var button = retryBtn;
+      button.disabled = true;
+      var ok = await run();
+      if (!ok && button.isConnected) button.disabled = false;
+      else if (ok && opts.controls()[0]) opts.controls()[0].focus();
+    });
+    opts.msgEl.appendChild(retryBtn);
+  }
+
+  async function run() {
+    try {
+      var stored = await opts.load();
+      loaded = true;
+      setControlsDisabled(false);
+      clearFailure();
+      opts.apply(stored);
+      return true;
+    } catch (error) {
+      console.warn('Failed to load ' + opts.label, error);
+      loaded = false;
+      setControlsDisabled(true);
+      clearFailure();
+      showFailure();
+      return false;
+    }
+  }
+
+  setControlsDisabled(true);
+  return { run: run, isLoaded: function() { return loaded; } };
+}
+
 function _showCardMessage(msgEl, text, failed) {
   if (!msgEl) return;
   msgEl.textContent = text;
@@ -849,16 +910,14 @@ async function initDefaultChat() {
     refreshModels(stored.default_model || '');
   }
 
-  // Show what is actually stored after a failed save instead of the choice
-  // that was not saved.
-  async function restoreStoredDefault() {
-    try { applyStoredDefault(await modelDefaults.load()); }
-    catch (e) { console.warn('Failed to reload default chat settings', e); }
-  }
-
-  try {
-    applyStoredDefault(await modelDefaults.load());
-  } catch (e) { console.warn('Failed to load default chat settings', e); }
+  var defaultLoader = _createModelDefaultLoader({
+    label: 'default chat model',
+    controls: function() { return [epSel, modelSel]; },
+    msgEl: msg,
+    load: function() { return modelDefaults.load(); },
+    apply: applyStoredDefault,
+  });
+  await defaultLoader.run();
 
   var foregroundPolicy = await loadForegroundPolicy();
   fallbackPrefsLoaded = foregroundPolicy !== null;
@@ -952,6 +1011,7 @@ async function initDefaultChat() {
   modelSel.addEventListener('change', saveDefault);
 
   async function saveDefault() {
+    if (!defaultLoader.isLoaded()) return;
     try {
       await modelDefaults.save({
         default_endpoint_id: epSel.value,
@@ -959,8 +1019,9 @@ async function initDefaultChat() {
       });
       _showCardMessage(msg, 'Saved', false);
     } catch (e) {
-      if (!e || !e.serverSaved) await restoreStoredDefault();
-      _showCardMessage(msg, modelDefaultSaveError(e), true);
+      // Show what is actually stored instead of the choice that was not saved.
+      var restored = (e && e.serverSaved) ? true : await defaultLoader.run();
+      if (restored) _showCardMessage(msg, modelDefaultSaveError(e), true);
     }
   }
 
@@ -1103,14 +1164,20 @@ async function initUtilityModel() {
     refreshEffort(settings.utility_reasoning_effort || '');
   }
 
-  async function restoreStoredUtility() {
-    try { applyStoredUtility(await modelDefaults.load()); }
-    catch (e) { console.warn('Failed to reload utility model settings', e); }
-  }
-
-  try {
-    var settings = await modelDefaults.load();
-    applyStoredUtility(settings);
+  function bindUtilityFallbacks(settings) {
+    var initial = Array.isArray(settings.utility_model_fallbacks)
+      ? settings.utility_model_fallbacks.map(function(f) {
+          return {
+            endpoint_id: (f && f.endpoint_id) || '',
+            model: (f && f.model) || '',
+            reasoning_effort: (f && f.reasoning_effort) || '',
+          };
+        })
+      : [];
+    if (fallbackWidget) {
+      fallbackWidget.setInitial(initial);
+      return;
+    }
     fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
@@ -1128,22 +1195,27 @@ async function initUtilityModel() {
         var meta = (_levelsByEndpoint[epId] || {})[modelId] || {};
         return Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels : [];
       },
-      initial: Array.isArray(settings.utility_model_fallbacks)
-        ? settings.utility_model_fallbacks.map(function(f) {
-            return {
-              endpoint_id: (f && f.endpoint_id) || '',
-              model: (f && f.model) || '',
-              reasoning_effort: (f && f.reasoning_effort) || '',
-            };
-          })
-        : [],
+      initial: initial,
     });
-  } catch (e) { console.warn('Failed to load utility model settings', e); }
+  }
+
+  var utilityLoader = _createModelDefaultLoader({
+    label: 'utility model',
+    controls: function() { return [epSel, modelSel, effortSel, el('set-utilityAddFallback')]; },
+    msgEl: msg,
+    load: function() { return modelDefaults.load(); },
+    apply: function(settings) {
+      applyStoredUtility(settings);
+      bindUtilityFallbacks(settings);
+    },
+  });
+  await utilityLoader.run();
 
   // Persist whatever's currently selected. Empty endpoint or model → backend
   // transparently falls back to the chat model (mirrors the teacher panel:
   // no toggle, "—" means "unset, use chat").
   async function saveUtility() {
+    if (!utilityLoader.isLoaded()) return;
     try {
       await modelDefaults.save({
         utility_endpoint_id: epSel.value || '',
@@ -1152,8 +1224,8 @@ async function initUtilityModel() {
       });
       _showCardMessage(msg, 'Saved', false);
     } catch (e) {
-      if (!e || !e.serverSaved) await restoreStoredUtility();
-      _showCardMessage(msg, modelDefaultSaveError(e), true);
+      var restored = (e && e.serverSaved) ? true : await utilityLoader.run();
+      if (restored) _showCardMessage(msg, modelDefaultSaveError(e), true);
     }
   }
 
@@ -1309,7 +1381,7 @@ async function initVisionSettings() {
   // Also pull the raw endpoint list so the fallback widget can resolve
   // endpoint-id → models the same way the other cards do.
   try {
-    _visionEndpoints = await _fetchModelEndpoints();
+    _visionEndpoints = await _fetchModelDefaultEndpoints();
   } catch (e) { console.warn('Failed to load endpoints for vision fallback', e); }
   try {
     const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
@@ -1776,9 +1848,14 @@ async function initResearchSettings() {
     refreshModels(stored.research_model || '');
   }
 
-  try {
-    applyStoredResearchModel(await modelDefaults.load());
-  } catch (e) { console.warn('Failed to load research model', e); }
+  var researchLoader = _createModelDefaultLoader({
+    label: 'research model',
+    controls: function() { return [epSel, modelSel]; },
+    msgEl: msg,
+    load: function() { return modelDefaults.load(); },
+    apply: applyStoredResearchModel,
+  });
+  await researchLoader.run();
 
   // Run limits are server-wide (Search → Deep Research).
   try {
@@ -1794,6 +1871,8 @@ async function initResearchSettings() {
   } catch (e) { console.warn('Failed to load research settings', e); }
 
   function showStatus() {
+    // Keep a load failure and its Retry visible.
+    if (!researchLoader.isLoaded()) return;
     var parts = [];
     if (epSel.value) {
       var epName = epSel.options[epSel.selectedIndex].textContent;
@@ -1829,6 +1908,7 @@ async function initResearchSettings() {
   // users); the run limits below are server-wide. They save separately so a
   // user's model choice never carries server-wide fields.
   async function saveResearchModel() {
+    if (!researchLoader.isLoaded()) return;
     try {
       await modelDefaults.save({
         research_endpoint_id: epSel.value,
@@ -1837,11 +1917,8 @@ async function initResearchSettings() {
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(showStatus, 2000);
     } catch (e) {
-      if (!e || !e.serverSaved) {
-        try { applyStoredResearchModel(await modelDefaults.load()); }
-        catch (loadError) { console.warn('Failed to reload research model', loadError); }
-      }
-      msg.textContent = modelDefaultSaveError(e); msg.style.color = 'var(--red)';
+      var restored = (e && e.serverSaved) ? true : await researchLoader.run();
+      if (restored) { msg.textContent = modelDefaultSaveError(e); msg.style.color = 'var(--red)'; }
     }
   }
 

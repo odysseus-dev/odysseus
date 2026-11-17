@@ -70,6 +70,8 @@ export const SETTINGS_PANELS = Object.freeze([
     label: 'Add Models',
     group: 'models',
     controller: 'admin',
+    // Creating and listing endpoints is admin-only on the server.
+    adminOnly: true,
     keywords: ['models', 'provider', 'endpoint'],
     sections: [
       {
@@ -91,6 +93,7 @@ export const SETTINGS_PANELS = Object.freeze([
     label: 'Added Models',
     group: 'models',
     controller: 'admin',
+    adminOnly: true,
     keywords: ['models', 'configured', 'provider', 'endpoint'],
     sections: [
       {
@@ -424,6 +427,12 @@ export const SETTINGS_PANELS = Object.freeze([
 ]);
 
 export const DEFAULT_SETTINGS_PANEL_ID = 'services';
+
+/** The first panel, in sidebar order, that this caller is offered. */
+export function getFirstOfferedSettingsPanelId(options = {}) {
+  const panel = SETTINGS_PANELS.find(candidate => isSettingsPanelOffered(candidate, options));
+  return panel ? panel.id : DEFAULT_SETTINGS_PANEL_ID;
+}
 
 const _panelsById = new Map(
   SETTINGS_PANELS.map(panel => [panel.id, panel]),
