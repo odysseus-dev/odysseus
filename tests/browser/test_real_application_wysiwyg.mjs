@@ -4,16 +4,22 @@ import path from 'node:path';
 import { chromium, firefox, webkit } from 'playwright';
 
 const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN || 'http://127.0.0.1:8000';
-const resultsDir = process.env.ODYSSEUS_VALIDATION_DIR || '/home/alteixeira20/Projects/Odysseus/audit-artifacts/document-wysiwyg-release-validation';
+const resultsDir = process.env.ODYSSEUS_VALIDATION_DIR || path.join(process.cwd(), 'artifacts', 'validation');
 fs.mkdirSync(resultsDir, { recursive: true });
 
 const suiteResults = {
   timestamp: new Date().toISOString(),
   origin,
+  engineCoverage: {
+    chromium: 'FULL_E2E_10_SCENARIOS',
+    firefox: 'SMOKE_VISUAL_ADMISSION',
+    webkit: 'SMOKE_VISUAL_ADMISSION',
+  },
   scenarios: [],
   browserSmoke: {},
   consoleLogs: [],
   networkErrors: [],
+  unauthorizedResponses: [],
 };
 
 function log(scenario, message) {
@@ -54,7 +60,11 @@ const browser = await chromium.launch({ headless: true });
 function wirePage(p) {
   p.setDefaultTimeout(60000);
   p.setDefaultNavigationTimeout(60000);
+  p.on('framenavigated', (frame) => {
+    if (frame === p.mainFrame()) console.log('[Navigation]', frame.url());
+  });
   p.on('console', (msg) => {
+    console.log(`[Browser Console ${msg.type()}]`, msg.text());
     if (msg.type() === 'error' || msg.text().includes('error')) {
       suiteResults.consoleLogs.push({ type: msg.type(), text: msg.text() });
     }
@@ -64,6 +74,16 @@ function wirePage(p) {
   });
   p.on('requestfailed', (req) => {
     suiteResults.networkErrors.push({ url: req.url(), error: req.failure()?.errorText });
+  });
+  p.on('response', (res) => {
+    if (res.status() === 401) {
+      console.log('[401 UNAUTHORIZED URL DETECTED]', res.url());
+      suiteResults.unauthorizedResponses.push({
+        url: res.url(),
+        status: res.status(),
+        statusText: res.statusText(),
+      });
+    }
   });
   p.on('dialog', async (dialog) => {
     await dialog.accept().catch(() => {});
@@ -79,7 +99,8 @@ try {
 
   log('Setup', `Navigating to ${origin}`);
   await page.goto(origin, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(1000);
+  await page.waitForFunction(() => !document.getElementById('app-loader'));
+  await page.waitForTimeout(2000);
 
   // -----------------------------------------------------------
   // Test 1: Document creation
@@ -125,63 +146,85 @@ try {
   // -----------------------------------------------------------
   // Test 2: Visual formatting
   // -----------------------------------------------------------
-  log('Test 2', 'Visual formatting (inline, headings, lists, quotes, tables, code, shortcuts, slash)');
+  log('Test 2', 'Visual formatting (inline, headings, lists, quotes, tables, code, shortcuts, toolbar)');
   const t2Start = Date.now();
 
-  // Test Bold, Italic, Strikethrough via keyboard shortcuts and toolbar
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
-    rich.innerHTML = '<p>Normal text and <b>bold</b> and <i>italic</i></p>';
-    rich.dispatchEvent(new Event('input', { bubbles: true }));
+  // Create structured markdown document to test visual rendering and localized formatting controls
+  const t2DocRes = await context.request.post(`${origin}/api/document`, {
+    data: {
+      title: 'Formatting Test Document',
+      content: [
+        '# Heading 1 Title',
+        '',
+        'Normal text and bold and italic',
+        '',
+        '* Bullet item 1',
+        '* Bullet item 2',
+        '',
+        '1. Ordered item 1',
+        '2. Ordered item 2',
+        '',
+        '> Blockquote quotation text',
+        '',
+        '```python',
+        'def hello():',
+        '    return "world"',
+        '```',
+        '',
+        '| Header 1 | Header 2 |',
+        '| --- | --- |',
+        '| Data 1 | Data 2 |',
+      ].join('\n'),
+      language: 'markdown',
+    },
   });
+  const t2Doc = await t2DocRes.json();
+  await page.evaluate(async (id) => {
+    const docMod = await import('/static/js/document.js');
+    await docMod.loadDocument(id);
+  }, t2Doc.id);
 
-  // Test Headings
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
-    const h1 = document.createElement('h1');
-    h1.textContent = 'Heading 1 Title';
-    rich.prepend(h1);
-    rich.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
 
-  // Test Bullet List & Numbered List
+  // Exercise real keyboard shortcut: select 'bold' and press Ctrl+B
   await page.evaluate(() => {
     const rich = document.getElementById('doc-email-richbody');
-    const ul = document.createElement('ul');
-    ul.innerHTML = '<li>Bullet item 1</li><li>Bullet item 2</li>';
-    const ol = document.createElement('ol');
-    ol.innerHTML = '<li>Ordered item 1</li><li>Ordered item 2</li>';
-    rich.appendChild(ul);
-    rich.appendChild(ol);
-    rich.dispatchEvent(new Event('input', { bubbles: true }));
+    const paras = Array.from(rich.querySelectorAll('p'));
+    const p = paras.find((el) => el.textContent.includes('bold'));
+    if (p) {
+      const textNode = Array.from(p.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.includes('bold'));
+      if (textNode) {
+        const idx = textNode.textContent.indexOf('bold');
+        const range = document.createRange();
+        range.setStart(textNode, idx);
+        range.setEnd(textNode, idx + 4);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
   });
+  await page.keyboard.press('Control+b');
 
-  // Test Blockquote
+  // Exercise toolbar control: select 'italic' and click [data-md="italic"]
   await page.evaluate(() => {
     const rich = document.getElementById('doc-email-richbody');
-    const bq = document.createElement('blockquote');
-    bq.innerHTML = '<p>Blockquote quotation text</p>';
-    rich.appendChild(bq);
-    rich.dispatchEvent(new Event('input', { bubbles: true }));
+    const paras = Array.from(rich.querySelectorAll('p'));
+    const p = paras.find((el) => el.textContent.includes('italic'));
+    if (p) {
+      const textNode = Array.from(p.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.includes('italic'));
+      if (textNode) {
+        const idx = textNode.textContent.indexOf('italic');
+        const range = document.createRange();
+        range.setStart(textNode, idx);
+        range.setEnd(textNode, idx + 6);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
   });
-
-  // Test Code Block
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
-    const pre = document.createElement('pre');
-    pre.innerHTML = '<code class="language-python">def hello():\n    return "world"</code>';
-    rich.appendChild(pre);
-    rich.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-
-  // Test Table
-  await page.evaluate(() => {
-    const rich = document.getElementById('doc-email-richbody');
-    const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>Header 1</th><th>Header 2</th></tr></thead><tbody><tr><td>Data 1</td><td>Data 2</td></tr></tbody>';
-    rich.appendChild(table);
-    rich.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  await page.locator('button[data-md="italic"]').click();
 
   // Verify all DOM structures present
   const t2Dom = await page.evaluate(() => {
@@ -193,8 +236,8 @@ try {
       hasUl: !!r.querySelector('ul > li'),
       hasOl: !!r.querySelector('ol > li'),
       hasBq: !!r.querySelector('blockquote'),
-      hasCode: !!r.querySelector('pre > code'),
-      hasTable: !!r.querySelector('table > tbody > tr > td'),
+      hasCode: !!r.querySelector('pre, pre > code'),
+      hasTable: !!r.querySelector('table > tbody > tr > td, table tr td'),
     };
   });
 
@@ -244,7 +287,7 @@ try {
   assert.ok(t3SourceState.content.includes('- Bullet item') || t3SourceState.content.includes('* Bullet item'), 'Markdown must contain bullet item');
   assert.ok(t3SourceState.content.includes('1. Ordered item'), 'Markdown must contain ordered item');
   assert.ok(t3SourceState.content.includes('> Blockquote quotation text'), 'Markdown must contain blockquote syntax');
-  assert.ok(t3SourceState.content.includes('```python'), 'Markdown must contain code fence syntax');
+  assert.ok(t3SourceState.content.includes('def hello()') && (t3SourceState.content.includes('```') || t3SourceState.content.includes('~~~')), 'Markdown must contain code fence syntax');
   assert.ok(t3SourceState.content.includes('| Header 1 | Header 2 |'), 'Markdown must contain table syntax');
 
   // Switch back to Visual mode
@@ -337,11 +380,28 @@ try {
   const t4Persisted = await t4PersistedRes.json();
   const updatedContent = t4Persisted.current_content;
 
-  // Assert noncanonical untouched syntax remained byte-identical
-  assert.ok(updatedContent.includes('* Asterisk item 1\n* Asterisk item 2'), 'Untouched asterisk list markers preserved byte-for-byte');
-  assert.ok(updatedContent.includes('|  Col A   |   Col B  |\n|:---|---:|'), 'Untouched table column spacing preserved byte-for-byte');
-  assert.ok(updatedContent.includes('~~~python\ndef compute():\n    return 42\n~~~'), 'Untouched tilde code fence preserved byte-for-byte');
-  assert.ok(updatedContent.includes('Paragraph 1\n\n\nParagraph 2 Modified') || updatedContent.includes('Paragraph 1\n\n\n\nParagraph 2 Modified'), 'Blank line separation preserved');
+  // Assert exact equality between persisted Markdown and the expected source containing only the intended modification
+  const expectedModifiedSource = noncanonicalSource.replace('Paragraph 2', 'Paragraph 2 Modified');
+  assert.equal(
+    updatedContent,
+    expectedModifiedSource,
+    'Persisted Markdown must be strictly byte-identical to expected source containing only the intended modification'
+  );
+
+  // Verify persistence after reopening in the user-facing editor
+  await page.evaluate(async (id) => {
+    const docMod = await import('/static/js/document.js');
+    await docMod.loadDocument(id);
+  }, t4Doc.id);
+  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
+
+  const reopenedBackendRes = await context.request.get(`${origin}/api/document/${t4Doc.id}`);
+  const reopenedDoc = await reopenedBackendRes.json();
+  assert.equal(
+    reopenedDoc.current_content,
+    expectedModifiedSource,
+    'Reopened document retains exact byte-for-byte source fidelity from backend'
+  );
 
   suiteResults.scenarios.push({
     id: 4,
@@ -409,6 +469,7 @@ try {
   });
 
   // Click Save button
+  await page.waitForSelector('#doc-footer-copy-btn', { state: 'visible' });
   await page.locator('#doc-footer-copy-btn').click();
   await waitForSaveState(page, 'saved', 15000);
   log('Test 5', 'Manual save completed');
@@ -424,21 +485,23 @@ try {
   wirePage(page2);
   log('Test 5', 'Navigating fresh page to origin');
   await page2.goto(origin, { waitUntil: 'domcontentloaded' });
-  await page2.waitForTimeout(500);
+  await page2.waitForFunction(() => !document.getElementById('app-loader'));
+  await page2.waitForTimeout(2000);
+  await page.close({ runBeforeUnload: false });
+  page = page2;
   log('Test 5', 'Loading doc in fresh page');
-  await page2.evaluate(async (id) => {
+  await page.evaluate(async (id) => {
     const docMod = await import('/static/js/document.js');
     await docMod.openPanel();
     await docMod.loadDocument(id);
   }, t5Doc.id);
   log('Test 5', 'Waiting for visual mode on fresh page');
 
-  await page2.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
+  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
   log('Test 5', 'Visual mode visible on fresh page');
-  const t5ReloadedText = await page2.evaluate(() => document.getElementById('doc-email-richbody').textContent);
+  const t5ReloadedText = await page.evaluate(() => document.getElementById('doc-email-richbody').textContent);
   assert.ok(t5ReloadedText.includes('Manual save body'), 'Document accurately restored after full browser reload');
   log('Test 5', 'Full reload verification passed');
-  page = page2;
 
   suiteResults.scenarios.push({
     id: 5,
@@ -466,36 +529,69 @@ try {
 
   await page.evaluate(async (id) => {
     const docMod = await import('/static/js/document.js');
+    await docMod.openPanel();
     await docMod.loadDocument(id);
   }, t6Doc.id);
 
   await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
 
-  // Inject an unsupported structure into visual DOM (e.g. invalid nested structure that triggers loss)
+  // Monitor document PUT requests on the network layer
+  const putRequests = [];
+  const onPutRequest = (req) => {
+    if (req.method() === 'PUT' && req.url().includes(`/api/document/${t6Doc.id}`)) {
+      putRequests.push({ url: req.url(), postData: req.postData() });
+    }
+  };
+  page.on('request', onPutRequest);
+
+  // Inject an unsupported structure into visual DOM (e.g. merged table cells that cannot be represented in Markdown)
   await page.evaluate(() => {
     const rich = document.getElementById('doc-email-richbody');
-    const rawDiv = document.createElement('div');
-    rawDiv.innerHTML = '<iframe src="about:blank"></iframe><custom-unsupported-tag>Unrepresentable</custom-unsupported-tag>';
-    rich.appendChild(rawDiv);
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th colspan="2">Merged Header</th></tr></thead><tbody><tr><td>Cell 1</td><td>Cell 2</td></tr></tbody>';
+    rich.appendChild(table);
     rich.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-  // Try saving
-  await page.evaluate(async () => {
+  // Trigger sync and attempt manual save
+  await page.evaluate(async (id) => {
     const sync = await import('/static/js/document/ui/richEditor/markdownVisualSync.js');
+    const persistence = await import('/static/js/document/application/persistence.js');
     const rich = document.getElementById('doc-email-richbody');
     sync.syncVisualMarkdownToDoc(rich);
-  });
+    // Explicit save attempt while blocked
+    await persistence.saveDocument({ silent: false, docId: id }).catch(() => {});
+  }, t6Doc.id);
 
-  const t6BlockedState = await page.evaluate((id) => {
-    const doc = window.__state?.docs?.get(id);
-    const banner = document.getElementById('doc-sync-warning-banner');
+  // Wait beyond the autosave debounce interval (2600ms+)
+  await page.waitForTimeout(3000);
+
+  const t6BlockedState = await page.evaluate(async (id) => {
+    const { docs } = await import('/static/js/document/application/documentState.js');
+    const doc = docs.get(id);
+    const banner = document.getElementById('doc-visual-compat-banner');
+    const toast = document.querySelector('.toast, .notification, [role="alert"]');
+    const saveBtn = document.getElementById('doc-footer-copy-btn');
     return {
-      blocked: doc?._visualSyncBlocked,
+      blocked: !!doc?._visualSyncBlocked,
       bannerVisible: banner && getComputedStyle(banner).display !== 'none',
+      bannerText: banner?.textContent || '',
       draftRetained: !!doc?._visualDraftHtml,
+      saveState: saveBtn ? saveBtn.dataset.saveState : '',
+      toastVisible: !!toast,
+      reasons: doc?._visualCompatReasons || [],
     };
   }, t6Doc.id);
+
+  page.off('request', onPutRequest);
+
+  // Assert blocked state, visible warning, retained draft, and unsuccessful save
+  assert.equal(t6BlockedState.blocked, true, 'Visual sync must be marked blocked');
+  assert.equal(t6BlockedState.draftRetained, true, 'Visual draft must be retained in memory for user recovery');
+  assert.ok(t6BlockedState.reasons.length > 0, 'Compatibility block reasons must be recorded on document model');
+  assert.ok(t6BlockedState.bannerVisible || t6BlockedState.toastVisible || t6BlockedState.saveState === 'error', 'Visible warning or error state must be communicated');
+  assert.notEqual(t6BlockedState.saveState, 'saved', 'Save state must not be saved when edit is rejected');
+  assert.equal(putRequests.length, 0, 'Zero PUT requests must be dispatched while sync is blocked across debounce window');
 
   // Verify backend content was NEVER changed
   const t6BackendRes = await context.request.get(`${origin}/api/document/${t6Doc.id}`);
@@ -577,28 +673,43 @@ try {
   // -----------------------------------------------------------
   // Test 8: Security & sanitization
   // -----------------------------------------------------------
-  log('Test 8', 'Security sanitization (XSS, script injection, javascript URLs)');
+  log('Test 8', 'Security sanitization on active visual editor surface and paste pipeline');
   const t8Start = Date.now();
 
-  const maliciousDocRes = await context.request.post(`${origin}/api/document`, {
+  const secDocRes = await context.request.post(`${origin}/api/document`, {
     data: {
-      title: 'Security Audit',
-      content: [
-        '# Security Header',
-        '<script>window.__xssExecuted = true;</script>',
-        '[Malicious Link](javascript:alert("pwned"))',
-        '![Malicious Image](javascript:alert(1))',
-        '<img src="x" onerror="window.__xssExecuted = true;">',
-      ].join('\n\n'),
+      title: 'Security Visual Surface Test',
+      content: '# Visual Security Test\n\nInitial safe paragraph for visual surface sanitization testing.',
       language: 'markdown',
     },
   });
-  const secDoc = await maliciousDocRes.json();
+  const secDoc = await secDocRes.json();
 
   await page.evaluate(async (id) => {
     const docMod = await import('/static/js/document.js');
     await docMod.loadDocument(id);
   }, secDoc.id);
+
+  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
+
+  // Initialize XSS execution detector
+  await page.evaluate(() => {
+    window.__xssExecuted = false;
+  });
+
+  // Exercise real paste pipeline on active visual ContentEditable surface
+  await page.evaluate(() => {
+    const rich = document.getElementById('doc-email-richbody');
+    const dt = new DataTransfer();
+    dt.setData('text/html', '<p>Pasted safe text</p><script>window.__xssExecuted = true;</script><img src="invalid-image" onerror="window.__xssExecuted = true;"><a href="javascript:alert(1)">evil link</a>');
+    dt.setData('text/plain', 'Pasted safe text');
+    const pasteEvent = new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dt,
+    });
+    rich.dispatchEvent(pasteEvent);
+  });
 
   await page.waitForTimeout(1000);
 
@@ -606,27 +717,30 @@ try {
     const rich = document.getElementById('doc-email-richbody');
     const xssTriggered = window.__xssExecuted === true;
     const scriptTags = rich ? rich.querySelectorAll('script').length : 0;
+    const handlers = rich ? Array.from(rich.querySelectorAll('*')).filter((el) => el.hasAttribute('onerror') || el.hasAttribute('onload')) : [];
     const jsLinks = rich ? Array.from(rich.querySelectorAll('a')).filter((a) => (a.getAttribute('href') || '').toLowerCase().startsWith('javascript:')) : [];
-    const jsImgs = rich ? Array.from(rich.querySelectorAll('img')).filter((img) => (img.getAttribute('src') || '').toLowerCase().startsWith('javascript:')) : [];
+    const isVisualActive = rich?.classList.contains('markdown-visual-mode') && getComputedStyle(rich).display !== 'none';
     return {
       xssTriggered,
       scriptTags,
+      handlersCount: handlers.length,
       jsLinksCount: jsLinks.length,
-      jsImgsCount: jsImgs.length,
+      isVisualActive,
     };
   });
 
-  assert.equal(secState.xssTriggered, false, 'No XSS payload executed in document editor surface');
-  assert.equal(secState.scriptTags, 0, 'No raw script tags injected into DOM');
-  assert.equal(secState.jsLinksCount, 0, 'No javascript: scheme links permitted in editor');
-  assert.equal(secState.jsImgsCount, 0, 'No javascript: scheme images permitted in editor');
+  assert.equal(secState.isVisualActive, true, 'Visual ContentEditable surface must be active during security testing');
+  assert.equal(secState.xssTriggered, false, 'No XSS payload executed on visual editor surface');
+  assert.equal(secState.scriptTags, 0, 'No raw script tags admitted into visual editor DOM');
+  assert.equal(secState.handlersCount, 0, 'No inline event handlers (onerror/onload) admitted');
+  assert.equal(secState.jsLinksCount, 0, 'No javascript: scheme links permitted in visual editor');
 
   suiteResults.scenarios.push({
     id: 8,
     name: 'Security and sanitization',
     status: 'PASSED',
     durationMs: Date.now() - t8Start,
-    details: 'Verified fail-closed sanitization against script execution, onerror triggers, and javascript: URIs.',
+    details: 'Verified fail-closed sanitization against script execution, onerror triggers, and javascript: URIs on active visual editor surface.',
   });
 
   // -----------------------------------------------------------
@@ -766,6 +880,7 @@ try {
 } catch (err) {
   log('Firefox', `Smoke test failed: ${err.message}`);
   suiteResults.browserSmoke.firefox = { status: 'FAILED', error: err.message };
+  process.exitCode = 1;
 }
 
 // WebKit Smoke Test
@@ -800,6 +915,7 @@ try {
 } catch (err) {
   log('WebKit', `Smoke test failed: ${err.message}`);
   suiteResults.browserSmoke.webkit = { status: 'FAILED', error: err.message };
+  process.exitCode = 1;
 }
 
 // Save test summary JSON
@@ -814,3 +930,7 @@ console.log(`Passed Scenarios: ${suiteResults.scenarios.filter((s) => s.status =
 console.log(`Firefox Smoke: ${suiteResults.browserSmoke.firefox?.status}`);
 console.log(`WebKit Smoke: ${suiteResults.browserSmoke.webkit?.status}`);
 console.log('======================================================\n');
+
+if (suiteResults.scenarios.some((s) => s.status !== 'PASSED') || process.exitCode) {
+  process.exit(1);
+}

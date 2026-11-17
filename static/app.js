@@ -205,7 +205,7 @@ function initRailHoverLabels() {
 const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
-  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
+  if (res.status === 401 && !String(args[0]).includes('/api/auth/') && !String(args[0]).includes('/api/tasks/notification-logs')) {
     window.location.href = '/login';
   }
   return res;

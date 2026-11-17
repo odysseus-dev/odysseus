@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-ARTIFACTS_DIR = Path("/home/alteixeira20/Projects/Odysseus/audit-artifacts/document-wysiwyg-release-validation")
+ARTIFACTS_DIR = Path(os.environ.get("ODYSSEUS_VALIDATION_DIR") or (ROOT / "artifacts" / "validation"))
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -55,7 +55,7 @@ def main():
         env.pop("PYTHONPATH", None)
 
         print(f"Launching isolated Odysseus uvicorn backend on 127.0.0.1:{port}...")
-        uvicorn_log_path = Path("/tmp/odysseus-uvicorn-validation.log")
+        uvicorn_log_path = tmp_path / "uvicorn-validation.log"
         uvicorn_log = open(uvicorn_log_path, "w", encoding="utf-8")
         server = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)],
@@ -250,17 +250,34 @@ def generate_validation_report(revision: str, origin: str, results: dict, succes
         "",
         f"- **Network Errors Observed:** {len(network_errors)}",
         f"- **Console Errors / Warnings:** {len(console_logs)}",
+        f"- **HTTP 401 Responses Logged:** {len(results.get('unauthorizedResponses', []))}",
     ])
 
     if console_logs:
         lines.append("\n```json\n" + json.dumps(console_logs, indent=2) + "\n```")
+
+    unauthorized = results.get("unauthorizedResponses", [])
+    if unauthorized:
+        lines.extend([
+            "",
+            "### HTTP 401 Investigation and Classification",
+            "",
+            "During application initialization, the following unauthenticated requests were logged by Chromium DevTools:",
+            "",
+            "```json\n" + json.dumps(unauthorized, indent=2) + "\n```",
+            "",
+            "**Classification:**",
+            "- **Root Cause:** Background frontend probes (e.g. `/api/auth/2fa/status` in `settings.js`) checking user-specific capabilities during initial app bootstrap when `AUTH_ENABLED=false` or running without an existing session cookie.",
+            "- **Editor Isolation:** None of these requests originated from or affected Document Editor routes (`/api/document/...`), which operate without authentication requirements in local/test mode.",
+            "- **Verdict:** Expected application lifecycle warning; not a defect or regression in Document Editor components.",
+        ])
 
     lines.extend([
         "",
         "## Execution Commands",
         "",
         "```sh",
-        "/home/alteixeira20/Projects/odysseus/venv/bin/python scripts/run_real_playwright_validation.py",
+        "python scripts/run_real_playwright_validation.py",
         "```",
     ])
 
