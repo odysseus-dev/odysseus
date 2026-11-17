@@ -1,5 +1,6 @@
 """The native FileList must survive resetting the compose file input."""
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -51,7 +52,7 @@ let chromium;try{({chromium}=require('playwright'));}catch(e){if(e.code==='MODUL
   assert.deepEqual(errors,[]);console.log(JSON.stringify({files:expected.length}));
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
-""".replace("__HANDLER__", function_body(handler)).replace("__HANDLER_NAME__", handler).replace("__UPLOADER__", uploader)
+""".replace("__HANDLER__", re.sub(r"^[ \t]*export\s+", "", function_body(handler))).replace("__HANDLER_NAME__", handler).replace("__UPLOADER__", uploader)
     result = subprocess.run(["node", "-e", script, json.dumps(selections), str(tmp_path)],
                             cwd=Path(__file__).resolve().parents[1], capture_output=True,
                             text=True, timeout=30)
