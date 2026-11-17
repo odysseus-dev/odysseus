@@ -58,17 +58,29 @@ function headingOf(card) {
   return card.querySelector('h2');
 }
 
-function markInert(node) {
+function markControlInert(node) {
   if (node.hasAttribute('inert')) return;
   node.setAttribute('inert', '');
   node.setAttribute(INERT_MARK, '');
+  if ('disabled' in node) {
+    node.disabled = true;
+    node.setAttribute('aria-disabled', 'true');
+  }
 }
 
 function removeScopePresentation(card) {
+  if (card._scopeObserver) {
+    card._scopeObserver.disconnect();
+    delete card._scopeObserver;
+  }
   card.querySelectorAll(`.${BADGE_CLASS}, .${NOTE_CLASS}`).forEach(node => node.remove());
   card.querySelectorAll(`[${INERT_MARK}]`).forEach(node => {
     node.removeAttribute('inert');
     node.removeAttribute(INERT_MARK);
+    if ('disabled' in node) {
+      node.disabled = false;
+      node.removeAttribute('aria-disabled');
+    }
   });
   card.classList.remove(LOCKED_CLASS);
   card.removeAttribute('data-settings-scope');
@@ -105,19 +117,39 @@ function applyToCard(card, scope, presentation) {
   if (heading) heading.after(note);
   else card.prepend(note);
 
-  // Keep the heading, note and description readable; make every control
+  // Keep the heading, note, labels and descriptions readable; make every control
   // unreachable so nobody starts an edit the server would reject.
+  const lockControls = root => {
+    if (!root || root.nodeType !== 1) return;
+    if (root.matches && root.matches(CONTROL_SELECTOR)) {
+      if (!root.closest(`.${BADGE_CLASS}`)) markControlInert(root);
+    }
+    if (root.querySelectorAll) {
+      root.querySelectorAll(CONTROL_SELECTOR).forEach(control => {
+        if (!control.closest(`.${BADGE_CLASS}`)) markControlInert(control);
+      });
+    }
+  };
+
   Array.from(card.children).forEach(child => {
     if (child === note) return;
-    if (heading && (child === heading || child.contains(heading))) {
-      child.querySelectorAll(CONTROL_SELECTOR).forEach(control => {
-        if (!control.closest(`.${BADGE_CLASS}`)) markInert(control);
-      });
-      return;
-    }
-    if (child.classList.contains('admin-toggle-sub')) return;
-    markInert(child);
+    if (child.classList?.contains('admin-toggle-sub')) return;
+    lockControls(child);
   });
+
+  if (typeof MutationObserver !== 'undefined') {
+    const observer = new MutationObserver(mutations => {
+      for (const m of mutations) {
+        for (const added of m.addedNodes) {
+          if (added.nodeType !== 1) continue;
+          if (added.classList?.contains(NOTE_CLASS) || added.classList?.contains(BADGE_CLASS)) continue;
+          lockControls(added);
+        }
+      }
+    });
+    observer.observe(card, { childList: true, subtree: true });
+    card._scopeObserver = observer;
+  }
 }
 
 export function applySettingsSectionScopes(modalEl, access) {

@@ -173,6 +173,13 @@ export function bindSettingsSearch(modalEl, options = {}) {
       return;
     }
 
+    const countStatus = document.createElement('div');
+    countStatus.className = 'a11y-visually-hidden';
+    countStatus.setAttribute('role', 'status');
+    countStatus.setAttribute('aria-live', 'polite');
+    countStatus.textContent = `${matches.length} result${matches.length === 1 ? '' : 's'} available`;
+    resultsEl.appendChild(countStatus);
+
     matches.forEach((entry, index) => {
       resultsEl.appendChild(buildResult(entry, index));
     });

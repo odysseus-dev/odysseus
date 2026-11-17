@@ -224,23 +224,38 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}
         formEl.style.display = 'none';
+        closeForm();
         await renderList();
         notifyIntegrationsChanged();
       });
     });
   }
 
-  function showForm(type, editId) {
+  function closeForm() {
+    formEl.style.display = 'none';
+    formEl.innerHTML = '';
+    listEl.querySelectorAll('.intg-card.intg-card-active').forEach(c => c.classList.remove('intg-card-active'));
+    if (addBtn && addBtn.parentElement && addBtn.parentElement.style.display !== 'none') {
+      addBtn.focus();
+    }
+  }
+
+  async function showForm(type, editId) {
     formEl.style.display = '';
-    const ctx = { formEl, renderList, setNotice };
-    if (type === 'api') showApiForm(ctx, editId);
-    else if (type === 'caldav') showCalDavForm(ctx, editId);
-    else if (type === 'contacts' || type === 'carddav') showCardDavForm(ctx);
-    else if (type === 'email') showEmailForm(ctx, editId);
-    else if (type === 'mcp') showMcpForm(ctx, editId);
-    else if (type === 'codex') showAgentForm(ctx, 'codex', editId);
-    else if (type === 'claude') showAgentForm(ctx, 'claude', editId);
-    else if (type === 'vault') showVaultForm(ctx);
+    const ctx = { formEl, renderList, setNotice, closeForm };
+    if (type === 'api') await showApiForm(ctx, editId);
+    else if (type === 'caldav') await showCalDavForm(ctx, editId);
+    else if (type === 'contacts' || type === 'carddav') await showCardDavForm(ctx);
+    else if (type === 'email') await showEmailForm(ctx, editId);
+    else if (type === 'mcp') await showMcpForm(ctx, editId);
+    else if (type === 'codex') await showAgentForm(ctx, 'codex', editId);
+    else if (type === 'claude') await showAgentForm(ctx, 'claude', editId);
+    else if (type === 'vault') await showVaultForm(ctx);
+
+    const first = formEl.querySelector('input:not([type="hidden"]):not([tabindex="-1"]), select:not([tabindex="-1"]), button:not([tabindex="-1"])');
+    if (first && typeof first.focus === 'function') {
+      first.focus();
+    }
   }
 
   // ── Add button now drops a type-picker menu directly anchored to itself ──
@@ -256,10 +271,12 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
       ['mcp', 'MCP Tool Server'],
     ];
     const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');
-    const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');
+    const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" role="menuitem" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');
 
     // Anchor wrapper so the absolutely-positioned menu lands directly under
     // the add button. The button is the wrapper's only sibling.
+    addBtn.setAttribute('aria-haspopup', 'menu');
+    addBtn.setAttribute('aria-expanded', 'false');
     if (!addBtn.parentElement.classList.contains('uf-add-anchor')) {
       addBtn.parentElement.style.position = 'relative';
       addBtn.parentElement.classList.add('uf-add-anchor');
@@ -274,9 +291,12 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
       if (_menuEl) { _closeMenu(); return; }
       const menu = document.createElement('div');
       menu.className = 'uf-add-menu';
+      menu.setAttribute('role', 'menu');
+      menu.setAttribute('aria-label', 'Integration types');
       menu.innerHTML = _rowsHtml;
-      menu.style.cssText = 'position:absolute;right:0;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:6px;max-height:340px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,0.25);min-width:220px;';
+      menu.style.cssText = 'position:absolute;right:0;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:6px;max-height:340px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,0.25);min-width:220px;max-width:calc(100vw - 32px);';
       addBtn.parentElement.appendChild(menu);
+      addBtn.setAttribute('aria-expanded', 'true');
       _menuEl = menu;
       // Drop-up when there isn't enough room below the button (modal near
       // the viewport bottom, mobile keyboard up, etc.).
@@ -289,7 +309,21 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
       } else {
         menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto';
       }
-      menu.querySelectorAll('.uf-type-option').forEach(btn => {
+      const optionBtns = Array.from(menu.querySelectorAll('.uf-type-option'));
+      if (optionBtns[0]) optionBtns[0].focus();
+      menu.addEventListener('keydown', (ke) => {
+        const idx = optionBtns.indexOf(document.activeElement);
+        if (ke.key === 'ArrowDown') {
+          ke.preventDefault();
+          const next = (idx + 1) % optionBtns.length;
+          optionBtns[next]?.focus();
+        } else if (ke.key === 'ArrowUp') {
+          ke.preventDefault();
+          const prev = (idx - 1 + optionBtns.length) % optionBtns.length;
+          optionBtns[prev]?.focus();
+        }
+      });
+      optionBtns.forEach(btn => {
         btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
         btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
         btn.addEventListener('click', (ev) => {
@@ -300,7 +334,11 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
           showForm(k, 'new');
         });
       });
-      _closeMenu = bindMenuDismiss(menu, () => { menu.remove(); _menuEl = null; }, (ev) => !menu.contains(ev.target) && ev.target !== addBtn);
+      _closeMenu = bindMenuDismiss(menu, () => {
+        addBtn.setAttribute('aria-expanded', 'false');
+        menu.remove();
+        _menuEl = null;
+      }, (ev) => !menu.contains(ev.target) && ev.target !== addBtn);
     });
   }
 

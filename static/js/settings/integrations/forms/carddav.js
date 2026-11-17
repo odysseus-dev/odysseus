@@ -7,16 +7,16 @@ import uiModule from '../../../ui.js?v=20260916largetoolscroll1';
 import { esc } from '../../html.js';
 
 // ── CardDAV form + contacts manager ──
-export async function showCardDavForm({ formEl, renderList }) {
+export async function showCardDavForm({ formEl, renderList, closeForm }) {
   formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Contacts (CardDAV)</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-carddav-url">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/" required aria-required="true"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-carddav-user">Username</label><input id="uf-carddav-user" class="settings-input"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-carddav-pass">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
-            <span id="uf-carddav-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            <span id="uf-carddav-msg" role="status" aria-live="polite" style="font-size:11px;flex:1;margin-right:8px"></span>
             <button class="admin-btn-add" id="uf-carddav-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
               Save
@@ -38,13 +38,13 @@ export async function showCardDavForm({ formEl, renderList }) {
           <input type="file" id="cm-import-file" accept=".vcf,.csv,text/vcard,text/csv" multiple style="display:none">
         </div>
         <div id="cm-add-row" class="contacts-add-row" style="display:none;flex-direction:column;gap:4px;">
-          <input id="cm-add-name" class="settings-input" placeholder="Name">
-          <input id="cm-add-email" class="settings-input" placeholder="email@example.com">
-          <input id="cm-add-phone" class="settings-input" placeholder="Phone (optional)">
-          <input id="cm-add-address" class="settings-input" placeholder="Address (optional)">
+          <input id="cm-add-name" class="settings-input" placeholder="Name" aria-label="Contact name">
+          <input id="cm-add-email" class="settings-input" placeholder="email@example.com" aria-label="Contact email">
+          <input id="cm-add-phone" class="settings-input" placeholder="Phone (optional)" aria-label="Contact phone">
+          <input id="cm-add-address" class="settings-input" placeholder="Address (optional)" aria-label="Contact address">
           <div style="display:flex;gap:6px;justify-content:flex-end;"><button class="admin-btn-sm" id="cm-add-save">Save</button></div>
         </div>
-        <input type="text" id="cm-search" class="settings-input" placeholder="Search contacts (name, email, phone, address)" style="margin-top:6px;">
+        <input type="text" id="cm-search" class="settings-input" placeholder="Search contacts (name, email, phone, address)" aria-label="Search contacts" style="margin-top:6px;">
         <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">Loading…</div></div>
       </div>`;
   try {
@@ -56,7 +56,10 @@ export async function showCardDavForm({ formEl, renderList }) {
     const passInput = el('uf-carddav-pass');
     if (passInput && d.password) passInput.placeholder = '(unchanged)';
   } catch (_) {}
-  el('uf-carddav-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+  el('uf-carddav-cancel').addEventListener('click', () => {
+    if (typeof closeForm === 'function') closeForm();
+    else { formEl.style.display = 'none'; formEl.innerHTML = ''; }
+  });
   el('uf-carddav-save').addEventListener('click', async () => {
     const body = { carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
     if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;

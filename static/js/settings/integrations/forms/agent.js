@@ -63,7 +63,7 @@ python3 ~/.claude/skills/odysseus/scripts/odysseus_api.py capabilities`,
   },
 };
 
-export async function showAgentForm({ formEl, renderList }, kind, editId) {
+export async function showAgentForm({ formEl, renderList, closeForm }, kind, editId) {
   const cfg = AGENT_CONFIGS[kind] || AGENT_CONFIGS.codex;
   let tokens = [];
   try {
@@ -132,12 +132,12 @@ export async function showAgentForm({ formEl, renderList }, kind, editId) {
   const editExistingHtml = current ? `
       <div style="border:1px solid var(--border);border-radius:6px;padding:9px 10px;margin-bottom:8px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <input type="text" id="uf-codex-existing-rename" data-token-id="${esc(current.id)}" value="${esc(current.name || cfg.defaultName)}" style="font-size:12px;font-weight:600;padding:3px 6px;flex:1;background:transparent;border:1px solid transparent;border-radius:4px;" title="Click to rename">
+          <input type="text" id="uf-codex-existing-rename" data-token-id="${esc(current.id)}" value="${esc(current.name || cfg.defaultName)}" style="font-size:12px;font-weight:600;padding:3px 6px;flex:1;background:transparent;border:1px solid transparent;border-radius:4px;" title="Click to rename" aria-label="Rename agent token">
           <span style="font-size:10px;opacity:0.55;">${esc(current.token_prefix || 'token')}...${current.last_used_at ? ` · Last used ${new Date(current.last_used_at).toLocaleDateString()}` : ' · Never used'}</span>
         </div>
         <div style="font-size:11px;font-weight:600;opacity:0.62;margin-bottom:4px;">Permissions</div>
         ${scopeToggles(current)}
-        <div id="uf-codex-existing-msg" style="font-size:11px;min-height:14px;margin-top:4px;"></div>
+        <div id="uf-codex-existing-msg" role="status" aria-live="polite" style="font-size:11px;min-height:14px;margin-top:4px;"></div>
       </div>` : '';
 
   formEl.innerHTML = `
@@ -146,7 +146,7 @@ export async function showAgentForm({ formEl, renderList }, kind, editId) {
           ${editExistingHtml}
           <div id="uf-codex-prompt" style="display:${current ? 'none' : 'block'};padding:6px 0;">
             <div style="font-size:11px;opacity:0.7;margin-bottom:6px;">Name this ${esc(cfg.word)} agent so you can tell it apart from other ones (e.g. "${esc(cfg.defaultName)} — laptop").</div>
-            <input type="text" id="uf-codex-name-input" class="settings-select" placeholder="${esc(cfg.defaultName)}" style="width:100%;font-size:12px;padding:6px 8px;">
+            <input type="text" id="uf-codex-name-input" class="settings-select" placeholder="${esc(cfg.defaultName)}" aria-label="Agent name" style="width:100%;font-size:12px;padding:6px 8px;">
           </div>
           <div id="uf-codex-pending" style="display:none;align-items:center;gap:8px;padding:6px 0;font-size:11px;opacity:0.7;"></div>
           <div id="uf-codex-reveal" style="display:none;width:100%;box-sizing:border-box;">
@@ -186,7 +186,7 @@ export async function showAgentForm({ formEl, renderList }, kind, editId) {
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               Cancel
             </button>
-            <span id="uf-codex-msg" style="font-size:11px;flex:1;text-align:center;"></span>
+            <span id="uf-codex-msg" role="status" aria-live="polite" style="font-size:11px;flex:1;text-align:center;"></span>
             <button class="admin-btn-add" id="uf-codex-revoke" style="display:none;align-items:center;gap:5px;background:color-mix(in srgb, var(--color-error) 10%, transparent);color:var(--color-error);border:1px solid var(--color-error);font-weight:600;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               Revoke
@@ -253,7 +253,10 @@ export async function showAgentForm({ formEl, renderList }, kind, editId) {
     });
   }
 
-  el('uf-codex-cancel')?.addEventListener('click', () => { formEl.style.display = 'none'; });
+  el('uf-codex-cancel')?.addEventListener('click', () => {
+    if (typeof closeForm === 'function') closeForm();
+    else { formEl.style.display = 'none'; formEl.innerHTML = ''; }
+  });
 
   // Configure access — collapsed by default so the reveal panel doesn't
   // dump 13 toggles at once. Click reveals + rotates the caret.

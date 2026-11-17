@@ -3,17 +3,17 @@
 import { byId as el } from '../../dom.js';
 
 // ── Vaultwarden form ──
-export async function showVaultForm({ formEl, renderList }) {
+export async function showVaultForm({ formEl, renderList, closeForm }) {
   formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">Vaultwarden (Password Vault)</h2>
         <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">Loading...</div>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Master Password</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="Only required for Login / Unlock"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-vault-url">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com" required aria-required="true"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-vault-email">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com" required aria-required="true"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-vault-pass">Master Password</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="Only required for Login / Unlock"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;">
-            <span id="uf-vault-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            <span id="uf-vault-msg" role="status" aria-live="polite" style="font-size:11px;flex:1;margin-right:8px"></span>
             <button class="admin-btn-add" id="uf-vault-save" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save Config</button>
             <button class="admin-btn-add" id="uf-vault-login" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Login</button>
             <button class="admin-btn-add" id="uf-vault-unlock" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Unlock</button>
@@ -54,7 +54,10 @@ export async function showVaultForm({ formEl, renderList }) {
   }
   await refreshStatus();
 
-  el('uf-vault-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+  el('uf-vault-cancel').addEventListener('click', () => {
+    if (typeof closeForm === 'function') closeForm();
+    else { formEl.style.display = 'none'; formEl.innerHTML = ''; }
+  });
 
   el('uf-vault-save').addEventListener('click', async () => {
     msg('Saving...');
