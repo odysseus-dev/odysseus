@@ -9,12 +9,24 @@ function defineGroup(definition) {
   return Object.freeze({ ...definition });
 }
 
+function defineSection(definition) {
+  return Object.freeze({
+    description: '',
+    ...definition,
+    keywords: Object.freeze([...(definition.keywords || [])]),
+  });
+}
+
+// Sections are the searchable, deep-linkable cards inside a panel. Each one is
+// anchored in the DOM by a `data-settings-section` attribute on its card, and
+// getSettingsRegistryIssues() verifies the two stay in sync.
 function definePanel(definition) {
   return Object.freeze({
     controller: 'settings',
     adminOnly: false,
     ...definition,
     keywords: Object.freeze([...(definition.keywords || [])]),
+    sections: Object.freeze((definition.sections || []).map(defineSection)),
   });
 }
 
@@ -50,6 +62,20 @@ export const SETTINGS_PANELS = Object.freeze([
     group: 'models',
     controller: 'admin',
     keywords: ['models', 'provider', 'endpoint'],
+    sections: [
+      {
+        id: 'local-models',
+        label: 'Add local models',
+        description: 'Connect a local model server such as Ollama, llama.cpp or vLLM.',
+        keywords: ['local', 'ollama', 'llama.cpp', 'vllm', 'lm studio', 'endpoint', 'url', 'scan network'],
+      },
+      {
+        id: 'api-models',
+        label: 'Add API models',
+        description: 'Connect a cloud provider with an API key.',
+        keywords: ['api', 'api key', 'cloud', 'openai', 'anthropic', 'deepseek', 'openrouter', 'gemini', 'provider', 'proxy'],
+      },
+    ],
   }),
   definePanel({
     id: 'added-models',
@@ -57,18 +83,90 @@ export const SETTINGS_PANELS = Object.freeze([
     group: 'models',
     controller: 'admin',
     keywords: ['models', 'configured', 'provider', 'endpoint'],
+    sections: [
+      {
+        id: 'endpoints',
+        label: 'Added models',
+        description: 'Review, probe, enable or remove configured endpoints.',
+        keywords: ['endpoints', 'probe', 'offline', 'enable', 'disable', 'remove', 'tools', 'native tool calling'],
+      },
+      {
+        id: 'per-model-settings',
+        label: 'Per-model settings',
+        description: 'Generation parameters for one endpoint and model.',
+        keywords: ['temperature', 'top p', 'top k', 'min p', 'presence penalty', 'repeat penalty', 'context window', 'thinking', 'sampling'],
+      },
+    ],
   }),
   definePanel({
     id: 'ai',
     label: 'AI Defaults',
     group: 'models',
     keywords: ['ai', 'defaults', 'model', 'vision', 'image', 'tts', 'stt'],
+    sections: [
+      {
+        id: 'default-chat',
+        label: 'Default chat model',
+        description: 'Model used for new chats, with optional fallback when it is unavailable.',
+        keywords: ['default model', 'default', 'chat', 'model', 'endpoint', 'fallback', 'fallback order', 'unavailable', 'strict'],
+      },
+      {
+        id: 'utility-model',
+        label: 'Utility model',
+        description: 'Model for titles, summaries and background work.',
+        keywords: ['utility', 'background', 'titles', 'summaries', 'effort', 'reasoning', 'fallback'],
+      },
+      {
+        id: 'vision',
+        label: 'Vision',
+        description: 'Model that describes images and attachments.',
+        keywords: ['vision', 'image understanding', 'attachments', 'fallback'],
+      },
+      {
+        id: 'research-model',
+        label: 'Research model',
+        description: 'Model used by Deep Research.',
+        keywords: ['research', 'deep research', 'model', 'endpoint'],
+      },
+      {
+        id: 'image-generation',
+        label: 'Image generation',
+        description: 'Model and quality for generated and edited images.',
+        keywords: ['image', 'generation', 'edit', 'quality', 'flux', 'dall-e'],
+      },
+      {
+        id: 'text-to-speech',
+        label: 'Text to speech',
+        description: 'Provider, model, voice and speed for read-aloud.',
+        keywords: ['tts', 'speech', 'voice', 'read aloud', 'kokoro', 'speed'],
+      },
+      {
+        id: 'writing-style',
+        label: 'Writing style',
+        description: 'General voice for documents.',
+        keywords: ['writing', 'style', 'tone', 'voice', 'documents'],
+      },
+    ],
   }),
   definePanel({
     id: 'search',
     label: 'Search',
     group: 'models',
     keywords: ['search', 'research', 'provider'],
+    sections: [
+      {
+        id: 'web-search',
+        label: 'Web search',
+        description: 'Search provider, API keys and fallback providers.',
+        keywords: ['web', 'provider', 'searxng', 'duckduckgo', 'brave', 'google', 'tavily', 'serper', 'you.com', 'api key', 'results', 'fallback'],
+      },
+      {
+        id: 'deep-research',
+        label: 'Deep research',
+        description: 'Deep Research search provider, token and timeout limits.',
+        keywords: ['research', 'deep research', 'max tokens', 'timeout', 'extract', 'parallel'],
+      },
+    ],
   }),
 
   definePanel({
@@ -77,18 +175,72 @@ export const SETTINGS_PANELS = Object.freeze([
     group: 'communications',
     controller: 'admin',
     keywords: ['integrations', 'connections', 'services'],
+    sections: [
+      {
+        id: 'integrations',
+        label: 'Integrations',
+        description: 'All external service connections in one place.',
+        keywords: ['integrations', 'connections', 'mcp', 'ntfy', 'webhook', 'calendar', 'caldav', 'carddav', 'contacts', 'vault', 'oauth'],
+      },
+    ],
   }),
   definePanel({
     id: 'email',
     label: 'Email',
     group: 'communications',
     keywords: ['email', 'imap', 'smtp', 'oauth'],
+    sections: [
+      {
+        id: 'email-default',
+        label: 'Default email account',
+        description: 'Set the default email and which settings apply here.',
+        keywords: ['email', 'default', 'account'],
+      },
+      {
+        id: 'email-accounts',
+        label: 'Email accounts',
+        description: 'Add, edit, delete and test accounts in Integrations.',
+        keywords: ['email', 'accounts', 'imap', 'smtp', 'oauth', 'gmail', 'outlook'],
+      },
+      {
+        id: 'email-tasks',
+        label: 'Email tasks',
+        description: 'Manage email background tasks in Tasks.',
+        keywords: ['email', 'tasks', 'background', 'triage'],
+      },
+      {
+        id: 'email-preferences',
+        label: 'Email preferences',
+        description: 'Signature, greetings and email writing style.',
+        keywords: ['email', 'preferences', 'signature', 'writing style', 'greeting'],
+      },
+    ],
   }),
   definePanel({
     id: 'reminders',
     label: 'Reminders',
     group: 'communications',
     keywords: ['reminders', 'notifications', 'alerts'],
+    sections: [
+      {
+        id: 'delivery',
+        label: 'Reminder delivery',
+        description: 'How fired note reminders are delivered.',
+        keywords: ['reminders', 'channel', 'browser notification', 'email', 'ntfy', 'webhook', 'test'],
+      },
+      {
+        id: 'ai-synthesis',
+        label: 'AI reminder synthesis',
+        description: 'Let the utility model write a short reminder line.',
+        keywords: ['ai', 'synthesis', 'persona', 'utility'],
+      },
+      {
+        id: 'public-url',
+        label: 'Public app URL',
+        description: 'Base URL for links inside outgoing emails.',
+        keywords: ['public', 'url', 'links', 'domain', 'base url'],
+      },
+    ],
   }),
 
   definePanel({
@@ -96,12 +248,40 @@ export const SETTINGS_PANELS = Object.freeze([
     label: 'Appearance',
     group: 'experience',
     keywords: ['appearance', 'theme', 'font', 'density', 'peek'],
+    sections: [
+      {
+        id: 'sidebar',
+        label: 'Sidebar items',
+        description: 'Show or hide items in the main sidebar.',
+        keywords: ['sidebar', 'hide', 'show', 'visibility', 'navigation', 'menu'],
+      },
+      {
+        id: 'chat-area',
+        label: 'Chat area',
+        description: 'Session header, full-width chat, incognito, thinking and sensitive blur.',
+        keywords: ['chat', 'full width', 'header', 'welcome', 'incognito', 'emojis', 'thinking', 'blur', 'sensitive', 'privacy'],
+      },
+      {
+        id: 'chat-bar',
+        label: 'Chat bar',
+        description: 'Choose which buttons appear in the message composer.',
+        keywords: ['chat bar', 'composer', 'buttons', 'web search', 'shell', 'attach', 'personas', 'agent mode'],
+      },
+    ],
   }),
   definePanel({
     id: 'shortcuts',
     label: 'Shortcuts',
     group: 'experience',
     keywords: ['shortcuts', 'keyboard', 'hotkeys'],
+    sections: [
+      {
+        id: 'keyboard-shortcuts',
+        label: 'Keyboard shortcuts',
+        description: 'Click a shortcut to rebind it.',
+        keywords: ['keyboard', 'shortcuts', 'hotkeys', 'keybindings', 'rebind'],
+      },
+    ],
   }),
 
   definePanel({
@@ -109,6 +289,30 @@ export const SETTINGS_PANELS = Object.freeze([
     label: 'Account',
     group: 'account',
     keywords: ['account', 'password', 'logout'],
+    sections: [
+      {
+        id: 'account',
+        label: 'Account',
+        description: 'Signed-in user and logout.',
+        keywords: ['account', 'user', 'logout', 'sign out'],
+      },
+      {
+        id: 'password',
+        label: 'Change password',
+        keywords: ['password', 'change password', 'security'],
+      },
+      {
+        id: 'two-factor',
+        label: 'Two-factor authentication',
+        keywords: ['2fa', 'two-factor', 'totp', 'authenticator', 'security'],
+      },
+      {
+        id: 'api-tokens',
+        label: 'Personal API tokens',
+        description: 'Create and revoke scoped API tokens.',
+        keywords: ['api', 'tokens', 'personal access token', 'scopes', 'revoke'],
+      },
+    ],
   }),
 
   definePanel({
@@ -118,6 +322,20 @@ export const SETTINGS_PANELS = Object.freeze([
     controller: 'admin',
     adminOnly: true,
     keywords: ['agent', 'tools'],
+    sections: [
+      {
+        id: 'agent-limits',
+        label: 'Agent limits and approval',
+        description: 'Tool call limit, steps per message and tool approval.',
+        keywords: ['agent', 'tool call limit', 'max steps', 'rounds', 'approval', 'tool approval', 'permissions', 'yolo'],
+      },
+      {
+        id: 'builtin-tools',
+        label: 'Built-in tools',
+        description: 'Enable or disable tools available to the agent.',
+        keywords: ['tools', 'built-in', 'enable', 'disable'],
+      },
+    ],
   }),
   definePanel({
     id: 'users',
@@ -126,6 +344,31 @@ export const SETTINGS_PANELS = Object.freeze([
     controller: 'admin',
     adminOnly: true,
     keywords: ['users', 'accounts', 'admin'],
+    sections: [
+      {
+        id: 'registration',
+        label: 'Registration',
+        description: 'Allow anyone to create an account from the login page.',
+        keywords: ['signup', 'registration', 'open signup'],
+      },
+      {
+        id: 'model-defaults',
+        label: 'Shared model defaults',
+        description: 'Let users without a personal default inherit the global default model.',
+        keywords: ['share defaults', 'default model', 'users'],
+      },
+      {
+        id: 'user-list',
+        label: 'Users',
+        description: 'Manage accounts, admin roles and privileges.',
+        keywords: ['users', 'accounts', 'admin', 'privileges', 'reset password'],
+      },
+      {
+        id: 'add-user',
+        label: 'Add user',
+        keywords: ['add user', 'create account'],
+      },
+    ],
   }),
   definePanel({
     id: 'system',
@@ -134,6 +377,26 @@ export const SETTINGS_PANELS = Object.freeze([
     controller: 'admin',
     adminOnly: true,
     keywords: ['system', 'admin', 'server'],
+    sections: [
+      {
+        id: 'logs',
+        label: 'Logs',
+        description: 'Terminal output and task notification logs.',
+        keywords: ['logs', 'terminal', 'notifications', 'debug', 'errors', 'diagnostics'],
+      },
+      {
+        id: 'backup',
+        label: 'Data backup',
+        description: 'Export or import memories, presets, settings and skills.',
+        keywords: ['backup', 'export', 'import', 'restore'],
+      },
+      {
+        id: 'danger-zone',
+        label: 'Danger zone',
+        description: 'Irreversibly delete one category of data.',
+        keywords: ['delete', 'wipe', 'reset', 'danger'],
+      },
+    ],
   }),
 ]);
 
@@ -194,6 +457,82 @@ export function searchSettingsPanels(query, options = {}) {
   });
 }
 
+export function getSettingsSection(panelId, sectionId) {
+  const panel = getSettingsPanel(panelId);
+  if (!panel) return null;
+  return panel.sections.find(section => section.id === sectionId) || null;
+}
+
+// Rank one field against the query. Higher is better; 0 means the field does
+// not contribute. The weights only order results; every term must still match
+// somewhere in the entry for it to be returned at all.
+function scoreField(text, normalized, terms, weight) {
+  const value = String(text || '').toLowerCase();
+  if (!value) return 0;
+  if (value === normalized) return weight * 4;
+  if (value.startsWith(normalized)) return weight * 3;
+  if (value.includes(normalized)) return weight * 2;
+  const words = value.split(/[^a-z0-9.]+/).filter(Boolean);
+  const wordHits = terms.filter(term => words.some(word => word.startsWith(term))).length;
+  return wordHits ? weight * (wordHits / terms.length) : 0;
+}
+
+function scoreEntry(fields, normalized, terms) {
+  const haystack = fields.map(field => String(field.text || '').toLowerCase()).join(' ');
+  if (!terms.every(term => haystack.includes(term))) return 0;
+  return fields.reduce(
+    (best, field) => Math.max(best, scoreField(field.text, normalized, terms, field.weight)),
+    0,
+  ) || 1;
+}
+
+/**
+ * Search panels and the sections inside them.
+ *
+ * Returns entries shaped as `{ kind: 'panel'|'section', panel, section,
+ * score }`, best match first and registry order as the tie-breaker. Admin-only
+ * panels (and their sections) are omitted for non-admin users. Whether a
+ * section is currently visible in the DOM is the caller's concern.
+ */
+export function searchSettings(query, options = {}) {
+  const normalized = normalizeSettingsSearch(query);
+  if (!normalized) return [];
+
+  const terms = normalized.split(' ');
+  const isAdmin = options.isAdmin === true;
+  const results = [];
+  let order = 0;
+
+  for (const panel of SETTINGS_PANELS) {
+    if (panel.adminOnly && !isAdmin) continue;
+
+    const panelScore = scoreEntry([
+      { text: panel.label, weight: 10 },
+      ...panel.keywords.map(text => ({ text, weight: 5 })),
+    ], normalized, terms);
+    if (panelScore) {
+      results.push({ kind: 'panel', panel, section: null, score: panelScore, order: order });
+    }
+    order += 1;
+
+    for (const section of panel.sections) {
+      const sectionScore = scoreEntry([
+        { text: section.label, weight: 9 },
+        ...section.keywords.map(text => ({ text, weight: 6 })),
+        { text: section.description, weight: 3 },
+        { text: panel.label, weight: 2 },
+      ], normalized, terms);
+      if (sectionScore) {
+        results.push({ kind: 'section', panel, section, score: sectionScore, order: order });
+      }
+      order += 1;
+    }
+  }
+
+  results.sort((a, b) => (b.score - a.score) || (a.order - b.order));
+  return results.map(({ order: _order, ...entry }) => entry);
+}
+
 export function getSettingsRegistryIssues(modalEl) {
   if (!modalEl) return ['Settings modal is unavailable'];
 
@@ -231,6 +570,29 @@ export function getSettingsRegistryIssues(modalEl) {
   }
   for (const id of panelIds) {
     if (!registryIds.includes(id)) issues.push(`DOM panel missing from registry: ${id}`);
+  }
+
+  // Section anchors must live inside their own panel, once each.
+  const panelElements = Array.from(modalEl.querySelectorAll('[data-settings-panel]'));
+  for (const panel of SETTINGS_PANELS) {
+    const panelEl = panelElements.find(element => element.dataset.settingsPanel === panel.id);
+    if (!panelEl) continue;
+
+    const sectionIds = Array.from(
+      panelEl.querySelectorAll('[data-settings-section]'),
+      element => element.dataset.settingsSection,
+    ).filter(Boolean);
+    const declared = panel.sections.map(section => section.id);
+
+    for (const id of new Set(duplicates(sectionIds))) {
+      issues.push(`Duplicate Settings section: ${panel.id}/${id}`);
+    }
+    for (const id of declared) {
+      if (!sectionIds.includes(id)) issues.push(`Registry section missing from DOM: ${panel.id}/${id}`);
+    }
+    for (const id of sectionIds) {
+      if (!declared.includes(id)) issues.push(`DOM section missing from registry: ${panel.id}/${id}`);
+    }
   }
 
   return issues;

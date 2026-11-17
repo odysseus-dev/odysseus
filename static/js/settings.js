@@ -6011,7 +6011,7 @@ async function initUnifiedIntegrations() {
 /* ═══════════════════════════════════════════
    PUBLIC API
    ═══════════════════════════════════════════ */
-export function open(tab) { _shell.open(tab); }
+export function open(tab, options) { _shell.open(tab, options); }
 export function close() { _shell.close(); }
 function syncAdminVisibility() { _shell.syncAdminVisibility(); }
 

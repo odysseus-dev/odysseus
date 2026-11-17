@@ -10,7 +10,11 @@
 // without this file changing — and so the shell's behavior is testable without
 // booting a panel.
 
-import { activateSettingsPanel, getActiveSettingsTab } from './navigation.js';
+import {
+  activateSettingsPanel,
+  getActiveSettingsTab,
+  revealSettingsSection,
+} from './navigation.js';
 import { showSettingsModal, hideSettingsModal } from './lifecycle.js';
 import { isAdminManagedSettingsTab } from './registry.js';
 import { syncSettingsPeek } from './peek.js';
@@ -64,7 +68,11 @@ export function createSettingsShell(options = {}) {
     });
   }
 
-  function open(tab) {
+  /**
+   * Open Settings, optionally on a panel and a section within it:
+   * `open('ai', { section: 'default-chat' })` lands on that card.
+   */
+  function open(tab, openOptions = {}) {
     if (typeof ensureInitialized === 'function') ensureInitialized();
 
     if (typeof syncAppearanceCheckboxes === 'function') syncAppearanceCheckboxes();
@@ -87,6 +95,11 @@ export function createSettingsShell(options = {}) {
     if (isAdminManagedSettingsTab(activeTab) && admin && !admin._initialized) {
       admin._initData();
     }
+
+    const section = openOptions && typeof openOptions.section === 'string'
+      ? openOptions.section
+      : '';
+    if (tab && section) revealSettingsSection(modalEl, tab, section);
   }
 
   function close() {

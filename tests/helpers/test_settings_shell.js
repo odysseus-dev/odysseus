@@ -242,6 +242,10 @@ function buildFixture(document) {
   const panels = document.createElement('div');
   content.appendChild(panels);
 
+  // Section anchors mirror the production markup so registry/DOM drift in
+  // static/index.html fails here as well as in the browser.
+  const productionSections = productionSectionAnchors();
+
   const makeTab = (id, active = false) => {
     const button = document.createElement('button');
     button.setAttribute('data-settings-tab', id);
@@ -251,7 +255,15 @@ function buildFixture(document) {
     panel.setAttribute('data-settings-panel', id);
     if (!active) panel.classList.add('hidden');
     panels.appendChild(panel);
-    return { button, panel };
+    const sections = {};
+    for (const sectionId of productionSections.get(id) || []) {
+      const card = document.createElement('div');
+      card.className = 'admin-card';
+      card.setAttribute('data-settings-section', sectionId);
+      panel.appendChild(card);
+      sections[sectionId] = card;
+    }
+    return { button, panel, sections };
   };
 
   const panelIds = [
@@ -289,6 +301,24 @@ function buildFixture(document) {
     sidebarToggle,
     sidebarHandle,
   };
+}
+
+function productionSectionAnchors() {
+  const html = fs.readFileSync(path.join(__dirname, '../../static/index.html'), 'utf8');
+  const start = html.indexOf('id="settings-modal"');
+  const markup = html.slice(start);
+  const anchors = new Map();
+  let currentPanel = null;
+  const pattern = /data-settings-(panel|section)="([^"]+)"/g;
+  for (const match of markup.matchAll(pattern)) {
+    if (match[1] === 'panel') {
+      currentPanel = match[2];
+      anchors.set(currentPanel, []);
+    } else if (currentPanel) {
+      anchors.get(currentPanel).push(match[2]);
+    }
+  }
+  return anchors;
 }
 
 function moduleSource(relativePath) {
@@ -554,6 +584,107 @@ function moduleSource(relativePath) {
     'Settings finder Escape clears results without closing Settings',
     fixture.searchInput.value === ''
       && fixture.searchResults.classList.contains('hidden'),
+  );
+
+  // ── Section-level search ──
+  const sectionFixture = buildFixture(document);
+  const ttsCard = sectionFixture.settingsPanels.ai.sections['text-to-speech'];
+  ttsCard.setAttribute('hidden', '');
+  const tokensCard = sectionFixture.settingsPanels.account.sections['api-tokens'];
+  tokensCard.style.display = 'none';
+
+  const sectionOpens = [];
+  const sectionReveals = [];
+  context.bindSettingsSearch(sectionFixture.modal, {
+    isAdmin: () => false,
+    openPanel(tab) { sectionOpens.push(tab); },
+    revealSection(panelId, sectionId) { sectionReveals.push(`${panelId}/${sectionId}`); },
+  });
+  const typeQuery = value => {
+    sectionFixture.searchInput.value = value;
+    sectionFixture.searchInput.dispatchEvent({ type: 'input', preventDefault() {}, stopPropagation() {} });
+  };
+  const renderedResults = () => sectionFixture.searchResults
+    .querySelectorAll('[data-settings-search-result]')
+    .map(button => `${button.dataset.settingsSearchResult}/${button.dataset.settingsSearchSection || '*'}`);
+
+  check(
+    'Settings registry reports a declared section that is missing from its panel',
+    (() => {
+      const probe = buildFixture(document);
+      const card = probe.settingsPanels.ai.sections['default-chat'];
+      card.setAttribute('data-settings-section', 'renamed-card');
+      card.dataset.settingsSection = 'renamed-card';
+      const issues = context.getSettingsRegistryIssues(probe.modal);
+      return issues.includes('Registry section missing from DOM: ai/default-chat')
+        && issues.includes('DOM section missing from registry: ai/renamed-card');
+    })(),
+  );
+
+  typeQuery('fallback');
+  check(
+    'Settings finder returns the cards that own a control, not only panels',
+    renderedResults().includes('ai/default-chat')
+      && renderedResults().includes('ai/utility-model')
+      && renderedResults().includes('search/web-search'),
+    renderedResults().join(','),
+  );
+  check(
+    'Settings finder results carry a description and combobox state',
+    sectionFixture.searchResults.querySelector('.settings-search-result-description') !== null
+      && sectionFixture.searchInput.getAttribute('aria-expanded') === 'true'
+      && sectionFixture.searchInput.getAttribute('role') === 'combobox',
+  );
+
+  typeQuery('voice');
+  check(
+    'Settings finder omits sections whose card is hidden in the DOM',
+    !renderedResults().includes('ai/text-to-speech')
+      && renderedResults().includes('ai/writing-style'),
+    renderedResults().join(','),
+  );
+
+  typeQuery('api tokens');
+  check(
+    'Settings finder omits sections hidden with an inline display:none',
+    !renderedResults().includes('account/api-tokens'),
+    renderedResults().join(','),
+  );
+
+  typeQuery('signup');
+  check(
+    'Settings finder omits sections of admin-only panels for non-admin users',
+    renderedResults().length === 0,
+    renderedResults().join(','),
+  );
+
+  typeQuery('2fa');
+  sectionFixture.searchInput.dispatchEvent({ type: 'keydown', key: 'ArrowDown', preventDefault() {}, stopPropagation() {} });
+  check(
+    'Settings finder arrow keys expose the active option to assistive technology',
+    sectionFixture.searchInput.getAttribute('aria-activedescendant') === 'settings-search-option-0',
+  );
+  sectionFixture.searchInput.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  check(
+    'Settings finder Enter on a section opens its panel and reveals the card',
+    sectionOpens.join(',') === 'account'
+      && sectionReveals.join(',') === 'account/two-factor'
+      && sectionFixture.searchInput.value === ''
+      && sectionFixture.searchInput.getAttribute('aria-expanded') === 'false',
+    `${sectionOpens.join(',')} | ${sectionReveals.join(',')}`,
+  );
+
+  const visible = sectionFixture.settingsPanels.ai.sections['default-chat'];
+  check(
+    'Section availability ignores the inactive owning panel but honors admin-only cards',
+    context.isSettingsSectionAvailable(visible, { isAdmin: false }) === true
+      && (() => {
+        visible.classList.add('admin-only');
+        const hiddenForUser = context.isSettingsSectionAvailable(visible, { isAdmin: false }) === false;
+        const shownForAdmin = context.isSettingsSectionAvailable(visible, { isAdmin: true }) === true;
+        visible.classList.remove('admin-only');
+        return hiddenForUser && shownForAdmin;
+      })(),
   );
 
   context.setSettingsSidebarWidth(fixture.modal, 280);
