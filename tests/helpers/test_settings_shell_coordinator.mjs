@@ -46,6 +46,13 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/integrations/events.js'),
   path.join(JS, 'settings/integrations/legacy.js'),
   path.join(JS, 'settings/integrations/unified.js'),
+  path.join(JS, 'settings/integrations/forms/agent.js'),
+  path.join(JS, 'settings/integrations/forms/api.js'),
+  path.join(JS, 'settings/integrations/forms/caldav.js'),
+  path.join(JS, 'settings/integrations/forms/carddav.js'),
+  path.join(JS, 'settings/integrations/forms/email.js'),
+  path.join(JS, 'settings/integrations/forms/mcp.js'),
+  path.join(JS, 'settings/integrations/forms/vault.js'),
 ]);
 
 const realModulesLoaded = new Set();
