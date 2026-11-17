@@ -175,7 +175,7 @@ pane.innerHTML = `
            B/I/S act on the live text (execCommand), and on send its HTML becomes
            the email's HTML part. Its plain text is mirrored into the textarea so
            the existing send/draft/change-detection paths keep working. -->
-      <div id="doc-email-richbody" class="doc-email-richbody" contenteditable="true" spellcheck="false" style="display:none" data-no-swipe-dismiss></div>
+      <div id="doc-email-richbody" class="doc-email-richbody" role="textbox" aria-multiline="true" contenteditable="true" spellcheck="false" style="display:none" data-no-swipe-dismiss></div>
       <div id="doc-rich-empty-import" class="doc-rich-empty-import" style="display:none" aria-live="polite">
         <button type="button" class="doc-preview-hover-edit doc-rich-empty-import-btn" title="Import a document" aria-label="Import a document">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M12 12v6"></path><path d="m9 15 3 3 3-3"></path></svg>

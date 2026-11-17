@@ -58,18 +58,26 @@ function _handleMarkdownVisualKeyExit(rich, e) {
     if (e.shiftKey) {
       const li = startEl.closest('li');
       if (li && rich.contains(li)) {
-        // Shift+Enter inside a list item inserts a line break (<br>) within the item
-        const br = document.createElement('br');
-        range.deleteContents();
-        const insertFn = range['insertNode'];
-        if (insertFn) insertFn.call(range, br);
-        range.setStartAfter(br);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
+        const suffix = document.createRange();
+        suffix.selectNodeContents(li);
+        suffix.setStart(range.endContainer, range.endOffset);
+        const atEnd = !suffix.toString();
+        const existingBreaks = new Set(li.querySelectorAll('br'));
+        // A final br is a browser placeholder. A second br makes the typed
+        // continuation visible; native insertion keeps the operation undoable.
+        document.execCommand('insertHTML', false, atEnd ? '<br><br>' : '<br>');
+        if (atEnd) {
+          const firstBreak = Array.from(li.querySelectorAll('br')).find(br => !existingBreaks.has(br));
+          if (firstBreak) {
+            const caret = document.createRange();
+            caret.setStartAfter(firstBreak);
+            caret.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(caret);
+          }
+        }
         _syncEmailRichbody(rich);
         _scheduleEmailRichbodySave();
-        rich._syncActive?.();
         return true;
       }
     }
@@ -88,20 +96,7 @@ function _handleMarkdownVisualKeyExit(rich, e) {
       }
       if (prefix.toString().length === 0) {
         if (/^h[1-6]$/i.test(block.tagName)) {
-          // Backspace at the start of a heading converts it to a paragraph while preserving text
-          const p = document.createElement('p');
-          while (block.firstChild) {
-            p.appendChild(block.firstChild);
-          }
-          if (!p.firstChild) {
-            p.appendChild(document.createElement('br'));
-          }
-          block.replaceWith(p);
-          const caret = document.createRange();
-          caret.selectNodeContents(p);
-          caret.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(caret);
+          document.execCommand('formatBlock', false, 'p');
           _syncEmailRichbody(rich);
           _scheduleEmailRichbodySave();
           rich._syncActive?.();
@@ -161,7 +156,13 @@ function _exitEmptyMarkdownQuoteLine(rich, startEl, selection) {
 export function _wireEmailRichbody(rich) {
     if (rich._wired) { _syncEmailRichbody(rich); return; }
     rich._wired = true;
-    rich.addEventListener('input', () => {
+    rich.addEventListener('compositionstart', () => { rich._isComposing = true; });
+    rich.addEventListener('compositionend', () => {
+      rich._isComposing = false;
+      rich.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText' }));
+    });
+    rich.addEventListener('input', (event) => {
+      if (event.isComposing || rich._isComposing) return;
       if (_richInlineCodeTypingArmed) {
         document.execCommand('styleWithCSS', false, false);
         setRichInlineCodeTypingArmed(false);
@@ -371,6 +372,7 @@ export function _wireEmailRichbody(rich) {
       _setRichChecklistItemChecked(rich, item, item.dataset.checked !== 'true');
     });
     rich.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (_richSlashMenu) {
         const commandCount = _richSlashMenu._commands?.length || 0;
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {

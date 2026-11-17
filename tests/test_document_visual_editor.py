@@ -447,9 +447,8 @@ DATA_INTEGRITY_CASES = [
     ("fenced-code", "Intro\n\n```js\nconst x = `y`;\n```", "visual", "Intro\n\n```js\nconst x = `y`; edited\n```"),
     ("escaped-markdown", "Literal \\*stars\\* stay", "visual", "Literal \\*stars\\* stay edited"),
     ("table", "| Name | Score |\n| :--- | ---: |\n| a | 1 |", "visual", "| Name | Score |\n| :--- | ---: |\n| a | 1 edited |"),
-    # CRLF is kept byte-for-byte until an edit; edits store LF, as the source
-    # textarea always has.
-    ("crlf-line-endings", "# T\r\n\r\nBody\r\n\r\n- a\r\n- b", "visual", "# T\n\nBody\n\n- a\n- b edited"),
+    # Mode transitions and localized visual edits retain untouched CRLF bytes.
+    ("crlf-line-endings", "# T\r\n\r\nBody\r\n\r\n- a\r\n- b", "visual", "# T\r\n\r\nBody\r\n\r\n- a\r\n- b edited"),
 ]
 
 
@@ -498,7 +497,7 @@ def test_markdown_data_integrity_matrix_preserves_untouched_content():
             assert opened["bannerVisible"] is True, name
             continue
         assert opened["visual"] is True, name
-        assert entry["toggled"]["content"] == md.replace("\r\n", "\n"), name
+        assert entry["toggled"]["content"] == md, name
         assert entry["edited"]["content"] == edited, (name, entry["edited"]["content"])
         assert entry["saved"] == edited, name
 
