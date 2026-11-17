@@ -53,7 +53,7 @@ import themeModule from './js/theme.js?v=20260911organsrain1';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260913researchrailerrors1';
+import * as researchPanelModule from './js/research/panel.js?v=20261117researchlib1';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';

@@ -103,7 +103,7 @@ const PRECACHE = [
   '/static/js/chatgptSubscriptionUsage.js',
   '/static/js/init.js?v=20260829chatstyle12',
   '/static/js/slashCommands.js?v=20260921chatgptusage1',
-  '/static/js/research/jobs.js?v=20261117researchretry1',
+  '/static/js/research/jobs.js?v=20261117researchlib1',
   '/static/js/emailInbox.js?v=20260914aireply4',
   '/static/js/emailLibrary/index.js',
   '/static/js/emailLibrary/aiReply.js',

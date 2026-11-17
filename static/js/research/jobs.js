@@ -60,6 +60,9 @@ function _forgetError(id) {
 let _activePollInterval = null;
 let _activePollInFlight = false;
 let _librarySyncInFlight = false;
+let _libraryTotal = null;
+/** Total saved research items from the last library sync (null until one succeeds). */
+export function getLibraryTotal() { return _libraryTotal; }
 let _lastLibrarySyncAt = 0;
 const _LIBRARY_SYNC_MIN_MS = 120000;
 
@@ -144,6 +147,7 @@ async function _syncLibrary(options = {}) {
     const libRes = await fetch(`${_apiBase}/api/research/library?sort=recent&limit=20`, { credentials: 'same-origin' });
     if (libRes.ok) {
       const libData = await libRes.json();
+      if (Number.isFinite(libData.total)) _libraryTotal = libData.total;
       const dismissed = _loadDismissed();
       for (const item of (libData.research || [])) {
         if (item.status !== 'done') continue;

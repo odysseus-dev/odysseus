@@ -1842,7 +1842,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     } else if (panel === 'skills') {
       document.getElementById('tool-skills-btn')?.click();
     } else if (panel === 'research') {
-        import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+        import('./research/panel.js?v=20261117researchlib1').then(mod => {
         const open = mod.openPanel || (mod.default && mod.default.openPanel);
         if (open) open();
       }).catch(() => {});
@@ -1947,7 +1947,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'research') {
-    import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+    import('./research/panel.js?v=20261117researchlib1').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
     }).catch(() => {});

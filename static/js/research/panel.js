@@ -1,7 +1,7 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
-import * as jobs from './jobs.js?v=20261117researchretry1';
+import * as jobs from './jobs.js?v=20261117researchlib1';
 import themeModule from '../theme.js?v=20260911organsrain1';
 import createResearchSynapse from '../researchSynapse.js?v=20260910roundlabels2';
 import spinnerModule from '../spinner.js';
@@ -308,8 +308,14 @@ export function openPanel(focusJobId) {
   _wireEvents(pane);
   _loadEndpoints().then(_restoreSavedSettings);
   _clearBadge();
-  _updateResearchCount();
-  jobs.refreshLibrary?.({ force: true });
+  // The library sync already returns the total, so the count chip reuses it
+  // instead of issuing a second /api/research/library request.
+  Promise.resolve(jobs.refreshLibrary?.({ force: true })).then(() => {
+    const total = jobs.getLibraryTotal?.();
+    if (total == null) { _updateResearchCount(); return; }
+    const el = document.getElementById('research-stats');
+    if (el) el.textContent = total + ' research';
+  });
 
   if ('Notification' in window && Notification.permission === 'default') {
     try { Notification.requestPermission(); } catch {}

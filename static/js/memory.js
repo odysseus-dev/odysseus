@@ -499,7 +499,9 @@ export async function loadMemories() {
 
     if (!response.ok) {
       console.error('Memory fetch failed with status:', response.status);
-      memories = [];
+      // Keep the last good list: wiping it made a failed refresh look like
+      // "all memories deleted".
+      showError('Could not refresh memories. Showing the last loaded list.');
       memoriesLoading = false;
       buildCategoryChips();
       renderMemoryList();
@@ -524,7 +526,7 @@ export async function loadMemories() {
     updateMemoryCount();
   } catch (error) {
     console.error('Failed to load memories:', error);
-    memories = [];
+    showError('Could not refresh memories. Showing the last loaded list.');
     memoriesLoading = false;
     buildCategoryChips();
     renderMemoryList();
@@ -1255,6 +1257,9 @@ export function updateMemoryCount() {
   if (tabCount) tabCount.textContent = num;
 }
 
+let _addMemoryInFlight = false;
+const _deleteInFlight = new Set();
+
 export async function addNewMemory() {
   const input = document.getElementById('new-memory-input');
   const text = input.value.trim();
@@ -1264,6 +1269,19 @@ export async function addNewMemory() {
     showError('Memory text cannot be empty');
     return;
   }
+
+  if (_addMemoryInFlight) return;
+  _addMemoryInFlight = true;
+  const addBtn = document.getElementById('new-memory-add-btn');
+  const setBusy = (busy) => {
+    for (const el of [input, addBtn]) {
+      if (!el) continue;
+      el.disabled = busy;
+      el.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
+    if (addBtn) addBtn.style.opacity = busy ? '0.55' : '';
+  };
+  setBusy(true);
 
   try {
     const response = await fetch(`${window.location.origin}/api/memory/add`, {
@@ -1278,17 +1296,23 @@ export async function addNewMemory() {
     });
 
     if (response.ok) {
+      // The memory is saved: clear the field now, then refresh the list.
       input.value = '';
       await loadMemories();
       showToast('Memory added');
     } else {
-      const errorData = await response.json();
+      const errorData = await response.json().catch(() => ({}));
       console.error('Server error details:', errorData);
-      throw new Error(errorData.detail || 'Failed to add memory');
+      throw new Error(errorData.detail || `Failed to add memory (HTTP ${response.status})`);
     }
   } catch (error) {
     console.error('Error adding memory:', error);
-    showError('Failed to add memory');
+    // The typed text stays in the field so nothing is lost on a retry.
+    showError(error?.message && error.message !== 'Failed to fetch' ? error.message : 'Failed to add memory');
+  } finally {
+    setBusy(false);
+    _addMemoryInFlight = false;
+    input.focus();
   }
 }
 
@@ -1313,6 +1337,8 @@ async function togglePin(id, pinned) {
       if (mem) mem.pinned = pinned;
       renderMemoryList();
       showToast(pinned ? 'Pinned — always in context' : 'Unpinned — RAG only');
+    } else {
+      showError(`Failed to update pin (HTTP ${res.status})`);
     }
   } catch (e) {
     console.error('Failed to toggle pin:', e);
@@ -1324,22 +1350,42 @@ export async function deleteMemory(id) {
   const memory = memories.find(m => m.id === id);
   if (!memory) return;
 
+  if (_deleteInFlight.has(id)) return;
   if (!await uiModule.styledConfirm(`Delete this memory?\n"${memory.text}"`, { confirmText: 'Delete', danger: true })) return;
+
+  _deleteInFlight.add(id);
+  const row = () => Array.from(document.querySelectorAll('.memory-item[data-memory-id]'))
+    .find(el => String(el.dataset.memoryId) === String(id));
+  const setRowBusy = (busy) => {
+    const el = row();
+    if (!el) return;
+    el.style.opacity = busy ? '0.5' : '';
+    el.style.pointerEvents = busy ? 'none' : '';
+    el.setAttribute('aria-busy', busy ? 'true' : 'false');
+  };
+  setRowBusy(true);
 
   try {
     const response = await fetch(`${window.location.origin}/api/memory/${id}`, {
       method: 'DELETE'
     });
 
-    if (response.ok) {
+    // 404 = already gone (another tab or tidy removed it): same end state.
+    if (response.ok || response.status === 404) {
       await animateMemoryRemoval([id]);
       await loadMemories();
-      showToast('Memory deleted');
+      showToast(response.ok ? 'Memory deleted' : 'Memory was already deleted');
     } else {
-      throw new Error('Failed to delete');
+      const detail = await response.json().then(d => d && d.detail, () => null);
+      throw new Error(detail || `Failed to delete (HTTP ${response.status})`);
     }
   } catch (error) {
-    showError('Failed to delete memory');
+    // Server refused or was unreachable: the memory is still there, so put
+    // the row back to normal instead of leaving it dimmed.
+    setRowBusy(false);
+    showError(error?.message && error.message !== 'Failed to fetch' ? error.message : 'Failed to delete memory');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
