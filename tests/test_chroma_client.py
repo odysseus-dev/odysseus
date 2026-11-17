@@ -12,19 +12,17 @@ import pytest
 import src.chroma_client as cc
 
 
-def _free_port() -> int:
-    """Bind to port 0, grab the assigned port, release it — nothing listens."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+@pytest.fixture
+def closed_port():
+    """Reserve a port without listening, so another worker cannot take it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        yield reserved.getsockname()[1]
 
 
-def test_port_open_false_for_closed_port_and_is_fast():
-    port = _free_port()
+def test_port_open_false_for_closed_port_and_is_fast(closed_port):
     t0 = time.monotonic()
-    assert cc._port_open("127.0.0.1", port, timeout=1.0) is False
+    assert cc._port_open("127.0.0.1", closed_port, timeout=1.0) is False
     # The whole point: we fail fast, nowhere near the 30-60s OS timeout.
     assert time.monotonic() - t0 < 5.0
 
@@ -40,11 +38,11 @@ def test_port_open_true_for_listening_socket():
         srv.close()
 
 
-def test_get_chroma_client_does_not_cache_when_unreachable(monkeypatch):
+def test_get_chroma_client_does_not_cache_when_unreachable(monkeypatch, closed_port):
     pytest.importorskip("chromadb")
     cc.reset_client()
     monkeypatch.setenv("CHROMADB_HOST", "127.0.0.1")
-    monkeypatch.setenv("CHROMADB_PORT", str(_free_port()))
+    monkeypatch.setenv("CHROMADB_PORT", str(closed_port))
     with pytest.raises(RuntimeError):
         cc.get_chroma_client()
     # A failed connection must leave the singleton unset so a later call

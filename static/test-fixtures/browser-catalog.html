@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Synthetic browser test catalog</title>
+<h1>Synthetic browser test catalog</h1>
+<p>Test data only. Nothing can be purchased.</p>
+<form id="search">
+  <label for="query">Search catalog</label>
+  <input id="query" name="query" type="search">
+  <button type="submit">Search</button>
+</form>
+<section aria-live="polite" id="results">Enter a color to see matching sofas.</section>
+<p id="consent-state"></p>
+<dialog id="cookie-choices" aria-labelledby="cookie-title">
+  <h2 id="cookie-title">Cookie choices</h2>
+  <p>This is a synthetic dialog. No cookies or tracking are installed.</p>
+  <button id="reject-optional" type="button">Reject optional cookies</button>
+  <button id="accept-optional" type="button">Accept optional cookies</button>
+</dialog>
+<script src="/static/test-fixtures/browser-catalog.js"></script>

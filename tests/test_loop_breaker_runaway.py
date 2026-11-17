@@ -19,7 +19,7 @@ _MOCKED = [
 for _m in _MOCKED:
     sys.modules.setdefault(_m, MagicMock())
 
-from src.agent_loop import _detect_runaway_call
+from src.agent_loop import _detect_runaway_call, _tool_result_signature
 
 
 def _freq(sigs):
@@ -59,3 +59,34 @@ def test_threshold_is_configurable():
 
 def test_empty_is_not_runaway():
     assert _detect_runaway_call(collections.Counter()) is None
+
+
+def test_tool_result_signature_ignores_different_commands():
+    first = _tool_result_signature([
+        {"tool_name": "host_shell", "content": '{"command":"pwd"}', "result": {"output": "/work", "exit_code": 0}},
+    ])
+    second = _tool_result_signature([
+        {"tool_name": "host_shell", "content": '{"command":"printf /work"}', "result": {"output": "/work", "exit_code": 0}},
+    ])
+    assert first == second
+
+
+def test_tool_result_signature_changes_when_evidence_changes():
+    first = _tool_result_signature([
+        {"tool_name": "host_shell", "result": {"output": "one", "exit_code": 0}},
+    ])
+    second = _tool_result_signature([
+        {"tool_name": "host_shell", "result": {"output": "two", "exit_code": 0}},
+    ])
+    assert first != second
+
+
+def test_tool_result_signature_ignores_batch_shape():
+    one = _tool_result_signature([
+        {"tool_name": "host_shell", "result": {"output": "/home/pewds", "exit_code": 0}},
+    ])
+    two = _tool_result_signature([
+        {"tool_name": "host_shell", "result": {"output": "/home/pewds", "exit_code": 0}},
+        {"tool_name": "host_shell", "result": {"output": "/home/pewds", "exit_code": 0}},
+    ])
+    assert one == two

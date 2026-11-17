@@ -20,13 +20,19 @@ def _run_tile_case():
           innerWidth: 1200,
           innerHeight: 800,
           addEventListener() {{}},
+          getComputedStyle() {{ return {{ display: 'block' }}; }},
+        }};
+        let sidebarVisible = false;
+        const sidebar = {{
+          classList: {{ contains(name) {{ return name === 'hidden' ? !sidebarVisible : false; }} }},
+          getBoundingClientRect() {{ return {{ left: 0, right: 240, width: 240, top: 0, bottom: 800 }}; }},
         }};
         globalThis.document = {{
           readyState: 'loading',
           body: {{ appendChild() {{}} }},
           documentElement: {{ style: {{ setProperty() {{}}, removeProperty() {{}} }} }},
           addEventListener() {{}},
-          getElementById() {{ return null; }},
+          getElementById(id) {{ return id === 'sidebar' ? sidebar : null; }},
           querySelector() {{ return null; }},
           querySelectorAll() {{ return []; }},
           createElement() {{
@@ -59,10 +65,16 @@ def _run_tile_case():
         const settingsModal = {{ id: 'settings-modal' }};
         const settingsContent = {{ closest() {{ return settingsModal; }} }};
 
+        const topWithoutSidebar = pick(mod._zoneForPointerForTests(500, 20));
+        sidebarVisible = true;
+        const topWithSidebar = pick(mod._zoneForPointerForTests(500, 20));
+        sidebarVisible = false;
+
         console.log(JSON.stringify({{
-          fullscreen: pick(mod._zoneForPointerForTests(500, 0)),
-          maximize: pick(mod._zoneForPointerForTests(500, 8)),
-          top: pick(mod._zoneForPointerForTests(500, 20)),
+          topEdge: pick(mod._zoneForPointerForTests(500, 0)),
+          topStrip: pick(mod._zoneForPointerForTests(500, 8)),
+          top: topWithoutSidebar,
+          topWithSidebar,
           left: pick(mod._zoneForPointerForTests(20, 300)),
           right: pick(mod._zoneForPointerForTests(1190, 300)),
           bottom: pick(mod._zoneForPointerForTests(500, 790)),
@@ -85,15 +97,26 @@ def _run_tile_case():
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_tile_manager_detects_all_four_workspace_edges():
+def test_tile_manager_uses_one_sidebar_aware_maximize_zone_for_the_whole_top_edge():
     zones = _run_tile_case()
 
-    assert zones["fullscreen"]["name"] == "fullscreen"
-    assert zones["maximize"]["name"] == "maximize"
-    assert zones["top"] == {
-        "name": "top-half",
-        "rect": {"left": 4, "top": 4, "width": 1192, "height": 396},
+    maximize = {
+        "name": "maximize",
+        "rect": {"left": 4, "top": 4, "width": 1192, "height": 792},
     }
+    assert zones["topEdge"] == maximize
+    assert zones["topStrip"] == maximize
+    assert zones["top"] == maximize
+    assert zones["topWithSidebar"] == {
+        "name": "maximize",
+        "rect": {"left": 244, "top": 4, "width": 952, "height": 792},
+    }
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_tile_manager_detects_side_edges_but_ignores_the_bottom_edge():
+    zones = _run_tile_case()
+
     assert zones["left"] == {
         "name": "left-half",
         "rect": {"left": 4, "top": 4, "width": 596, "height": 792},
@@ -102,16 +125,13 @@ def test_tile_manager_detects_all_four_workspace_edges():
         "name": "right-half",
         "rect": {"left": 600, "top": 4, "width": 596, "height": 792},
     }
-    assert zones["bottom"] == {
-        "name": "bottom-half",
-        "rect": {"left": 4, "top": 400, "width": 1192, "height": 396},
-    }
+    assert zones["bottom"] is None
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_regular_tool_modals_are_not_limited_to_fullscreen_only():
     zones = _run_tile_case()
 
-    assert zones["memoryBottom"]["name"] == "bottom-half"
+    assert zones["memoryBottom"] is None
     assert zones["settingsTop"] is None
     assert zones["settingsRight"]["name"] == "right-half"

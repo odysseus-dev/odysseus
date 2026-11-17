@@ -17,7 +17,10 @@ def _run(tool, content):
 @pytest.fixture
 def repo():
     # Built under /tmp, which is on the default tool-path allowlist.
-    root = tempfile.mkdtemp(dir="/tmp", prefix="codenav_")
+    # realpath because the code under test resolves the path it reports, and on
+    # macOS /tmp is a symlink to /private/tmp: comparing the unresolved path
+    # against the resolved one fails on a file both sides found correctly.
+    root = os.path.realpath(tempfile.mkdtemp(dir="/tmp", prefix="codenav_"))
     try:
         with open(os.path.join(root, "a.py"), "w") as f:
             f.write("import os\n# needle here\nprint('x')\n")
@@ -58,10 +61,19 @@ def test_grep_ignore_case(repo):
     assert "b.txt:2:" in r["output"]
 
 
-def test_grep_glob_filter(repo):
+def test_grep_glob_filter(repo, monkeypatch):
     r = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "glob": "*.py", "path": "{repo}"}}')
+    assert r["exit_code"] == 0
     assert "a.py" in r["output"]
     assert "b.txt" not in r["output"]
+
+    # Positive control: verify that fallback path honors the exact same glob contract
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **kw: None if name == "rg" else real_which(name, *a, **kw))
+    r_fallback = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "glob": "*.py", "path": "{repo}"}}')
+    assert r_fallback["exit_code"] == 0
+    assert "a.py" in r_fallback["output"]
+    assert "b.txt" not in r_fallback["output"]
 
 
 def test_grep_no_match(repo):
@@ -89,6 +101,17 @@ def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
     assert "a.py:2:" in r["output"]
     assert "node_modules" not in r["output"]
     assert ".git/config" not in r["output"]
+
+
+def test_grep_python_fallback_uses_relative_glob_paths(repo, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    r = _run(
+        "grep",
+        f'{{"pattern": "needle|python", "glob": "**/*.py", "path": "{repo}"}}',
+    )
+    assert r["exit_code"] == 0
+    assert "a.py" in r["output"]
+    assert "sub/deep/c.py" in r["output"]
 
 
 @pytest.mark.skipif(shutil.which("rg") is None, reason="targets the ripgrep fast-path")
@@ -196,3 +219,49 @@ def test_read_file_plain_path_backcompat(repo):
     r = _run("read_file", os.path.join(repo, "a.py"))
     assert r["exit_code"] == 0
     assert "needle" in r["output"]
+
+
+def test_read_file_extracts_structured_documents(repo, monkeypatch):
+    p = os.path.join(repo, "report.docx")
+    with open(p, "wb") as f:
+        f.write(b"PK fake structured document")
+
+    calls = []
+
+    def _fake_extract(path, **kwargs):
+        calls.append((path, kwargs))
+        return "Heading\nFirst fact\nSecond fact\n"
+
+    monkeypatch.setattr(
+        "src.document_processor.extract_local_document",
+        _fake_extract,
+    )
+
+    r = _run("read_file", f'{{"path": "{p}", "offset": 2, "limit": 2}}')
+
+    assert r == {"output": "First fact\nSecond fact\n", "exit_code": 0}
+    assert calls == [(p, {
+        "display_name": "report.docx",
+        "analyze_embedded_images": False,
+    })]
+
+
+def test_read_file_extracts_legacy_word_documents(repo, monkeypatch):
+    p = os.path.join(repo, "report.doc")
+    with open(p, "wb") as f:
+        f.write(b"binary OLE document")
+
+    calls = []
+
+    def _fake_extract(path, **kwargs):
+        calls.append((path, kwargs))
+        return "Legacy Word content\nShipping price\n"
+
+    monkeypatch.setattr("src.document_processor.extract_local_document", _fake_extract)
+    r = _run("read_file", p)
+
+    assert r == {"output": "Legacy Word content\nShipping price\n", "exit_code": 0}
+    assert calls == [(p, {
+        "display_name": "report.doc",
+        "analyze_embedded_images": False,
+    })]

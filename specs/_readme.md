@@ -1,6 +1,6 @@
 # Specs DocumentMap
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 This folder is the compact implementation-truth map for humans and coding agents working on Odysseus. Read this file first, then open only the subsystem specs that match the work.
 
@@ -56,14 +56,14 @@ project documentation.
 - [context-building.md](context-building.md): URL/search/RAG/memory/skills/YouTube/email/tool-output context, untrusted wrapping, unavailable context, intent boundaries.
 - [search.md](search.md): web search providers, ranking, cache/analytics, URL fetch/content extraction, `src.search`/`services.search` split.
 - [documents-rag-uploads.md](documents-rag-uploads.md): uploads, documents, PDF/form handling, personal docs, RAG/vector stores.
-- [memory-skills.md](memory-skills.md): memory storage, semantic memory, skill extraction/formatting, owner isolation.
+- [memory-skills.md](memory-skills.md): memory storage, semantic memory, skill storage/extraction and service-owned audit/evaluation, owner isolation.
 - [research.md](research.md): deep research jobs, synthesis, sources, research library, research UI panel.
-- [calendar-tasks-notes.md](calendar-tasks-notes.md): CalDAV calendars, scheduled tasks, reminders, assistant runs, notes/todos.
+- [calendar-tasks-notes.md](calendar-tasks-notes.md): CalDAV calendars, scheduled tasks, reminders, assistant runs, Notes feature state and lifecycle.
 - [email-contacts.md](email-contacts.md): IMAP/SMTP email, email library, scheduled mail, contacts/CardDAV.
 - [gallery-editor-media.md](gallery-editor-media.md): gallery, generated media, image editor drafts, signatures, emoji/font helpers.
 - [cookbook-hwfit.md](cookbook-hwfit.md): model downloads, local/remote model serving, hardware detection, fit ranking.
 - [speech.md](speech.md): STT and TTS services, routes, settings, optional dependencies.
-- [frontend.md](frontend.md): static SPA, module loading, UI conventions, major JS areas, no-build frontend shape.
+- [frontend.md](frontend.md): static native-ESM SPA, maintained Notes source/deployment graph, module loading, UI conventions and shared ownership.
 - [integrations.md](integrations.md): Codex/Claude scoped APIs, companion pairing, webhooks, external agent access.
 - [shell-mcp.md](shell-mcp.md): shell execution, background jobs, MCP manager, built-in MCP servers.
 - [settings-admin.md](settings-admin.md): settings, preferences, presets, backup/import/export, diagnostics, admin wipe.

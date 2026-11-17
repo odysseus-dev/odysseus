@@ -5,6 +5,8 @@ from src.user_time import (
     clear_user_time_context,
     current_datetime_prompt,
     get_user_tz_name,
+    get_user_tz_offset,
+    set_user_timezone,
     set_user_tz_name,
     set_user_tz_offset,
 )
@@ -82,6 +84,54 @@ def test_timezone_name_is_sanitized_and_ephemeral():
 
     clear_user_time_context()
     assert get_user_tz_name() is None
+
+
+def test_sft_fixture_timezone_override_is_deterministic_utc():
+    clear_user_time_context()
+    set_user_tz_offset(540)
+    set_user_tz_name("Asia/Tokyo")
+
+    set_user_timezone("UTC", 0)
+    prompt = current_datetime_prompt(datetime(2026, 8, 22, 21, 18, tzinfo=timezone.utc))
+
+    assert "Saturday, August 22, 2026 (2026-08-22)" in prompt
+    assert "User local time is 9:18 PM" in prompt
+    assert "UTC+00:00" in prompt
+    assert "Asia/Tokyo" not in prompt
+    assert "Today is Sunday, August 23, 2026" not in prompt
+    assert "Tomorrow is Sunday, August 23, 2026 (2026-08-23)" in prompt
+
+
+def test_interactive_sft_user_keeps_browser_timezone_by_default(monkeypatch):
+    from routes import chat_routes
+
+    class Request:
+        headers = {"x-tz-offset": "540", "x-tz-name": "Asia/Tokyo"}
+
+    clear_user_time_context()
+    monkeypatch.delenv("ODYSSEUS_SFT_FORCE_UTC_TIMEZONE", raising=False)
+    monkeypatch.setattr(chat_routes, "effective_user", lambda _request: "sft_alex_creator")
+
+    chat_routes._set_user_time_from_request(Request())
+
+    assert get_user_tz_name() == "Asia/Tokyo"
+    assert get_user_tz_offset() == 540
+
+
+def test_sft_user_can_still_force_utc_timezone(monkeypatch):
+    from routes import chat_routes
+
+    class Request:
+        headers = {"x-tz-offset": "540", "x-tz-name": "Asia/Tokyo"}
+
+    clear_user_time_context()
+    monkeypatch.setenv("ODYSSEUS_SFT_FORCE_UTC_TIMEZONE", "1")
+    monkeypatch.setattr(chat_routes, "effective_user", lambda _request: "sft_alex_creator")
+
+    chat_routes._set_user_time_from_request(Request())
+
+    assert get_user_tz_name() == "UTC"
+    assert get_user_tz_offset() == 0
 
 
 def test_chat_preface_excludes_current_time_for_non_agent_chat():

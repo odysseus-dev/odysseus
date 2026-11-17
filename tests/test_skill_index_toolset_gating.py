@@ -42,6 +42,7 @@ def _write_skill_md(skills_root: Path, name: str, *, requires: str = "",
     fm += [
         "status: published",
         "confidence: 0.9",
+        "audit_verdict: pass",
         "source: learned",
         "created: 2026-01-01T00:00:00Z",
         "---",
@@ -66,6 +67,7 @@ def test_requires_toolsets_not_gated_when_active_set_unknown(tmp_path):
     (tmp_path / "skills").mkdir()
     _write_skill_md(tmp_path / "skills", "notes-lookup", requires="grep, read_file")
     sm = SkillsManager(str(tmp_path))
+    sm.set_audit("notes-lookup", "pass")
 
     # None = caller doesn't know the active tool set → no gating.
     assert "notes-lookup" in _names(sm.index_for())
@@ -76,6 +78,7 @@ def test_requires_toolsets_gates_on_explicit_list(tmp_path):
     (tmp_path / "skills").mkdir()
     _write_skill_md(tmp_path / "skills", "notes-lookup", requires="grep, read_file")
     sm = SkillsManager(str(tmp_path))
+    sm.set_audit("notes-lookup", "pass")
 
     # Explicit list missing a required tool → hidden.
     assert "notes-lookup" not in _names(sm.index_for(active_toolsets=["grep"]))
@@ -89,6 +92,7 @@ def test_fallback_for_toolsets_unaffected_by_none(tmp_path):
     (tmp_path / "skills").mkdir()
     _write_skill_md(tmp_path / "skills", "web-fallback", fallback="web_search")
     sm = SkillsManager(str(tmp_path))
+    sm.set_audit("web-fallback", "pass")
 
     # Fallback skills hide only when the toolset they substitute for is
     # known to be active.
@@ -96,3 +100,53 @@ def test_fallback_for_toolsets_unaffected_by_none(tmp_path):
     assert "web-fallback" in _names(sm.index_for(active_toolsets=[]))
     assert "web-fallback" not in _names(
         sm.index_for(active_toolsets=["web_search"]))
+
+
+def test_inconclusive_audit_hides_an_unapproved_skill(tmp_path):
+    (tmp_path / "skills").mkdir()
+    _write_skill_md(tmp_path / "skills", "release-checklist")
+    sm = SkillsManager(str(tmp_path))
+    sm.set_audit("release-checklist", "inconclusive")
+
+    assert "release-checklist" not in _names(sm.index_for())
+
+
+def test_failed_audit_hides_an_approved_skill(tmp_path):
+    (tmp_path / "skills").mkdir()
+    _write_skill_md(tmp_path / "skills", "release-checklist")
+    sm = SkillsManager(str(tmp_path))
+    sm.set_audit("release-checklist", "fail")
+
+    assert "release-checklist" not in _names(sm.index_for())
+
+
+def test_unaudited_or_below_threshold_published_skill_is_not_injected(tmp_path):
+    (tmp_path / "skills").mkdir()
+    path = _write_skill_md(tmp_path / "skills", "premature-skill")
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("audit_verdict: pass\n", "")
+    text = text.replace("confidence: 0.9", "confidence: 0.72")
+    path.write_text(text, encoding="utf-8")
+    sm = SkillsManager(str(tmp_path))
+
+    assert "premature-skill" not in _names(sm.index_for())
+    assert not sm.get_relevant_skills(
+        "premature skill", min_confidence=0.80,
+    )
+
+
+def test_auto_approve_off_injects_published_skills_without_an_audit(tmp_path):
+    # #6634: OFF used min_confidence=2.0, which no 0-1 confidence clears, so
+    # every user skill was rejected. Publishing is the approval when OFF.
+    (tmp_path / "skills").mkdir()
+    for name, status in (("premature-skill", "published"), ("draft-skill", "draft")):
+        path = _write_skill_md(tmp_path / "skills", name)
+        text = path.read_text(encoding="utf-8").replace("audit_verdict: pass\n", "")
+        path.write_text(text.replace("status: published", f"status: {status}"), encoding="utf-8")
+    sm = SkillsManager(str(tmp_path))
+
+    query = "premature skill draft skill"
+    # threshold=0 isolates the eligibility gate from relevance scoring.
+    assert _names(sm.get_relevant_skills(query, threshold=0.0, published_only=True)) == {"premature-skill"}
+    # Auto-approve ON still needs a passing audit, as before.
+    assert not sm.get_relevant_skills(query, threshold=0.0, min_confidence=0.85)

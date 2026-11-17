@@ -18,8 +18,11 @@ def create_office_document(
     upload_id: str,
     title: str,
     body_text: Optional[str] = None,
+    language: str = "markdown",
+    *,
+    owner: Optional[str] = None,
 ) -> Optional[str]:
-    """Create a markdown Document for an Office attachment and set it active.
+    """Create a Document for an Office attachment and set it active.
 
     Returns the new doc_id, or None on failure / empty body. The full
     extracted body lives in `current_content`, so the agent can fetch
@@ -42,15 +45,17 @@ def create_office_document(
         doc_id = str(uuid.uuid4())
         ver_id = str(uuid.uuid4())
         sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if owner and sess and sess.owner != owner:
+            raise ValueError("Office document session belongs to a different owner")
         doc = Document(
             id=doc_id,
             session_id=session_id,
             title=title,
-            language="markdown",
+            language=language or "markdown",
             current_content=body_text,
             version_count=1,
             is_active=True,
-            owner=sess.owner if sess else None,
+            owner=owner or (sess.owner if sess else None),
         )
         ver = DocumentVersion(
             id=ver_id,

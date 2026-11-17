@@ -12,16 +12,45 @@
  * @param {{
  *   composite: () => void,
  *   showCropApply: () => void,
+ *   syncCropFrame?: () => void,
+ *   snapFrame?: (frame: object, center: object) => object,
  * }} deps
  */
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
 import { drawCheckerboard } from '../checkerboard.js';
+import { createDirectManipulationSession } from '../direct-manipulation-session.js';
 
-export function createCropTool({ composite, showCropApply }) {
+export function createCropTool({ composite, showCropApply, snapFrame, syncCropFrame }) {
+  const gesture = createDirectManipulationSession({
+    name: 'crop',
+    getContext: () => ({ canvas: state.mainCanvas, tool: state.tool }),
+    isContextCurrent: context => context.canvas === state.mainCanvas && state.tool === 'crop',
+    onCancel: (data, reason) => {
+      state.cropping = false;
+      state.cropMoving = false;
+      state.cropStart = null;
+      state.cropEnd = null;
+      state.cropMoveStart = null;
+      state.cropAspectLock = null;
+      state.activeSnapGuides = null;
+      // Switching tools abandons the crop entirely — do not restore a
+      // half-drawn rect, and tear down any Apply panel a commit may have
+      // mounted mid-gesture.
+      if (reason === 'tool-switch') {
+        state.cropRect = null;
+        state.container?.querySelector('.ge-crop-apply')?.remove();
+      } else {
+        state.cropRect = data?.previousRect ? { ...data.previousRect } : null;
+      }
+      composite();
+      if (state.cropRect && reason !== 'tool-switch') showCropApply();
+    },
+  });
   return {
     begin(e) {
       const coords = canvasCoords(e, state.mainCanvas);
+      const previousRect = state.cropRect ? { ...state.cropRect } : null;
       // Click inside an existing crop rect → switch to move-mode so
       // the user can reposition without redrawing.
       if (state.cropRect &&
@@ -29,6 +58,7 @@ export function createCropTool({ composite, showCropApply }) {
           coords.y >= state.cropRect.y && coords.y <= state.cropRect.y + state.cropRect.h) {
         state.cropMoving = true;
         state.cropMoveStart = { x: coords.x, y: coords.y, rx: state.cropRect.x, ry: state.cropRect.y };
+        gesture.begin(e, { mode: 'move', previousRect }, { captureTarget: e.currentTarget });
         return;
       }
       state.cropping = true;
@@ -39,9 +69,11 @@ export function createCropTool({ composite, showCropApply }) {
       // Tear down the size panel while the user is drawing a new rect.
       const old = state.container?.querySelector('.ge-crop-apply');
       if (old) old.remove();
+      gesture.begin(e, { mode: 'draw', previousRect }, { captureTarget: e.currentTarget });
     },
 
     drag(e) {
+      if (!gesture.update(e)) return;
       // Move-mode: drag the existing rect around the canvas.
       if (state.cropMoving && state.cropRect && state.cropMoveStart) {
         e.preventDefault();
@@ -50,19 +82,57 @@ export function createCropTool({ composite, showCropApply }) {
         const dy = c.y - state.cropMoveStart.y;
         let nx = state.cropMoveStart.rx + dx;
         let ny = state.cropMoveStart.ry + dy;
-        // Clamp to canvas bounds so the rect stays fully visible.
-        nx = Math.max(0, Math.min(nx, state.mainCanvas.width - state.cropRect.w));
-        ny = Math.max(0, Math.min(ny, state.mainCanvas.height - state.cropRect.h));
+        const modifier = e.ctrlKey || e.metaKey;
+        const snapping = state.snapEnabled ? !modifier : modifier;
+        if (snapping && snapFrame) {
+          const snapped = snapFrame({
+            centerX: state.cropMoveStart.rx + state.cropRect.w / 2,
+            centerY: state.cropMoveStart.ry + state.cropRect.h / 2,
+            width: state.cropRect.w,
+            height: state.cropRect.h,
+            rotation: 0,
+          }, { x: nx + state.cropRect.w / 2, y: ny + state.cropRect.h / 2 });
+          nx = snapped.centerX - state.cropRect.w / 2;
+          ny = snapped.centerY - state.cropRect.h / 2;
+          state.activeSnapGuides = snapped.guides || null;
+        } else {
+          state.activeSnapGuides = null;
+        }
+        // Allow the rect to be dragged beyond the image edge as well (that
+        // expands the canvas on Apply). Only guard against absurd coords.
+        const MAX = 20000;
+        nx = Math.max(-MAX, Math.min(nx, MAX));
+        ny = Math.max(-MAX, Math.min(ny, MAX));
         state.cropRect = { ...state.cropRect, x: nx, y: ny };
         composite();
+        syncCropFrame?.();
         return;
       }
       if (!state.cropping) return;
       e.preventDefault();
-      state.cropEnd = canvasCoords(e, state.mainCanvas);
-      // Shift-held = lock aspect ratio. First Shift press during the
-      // drag snapshots the current aspect; subsequent moves stay locked.
-      // Releasing Shift resets so the user can re-lock at a new ratio.
+      // The dragged corner may go OUTSIDE the image: a rect that reaches
+      // past an edge expands the canvas there (transparent fill) on Apply.
+      // Only clamp against absurd coordinates (pointer flung off-screen).
+      const end = canvasCoords(e, state.mainCanvas);
+      const MAX = 20000;
+      state.cropEnd = {
+        x: Math.max(-MAX, Math.min(MAX, end.x)),
+        y: Math.max(-MAX, Math.min(MAX, end.y)),
+      };
+      // Aspect lock. Shift-held snapshots the current aspect on first press
+      // and stays locked until released. Otherwise a chosen crop preset
+      // (state.cropAspectPreset) locks the ratio for new drags.
+      let presetRatio = null;
+      const preset = state.cropAspectPreset;
+      if (preset && preset !== 'free') {
+        if (preset === 'original') {
+          presetRatio = (state.imgWidth && state.imgHeight) ? state.imgWidth / state.imgHeight : null;
+        } else {
+          const m = /^(\d+):(\d+)$/.exec(preset);
+          presetRatio = m ? Number(m[1]) / Number(m[2]) : null;
+        }
+      }
+      let lockRatio = null;
       if (e.shiftKey) {
         const rawDx = state.cropEnd.x - state.cropStart.x;
         const rawDy = state.cropEnd.y - state.cropStart.y;
@@ -71,21 +141,27 @@ export function createCropTool({ composite, showCropApply }) {
           const rawH = Math.abs(rawDy) || 1;
           state.cropAspectLock = rawW / rawH;
         }
+        lockRatio = state.cropAspectLock;
+      } else {
+        state.cropAspectLock = null;
+        lockRatio = presetRatio;
+      }
+      if (lockRatio) {
+        const rawDx = state.cropEnd.x - state.cropStart.x;
+        const rawDy = state.cropEnd.y - state.cropStart.y;
         const absDx = Math.abs(rawDx);
         const absDy = Math.abs(rawDy);
         // Whichever axis the user moved more (relative to the lock) is
         // the driver; scale the other to preserve aspect.
         let dx, dy;
-        if (absDx >= absDy * state.cropAspectLock) {
+        if (absDx >= absDy * lockRatio) {
           dx = rawDx;
-          dy = Math.sign(rawDy || 1) * (absDx / state.cropAspectLock);
+          dy = Math.sign(rawDy || 1) * (absDx / lockRatio);
         } else {
           dy = rawDy;
-          dx = Math.sign(rawDx || 1) * (absDy * state.cropAspectLock);
+          dx = Math.sign(rawDx || 1) * (absDy * lockRatio);
         }
         state.cropEnd = { x: state.cropStart.x + dx, y: state.cropStart.y + dy };
-      } else {
-        state.cropAspectLock = null;
       }
       composite();
       // Draw crop overlay.
@@ -117,9 +193,12 @@ export function createCropTool({ composite, showCropApply }) {
       state.mainCtx.strokeRect(x, y, w, h);
       state.mainCtx.setLineDash([]);
       state.cropRect = { x, y, w, h };
+      syncCropFrame?.();
     },
 
-    end() {
+    end(e) {
+      if (!gesture.commit(e)) return;
+      state.activeSnapGuides = null;
       // Move-mode wrap-up: refresh the floating panel so Apply follows
       // the rect to its new spot.
       if (state.cropMoving) {
@@ -132,6 +211,27 @@ export function createCropTool({ composite, showCropApply }) {
       if (state.cropRect && state.cropRect.w > 5 && state.cropRect.h > 5) {
         showCropApply();
       }
+    },
+    cancel(reason) {
+      return gesture.cancel(reason);
+    },
+
+    // Unconditional teardown used when the user switches tools. Unlike
+    // cancel(), this clears a rect even if the gesture already committed
+    // (e.g. a stray pointerdown restarted it mid-drag) and removes any
+    // mounted Apply panel.
+    reset() {
+      gesture.cancel('tool-switch');
+      state.cropping = false;
+      state.cropMoving = false;
+      state.cropStart = null;
+      state.cropEnd = null;
+      state.cropMoveStart = null;
+      state.cropAspectLock = null;
+      state.activeSnapGuides = null;
+      state.cropRect = null;
+      state.container?.querySelector('.ge-crop-apply')?.remove();
+      composite();
     },
   };
 }

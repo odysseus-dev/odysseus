@@ -163,3 +163,13 @@ class TestThinkSuppression:
             monkeypatch, "http://127.0.0.1:11435/v1/chat/completions", "qwen3:14b"
         )
         assert payload.get("think") is False
+
+    def test_qwen_tool_router_does_not_receive_ollama_think_override(self, monkeypatch):
+        """A local OpenAI-compatible tool-router is not Ollama's /v1 surface."""
+        payload = _capture_payload(
+            monkeypatch,
+            "http://127.0.0.1:18059/v1/chat/completions",
+            "qwen35-9b-tool-router-v4-firstaction-noschema-adapter",
+        )
+        assert "think" not in payload
+        assert payload["max_tokens"] == llm_core.LLMConfig.DEFAULT_MAX_TOKENS

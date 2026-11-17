@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
+from tests.helpers.notes_source import notes_source
+
 
 _REPO = Path(__file__).resolve().parent.parent
 
 
 def test_notes_image_src_guard_rejects_script_capable_data_images():
-    src = (_REPO / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    src = notes_source("ui/text", "ui/editor", "ui/drawing")
 
     assert "function _safeImgSrc(s)" in src
     assert r"^data:image\/(?:png|jpe?g|gif|webp);base64," in src
@@ -15,7 +17,7 @@ def test_notes_image_src_guard_rejects_script_capable_data_images():
 
 
 def test_notes_linkify_escapes_href_attribute():
-    src = (_REPO / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    src = notes_source("ui/text", "ui/editor", "ui/drawing")
 
     assert "function _attrEsc(s)" in src
     assert 'href="${_attrEsc(href)}"' in src
@@ -23,7 +25,7 @@ def test_notes_linkify_escapes_href_attribute():
 
 
 def test_notes_edit_form_uses_safe_image_src_guard():
-    src = (_REPO / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    src = notes_source("ui/text", "ui/editor", "ui/drawing")
 
     assert "let currentImageUrl = _safeImgSrc(note?.image_url || '');" in src
     assert "let _stashedDrawUrl = (type === 'draw') ? (_safeImgSrc(note?.image_url) || null) : null;" in src

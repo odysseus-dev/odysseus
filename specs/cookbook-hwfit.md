@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-15
 
 ## Scope
 
@@ -40,7 +40,7 @@ Access policy is split by surface:
 
 - download/setup/SSH key/cache scan/serve/GPU/kill/state/task-status are admin/internal-tool surfaces;
 - `/api/cookbook/hf-latest` is authenticated-user gated;
-- HW Fit routes are authenticated read/probe routes through normal middleware, not admin-only operations;
+- HW Fit routes carry a router-wide admin dependency because host/model-path probes can use server SSH/filesystem authority;
 - bearer API tokens do not satisfy Cookbook admin gates.
 
 Runtime behavior:
@@ -130,7 +130,7 @@ Runtime behavior:
 
 - Linux, Windows/PowerShell, macOS, Docker, NVIDIA, AMD, Apple Silicon, and CPU-only systems have different command paths.
 - Remote hosts are accessed through SSH helpers; Cookbook host/port/path inputs must be validated before command construction.
-- HW Fit remote host/port query values currently do not share all Cookbook route-level validation before SSH probing.
+- HW Fit detection targets use shared host/port validation before remote probing; the router-wide admin gate still owns admission.
 - Missing local tools or failed installs should surface command/output/error detail where possible.
 - GPU overlays remain optional and do not break CPU-only deployments.
 - Docker GPU overlays pass host devices/env; they do not install CUDA/ROCm engines by themselves.
@@ -151,14 +151,18 @@ Runtime behavior:
 HW Fit model scoring depends on bundled `services/hwfit/data/hf_models.json`,
 bundled `services/hwfit/data/mlx_community_models.json`, runtime dynamic caches
 under `DATA_DIR/hwfit/`, catalog normalization, and assumptions about model
-formats and quantization. `scripts/add_hwfit_models.py` updates the static HF
-catalog.
+formats and quantization. The two bundled lists are intentionally empty.
+`scripts/add_hwfit_models.py`, `scripts/backfill_model_release_dates.py`, and
+`scripts/import_from_vllm_recipes.py` maintain user data at
+`DATA_DIR/hwfit/hf_models.json`; they do not populate repository snapshots.
 
 Hugging Face latest lookup and HW Fit dynamic refresh use external Hub metadata
 and can degrade to empty, unknown-size, partial, or malformed-result behavior.
 `refresh_catalog=1` refreshes API-backed collection caches for MLX community
 and selected HF organization collections, with a 24-hour freshness guard and
-bundled JSON fallbacks when the network/cache is unavailable. HW Fit tolerates
+an empty offline state when no runtime catalog/cache is available. Use the
+Cookbook Rescan control while online to populate recommendations.
+See [catalog data policy](../services/hwfit/data/README.md). HW Fit tolerates
 non-numeric `gpu_count` values from callers. Model normalization also treats
 non-string `parameter_count` and quantization fields as unknown rather than
 calling string methods and aborting the ranking pass. Catalog drift and dynamic
@@ -183,6 +187,18 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking and request-model pinning, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows venv/path/task helpers, non-numeric GPU counts, non-string model catalog fields, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
+
+## Native Control And Adapter Contracts
+
+`routes/cookbook_routes.py` gates native download/serve producers even when scoped wrappers call them directly. Local tools use a one-use admitted operation/backend/body capability from `src.agent_runtime.local_model_control`; fallback administration uses the shell admin gate. Kill-PID, SSH-key and state mutation do not inherit that model capability. Remote operations retain separate validation and admin requirements.
+
+Cached-model scans pass request-owned script bytes over subprocess stdin instead of sharing `scan_cache.py`; cancellation/timeout terminates that request's scanner. Image serving accepts a shell-safe explicit `runtime_adapter`, passes it as `ODYSSEUS_MLX_IMAGE_ADAPTER`, and retains `auto` detection with dependency preflights. HW Fit ranking carries image dependency-package metadata; native AWQ rows no longer require multiple GPUs on otherwise supported accelerator platforms.
+
+## Native Process And Catalog Limits
+
+Tool-reachable local Cookbook stop refuses legacy unadmitted tmux/process targets with resource-identity denial before scanning or killing; native model capabilities admit only the exact owner/request/backend/body and consume once. Scheduled native serving requires the sealed capability, while remote/operator HTTP flows retain their distinct validation. Procfs discovery returns empty when procfs is unavailable and cannot prove absence or authorize survivor reclamation. Shared process cleanup freezes known descendants, checks start tokens and observes death; uncertain identity is retained, with unavoidable signal/observation races rather than guaranteed portable teardown.
+
+Image collection refresh has a short in-memory and longer disk cache; network failure can preserve stale model data rather than force an empty catalog. Latest lookup and organization prefilters use external metadata and heuristic first-party/format/parameter sizing; fit estimates (including a 90-percent VRAM budget) are recommendations, not measured serving acceptance. Bundled HF/MLX inventories remain empty in final source, and generated inventory inspection is separate from consumer/schema review.
 
 ## Current Gaps
 

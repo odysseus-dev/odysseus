@@ -20,7 +20,7 @@ PRESETS_JS = Path("static/js/presets.js").read_text(encoding="utf-8")
 def test_group_imports_getUserTemplates():
     """group.js must import getUserTemplates from presets.js."""
     assert "getUserTemplates" in GROUP_JS
-    assert "from './presets.js'" in GROUP_JS or 'from "./presets.js"' in GROUP_JS
+    assert "from './presets.js" in GROUP_JS or 'from "./presets.js' in GROUP_JS
 
 
 def test_group_merges_in_memory_templates():

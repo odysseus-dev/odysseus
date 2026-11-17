@@ -1,5 +1,5 @@
 /**
- * Apply a Brightness/Contrast, Hue/Saturation, Levels, or Color Balance
+ * Apply a Brightness/Contrast, Black & White, Hue/Saturation, Levels, Curves, or Color Balance
  * adjustment to a source canvas and return a fresh canvas with the
  * result. Pure pixel math — no DOM, no module state.
  *
@@ -11,8 +11,114 @@
  *   { type: 'brightness-contrast', params: { brightness, contrast } }
  *   { type: 'hue-saturation',      params: { hue, saturation } }
  *   { type: 'levels',              params: { inBlack, inWhite, gamma, outBlack, outWhite } }
+ *   { type: 'curves',              params: { points: {rgb, red, green, blue} } }
  *   { type: 'color-balance',       params: { shadows, midtones, highlights } }
  */
+import { developImageData } from './develop.js';
+import { applyCubeLut } from './cube-lut.js';
+
+function clampByte(value) {
+  return value < 0 ? 0 : value > 255 ? 255 : Math.round(value);
+}
+
+function finiteOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function levelLut(values = {}) {
+  const inLow = Math.max(0, Math.min(254, finiteOr(values.inBlack, 0)));
+  const inHigh = Math.max(inLow + 1, Math.min(255, finiteOr(values.inWhite, 255)));
+  const gamma = Math.max(0.1, finiteOr(values.gamma, 1));
+  const outLow = Math.max(0, Math.min(255, finiteOr(values.outBlack, 0)));
+  const outHigh = Math.max(outLow, Math.min(255, finiteOr(values.outWhite, 255)));
+  const lut = new Uint8ClampedArray(256);
+  for (let value = 0; value < 256; value += 1) {
+    const normalized = Math.max(0, Math.min(1, (value - inLow) / (inHigh - inLow)));
+    lut[value] = clampByte(Math.pow(normalized, 1 / gamma) * (outHigh - outLow) + outLow);
+  }
+  return lut;
+}
+
+function normalizedCurvePoints(points) {
+  const clean = (Array.isArray(points) ? points : [])
+    .filter(point => Array.isArray(point) && point.length >= 2)
+    .map(point => [clampByte(Number(point[0]) || 0), clampByte(Number(point[1]) || 0)])
+    .sort((a, b) => a[0] - b[0]);
+  if (!clean.length || clean[0][0] !== 0) clean.unshift([0, clean[0]?.[1] ?? 0]);
+  if (clean[clean.length - 1][0] !== 255) clean.push([255, clean[clean.length - 1]?.[1] ?? 255]);
+  const unique = [];
+  for (const point of clean) {
+    if (unique.length && unique[unique.length - 1][0] === point[0]) unique[unique.length - 1] = point;
+    else unique.push(point);
+  }
+  return unique;
+}
+
+export function curveLut(points) {
+  const clean = normalizedCurvePoints(points);
+  const lut = new Uint8ClampedArray(256);
+  let segment = 0;
+  for (let value = 0; value < 256; value += 1) {
+    while (segment < clean.length - 2 && value > clean[segment + 1][0]) segment += 1;
+    const left = clean[segment];
+    const right = clean[Math.min(segment + 1, clean.length - 1)];
+    const span = Math.max(1, right[0] - left[0]);
+    const amount = Math.max(0, Math.min(1, (value - left[0]) / span));
+    lut[value] = clampByte(left[1] + (right[1] - left[1]) * amount);
+  }
+  return lut;
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  if (max === min) return [0, 0, lightness];
+  const delta = max - min;
+  const saturation = lightness > .5 ? delta / (2 - max - min) : delta / (max + min);
+  let hue;
+  if (max === r) hue = ((g - b) / delta + (g < b ? 6 : 0)) / 6;
+  else if (max === g) hue = ((b - r) / delta + 2) / 6;
+  else hue = ((r - g) / delta + 4) / 6;
+  return [hue, saturation, lightness];
+}
+
+function hueChannel(p, q, t) {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1 / 6) return p + (q - p) * 6 * t;
+  if (t < 1 / 2) return q;
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+  return p;
+}
+
+function hslToRgb(h, s, l) {
+  if (!s) return [l * 255, l * 255, l * 255];
+  const q = l < .5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [hueChannel(p, q, h + 1 / 3) * 255, hueChannel(p, q, h) * 255, hueChannel(p, q, h - 1 / 3) * 255];
+}
+
+function parseHexColor(value, fallback) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(value || ''));
+  const hex = match ? match[1] : fallback;
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+}
+
+function hueDistance(a, b) {
+  const distance = Math.abs(a - b);
+  return Math.min(distance, 1 - distance);
+}
+
+function selectiveRangeWeight(name, hue, saturation, lightness) {
+  if (name === 'blacks') return Math.max(0, Math.min(1, (0.55 - lightness) / 0.45));
+  if (name === 'neutrals') return Math.max(0, Math.min(1, (1 - saturation) * (1 - Math.abs(lightness - .5) * 1.5)));
+  const centers = { reds: 0, yellows: 1 / 6, greens: 1 / 3, cyans: .5, blues: 2 / 3, magentas: 5 / 6 };
+  const distance = hueDistance(hue, centers[name] ?? 0);
+  return Math.max(0, 1 - distance * 6) * saturation;
+}
+
 export function applyAdjustment(srcCanvas, adj) {
   const w = srcCanvas.width, h = srcCanvas.height;
   const out = document.createElement('canvas');
@@ -27,37 +133,149 @@ export function applyAdjustment(srcCanvas, adj) {
     octx.filter = 'none';
     return out;
   }
-  if (adj.type === 'hue-saturation') {
-    const p = adj.params;
-    octx.filter = `saturate(${p.saturation}) hue-rotate(${p.hue}deg)`;
-    octx.drawImage(srcCanvas, 0, 0);
-    octx.filter = 'none';
-    return out;
-  }
-
-  // Levels + Color Balance need per-pixel math.
+  // The remaining adjustments need deterministic per-pixel math so preview,
+  // flattening, and reopened documents produce the same result.
   octx.drawImage(srcCanvas, 0, 0);
   const img = octx.getImageData(0, 0, w, h);
   const d = img.data;
 
+  if (adj.type === 'develop') {
+    const p = adj.params || {};
+    developImageData(d, w, h, p);
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+  if (adj.type === 'exposure') {
+    const p = adj.params || {};
+    const multiplier = Math.pow(2, finiteOr(p.exposure, 0));
+    const offset = finiteOr(p.offset, 0);
+    const gamma = Math.max(.1, finiteOr(p.gamma, 1));
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = clampByte(Math.pow(Math.max(0, Math.min(1, d[i] / 255 * multiplier + offset)), 1 / gamma) * 255);
+      d[i + 1] = clampByte(Math.pow(Math.max(0, Math.min(1, d[i + 1] / 255 * multiplier + offset)), 1 / gamma) * 255);
+      d[i + 2] = clampByte(Math.pow(Math.max(0, Math.min(1, d[i + 2] / 255 * multiplier + offset)), 1 / gamma) * 255);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'white-balance') {
+    const p = adj.params || {};
+    const temperature = finiteOr(p.temperature, 0) / 100;
+    const tint = finiteOr(p.tint, 0) / 100;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = clampByte(d[i] * (1 + temperature * .28 + tint * .09));
+      d[i + 1] = clampByte(d[i + 1] * (1 - tint * .18));
+      d[i + 2] = clampByte(d[i + 2] * (1 - temperature * .28 + tint * .09));
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'hue-saturation') {
+    const p = adj.params || {};
+    const hueShift = finiteOr(p.hue, 0) / 360;
+    const saturationScale = Math.max(0, finiteOr(p.saturation, 1));
+    const lightnessShift = finiteOr(p.lightness, 0) / 100;
+    for (let i = 0; i < d.length; i += 4) {
+      let [hue, saturation, lightness] = rgbToHsl(d[i], d[i + 1], d[i + 2]);
+      hue = (hue + hueShift + 1) % 1;
+      saturation = Math.max(0, Math.min(1, saturation * saturationScale));
+      lightness = Math.max(0, Math.min(1, lightness + lightnessShift));
+      const rgb = hslToRgb(hue, saturation, lightness);
+      d[i] = clampByte(rgb[0]); d[i + 1] = clampByte(rgb[1]); d[i + 2] = clampByte(rgb[2]);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'vibrance') {
+    const amount = Math.max(-1, Math.min(1, finiteOr(adj.params?.vibrance, 0) / 100));
+    // Scale chroma around luminance by a factor that leans on low-saturation
+    // pixels. Doing it directly in RGB (no HSL round-trip) keeps near-gray
+    // pixels near-gray instead of pinning them to an absolute saturation floor,
+    // which previously turned faint hue noise (e.g. lifted shadow haze) into
+    // false-colour banding.
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const avg = (r + g + b) / 3;
+      const sat = max <= 0 ? 0 : (max - min) / max;
+      const factor = 1 + (1 - sat) * amount;
+      d[i] = clampByte(avg + (r - avg) * factor);
+      d[i + 1] = clampByte(avg + (g - avg) * factor);
+      d[i + 2] = clampByte(avg + (b - avg) * factor);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'black-white') {
+    const p = adj.params || {};
+    const red = finiteOr(p.red, 30) / 100;
+    const green = finiteOr(p.green, 59) / 100;
+    const blue = finiteOr(p.blue, 11) / 100;
+    const constant = finiteOr(p.constant, 0) * 2.55;
+    for (let i = 0; i < d.length; i += 4) {
+      const gray = d[i] * red + d[i + 1] * green + d[i + 2] * blue + constant;
+      d[i] = clampByte(gray);
+      d[i + 1] = clampByte(gray);
+      d[i + 2] = clampByte(gray);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'shadows-highlights') {
+    const shadows = Math.max(-1, Math.min(1, finiteOr(adj.params?.shadows, 0) / 100));
+    const highlights = Math.max(-1, Math.min(1, finiteOr(adj.params?.highlights, 0) / 100));
+    // Endpoint-preserving tonal lift. A linear "add toward white" lift turns
+    // every near-black pixel grey (flattening the whole image under a veil);
+    // instead scale luminance with a gamma curve so 0 stays 0 and 255 stays 255
+    // while shadows/midtones open up. Colour is preserved via the luminance ratio.
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      if (luminance <= 1 / 255) continue;
+      const shadowWeight = (1 - luminance) * (1 - luminance);
+      const highlightWeight = luminance * luminance;
+      let exponent = 1;
+      if (shadows) exponent /= (1 + shadows * shadowWeight * 0.85);
+      if (highlights) exponent /= (1 + highlights * highlightWeight * 0.85);
+      const ratio = Math.pow(luminance, exponent - 1);
+      d[i] = clampByte(r * ratio);
+      d[i + 1] = clampByte(g * ratio);
+      d[i + 2] = clampByte(b * ratio);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
   if (adj.type === 'levels') {
     const l = adj.params;
-    const inLow  = Math.max(0, Math.min(254, l.inBlack));
-    const inHigh = Math.max(inLow + 1, Math.min(255, l.inWhite));
-    const gamma  = Math.max(0.1, l.gamma || 1);
-    const outLow  = Math.max(0, Math.min(255, l.outBlack));
-    const outHigh = Math.max(outLow, Math.min(255, l.outWhite));
-    const inv = 1.0 / gamma;
-    const span = (outHigh - outLow);
-    const lut = new Uint8ClampedArray(256);
-    for (let v = 0; v < 256; v++) {
-      let t = (v - inLow) / (inHigh - inLow);
-      if (t < 0) t = 0; else if (t > 1) t = 1;
-      t = Math.pow(t, inv);
-      lut[v] = Math.round(t * span + outLow);
-    }
+    const master = levelLut(l);
+    const red = levelLut(l.channels?.red);
+    const green = levelLut(l.channels?.green);
+    const blue = levelLut(l.channels?.blue);
     for (let i = 0; i < d.length; i += 4) {
-      d[i] = lut[d[i]]; d[i+1] = lut[d[i+1]]; d[i+2] = lut[d[i+2]];
+      d[i] = red[master[d[i]]];
+      d[i + 1] = green[master[d[i + 1]]];
+      d[i + 2] = blue[master[d[i + 2]]];
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'curves') {
+    const points = adj.params?.points || {};
+    const master = curveLut(points.rgb);
+    const red = curveLut(points.red);
+    const green = curveLut(points.green);
+    const blue = curveLut(points.blue);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = red[master[d[i]]];
+      d[i + 1] = green[master[d[i + 1]]];
+      d[i + 2] = blue[master[d[i + 2]]];
     }
     octx.putImageData(img, 0, 0);
     return out;
@@ -66,7 +284,17 @@ export function applyAdjustment(srcCanvas, adj) {
   if (adj.type === 'color-balance') {
     const cb = adj.params;
     const scale = 0.6;
-    const s = cb.shadows, m = cb.midtones, hi = cb.highlights;
+    // Be robust to malformed planner params: a tone may arrive as a bare
+    // number instead of {r,g,b}, which would otherwise produce NaN pixels
+    // (a blank white canvas). Coerce every tone to finite {r,g,b}.
+    const toTone = (v) => {
+      if (v && typeof v === 'object') {
+        return { r: Number.isFinite(v.r) ? v.r : 0, g: Number.isFinite(v.g) ? v.g : 0, b: Number.isFinite(v.b) ? v.b : 0 };
+      }
+      const n = Number.isFinite(v) ? v : 0;
+      return { r: n, g: n, b: n };
+    };
+    const s = toTone(cb.shadows), m = toTone(cb.midtones), hi = toTone(cb.highlights);
     const sR = s.r*scale, sG = s.g*scale, sB = s.b*scale;
     const mR = m.r*scale, mG = m.g*scale, mB = m.b*scale;
     const hR = hi.r*scale, hG = hi.g*scale, hB = hi.b*scale;
@@ -90,6 +318,153 @@ export function applyAdjustment(srcCanvas, adj) {
       d[i]   = r < 0 ? 0 : r > 255 ? 255 : r;
       d[i+1] = g < 0 ? 0 : g > 255 ? 255 : g;
       d[i+2] = b < 0 ? 0 : b > 255 ? 255 : b;
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'selective-color') {
+    const ranges = adj.params?.ranges || {};
+    for (let i = 0; i < d.length; i += 4) {
+      let r = d[i], g = d[i + 1], b = d[i + 2];
+      const [hue, saturation, lightness] = rgbToHsl(r, g, b);
+      for (const [name, values] of Object.entries(ranges)) {
+        const weight = selectiveRangeWeight(name, hue, saturation, lightness) * .65;
+        if (weight <= 0) continue;
+        const black = finiteOr(values.black, 0) / 100;
+        r += (-finiteOr(values.cyan, 0) / 100 * 255 - black * r) * weight;
+        g += (-finiteOr(values.magenta, 0) / 100 * 255 - black * g) * weight;
+        b += (-finiteOr(values.yellow, 0) / 100 * 255 - black * b) * weight;
+      }
+      d[i] = clampByte(r); d[i + 1] = clampByte(g); d[i + 2] = clampByte(b);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'gradient-map') {
+    const p = adj.params || {};
+    let shadows = parseHexColor(p.shadows, '000000');
+    let highlights = parseHexColor(p.highlights, 'ffffff');
+    if (p.reverse) [shadows, highlights] = [highlights, shadows];
+    const midpoint = Math.max(.01, Math.min(.99, finiteOr(p.midpoint, 50) / 100));
+    const exponent = Math.log(.5) / Math.log(midpoint);
+    for (let i = 0; i < d.length; i += 4) {
+      const luminance = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      const amount = Math.pow(luminance, exponent);
+      d[i] = clampByte(shadows[0] + (highlights[0] - shadows[0]) * amount);
+      d[i + 1] = clampByte(shadows[1] + (highlights[1] - shadows[1]) * amount);
+      d[i + 2] = clampByte(shadows[2] + (highlights[2] - shadows[2]) * amount);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'invert') {
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'posterize') {
+    const levels = Math.max(2, Math.min(255, Math.round(finiteOr(adj.params?.levels, 4))));
+    const step = 255 / (levels - 1);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = clampByte(Math.round(d[i] / step) * step);
+      d[i + 1] = clampByte(Math.round(d[i + 1] / step) * step);
+      d[i + 2] = clampByte(Math.round(d[i + 2] / step) * step);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'threshold') {
+    const level = Math.max(0, Math.min(255, Math.round(finiteOr(adj.params?.level, 128))));
+    for (let i = 0; i < d.length; i += 4) {
+      const luminance = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      const value = luminance >= level ? 255 : 0;
+      d[i] = value; d[i + 1] = value; d[i + 2] = value;
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'photo-filter') {
+    const p = adj.params || {};
+    const color = parseHexColor(p.color, 'ec8a00');
+    const density = Math.max(0, Math.min(1, finiteOr(p.density, 25) / 100));
+    const preserve = p.preserve_luminosity !== false;
+    for (let i = 0; i < d.length; i += 4) {
+      const sourceLum = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      let r = d[i] * (1 - density) + color[0] * density;
+      let g = d[i + 1] * (1 - density) + color[1] * density;
+      let b = d[i + 2] * (1 - density) + color[2] * density;
+      if (preserve) {
+        const filteredLum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if (filteredLum > 0.001) { const scale = sourceLum / filteredLum; r *= scale; g *= scale; b *= scale; }
+      }
+      d[i] = clampByte(r); d[i + 1] = clampByte(g); d[i + 2] = clampByte(b);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'channel-mixer') {
+    const p = adj.params || {};
+    const red = p.red || { r: 100, g: 0, b: 0 };
+    const green = p.green || { r: 0, g: 100, b: 0 };
+    const blue = p.blue || { r: 0, g: 0, b: 100 };
+    const constant = p.constant || { r: 0, g: 0, b: 0 };
+    const mono = !!p.monochrome;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const nr = (r * finiteOr(red.r, 100) + g * finiteOr(red.g, 0) + b * finiteOr(red.b, 0)) / 100 + finiteOr(constant.r, 0) * 2.55;
+      const ng = (r * finiteOr(green.r, 0) + g * finiteOr(green.g, 100) + b * finiteOr(green.b, 0)) / 100 + finiteOr(constant.g, 0) * 2.55;
+      const nb = (r * finiteOr(blue.r, 0) + g * finiteOr(blue.g, 0) + b * finiteOr(blue.b, 100)) / 100 + finiteOr(constant.b, 0) * 2.55;
+      if (mono) { d[i] = d[i + 1] = d[i + 2] = clampByte(nr); continue; }
+      d[i] = clampByte(nr); d[i + 1] = clampByte(ng); d[i + 2] = clampByte(nb);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'color-lookup') {
+    const preset = String(adj.params?.preset || 'none');
+    // An imported .cube LUT (Adobe Cube spec) takes precedence over the small
+    // built-in preset matrices. `params.cube` is stored serializable:
+    //   { size, domainMin:[3], domainMax:[3], data:[size^3*3] }  (red fastest)
+    const cube = adj.params?.cube;
+    if (cube && cube.size && cube.data) {
+      const lut = {
+        size: Number(cube.size),
+        domainMin: Array.isArray(cube.domainMin) ? cube.domainMin.slice(0, 3) : [0, 0, 0],
+        domainMax: Array.isArray(cube.domainMax) ? cube.domainMax.slice(0, 3) : [1, 1, 1],
+        data: cube.data instanceof Float64Array ? cube.data : new Float64Array(cube.data),
+      };
+      const strength = adj.params?.strength == null ? 1 : Math.max(0, Math.min(1, Number(adj.params.strength) / 100));
+      applyCubeLut(d, w, h, lut, { strength });
+      octx.putImageData(img, 0, 0);
+      return out;
+    }
+    const matrices = {
+      teal_orange: [[1.05, -0.05, 0.0], [0.0, 1.0, 0.0], [0.0, -0.02, 1.05]],
+      cold: [[0.95, 0.0, 0.05], [0.0, 1.0, 0.03], [0.02, 0.05, 1.12]],
+      warm: [[1.12, 0.02, 0.0], [0.03, 1.0, 0.0], [0.0, 0.02, 0.92]],
+      high_contrast: [[1.35, -0.18, -0.17], [-0.17, 1.35, -0.18], [-0.18, -0.17, 1.35]],
+      sepia: [[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]],
+    };
+    const m = matrices[preset];
+    if (m) {
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        d[i] = clampByte(r * m[0][0] + g * m[0][1] + b * m[0][2]);
+        d[i + 1] = clampByte(r * m[1][0] + g * m[1][1] + b * m[1][2]);
+        d[i + 2] = clampByte(r * m[2][0] + g * m[2][1] + b * m[2][2]);
+      }
     }
     octx.putImageData(img, 0, 0);
     return out;
@@ -215,14 +590,16 @@ export function renderLayerWithAdjLayers(layer) {
   const editingId = layer._editingAdjId || null;
   const stack = (layer.adjLayers || []).filter(a => a.visible && a.id !== editingId);
   const staged = layer._stagedAdj;
-  if (stack.length === 0 && !staged) {
+  if (stack.length === 0 && (!staged || layer._adjCompare)) {
     layer._adjFinalKey = '';
     return layer.canvas;
   }
   const sig = stack.map(a => `${a.id}:${a.visible?1:0}:${a.opacity}:${a.type}:${JSON.stringify(a.params)}`).join('|') +
     (staged ? `|S:${staged.type}:${JSON.stringify(staged.params)}` : '') +
     (editingId ? `|E:${editingId}` : '');
-  if (layer._adjFinal && layer._adjFinalKey === sig) return layer._adjFinal;
+  const compare = !!layer._adjCompare;
+  const fullSig = `${sig}|C:${compare ? 1 : 0}`;
+  if (layer._adjFinal && layer._adjFinalKey === fullSig) return layer._adjFinal;
   let cur = layer.canvas;
   const w = layer.canvas.width, h = layer.canvas.height;
   for (const adj of stack) {
@@ -240,10 +617,10 @@ export function renderLayerWithAdjLayers(layer) {
       cur = blend;
     }
   }
-  if (staged) {
+  if (staged && !compare) {
     cur = applyAdjustment(cur, staged);
   }
   layer._adjFinal = cur;
-  layer._adjFinalKey = sig;
+  layer._adjFinalKey = fullSig;
   return cur;
 }

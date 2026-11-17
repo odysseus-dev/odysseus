@@ -35,6 +35,7 @@ CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
 CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
+CHAT_READ_SCOPES = {"chat"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
 
 
@@ -113,13 +114,27 @@ def _scope_owner_all(request: Request, required: set[str]) -> str:
 def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
     """Authorize a Codex cookbook route.
 
-    For API-token callers, enforce the given scope set.
-    For cookie-session callers, additionally require admin privileges
-    because cookbook surfaces expose host topology, task logs, tmux
-    commands, and model-serving controls.
+    Cookbook surfaces expose host topology, task logs, tmux commands, and
+    model-serving controls, so both cookie users and API-token owners must
+    currently be administrators.
     """
+    # Internal transport/owner attribution is not a scoped external credential.
+    # In no-login mode, this wrapper must preserve the native local-operator
+    # boundary even though it invokes endpoint functions without dependencies.
+    from src.agent_runtime.authority import is_internal_tool_request
+    from src.auth_helpers import _auth_disabled
+    from core.middleware import INTERNAL_TOOL_HEADER
+    if is_internal_tool_request(request) or request.headers.get(INTERNAL_TOOL_HEADER):
+        raise HTTPException(403, "Internal Cookbook calls require a dedicated producer")
+    if _auth_disabled():
+        from routes.shell_routes import _require_admin
+        _require_admin(request)
     owner = _scope_owner(request, allowed)
-    if not getattr(request.state, "api_token", False):
+    if getattr(request.state, "api_token", False):
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        if not auth_mgr or not auth_mgr.is_admin(owner):
+            raise HTTPException(403, "Cookbook API tokens require an admin owner")
+    else:
         require_admin(request)
     return owner
 
@@ -150,6 +165,7 @@ def setup_codex_routes(
     memory_router: APIRouter | None = None,
     calendar_router: APIRouter | None = None,
     document_router: APIRouter | None = None,
+    history_router: APIRouter | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/codex", tags=["codex"])
     email_list_endpoint = _find_endpoint(email_router, "GET", "/api/email/list")
@@ -163,11 +179,17 @@ def setup_codex_routes(
     documents_library_endpoint = _find_endpoint(document_router, "GET", "/api/documents/library")
     documents_get_endpoint = _find_endpoint(document_router, "GET", "/api/document/{doc_id}")
     documents_create_endpoint = _find_endpoint(document_router, "POST", "/api/document")
+    chat_history_endpoint = _find_endpoint(history_router, "GET", "/api/history/{session_id}")
 
     @router.get("/capabilities")
     def capabilities(request: Request):
         token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
         has_token = bool(getattr(request.state, "api_token", False))
+        token_owner = getattr(request.state, "api_token_owner", None)
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        cookbook_allowed = not has_token or bool(
+            token_owner and auth_mgr and auth_mgr.is_admin(token_owner)
+        )
         def scoped(allowed):
             return bool(token_scopes.intersection(allowed)) if has_token else True
         return {
@@ -204,15 +226,47 @@ def setup_codex_routes(
                     "available": documents_library_endpoint is not None,
                 },
                 "cookbook": {
-                    "read": scoped(COOKBOOK_READ_SCOPES),
-                    "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
+                    "read": cookbook_allowed and scoped(COOKBOOK_READ_SCOPES),
+                    "launch": cookbook_allowed and scoped(COOKBOOK_LAUNCH_SCOPES),
                     "actions": ["tasks", "servers", "output", "serve", "stop"],
+                },
+                "chat": {
+                    "read": scoped(CHAT_READ_SCOPES),
+                    "actions": ["read"],
+                    "available": chat_history_endpoint is not None,
                 },
             },
             "safety": {
                 "email_send_requires_confirmation": True,
                 "destructive_actions_should_confirm": True,
             },
+        }
+
+    @router.get("/chat/{session_id}")
+    async def read_chat(
+        request: Request,
+        session_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ):
+        _scope_owner(request, CHAT_READ_SCOPES)
+        if chat_history_endpoint is None:
+            raise HTTPException(503, "chat history unavailable")
+        offset, limit = _clamp_pagination(
+            offset,
+            limit,
+            default_limit=100,
+            max_limit=100,
+        )
+        result = await chat_history_endpoint(request, session_id, limit, offset)
+        return {
+            "session_id": session_id,
+            "name": result["name"],
+            "model": result["model"],
+            "messages": result["history"],
+            "total": result["total"],
+            "offset": result["offset"],
+            "limit": result["limit"],
         }
 
     @router.get("/plugin.zip")

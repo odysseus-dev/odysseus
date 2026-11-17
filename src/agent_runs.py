@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class _Run:
-    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id")
+    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "run_id", "finish_requested", "finish_event")
 
     def __init__(self) -> None:
         self.buffer: list = []          # ordered SSE event strings (replay log)
@@ -35,6 +35,8 @@ class _Run:
         # Stable across every subscription/replay of this exact detached run.
         # The browser uses it to make local cost accounting replay-idempotent.
         self.run_id: str = uuid.uuid4().hex
+        self.finish_requested: bool = False
+        self.finish_event = asyncio.Event()
 
 
 _RUNS: Dict[str, _Run] = {}
@@ -132,10 +134,20 @@ async def _drain(session_id: str, run: _Run, agen: AsyncGenerator[str, None],
     try:
         if prev_task is not None and not prev_task.done():
             await asyncio.wait({prev_task})
+        terminal_event: Optional[str] = None
         async for ev in agen:
+            # A client treats [DONE] as permission to submit the next turn.
+            # Do not expose it until the wrapped generator has fully unwound;
+            # chat persistence and active-run cleanup can occur after the
+            # generator yields its terminal SSE event.
+            if str(ev).strip() == "data: [DONE]":
+                terminal_event = ev
+                continue
             _publish(run, ev)
         if run.status == "running":
             run.status = "done"
+        if terminal_event is not None:
+            _publish(run, terminal_event)
     except asyncio.CancelledError:
         run.status = "stopped"
         # Let the wrapped generator's own CancelledError handler run (it saves
@@ -269,3 +281,25 @@ def stop(session_id: str, expected_run_id: Optional[str] = None) -> bool:
         run.task.cancel()
         return True
     return False
+
+
+def request_finish(session_id: str, expected_run_id: Optional[str] = None) -> bool:
+    """Ask the exact active run to finish after its completed editor work."""
+    run = _RUNS.get(session_id)
+    if not expected_run_id or run is None or run.run_id != expected_run_id:
+        return False
+    if run.status != "running" or not run.task or run.task.done():
+        return False
+    run.finish_requested = True
+    run.finish_event.set()
+    return True
+
+
+def should_finish(session_id: str) -> bool:
+    run = _RUNS.get(session_id)
+    return bool(run and run.status == "running" and run.finish_requested)
+
+
+def get_finish_event(session_id: str) -> Optional[asyncio.Event]:
+    run = _RUNS.get(session_id)
+    return run.finish_event if run and run.status == "running" else None

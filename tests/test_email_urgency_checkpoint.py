@@ -149,6 +149,44 @@ def _configure_action(monkeypatch, tmp_path, account_ids):
     return builtin_actions, runtime
 
 
+def test_company_receipt_is_not_marked_urgent_or_reply_soon():
+    from src.builtin_actions import _heuristic_email_urgency_verdict
+
+    verdict = _heuristic_email_urgency_verdict(
+        {
+            "from": "Acme Company <receipts@example.com>",
+            "subject": "Your payment receipt from Acme",
+            "body": "Thanks for your purchase. This is your receipt and payment confirmation.",
+            "message_id": "<receipt-1@example.com>",
+            "unread": True,
+        },
+        triage_version=99,
+    )
+
+    assert verdict["score"] == 0
+    assert "receipt" in verdict["tags"]
+    assert "action-needed" not in verdict["tags"]
+
+
+def test_payment_due_with_deadline_is_reply_soon_bill():
+    from src.builtin_actions import _heuristic_email_urgency_verdict
+
+    verdict = _heuristic_email_urgency_verdict(
+        {
+            "from": "Billing <billing@example.com>",
+            "subject": "Payment due",
+            "body": "Your payment is due. Please pay by 18 August.",
+            "message_id": "<bill-1@example.com>",
+            "unread": True,
+        },
+        triage_version=99,
+    )
+
+    assert verdict["score"] == 2
+    assert "action-needed" in verdict["tags"]
+    assert "bills" in verdict["tags"]
+
+
 @pytest.mark.asyncio
 async def test_urgency_state_transaction_serializes_decision_and_checkpoint(tmp_path):
     """A later worker must observe the first worker's delivered UID."""

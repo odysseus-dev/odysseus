@@ -1,0 +1,158 @@
+[
+  {
+    "name": "microsoft/Phi-mini-MoE-instruct",
+    "provider": "test",
+    "parameter_count": "2B",
+    "parameters_raw": 2000000000,
+    "quantization": "F16",
+    "context_length": 4096,
+    "release_date": "2026-01-01",
+    "gguf_sources": []
+  },
+  {
+    "name": "Qwen/Qwen2.5-3B-Instruct-AWQ",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "AWQ-4bit",
+    "context_length": 4096,
+    "release_date": "2026-01-02",
+    "gguf_sources": []
+  },
+  {
+    "name": "Qwen/Qwen2.5-3B-Instruct",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "F16",
+    "context_length": 4096,
+    "release_date": "2026-01-03",
+    "gguf_sources": [
+      {
+        "repo": "test/three-GGUF",
+        "file": "three-Q4_K_M.gguf"
+      }
+    ]
+  },
+  {
+    "name": "Qwen/Qwen3.5-9B",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "F16",
+    "context_length": 4096,
+    "release_date": "2026-01-04",
+    "gguf_sources": [
+      {
+        "repo": "unsloth/Qwen3.5-9B-GGUF",
+        "file": "Qwen3.5-9B-Q4_K_M.gguf"
+      }
+    ]
+  },
+  {
+    "name": "Qwen/Qwen3.6-27B",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "F16",
+    "context_length": 4096,
+    "release_date": "2026-01-05",
+    "gguf_sources": [
+      {
+        "repo": "unsloth/Qwen3.6-27B-GGUF",
+        "file": "Qwen3.6-27B-Q4_K_M.gguf"
+      }
+    ]
+  },
+  {
+    "name": "Qwen/Qwen3.6-35B-A3B",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "F16",
+    "context_length": 4096,
+    "release_date": "2026-01-06",
+    "gguf_sources": [
+      {
+        "repo": "unsloth/Qwen3.6-35B-A3B-GGUF",
+        "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+      }
+    ]
+  },
+  {
+    "name": "google/gemma-4-12B-it",
+    "provider": "test",
+    "parameter_count": "12B",
+    "parameters_raw": 12000000000,
+    "quantization": "F16",
+    "context_length": 4096,
+    "release_date": "2026-01-07",
+    "gguf_sources": [
+      {
+        "repo": "unsloth/gemma-4-12B-it-GGUF",
+        "file": "test-Q4_K_M.gguf"
+      }
+    ]
+  },
+  {
+    "name": "google/gemma-4-12B-it-qat-int4",
+    "provider": "test",
+    "parameter_count": "12B",
+    "parameters_raw": 12000000000,
+    "quantization": "QAT-INT4",
+    "context_length": 4096,
+    "release_date": "2026-01-08",
+    "gguf_sources": []
+  },
+  {
+    "name": "google/gemma-4-12B-it-qat-int8",
+    "provider": "test",
+    "parameter_count": "12B",
+    "parameters_raw": 12000000000,
+    "quantization": "QAT-INT8",
+    "context_length": 4096,
+    "release_date": "2026-01-09",
+    "gguf_sources": []
+  },
+  {
+    "name": "test/native-NVFP4",
+    "provider": "test",
+    "parameter_count": "12B",
+    "parameters_raw": 12000000000,
+    "quantization": "NVFP4",
+    "context_length": 4096,
+    "release_date": "2026-01-10",
+    "gguf_sources": []
+  },
+  {
+    "name": "test/native-FP8",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "FP8",
+    "context_length": 4096,
+    "release_date": "2026-01-11",
+    "gguf_sources": []
+  },
+  {
+    "name": "mlx-community/test-4bit",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "mlx-4bit",
+    "context_length": 4096,
+    "release_date": "2026-01-12",
+    "gguf_sources": []
+  },
+  {
+    "name": "test/standalone-GGUF",
+    "provider": "test",
+    "parameter_count": "3B",
+    "parameters_raw": 3000000000,
+    "quantization": "Q4_K_M",
+    "context_length": 4096,
+    "release_date": null,
+    "gguf_sources": [],
+    "is_gguf": true
+  }
+]

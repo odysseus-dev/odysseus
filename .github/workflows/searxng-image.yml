@@ -1,0 +1,79 @@
+name: ci / SearXNG trust
+
+on:
+  pull_request:
+    paths:
+      - 'docker/searxng/**'
+      - 'scripts/check_ca_trust.py'
+      - 'tests/fixtures/ca-trust/**'
+      - 'tests/test_searxng*'
+      - 'docker-compose*.yml'
+      - 'config/searxng/**'
+      - 'scripts/migrate_searxng_settings.py'
+      - '.github/scripts/*searxng*'
+      - '.github/searxng-validation.compose.yml'
+      - '.github/workflows/searxng-image.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'docker/searxng/**'
+      - 'scripts/check_ca_trust.py'
+      - 'tests/fixtures/ca-trust/**'
+      - 'docker-compose*.yml'
+      - 'config/searxng/**'
+      - 'scripts/migrate_searxng_settings.py'
+      - '.github/scripts/*searxng*'
+      - '.github/searxng-validation.compose.yml'
+      - '.github/workflows/searxng-image.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: searxng-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: SearXNG validate (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the immutable upstream image from Compose
+        id: image
+        run: |
+          docker compose --env-file /dev/null -f docker-compose.yml config --format json |
+            python3 -c 'import json, re, sys; image = json.load(sys.stdin)["services"]["searxng"]["image"]; re.fullmatch(r"docker\.io/searxng/searxng:[0-9]{4}\.[^@\s]+@sha256:[0-9a-f]{64}", image) or sys.exit("Invalid SearXNG pin"); print("image=" + image)' >> "$GITHUB_OUTPUT"
+      - name: Pull the upstream image without registry credentials
+        env:
+          SEARXNG_TEST_IMAGE: ${{ steps.image.outputs.image }}
+        run: docker pull "$SEARXNG_TEST_IMAGE"
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Check unmodified upstream trust and actual entrypoint offline
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/searxng/Dockerfile
+          target: validation
+          build-args: SEARXNG_IMAGE=${{ steps.image.outputs.image }}
+          network: none
+          platforms: ${{ matrix.platform }}
+          no-cache-filters: validation
+      - name: Validate the selected upstream runtime through Compose and live HTTPS
+        env:
+          SEARXNG_TEST_IMAGE: ${{ steps.image.outputs.image }}
+        run: bash .github/scripts/validate-searxng-image.sh "$SEARXNG_TEST_IMAGE"

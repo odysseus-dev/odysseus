@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from core.database import Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import _auth_disabled
+from src.path_confinement import is_inside
 from src.upload_handler import UploadHandler
 
 logger = logging.getLogger(__name__)
@@ -136,12 +137,7 @@ _PDF_RENDER_SCALE = 2.0
 
 
 def _upload_path_inside(upload_dir: str, path: str) -> bool:
-    base = os.path.realpath(upload_dir)
-    p = os.path.realpath(path)
-    try:
-        return os.path.commonpath([base, p]) == base
-    except Exception:
-        return False
+    return is_inside(upload_dir, path)
 
 
 def _resolve_user_upload_path(

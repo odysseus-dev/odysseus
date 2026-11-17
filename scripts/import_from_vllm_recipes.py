@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Import models from the upstream vllm-project/recipes catalog into our
-local hf_models.json. Two modes:
+runtime DATA_DIR/hwfit/hf_models.json. Two modes:
 
   --update-existing  Stamp min_vllm_version + vllm_recipe=True on rows we
                      already carry. Cheap, no HF API calls.
@@ -44,7 +44,10 @@ except ImportError:
     HfHubHTTPError = Exception
 
 
-CATALOG_PATH = Path(__file__).resolve().parent.parent / "services" / "hwfit" / "data" / "hf_models.json"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.hwfit.models import model_catalog_path
+
+CATALOG_PATH = Path(model_catalog_path())
 RECIPES_TREE_URL = (
     "https://api.github.com/repos/vllm-project/recipes/git/trees/main?recursive=1"
 )
@@ -253,8 +256,12 @@ def main():
     if not args.update_existing and not args.add_missing:
         args.update_existing = args.add_missing = True
 
-    with CATALOG_PATH.open(encoding="utf-8") as f:
-        catalog = json.load(f)
+    CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if CATALOG_PATH.exists():
+        with CATALOG_PATH.open(encoding="utf-8") as f:
+            catalog = json.load(f)
+    else:
+        catalog = []
     by_name = {m.get("name"): m for m in catalog if m.get("name")}
 
     client = httpx.Client(follow_redirects=True)

@@ -163,8 +163,10 @@ export function wireSliderUx({ registerDocClickAway }) {
     const crect = chip.getBoundingClientRect();
     const rrect = row.getBoundingClientRect();
     inp.style.left = (crect.left - rrect.left) + 'px';
-    inp.style.top = (crect.top - rrect.top - 1) + 'px';
     inp.style.width = Math.max(40, crect.width + 8) + 'px';
+    // Vertically centre the editor on the chip it replaced (the input is
+    // not necessarily the same height as the chip).
+    inp.style.top = (crect.top - rrect.top + (crect.height - inp.offsetHeight) / 2) + 'px';
     inp.focus();
     inp.select();
     const commit = () => {

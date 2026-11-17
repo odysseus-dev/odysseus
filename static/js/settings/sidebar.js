@@ -121,9 +121,87 @@ export function setSettingsSidebarWidth(modalEl, width, options = {}) {
   return next;
 }
 
+/* ── Build provenance ──
+   The bottom-left of the panel answers "which build am I actually looking
+   at": the version this build registers and the commit its process loaded.
+   Both come from /api/version, which resolves the commit once at import via
+   `git rev-parse HEAD` and reports the string "unknown" when it cannot — a
+   read-only Docker tree with no .git, for instance. */
+const BUILD_COMMIT_SHORT_LEN = 8;
+const BUILD_UNKNOWN = 'unknown';
+const BUILD_COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
+
+function buildField(value) {
+  const text = String(value ?? '').trim();
+  return text && text.toLowerCase() !== BUILD_UNKNOWN ? text : '';
+}
+
+/** Turn an /api/version payload into the two sidebar lines, or null when it
+ *  carries nothing worth a footer. */
+export function formatSettingsBuildInfo(payload) {
+  const version = buildField(payload?.version);
+  const build = buildField(payload?.build);
+  const commit = buildField(payload?.source_commit);
+
+  const parts = [];
+  if (version) parts.push(`v${version}`);
+  // The preview harness versions itself separately from the public semver, so
+  // show both — but never the same number twice.
+  if (build && build !== version) parts.push(`build ${build}`);
+
+  // An ODYSSEUS_SOURCE_COMMIT override need not be a sha; leave those intact
+  // and let the CSS ellipsis deal with the width.
+  const commitLabel = BUILD_COMMIT_SHA.test(commit)
+    ? commit.slice(0, BUILD_COMMIT_SHORT_LEN).toLowerCase()
+    : commit;
+
+  if (!parts.length && !commitLabel) return null;
+
+  return {
+    versionLabel: parts.join(' \u00b7 '),
+    commitLabel,
+    commitTitle: commit,
+  };
+}
+
+function paintSettingsBuildInfo(modalEl, info) {
+  const host = modalEl?.querySelector('#settings-sidebar-build');
+  if (!host) return;
+
+  const versionEl = host.querySelector('#settings-sidebar-build-version');
+  const commitEl = host.querySelector('#settings-sidebar-build-commit');
+
+  if (!info) {
+    host.hidden = true;
+    return;
+  }
+
+  if (versionEl) versionEl.textContent = info.versionLabel;
+  if (commitEl) {
+    commitEl.textContent = info.commitLabel;
+    // The short hash is what fits; keep the full one reachable on hover.
+    if (info.commitTitle) commitEl.title = info.commitTitle;
+  }
+
+  host.hidden = false;
+}
+
+async function loadSettingsBuildInfo(modalEl) {
+  try {
+    const res = await fetch('/api/version', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    paintSettingsBuildInfo(modalEl, formatSettingsBuildInfo(await res.json()));
+  } catch {
+    // Provenance is informational: a failed probe leaves the footer hidden
+    // rather than putting an error in the middle of the settings nav.
+  }
+}
+
 export function bindSettingsSidebar(modalEl) {
   if (!modalEl || _bound.has(modalEl)) return;
   _bound.add(modalEl);
+
+  loadSettingsBuildInfo(modalEl);
 
   const sidebar = modalEl.querySelector('.settings-sidebar');
   const handle = modalEl.querySelector('#settings-sidebar-resize-handle');

@@ -1,0 +1,853 @@
+#!/usr/bin/env python3
+"""odysseus-dev — boot the checkout you are standing in, isolated from every other one.
+
+`start-macos.sh` is the single-instance launcher: it owns the Homebrew
+deps, the venv, and the production-shaped boot. It deliberately shares
+whatever is already listening — an open ChromaDB port is a resource it
+adopts. That is right for one instance and wrong for N worktrees, where
+adopting a port means writing into another checkout's vector store.
+
+This tool is the sibling that owns isolation instead:
+
+  - ports are derived from the worktree path, so two checkouts never
+    pick the same ones and the same checkout always picks its own;
+  - a ChromaDB we did not start is never adopted — we start our own on
+    our own port against our own data dir, or fall closed to keyword
+    mode and say so;
+  - the data dir, the database and the browser-MCP cache all live under
+    `.odysseus-dev/`, so a dev boot leaves `data/` — what a normal launch
+    of this checkout owns — untouched;
+  - readiness is `/api/ready` (database, writable data dir, storage
+    metadata), never a TCP accept and never `/api/health`, which is
+    liveness only;
+  - the app runs detached with durable logs and a recorded stop handle,
+    so closing the terminal does not decide the instance's lifetime.
+
+    odysseus dev up                  # boot this worktree, print URL + stop handle
+    odysseus dev up --from-pr 42     # fetch PR 42 into a worktree and boot that
+    odysseus dev status              # what is running here (JSON)
+    odysseus dev down                # stop what `up` started here
+    odysseus dev ports               # the derived port set (JSON)
+    odysseus dev env                 # shell exports for running tests in this worktree
+
+Every subcommand acts on the checkout containing the current working
+directory, so a single copy on $PATH serves every worktree.
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
+from cli import quiet_logs, emit, fail, common_parser, run  # noqa: E402
+
+quiet_logs()
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import signal  # noqa: E402
+import socket  # noqa: E402
+import subprocess  # noqa: E402
+import time  # noqa: E402
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Everything this tool writes lives under one directory inside the
+# worktree, next to but never inside `data/` — a dev boot must not be
+# able to corrupt the data dir a normal `start-macos.sh` run owns.
+DEV_DIR_NAME = ".odysseus-dev"
+STATE_FILE_NAME = "run.json"
+
+# Files that identify a checkout root, so `odysseus dev` from any
+# subdirectory finds the worktree it belongs to.
+ROOT_MARKERS = ("app.py", "setup.py", "requirements.txt")
+
+# Port block derivation. Three consecutive ports per worktree (app,
+# ChromaDB, test static server) starting at 7200; the last block ends at
+# 7799. The range is chosen to exclude every port the project already
+# means something by, so a derived port can never collide with a normal
+# launch on the same machine.
+PORT_BLOCK_BASE = 7200
+PORT_BLOCK_COUNT = 200
+PORTS_PER_BLOCK = 3
+
+# Ports this tool refuses to use even when asked explicitly, with the
+# reason each one is spoken for.
+RESERVED_PORTS = {
+    7000: "the historical app default (and macOS AirPlay Receiver)",
+    7011: "the app's own default bind and the compose APP_PORT",
+    7860: "start-macos.sh's default, i.e. a normal launch of this app",
+    8100: "the default CHROMADB_PORT, i.e. someone else's vector store",
+}
+
+READY_PATH = "/api/ready"
+HEALTH_PATH = "/api/health"
+LOGIN_PATH = "/api/auth/login"
+SESSION_COOKIE = "odysseus_session"
+DEFAULT_READY_TIMEOUT = 180
+STOP_GRACE_SECONDS = 10
+
+# `/api/ready` is not in app.py's AUTH_EXEMPT_EXACT set, so readiness is
+# only observable with a session. The launcher therefore owns the dev
+# admin account: it generates the password once, hands it to setup.py,
+# keeps it here, and prints it — otherwise a generated password scrolls
+# past on first boot and the instance is unusable afterwards.
+CREDENTIALS_FILE_NAME = "admin.json"
+VENV_FILE_NAME = "venv-path"
+DEV_ADMIN_USER = "admin"
+
+
+# --------------------------------------------------------------------------
+# Locating the worktree
+# --------------------------------------------------------------------------
+
+def find_repo_root(start):
+    """Return the checkout root at or above `start`, or None.
+
+    Resolved from the working directory rather than from this file, so a
+    symlink on $PATH still boots the worktree the user is standing in.
+    """
+    current = Path(start).resolve()
+    for candidate in [current, *current.parents]:
+        if all((candidate / marker).exists() for marker in ROOT_MARKERS):
+            return candidate
+    return None
+
+
+def dev_dir(root):
+    return Path(root) / DEV_DIR_NAME
+
+
+def state_path(root):
+    return dev_dir(root) / STATE_FILE_NAME
+
+
+# --------------------------------------------------------------------------
+# Ports
+# --------------------------------------------------------------------------
+
+def derive_ports(root):
+    """Map a worktree path to its own block of three ports.
+
+    Deterministic: the same checkout gets the same ports on every run, so
+    a bookmarked URL keeps working, and two checkouts only collide if
+    their paths hash into the same block — which `up` detects and refuses
+    rather than papers over.
+    """
+    digest = hashlib.blake2s(str(Path(root).resolve()).encode("utf-8"), digest_size=8).digest()
+    block = int.from_bytes(digest, "big") % PORT_BLOCK_COUNT
+    base = PORT_BLOCK_BASE + block * PORTS_PER_BLOCK
+    return {"app": base, "chroma": base + 1, "test_static": base + 2}
+
+
+def reserved_reason(port):
+    """Return why `port` is off limits, or None if it is usable."""
+    return RESERVED_PORTS.get(int(port))
+
+
+def port_bound(port, host="127.0.0.1", timeout=0.4):
+    """True if something already accepts connections on host:port."""
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def unused_port():
+    """Ask the OS for a free port and release it immediately.
+
+    Used only to point CHROMADB_PORT at something that will refuse the
+    connection, which is how the app falls back to keyword mode.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+# --------------------------------------------------------------------------
+# Refusing to boot where a real instance lives
+# --------------------------------------------------------------------------
+
+def service_unit_dirs():
+    home = Path.home()
+    if sys.platform == "darwin":
+        return [
+            home / "Library" / "LaunchAgents",
+            Path("/Library/LaunchAgents"),
+            Path("/Library/LaunchDaemons"),
+        ]
+    return [
+        home / ".config" / "systemd" / "user",
+        Path("/etc/systemd/system"),
+        Path("/usr/lib/systemd/system"),
+    ]
+
+
+def managed_by_service(root, unit_dirs=None):
+    """Return the unit file naming a path inside `root`, or None.
+
+    A checkout wired into launchd or systemd is somebody's running
+    instance: booting a second process out of it would share its source
+    tree and, on the first mistake, its data. We refuse rather than trust
+    the user to remember which directory this is. The match is on the
+    path, so a unit pointing anywhere inside the checkout counts.
+    """
+    needle = str(Path(root).resolve())
+    for directory in unit_dirs if unit_dirs is not None else service_unit_dirs():
+        try:
+            entries = sorted(Path(directory).iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.suffix not in (".plist", ".service"):
+                continue
+            try:
+                text = entry.read_text(errors="ignore")
+            except OSError:
+                continue
+            if needle in text:
+                return str(entry)
+    return None
+
+
+# --------------------------------------------------------------------------
+# Process ownership
+# --------------------------------------------------------------------------
+
+def pid_command(pid):
+    """Return the full command line of `pid`, or "" if it is not ours to see."""
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(int(pid))],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def pid_is_ours(pid, fingerprints):
+    """True only when `pid` is alive AND its command line still shows every
+    fingerprint we recorded when we started it.
+
+    A pid alone proves nothing — the number is reused. Everything that
+    kills or adopts a process goes through here.
+    """
+    if not pid:
+        return False
+    command = pid_command(pid)
+    if not command:
+        return False
+    return all(str(mark) in command for mark in fingerprints)
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def credentials(root):
+    """Return this worktree's dev admin account, generating it once.
+
+    Stored outside the data dir so `down`, a wiped database, or a fresh
+    `up` all keep the same login.
+    """
+    path = dev_dir(root) / CREDENTIALS_FILE_NAME
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        pass
+    import secrets
+
+    account = {"username": DEV_ADMIN_USER, "password": secrets.token_urlsafe(18)}
+    dev_dir(root).mkdir(parents=True, exist_ok=True)
+    with open(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w",
+              encoding="utf-8") as handle:
+        json.dump(account, handle, indent=2)
+    return account
+
+
+def read_state(root):
+    try:
+        with open(state_path(root), encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(root, state):
+    dev_dir(root).mkdir(parents=True, exist_ok=True)
+    with open(state_path(root), "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2)
+
+
+def running_app(state):
+    """Return the recorded app entry if that exact process is still alive."""
+    app = (state or {}).get("app") or {}
+    if pid_is_ours(app.get("pid"), app.get("fingerprints") or []):
+        return app
+    return None
+
+
+# --------------------------------------------------------------------------
+# ChromaDB
+# --------------------------------------------------------------------------
+
+def start_chroma(venv_python, port, chroma_path, log_path):
+    """Start our own ChromaDB, or explain why we are going without one.
+
+    Returns (entry_or_None, note). Adopting a foreign server is not one of
+    the outcomes: the caller has already established that the port is free.
+    """
+    binary = Path(venv_python).parent / "chroma"
+    if not binary.exists():
+        return None, (
+            "keyword-only mode: no `chroma` binary in this venv "
+            "(requirements.txt pins chromadb-client, the HTTP client). "
+            f"Install the server with `{venv_python} -m pip install chromadb` to enable vectors."
+        )
+    chroma_path.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(binary), "run",
+        "--host", "127.0.0.1",
+        "--port", str(port),
+        "--path", str(chroma_path),
+    ]
+    with open(log_path, "ab") as log:
+        process = subprocess.Popen(
+            command, stdout=log, stderr=subprocess.STDOUT,
+            start_new_session=True, cwd=str(chroma_path.parent),
+        )
+    entry = {
+        "pid": process.pid,
+        "port": port,
+        "path": str(chroma_path),
+        "log": str(log_path),
+        # The data path is the identity: it is unique to this worktree
+        # and appears in the command line whichever way ps resolves the
+        # console script.
+        "fingerprints": ["chroma", str(chroma_path)],
+    }
+    return entry, f"own server on 127.0.0.1:{port} against {chroma_path}"
+
+
+# --------------------------------------------------------------------------
+# Readiness
+# --------------------------------------------------------------------------
+
+def http_json(port, path, payload=None, cookie=None, timeout=5.0):
+    """One request against the local instance. Returns (status, body)."""
+    url = f"http://127.0.0.1:{port}{path}"
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"Content-Type": "application/json"} if data else {}
+    if cookie:
+        headers["Cookie"] = f"{SESSION_COOKIE}={cookie}"
+    request = urllib.request.Request(url, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, _decode(response.read()), response
+    except urllib.error.HTTPError as exc:
+        return exc.code, _decode(exc.read()), exc
+    except (OSError, ValueError) as exc:
+        return 0, {"error": str(exc)}, None
+
+
+def _decode(raw):
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return {}
+
+
+def login(port, account):
+    """Return a session cookie for the dev admin, or None."""
+    status, _, response = http_json(port, LOGIN_PATH, payload={
+        "username": account["username"], "password": account["password"],
+    })
+    if status != 200 or response is None:
+        return None
+    for header in response.headers.get_all("Set-Cookie") or []:
+        if header.startswith(f"{SESSION_COOKIE}="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    return None
+
+
+def probe_ready(port, cookie=None, timeout=5.0):
+    """GET /api/ready once. Returns (ready, payload).
+
+    /api/health only proves the process is alive. /api/ready is the one
+    that checks the database, a writable data dir and storage metadata,
+    and it answers 503 until all three hold — which is why a TCP accept
+    is not what this tool waits for.
+    """
+    status, body, _ = http_json(port, READY_PATH, cookie=cookie, timeout=timeout)
+    body = dict(body or {})
+    body.setdefault("status", status)
+    return bool(body.get("ready")), body
+
+
+def wait_ready(port, process, timeout, log_path, account):
+    """Wait for liveness, authenticate, then wait for real readiness."""
+    deadline = time.monotonic() + timeout
+
+    def alive():
+        if process is not None and process.poll() is not None:
+            fail(
+                f"the app exited with code {process.returncode} before becoming ready.\n"
+                f"       last lines of {log_path}:\n{tail(log_path, 20)}"
+            )
+
+    while time.monotonic() < deadline:
+        alive()
+        if http_json(port, HEALTH_PATH, timeout=2.0)[0] == 200:
+            break
+        time.sleep(1)
+
+    # One login, not one per poll: the login route is rate limited.
+    cookie, last = None, {}
+    while time.monotonic() < deadline and cookie is None:
+        alive()
+        cookie = login(port, account)
+        if cookie is None:
+            time.sleep(3)
+    if cookie is None:
+        fail(
+            f"could not log in as {account['username']} to read {READY_PATH}.\n"
+            f"       The recorded credentials may not match this data dir. Remove "
+            f"{Path(log_path).parent.parent / CREDENTIALS_FILE_NAME} and the data dir "
+            f"to start clean.\n"
+            f"       The app is running; stop it with `odysseus dev down`."
+        )
+
+    while time.monotonic() < deadline:
+        alive()
+        ready, last = probe_ready(port, cookie=cookie)
+        if ready:
+            return last
+        time.sleep(1)
+    fail(
+        f"{READY_PATH} did not report ready within {timeout}s.\n"
+        f"       last response: {json.dumps(last, default=str)[:400]}\n"
+        f"       the app is still running; logs: {log_path}\n"
+        f"       stop it with `odysseus dev down`"
+    )
+
+
+def tail(path, lines):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return "".join(f"         {line}" for line in handle.readlines()[-lines:])
+    except OSError:
+        return "         (no log)"
+
+
+# --------------------------------------------------------------------------
+# git helpers for --from-pr
+# --------------------------------------------------------------------------
+
+def git(root, *args, check=True):
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True, text=True, check=False,
+    )
+    if check and result.returncode != 0:
+        fail(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def worktree_for_pr(root, number, remote):
+    """Fetch a pull request head into its own worktree and return its path.
+
+    `pull/<n>/head` is served by the repository the PR targets, so this
+    works for forks without knowing anything about the fork layout.
+    """
+    target = Path(root).resolve().parent / f"{Path(root).resolve().name}-pr{number}"
+    if target.exists():
+        sys.stdout.write(f"  worktree for PR {number} already exists at {target}\n")
+        return target
+    git(root, "fetch", remote, f"pull/{number}/head")
+    head = git(root, "rev-parse", "FETCH_HEAD")
+    git(root, "worktree", "add", "--detach", str(target), head)
+    sys.stdout.write(f"  PR {number} checked out at {target} ({head[:8]})\n")
+    return target
+
+
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
+
+def resolve_root(args):
+    root = find_repo_root(Path.cwd())
+    if root is None:
+        fail(
+            "not inside an Odysseus checkout "
+            f"(looked for {', '.join(ROOT_MARKERS)} from {Path.cwd()} upwards)",
+            code=2,
+        )
+    return root
+
+
+def resolve_ports(root, args):
+    ports = derive_ports(root)
+    for name, override in (("app", getattr(args, "port", None)),
+                           ("chroma", getattr(args, "chroma_port", None))):
+        if override:
+            ports[name] = int(override)
+    for name, port in ports.items():
+        reason = reserved_reason(port)
+        if reason:
+            fail(f"port {port} is {reason}; refusing to use it as the {name} port")
+    return ports
+
+
+def remembered_venv(root):
+    """The venv a previous `up` borrowed for this worktree, if any."""
+    try:
+        return Path(dev_dir(root).joinpath(VENV_FILE_NAME).read_text(encoding="utf-8").strip())
+    except OSError:
+        return None
+
+
+def remember_venv(root, venv_root):
+    dev_dir(root).mkdir(parents=True, exist_ok=True)
+    dev_dir(root).joinpath(VENV_FILE_NAME).write_text(str(venv_root), encoding="utf-8")
+
+
+def resolve_venv(root, args):
+    """Pick the interpreter to run the app with. This tool never builds a
+    venv — `--venv` pointing at a sibling worktree's environment is what
+    makes booting a PR take seconds rather than minutes, and the choice is
+    remembered so the next `up` in that worktree does not need the flag."""
+    candidates = [
+        Path(args.venv).expanduser().resolve() if args.venv else None,
+        Path(root) / "venv",
+        remembered_venv(root),
+    ]
+    for candidate in candidates:
+        if candidate and (candidate / "bin" / "python").exists():
+            return candidate / "bin" / "python"
+    if args.venv:
+        fail(f"no interpreter at {Path(args.venv).expanduser().resolve() / 'bin' / 'python'}")
+    fail(
+        f"no venv at {Path(root) / 'venv'}.\n"
+        f"       build one with ./start-macos.sh, or reuse another worktree's "
+        f"with --venv /path/to/worktree/venv"
+    )
+
+
+def refuse_if_taken(root, args, ports, state):
+    """Stop before anything is started if this worktree cannot own the boot."""
+    unit = managed_by_service(root)
+    if unit:
+        fail(
+            f"{root} is run as a service by {unit}.\n"
+            f"       That is a real instance, not a scratch worktree. Boot a separate "
+            f"checkout instead:\n"
+            f"         git worktree add ../odysseus-dev <ref> && cd ../odysseus-dev"
+        )
+    if port_bound(ports["app"]):
+        fail(
+            f"port {ports['app']} is already in use by a process we do not own.\n"
+            f"       This worktree derives that port from its path, so something else "
+            f"took it.\n"
+            f"       Re-run with --port <n> to pick another."
+        )
+
+
+def resolve_chroma(args, state, ports, venv_python, data_dir, log_dir):
+    """Decide what this worktree talks to for vectors.
+
+    Returns (state_entry, port, note). The one outcome this never
+    produces is a port somebody else is serving: the whole tool exists
+    because `start-macos.sh` treats that as a resource to adopt.
+    """
+    if args.no_chroma:
+        # Point at a port nothing is listening on rather than at the
+        # derived one, which may be exactly the foreign server we are
+        # refusing to touch. Connection refused is what makes the app
+        # fall back to keyword search.
+        return None, unused_port(), "disabled by --no-chroma"
+
+    if port_bound(ports["chroma"]):
+        ours = (state or {}).get("chroma") or {}
+        if pid_is_ours(ours.get("pid"), ours.get("fingerprints") or []):
+            return ours, ours["port"], f"reusing the server we started earlier on {ours['port']}"
+        fail(
+            f"port {ports['chroma']} is serving a ChromaDB this worktree did not start.\n"
+            f"       Adopting it would read and write another checkout's vectors, so we "
+            f"will not.\n"
+            f"       Re-run with --chroma-port <n>, or with --no-chroma to run in "
+            f"keyword-only mode."
+        )
+
+    entry, note = start_chroma(
+        venv_python, ports["chroma"], data_dir / "chroma", log_dir / "chroma.log"
+    )
+    # If we could not start one, point the app at a port nothing is on
+    # rather than at our derived one: otherwise a ChromaDB that binds
+    # that port later would be adopted by a running app, which is the
+    # exact failure this tool exists to prevent.
+    return entry, (ports["chroma"] if entry else unused_port()), note
+
+
+def boot_environment(account, ports, chroma_port, data_dir):
+    """The environment that makes the child process this worktree's own."""
+    env = dict(os.environ)
+    env.update({
+        "ODYSSEUS_ADMIN_USER": account["username"],
+        "ODYSSEUS_ADMIN_PASSWORD": account["password"],
+        "APP_PORT": str(ports["app"]),
+        "APP_BIND": "127.0.0.1",
+        "ODYSSEUS_DATA_DIR": str(data_dir),
+        "DATABASE_URL": f"sqlite:///{data_dir / 'app.db'}",
+        # src/builtin_mcp.py derives this cache from a literal "data"
+        # under the app root rather than from DATA_DIR, so without an
+        # explicit value a dev boot would write into the checkout's
+        # data/ after all. Pointing it at our own dir keeps the
+        # isolation claim true.
+        "ODYSSEUS_BROWSER_MCP_CACHE": str(data_dir / "playwright-mcp-cache"),
+        "CHROMADB_HOST": "127.0.0.1",
+        "CHROMADB_PORT": str(chroma_port),
+        "ODYSSEUS_TEST_STATIC_PORT": str(ports["test_static"]),
+        "ODYSSEUS_NO_OPEN": "1",
+        "ODYSSEUS_SKIP_RUN_HINT": "1",
+        "ODYSSEUS_SKIP_ADMIN_PROMPT": "1",
+    })
+    return env
+
+
+def run_setup(root, venv_python, env, data_dir, log_dir):
+    """Create the data dir, database and admin account. Idempotent."""
+    sys.stdout.write(f"  preparing {data_dir} (setup.py is idempotent)\n")
+    setup = subprocess.run(
+        [str(venv_python), "setup.py"], cwd=str(root), env=env,
+        capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False,
+    )
+    log = log_dir / "setup.log"
+    with open(log, "w", encoding="utf-8") as handle:
+        handle.write(setup.stdout + setup.stderr)
+    if setup.returncode != 0:
+        fail(f"setup.py failed; see {log}\n{tail(log, 15)}")
+
+
+def borrow_venv_for_pr(root, args):
+    """A fresh PR worktree has no venv; the one we came from will do."""
+    if args.venv or (root / "venv" / "bin" / "python").exists():
+        return
+    source_venv = find_repo_root(Path.cwd()) / "venv"
+    if (source_venv / "bin" / "python").exists():
+        args.venv = str(source_venv)
+        sys.stdout.write(f"  reusing {source_venv} (the PR worktree has none)\n")
+
+
+def cmd_up(args):
+    root = resolve_root(args)
+    if args.from_pr:
+        root = worktree_for_pr(root, args.from_pr, args.remote)
+        borrow_venv_for_pr(root, args)
+
+    state = read_state(root)
+    already = running_app(state)
+    if already:
+        sys.stdout.write(
+            f"already up: http://127.0.0.1:{already['port']} (pid {already['pid']})\n"
+            f"stop it with `odysseus dev down`, or re-run after that to restart.\n"
+        )
+        return
+
+    ports = resolve_ports(root, args)
+    refuse_if_taken(root, args, ports, state)
+    venv_python = resolve_venv(root, args)
+    remember_venv(root, venv_python.parent.parent)
+
+    data_dir = dev_dir(root) / "data"
+    log_dir = dev_dir(root) / "logs"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    app_log = log_dir / "app.log"
+
+    chroma_entry, chroma_port, chroma_note = resolve_chroma(
+        args, state, ports, venv_python, data_dir, log_dir
+    )
+    account = credentials(root)
+    env = boot_environment(account, ports, chroma_port, data_dir)
+    run_setup(root, venv_python, env, data_dir, log_dir)
+
+    command = [
+        str(venv_python), "-m", "uvicorn", "app:app",
+        "--host", "127.0.0.1", "--port", str(ports["app"]),
+    ]
+    if args.foreground:
+        sys.stdout.write(f"  starting in the foreground on http://127.0.0.1:{ports['app']}\n")
+        os.execve(str(venv_python), command, env)
+
+    with open(app_log, "ab") as log:
+        process = subprocess.Popen(
+            command, cwd=str(root), env=env, stdout=log, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+
+    state = {
+        "root": str(root),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "commit": git(root, "rev-parse", "--short", "HEAD", check=False),
+        "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD", check=False),
+        "venv": str(Path(venv_python).parent.parent),
+        "data_dir": str(data_dir),
+        "ports": ports,
+        "app": {
+            "pid": process.pid,
+            "port": ports["app"],
+            "log": str(app_log),
+            # The interpreter path is not one of these on purpose: macOS
+            # reports the framework binary a venv symlinks to, not the
+            # venv path we launched. The port is derived per worktree, so
+            # it is the part that actually identifies this instance.
+            "fingerprints": ["uvicorn", "app:app", f"--port {ports['app']}"],
+        },
+        "chroma": chroma_entry,
+    }
+    write_state(root, state)
+
+    sys.stdout.write(f"  waiting for {READY_PATH} (up to {args.timeout}s)\n")
+    report = wait_ready(ports["app"], process, args.timeout, app_log, account)
+
+    sys.stdout.write(
+        f"\nOdysseus is up — this worktree only.\n\n"
+        f"  URL        http://127.0.0.1:{ports['app']}\n"
+        f"  Login      {account['username']} / {account['password']}\n"
+        f"  Worktree   {root} ({state['branch']} @ {state['commit']})\n"
+        f"  Data dir   {data_dir}\n"
+        f"  ChromaDB   {chroma_note}\n"
+        f"  Test port  {ports['test_static']} (ODYSSEUS_TEST_STATIC_PORT; see `odysseus dev env`)\n"
+        f"  Logs       {app_log}\n"
+        f"  Ready      {json.dumps({k: v.get('ok') for k, v in report.get('checks', {}).items()})}\n"
+        f"  Stop with  odysseus dev down\n"
+    )
+
+
+def cmd_down(args):
+    root = resolve_root(args)
+    state = read_state(root)
+    stopped, unclaimed = [], []
+    for name in ("app", "chroma"):
+        entry = (state or {}).get(name) or {}
+        pid = entry.get("pid")
+        if not pid_is_ours(pid, entry.get("fingerprints") or []):
+            if pid_alive(pid):
+                # Alive but no longer recognisable: signalling it would be
+                # signalling a stranger. Say so and keep the record.
+                unclaimed.append(f"{name} (pid {pid})")
+            continue
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + STOP_GRACE_SECONDS
+        while time.monotonic() < deadline and pid_is_ours(pid, entry.get("fingerprints") or []):
+            time.sleep(0.2)
+        if pid_is_ours(pid, entry.get("fingerprints") or []):
+            os.kill(pid, signal.SIGKILL)
+        stopped.append(f"{name} (pid {pid})")
+    if stopped:
+        sys.stdout.write(f"stopped {', '.join(stopped)}.\n")
+    elif not unclaimed:
+        sys.stdout.write("nothing this worktree started is still running.\n")
+    if unclaimed:
+        sys.stdout.write(
+            f"left alone: {', '.join(unclaimed)} — still alive but no longer matching "
+            f"what we recorded. Check it before killing it; {state_path(root)} is kept.\n"
+        )
+        return
+    try:
+        state_path(root).unlink()
+    except OSError:
+        pass
+
+
+def cmd_status(args):
+    root = resolve_root(args)
+    state = read_state(root)
+    app = running_app(state)
+    chroma = (state or {}).get("chroma") or {}
+    ready = False
+    if app:
+        ready = probe_ready(app["port"], cookie=login(app["port"], credentials(root)))[0]
+    emit({
+        "root": str(root),
+        "running": bool(app),
+        "url": f"http://127.0.0.1:{app['port']}" if app else None,
+        "ready": ready,
+        "chroma_running": pid_is_ours(chroma.get("pid"), chroma.get("fingerprints") or []),
+        "ports": (state or {}).get("ports") or derive_ports(root),
+        "state_file": str(state_path(root)),
+    }, args)
+
+
+def cmd_ports(args):
+    root = resolve_root(args)
+    ports = derive_ports(root)
+    emit({
+        "root": str(root),
+        "ports": ports,
+        "in_use": {name: port_bound(port) for name, port in ports.items()},
+    }, args)
+
+
+def cmd_env(args):
+    """Print the isolated environment as shell exports, so a test run in
+    this worktree uses the same ports and data dir the app does."""
+    root = resolve_root(args)
+    ports = derive_ports(root)
+    data = dev_dir(root) / "data"
+    for key, value in (
+        ("APP_PORT", ports["app"]),
+        ("ODYSSEUS_TEST_STATIC_PORT", ports["test_static"]),
+        ("CHROMADB_PORT", ports["chroma"]),
+        ("ODYSSEUS_DATA_DIR", data),
+        ("DATABASE_URL", f"sqlite:///{data / 'app.db'}"),
+    ):
+        sys.stdout.write(f"export {key}={value}\n")
+
+
+def build_parser():
+    parser = common_parser("odysseus-dev", "Boot this worktree in isolation.")
+    common = parser._common_parents[0]
+    sub = parser.add_subparsers(dest="cmd")
+
+    up = sub.add_parser("up", parents=[common], help="boot this worktree")
+    up.add_argument("--port", type=int, help="override the derived app port")
+    up.add_argument("--chroma-port", type=int, help="override the derived ChromaDB port")
+    up.add_argument("--no-chroma", action="store_true",
+                    help="run without vectors (keyword mode) instead of starting a server")
+    up.add_argument("--venv", help="use this venv instead of ./venv (e.g. a sibling worktree's)")
+    up.add_argument("--from-pr", type=int, metavar="N",
+                    help="fetch pull request N into its own worktree and boot that")
+    up.add_argument("--remote", default="origin", help="remote to fetch the PR from")
+    up.add_argument("--foreground", action="store_true",
+                    help="run uvicorn in this terminal instead of detaching")
+    up.add_argument("--timeout", type=int, default=DEFAULT_READY_TIMEOUT,
+                    help=f"seconds to wait for {READY_PATH} (default: {DEFAULT_READY_TIMEOUT})")
+    up.set_defaults(func=cmd_up)
+
+    down = sub.add_parser("down", parents=[common], help="stop what `up` started here")
+    down.set_defaults(func=cmd_down)
+
+    status = sub.add_parser("status", parents=[common], help="what is running in this worktree")
+    status.set_defaults(func=cmd_status)
+
+    ports = sub.add_parser("ports", parents=[common], help="the derived port set")
+    ports.set_defaults(func=cmd_ports)
+
+    env = sub.add_parser("env", parents=[common], help="shell exports for this worktree")
+    env.set_defaults(func=cmd_env)
+
+    parser.set_defaults(func=lambda args: parser.print_help())
+    return parser
+
+
+if __name__ == "__main__":
+    sys.exit(run(build_parser()))

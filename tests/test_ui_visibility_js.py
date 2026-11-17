@@ -62,6 +62,7 @@ EXPECTED_RAIL_PAIRS = {
     "tool-gallery": "#rail-gallery",
     "tool-library": "#rail-archive",
     "tool-memory": "#rail-memory",
+    "tool-skills": "#rail-skills",
     "tool-notes": "#rail-notes",
     "tool-tasks": "#rail-tasks",
     "tool-theme": "#rail-theme",

@@ -148,6 +148,12 @@ class TestDeepSeekToolSupport:
     def test_qwen_local_non_ollama_still_gets_tools(self):
         assert _compute_is_api_model("qwen2.5:14b", "http://localhost:8000/v1") is True
 
+    def test_qwen35_alias_local_openai_compat_gets_tools(self):
+        """Dash-style Qwen 3.5 aliases must receive native tool schemas."""
+        assert _compute_is_api_model(
+            "qwen35-9b-ajax-tp2-67", "http://localhost:8000/v1"
+        ) is True
+
     def test_llama_local_non_ollama_gets_tools_via_host(self):
         assert _compute_is_api_model("llama3.2:3b", "http://localhost:8000/v1") is True
 

@@ -60,6 +60,18 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 **Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
 
+### Post-external-context tool approval gate — on by default
+
+`src/tool_capabilities.py` carries a second layer: once untrusted content has entered a run, `ToolRunSecurityContext.decision_for()` blocks tools that execute code, mutate state, or cause external side effects until the user authorises the action separately.
+
+It is on unless `ODYSSEUS_TOOL_APPROVAL_GATE` is set to a falsy value (`0`/`false`/`no`/`off`). The admin-only `tool_approval_mode` setting (Settings → Agent Tools, `off` = "Off (YOLO)") is the same knob exposed in the UI: with `off`, every run sets `approval_gate_bypassed` and this gate stops asking, exactly as if the env var were off. Request authority narrows which tool families a turn may use, but within an admitted family it does not bind the exact action: a request to read email admits `send_email` and `delete_email`, and agent processes inherit the host network. Until those are covered by their own boundaries, this gate is what stops an injected instruction from reaching them. Turning it off — by either knob — lets a successful injection reach `bash`, `host_shell`, `send_email` and `delete_email` without a separate confirmation.
+
+Three exemptions apply even when the gate is on, all deliberate:
+
+- Sources in `_CONTROL_PLANE_CONTEXT_SOURCES` (skills, runtime descriptors, the open editor document, the open email, uploaded files) are treated as control-plane metadata and still permit read-only tools.
+- A TUI run that advertises a host shell bridge and declares `unattended_mode` exempts the local execution set in `TUI_CLIENT_TOOL_NAMES`. Personal, network and deployment-local tools are never exempted.
+- Narrow continuation for local MCP tools declared via `ODYSSEUS_LOCAL_MCP_READ_TOOLS` and `ODYSSEUS_LOCAL_MCP_WRITE_TOOLS`: Only explicitly configured stdio MCP servers qualify; remote HTTP and SSE servers fail closed. Declarations never override built-in tool effects, so built-in email, browser, memory, image generation, and other built-in servers cannot receive continuation exceptions. Declared read tools remain untrusted (`EXTERNAL_UNTRUSTED`) to ensure that prompt injections in local data cannot reach shell, network, or unrelated tools without approval. Stdio transport does not guarantee network isolation, as local processes may still reach the host network. However, declared non-destructive write tools on the exact same stdio MCP server are permitted to continue without an approval prompt if the only untrusted context in the run was produced by declared local reads on that same server, without any explicit error or external taint. Genuinely external content (web search, web fetch, emails, external message context) blocks these writes. Authorization must still originate from the trusted request: request authority must permit the tool and retain the sealed backend resource grant. The residual same-store write risk (the agent writing to the same local store after reading a local prompt injection) remains subject to the user's initial request authority.
+
 ## Security Headers
 
 `core/middleware.py:SecurityHeadersMiddleware` sets headers on every response:
@@ -72,7 +84,7 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 These are open, acknowledged, and contributor help is welcome:
 
-1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal.
+1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal. The tool approval gate above is the compensating control and is on by default; turning it off leaves this gap unmitigated beyond the untrusted-context wrapper.
 
 2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
 

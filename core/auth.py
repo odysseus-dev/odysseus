@@ -47,7 +47,7 @@ ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 # backwards for this sentinel.
 ADMIN_PRIVILEGES["block_all_models"] = False
 
-from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH
+from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH, USERNAME_MAX_LENGTH
 from src.owner_identity import RESERVED_AUTH_USERNAMES
 DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
@@ -60,6 +60,24 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # scheduler/assistant/research paths. The Default/Local owner is a storage
 # bucket for explicit auth-disabled no-login mode, not a login username.
 RESERVED_USERNAMES = frozenset(RESERVED_AUTH_USERNAMES)
+
+
+def username_error(username: str | None) -> Optional[str]:
+    """Why a new username is not acceptable, or None when it is.
+
+    Admin routes carry the name as a URL path segment, where "/" never
+    reaches the handler, so such an account could not be managed afterwards.
+    """
+    name = (username or "").strip()
+    if not name:
+        return "Username is required"
+    if len(name) > USERNAME_MAX_LENGTH:
+        return f"Username must be at most {USERNAME_MAX_LENGTH} characters"
+    if "/" in name or "\\" in name or any(not c.isprintable() for c in name):
+        return "Username must not contain slashes or control characters"
+    if name in (".", ".."):
+        return "Username is not allowed"
+    return None
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
@@ -396,6 +414,15 @@ class AuthManager:
             current = self.get_privileges(username)
             for k, v in privileges.items():
                 if k in DEFAULT_PRIVILEGES:
+                    default = DEFAULT_PRIVILEGES[k]
+                    if isinstance(default, bool):
+                        ok = isinstance(v, bool)
+                    elif isinstance(default, int):
+                        ok = isinstance(v, int) and not isinstance(v, bool)
+                    else:
+                        ok = isinstance(v, list)
+                    if not ok:
+                        raise ValueError(f"Invalid value for privilege '{k}'")
                     current[k] = v
             self._config["users"][username]["privileges"] = current
             self._save()
@@ -436,6 +463,17 @@ class AuthManager:
                 admin_count = sum(1 for d in self.users.values() if d.get("is_admin"))
                 if admin_count <= 1:
                     return SetAdminResult.LAST_ADMIN
+                # Token creation is admin-only and a demoted user can neither
+                # list nor revoke their tokens, so purge them with the role.
+                # Done before the flag flips: if the token store fails the
+                # exception propagates and the user is still an admin.
+                from core.database import get_db_session, ApiToken
+                with get_db_session() as db:
+                    removed_tokens = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+                if removed_tokens:
+                    logger.info(
+                        f"Revoked {removed_tokens} API token(s) owned by demoted admin '{username}'"
+                    )
             # Write order matters for lock-free readers: get_privileges()
             # reads without _config_lock and trusts is_admin, so the admin
             # flag must be flipped while the stored map is safe to expose —
@@ -464,6 +502,19 @@ class AuthManager:
             self._save()
         logger.info("Set is_admin=%s for '%s' (by '%s')", is_admin, username, requesting_user)
         return SetAdminResult.OK
+
+    def reset_user_password(self, username: str, new_password: str, requesting_user: str) -> bool:
+        """Allow an admin to reset a non-admin account and revoke its sessions."""
+        username = username.strip().lower()
+        with self._config_lock:
+            target = self.users.get(username)
+            if not self.is_admin(requesting_user) or not target or target.get("is_admin"):
+                return False
+            self._config["users"][username]["password_hash"] = _hash_password(new_password)
+            self._save()
+            self.revoke_user_sessions(username)
+        logger.info("Password reset for '%s' by '%s'", username, requesting_user)
+        return True
 
     def change_password(self, username: str, current_password: str, new_password: str) -> bool:
         username = username.strip().lower()

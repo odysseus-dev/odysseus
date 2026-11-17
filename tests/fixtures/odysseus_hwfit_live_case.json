@@ -1,0 +1,18 @@
+[
+  {
+    "id": "hardware_aware_model_recommendation",
+    "kind": "cookbook_admin",
+    "user": "find the best model to run on my hardware",
+    "expect_first_tool_any": [
+      "app_api",
+      "list_models"
+    ],
+    "must_answer_any": [
+      "Ryzen AI Max+ 395",
+      "96 GB",
+      "96GB",
+      "compatible",
+      "Qwen/Qwen3-Next-80B-A3B-Thinking"
+    ]
+  }
+]

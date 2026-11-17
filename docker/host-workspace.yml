@@ -1,0 +1,11 @@
+# High-trust host workspace access. Enable only when the Odysseus agent should
+# work on a host directory outside the container's normal /app/data sandbox.
+#   COMPOSE_FILE=docker-compose.yml:docker/host-workspace.yml
+#   ODYSSEUS_HOST_WORKSPACE_DIR=/absolute/host/path
+#   ODYSSEUS_HOST_WORKSPACE_MOUNT=/host/workspace
+services:
+  odysseus:
+    volumes:
+      - ${ODYSSEUS_HOST_WORKSPACE_DIR:?set ODYSSEUS_HOST_WORKSPACE_DIR}:${ODYSSEUS_HOST_WORKSPACE_MOUNT:-/host/workspace}:rw,z
+    environment:
+      - ODYSSEUS_HOST_WORKSPACE_MOUNT=${ODYSSEUS_HOST_WORKSPACE_MOUNT:-/host/workspace}

@@ -6,6 +6,7 @@ and the real startup-shell coordinator then run together under Node.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,23 +19,7 @@ _SESSIONS = _REPO / "static" / "js" / "sessions.js"
 _SHELL_URL = (_REPO / "static" / "js" / "startupShell.js").as_uri()
 _HAS_NODE = shutil.which("node") is not None
 
-_IMPORT_REWRITES = {
-    "import Storage from './storage.js';": "import Storage from './storage.mjs';",
-    "import uiModule, { autoResize, styledPrompt } from './ui.js';": (
-        "import uiModule, { autoResize, styledPrompt } from './ui.mjs';"
-    ),
-    "import chatRenderer from './chatRenderer.js?v=20260815toolapproval4';": (
-        "import chatRenderer from './chatRenderer.mjs';"
-    ),
-    "import { providerLogo } from './providers.js';": (
-        "import { providerLogo } from './providers.mjs';"
-    ),
-    "import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260722ctxheader1';": (
-        "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';"
-    ),
-    "import themeModule from './theme.js';": "import themeModule from './theme.mjs';",
-    "import spinnerModule from './spinner.js';": "import spinnerModule from './spinner.mjs';",
-}
+_IMPORT_REWRITES = {}
 
 _STUBS = {
     "storage.mjs": r"""
@@ -71,6 +56,15 @@ export default ui;
     ),
     "theme.mjs": "export default {};\n",
     "spinner.mjs": "export default {};\n",
+    "actionMenuOrder.mjs": (
+        "export const SELECT_MENU_ICON = '';\n"
+        "export const actionMenuRank = () => 0;\n"
+        "export const orderActionMenuItems = (items) => items;\n"
+    ),
+    "escMenuStack.mjs": (
+        "export const registerEscapeLayer = () => () => {};\n"
+        "export const bindMenuDismiss = () => {};\n"
+    ),
 }
 
 _HARNESS = r"""
@@ -306,6 +300,47 @@ def results(tmp_path_factory):
 
     module_dir = tmp_path_factory.mktemp("session-bootstrap-js")
     source = _SESSIONS.read_text(encoding="utf-8")
+    versioned_rewrites = (
+        (
+            r"import Storage from './storage\.js(?:[?#][^']*)?';",
+            "import Storage from './storage.mjs';",
+        ),
+        (
+            r"import uiModule, \{ autoResize, styledPrompt \} from './ui\.js(?:[?#][^']*)?';",
+            "import uiModule, { autoResize, styledPrompt } from './ui.mjs';",
+        ),
+        (
+            r"import chatRenderer from './chatRenderer\.js(?:[?#][^']*)?';",
+            "import chatRenderer from './chatRenderer.mjs';",
+        ),
+        (
+            r"import \{ providerLogo \} from './providers\.js(?:[?#][^']*)?';",
+            "import { providerLogo } from './providers.mjs';",
+        ),
+        (
+            r"import \{ initModelPicker, updateModelPicker \} from './modelPicker\.js(?:[?#][^']*)?';",
+            "import { initModelPicker, updateModelPicker } from './modelPicker.mjs';",
+        ),
+        (
+            r"import themeModule from './theme\.js(?:[?#][^']*)?';",
+            "import themeModule from './theme.mjs';",
+        ),
+        (
+            r"import spinnerModule from './spinner\.js(?:[?#][^']*)?';",
+            "import spinnerModule from './spinner.mjs';",
+        ),
+        (
+            r"import \{ actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON \} from './actionMenuOrder\.js(?:[?#][^']*)?';",
+            "import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.mjs';",
+        ),
+        (
+            r"import \{ registerEscapeLayer, bindMenuDismiss \} from './escMenuStack\.js(?:[?#][^']*)?';",
+            "import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.mjs';",
+        ),
+    )
+    for pattern, replacement in versioned_rewrites:
+        source, count = re.subn(pattern, replacement, source, count=1)
+        assert count == 1, f"sessions import changed: {pattern}"
     for original, replacement in _IMPORT_REWRITES.items():
         assert original in source, f"sessions import changed: {original}"
         source = source.replace(original, replacement, 1)

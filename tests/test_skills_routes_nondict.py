@@ -110,3 +110,73 @@ def test_manual_skill_test_pauses_with_resumable_exact_approval(monkeypatch):
         assert "Waiting for an exact user approval" in "".join(job["_transcript"])
     finally:
         _skill_test_jobs.pop(key, None)
+
+
+def test_manual_skill_test_records_saved_turns_after_baseline(monkeypatch):
+    async def fake_loop(*args, **kwargs):
+        yield "data: " + json.dumps({"type": "agent_step", "round": 1})
+        yield "data: " + json.dumps({"type": "tool_start", "tool": "notes", "command": "lookup"})
+        yield "data: " + json.dumps({"delta": "done"})
+        yield "data: " + json.dumps({"type": "metrics", "data": {"agent_rounds": 1, "tool_calls": 1}})
+
+    async def fake_baseline(*args, **kwargs):
+        return "baseline transcript", {"turns": 3, "tool_calls": 2}, None
+
+    async def fake_eval(*args, **kwargs):
+        assert kwargs["skill_stats"] == {"turns": 1, "tool_calls": 1}
+        assert kwargs["baseline_stats"] == {"turns": 3, "tool_calls": 2}
+        return {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "summary": "faster",
+            "issues": [],
+            "baseline_verdict": "better",
+            "usefulness": 0.9,
+            "saved_turns": 2,
+            "saved_tool_calls": 1,
+        }
+
+    class FakeSkills:
+        def __init__(self):
+            self.audit = []
+            self.updated = []
+
+        def set_audit(self, *args, **kwargs):
+            self.audit.append((args, kwargs))
+
+        def update_skill(self, *args, **kwargs):
+            self.updated.append((args, kwargs))
+
+    monkeypatch.setattr("src.agent_loop.stream_agent_loop", fake_loop)
+    monkeypatch.setattr(skills_routes, "_run_skill_audit_arm", fake_baseline)
+    monkeypatch.setattr(skills_routes, "_eval_skill_run", fake_eval)
+
+    key = ("owner", "skill")
+    fake = FakeSkills()
+    _skill_test_jobs[key] = {
+        "status": "running",
+        "log": [],
+        "verdict": None,
+    }
+    try:
+        asyncio.run(_run_skill_test_job(
+            key,
+            "skill",
+            "skill markdown",
+            "task",
+            "http://example.test",
+            "model",
+            None,
+            "owner",
+            skills_manager=fake,
+        ))
+
+        job = _skill_test_jobs[key]
+        assert job["status"] == "done"
+        assert job["verdict"]["saved_turns"] == 2
+        assert fake.audit[-1][1]["saved_turns"] == 2
+        assert fake.audit[-1][1]["saved_tool_calls"] == 1
+        assert fake.audit[-1][1]["baseline_verdict"] == "better"
+        assert fake.audit[-1][1]["usefulness"] == 0.9
+    finally:
+        _skill_test_jobs.pop(key, None)

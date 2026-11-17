@@ -4,7 +4,7 @@
  * File attachment and upload handling
  */
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 
 let pendingFiles = [];
@@ -50,7 +50,7 @@ function _canvasToBlob(canvas, type, quality) {
 
 async function _openMobileCropper(file) {
   const url = _getPreviewUrl(file);
-  const imgProbe = await _loadImage(url);
+  let imgProbe = await _loadImage(url);
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'attach-crop-overlay';
@@ -63,13 +63,17 @@ async function _openMobileCropper(file) {
         <div class="attach-crop-actions">
           <button type="button" class="attach-crop-btn" data-action="cancel">Cancel</button>
           <button type="button" class="attach-crop-btn" data-action="original">Original</button>
+          <button type="button" class="attach-crop-btn" data-action="rotate" title="Rotate image clockwise">Rotate</button>
           <button type="button" class="attach-crop-btn attach-crop-primary" data-action="crop">Use crop</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
     const img = overlay.querySelector('.attach-crop-img');
     const box = overlay.querySelector('.attach-crop-box');
-    img.src = url;
+    let workingFile = file;
+    let workingUrl = url;
+    let rotatedUrl = null;
+    img.src = workingUrl;
     img.alt = file.name || 'image';
 
     let crop = { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
@@ -92,6 +96,7 @@ async function _openMobileCropper(file) {
     function finish(value) {
       overlay.remove();
       window.removeEventListener('resize', applyCrop);
+      if (rotatedUrl) URL.revokeObjectURL(rotatedUrl);
       resolve(value);
     }
     requestAnimationFrame(applyCrop);
@@ -128,6 +133,29 @@ async function _openMobileCropper(file) {
 
     overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => finish(null));
     overlay.querySelector('[data-action="original"]').addEventListener('click', () => finish(file));
+    overlay.querySelector('[data-action="rotate"]').addEventListener('click', async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = imgProbe.naturalHeight;
+      canvas.height = imgProbe.naturalWidth;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(canvas.width, 0);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(imgProbe, 0, 0);
+      const type = workingFile.type && workingFile.type !== 'image/bmp' ? workingFile.type : 'image/png';
+      const blob = await _canvasToBlob(canvas, type, 0.92);
+      if (!blob) return;
+      const ext = type.includes('jpeg') ? 'jpg' : (type.split('/')[1] || 'png');
+      const base = (file.name || 'image').replace(/\.[^.]+$/, '');
+      workingFile = new File([blob], `${base}-rotated.${ext}`, { type, lastModified: Date.now() });
+      const nextUrl = URL.createObjectURL(workingFile);
+      if (rotatedUrl) URL.revokeObjectURL(rotatedUrl);
+      rotatedUrl = nextUrl;
+      workingUrl = nextUrl;
+      imgProbe = await _loadImage(workingUrl);
+      crop = { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
+      img.src = workingUrl;
+      requestAnimationFrame(applyCrop);
+    });
     overlay.querySelector('[data-action="crop"]').addEventListener('click', async () => {
       clampCrop();
       const canvas = document.createElement('canvas');
@@ -139,7 +167,7 @@ async function _openMobileCropper(file) {
       canvas.height = sh;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(imgProbe, sx, sy, sw, sh, 0, 0, sw, sh);
-      const type = file.type && file.type !== 'image/bmp' ? file.type : 'image/png';
+      const type = workingFile.type && workingFile.type !== 'image/bmp' ? workingFile.type : 'image/png';
       const blob = await _canvasToBlob(canvas, type, 0.92);
       if (!blob) { finish(file); return; }
       const ext = type.includes('jpeg') ? 'jpg' : (type.split('/')[1] || 'png');
@@ -240,6 +268,20 @@ function _createChip(f, idx) {
     img.className = 'thumb-img';
     img.src = _getPreviewUrl(f);
     img.alt = f.name || 'image';
+    img.title = _isMobileViewport() && _isCroppableImage(f) ? 'Crop or rotate image' : '';
+    img.addEventListener('click', async (e) => {
+      if (!_isMobileViewport() || !_isCroppableImage(f) || _uploading) return;
+      e.stopPropagation();
+      try {
+        const nextFile = await _openMobileCropper(f);
+        if (!nextFile || nextFile === f || pendingFiles[idx] !== f) return;
+        _revokePreviewUrl(f);
+        pendingFiles[idx] = nextFile;
+        renderAttachStrip();
+      } catch (_) {
+        _showToast('Could not edit image');
+      }
+    });
     chip.appendChild(img);
   } else {
     const span = document.createElement('span');

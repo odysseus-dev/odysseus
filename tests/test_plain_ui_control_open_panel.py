@@ -18,6 +18,30 @@ def test_plain_ui_control_open_panel_rescues_backticked_line():
     assert blocks[0].content == "open_panel cookbook"
 
 
+def test_plain_ui_control_open_panel_rescues_calendar():
+    blocks = parse_tool_blocks("ui_control open_panel calendar", skip_fenced=True)
+
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "ui_control"
+    assert blocks[0].content == "open_panel calendar"
+
+
+def test_plain_ui_control_open_panel_preserves_calendar_month_view():
+    blocks = parse_tool_blocks("ui_control open_panel calendar month view", skip_fenced=True)
+
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "ui_control"
+    assert blocks[0].content == "open_panel calendar month view"
+
+
+def test_plain_ui_control_open_panel_rescues_theme_alias():
+    blocks = parse_tool_blocks("ui_control open_panel theme", skip_fenced=True)
+
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "ui_control"
+    assert blocks[0].content == "open_panel theme"
+
+
 def test_plain_ui_control_open_panel_strips_executed_line_only():
     text = "I'll open it now.\nui_control open_panel notes"
 

@@ -1,9 +1,9 @@
 // compare/scoreboard.js — vote history display
 import Storage from '../storage.js';
 import state from './state.js';
-import { VOTES_STORAGE_KEY } from './icons.js';
-import themeModule from '../theme.js';
-import uiModule from '../ui.js';
+import { VOTES_STORAGE_KEY } from './icons.js?v=20260908compareprompts1';
+import themeModule from '../theme.js?v=20260911organsrain1';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 
 const escapeHtml = uiModule.esc;
 
@@ -120,7 +120,7 @@ export function showScoreboard() {
 
     if (sorted.length === 0) {
       const empty = document.createElement('p');
-      empty.style.cssText = 'color:color-mix(in srgb, var(--fg) 50%, transparent);text-align:center;padding:24px 0;';
+      empty.style.cssText = 'color:color-mix(in srgb, var(--fg) 50%, transparent);text-align:center;padding:24px 0;font-size:calc(1em - 1px);';
       empty.textContent = 'No ' + activeMode + ' votes yet. Run a comparison and vote!';
       wrap.appendChild(empty);
     } else {
@@ -185,7 +185,7 @@ export function showScoreboard() {
   clearBtn.addEventListener('click', () => {
     // Inline confirmation
     const confirmRow = document.createElement('div');
-    confirmRow.style.cssText = 'display:flex;gap:8px;justify-content:center;align-items:center;margin-top:8px;padding:8px 12px;border:1px solid color-mix(in srgb, var(--red) 40%, var(--border));border-radius:6px;background:color-mix(in srgb, var(--red) 5%, transparent);';
+    confirmRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;padding:8px 12px;border:1px solid color-mix(in srgb, var(--red) 40%, var(--border));border-radius:6px;background:color-mix(in srgb, var(--red) 5%, transparent);';
     const confirmLabel = document.createElement('span');
     confirmLabel.style.cssText = 'font-size:12px;opacity:0.7;';
     confirmLabel.textContent = 'Clear all vote history?';
@@ -202,9 +202,10 @@ export function showScoreboard() {
     noBtn.className = 'cmp-btn-secondary';
     noBtn.style.cssText = 'padding:4px 12px;border-radius:4px;font-size:12px;';
     noBtn.addEventListener('click', () => confirmRow.remove());
-    confirmRow.appendChild(confirmLabel);
-    confirmRow.appendChild(yesBtn);
-    confirmRow.appendChild(noBtn);
+    const actions = document.createElement('span');
+    actions.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-left:auto;';
+    actions.append(noBtn, yesBtn);
+    confirmRow.append(confirmLabel, actions);
     // Replace button with confirmation
     clearBtn.style.display = 'none';
     clearBtn.parentElement.appendChild(confirmRow);

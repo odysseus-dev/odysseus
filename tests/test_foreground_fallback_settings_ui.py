@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -12,6 +13,7 @@ import pytest
 
 import routes.prefs_routes as prefs_routes
 import src.foreground_model_routing as foreground_model_routing
+from tests.helpers.stylesheets import app_css
 
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -108,12 +110,12 @@ def test_default_chat_controls_use_only_owner_scoped_new_preferences():
 def test_service_worker_precaches_new_module_and_bumps_cache():
     source = (_REPO / "static" / "sw.js").read_text(encoding="utf-8")
 
-    assert "const CACHE_NAME = 'odysseus-v345';" in source
+    assert re.search(r"const CACHE_NAME = 'odysseus-v\d+-[a-z0-9-]+';", source)
     assert "'/static/js/foregroundFallbackSettings.js'" in source
 
 
 def test_foreground_fallback_editor_has_mobile_layout_and_disabled_states():
-    source = (_REPO / "static" / "style.css").read_text(encoding="utf-8")
+    source = app_css()
 
     assert ".settings-foreground-fallback-editor[hidden]" in source
     assert ".settings-fallback-remove:disabled" in source

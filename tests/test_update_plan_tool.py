@@ -11,6 +11,9 @@ from src.agent_tools import ToolBlock, TOOL_TAGS  # import first to avoid circul
 from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
 from src.tool_index import ALWAYS_AVAILABLE, BUILTIN_TOOL_DESCRIPTIONS
 from src.tool_security import is_public_blocked_tool
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+execute_tool_block = server_authorized_executor(execute_tool_block)
 
 
 def _run(content):

@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -20,7 +20,7 @@ This spec covers settings and admin surfaces in:
 - `routes/model_routes.py` for `/api/tools` and settings-bound model endpoint references;
 - `src/agent_tools/admin_tools.py`, `src/tool_implementations.py`, `src/tool_execution.py`, `src/tool_schemas.py`, and `src/tool_index.py` for `manage_settings`;
 - `src/agent_loop.py` for stale agent prompt references to settings APIs;
-- frontend modules `static/js/appConfig.js`, `static/js/settings.js`, `static/js/settings/{registry,navigation,lifecycle,search,dom,sidebar}.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
+- frontend modules `static/js/appConfig.js`, `static/js/settings.js`, `static/js/settings/{registry,navigation,lifecycle,search,dom,sidebar,shell,peek,oauthReturn,agent,api,imageModels,speech,writingStyle}.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
 - CLI helpers `scripts/odysseus-preset` and `scripts/odysseus-theme`.
 
 Generic API integrations are cross-referenced in `integrations.md`. Model endpoint CRUD and endpoint cleanup are covered in `llm-models.md`. Email/contact/calendar legacy setting fallbacks stay with their domain specs.
@@ -54,10 +54,10 @@ Other active stores include:
 Settings runtime:
 
 - `GET /api/auth/features` is public feature visibility metadata;
-- `POST /api/auth/features` is admin-only;
-- `GET /api/auth/settings` returns full settings to admins;
-- non-admin or unauthenticated `GET /api/auth/settings` returns `scrub_settings()` output;
-- `POST /api/auth/settings` is admin-only and only writes keys present in `DEFAULT_SETTINGS`.
+- `POST /api/auth/features` requires admin unless auth is explicitly disabled;
+- `GET /api/auth/settings` returns full settings to admins and the disabled-auth operator;
+- with auth enabled, non-admin or unauthenticated `GET /api/auth/settings` returns `scrub_settings()` output;
+- `POST /api/auth/settings` requires admin unless auth is explicitly disabled and only writes keys present in `DEFAULT_SETTINGS`.
 
 `src.settings_scrub` owns deep secret-key scrubbing for non-admin settings reads, including snake_case and camelCase secret-like key names. It preserves structure while blanking secret-shaped string values.
 
@@ -75,7 +75,7 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - bundled accessibility font selection such as OpenDyslexic and text-size variable application;
 - CSS variable application.
 
-`static/js/settings.js` owns domain panel load/save behavior and compatibility exports, while `static/js/settings/registry.js` is the canonical group/panel metadata inventory. `navigation.js` activates panels and lazy admin content, `search.js` implements the registry-backed finder while filtering admin-only entries, `lifecycle.js` owns modal open/close/Escape/drag/docking behavior, `sidebar.js` owns persisted collapse/resize state, and `dom.js` holds shared DOM helpers. Registry/DOM consistency is a tested contract; new panels must update both the registry metadata and actual DOM. `static/js/appConfig.js` shares one promise cache for settings and tool reads across frontend modules, consumes a login-page settings prefetch once, drops rejected promises for retry, and requires settings/tool writers to invalidate the matching cache; `/api/tools` writes invalidate both entries because disabled tools live in settings state.
+`static/js/settings.js` coordinates compatibility exports and delegates Agent, image-model, speech and writing-style panel initialization to their named leaf modules; while `static/js/settings/registry.js` is the canonical group/panel metadata inventory. `navigation.js` activates panels and lazy admin content, `search.js` implements the registry-backed finder while filtering admin-only entries, `lifecycle.js` owns modal open/close/Escape/drag/docking behavior, `sidebar.js` owns persisted collapse/resize state, and `dom.js` holds shared DOM helpers. `shell.js` owns the coordination above those primitives — per-panel activation side effects, the admin-controller handoff, `.admin-only` visibility, and the public `open()`/`close()` entry points — holding no panel state of its own and taking what it needs from `settings.js` as injected callbacks. `peek.js` owns the Appearance window-fade chrome and clearing it when the user leaves that panel, and `oauthReturn.js` owns the once-per-load return path from the Google OAuth redirect into the Integrations panel. Registry/DOM consistency is a tested contract; new panels must update both the registry metadata and actual DOM. `static/js/appConfig.js` shares one promise cache for settings and tool reads across frontend modules, consumes a login-page settings prefetch once, drops rejected promises for retry, and requires settings/tool writers to invalidate the matching cache; `/api/tools` writes invalidate both entries because disabled tools live in settings state.
 
 Settings panels cover provider/model/search/research/reminder/email/CalDAV/CardDAV/vault, accessibility/font/text-size, scoped tokens, and unified integrations. The hidden legacy fallback editor was removed; no current Settings panel exposes the new foreground fallback keys, so opt-in exists only through owner-scoped preferences/internal callers until a deliberate UI is added. Email OAuth connect preserves the selected SMTP security mode and returns to the Settings surface after callback. `static/js/admin.js` owns user/admin panels, model endpoints, builtin tool toggles, MCP forms, feature toggles, token/webhook panels, diagnostics, backup/import, and danger-zone wipes.
 
@@ -94,6 +94,14 @@ Runtime behavior:
 - presets, user templates, and group presets are currently shared stores, not owner-scoped stores.
 
 `scripts/odysseus-preset` is a local CLI for preset store maintenance and backup of `presets.json`.
+
+Custom presets now carry optional persona continuity notes, a `general`/`health` memory schema, `thinking_mode` (`on`, `off`, or provider default), and `show_persona_name`. `PresetManager.update_persona_memory()` updates matching active and saved personas; these remain shared preset data. The default custom output limit is 32,768 tokens.
+
+## Writing Style And Admin Controls
+
+`document_writing_style` and `email_writing_style` are separate global settings. `POST /api/auth/settings/document-style/extract` requires an admin unless auth is explicitly disabled. It reads a bounded document upload, extracts prose, and calls the owner-resolved Utility model (Default Chat if unavailable) with at most 30,000 sample characters. Its prompt treats the sample as untrusted data; the response is a proposed style string, and the temporary file is removed in `finally`. `static/js/settings/writingStyle.js` owns the UI. This is a model inference path rather than a deterministic style parser.
+
+`auto_compact_threshold_percent` defaults to 85 and settings writes clamp it to 50–95. `utility_reasoning_effort` is an allowed per-user override; utility fallback entries can specify their own effort. Admin `PUT /api/auth/users/{username}/password` delegates to `AuthManager.reset_user_password`, accepts only existing non-admin targets, revokes their sessions after reset, and validates minimum length and the 72-byte UTF-8 limit.
 
 ## Tools Settings
 
@@ -150,8 +158,8 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 
 ## Security And Provenance
 
-- Non-admin and unauthenticated settings reads are scrubbed.
-- Admin settings reads, admin edit forms, vault flows, backup files, and local CLI artifacts can contain secrets and must remain admin-only or locally protected.
+- With auth enabled, non-admin and unauthenticated settings reads are scrubbed; explicit disabled-auth operator reads return full settings.
+- Full settings responses, admin edit forms, vault flows, backup files, and local CLI artifacts can contain secrets and need their applicable access and storage protections.
 - Backup artifacts are sensitive because settings may include API keys, passwords, tokens, and endpoint credentials.
 - Diagnostics and logs should avoid adding secret-bearing values.
 - Admin wipe is global per kind and crosses owners.
@@ -171,20 +179,31 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 - Theme/preset frontend helpers tolerate malformed localStorage values.
 - CLI helpers are local maintenance surfaces and may bypass HTTP route policy.
 
+## App Configuration Gates And Cleanup
+
+`routes/auth_routes.py` uses `_require_admin_user()` for settings writes, feature writes, document-style extraction and integration management. Explicit `AUTH_ENABLED=false` admits the operator without a session identity, and settings GET returns unscrubbed values in that mode; auth-enabled callers need an admin for writes and get scrubbed reads unless admin. User-store administration still requires a real admin identity. `static/js/settings.js` reports shortcut save failure with a toast; settings writes use the existing response-status-checking API helper.
+
+`src/cleanup_service.py` previews and deletes using durable `ChatMessage` row counts rather than `Session.message_count`; it selects only the configured most-recent IDs for protection. The DELETE rechecks owner, archive state, age, importance and actual message threshold. Supported databases use DELETE RETURNING to attribute deleted rows and estimated space; legacy SQLite has a rowcount/survivor fallback with bounded estimate attribution. Cache eviction follows commit and includes observed externally removed candidates; estimates are not a measurement of reclaimed database bytes.
+
 ## Testing Notes
 
 Current targeted coverage includes settings store fallback/error paths, settings scrub, shared frontend config caching/invalidation/prefetch behavior, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore/list-race safety, cleanup owner scope, diagnostics admin-gate/source/service-health/log-tail checks, admin promote/demote, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, Google email OAuth route/helper behavior, and a token-budget `manage_settings` path.
 
+## Panel Save And Vault Identity Details
+
+`static/js/settings/api.js` centralizes settings POSTs, rejects non-OK/403 responses and invalidates the shared cache in finally even on failure. Older per-panel unchecked-response behavior is superseded by this final helper; individual UI completion is not model/provider acceptance. Image model selectors retain the final mixed eligibility filter rather than an image-only historical rule. Sidebar build information fetches public version/build/source-commit metadata, hides failed/unknown responses and abbreviates hexadecimal commits for display; arbitrary overrides are not byte attestation.
+
+Vault tool bindings require an explicit matching configuration owner and pin backend/config/session incarnations plus exact observed item identities. `routes/vault/vault_routes.py` checks configuration ownership on save and clears session/unlock time when adopting ownerless legacy state. Same-owner configuration edits retain saved session/unlock fields while invalidating bindings whose configuration incarnation changes. Configuration reads and login/unlock/lock/logout use common `require_admin()` without that owner-binding check. Observed catalog names or selectors cannot renew a revoked tool backend; search observations can update selected entries without proving every remote account/session is fresh.
+
 ## Current Gaps
 
-- Add route tests for `/api/auth/settings`: anonymous/non-admin scrubbed reads, admin full reads, non-admin POST rejection, and unknown-key ignore behavior.
-- Add route tests for `/api/auth/features` admin writes.
+- Settings/features route tests cover disabled-auth operation, auth-enabled read scrubbing, admin/non-admin writes, numeric validation and ignoring unknown keys; real auth-middleware integration and broader store-failure combinations still need coverage.
 - Add `/api/tools` and `manage_settings` tests for secret write refusal, enum/integer coercion failures, structured-setting refusal, reset/default behavior, endpoint/model resolution, and tool enable/disable aliases.
 - Add backup tests for secret-bearing export policy, owner-scoped exported sections, invalid import handling, skills dedup, settings/features merge, and admin gates.
 - Add diagnostics tests for broader error redaction and sensitive output limits.
 - Add admin wipe tests for every wipe kind, unknown-kind 400, rollback behavior, and admin gating.
 - Add vault route tests for session omission, permission setting, login/unlock failures, lock/logout clearing, corrupt config, and admin gates.
-- Add broader frontend behavior coverage for Settings/Admin panel save/load flows, vault password clearing, diagnostics buttons, cleanup/wipe confirmations, custom font/theme wiring, and tab state; registry/navigation/finder/lifecycle contracts now have focused source/JS tests.
+- Add broader frontend behavior coverage for Settings/Admin panel save/load flows, vault password clearing, diagnostics buttons, cleanup/wipe confirmations, custom font/theme wiring, and tab state; registry/navigation/finder/lifecycle contracts now have focused source/JS tests, and the real-ESM coordinator smoke in `tests/helpers/test_settings_shell_coordinator.mjs` additionally covers the shell's admin-only visibility, admin-controller handoff and Peek fade/clear behavior.
 - Decide whether `user_templates` and `group_presets` should remain shared despite user-facing names.
 - Decide whether backup/import should preserve explicit owner fields or force imported owner ownership.
-- Continue moving shell/navigation concerns out of the still-large `static/js/settings.js` and `static/js/admin.js` domain boundary without duplicating registry ownership.
+- Settings panel code now has additional domain modules, but `static/js/settings.js` and `static/js/admin.js` remain substantial coordinators; future extraction must preserve registry and lifecycle ownership.

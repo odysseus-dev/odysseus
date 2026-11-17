@@ -1,5 +1,5 @@
 // Shared window-drag helper. Replaces the duplicated mousedown / mousemove
-// / mouseup + snap-to-top fullscreen + left/right edge dock patterns that
+// / mouseup + legacy snap-to-top fullscreen + edge-dock patterns that
 // were copy-pasted across calendar.js, tasks.js, gallery.js, emailLibrary.js,
 // documentLibrary.js, theme.js. Behavior stays identical to the old per-file
 // copies — each callsite provides its own enter/exit-fullscreen callbacks
@@ -31,8 +31,9 @@
 //                        true on desktop, irrelevant on mobile (mobileSkip).
 //     mobileSkip:      drag is disabled below this viewport width.
 //                        Default 768. Set to 0 to never skip.
-//     enableDock:      bool — enable left + right edge docks.
-//                        Default true.
+//     enableDock:      bool — allow an existing programmatic edge dock to be
+//                        dragged loose. New drag snaps are owned exclusively
+//                        by tileManager so two previews/actions cannot race.
 //     enableFullscreen: bool — enable top-edge fullscreen snap.
 //                        Default true when onEnterFullscreen is supplied.
 
@@ -68,6 +69,9 @@ export function makeWindowDraggable(modal, options = {}) {
   const mobileSkip = (typeof options.mobileSkip === 'number') ? options.mobileSkip : 768;
   const enableTouch = options.enableTouch !== false;
   const enableDock = options.enableDock !== false && !!modal;
+  // tileManager is the single source of truth for new edge snaps. Keep these
+  // controllers only so a programmatically docked window can be pulled loose.
+  const enableDockSnap = false;
 
   header.style.cursor = 'move';
   header.style.userSelect = 'none';
@@ -91,6 +95,20 @@ export function makeWindowDraggable(modal, options = {}) {
           : (content.id ? 'winsize-' + content.id : null)),
     });
   }
+
+  // A native-window-style reset gesture: double-clicking unused header/title
+  // space restores the authored size and lets the modal overlay center it.
+  // Controls keep their own double-click behaviour, and mobile sheets retain
+  // their fixed drawer geometry.
+  header.addEventListener('dblclick', (event) => {
+    if (mobileSkip > 0 && window.innerWidth <= mobileSkip) return;
+    if (skipSelector && event.target.closest(skipSelector)) return;
+    if (event.target.closest('button, input, select, textarea, a, [contenteditable="true"]')) return;
+    if (typeof content._resetWindowGeometry !== 'function') return;
+    if (!content._resetWindowGeometry()) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
 
   const rightDock = enableDock ? makeEdgeDockController(modal, 'right') : null;
   // Left dock is enabled by default too. modalSnap collapses the wide sidebar
@@ -190,20 +208,20 @@ export function makeWindowDraggable(modal, options = {}) {
       // fullscreen first, which re-CENTERED the window — so it looked like
       // it "centered instead of docking". Only a downward drag unsnaps to a
       // windowed (centered) modal.
-      if (nearRight && rightDock) {
+      if (enableDockSnap && nearRight && rightDock) {
         if (leftDock) leftDock.release();
         rightDock.onMove(cx, cy);
         return;
       }
-      if (nearLeft && leftDock) {
+      if (enableDockSnap && nearLeft && leftDock) {
         if (rightDock) rightDock.release();
         leftDock.onMove(cx, cy);
         return;
       }
       if (cy > UNSNAP_PX) {
         _exitFs(cx, cy);
-        if (rightDock) rightDock.onMove(cx, cy);
-        if (leftDock) leftDock.onMove(cx, cy);
+        if (enableDockSnap && rightDock) rightDock.onMove(cx, cy);
+        if (enableDockSnap && leftDock) leftDock.onMove(cx, cy);
       } else {
         if (rightDock) rightDock.release();
         if (leftDock) leftDock.release();
@@ -237,7 +255,7 @@ export function makeWindowDraggable(modal, options = {}) {
     // top corner only ever snaps to fullscreen — never the corner hybrid.
     const inTopBand = cy <= SNAP_PX;
     _showSnapHint(enableFullscreen && inTopBand);
-    if (inTopBand) {
+    if (inTopBand || !enableDockSnap) {
       if (rightDock) rightDock.release();
       if (leftDock) leftDock.release();
     } else {
@@ -258,13 +276,13 @@ export function makeWindowDraggable(modal, options = {}) {
       _enterFs();
       return;
     }
-    if (rightDock && rightDock.hovering()) {
+    if (enableDockSnap && rightDock && rightDock.hovering()) {
       if (leftDock) leftDock.release();
       if (fsClass && modal) modal.classList.remove(fsClass);  // dock takes over from fullscreen
       rightDock.commit();
       return;
     }
-    if (leftDock && leftDock.hovering()) {
+    if (enableDockSnap && leftDock && leftDock.hovering()) {
       if (rightDock) rightDock.release();
       if (fsClass && modal) modal.classList.remove(fsClass);
       leftDock.commit();

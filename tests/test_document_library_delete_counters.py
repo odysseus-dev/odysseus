@@ -41,3 +41,13 @@ def test_single_delete_updates_language_counters_and_chips():
         "async function libraryBulkDelete()",
     )
     assert "libraryRemoveDocumentFromState(docId);" in delete_body
+
+
+def test_library_sort_options_have_distinct_icons():
+    text = _src()
+
+    assert "const _LIBRARY_SORT_ICONS = {" in text
+    for value in ("recent", "oldest", "most-messages", "most-sources", "edits", "alpha"):
+        assert f"{value}:" in text or f"'{value}':" in text
+    assert "_librarySortIcon(option.value)" in text
+    assert "_librarySortIcon(selected?.value)" in text

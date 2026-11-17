@@ -6,11 +6,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.helpers.document_source import document_source
+from tests.helpers.js_modules import email_library_source, js_function_source
 
 
 _REPO = Path(__file__).resolve().parent.parent
 _INBOX_JS = _REPO / "static" / "js" / "emailInbox.js"
-_LIBRARY_JS = _REPO / "static" / "js" / "emailLibrary.js"
 _HAS_NODE = shutil.which("node") is not None
 
 
@@ -21,8 +22,8 @@ def _extract_between(source: str, signature: str, next_marker: str) -> str:
 
 
 def test_library_unread_preview_has_one_authoritative_request_and_rollback():
-    source = _LIBRARY_JS.read_text(encoding="utf-8")
-    function = _extract_between(source, "async function _toggleCardPreview", "\n/**\n * Wrap a probable signature block")
+    source = email_library_source()
+    function = js_function_source("_toggleCardPreview", source)
 
     assert function.count("/api/email/read/") == 1
     assert "/api/email/mark-read/" not in function
@@ -38,8 +39,8 @@ def test_library_unread_preview_has_one_authoritative_request_and_rollback():
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_library_authoritative_success_defeats_newer_rollback_in_either_order():
-    source = _LIBRARY_JS.read_text(encoding="utf-8")
-    function = _extract_between(source, "async function _toggleCardPreview", "\n/**\n * Wrap a probable signature block")
+    source = email_library_source()
+    function = js_function_source("_toggleCardPreview", source)
     settlements = _extract_between(
         function,
         "  const restoreUnreadState = () => {",
@@ -101,7 +102,7 @@ console.log(JSON.stringify({{
 
 
 def test_library_reply_open_carries_immutable_mailbox_context():
-    library_source = _LIBRARY_JS.read_text(encoding="utf-8")
+    library_source = email_library_source()
     inbox_source = _INBOX_JS.read_text(encoding="utf-8")
 
     assert "const mailboxGeneration = _emailMailboxGeneration;" in library_source
@@ -109,7 +110,36 @@ def test_library_reply_open_carries_immutable_mailbox_context():
     assert "return onEmailClick({ ...options, mailboxContext });" in library_source
     assert "mailboxContext?.messageFolder || _currentFolder" in inbox_source
     assert "mailboxContextIsCurrent()" in inbox_source
-    assert "if (!isCurrentOpen()) return;\n        let activeSid = await _createEmailChat" in inbox_source
+    reply_branch = inbox_source[
+        inbox_source.index("const reuseExisting = mode !== 'forward'"):
+        inbox_source.index("const createReplyDoc =", inbox_source.index("const reuseExisting = mode !== 'forward'"))
+    ]
+    assert reply_branch.index("if (!isCurrentOpen()) return;") < reply_branch.index("_createEmailChat(data")
+    assert "let activeSid = sessionModule?.getCurrentSessionId?.() || '';" in reply_branch
+    assert "_createEmailChat(data);" in reply_branch
+    assert "forceNew: !aiSuggestedBody" not in reply_branch
+
+
+def test_attachment_warning_only_checks_authored_reply_text():
+    source = document_source()
+    helper = source[source.index("function _bodyMentionsAttachment"):source.index("\n\n  function _clearMissingAttachmentWarnings", source.index("function _bodyMentionsAttachment"))]
+
+    assert "_emailReplyOwnText(text)" in helper
+    assert "text.split(/^>|^On .* wrote:/m)" not in helper
+
+
+def test_email_send_saves_recovery_draft_before_send_and_retains_it_on_failure():
+    source = document_source()
+    send = source[source.index("async function _sendEmail"):source.index("\n\n  async function _saveDraft", source.index("async function _sendEmail"))]
+
+    assert "async function _saveEmailDraftForRecovery" in source
+    assert send.index("_saveEmailDraftForRecovery({") < send.index("fetch(`${API_BASE}/api/email/send`")
+    assert send.index("if (isLibraryOpen()) closeLibrary();") > send.index("const sendRequest = fetch(")
+    assert send.index("if (isLibraryOpen()) closeLibrary();") < send.index("const res = await sendRequest")
+    success_branch = send[send.index("if (data.success) {"):]
+    assert "fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' })" in success_branch
+    assert "Draft kept in Drafts." in send
+    assert "recoveryDraft.draft_uid" in send
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")

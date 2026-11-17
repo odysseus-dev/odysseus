@@ -5,11 +5,11 @@
  */
 
 import Storage from './storage.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
-import { modelColor } from './chatRenderer.js';
+import { modelColor } from './chatRenderer.js?v=20260914metricssummary1';
 import { providerLogo } from './providers.js';
 import { sortModelIds } from './modelSort.js';
 
@@ -199,7 +199,9 @@ export async function refreshModels(force = false, opts = {}) {
         // ages out. (Bug repro: serve a model, picker is empty for ~30s
         // even though the endpoint is in the DB and online.)
         const _seq = ++_fetchSeq;
-        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '?background=false');
+        const _url = `${API_BASE}/api/models` + (force
+          ? `?refresh=true${opts.waitForRefresh ? '&wait_refresh=true' : ''}`
+          : '?background=false');
         _fetchInflight = fetch(_url, { credentials: 'same-origin' })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -587,6 +589,12 @@ export async function refreshModels(force = false, opts = {}) {
           + '<span class="muted-sm">Ask an admin to configure model endpoints</span>';
       }
       box.appendChild(noModels);
+      const openAdmin = noModels.querySelector('#models-open-admin');
+      if (openAdmin) openAdmin.addEventListener('click', (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('user-bar-admin');
+        if (btn) btn.click();
+      });
     }
   } catch (e) {
     console.error(e);

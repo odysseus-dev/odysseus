@@ -1,8 +1,9 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, You.com."""
 
 import json
 import logging
 import os
+import re
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -23,6 +24,9 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    # Keyless by default (free agent search); optional YDC_API_KEY upgrades
+    # to the keyed Search API. needs_key stays False so fresh installs work.
+    "you_com":  ("You.com",           False, False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -33,9 +37,16 @@ def _get_search_settings() -> dict:
     """Return search settings from admin config, falling back to env defaults."""
     try:
         from src.settings import load_settings
-        return load_settings()
+        settings = dict(load_settings())
     except Exception:
-        return {}
+        settings = {}
+    # Headless/native deployments do not necessarily have an admin settings
+    # database.  Require an explicit Odysseus-prefixed override so ordinary UI
+    # configuration remains authoritative by default.
+    env_provider = os.environ.get("ODYSSEUS_SEARCH_PROVIDER", "").strip().lower()
+    if env_provider:
+        settings["search_provider"] = env_provider
+    return settings
 
 
 def _get_search_instance() -> str:
@@ -55,24 +66,33 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "you_com": "ydc_api_key",
     }
     field = key_map.get(provider, "")
     if field:
         val = (settings.get(field) or "").strip()
         if val:
             return val
-    # Legacy fallback: old shared search_api_key field
+    # Legacy fallback: old shared search_api_key field. Skipped for You.com:
+    # its key is optional, and a stale key from another provider would turn
+    # a working keyless setup into 401s on the keyed endpoint.
     legacy = (settings.get("search_api_key") or "").strip()
-    if legacy:
+    if legacy and provider != "you_com":
         return legacy
     env_map = {
-        "brave": "DATA_BRAVE_API_KEY",
-        "google_pse": "GOOGLE_API_KEY",
-        "tavily": "TAVILY_API_KEY",
-        "serper": "SERPER_API_KEY",
+        # DATA_BRAVE_API_KEY is the historical Odysseus name; BRAVE_API_KEY is
+        # the standard name used by headless runners and the Brave SDK.
+        "brave": ("DATA_BRAVE_API_KEY", "BRAVE_API_KEY"),
+        "google_pse": ("GOOGLE_API_KEY",),
+        "tavily": ("TAVILY_API_KEY",),
+        "serper": ("SERPER_API_KEY",),
+        "you_com": ("YDC_API_KEY",),
     }
-    env_name = env_map.get(provider, "")
-    return (os.environ.get(env_name) or "").strip() if env_name else ""
+    for env_name in env_map.get(provider, ()):
+        value = (os.environ.get(env_name) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _get_result_count() -> int:
@@ -82,6 +102,19 @@ def _get_result_count() -> int:
         return int(settings.get("search_result_count", 5))
     except (ValueError, TypeError):
         return 5
+
+
+def provider_configured(provider: str) -> bool:
+    """Configuration readiness only; a configured engine can still fail upstream."""
+    if provider in {"searxng", "searxng_yep", "duckduckgo", "you_com"}:
+        return True
+    if provider not in {"brave", "google_pse", "tavily", "serper"}:
+        return False
+    if not _get_provider_key(provider):
+        return False
+    if provider == "google_pse":
+        return bool(_get_search_settings().get("google_pse_cx") or os.environ.get("GOOGLE_PSE_CX"))
+    return True
 
 
 # Canonical SafeSearch levels: "strict" (default), "moderate", "off".
@@ -118,22 +151,45 @@ def _safesearch_for(provider: str) -> Optional[str]:
         return None if level == "off" else "active"
     if provider == "serper":
         return None if level == "off" else "active"
+    if provider == "you_com":
+        # You.com Search API: safesearch=off|moderate|strict
+        return level
     return None
 
 
 # ── SearXNG ──
 
-_NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "idag")
+_NEWS_HINTS = (
+    "news", "nyheter", "headlines", "breaking", "idag",
+    "current events", "what's happening", "what is happening",
+)
+_NEWS_EVENT_HINT_RE = re.compile(
+    r"\b(?:deport(?:ation|ed|ing)?|arrest(?:ed|s)?|election(?:s)?|"
+    r"evacuat(?:e|ed|ion)|flood(?:ing|s|ed)?|sanction(?:s|ed)?)\b",
+    re.IGNORECASE,
+)
+_SOFTWARE_RELEASE_HINTS = (
+    "github",
+    "gitlab",
+    "release",
+    "releases",
+    "version",
+    "versions",
+    "changelog",
+    "change log",
+    "pypi",
+    "npm",
+    "package",
+)
 
-# Default general engines (google/duckduckgo/brave/startpage/wikipedia) are
-# routinely rate-limited / CAPTCHA-blocked on this instance and return nothing.
-# Pin engines that actually respond so non-news queries get results without any
-# third-party API fallback. Override via SEARXNG_GENERAL_ENGINES.
-_GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presearch")
+# Verified with the pinned September SearXNG adapters. Bing can return unrelated
+# pages as successful results; do not prefer it over working general engines.
+# Deployments can override this via SEARXNG_GENERAL_ENGINES.
+_GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "google,brave,duckduckgo")
 
 
 def searxng_search_api(query: str, count: Optional[int] = None, categories: str = "general",
-                       time_filter: Optional[str] = None) -> List[dict]:
+                       time_filter: Optional[str] = None, *, engines: Optional[str] = None) -> List[dict]:
     """Search using SearXNG JSON API. Returns list of {title, url, snippet}."""
     count = count if count is not None else _get_result_count()
     instance = _get_search_instance()
@@ -158,19 +214,39 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
         "safesearch": _safesearch_for("searxng"),
     }
     q_lc = query.lower()
-    is_news = time_filter is not None or any(h in q_lc for h in _NEWS_HINTS)
+    # Fresh software-version queries are usually better served by general
+    # search or canonical project pages than by the news vertical. For example
+    # "latest ollama release version github" can return a sparse news result
+    # that gets filtered as irrelevant, while general engines find GitHub.
+    is_software_release_query = any(h in q_lc for h in _SOFTWARE_RELEASE_HINTS)
+    is_news = (
+        not is_software_release_query
+        and (
+            any(h in q_lc for h in _NEWS_HINTS)
+            or bool(_NEWS_EVENT_HINT_RE.search(query))
+            or (
+                bool(re.search(r'\bdevelopments\b', query, re.I))
+                and bool(re.search(r'\b(?:latest|recent|today|this\s+(?:week|month)|past\s+(?:week|month))\b', query, re.I))
+            )
+        )
+    )
     if is_news and categories == "general":
         params["categories"] = "news"
         if time_filter in ("day", "week", "month", "year"):
-            # 'day' is too sparse on most SearXNG news engines — widen to a week
-            # so there's enough volume; the news category already biases recent.
-            params["time_range"] = "week" if time_filter in ("day", "week") else time_filter
+            params["time_range"] = time_filter
     else:
         params["categories"] = categories
+        # Freshness and source category are independent: current manuals,
+        # comparisons and documentation still belong in general search.
+        if time_filter in ("day", "week", "month", "year"):
+            params["time_range"] = time_filter
         # Route general queries to engines that aren't blocked (default general
         # set returns 0 on this instance — see _GENERAL_ENGINES).
         if categories == "general" and _GENERAL_ENGINES:
             params["engines"] = _GENERAL_ENGINES
+    if engines:
+        params["categories"] = "general"
+        params["engines"] = engines
     try:
         def _parse_results(results):
             return [
@@ -178,6 +254,10 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
                     "title": r.get("title", ""),
                     "url": r.get("url", ""),
                     "snippet": r.get("content", ""),
+                    "provider": "searxng",
+                    "engines": r.get("engines", []),
+                    "published_date": r.get("publishedDate"),
+                    "query": query,
                 }
                 for r in results[:count]
                 if r.get("url")
@@ -196,17 +276,11 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
 
         active_params = params
         parsed, data = _run(active_params)
-        if not parsed and is_news and categories == "general":
+        if not parsed and active_params.get("categories") == "news":
             # Some self-hosted SearXNG configs have no working news engines.
             # Fall back to the known-good general engines before reporting an
             # empty search, otherwise common queries like "Canada news" fail.
-            fallback = {
-                "q": query,
-                "format": "json",
-                "language": "en",
-                "categories": "general",
-                "safesearch": _safesearch_for("searxng"),
-            }
+            fallback = {**active_params, "categories": "general"}
             if _GENERAL_ENGINES:
                 fallback["engines"] = _GENERAL_ENGINES
             logger.info(
@@ -240,23 +314,28 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
         return parsed
     except Exception as e:
         logger.warning(f"SearXNG JSON API search failed: {e}")
-        html_results = searxng_search(query, max_results=count)
+        html_results = searxng_search(query, max_results=count, search_params=active_params)
         if html_results:
             logger.info(f"SearXNG HTML fallback returned {len(html_results)} results for: {query}")
         return html_results
 
 
-def searxng_search(query, max_results=10):
+def searxng_search(query, max_results=10, *, search_params=None):
     """Search using SearXNG instance - parsing HTML."""
     instance = _get_search_instance()
     api_key = ""
     req_headers = {"User-Agent": WEB_FETCH_USER_AGENT}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
+    # Transport fallback must not change the user's retrieval constraints.
+    # In particular omit only JSON formatting, not publication time/category.
+    params = {key: value for key, value in (search_params or {}).items()
+              if key in {'categories', 'engines', 'language', 'time_range'}}
+    params.update({'q': query, 'safesearch': _safesearch_for('searxng')})
     try:
         response = httpx.get(
             f"{instance}/search",
-            params={"q": query, "safesearch": _safesearch_for("searxng")},
+            params=params,
             headers=req_headers,
             timeout=10,
         )
@@ -390,7 +469,11 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
                 "https://html.duckduckgo.com/html/",
                 params={"q": query, "kp": _safesearch_for("duckduckgo_html")},
                 headers={"User-Agent": WEB_FETCH_USER_AGENT},
-                timeout=REQUEST_TIMEOUT,
+                # This is a last-resort compatibility path when the declared
+                # optional ``ddgs`` dependency is absent. Keep it short so a
+                # blocked public endpoint cannot consume the full search SLA
+                # across provider and query-relaxation retries.
+                timeout=min(REQUEST_TIMEOUT, 5),
             )
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
@@ -638,4 +721,135 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── You.com ──
+#
+# Keyless by default: the free agent search endpoint needs no account
+# (100 searches/day). With YDC_API_KEY (or the ydc_api_key setting) it uses
+# the keyed Web Search API instead. Both return the same {results: {web,
+# news}} shape. Spec: https://you.com/specs/openapi_search_v1.yaml
+
+_YOU_COM_UA = "youdotcom-integration/odysseus-dev-odysseus"
+_YOU_COM_FREE_URL = "https://api.you.com/v1/agents/search"
+_YOU_COM_KEYED_URL = "https://ydc-index.io/v1/search"
+
+
+def _you_com_headers(api_key: str = "") -> dict:
+    """Headers for You.com hosts only: attribution UA, optional X-API-Key."""
+    headers = {
+        "User-Agent": _YOU_COM_UA,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return headers
+
+
+def _you_com_parse_results(data: dict, count: int) -> List[dict]:
+    """Normalize You.com {results: {web, news}} into Odysseus result dicts."""
+    results_block = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results_block, dict):
+        return []
+    raw_web = results_block.get("web")
+    items = raw_web if isinstance(raw_web, list) else []
+    if not items:
+        raw_news = results_block.get("news")
+        items = raw_news if isinstance(raw_news, list) else []
+    parsed = []
+    for item in items[:count]:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url", "")
+        if not isinstance(url, str) or not url.strip():
+            continue
+        snippets = item.get("snippets") or []
+        if isinstance(snippets, list):
+            snippet = " ".join(
+                s.strip() for s in snippets[:2] if isinstance(s, str) and s.strip()
+            )
+        else:
+            snippet = ""
+        if not snippet:
+            snippet = item.get("description", "") or ""
+        parsed.append({
+            "title": str(item.get("title") or ""),
+            "url": url,
+            "snippet": str(snippet or ""),
+            "age": str(item.get("page_age") or ""),
+        })
+    return parsed
+
+
+def you_com_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using You.com. Works without a key; YDC_API_KEY is optional.
+
+    No key: free agent search at api.you.com/v1/agents/search (100/day, max 50 results).
+    With a key: keyed Web Search API at ydc-index.io/v1/search (X-API-Key, max 100 results).
+    """
+    if not query or not query.strip():
+        return []
+    api_key = _get_provider_key("you_com")
+    max_count = 100 if api_key else 50
+    try:
+        count = int(count) if count is not None else _get_result_count()
+    except (ValueError, TypeError):
+        count = _get_result_count()
+    count = max(1, min(count, max_count))
+    payload = {
+        "query": query,
+        "count": count,
+    }
+    safe = _safesearch_for("you_com")
+    if safe:
+        payload["safesearch"] = safe
+    if time_filter:
+        time_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
+        if time_filter in time_map:
+            payload["freshness"] = time_map[time_filter]
+
+    url = _YOU_COM_KEYED_URL if api_key else _YOU_COM_FREE_URL
+    headers = _you_com_headers(api_key)
+    mode = "keyed" if api_key else "keyless"
+    logger.info("Executing You.com %s search with query: %s", mode, query)
+    try:
+        response = httpx.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError(
+                "You.com rate limit hit" if api_key
+                else "You.com free tier limit hit; set YDC_API_KEY for higher limits"
+            )
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"You.com search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        if api_key and status in (401, 403):
+            hint = "check YDC_API_KEY"
+        elif status == 402:
+            hint = "out of credits" if api_key else "free tier limit hit; set YDC_API_KEY for higher limits"
+        else:
+            hint = "upstream error"
+        error_logger.error(f"You.com search failed ({status}, {hint})")
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"You.com returned invalid JSON: {e}")
+        return []
+
+    results = _you_com_parse_results(data, count)
+    logger.info(f"You.com returned {len(results)} results")
     return results

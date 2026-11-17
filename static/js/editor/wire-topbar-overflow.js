@@ -15,11 +15,16 @@
  */
 import { state } from './state.js';
 
+let disposeTopbar;
+
 export function wireTopbarOverflow({ container }) {
+  disposeTopbar?.();
+  const cleanups = [];
+  disposeTopbar = () => cleanups.forEach(cleanup => cleanup());
   // Canvas-size badge updater (kept simple — it lives in the topbar).
   const sizeLabel = document.getElementById('ge-canvas-size');
   function updateSizeLabel() {
-    if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
+    if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight} px`;
   }
   updateSizeLabel();
 
@@ -30,6 +35,51 @@ export function wireTopbarOverflow({ container }) {
     container.querySelector('#ge-ai-model'),
     ...container.querySelectorAll('.ge-topbar span[style*="font-size:9px"]'),
   ].filter(Boolean);
+
+  // Native popovers keep the existing DOM/event ownership while escaping
+  // the toolbar's horizontal scroll clip and the editor's stacking context.
+  topbar?.querySelectorAll('.dropdown[hidden]').forEach(menu => {
+    if (!menu.showPopover) return;
+    const anchor = menu.parentElement.querySelector('button');
+    if (!anchor) return;
+    menu.setAttribute('popover', 'manual');
+    const position = () => {
+      const rect = anchor.getBoundingClientRect();
+      menu.style.top = `${rect.bottom + 4}px`;
+      // Anchor the menu's LEFT edge under the button's left edge
+      // (Photoshop behaviour), then clamp so the whole menu stays inside
+      // the viewport — a right-hand menu would otherwise overflow on the
+      // right, and a left-hand button (e.g. SELECT at 390px) would push
+      // a ~224px menu past the left edge.
+      const margin = 8;
+      const width = menu.getBoundingClientRect().width || menu.offsetWidth || 0;
+      let left = rect.left;
+      if (left + width > window.innerWidth - margin) {
+        left = window.innerWidth - margin - width;
+      }
+      if (left < margin) left = margin;
+      menu.style.left = `${left}px`;
+      menu.style.right = 'auto';
+    };
+    const sync = () => {
+      if (menu.hidden) {
+        if (menu.matches(':popover-open')) menu.hidePopover();
+      } else if (menu.isConnected) {
+        position();
+        if (!menu.matches(':popover-open')) menu.showPopover();
+      }
+    };
+    const observer = new MutationObserver(sync);
+    observer.observe(menu, { attributes: true, attributeFilter: ['hidden'] });
+    topbar.addEventListener('scroll', position, { passive: true });
+    window.addEventListener('resize', position);
+    cleanups.push(() => {
+      observer.disconnect();
+      topbar.removeEventListener('scroll', position);
+      window.removeEventListener('resize', position);
+      if (menu.matches(':popover-open')) menu.hidePopover();
+    });
+  });
 
   function syncOverflow() {
     if (!topbar) return;
@@ -43,6 +93,7 @@ export function wireTopbarOverflow({ container }) {
   if (topbar && window.ResizeObserver) {
     const ro = new ResizeObserver(() => syncOverflow());
     ro.observe(topbar);
+    cleanups.push(() => ro.disconnect());
   }
   // Initial pass after layout settles.
   requestAnimationFrame(syncOverflow);

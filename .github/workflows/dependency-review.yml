@@ -30,7 +30,10 @@ jobs:
   dependency-review:
     name: dependency-review (PR gate)
     # Only meaningful on a pull request -- it needs a base..head diff to review.
-    if: github.event_name == 'pull_request'
+    # dependency-review-action requires GitHub dependency-review support.
+    # Keep the blocking gate on the canonical repository; forks and maintainer
+    # preview mirrors still run the advisory pip-audit job below.
+    if: github.event_name == 'pull_request' && github.repository == 'odysseus-dev/odysseus'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,5 +70,9 @@ jobs:
       - name: Run pip-audit on requirements
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates
+          python scripts/check_ca_trust.py --system
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
           pip install pip-audit==2.10.0
           pip-audit -r requirements.txt -r requirements-optional.txt --strict

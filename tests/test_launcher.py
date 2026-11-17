@@ -1,10 +1,20 @@
 # tests/test_launcher.py
 import sys
 import os
+from pathlib import Path
 from unittest import mock
 import pytest
 
 from launcher import NullWriter, create_tray_image, on_open_browser, on_exit, open_browser
+
+
+def test_frozen_multiprocessing_bootstrap_precedes_gui_and_app_imports():
+    source = Path("launcher.py").read_text(encoding="utf-8")
+
+    freeze = source.index("multiprocessing.freeze_support()")
+    splash = source.index("if getattr(sys, 'frozen', False):")
+    app_import = source.index("from app import app")
+    assert freeze < splash < app_import
 
 
 def test_null_writer():

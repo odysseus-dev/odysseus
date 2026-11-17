@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <rect width="640" height="480" fill="#ffffff"/>
+  <text x="320" y="90" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="52" font-weight="bold" fill="#111111">ODYSSEUS 42</text>
+  <circle cx="190" cy="285" r="90" fill="#e53935"/>
+  <rect x="370" y="195" width="180" height="180" fill="#1e5bd7"/>
+</svg>

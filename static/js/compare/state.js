@@ -14,6 +14,7 @@ const state = {
                                    // (sequential mode otherwise always picks pane 1)
   _selectedModels: [],             // [{model, endpoint, endpointId, name}, ...]
   _paneSessionIds: [],             // session IDs for each pane
+  _paneGenerationSettings: [],     // per-pane thinking / temperature / token overrides
   _paneMetrics: [],                // metrics per pane from last round
   _abortControllers: [],           // per-pane abort controllers
   _sidebarWasHidden: false,
@@ -33,6 +34,7 @@ const state = {
   _fetchModelsCacheTime: 0,
   _expectedAnswer: '',             // when an eval prompt with `answer` is picked,
                                    // stream.js reads this and stamps ✓/✗ per pane
+  _activeMobilePane: 0,            // visible pane in the phone tab/card layout
 };
 
 /** Reset transient state to defaults — useful for clean restarts. */
@@ -44,10 +46,12 @@ export function reset() {
   state._abortControllers.forEach(c => { if (c) c.abort(); });
   state._abortControllers = [];
   state._paneSessionIds = [];
+  state._paneGenerationSettings = [];
   state._paneMetrics = [];
   state._compareElements = [];
   state._hasVisibleResults = false;
   state._lastPrompt = '';
+  state._activeMobilePane = 0;
   state._cachedModels = [];
   state._probed = new Set();
   state._cachedProviders = null;

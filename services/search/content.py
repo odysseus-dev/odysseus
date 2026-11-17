@@ -8,6 +8,7 @@ import re
 import logging
 from datetime import datetime, timedelta
 from typing import List
+from urllib.parse import urljoin, urlsplit, quote
 
 import httpx
 from bs4 import BeautifulSoup
@@ -65,6 +66,49 @@ try:
 except ImportError:
     pdf_extract_text = None  # type: ignore
 
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None  # type: ignore
+
+
+def _extract_pdf_text(pdf_bytes: bytes, url: str = "") -> str:
+    """Extract PDF text with available permissive dependencies."""
+    # Prefer pypdf's layout mode. Plain text extraction and pdfminer often
+    # collapse table columns into an ambiguous number stream, which makes a
+    # correct source passage easy for the model to misread.
+    if PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            pages: List[str] = []
+            for idx, page in enumerate(reader.pages):
+                try:
+                    try:
+                        page_text = page.extract_text(extraction_mode="layout") or ""
+                    except TypeError:
+                        page_text = page.extract_text() or ""
+                except Exception as e:
+                    logger.warning(f"pypdf extraction failed for {url} page {idx + 1}: {e}")
+                    page_text = ""
+                if page_text.strip():
+                    pages.append(f"[Page {idx + 1}]\n{page_text.strip()}")
+            if pages:
+                return "\n\n".join(pages)
+        except Exception as e:
+            logger.warning(f"pypdf extraction failed for {url}: {e}")
+
+    if pdf_extract_text is not None:
+        try:
+            text = pdf_extract_text(io.BytesIO(pdf_bytes)) or ""
+            if text.strip():
+                return text
+        except Exception as e:
+            logger.warning(f"pdfminer extraction failed for {url}: {e}")
+
+    if PdfReader is None and pdf_extract_text is None:
+        logger.error("No PDF text extractor installed; install pdfminer.six or pypdf.")
+    return ""
+
 
 # ----------------------------------------------------------------------
 # HTML extraction helpers
@@ -102,6 +146,69 @@ def _extract_og_image(soup: BeautifulSoup) -> str:
         if url.startswith(("https://", "http://")) and not url.endswith((".svg", ".ico")):
             return url
     return ""
+
+
+def _linked_text(area, base_url: str) -> str:
+    """Preserve observed anchor destinations and block order without fetching links."""
+    area = copy.copy(area)
+    for anchor in area.find_all('a', href=True):
+        label = ' '.join(anchor.get_text(' ', strip=True).split())
+        href = str(anchor.get('href') or '').strip()
+        if not label or not href or href.startswith('#'):
+            continue
+        target = urljoin(base_url, href)
+        try:
+            parsed = urlsplit(target)
+            if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
+                continue
+        except ValueError:
+            continue
+        label = re.sub(r'([\\\[\]])', r'\\\1', label)
+        target = quote(target, safe=":/?#[]@!$&'()*+,;=%~_-.")
+        anchor.replace_with(f'[{label}](<{target}>)')
+    for block in area.find_all(['p', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'article', 'br']):
+        block.insert_before('\n')
+        block.insert_after('\n')
+    return '\n'.join(' '.join(line.split()) for line in area.get_text(' ', strip=False).splitlines() if line.strip())
+
+
+def _page_entries(areas, base_url: str) -> list[dict]:
+    """Recognize repeated listing structures, retaining DOM order, not popularity."""
+    entries = []
+    seen = set()
+    for area in areas:
+        nodes = ([area] if area.name == 'article' else []) + area.find_all(['li', 'article', 'tr'])
+        for node in nodes:
+            anchor = None
+            if node.name == 'tr':
+                cells = node.find_all(['td', 'th'], recursive=False)
+                if cells and re.fullmatch(r'\d+[.)]?', cells[0].get_text(strip=True)):
+                    anchor = next((a for a in node.find_all('a', href=True)
+                                   if a.get_text(strip=True)), None)
+            elif node.name == 'article':
+                heading = node.find(['h1', 'h2', 'h3', 'h4'])
+                anchor = heading.find('a', href=True) if heading else None
+            elif node.parent and node.parent.name == 'ol':
+                anchor = node.find('a', href=True)
+            if not anchor:
+                continue
+            title = ' '.join(anchor.get_text(' ', strip=True).split())
+            href = str(anchor.get('href') or '').strip()
+            if not title or not href or href.startswith('#'):
+                continue
+            url = urljoin(base_url, href)
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
+                    continue
+            except ValueError:
+                continue
+            if (title, url) not in seen:
+                seen.add((title, url))
+                entries.append({'title': title, 'url': url})
+            if len(entries) == 100:
+                return entries
+    return entries if len(entries) >= 2 else []
 
 
 def _extract_lists(soup: BeautifulSoup) -> List[List[str]]:
@@ -190,7 +297,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     effective_cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
     # The cap is part of the cache identity: a truncated soft-cap fetch must
     # not be served to a later full-budget request for the same URL.
-    cache_key = generate_cache_key(f"{url}#cap={effective_cap}")
+    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-links-v7")
     cache_file = CONTENT_CACHE_DIR / f"{cache_key}.cache"
 
     # Check cache
@@ -216,9 +323,6 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             "User-Agent": WEB_FETCH_USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            # identity so the streamed size cap in _get_public_url stays honest
-            # (a compressed body can decode to far more than Content-Length).
-            "Accept-Encoding": "identity",
             "Connection": "keep-alive",
         }
         response = _get_public_url(url, headers=headers, timeout=timeout,
@@ -252,26 +356,43 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # PDF handling
     content_type = response.headers.get("Content-Type", "").lower()
     if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+        if (
+            _size_fields["truncated"]
+            and effective_cap < WEB_FETCH_HARD_MAX_BYTES
+            and (
+                _size_fields["total_bytes"] is None
+                or _size_fields["total_bytes"] <= WEB_FETCH_HARD_MAX_BYTES
+            )
+        ):
+            try:
+                response = _get_public_url(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    max_bytes=WEB_FETCH_HARD_MAX_BYTES,
+                )
+                _size_fields = {
+                    "truncated": getattr(response, "truncated", False),
+                    "fetched_bytes": len(response.content),
+                    "total_bytes": getattr(response, "declared_bytes", None),
+                }
+                effective_cap = WEB_FETCH_HARD_MAX_BYTES
+            except BodyTooLargeError as e:
+                error_logger.warning(f"Refused oversized PDF body for {url}: {e}")
+                return _empty_result(url, f"TooLarge: {e}")
+            except Exception as e:
+                logger.warning(f"Full-budget PDF retry failed for {url}: {e}")
         if _size_fields["truncated"]:
             # A PDF cut mid-stream is not parseable; unlike text there is no
             # useful partial result, so report the budget problem instead.
             _declared = _size_fields["total_bytes"]
-            return _empty_result(
-                url,
-                f"TooLarge: PDF exceeds the {effective_cap:,}-byte fetch budget"
-                + (f" (size {_declared:,} bytes)" if _declared else "")
-                + "; retry with a larger budget if it fits under the hard cap",
+            error = (
+                f"TooLarge: PDF decoded body exceeded the {effective_cap:,}-byte fetch budget"
+                + (f" (declared compressed size {_declared:,} bytes)" if _declared else "")
+                + "; retry with a larger budget if it fits under the hard cap"
             )
-        if pdf_extract_text is None:
-            logger.error("pdfminer.six is not installed; cannot extract PDF text.")
-            pdf_text = ""
-        else:
-            try:
-                pdf_bytes = io.BytesIO(response.content)
-                pdf_text = pdf_extract_text(pdf_bytes)
-            except Exception as e:
-                logger.warning(f"PDF extraction failed for {url}: {e}")
-                pdf_text = ""
+            return {**_empty_result(url, error), **_size_fields}
+        pdf_text = _extract_pdf_text(response.content, url)
         result = {
             "url": url,
             "title": os.path.basename(url),
@@ -301,11 +422,19 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # catches servers that mislabel text files as `application/octet-stream`.
     is_html = "html" in content_type
     is_json = "json" in content_type
+    # Atom and XML are common public API formats (for example scholarly,
+    # release, and government feeds). Parsing them through the HTML content
+    # heuristic can yield an empty body even though the response contains
+    # complete structured evidence. Preserve the source text so the caller
+    # can inspect the fields or process it with workspace tools.
+    is_xml = "xml" in content_type
     url_path = url.lower().split("?", 1)[0].split("#", 1)[0]
     looks_like_text_file = url_path.endswith(
         (".md", ".markdown", ".txt", ".text", ".json", ".jsonl")
     )
-    if not is_html and (content_type.startswith("text/") or is_json or looks_like_text_file):
+    if not is_html and (
+        content_type.startswith("text/") or is_json or is_xml or looks_like_text_file
+    ):
         text_body = (response.text or "").strip()
         result = {
             "url": url,
@@ -337,28 +466,53 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     title_tag = soup.find("title")
     title_text = title_tag.get_text(strip=True) if title_tag else ""
     meta_info = _extract_meta(soup)
+    link_base = str(getattr(response, 'url', None) or url)
+    base_tag = soup.find('base', href=True)
+    if base_tag:
+        candidate_base = urljoin(link_base, str(base_tag['href']))
+        if candidate_base.startswith(('https://', 'http://')):
+            link_base = candidate_base
     og_image = _extract_og_image(soup)
     js_rendered = _detect_js_frameworks(soup)
     js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
 
-    # Main textual content (heuristic): prefer semantic / "content"-classed
-    # containers to skip nav/footer/boilerplate; tuned for article pages.
+    # Prefer semantic containers even without CSS classes. Work on a copy so
+    # lists/tables and metadata extraction below still see the original DOM.
+    text_soup = copy.copy(soup)
+    for noise in text_soup.select('script, style, noscript, template, nav, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"]'):
+        noise.extract()
     main_content = ""
-    content_areas = soup.find_all(
-        ["main", "article", "section", "div"],
-        class_=re.compile("content|main|body|article|post|entry|text", re.I),
-    )
+    semantic_main = text_soup.find('main') or text_soup.find(attrs={'role': 'main'})
+    articles = semantic_main.find_all('article') if semantic_main else text_soup.find_all('article')
+    # A single substantive article is a more precise content boundary than
+    # main, which commonly also contains tags, related links and comment forms.
+    # Multiple article cards usually form a listing: keep its main context.
+    if semantic_main and len(articles) == 1 and len(articles[0].get_text(strip=True)) >= 200:
+        content_areas = articles
+    else:
+        content_areas = [semantic_main] if semantic_main else articles
+    if not content_areas:
+        content_areas = text_soup.find_all(
+            ["section", "div"],
+            class_=re.compile("content|main|body|article|post|entry|text", re.I),
+        )
+    # Ancestor and child matches contain the same text. Emit each subtree once,
+    # while retaining separate sibling articles/cards.
+    candidate_ids = {id(area) for area in content_areas}
+    content_areas = [area for area in content_areas
+                     if not any(id(parent) in candidate_ids for parent in area.parents)]
     if content_areas:
-        for area in content_areas[:3]:
+        for area in content_areas:
             main_content += area.get_text(separator=" ", strip=True) + " "
+    linked_areas = content_areas
     main_content = re.sub(r"\s+", " ", main_content).strip()
 
     # If the heuristic finds only a tiny wrapper, fall back to body text with
     # obvious boilerplate stripped so UI/deep-research search results do not
     # look empty for app/landing pages.
     THIN_CONTENT_CHARS = 600
-    if len(main_content) < THIN_CONTENT_CHARS:
-        body = soup.find("body")
+    if len(main_content) < THIN_CONTENT_CHARS and not semantic_main:
+        body = text_soup.find("body")
         if body:
             body_copy = copy.copy(body)
             for noise in body_copy.find_all(
@@ -368,11 +522,28 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             body_text = re.sub(r"\s+", " ", body_copy.get_text(separator=" ", strip=True)).strip()
             if len(body_text) > len(main_content):
                 main_content = body_text
+                linked_areas = [body_copy]
+
+    # HTTP 200 does not imply an article was retrieved. Classify only short
+    # interstitials with both a challenge title and corroborating body text;
+    # ordinary articles mentioning CAPTCHA must remain readable evidence.
+    challenge_title = title_text.strip().lower().rstrip('.!')
+    challenge_titles = {'client challenge', 'just a moment', 'security verification', 'verify you are human'}
+    if (challenge_title in challenge_titles and len(main_content) < 2000
+            and re.search(r"required part of this site|verify (?:that )?you are human|checking your browser|enable javascript|security verification|performing security", main_content, re.I)):
+        return {
+            **_empty_result(url, 'Page access challenge: article content was not retrieved. Try private_browser or another authoritative source; do not treat the challenge page as evidence.'),
+            'title': title_text,
+            'error_kind': 'access_challenge',
+            **_size_fields,
+        }
 
     result = {
         "url": url,
         "title": title_text,
         "content": main_content,
+        "linked_content": '\n'.join(_linked_text(area, link_base) for area in linked_areas),
+        "page_entries": _page_entries(linked_areas, link_base),
         "lists": _extract_lists(soup),
         "tables": _extract_tables(soup),
         "code_blocks": _extract_code_blocks(soup),

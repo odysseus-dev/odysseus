@@ -300,7 +300,7 @@ def stamp_annotations(
                     # baseline of a line box sits at fontsize × (lh + 0.6) / 2
                     # from the line-box top (half the leading above the glyph,
                     # half below, ascent ≈ 0.8 × fontsize).
-                    fontsize = 11.0
+                    fontsize = max(6.0, min(72.0, float(ann.get("font_size") or 11.0)))
                     # Stride between lines is tuned to match what the editor
                     # shows: the editor's textarea renders text larger than
                     # 11pt (cqh-based ≈ 1.5% of page-image height ≈ 17pt for
