@@ -48,7 +48,7 @@ def available_memory_bytes() -> int | None:
 def build_launch_plan(*, engine: str, executable: str, port: int, model_path: str = '',
                       context_length: int = 4096, gpu_layers: int = 0,
                       model_context_limit: int | None = None, kv_bytes_per_token: int | None = None,
-                      available_memory_bytes: int | None = None) -> dict:
+                      available_memory_bytes: int | None = None, gpu: dict | None = None) -> dict:
     if engine not in {'llamacpp', 'ollama'}:
         raise ValueError('Only standalone llama.cpp or Ollama can be managed; Python bindings are separate')
     exe = Path(executable).expanduser().resolve()
@@ -100,6 +100,27 @@ def build_launch_plan(*, engine: str, executable: str, port: int, model_path: st
                     raise ValueError('Insufficient memory for the requested KV cache')
                 if kv_bytes_per_token and kv_bytes_per_token >= derived_kv:
                     memory_validation = 'estimated'
+        if gpu_layers > 0:
+            from src import gpu_runtime
+            runtime = gpu_runtime.inspect_runtime(exe.parent, cuda_driver_major=(gpu or {}).get('cuda_driver_major', 0))
+            if runtime['build'] != 'cuda':
+                raise ValueError('GPU layers requested but this llama.cpp runtime is a CPU-only build')
+            if not runtime['cuda_ready']:
+                raise ValueError(runtime['detail'])
+            if not gpu or not gpu.get('available') or not gpu.get('free_bytes'):
+                raise ValueError('GPU layers requested but no usable NVIDIA GPU was detected')
+            if kv_estimate and (kv_estimate.get('layers') or 0) > 0:
+                gpu_plan = gpu_runtime.plan_gpu_offload(
+                    requested_layers=gpu_layers, model_bytes=source.stat().st_size,
+                    layers=kv_estimate['layers'], kv_bytes_per_token=derived_kv, context=context,
+                    free_vram=gpu['free_bytes'], total_vram=gpu['total_bytes'])
+                if gpu_plan['clamped']:
+                    warnings.append(f"GPU offload reduced to {gpu_plan['gpu_layers']} of {gpu_plan['model_layers']} "
+                                    "layers to leave VRAM headroom for Windows and compute buffers")
+                gpu_layers = gpu_plan['gpu_layers']
+                memory_validation = 'estimated'
+            else:
+                warnings.append('GPU layer count could not be checked against VRAM: model layer geometry unknown')
         if kv_estimate:
             kv_estimate['bytes_at_planned_context'] = context * derived_kv
             kv_estimate['used_for_memory_limit'] = bool(available_memory_bytes and gpu_layers == 0)

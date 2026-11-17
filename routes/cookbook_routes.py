@@ -4117,10 +4117,32 @@ def setup_cookbook_routes() -> APIRouter:
         _reject_cross_site(request)
 
     def serving_plan(req):
+        gpu = None
+        if req.gpu_layers > 0:
+            from src import gpu_runtime
+            gpu = gpu_runtime.probe_cuda_driver()
         return serving_control.build_launch_plan(
             **req.model_dump(exclude={"allow_unestimated_context"}),
             available_memory_bytes=serving_control.available_memory_bytes(),
+            gpu=gpu,
         )
+
+    @router.get("/api/cookbook/serving/gpu")
+    async def cookbook_serving_gpu(request: Request, verify: bool = False):
+        """GPU/CUDA detection and CPU-vs-CUDA verdict per installed llama.cpp runtime.
+
+        ``verify`` additionally runs ``llama-server --list-devices`` (no model load)
+        on the selected runtime to confirm the backend really sees the GPU.
+        """
+        require_admin(request)
+        from src import gpu_runtime, llama_runtime
+
+        def collect():
+            status = gpu_runtime.gpu_status(llama_runtime.llama_runtime_root())
+            if verify and status["selected_runtime"]:
+                status["verification"] = gpu_runtime.verify_runtime_devices(Path(status["selected_runtime"]))
+            return status
+        return await asyncio.to_thread(collect)
 
     @router.post("/api/cookbook/serving/plan")
     async def cookbook_serving_plan(request: Request, req: ServingLaunchRequest):

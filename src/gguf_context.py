@@ -84,7 +84,7 @@ def _dense_kv_estimate(values, architecture):
     if any(type(size) is not int or not 0 < size <= 1048576 for size in (key, value)):
         return None
     return {'source': 'gguf-dense-f16-assumption', 'architecture': architecture,
-            'bytes_per_token': 2 * layers * kv_heads * (key + value)}
+            'bytes_per_token': 2 * layers * kv_heads * (key + value), 'layers': layers}
 
 
 def planning_metadata(path: Path, *, max_bytes=8 * 1024 * 1024) -> dict:

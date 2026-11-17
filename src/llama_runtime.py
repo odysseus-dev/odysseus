@@ -157,7 +157,8 @@ def platform_llama_variants(*, is_windows: bool, is_wsl: bool, is_macos: bool,
     return variants
 
 
-def select_llama_asset(release: dict, variant_id: str, driver_version: str = "") -> dict | None:
+def select_llama_asset(release: dict, variant_id: str, driver_version: str = "",
+                       cuda_driver_major: int = 0) -> dict | None:
     """Pick the Windows x64 asset for ``variant_id`` from a GitHub release.
 
     Returns the asset dict (with a ``driver_warning`` when the chosen CUDA build
@@ -194,14 +195,14 @@ def select_llama_asset(release: dict, variant_id: str, driver_version: str = "")
                     "size": asset.get("size"),
                     "id": asset.get("id"),
                 }
-                warning = cuda_driver_warning(asset["name"], driver_version)
+                warning = cuda_driver_warning(asset["name"], driver_version, cuda_driver_major)
                 if warning:
                     selected["driver_warning"] = warning
                 return selected
     return None
 
 
-def cuda_driver_warning(asset_name: str, driver_version: str) -> str:
+def cuda_driver_warning(asset_name: str, driver_version: str, cuda_driver_major: int = 0) -> str:
     """Flag a CUDA build that needs a newer driver than the one detected.
 
     CUDA 13.x needs an NVIDIA driver newer than 580.x; CUDA 12.4 needs 550.96+.
@@ -212,6 +213,8 @@ def cuda_driver_warning(asset_name: str, driver_version: str) -> str:
     low = asset_name.lower()
     if "cuda-13" not in low and "cu13" not in low:
         return ""
+    if cuda_driver_major >= 13:
+        return ""  # the driver itself reports CUDA 13+ support
     if not driver_version:
         return ("This is a CUDA 13.x build. No NVIDIA driver version could be read, so "
                 "Cookbook cannot confirm it will run — update the driver first or choose CUDA 12.4.")
@@ -414,7 +417,7 @@ def nvidia_driver_version() -> str:
     return gpu.get("driver", "") if gpu.get("kind") == "nvidia" else ""
 
 
-def detect_gpu() -> dict:
+def _detect_gpu_basic() -> dict:
     """Detect the GPU and driver without depending on a working NVML.
 
     On this host `nvidia-smi` fails with "Failed to initialize NVML: Unknown
@@ -468,6 +471,31 @@ def detect_gpu() -> dict:
     except (OSError, subprocess.SubprocessError):
         pass
     return {"kind": "unknown", "name": "", "driver": "", "source": "none"}
+
+
+def detect_gpu() -> dict:
+    """GPU identity (nvidia-smi or WMI) enriched with the CUDA driver API.
+
+    The CUDA driver API works when NVML does not, and reports VRAM and the
+    supported CUDA version. WMI's 32.x driver string is translated to NVIDIA's
+    public number (32.0.16.2101 -> 621.01).
+    """
+    info = _detect_gpu_basic()
+    if info.get("kind") != "nvidia":
+        return info
+    from src import gpu_runtime
+
+    if info.get("source") == "wmi":
+        info["wmi_driver"] = info.get("driver", "")
+        info["driver"] = gpu_runtime.nvidia_driver_from_wmi(info["driver"]) or info["driver"]
+    cuda = gpu_runtime.probe_cuda_driver()
+    if cuda.get("available"):
+        info.update({k: cuda[k] for k in ("cuda_driver_version", "cuda_driver_major", "compute_capability",
+                                           "total_bytes", "free_bytes")})
+        info["name"] = cuda["name"] or info["name"]
+    else:
+        info["cuda_error"] = cuda.get("error", "")
+    return info
 
 
 def is_wsl_host() -> bool:

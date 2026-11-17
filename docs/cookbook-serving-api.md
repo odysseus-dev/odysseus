@@ -220,3 +220,17 @@ The three focused files `test_model_serving_status.py`, `test_model_serving_cont
 An additional route regression for replacement spawn failure passed separately after that group: HTTP 409 accurately reported the old process stopped and the replacement failure. No source changes were needed for that extra assertion.
 
 The accepted corrective browser sequence is reused, not repeated. No model, runtime or package was downloaded; no actual llama.cpp/Ollama model was loaded. Still unverified/deferred: real CPU/GPU inference with approval, native-chat UI integration, runtime-validated KV/VRAM fit and MLA/hybrid layouts, attribution outside the exact direct-controller Windows IPv4 case above, arbitrary external-instance selection, automatic recovery/restart policy, and a continuous background supervisor. Status provides bounded on-demand health observation; it does not silently add a polling service.
+
+## GPU/CUDA detection and VRAM-safe offload
+
+`GET /api/cookbook/serving/gpu[?verify=true]` (admin) reports the NVIDIA GPU from the
+CUDA driver API (works when NVML fails), CUDA driver major, VRAM total/free, and a
+CPU/CUDA verdict per installed llama.cpp runtime (`cuda_ready`, `missing_libs`).
+A runtime whose `ggml-cuda.dll` lacks its `cudart/cublas` libraries, or needs a newer
+CUDA than the driver supports, is `cuda_ready: false`. `verify=true` runs
+`llama-server --list-devices` (no model load) on the selected runtime.
+
+Plans with `gpu_layers > 0` take a fresh VRAM reading, refuse CPU-only or incomplete
+CUDA runtimes and missing GPUs, and clamp layers so that
+`max(1.25 GiB, 15% of VRAM)` stays free. The clamp is a dense-F16 estimate from GGUF
+geometry; unknown geometry is passed through with a warning.

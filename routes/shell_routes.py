@@ -1635,7 +1635,9 @@ def setup_shell_routes() -> APIRouter:
         except Exception as exc:
             raise HTTPException(502, f"Could not reach the llama.cpp releases API: {exc}")
         driver = llama_runtime.nvidia_driver_version()
-        asset = llama_runtime.select_llama_asset(release, variant, driver)
+        asset = llama_runtime.select_llama_asset(
+            release, variant, driver,
+            llama_runtime.detect_gpu().get("cuda_driver_major", 0))
         if asset is None:
             raise HTTPException(404, f"No Windows prebuilt asset for variant '{variant}' in {release.get('tag_name')}.")
         return {
