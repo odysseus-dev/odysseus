@@ -29,6 +29,7 @@ from .interaction_tools import AskUserTool, UpdatePlanTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .editor_tools import PlanEditTool, RunEditorCommandTool, GetEditorScreenshotTool, AiEditImageTool
 from .admin_tools import (
     ADMIN_TOOL_HANDLERS,
     do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
@@ -72,6 +73,10 @@ TOOL_HANDLERS = {
     "list_sessions": ListSessionsTool().execute,
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
+    "plan_edit": PlanEditTool().execute,
+    "run_editor_command": RunEditorCommandTool().execute,
+    "get_editor_screenshot": GetEditorScreenshotTool().execute,
+    "ai_edit_image": AiEditImageTool().execute,
 }
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)

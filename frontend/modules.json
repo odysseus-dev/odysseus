@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "source": "shared/actionMenuOrder.js",
+      "deployment": "js/actionMenuOrder.js"
+    },
+    {
+      "source": "features/notes/domain/recurrence.js",
+      "deployment": "js/features/notes/domain/recurrence.js"
+    },
+    {
+      "source": "features/notes/infrastructure/http.js",
+      "deployment": "js/features/notes/infrastructure/http.js"
+    },
+    {
+      "source": "features/notes/infrastructure/storage.js",
+      "deployment": "js/features/notes/infrastructure/storage.js"
+    },
+    {
+      "source": "features/notes/application/state.js",
+      "deployment": "js/features/notes/application/state.js"
+    },
+    {
+      "source": "features/notes/application/workflows.js",
+      "deployment": "js/features/notes/application/workflows.js"
+    },
+    {
+      "source": "features/notes/application/reminders.js",
+      "deployment": "js/features/notes/application/reminders.js"
+    },
+    {
+      "source": "features/notes/infrastructure/notifications.js",
+      "deployment": "js/features/notes/infrastructure/notifications.js"
+    },
+    {
+      "source": "features/notes/ui/text.js",
+      "deployment": "js/features/notes/ui/text.js"
+    },
+    {
+      "source": "features/notes/ui/colors.js",
+      "deployment": "js/features/notes/ui/colors.js"
+    },
+    {
+      "source": "features/notes/ui/panel.js",
+      "deployment": "js/features/notes/ui/panel.js"
+    },
+    {
+      "source": "features/notes/ui/reminderDisplay.js",
+      "deployment": "js/features/notes/ui/reminderDisplay.js"
+    },
+    {
+      "source": "features/notes/ui/selection.js",
+      "deployment": "js/features/notes/ui/selection.js"
+    },
+    {
+      "source": "features/notes/ui/filters.js",
+      "deployment": "js/features/notes/ui/filters.js"
+    },
+    {
+      "source": "features/notes/ui/cardRendering.js",
+      "deployment": "js/features/notes/ui/cardRendering.js"
+    },
+    {
+      "source": "features/notes/ui/layout.js",
+      "deployment": "js/features/notes/ui/layout.js"
+    },
+    {
+      "source": "features/notes/ui/quickAdd.js",
+      "deployment": "js/features/notes/ui/quickAdd.js"
+    },
+    {
+      "source": "features/notes/ui/cardInteractions.js",
+      "deployment": "js/features/notes/ui/cardInteractions.js"
+    },
+    {
+      "source": "features/notes/ui/cardChecklist.js",
+      "deployment": "js/features/notes/ui/cardChecklist.js"
+    },
+    {
+      "source": "features/notes/ui/cardReorder.js",
+      "deployment": "js/features/notes/ui/cardReorder.js"
+    },
+    {
+      "source": "features/notes/ui/draftEditor.js",
+      "deployment": "js/features/notes/ui/draftEditor.js"
+    },
+    {
+      "source": "features/notes/ui/editor.js",
+      "deployment": "js/features/notes/ui/editor.js"
+    },
+    {
+      "source": "features/notes/ui/reminderPicker.js",
+      "deployment": "js/features/notes/ui/reminderPicker.js"
+    },
+    {
+      "source": "features/notes/ui/checklist.js",
+      "deployment": "js/features/notes/ui/checklist.js"
+    },
+    {
+      "source": "features/notes/ui/drawing.js",
+      "deployment": "js/features/notes/ui/drawing.js"
+    },
+    {
+      "source": "features/notes/ui/clipboard.js",
+      "deployment": "js/features/notes/ui/clipboard.js"
+    },
+    {
+      "source": "features/notes/ui/mobileEditor.js",
+      "deployment": "js/features/notes/ui/mobileEditor.js"
+    },
+    {
+      "source": "features/notes/ui/mobileReorder.js",
+      "deployment": "js/features/notes/ui/mobileReorder.js"
+    },
+    {
+      "source": "features/notes/ui/checklistReorder.js",
+      "deployment": "js/features/notes/ui/checklistReorder.js"
+    },
+    {
+      "source": "features/notes/application/queries.js",
+      "deployment": "js/features/notes/application/queries.js"
+    },
+    {
+      "source": "features/notes/application/agentActions.js",
+      "deployment": "js/features/notes/application/agentActions.js"
+    },
+    {
+      "source": "features/notes/application/deletion.js",
+      "deployment": "js/features/notes/application/deletion.js"
+    },
+    {
+      "source": "features/notes/domain/noteRules.js",
+      "deployment": "js/features/notes/domain/noteRules.js"
+    },
+    {
+      "source": "features/notes/index.js",
+      "deployment": "js/features/notes/index.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/ui.js?v=20260916largetoolscroll1",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/modalManager.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/colorPicker.js?v=20260910eyedropper1",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/windowDrag.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/tileManager.js?v=20260910responsivebounds1",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/modalSnap.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/toolWindowZOrder.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/escMenuStack.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/tourHintDismiss.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        }
+      ]
+    },
+    {
+      "source": "features/notes/application/submission.js",
+      "deployment": "js/features/notes/application/submission.js"
+    },
+    {
+      "source": "features/notes/application/drafts.js",
+      "deployment": "js/features/notes/application/drafts.js"
+    },
+    {
+      "source": "features/notes/ui/lifecycle.js",
+      "deployment": "js/features/notes/ui/lifecycle.js"
+    },
+    {
+      "source": "features/notes/application/cardOperations.js",
+      "deployment": "js/features/notes/application/cardOperations.js"
+    },
+    {
+      "source": "features/notes/application/checklistOperations.js",
+      "deployment": "js/features/notes/application/checklistOperations.js"
+    },
+    {
+      "source": "features/notes/application/selection.js",
+      "deployment": "js/features/notes/application/selection.js"
+    },
+    {
+      "source": "features/notes/ui/toolbar.js",
+      "deployment": "js/features/notes/ui/toolbar.js"
+    },
+    {
+      "source": "features/notes/ui/windowLayout.js",
+      "deployment": "js/features/notes/ui/windowLayout.js"
+    },
+    {
+      "source": "shared/ui/confetti.js",
+      "deployment": "js/shared/ui/confetti.js"
+    }
+  ]
+}

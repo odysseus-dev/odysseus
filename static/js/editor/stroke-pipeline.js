@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { createBrushSampler, pressureValue } from './brush-engine.js';
 import { isLayerTransparencyLocked } from './layer-groups.js';
 
-const PAINT_TOOLS = new Set(['brush', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'inpaint']);
+const PAINT_TOOLS = new Set(['brush', 'pixel', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'inpaint']);
 
 function toolSettings(tool) {
   if (tool === 'eraser') return { opacity: state.eraserOpacity, flow: state.eraserFlow, softness: state.eraserSoftness };
@@ -12,15 +12,28 @@ function toolSettings(tool) {
   return { opacity: state.brushOpacity, flow: state.brushFlow, softness: state.brushSoftness };
 }
 
-function transparentColor(color) {
+let _lastColor = null;
+let _lastTransparentColor = null;
+function transparentColor(color, alpha = 0) {
+  const key = `${color}|${alpha}`;
+  if (key === _lastColor && _lastTransparentColor) return _lastTransparentColor;
+  _lastColor = key;
+  _lastTransparentColor = colorWithAlpha(color, alpha);
+  return _lastTransparentColor;
+}
+
+function colorWithAlpha(color, alpha) {
   if (color.startsWith('#')) {
     const raw = color.slice(1);
     const expanded = raw.length === 3 ? raw.split('').map(char => char + char).join('') : raw;
     const rgb = [0, 2, 4].map(index => parseInt(expanded.slice(index, index + 2), 16));
-    return `rgba(${rgb.join(',')},0)`;
+    return `rgba(${rgb.join(',')},${alpha})`;
   }
   const match = color.match(/rgba?\(([^)]+)\)/);
-  return match ? `rgba(${match[1].split(',').slice(0, 3).join(',')},0)` : 'rgba(0,0,0,0)';
+  if (!match) return `rgba(0,0,0,${alpha})`;
+  const components = match[1].split(',');
+  const originalAlpha = components.length > 3 ? Number(components[3]) : 1;
+  return `rgba(${components.slice(0, 3).join(',')},${alpha * originalAlpha})`;
 }
 
 function circleStamp(ctx, x, y, radius, softness, color, alpha, operation) {
@@ -32,8 +45,19 @@ function circleStamp(ctx, x, y, radius, softness, color, alpha, operation) {
     ctx.fillStyle = color;
   } else {
     const gradient = ctx.createRadialGradient(x, y, radius * hard, x, y, radius);
-    gradient.addColorStop(0, color);
-    gradient.addColorStop(1, transparentColor(color));
+    if (softness > 1) {
+      // Above the old maximum, remove the firm core with a progressively
+      // gentler alpha profile while keeping the selected brush diameter.
+      ctx.fillStyle = color;
+      const normalized = ctx.fillStyle;
+      for (let step = 0; step <= 16; step++) {
+        const t = step / 16;
+        gradient.addColorStop(t, transparentColor(normalized, (1 - t) ** softness));
+      }
+    } else {
+      gradient.addColorStop(0, color);
+      gradient.addColorStop(1, transparentColor(color));
+    }
     ctx.fillStyle = gradient;
   }
   ctx.beginPath();
@@ -42,10 +66,63 @@ function circleStamp(ctx, x, y, radius, softness, color, alpha, operation) {
   ctx.restore();
 }
 
+// Crisp pixel brush: a hard square fillRect snapped to a grid whose cell is
+// `size` px, so consecutive dabs land on the same lattice and connect cleanly.
+function pixelDab(ctx, x, y, size, operation, color) {
+  const s = Math.max(1, Math.round(size));
+  const gx = Math.floor(x / s) * s;
+  const gy = Math.floor(y / s) * s;
+  ctx.save();
+  ctx.globalCompositeOperation = operation;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.fillRect(gx, gy, s, s);
+  ctx.restore();
+}
+
+// Snap a drag vector to the nearest of 8 compass directions (0/45/90...)
+// so the pixel brush draws perfectly straight lines.
+function snapDirection(dx, dy) {
+  const step = Math.PI / 4;
+  const snapped = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: Math.cos(snapped), y: Math.sin(snapped) };
+}
+
+// Connect two sampled points by walking whole grid cells (cell = `size` px)
+// with a Bresenham line, so a fast drag fills every cell the line crosses and
+// leaves no gaps and no half-cells.
+function pixelLine(ctx, x0, y0, x1, y1, size, operation, color) {
+  const s = Math.max(1, Math.round(size));
+  let cx = Math.floor(Math.round(x0) / s);
+  let cy = Math.floor(Math.round(y0) / s);
+  const cx1 = Math.floor(Math.round(x1) / s);
+  const cy1 = Math.floor(Math.round(y1) / s);
+  const dx = Math.abs(cx1 - cx);
+  const dy = -Math.abs(cy1 - cy);
+  const sx = cx < cx1 ? 1 : -1;
+  const sy = cy < cy1 ? 1 : -1;
+  let err = dx + dy;
+  ctx.save();
+  ctx.globalCompositeOperation = operation;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  for (;;) {
+    ctx.fillRect(cx * s, cy * s, s, s);
+    if (cx === cx1 && cy === cy1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; cx += sx; }
+    if (e2 <= dx) { err += dx; cy += sy; }
+  }
+  ctx.restore();
+}
+
 export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composite }) {
   let strokeTool = null;
   let compositeFrame = null;
   let smudgeBuffer = null;
+  let pixelLast = null;
+  let pixelAnchor = null;
+  let pixelClickAnchor = null;
 
   // Pointer events can arrive much faster than the display refresh rate.
   // Stamps are applied synchronously, so only the visible document composite
@@ -215,6 +292,10 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
     if (!PAINT_TOOLS.has(tool)) return;
     const layer = activeLayer();
     if (!layer) return;
+    // Pixel writes invalidate adjusted previews even when adjustment settings
+    // themselves have not changed (otherwise retouch strokes appear late).
+    layer._adjFinalKey = null;
+    layer._adjCacheKey = null;
     if (tool === 'clone') return cloneStamp(sample, layer);
     if (tool === 'heal') {
       // A healing stroke without a picked source uses the convenient local
@@ -235,17 +316,62 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
     let operation = 'source-over';
     let color = state.color;
     let alpha = opacity * flow;
-    let softness = Math.max(0, Math.min(1, settings.softness / 300));
+    let softness = Math.max(0, Math.min(4, settings.softness / 300));
     if (tool === 'eraser') { operation = 'destination-out'; color = 'rgba(0,0,0,1)'; }
     else if (tool === 'inpaint') {
       operation = state.inpaintEraseStroke ? 'destination-out' : 'source-over';
       color = 'rgba(255,255,255,1)';
       alpha = 1;
       softness = 0;
-    } else if (tool === 'dodge') { operation = 'screen'; color = 'rgba(255,255,255,1)'; }
-    else if (tool === 'burn') { operation = 'multiply'; color = 'rgba(0,0,0,1)'; }
+    } else if (tool === 'dodge') {
+      // Lighten the pixels already there rather than stamping flat white.
+      // Intensity scales the per-dab strength so a stroke can be gentle or
+      // punchy; the cap keeps it building up gradually like Photoshop.
+      const intensity = Number.isFinite(state.dodgeBurnIntensity) ? state.dodgeBurnIntensity / 100 : 0.25;
+      operation = 'screen';
+      color = 'rgba(255,255,255,1)';
+      alpha = Math.max(0.004, Math.min(0.6, alpha * intensity * 0.5));
+    } else if (tool === 'burn') {
+      // Darken the pixels already there rather than stamping flat black.
+      const intensity = Number.isFinite(state.dodgeBurnIntensity) ? state.dodgeBurnIntensity / 100 : 0.25;
+      operation = 'multiply';
+      color = 'rgba(0,0,0,1)';
+      alpha = Math.max(0.004, Math.min(0.6, alpha * intensity * 0.5));
+    }
     else if (target.paintingMask) { color = 'rgba(255,255,255,1)'; alpha = 1; softness = 0; }
     else operation = isLayerTransparencyLocked(state, layer) ? 'source-atop' : state.brushBlendMode;
+    // The Pixel tool always stamps hard squares; the bundle flag makes a
+    // regular Brush/Eraser do the same when the (legacy) pixel preset is on.
+    if ((tool === 'pixel' || (state.brushPixel && (tool === 'brush' || tool === 'eraser'))) && !target.paintingMask) {
+      // Square pixel brush: hard integer-aligned dabs at the chosen size.
+      // Freehand by default; hold Shift to constrain the stroke to the
+      // nearest of 8 directions (a straight line anchored at the stroke
+      // start, or at the previous Shift+click point).
+      const pixelSize = Math.max(1, Math.round(diameter));
+      const px = sample.x - target.xOffset;
+      const py = sample.y - target.yOffset;
+      const op = tool === 'eraser' ? 'destination-out' : 'source-over';
+      if (sample.shift) {
+        if (!pixelAnchor) pixelAnchor = { x: px, y: py };
+        const ddx = px - pixelAnchor.x;
+        const ddy = py - pixelAnchor.y;
+        if (Math.hypot(ddx, ddy) < 2) {
+          pixelDab(target.ctx, px, py, pixelSize, op, color);
+          pixelLast = { x: px, y: py };
+          return;
+        }
+        const dir = snapDirection(ddx, ddy);
+        const len = ddx * dir.x + ddy * dir.y;
+        const end = { x: pixelAnchor.x + dir.x * len, y: pixelAnchor.y + dir.y * len };
+        pixelLine(target.ctx, pixelAnchor.x, pixelAnchor.y, end.x, end.y, pixelSize, op, color);
+        pixelLast = end;
+        return;
+      }
+      if (pixelLast) pixelLine(target.ctx, pixelLast.x, pixelLast.y, px, py, pixelSize, op, color);
+      else pixelDab(target.ctx, px, py, pixelSize, op, color);
+      pixelLast = { x: px, y: py };
+      return;
+    }
     circleStamp(target.ctx, sample.x - target.xOffset, sample.y - target.yOffset, radius, softness, color, alpha, operation);
   }
 
@@ -259,6 +385,8 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
   function beginStroke(sample, tool = state.tool) {
     strokeTool = tool;
     smudgeBuffer = null;
+    pixelLast = null;
+    pixelAnchor = (sample && sample.shift && pixelClickAnchor) ? { x: pixelClickAnchor.x, y: pixelClickAnchor.y } : null;
     sampler.begin(sample);
     state.lastX = sample.x;
     state.lastY = sample.y;
@@ -274,8 +402,11 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
 
   function endStroke(sample) {
     sampler.end(sample);
+    if (pixelLast) pixelClickAnchor = { x: pixelLast.x, y: pixelLast.y };
     strokeTool = null;
     smudgeBuffer = null;
+    pixelLast = null;
+    pixelAnchor = null;
     flushComposite();
   }
 

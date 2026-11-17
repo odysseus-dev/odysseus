@@ -163,11 +163,13 @@ function buildCategoryChips() {
   const container = document.getElementById('memory-category-filters');
   if (!container) return;
 
+  const cats = new Set(memories.map(m => m.category || 'fact'));
+  if (activeCategory !== 'all' && !cats.has(activeCategory)) activeCategory = 'all';
+
   // Hide the chip row entirely when there are no memories — no point showing
   // an "all" chip with nothing to filter.
   if (!memories.length) { container.innerHTML = ''; return; }
 
-  const cats = new Set(memories.map(m => m.category || 'fact'));
   const sorted = ['all', ...Array.from(cats).sort()];
   const counts = memories.reduce((result, memory) => {
     const category = memory.category || 'fact';
@@ -277,6 +279,7 @@ export function openMemoryModal(tabName = 'browse') {
       else if (m.default?.loadSkills) m.default.loadSkills(true);
     });
   }
+  if (mode === 'memory') return loadMemories();
 }
 
 function _decodeMemoryAnchorId(memoryId) {
@@ -297,9 +300,8 @@ function _resetMemoryDeepLinkFilters() {
 // Memory search output may expose a shortened id, so prefix matching is
 // intentional here.
 export async function openMemory(memoryId, attempt = 0) {
-  openMemoryModal('browse');
   _resetMemoryDeepLinkFilters();
-  await loadMemories();
+  await openMemoryModal('browse');
   if (renderMemoryList) renderMemoryList();
   const wanted = _decodeMemoryAnchorId(memoryId);
   if (!wanted) return;

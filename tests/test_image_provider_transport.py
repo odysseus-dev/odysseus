@@ -23,7 +23,7 @@ def test_native_generation_uses_configured_model_and_multiline_prompt(image_tran
         json.dumps({'prompt': prompt}), session_id='fixture', owner='alice'))
     assert 'error' not in result
     assert seen == [('openai/gpt-5-image', 'alice')]
-    assert json.loads(requests[0].content)['prompt'] == prompt
+    assert json.loads(requests[0].content)['messages'][0]['content'] == prompt
     assert result['image_id']
 
 
@@ -31,6 +31,38 @@ def test_native_generation_respects_admin_disable(monkeypatch):
     monkeypatch.setattr(settings, 'load_settings', lambda: {'image_gen_enabled': False})
     result = asyncio.run(ai_interaction.do_generate_image(json.dumps({'prompt': 'A city'})))
     assert 'disabled' in result['error']
+
+
+@pytest.mark.parametrize('editing', [False, True])
+def test_incognito_images_never_write_gallery_or_files(image_transport, editing):
+    configure, source, requests, rows = image_transport
+    configure('https://openrouter.ai/api/v1')
+    if editing:
+        result = asyncio.run(ai_interaction.do_edit_image(
+            'Private edit', str(source), model_spec='openai/gpt-5-image',
+            owner='alice', session_id='private-chat', incognito=True))
+    else:
+        result = asyncio.run(ai_interaction.do_generate_image(
+            'Private image\nopenai/gpt-5-image', owner='alice',
+            session_id='private-chat', incognito=True))
+    assert 'error' not in result
+    assert result['image_url'].startswith('data:image/png;base64,')
+    assert base64.b64decode(result['image_url'].split(',', 1)[1]) == source.read_bytes()
+    assert not result['image_id']
+    assert not rows
+    assert not (source.parent / 'generated').exists()
+
+
+def test_incognito_url_image_is_not_persisted(image_transport, monkeypatch):
+    configure, source, requests, rows = image_transport
+    configure('https://api.openai.com/v1', body={'data': [{'url': 'https://example.com/output.png'}]})
+    monkeypatch.setattr(httpx, 'get', lambda *args, **kwargs: httpx.Response(200, content=source.read_bytes()))
+    monkeypatch.setattr('src.url_safety.check_outbound_url', lambda *args, **kwargs: (True, ''))
+    result = asyncio.run(ai_interaction.do_generate_image(
+        'Private image\nopenai/gpt-5-image', owner='alice', incognito=True))
+    assert result['image_url'].startswith('data:image/png;base64,')
+    assert not rows
+    assert not (source.parent / 'generated').exists()
 
 
 @pytest.fixture
@@ -55,13 +87,17 @@ def image_transport(monkeypatch, tmp_path):
     original_client = httpx.AsyncClient
     requests = []
 
-    def configure(base, status=200, body=None):
+    def configure(base, status=200, body=None, model='openai/gpt-5-image'):
         monkeypatch.setattr(ai_interaction, '_resolve_model', lambda *args, **kwargs: (
-            base + '/chat/completions', 'openai/gpt-5-image', {'Authorization': 'Bearer test'},
+            base + '/chat/completions', model, {'Authorization': 'Bearer test'},
         ))
 
         def handle(request):
             requests.append(request)
+            if body is None and 'openrouter.ai' in base and request.url.path.endswith('/chat/completions'):
+                return httpx.Response(status, json={'choices': [{'message': {'images': [{
+                    'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(source.read_bytes()).decode()},
+                }]}}]})
             return httpx.Response(status, json=body if body is not None else {
                 'data': [{'b64_json': base64.b64encode(source.read_bytes()).decode()}],
             })
@@ -98,12 +134,13 @@ def test_image_provider_protocol(image_transport, editing, base):
     assert request.headers['authorization'] == 'Bearer test'
     if 'openrouter.ai' in base:
         assert len(requests) == 1  # No unsupported local progress/fallback probes.
-        assert str(request.url) == base + '/images'
+        assert str(request.url) == base + '/chat/completions'
         payload = json.loads(request.content)
-        assert payload['n'] == 1
+        assert payload['model'] == 'openai/gpt-5-image'
+        assert payload['modalities'] == ['image', 'text']
+        assert 'prompt' not in payload
         if editing:
-            assert payload['size'] == '1536x1024'
-            reference = payload['input_references'][0]['image_url']['url']
+            reference = payload['messages'][0]['content'][1]['image_url']['url']
             assert reference.startswith('data:image/png;base64,')
             assert base64.b64decode(reference.split(',', 1)[1]) == source.read_bytes()
             assert 'request_id' not in payload
@@ -149,13 +186,65 @@ def test_edit_dimensions_respect_exif_and_explicit_size(image_transport, explici
     exif = Image.Exif()
     exif[274] = 6
     Image.new('RGB', (120, 80)).save(source, exif=exif)
-    configure('https://openrouter.ai/api/v1')
+    configure('https://openrouter.ai/api/v1', model='openai/gpt-image-1')
     result = asyncio.run(ai_interaction.do_edit_image(
-        'Edit', str(source), model_spec='openai/gpt-5-image',
+        'Edit', str(source), model_spec='openai/gpt-image-1',
         size='1024x1024' if explicit else 'auto',
     ))
     assert 'error' not in result
-    assert json.loads(requests[0].content)['size'] == ('1024x1024' if explicit else '1024x1536')
+    assert json.loads(requests[0].content)['aspect_ratio'] == ('1:1' if explicit else '2:3')
+
+
+def test_native_openrouter_image_model_keeps_dedicated_image_api(image_transport):
+    configure, source, requests, rows = image_transport
+    configure('https://openrouter.ai/api/v1', model='openai/gpt-image-1')
+    result = asyncio.run(ai_interaction.do_generate_image('A cow\nopenai/gpt-image-1', incognito=True))
+    assert 'error' not in result
+    assert str(requests[0].url).endswith('/api/v1/images')
+    assert json.loads(requests[0].content)['model'] == 'openai/gpt-image-1'
+
+
+@pytest.mark.parametrize('editing', [False, True])
+def test_http_200_provider_deprecation_is_not_reported_as_empty_image(image_transport, editing):
+    configure, source, requests, rows = image_transport
+    configure('https://openrouter.ai/api/v1', body={'choices': [{
+        'finish_reason': 'error', 'message': {'content': None},
+        'error': {'code': 502, 'message': 'The model gpt-image-1 has been deprecated'},
+    }]})
+    if editing:
+        result = asyncio.run(ai_interaction.do_edit_image('Edit', str(source), model_spec='openai/gpt-5-image'))
+    else:
+        result = asyncio.run(ai_interaction.do_generate_image('A cow\nopenai/gpt-5-image'))
+    assert 'deprecated' in result['error']
+    assert 'openai/gpt-5-image' in result['error']
+    assert 'AI settings' in result['error']
+    assert len(requests) == 1
+    assert not rows
+
+
+def test_empty_image_response_identifies_the_selected_model(image_transport):
+    configure, source, requests, rows = image_transport
+    configure('https://openrouter.ai/api/v1', body={'choices': [{'message': {'content': 'No image.'}}]})
+    result = asyncio.run(ai_interaction.do_generate_image('A cow\nopenai/gpt-5-image'))
+    assert "'openai/gpt-5-image' returned no image" in result['error']
+    assert 'AI settings' in result['error']
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize('editing', [False,True])
+def test_openrouter_1280_by_720_requests_16_by_9_not_square(image_transport, editing):
+    configure, source, requests, rows = image_transport
+    Image.new('RGB',(1280,720),'red').save(source)
+    configure('https://openrouter.ai/api/v1',model='openai/gpt-image-2')
+    if editing:
+        result = asyncio.run(ai_interaction.do_edit_image('Change the sky',str(source),model_spec='openai/gpt-image-2',incognito=True))
+    else:
+        result = asyncio.run(ai_interaction.do_generate_image(json.dumps({
+            'prompt':'a landscape','model':'openai/gpt-image-2','size':'1280x720'}),incognito=True))
+    assert 'error' not in result
+    body = json.loads(requests[0].content)
+    assert body['aspect_ratio'] == '16:9'
+    assert 'size' not in body
 
 
 def test_unreadable_image_does_not_call_provider(image_transport):

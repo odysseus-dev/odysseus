@@ -48,8 +48,9 @@ import {
   defaultAdjParams,
 } from '../layer-helpers.js';
 import { drawHistogram } from './histogram.js';
+import { parseCubeLut, generateCubeLut } from './cube-lut.js';
 
-export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, getAdjustmentSource = null }) {
+export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, getAdjustmentSource = null, schedulePersist = null }) {
   function suppressLayerGhostTap() {
     window.__geSuppressLayerTapUntil = Date.now() + 650;
   }
@@ -152,6 +153,12 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       { type: 'color-balance',       label: 'Color Balance' },
       { type: 'selective-color',     label: 'Selective Color' },
       { type: 'gradient-map',        label: 'Gradient Map' },
+      { type: 'invert',              label: 'Invert' },
+      { type: 'posterize',           label: 'Posterize' },
+      { type: 'threshold',           label: 'Threshold' },
+      { type: 'photo-filter',        label: 'Photo Filter' },
+      { type: 'channel-mixer',       label: 'Channel Mixer' },
+      { type: 'color-lookup',        label: 'Color Lookup' },
     ];
     menu.innerHTML = items.map(i =>
       `<button class="ge-fx-menu-item" data-fx-type="${i.type}"><span class="ge-fx-menu-icon">${ADJ_ICONS[i.type] || ''}</span><span>${i.label}</span></button>`
@@ -332,7 +339,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       <span class="ge-adj-icon">${ADJ_ICONS[type] || ''}</span>
       <span class="ge-adj-title">${adjLayerLabel(type)}</span>
       <span class="ge-head-btns">
-        <button class="ge-adj-min" type="button" title="Minimise">&minus;</button>
+        <button class="ge-adj-close" type="button" title="Close" aria-label="Close">&times;</button>
       </span>
     </div>
     <label class="ge-adj-preset-field">Preset
@@ -382,7 +389,6 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
     }
 
     pop.querySelector('.ge-adj-close')?.addEventListener('click', closeAdjPopup);
-    pop.querySelector('.ge-adj-min')?.addEventListener('click', () => minimiseAdjPopup(pop));
     // Drag by head — anywhere except buttons. Mobile pins via !important
     // rules; setProperty with 'important' lets inline styles win during drag.
     const head = pop.querySelector('[data-adj-drag]');
@@ -505,6 +511,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       composite();
       renderLayerPanel();
       closeAdjPopup();
+      schedulePersist?.();
     });
   }
 
@@ -529,15 +536,22 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       if (!p.channels[channel]) p.channels[channel] = defaultAdjParams('levels').channels[channel];
       return p.channels[channel];
     };
+    // Params come from project files and drafts, which only validate the
+    // adjustment type; coerce anything interpolated into markup below.
+    const finite = value => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    const hexColor = (value, fallback) => (/^#[0-9a-f]{6}$/i.test(value) ? value : fallback);
     const revertIcon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-    const sliderRow = (key, label, min, max, value, suffix) => `
-      <div class="ge-adj-row" data-adj-key="${key}">
+    const sliderRow = (key, label, min, max, rawValue, suffix, defaultValue) => {
+      const value = finite(rawValue);
+      return `
+      <div class="ge-adj-row" data-adj-key="${key}"${defaultValue != null ? ` data-default="${defaultValue}"` : ''}>
         <label>${label}</label>
         <input type="range" min="${min}" max="${max}" value="${value}" data-key="${key}" />
         <span class="ge-adj-value">${value}${suffix || ''}</span>
         <button class="ge-adj-revert" type="button" title="Reset this slider" data-revert-key="${key}">${revertIcon}</button>
       </div>
     `;
+    };
     if (type === 'brightness-contrast') {
       const bSlider = Math.round((p.brightness - 1) * 100);
       const cSlider = Math.round((p.contrast - 1) * 100);
@@ -550,6 +564,25 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       ${sliderRow('exposure', 'Exposure', -500, 500, Math.round(p.exposure * 100), ' EV')}
       ${sliderRow('offset', 'Offset', -50, 50, Math.round(p.offset * 100), '')}
       ${sliderRow('gamma', 'Gamma', 10, 300, Math.round(p.gamma * 100), 'γ')}
+    `;
+    } else if (type === 'develop') {
+      body.innerHTML = `
+      <div class="ge-adj-develop">
+      <div class="ge-adj-group-label">Basic</div>
+      ${sliderRow('temperature', 'Temperature', -100, 100, Math.round(p.temperature || 0), '', 0)}
+      ${sliderRow('tint', 'Tint', -100, 100, Math.round(p.tint || 0), '', 0)}
+      ${sliderRow('exposure', 'Exposure', -500, 500, Math.round((p.exposure || 0) * 100), ' EV', 0)}
+      ${sliderRow('contrast', 'Contrast', -100, 100, Math.round(p.contrast || 0), '', 0)}
+      ${sliderRow('highlights', 'Highlights', -100, 100, Math.round(p.highlights || 0), '', 0)}
+      ${sliderRow('shadows', 'Shadows', -100, 100, Math.round(p.shadows || 0), '', 0)}
+      ${sliderRow('whites', 'Whites', -100, 100, Math.round(p.whites || 0), '', 0)}
+      ${sliderRow('blacks', 'Blacks', -100, 100, Math.round(p.blacks || 0), '', 0)}
+      <div class="ge-adj-group-label">Presence</div>
+      ${sliderRow('clarity', 'Clarity', -100, 100, Math.round(p.clarity || 0), '', 0)}
+      ${sliderRow('vibrance', 'Vibrance', -100, 100, Math.round(p.vibrance || 0), '', 0)}
+      ${sliderRow('saturation', 'Saturation', -100, 100, Math.round(p.saturation || 0), '', 0)}
+      <p class="ge-adj-help">Camera-Raw-style Basic panel: white balance, exposure and tone, then clarity, vibrance and saturation.</p>
+      </div>
     `;
     } else if (type === 'white-balance') {
       body.innerHTML = `
@@ -667,7 +700,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       });
     } else if (type === 'color-balance') {
       // Color-tinted slider ends so the user sees what direction does what.
-      const cbRow = (key, leftCol, rightCol, label, value) => `
+      const cbRow = (key, leftCol, rightCol, label, rawValue, value = finite(rawValue)) => `
       <div class="ge-adj-row ge-adj-cb-row" data-adj-key="${key}">
         <span class="ge-adj-cb-dot" style="background:${leftCol}"></span>
         <input type="range" min="-100" max="100" value="${value}" data-key="${key}" />
@@ -724,6 +757,9 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
         buildAdjBody(layer, type, body, popEl);
       });
     } else if (type === 'gradient-map') {
+      const gradientDefaults = defaultAdjParams('gradient-map');
+      p.shadows = hexColor(p.shadows, gradientDefaults.shadows);
+      p.highlights = hexColor(p.highlights, gradientDefaults.highlights);
       body.innerHTML = `
         <div class="ge-gradient-map-preview" style="--ge-gradient-start:${p.shadows};--ge-gradient-end:${p.highlights}"></div>
         <div class="ge-gradient-color-row">
@@ -745,6 +781,134 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       body.querySelector('[data-gradient-reverse]')?.addEventListener('change', event => {
         p.reverse = event.target.checked;
         scheduleAdjRefresh(layer);
+      });
+    } else if (type === 'invert') {
+      body.innerHTML = `
+      <p class="ge-adj-help">Inverts every color channel in the source layer.</p>
+    `;
+    } else if (type === 'posterize') {
+      body.innerHTML = `
+      ${sliderRow('levels', 'Levels', 2, 255, Math.round(p.levels ?? 4), '')}
+      <p class="ge-adj-help">Reduces each channel to a limited number of tonal steps.</p>
+    `;
+    } else if (type === 'threshold') {
+      body.innerHTML = `
+      ${sliderRow('level', 'Threshold', 0, 255, Math.round(p.level ?? 128), '')}
+      <p class="ge-adj-help">Pixels brighter than the threshold become white, the rest black.</p>
+    `;
+    } else if (type === 'photo-filter') {
+      body.innerHTML = `
+        <div class="ge-adj-row">
+          <label>Color</label>
+          <input type="color" data-photo-key="color" value="${hexColor(p.color, '#ec8a00')}">
+        </div>
+        ${sliderRow('density', 'Density', 0, 100, Math.round(p.density ?? 25), '%')}
+        <label class="ge-adj-toggle-row"><span>Preserve luminosity</span><input type="checkbox" data-photo-preserve${p.preserve_luminosity ? ' checked' : ''}><span class="ge-toggle-track"></span></label>
+      `;
+      body.querySelector('[data-photo-key="color"]')?.addEventListener('input', event => {
+        p.color = event.target.value;
+        scheduleAdjRefresh(layer);
+      });
+      body.querySelector('[data-photo-preserve]')?.addEventListener('change', event => {
+        p.preserve_luminosity = event.target.checked;
+        scheduleAdjRefresh(layer);
+      });
+    } else if (type === 'channel-mixer') {
+      const channels = ['red', 'green', 'blue'];
+      const ch = channels.includes(popEl._cmMixChannel) ? popEl._cmMixChannel : 'red';
+      popEl._cmMixChannel = ch;
+      if (!p[ch]) p[ch] = defaultAdjParams(type)[ch];
+      if (!p.constant) p.constant = defaultAdjParams(type).constant;
+      const values = p[ch];
+      body.innerHTML = `
+        <label class="ge-adj-channel-field">Output channel
+          <select class="ge-adj-cm-channel-select">
+            <option value="red"${ch === 'red' ? ' selected' : ''}>Red</option>
+            <option value="green"${ch === 'green' ? ' selected' : ''}>Green</option>
+            <option value="blue"${ch === 'blue' ? ' selected' : ''}>Blue</option>
+          </select>
+        </label>
+        ${sliderRow(`${ch}-r`, 'Red', -200, 200, Math.round(values.r ?? 0), '%')}
+        ${sliderRow(`${ch}-g`, 'Green', -200, 200, Math.round(values.g ?? 0), '%')}
+        ${sliderRow(`${ch}-b`, 'Blue', -200, 200, Math.round(values.b ?? 0), '%')}
+        ${sliderRow(`${ch}-c`, 'Constant', -100, 100, Math.round(p.constant[ch] ?? 0), '')}
+        <label class="ge-adj-toggle-row"><span>Monochrome</span><input type="checkbox" data-cm-monochrome${p.monochrome ? ' checked' : ''}><span class="ge-toggle-track"></span></label>
+        <p class="ge-adj-help">Mixes source channels into the selected output channel.</p>
+      `;
+      body.querySelector('.ge-adj-cm-channel-select')?.addEventListener('change', event => {
+        popEl._cmMixChannel = event.target.value;
+        body.innerHTML = '';
+        buildAdjBody(layer, type, body, popEl);
+      });
+      body.querySelector('[data-cm-monochrome]')?.addEventListener('change', event => {
+        p.monochrome = event.target.checked;
+        scheduleAdjRefresh(layer);
+      });
+    } else if (type === 'color-lookup') {
+      const presets = ['none', 'teal_orange', 'cold', 'warm', 'high_contrast', 'sepia'];
+      const presetLabels = { none: 'None', teal_orange: 'Teal & Orange', cold: 'Cold', warm: 'Warm', high_contrast: 'High Contrast', sepia: 'Sepia' };
+      const strength = p.strength == null ? 100 : p.strength;
+      const hasCube = !!(p.cube && p.cube.size && p.cube.data);
+      const lutName = hasCube ? `Loaded LUT · ${finite(p.cube.size)}³` : 'No .cube loaded';
+      body.innerHTML = `
+        <label class="ge-adj-channel-field">Lookup preset
+          <select class="ge-adj-lut-select">
+            ${presets.map(name => `<option value="${name}"${(p.preset || 'none') === name ? ' selected' : ''}>${presetLabels[name]}</option>`).join('')}
+          </select>
+        </label>
+        <div class="ge-adj-lut-actions">
+          <label class="ge-btn ge-btn-sm ge-adj-lut-load">Load .cube…
+            <input type="file" accept=".cube,text/plain" hidden />
+          </label>
+          <button type="button" class="ge-btn ge-btn-sm ge-adj-lut-export"${hasCube ? '' : ' disabled'}>Export .cube</button>
+        </div>
+        <div class="ge-adj-lut-name">${lutName}</div>
+        ${sliderRow('strength', 'Strength', 0, 100, strength, '%', 100)}
+        <p class="ge-adj-help">Import an Adobe .cube 3D LUT (or pick a built-in look). Strength blends the LUT with the original pixels.</p>
+      `;
+      body.querySelector('.ge-adj-lut-select')?.addEventListener('change', event => {
+        p.preset = event.target.value;
+        scheduleAdjRefresh(layer);
+      });
+      const fileInput = body.querySelector('.ge-adj-lut-load input[type="file"]');
+      fileInput?.addEventListener('change', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const lut = parseCubeLut(text);
+          p.cube = {
+            size: lut.size,
+            domainMin: Array.from(lut.domainMin),
+            domainMax: Array.from(lut.domainMax),
+            data: Array.from(lut.data),
+          };
+          if (p.strength == null) p.strength = 100;
+          const nameEl = body.querySelector('.ge-adj-lut-name');
+          if (nameEl) nameEl.textContent = `Loaded ${file.name} · ${lut.size}³`;
+          const exp = body.querySelector('.ge-adj-lut-export');
+          if (exp) exp.disabled = false;
+          scheduleAdjRefresh(layer);
+        } catch (err) {
+          const nameEl = body.querySelector('.ge-adj-lut-name');
+          if (nameEl) nameEl.textContent = 'Could not read .cube: ' + (err?.message || err);
+        }
+      });
+      body.querySelector('.ge-adj-lut-export')?.addEventListener('click', () => {
+        const cube = p.cube && p.cube.size ? p.cube : null;
+        if (!cube) return;
+        const text = generateCubeLut({
+          size: cube.size,
+          domainMin: cube.domainMin || [0, 0, 0],
+          domainMax: cube.domainMax || [1, 1, 1],
+          data: cube.data,
+        });
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'look.cube';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       });
     }
     // Wire all sliders.
@@ -769,7 +933,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
   function revertAdjKey(layer, type, key) {
     const defaults = defaultAdjParams(type);
     const p = layer._stagedAdj.params;
-    if (['brightness-contrast', 'exposure', 'white-balance', 'hue-saturation', 'vibrance', 'black-white', 'shadows-highlights', 'gradient-map'].includes(type)) {
+    if (['brightness-contrast', 'exposure', 'white-balance', 'hue-saturation', 'vibrance', 'black-white', 'shadows-highlights', 'gradient-map', 'posterize', 'threshold', 'photo-filter', 'color-lookup'].includes(type)) {
       p[key] = defaults[key];
     } else if (type === 'levels') {
       const channel = ['red', 'green', 'blue'].includes(p.channel) ? p.channel : 'rgb';
@@ -779,6 +943,10 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
     } else if (type === 'color-balance') {
       const [tone, ch] = key.split('-');
       p[tone][ch] = defaults[tone][ch];
+    } else if (type === 'channel-mixer') {
+      const [ch, comp] = key.split('-');
+      if (comp === 'c') p.constant[ch] = defaults.constant[ch];
+      else p[ch][comp] = defaults[ch][comp];
     } else if (type === 'selective-color') {
       p.ranges[p.range][key] = defaults.ranges[p.range][key];
     }
@@ -791,6 +959,10 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
     const raw = parseInt(sl.value, 10);
     const valEl = sl.parentElement.querySelector('.ge-adj-value');
     const p = layer._stagedAdj.params;
+    const row = sl.closest('.ge-adj-row');
+    if (row && row.hasAttribute('data-default')) {
+      row.classList.toggle('is-modified', Number(sl.value) !== Number(row.getAttribute('data-default')));
+    }
     let display = String(raw);
     if (type === 'brightness-contrast' || type === 'hue-saturation') {
       if (key === 'brightness' || key === 'contrast' || key === 'saturation') {
@@ -804,6 +976,11 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
       if (key === 'exposure') { p.exposure = raw / 100; display = (raw / 100).toFixed(2) + ' EV'; }
       else if (key === 'offset') { p.offset = raw / 100; display = (raw / 100).toFixed(2); }
       else if (key === 'gamma') { p.gamma = raw / 100; display = (raw / 100).toFixed(2) + 'γ'; }
+    } else if (type === 'develop') {
+      if (key === 'exposure') { p.exposure = raw / 100; display = (raw / 100).toFixed(2) + ' EV'; }
+      else { p[key] = raw; }
+    } else if (type === 'color-lookup') {
+      p.strength = raw; display = raw + '%';
     } else if (type === 'white-balance') {
       p[key] = raw;
     } else if (type === 'vibrance') {
@@ -828,6 +1005,18 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, g
     } else if (type === 'gradient-map') {
       p.midpoint = raw;
       display = raw + '%';
+    } else if (type === 'posterize') {
+      p.levels = raw;
+    } else if (type === 'threshold') {
+      p.level = raw;
+    } else if (type === 'photo-filter') {
+      p.density = raw;
+      display = raw + '%';
+    } else if (type === 'channel-mixer') {
+      const [ch, comp] = key.split('-');
+      if (comp === 'c') p.constant[ch] = raw;
+      else p[ch][comp] = raw;
+      display = raw + (comp === 'c' ? '' : '%');
     }
     if (valEl) valEl.textContent = display;
     scheduleAdjRefresh(layer);

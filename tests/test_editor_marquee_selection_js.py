@@ -233,13 +233,39 @@ def test_selection_transform_is_affine_and_keeps_source_immutable():
     assert ["drawImage", "source-over", "mask", 10, 20, 30, 24, -22.5, -18, 45, 36] in result["calls"]
 
 
+def test_selection_mask_offset_mapping_between_layer_and_document_space():
+    result = run_node(
+        """
+        const layerMask = canvas(681, 600, 'layer');
+        const doc = selectionMaskToDocument(layerMask, 'layer', {x:110, y:24}, 900, 600);
+        const docMask = canvas(900, 600, 'doc');
+        const back = selectionMaskForLayer(docMask, 'document', {x:110, y:24}, 681, 600);
+        const same = selectionMaskToDocument(canvas(900, 600, 'doc2'), 'document', {x:0, y:0}, 900, 600);
+        console.log(JSON.stringify({
+          docSize: [doc.width, doc.height],
+          docCalls: doc.calls,
+          backCalls: back.calls,
+          sameTag: same.tag,
+        }));
+        """
+    )
+
+    # A layer-space mask is painted into the document at the layer offset.
+    assert result["docSize"] == [900, 600]
+    assert ["drawImage", "source-over", "layer", 110, 24] in result["docCalls"]
+    # And a document-space mask is painted back into the layer at the negative offset.
+    assert ["drawImage", "source-over", "doc", -110, -24] in result["backCalls"]
+    # Identity when already document-space at the right size.
+    assert result["sameTag"] == "doc2"
+
+
 def test_marquee_is_wired_through_editor_and_offline_graph():
     editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     toolbar = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
     controls = (ROOT / "static/js/editor/build/controls.js").read_text(encoding="utf-8")
     service_worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
-    assert "{ id: 'marquee', label: 'Marquee'" in toolbar
+    assert "marquee: { label: 'Marquee'" in toolbar
     assert 'id="ge-marquee-section"' in controls
     assert "if (state.tool === 'marquee') return _marqueeTool.begin(e);" in editor
     assert "if (state.marqueeActive || state.selectionMoving) return _marqueeTool.drag(e);" in editor

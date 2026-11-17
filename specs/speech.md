@@ -1,6 +1,6 @@
 # Speech
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-15
 
 ## Scope
 
@@ -16,7 +16,7 @@ This spec covers speech behavior in:
 - settings routes in `routes/auth_routes.py`;
 - model endpoint cleanup in `routes/model_routes.py`;
 - settings/tool aliases in `src/tool_implementations.py`;
-- frontend modules `static/js/voiceRecorder.js`, `static/js/tts-ai.js`, `static/app.js`, `static/js/chat.js`, `static/js/slashCommands.js`, `static/js/keyboard-shortcuts.js`, `static/js/settings.js`, and `static/index.html`;
+- frontend modules `static/js/voiceRecorder.js`, `static/js/tts-ai.js`, `static/app.js`, `static/js/chat.js`, `static/js/slashCommands.js`, `static/js/keyboard-shortcuts.js`, `static/js/settings.js`, `static/js/settings/speech.js`, and `static/index.html`;
 - optional dependency declarations in `requirements-optional.txt`;
 - runtime cache path `data/tts_cache/`;
 - tests covering speech service toggles, TTS speed/cache, STT temp cleanup, upload limits, settings scrubbing, and model endpoint cleanup.
@@ -80,7 +80,7 @@ Route behavior:
 
 Speech providers are global settings under `data/settings.json`, with defaults in `src/settings.py`. Settings reads are scrubbed for non-admin callers, writes are admin-only, and `manage_settings` can change non-secret speech settings through aliases.
 
-Visible UI state is not complete: backend and JS speech settings exist, the TTS settings card is currently hidden, and the STT settings JS exits when its removed DOM nodes are absent.
+`static/js/settings/speech.js` owns TTS/STT settings initialization and provider selectors; the Settings coordinator imports those initializers. Visible UI state is not complete: backend and JS speech settings exist, the TTS settings card is currently hidden, and the STT settings JS exits when its removed DOM nodes are absent.
 
 `routes.model_routes` clears `tts_provider` and `stt_provider` references when a referenced model endpoint is deleted.
 

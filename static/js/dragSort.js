@@ -31,10 +31,15 @@ export function enable(containerId, itemSelector, options = {}) {
     onReorder: options.onReorder || null,
     handleSelector: options.handleSelector || null,
     excludeSelector: options.excludeSelector || null,
+    ignoreSelector: options.ignoreSelector || null,
+    // When > 0 the pointer must travel this many pixels before the drag
+    // starts, so rows that also handle plain clicks stay clickable.
+    threshold: Math.max(0, Number(options.threshold) || 0),
     storageKey: options.storageKey || null,
   };
 
   let draggedEl = null;
+  let pending = null;
   let placeholder = null;
   let offsetY = 0;
   let items = [];
@@ -130,6 +135,12 @@ export function enable(containerId, itemSelector, options = {}) {
     draggedEl.style.top = snapTop + 'px';
 
     setTimeout(() => {
+      // The list may have been re-rendered mid-drag (e.g. dropping a layer
+      // effect copies it and rebuilds the panel), detaching both nodes.
+      if (!placeholder.parentNode || !draggedEl.isConnected) {
+        placeholder.remove();
+        return;
+      }
       placeholder.parentNode.insertBefore(draggedEl, placeholder);
       placeholder.remove();
       draggedEl.classList.remove('dragging');
@@ -158,9 +169,20 @@ export function enable(containerId, itemSelector, options = {}) {
   function onMouseDown(e) {
     if (e.button !== 0) return;
     if (config.handleSelector && !e.target.closest(config.handleSelector)) return;
+    if (config.ignoreSelector && e.target.closest(config.ignoreSelector)) return;
     const item = e.target.closest(itemSelector);
     if (!item || !container.contains(item)) return;
     if (config.excludeSelector && item.matches(config.excludeSelector)) return;
+
+    if (config.threshold > 0) {
+      // Defer the lift until the pointer actually moves, so a plain click
+      // (select layer, open the rename field) is left untouched.
+      pending = { item, startY: e.clientY };
+      e.preventDefault();
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      return;
+    }
 
     e.preventDefault();
     e.stopPropagation();
@@ -169,11 +191,21 @@ export function enable(containerId, itemSelector, options = {}) {
     document.addEventListener('mouseup', onMouseUp);
   }
 
-  function onMouseMove(e) { moveDrag(e.clientY); }
+  function onMouseMove(e) {
+    if (pending) {
+      if (Math.abs(e.clientY - pending.startY) < config.threshold) return;
+      const { item, startY } = pending;
+      pending = null;
+      e.preventDefault();
+      startDrag(startY, item);
+    }
+    moveDrag(e.clientY);
+  }
 
   function onMouseUp() {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
+    pending = null;
     endDrag();
   }
 

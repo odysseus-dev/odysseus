@@ -22,6 +22,20 @@
 
 /* Session items */
 .session-item { position: relative; }
+
+/* Title fade: the server auto-renames a chat shortly after its first
+   prompt, which re-renders the sidebar. Fade the new title in so the
+   change reads as smooth rather than a snap. */
+.session-item .grow.session-title-updated {
+  animation: sessionTitleFade 0.5s ease;
+}
+@keyframes sessionTitleFade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-item .grow.session-title-updated { animation: none; }
+}
 .text-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-menu-btn { padding: 0 2px !important; min-width: 20px; height: 20px; display: inline-flex !important; align-items: center; justify-content: center; background: none !important; border-color: transparent !important; }
 .session-menu-btn:hover { background: none !important; border-color: transparent !important; }
@@ -410,8 +424,8 @@ button.hamburger {
 /* Agent indicator */
 #agent-indicator {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  top: calc(20px + var(--safe-top));
+  right: calc(20px + var(--safe-right));
   background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   border: 1px solid var(--border);
@@ -894,7 +908,7 @@ button.hamburger {
 /* Recording indicator */
 #recording-indicator {
   position: fixed;
-  top: 10px;
+  top: calc(10px + var(--safe-top));
   left: 0;
   right: 0;
   background: rgba(0, 0, 0, 0.8);

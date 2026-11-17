@@ -2,7 +2,8 @@
 import json
 import time
 import copy
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,7 @@ _DEPENDENCIES = {
     'web': {'web_search', 'web_fetch', 'private_browser'},
     'email': {'list_email_accounts', 'list_emails', 'search_emails', 'read_email',
               'download_attachment'},
-    'contacts': {'resolve_contact'},
+    'contacts': {'resolve_contact', 'manage_contact'},
     'documents': {'search_documents', 'read_document'},
 }
 _DRAFT_TOOLS = {'ask_user', 'update_plan', 'draft_email', 'draft_email_reply',
@@ -116,8 +117,9 @@ def parse_email_task_intent(value):
 
 def scope_email_tools(schemas, intent, *, active_editor=False):
     if intent.operation == 'read' and intent.dependencies:
-        allowed = set().union(*(_DEPENDENCIES[d] for d in intent.dependencies))
-        if active_editor:
+        allowed = {tool for dependency in intent.dependencies
+                   for tool in _DEPENDENCIES[dependency]}
+        if active_editor and intent.dependencies:
             allowed.update(_OPEN_EDITOR_TOOLS)
         if intent.needs_clarification:
             allowed.add('ask_user')
@@ -126,6 +128,9 @@ def scope_email_tools(schemas, intent, *, active_editor=False):
     if intent.operation not in {'draft', 'revise'}:
         return list(schemas)
     allowed = _DRAFT_TOOLS.union(*(_DEPENDENCIES[d] for d in intent.dependencies))
+    # manage_contact is a read-only runtime source for lookups, not a
+    # composition tool. Drafts still resolve recipients through resolve_contact.
+    allowed.discard('manage_contact')
     if active_editor:
         allowed.update(_OPEN_EDITOR_TOOLS)
     if not intent.needs_clarification:
@@ -145,6 +150,62 @@ def scope_email_tools(schemas, intent, *, active_editor=False):
 # as though it were the whole task. This byte budget is deliberately conservative.
 CLASSIFIER_CONTEXT_BYTES = 24000
 
+# The model can produce a structurally valid classification while forgetting
+# the source or mistaking a list of message headers for a request for bodies.
+_OWN_MAILBOX = re.compile(
+    r'\b(?:my|our)\s+(?:(?:last|latest|recent|new|unread|read|first|most|\d+)\s+){0,5}'
+    r'(?:e-?mails?|mail|inbox|mailbox)\b', re.IGNORECASE,
+)
+_MAILBOX_HEADER_LIST = re.compile(
+    r'^\s*(?:list|show|display|what(?:\'s| are))\s+(?:me\s+)?(?:my|our)\s+'
+    r'(?:(?:last|latest|recent|new|unread|read|first|most|\d+)\s+){0,5}'
+    r'(?:e-?mails|messages)\s*'
+    r'(?:with\s+(?:(?:sender|subject|date|time|recipient|status)\s*'
+    r'(?:(?:,|and)\s*)?)+)?[?.!]*\s*$', re.IGNORECASE,
+)
+_EMAIL_HEADER_FIELDS = re.compile(r'\b(?:subjects?|senders?|dates?)\b', re.IGNORECASE)
+_EMAIL_HEADER_FOLLOWUP = re.compile(r'\b(?:those|these|them|their|same)\b', re.IGNORECASE)
+_READ_REQUEST = re.compile(r'^\s*(?:please\s+)?(?:show|list|display|find|search|read|what|how many|are there|do i have)\b', re.IGNORECASE)
+_EMAIL_COUNT = re.compile(r'^\s*how many\s+(?:(?:unread|read|new)\s+)?(?:e-?mails|messages)\b',
+                          re.IGNORECASE)
+_EMAIL_BODY_QUERY = re.compile(
+    r'\b(?:mention(?:s|ed|ing)?|body|contents?|amount|owe|says?|said|when|where|why|'
+    r'starts?|deadline|attachments?)\b|\bhow much\b|\bwhat time\b',
+                               re.IGNORECASE)
+_CONTACT_EMAIL_FIELD = re.compile(
+    r'\bcontacts?\b[^.!?\n]{0,100}\bemail\b', re.IGNORECASE,
+)
+_MAILBOX_SOURCE = re.compile(
+    r'\b(?:my|our)\s+(?:(?:last|latest|recent|new|unread|read|first|most|\d+)\s+){0,5}'
+    r'(?:e-?mails?|inbox|mailbox)\b|\b(?:inbox|mailbox|email\s+history)\b|'
+    r'\b(?:e-?mails?|messages?)\s+(?:from|to|sent|received)\b|'
+    r'\bemailed?\s+(?:me|us)\b', re.IGNORECASE,
+)
+
+EMAIL_TASK_RESPONSE_FORMAT = {
+    'type': 'json_schema',
+    'json_schema': {
+        'name': 'email_task_intent',
+        'strict': True,
+        'schema': {
+            'type': 'object',
+            'additionalProperties': False,
+            'properties': {
+                'operation': {'type': 'string', 'enum': ['draft', 'revise', 'read', 'send', 'other']},
+                'requires_content': {'type': 'boolean'},
+                'dependencies': {'type': 'array', 'items': {
+                    'type': 'string', 'enum': list(_DEPENDENCIES),
+                }},
+                'destination': {'type': 'string', 'enum': ['chat', 'mailbox']},
+                'needs_clarification': {'type': 'boolean'},
+                'summary': {'type': 'string'},
+            },
+            'required': ['operation', 'requires_content', 'dependencies', 'destination',
+                         'needs_clarification', 'summary'],
+        },
+    },
+}
+
 
 async def classify_email_task(client, *, endpoint_url, headers, model, history,
                               supplied_context=None, accounting=None):
@@ -152,6 +213,8 @@ async def classify_email_task(client, *, endpoint_url, headers, model, history,
     # text from multimodal messages, so an attached image cannot hide the latest
     # instruction and leave us classifying an earlier task instead.
     dialogue = []
+    latest_user_text = ''
+    prior_user_text = ''
     for row in history:
         if row.get('role') not in {'user', 'assistant'} or row.get('_harness_control'):
             continue
@@ -166,6 +229,9 @@ async def classify_email_task(client, *, endpoint_url, headers, model, history,
                                 and isinstance(block.get('text'), str))
         if isinstance(content, str):
             dialogue.append({'role': row['role'], 'content': content})
+            if row['role'] == 'user':
+                prior_user_text = latest_user_text
+                latest_user_text = content
     payload = json.dumps({'dialogue': dialogue, 'supplied_context': supplied_context},
                          ensure_ascii=False)
     if len(payload.encode('utf-8')) > CLASSIFIER_CONTEXT_BYTES:
@@ -174,7 +240,7 @@ async def classify_email_task(client, *, endpoint_url, headers, model, history,
     response = await client.post(endpoint_url, headers=headers, timeout=20, json={
         'model': model, 'stream': False, 'temperature': 0, 'max_tokens': 500,
         'chat_template_kwargs': {'enable_thinking': False},
-        'response_format': {'type': 'json_object'},
+        'response_format': EMAIL_TASK_RESPONSE_FORMAT,
         'messages': [{'role': 'system', 'content': (
             'Classify the current conversational task. Return JSON only with operation '
             '(draft, revise, read, send, other), requires_content (boolean), dependencies (array containing only web, '
@@ -250,6 +316,47 @@ async def classify_email_task(client, *, endpoint_url, headers, model, history,
             'response_time': round(time.monotonic() - started, 3),
         })
     try:
-        return parse_email_task_intent(json.loads(body['choices'][0]['message']['content']))
+        intent = parse_email_task_intent(json.loads(body['choices'][0]['message']['content']))
+        if intent.operation == 'read' and not intent.needs_clarification:
+            # In a contact-record question, "email" can name an address field
+            # rather than the mailbox as a source. Keep both dependencies when
+            # the request also names a mailbox/history source.
+            contact_email_field = bool(
+                _CONTACT_EMAIL_FIELD.search(latest_user_text)
+                and not _MAILBOX_SOURCE.search(latest_user_text)
+            )
+            if contact_email_field:
+                intent = replace(intent, dependencies=tuple(dict.fromkeys(
+                    (*[d for d in intent.dependencies if d != 'email'], 'contacts')
+                )))
+            # Reuse the product's existing source classifier rather than a
+            # second vocabulary of mailbox phrases. The classifier has a known
+            # gap for possessive single-message questions, so retain that
+            # narrow fallback only when it found no competing source family.
+            from src.turn_contract import requested_capabilities
+            capabilities = requested_capabilities(latest_user_text)
+            # A header-only reference can inherit the immediately preceding
+            # mailbox read, but an intervening request or a competing source
+            # breaks that link. Never infer a read from an earlier write.
+            header_followup = (
+                not capabilities
+                and bool(_EMAIL_HEADER_FIELDS.search(latest_user_text))
+                and bool(_EMAIL_HEADER_FOLLOWUP.search(latest_user_text))
+                and bool(_READ_REQUEST.match(prior_user_text))
+                and requested_capabilities(prior_user_text) == {'email'}
+            )
+            mailbox_read = not contact_email_field and (capabilities == {'email'} or (
+                not capabilities and bool(_OWN_MAILBOX.search(latest_user_text))
+            ) or header_followup)
+        else:
+            mailbox_read = False
+        if mailbox_read:
+            intent = replace(intent, dependencies=tuple(dict.fromkeys((*intent.dependencies, 'email'))))
+            if (not _EMAIL_BODY_QUERY.search(latest_user_text)
+                    and (_MAILBOX_HEADER_LIST.fullmatch(latest_user_text)
+                         or _EMAIL_HEADER_FIELDS.search(latest_user_text)
+                         or _EMAIL_COUNT.match(latest_user_text))):
+                intent = replace(intent, requires_content=False)
+        return intent
     except (KeyError, IndexError, TypeError) as exc:
         raise ValueError('Invalid classifier response') from exc

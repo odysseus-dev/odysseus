@@ -26,7 +26,7 @@ test('clipping mask uses base alpha and survives undo, redo, and server reopen',
   });
 
   const editRow = page.locator('.ge-layer-item[data-layer-id]').filter({ hasText: 'Edit' }).first();
-  await page.locator('#ge-layer-tools .ge-layer-clip-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-layer-clip-btn').click();
   await expect(editRow).toHaveClass(/clipped/);
   await expect(editRow.locator('.ge-layer-clipped-marker')).toBeVisible();
   expect((await editorState(page)).layers.find(layer => layer.name === 'Edit').clipped).toBe(true);
@@ -45,13 +45,13 @@ test('clipping mask uses base alpha and survives undo, redo, and server reopen',
   expect((await sampleComposite(page)).right[3]).toBe(0);
   await expect(page.locator('.ge-layer-item.clipped .ge-layer-clipped-marker')).toBeVisible();
 
-  await page.locator('#ge-layer-tools button[title="Merge down into layer below"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Merge down into layer below"]').click();
   expect((await editorState(page)).layers).toHaveLength(1);
   expect((await sampleComposite(page)).right[3]).toBe(0);
   await page.locator('#ge-undo').click();
   expect((await editorState(page)).layers.find(layer => layer.name === 'Edit').clipped).toBe(true);
 
-  await page.locator('#ge-layer-tools .ge-layer-clip-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-layer-clip-btn').click();
   expect((await sampleComposite(page)).right).toEqual([0, 0, 255, 255]);
   await request.delete(`/api/editor-drafts/${encodeURIComponent(draftId)}`);
 });

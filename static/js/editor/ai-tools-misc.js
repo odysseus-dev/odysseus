@@ -215,21 +215,19 @@ export function wireAIToolsMisc({
   function addEmptyLayer() {
     saveState('Add layer');
     const layer = createLayer('Layer ' + state.layers.length, state.imgWidth, state.imgHeight);
-    state.layers.push(layer);
+    // Photoshop inserts the new layer directly above the selected one.
+    const activeIndex = state.layers.findIndex(item => item.id === state.activeLayerId);
+    const insertIndex = activeIndex >= 0 ? activeIndex + 1 : state.layers.length;
+    state.layers.splice(insertIndex, 0, layer);
     state.activeLayerId = layer.id;
     renderLayerPanel();
     composite();
   }
-  const addButton = document.getElementById('ge-add-layer');
-  addButton?.addEventListener('click', event => {
-    event.preventDefault();
-    event.stopPropagation();
+  const buildFxMenu = (anchor) => {
     document.querySelector('.ge-add-layer-menu')?.remove();
     const menu = document.createElement('div');
     menu.className = 'ge-add-layer-menu ge-frosted';
     menu.innerHTML = `
-      <button type="button" data-layer-kind="raster"><span class="ge-add-layer-symbol">+</span><span>Pixel Layer</span></button>
-      <span class="ge-add-layer-divider"></span>
       <button type="button" data-adjustment-type="levels"><span class="ge-add-layer-symbol">▥</span><span>Levels</span></button>
       <button type="button" data-adjustment-type="curves"><span class="ge-add-layer-symbol">⌁</span><span>Curves</span></button>
       <button type="button" data-adjustment-type="exposure"><span class="ge-add-layer-symbol">☼</span><span>Exposure</span></button>
@@ -242,9 +240,16 @@ export function wireAIToolsMisc({
       <button type="button" data-adjustment-type="color-balance"><span class="ge-add-layer-symbol">◒</span><span>Color Balance</span></button>
       <button type="button" data-adjustment-type="selective-color"><span class="ge-add-layer-symbol">◎</span><span>Selective Color</span></button>
       <button type="button" data-adjustment-type="gradient-map"><span class="ge-add-layer-symbol">▰</span><span>Gradient Map</span></button>
+      <span class="ge-add-layer-divider"></span>
+      <button type="button" data-adjustment-type="invert"><span class="ge-add-layer-symbol">◑</span><span>Invert</span></button>
+      <button type="button" data-adjustment-type="posterize"><span class="ge-add-layer-symbol">▤</span><span>Posterize</span></button>
+      <button type="button" data-adjustment-type="threshold"><span class="ge-add-layer-symbol">◧</span><span>Threshold</span></button>
+      <button type="button" data-adjustment-type="photo-filter"><span class="ge-add-layer-symbol">◍</span><span>Photo Filter</span></button>
+      <button type="button" data-adjustment-type="channel-mixer"><span class="ge-add-layer-symbol">⇄</span><span>Channel Mixer</span></button>
+      <button type="button" data-adjustment-type="color-lookup"><span class="ge-add-layer-symbol">▦</span><span>Color Lookup</span></button>
     `;
     document.body.appendChild(menu);
-    const rect = addButton.getBoundingClientRect();
+    const rect = anchor.getBoundingClientRect();
     const menuRect = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuRect.width - 8, rect.right - menuRect.width))}px`;
     menu.style.top = `${Math.max(8, Math.min(window.innerHeight - menuRect.height - 8, rect.bottom + 5))}px`;
@@ -253,7 +258,7 @@ export function wireAIToolsMisc({
       document.removeEventListener('pointerdown', away, true);
     };
     const away = pointerEvent => {
-      if (!menu.contains(pointerEvent.target) && pointerEvent.target !== addButton) close();
+      if (!menu.contains(pointerEvent.target) && pointerEvent.target !== anchor) close();
     };
     requestAnimationFrame(() => document.addEventListener('pointerdown', away, true));
     menu.addEventListener('click', clickEvent => {
@@ -261,10 +266,26 @@ export function wireAIToolsMisc({
       if (!button) return;
       clickEvent.preventDefault();
       clickEvent.stopPropagation();
-      if (button.dataset.layerKind === 'raster') addEmptyLayer();
-      else if (button.dataset.adjustmentType) openAdjustmentLayer?.(button.dataset.adjustmentType, addButton);
+      if (button.dataset.adjustmentType) openAdjustmentLayer?.(button.dataset.adjustmentType, anchor);
       close();
     });
+  };
+
+  // "+" adds a plain pixel layer directly.
+  const addButton = document.getElementById('ge-add-layer');
+  addButton?.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelector('.ge-add-layer-menu')?.remove();
+    addEmptyLayer();
+  });
+
+  // "fx" opens the adjustment-layer chooser.
+  const addFxButton = document.getElementById('ge-add-fx');
+  addFxButton?.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    buildFxMenu(addFxButton);
   });
 
   return { addEmptyLayer };

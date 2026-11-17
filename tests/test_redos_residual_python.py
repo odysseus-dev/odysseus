@@ -26,7 +26,7 @@ def _fast(fn, *args):
     return result
 
 
-# -- closed <think> blocks (skills_routes x4, memory_extractor.audit_memories) --
+# -- closed <think> blocks (skills.evaluation x4, memory_extractor.audit_memories) --
 
 _THINK_REF = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>", re.I)
 
@@ -51,7 +51,11 @@ def test_strip_closed_think_blocks_unclosed_opener_flood_is_linear():
 
 
 def test_lazy_think_regex_is_gone_from_llm_review_parsers():
-    for rel in ("routes/skills_routes.py", "services/memory/memory_extractor.py"):
+    for rel in (
+        "routes/skills_routes.py",
+        "services/skills/evaluation.py",
+        "services/memory/memory_extractor.py",
+    ):
         source = (_ROOT / rel).read_text(encoding="utf-8")
         assert r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>" not in source, rel
 

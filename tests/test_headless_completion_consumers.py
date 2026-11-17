@@ -14,6 +14,20 @@ from src.teacher_escalation import with_teacher_takeover
 CLAIM = 'I created report.md and all tests passed.'
 
 
+@pytest.fixture(autouse=True)
+def registered_scheduler_endpoint(tmp_path, monkeypatch):
+    import core.database as database
+    from tests.helpers.database import disposable_database
+
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(database, 'SessionLocal', factory)
+        with factory() as db:
+            db.add(database.ModelEndpoint(id='test-endpoint', name='test', owner='admin',
+                                          base_url='http://ep/v1', is_enabled=True))
+            db.commit()
+        yield
+
+
 def _event(payload):
     return 'data: ' + json.dumps(payload) + '\n\n'
 

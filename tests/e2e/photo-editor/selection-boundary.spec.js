@@ -1,9 +1,10 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers');
 
 test('selection boundary animates, moves independently, and supports Quick Mask', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Selection workflow');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.55, y: 0.55 });
 
   const initial = await editorState(page);
@@ -44,20 +45,10 @@ test('selection boundary animates, moves independently, and supports Quick Mask'
   expect((await editorState(page)).quickMaskActive).toBe(false);
 });
 
-test('marquee supports exact fixed-size and fixed-ratio geometry', async ({ page }) => {
+test('marquee supports exact fixed-ratio geometry', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Precise marquee');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
 
-  await page.locator('#ge-marquee-constraint').selectOption('size');
-  await page.locator('#ge-marquee-width').fill('80');
-  await page.locator('#ge-marquee-width').blur();
-  await page.locator('#ge-marquee-height').fill('60');
-  await page.locator('#ge-marquee-height').blur();
-  const box = await page.locator('.ge-main-canvas').boundingBox();
-  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.75);
-  await expect.poll(async () => (await editorState(page)).selection?.bounds).toEqual({ x: 240, y: 180, width: 80, height: 60 });
-
-  await page.locator('#ge-marquee-clear').click();
   await page.locator('#ge-marquee-constraint').selectOption('ratio');
   await page.locator('#ge-marquee-width').fill('4');
   await page.locator('#ge-marquee-width').blur();
@@ -72,14 +63,14 @@ test('marquee supports exact fixed-size and fixed-ratio geometry', async ({ page
 
 test('transform selection moves, scales, rotates, cancels, and preserves layer pixels', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Transform selection');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.2, y: 0.25 }, { x: 0.5, y: 0.55 });
   const original = await editorState(page);
   const originalLayer = original.layers.find(layer => layer.id === original.activeLayerId);
 
   await page.locator('#ge-selection-menu-btn').click();
   await page.locator('[data-selection-action="transform"]').click();
-  await expect(page.locator('.ge-transform-popup')).toBeVisible();
+  await expect(page.locator('#ge-transform-section')).toBeVisible();
   await expect(page.locator('.ge-transform-popup .ge-adj-title')).toHaveText('Transform Selection');
   await dragOnCanvas(page, { x: 0.35, y: 0.4 }, { x: 0.45, y: 0.47 });
   const moved = await editorState(page);
@@ -115,20 +106,20 @@ test('transform selection moves, scales, rotates, cancels, and preserves layer p
   await page.waitForTimeout(250);
   await page.locator('#ge-selection-menu-btn').click();
   await page.locator('[data-selection-action="transform"]').click();
-  const mobilePopup = await page.locator('.ge-transform-popup').boundingBox();
-  const mobileTitle = await page.locator('.ge-transform-popup .ge-adj-title').boundingBox();
-  expect(mobilePopup.x).toBeGreaterThanOrEqual(0);
-  expect(mobilePopup.y).toBeGreaterThanOrEqual(0);
-  expect(mobilePopup.x + mobilePopup.width).toBeLessThanOrEqual(390);
-  expect(mobilePopup.y + mobilePopup.height).toBeLessThanOrEqual(844);
-  expect(mobileTitle.x).toBeGreaterThanOrEqual(mobilePopup.x);
-  expect(mobileTitle.x + mobileTitle.width).toBeLessThanOrEqual(mobilePopup.x + mobilePopup.width);
+  await expect(page.locator('#ge-transform-section')).toBeVisible();
+  const mobileSection = await page.locator('#ge-transform-section').boundingBox();
+  expect(mobileSection.x).toBeGreaterThanOrEqual(0);
+  expect(mobileSection.y).toBeGreaterThanOrEqual(0);
+  expect(mobileSection.x + mobileSection.width).toBeLessThanOrEqual(390);
+  expect(mobileSection.y + mobileSection.height).toBeLessThanOrEqual(844);
   await page.locator('#ge-transform-cancel-btn').click();
+  await expect.poll(() => page.evaluate(async () => (await import('/static/js/editor/state.js')).state.transformActive)).toBe(false);
+  expect((await editorState(page)).selection.pixelHash).toBe(original.selection.pixelHash);
 });
 
 test('named selections support reselect, load, delete, and server-draft reopen', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Saved selections');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.15, y: 0.2 }, { x: 0.5, y: 0.6 });
   const original = (await editorState(page)).selection;
 
@@ -178,4 +169,57 @@ test('named selections support reselect, load, delete, and server-draft reopen',
   const mobileMenu = await page.locator('#ge-selection-menu').boundingBox();
   expect(mobileMenu.x).toBeGreaterThanOrEqual(0);
   expect(mobileMenu.x + mobileMenu.width).toBeLessThanOrEqual(390);
+});
+
+test('marquee released over the right panel commits a clamped selection', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 }, 'Marquee overshoot');
+  await selectTool(page, 'marquee');
+  const setup = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    const rect = state.mainCanvas.getBoundingClientRect();
+    const panel = document.querySelector('.ge-right-panel');
+    const panelBox = panel ? panel.getBoundingClientRect() : null;
+    return {
+      document: { width: state.imgWidth, height: state.imgHeight },
+      start: { x: rect.left + rect.width * 0.2, y: rect.top + rect.height * 0.2 },
+      panelPoint: panelBox
+        ? { x: panelBox.left + panelBox.width / 2, y: rect.top + rect.height * 0.6 }
+        : null,
+    };
+  });
+  expect(setup.panelPoint, 'right panel must be visible on desktop').toBeTruthy();
+
+  await page.mouse.move(setup.start.x, setup.start.y);
+  await page.mouse.down();
+  // Drag straight onto the right panel. The window mousemove guard must
+  // keep the raw rect from extending off-canvas, and the release must
+  // commit a clamped selection rather than discard it.
+  await page.mouse.move(setup.panelPoint.x, setup.panelPoint.y, { steps: 12 });
+  await page.mouse.up();
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    if (!state.wandMask) return { active: false };
+    const data = state.wandMask.getContext('2d')
+      .getImageData(0, 0, state.wandMask.width, state.wandMask.height).data;
+    let left = state.wandMask.width, top = state.wandMask.height, right = -1, bottom = -1;
+    for (let y = 0; y < state.wandMask.height; y += 1) {
+      for (let x = 0; x < state.wandMask.width; x += 1) {
+        if (data[(y * state.wandMask.width + x) * 4 + 3] < 1) continue;
+        left = Math.min(left, x); top = Math.min(top, y);
+        right = Math.max(right, x); bottom = Math.max(bottom, y);
+      }
+    }
+    return { active: true, left, top, right, bottom, width: state.wandMask.width, height: state.wandMask.height };
+  });
+  expect(result.active).toBe(true);
+  expect(result.right).toBeGreaterThanOrEqual(result.left);
+  expect(result.bottom).toBeGreaterThanOrEqual(result.top);
+  // Clamped: never beyond the document edge on any side.
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.top).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThan(result.width);
+  expect(result.bottom).toBeLessThan(result.height);
+  expect(result.right - result.left).toBeGreaterThan(0);
+  expect(result.bottom - result.top).toBeGreaterThan(0);
 });

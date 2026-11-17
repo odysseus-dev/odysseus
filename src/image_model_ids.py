@@ -40,6 +40,15 @@ def image_edit_size(model_id: str, width: int, height: int) -> str:
     return f"{width}x{height}"
 
 
+def image_aspect_ratio(width: int, height: int) -> str:
+    """Choose the nearest common Image API ratio, without distorting pixels."""
+    if width <= 0 or height <= 0:
+        raise ValueError("Image dimensions must be positive")
+    ratios = ((1, 1), (16, 9), (9, 16), (3, 2), (2, 3), (4, 3), (3, 4), (21, 9))
+    w, h = min(ratios, key=lambda ratio: abs(math.log((ratio[0] / ratio[1]) / (width / height))))
+    return f"{w}:{h}"
+
+
 def looks_like_image_generation_model(model_id: str) -> bool:
     """Return True when a model id should use image generation routes.
 

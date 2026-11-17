@@ -12,9 +12,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # File-backed databases remain fixture-owned. Cleanup restores the caller.
 # Keep the existing generated environment-reference locations stable.
 _database_environment = pytest.MonkeyPatch()
-_database_environment.setenv("DATABASE_URL", "sqlite:///:memory:")
 from tests.helpers.worker_runtime import bootstrap_runtime, configure_runtime
 _runtime_environment = bootstrap_runtime()
+# A file keeps the collection schema consistent across TestClient threads;
+# SingletonThreadPool can evict the populated in-memory main-thread database.
+# One patcher owns this variable, including restoration of an inherited URL.
+_database_environment.setenv(
+    "DATABASE_URL",
+    f"sqlite:///{_runtime_environment.root / 'collection.db'}"
+    if _runtime_environment is not None else "sqlite:///:memory:",
+)
+_collection_database_engine = None
 
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
@@ -26,6 +34,7 @@ try:
     import sqlalchemy.orm  # noqa: F401
     import core.database  # noqa: F401
     import src.database
+    _collection_database_engine = core.database.engine
 except ImportError:
     pass  # not installed - the stubs below will handle it
 
@@ -100,6 +109,10 @@ def pytest_configure(config):
     only registers marker names; it imports no production module.
     """
     config.add_cleanup(_database_environment.undo)
+    if _collection_database_engine is not None:
+        # Registered after runtime cleanup, so connections close before the
+        # owned file is removed (also required on Windows).
+        config.add_cleanup(_collection_database_engine.dispose)
 
     import pathlib
     from tests._taxonomy import discover_markers

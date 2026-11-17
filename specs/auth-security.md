@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -20,8 +20,7 @@ This spec covers current security and trust-boundary behavior in:
 - `src/prompt_security.py`;
 - `src/url_safety.py` and `src/url_security.py`;
 - `src/host_docker_access.py`;
-- `src/attachment_refs.py` and upload lifecycle enforcement in
-  `src/upload_handler.py` / `routes/upload_routes.py`;
+- `src/attachment_refs.py` and upload lifecycle enforcement in `src/upload_handler.py` / `routes/upload_routes.py`;
 - `src/secret_storage.py`;
 - `src/api_key_manager.py`;
 - `src/integrations.py`;
@@ -56,7 +55,7 @@ Reserved usernames include request-only sentinels `internal-tool`, `api`, `demo`
 
 Public/auth-exempt surfaces are limited to setup, signup/login/logout/status, feature/settings/integration preset reads, health/version/login, `/static/*`, and task webhook trigger paths. `routes/task/task_routes.py` owns validation of `POST /api/tasks/{task_id}/webhook/{token}` path credentials.
 
-Login issues an `HttpOnly`, `SameSite=Lax` cookie with a seven-day max age when "remember" is enabled. `_secure_cookie()` (`routes/auth_routes.py:89`) decides the `Secure` attribute: an explicit `SECURE_COOKIES` of `true` or `false` is authoritative, and any other value, including unset and the present-but-empty value docker-compose injects, derives it from the request, marking the cookie `Secure` when the connection scheme or the first `X-Forwarded-Proto` hop is https. TOTP is checked before session issuance. Logout, password changes, user deletion, rename flows, expired sessions, and deleted-user sessions must keep revocation/migration behavior intact.
+Login issues an `HttpOnly`, `SameSite=Lax` cookie with a seven-day max age when "remember" is enabled. `_secure_cookie()` (`routes/auth_routes.py`) decides the `Secure` attribute: an explicit `SECURE_COOKIES` of `true` or `false` is authoritative, and any other value, including unset and the present-but-empty value docker-compose injects, derives it from the request, marking the cookie `Secure` when the connection scheme or the first `X-Forwarded-Proto` hop is https. TOTP is checked before session issuance. Logout, password changes, user deletion, rename flows, expired sessions, and deleted-user sessions must keep revocation/migration behavior intact.
 
 Deleting a user revokes that user's browser sessions and API-token rows, then the admin delete route invalidates the in-memory bearer-token cache so already-cached tokens stop authenticating.
 
@@ -68,40 +67,26 @@ Admin promotion/demotion is a live auth flag change through `AuthManager.set_adm
 
 Cookie requests use the real username. Bearer-token requests are stamped as `request.state.current_user = "api"` plus `api_token_owner`, `api_token_scopes`, and token id. Routes that support API-token access must explicitly use `effective_user()` or route-local scope helpers instead of treating `"api"` as an owner.
 
-Internal loopback calls may stamp `current_user = "internal-tool"` or a validated `X-Odysseus-Owner` username. Network/proxy validation for that bypass lives in `app.py`; `require_admin()` trusts the stamped sentinel or raw internal header and should be used behind equivalent middleware control.
+Internal loopback calls may stamp `current_user = "internal-tool"` or a validated `X-Odysseus-Owner` username. Network/proxy validation for that bypass lives in `app.py`. Native shell/PID and local Cookbook controls add resource-bound admission and reject an internal header or sentinel as human administration. This boundary is surface-specific: common `core.middleware.require_admin()` still admits a matching internal token or sentinel, including MCP configuration routes; producer-side tool policy is a separate check.
 
 Missing-owner values remain state-dependent at legacy call sites, but new storage-facing code has one normalization contract:
 
 - Auth-enabled, configured auth with no `current_user` is unauthenticated and should fail closed at route dependencies.
-- `AUTH_ENABLED=false` is an explicit local single-user/no-login mode. Existing route dependencies can still return `""`, and admin gates allow the local operator. `effective_storage_owner()` and `storage_owner_for_request()` normalize an absent owner to `__odysseus_local__` only in this mode.
-  Native shell and local Cookbook administration additionally require a direct
-  loopback connection without proxy forwarding, cross-site indicators, or an
-  internal-tool header. Remote/proxied anonymous traffic remains denied at
-  these controls. Auth-enabled administration still requires a human admin.
-  This mode trusts local programs as well as the local operator: a headerless
-  loopback request cannot identify which local program sent it. Agent program
-  launches retain inherited networking; this is not protection against hostile
-  local code. Use authenticated mode when local programs are outside that trust.
-  Local Cookbook tools use a separate one-use capability for an admitted exact
-  request/operation/native backend and resolved launch body; that capability
-  cannot administer shell, PID, SSH-key, or arbitrary Cookbook state routes.
+- `AUTH_ENABLED=false` is an explicit local single-user/no-login mode. Existing route dependencies can still return `""`, and admin gates allow the local operator. `effective_storage_owner()` and `storage_owner_for_request()` normalize an absent owner to `__odysseus_local__` only in this mode. Native shell and local Cookbook administration additionally require a direct loopback connection without proxy forwarding, cross-site indicators, or an internal-tool header. Remote/proxied anonymous traffic remains denied at these controls. Auth-enabled administration still requires a human admin. This mode trusts local programs as well as the local operator: a headerless loopback request cannot identify which local program sent it. Agent program launches retain inherited networking; this is not protection against hostile local code. Use authenticated mode when local programs are outside that trust. Local Cookbook tools use a separate one-use capability for an admitted exact request/operation/native backend and resolved launch body; that capability cannot administer shell, PID, SSH-key, or arbitrary Cookbook state routes.
 - Chat/agent code that reads `get_current_user(request)` directly gets `None` when auth middleware is disabled, because no middleware stamps request state.
 - SQL `NULL`/JSON missing owners remain legacy/shared compatibility data, not the same thing as a logged-out authenticated caller.
 - `"api"` and `"internal-tool"` are request sentinels. They must not be persisted as normal storage owners unless a route explicitly defines that behavior.
 - `__odysseus_local__` is a valid storage owner but never a login or request sentinel. Adoption is incremental: callers that do not use the storage-owner helper can still expose older `None`/empty/null compatibility behavior.
 
-Authenticated `manage_tasks` mutations require an exact stored task-owner
-match and reject both cross-owner and legacy null-owner rows. The `owner=None`
-agent path keeps deliberate auth-disabled single-user compatibility, including
-unscoped list/create/mutation behavior.
+Authenticated `manage_tasks` mutations require an exact stored task-owner match and reject both cross-owner and legacy null-owner rows. The `owner=None` agent path keeps deliberate auth-disabled single-user compatibility, including unscoped list/create/mutation behavior.
 
 Owner-scoped route code should use `require_user()` or equivalent policy before querying per-owner data. Current note CRUD/reorder/reminder routes do this so an auth-enabled request that reaches the route without identity returns `401` instead of falling into single-user/null-owner compatibility behavior.
 
-Scheduled task actions attribute differently again. `_execute_action` (`src/task_scheduler.py:1231`) invokes the action with `owner=task.owner` read from the stored `ScheduledTask` row, so no request and no resolved principal are in flight. These trigger paths converge there: schedule, event bus, manual run (`routes/task/task_routes.py:865`), the `manage_tasks` agent tool (`src/tools/system.py:469`), webhook triggers (`routes/task/task_routes.py:1045`), which are unauthenticated by design with the token as the only credential and execute under the stored `task.owner`, and success-chained tasks (`src/task_scheduler.py:1063-1074`), which additionally require the chained target to share `task.owner` and reject cycles. Trigger-side ownership checks use the `if user and task.owner != user` shape, so a falsy caller skips them. Action bodies that reach owner-scoped storage must treat `task.owner` as the authority; route-level `require_user()` never runs on this path.
+Scheduled task actions attribute differently again. `_execute_action` (`src/task_scheduler.py`) invokes the action with `owner=task.owner` read from the stored `ScheduledTask` row, so no request and no resolved principal are in flight. These trigger paths converge there: schedule, event bus, manual run (`routes/task/task_routes.py`), the `manage_tasks` agent tool (`src/tools/system.py`), webhook triggers (`routes/task/task_routes.py`), which are unauthenticated by design with the token as the only credential and execute under the stored `task.owner`, and success-chained tasks (`src/task_scheduler.py`), which additionally require the chained target to share `task.owner` and reject cycles. Trigger-side ownership checks use the `if user and task.owner != user` shape, so a falsy caller skips them. Action bodies that reach owner-scoped storage must treat `task.owner` as the authority; route-level `require_user()` never runs on this path.
 
 ## API Tokens And Scoped Integrations
 
-`routes/api_token_routes.py` owns token CRUD and scope normalization. Partial updates preserve existing scopes unless new scopes are supplied, write scopes imply the matching read scopes where applicable, and Cookbook scopes are part of the normalized scope set. `app.py` caches active token prefix rows and verifies bearer tokens with bcrypt. API-token requests set `request.state.current_user = "api"` plus token owner/scopes.
+`routes/api_token_routes.py` owns token CRUD and scope normalization. Partial updates preserve existing scopes unless new scopes are supplied, write scopes imply the matching read scopes where applicable, and Cookbook scopes are part of the normalized scope set. `app.py` builds a complete replacement active-prefix map and publishes it by reference, including `app.state`, before verifying bearer tokens with bcrypt. Readers holding an older map are not emptied; this does not guarantee freshest revocation visibility or serialize overlapping refreshes. API-token requests set `request.state.current_user = "api"` plus token owner/scopes.
 
 Current call sites include Codex/Claude scoped APIs, `/api/v1/chat`, webhooks, selected session routes, companion pairing, and external integrations. `/api/codex/*` and `/api/v1/chat` enforce route-local scopes; companion and selected session routes use owner attribution. `companion/pairing.py` can mint chat-scoped tokens outside normal token CRUD.
 
@@ -137,21 +122,12 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 - `src/url_security.py` owns public HTTP(S) validation for integration/API-token supplied URLs. It should fail closed for private IP, loopback, invalid scheme, and unsafe redirect targets.
 - `src/url_safety.py` owns local-first outbound URL safety for model endpoints and similar local services. Loopback/LAN can be allowed by default, and private-IP blocking is an explicit caller policy. Strict `block_private=True` also rejects RFC 6598 shared/CGNAT space (`100.64.0.0/10`) explicitly because Python does not classify that range as private.
 - `core.log_safety.redact_url()` strips URL userinfo, query strings, and fragments before endpoint URLs enter logs. Model, chat/research endpoint, contact/CardDAV, and similar diagnostics should use this helper instead of logging raw admin-configured URLs.
-- `src.webhook_manager` validates webhook URLs at create and delivery time,
-  rejects private/internal targets, disables redirects, and pins delivery to
-  the public IP set that passed validation immediately before the request.
-- `src.integrations` owns admin-configured integration base URLs and secret
-  masking. `api_call` accepts only relative paths, rejects link-local/metadata destinations through `src.url_safety`, can additionally block RFC1918/loopback/private targets with `INTEGRATION_API_BLOCK_PRIVATE_IPS=true`, and pins requests to the IP set that passed SSRF validation while preserving the intended Host/TLS identity.
+- `src.webhook_manager` validates webhook URLs at create and delivery time, rejects private/internal targets, disables redirects, and pins delivery to the public IP set that passed validation immediately before the request.
+- `src.integrations` owns admin-configured integration base URLs and secret masking. `api_call` accepts only relative paths, rejects link-local/metadata destinations through `src.url_safety`, can additionally block RFC1918/loopback/private targets with `INTEGRATION_API_BLOCK_PRIVATE_IPS=true`, and pins requests to the IP set that passed SSRF validation while preserving the intended Host/TLS identity.
 - `src.outbound_fetch` owns reusable public-URL classification, validates every redirect hop, rejects private/local resolved addresses, and pins the HTTP connection to the validated public IP while preserving original URL/SNI/Host semantics. `services.search.content` adapts that transport for extraction and caching.
 - Path-based tools, upload/document/gallery/signature/generated-image routes, embedding cache paths, and research JSON helpers must stay confined to allowed roots and owner-scoped files. Native file/code-navigation tools also apply a case-insensitive sensitive-path denylist so `grep`, `glob`, `ls`, direct reads, and writes cannot reveal `.env`, SSH/GPG material, private-key filenames, or similar secret paths.
-- Durable upload references are owner-reserved before chat/session, document,
-  note, or calendar writes. Cleanup scans every current durable reference
-  surface and fails closed on incomplete discovery or inconsistent upload-index
-  state rather than deleting a possibly live upload.
-- File-backed SQLite startup restricts `app.db` and existing rollback/WAL/SHM
-  sidecars to `0600` on POSIX after resolving the real path from the parsed
-  engine URL. Windows, in-memory, and non-SQLite databases are excluded, and
-  failed POSIX restriction is logged as a secret-file warning.
+- Durable upload references are owner-reserved before chat/session, document, note, or calendar writes. Cleanup scans every current durable reference surface and fails closed on incomplete discovery or inconsistent upload-index state rather than deleting a possibly live upload.
+- File-backed SQLite startup restricts `app.db` and existing rollback/WAL/SHM sidecars to `0600` on POSIX after resolving the real path from the parsed engine URL. Windows, in-memory, and non-SQLite databases are excluded, and failed POSIX restriction is logged as a secret-file warning.
 - Secret-like DB columns use `EncryptedText` or `src.secret_storage`. Email passwords and Google OAuth mail tokens are encrypted manually in `EmailAccount` string columns; Google OAuth state is HMAC-signed and callback writes are owner-checked before token storage. `src.api_key_manager` keeps provider API keys encrypted in `data/api_keys.json`, writes by loading the raw encrypted dict so saving one provider does not rewrite other providers' keys as plaintext, and restricts local key-file permissions where the platform supports chmod. Vault state in `data/vault.json` is a chmod-restricted JSON secret store, not Fernet-encrypted DB storage. Do not log or return decrypted secrets except for intentional admin vault retrieval flows with audit/reason checks.
 - `.env` files are secrets-only inputs and should not be read or printed during agent work.
 
@@ -170,11 +146,39 @@ Host Docker socket access is a high-trust admin/deployment choice, not a normal 
 - Legacy migrations claim null-owner SQL/JSON data for the primary admin when possible, and startup repeats a null-owner sweep hourly. Remaining null-owner rows are surface-specific compatibility data that must be deliberately included, no-oped for single-user mode, or rejected for strict ownership gates.
 - `.env` is loaded with `utf-8-sig`, so Windows BOM auth flags still parse.
 
+## Server Admission And Model Execution
+
+`src.agent_runtime.authority.RequestAuthority` is server-owned admission separate from schema availability or intent selection. `execute_tool_block()` requires explicit security context, verifies owner/session/workspace binding, intersects delegated child authority, applies policy denial before approval/bridge dispatch, and resolves typed backend/filesystem/owned/process/browser resource identities. Exact approvals seal and revalidate these bindings; task/chat taint grants cannot manufacture absent backend or resource authority.
+
+Native filesystem operations use `src.path_confinement` and `src.agent_runtime.resources` to reject sensitive/control-plane paths, including runtime effect stores and aliases. Native model shell/Python paths use enforcing containment with required filesystem, process-tree, and wall-clock dimensions; missing required enforcement fails before spawn. This is distinct from direct operator/admin HTTP shell access and declared external execution bridges. Network and resource-limit dimensions are not automatically promised by the default requirements.
+
+`core.auth.AuthManager.reset_user_password()` permits an admin to reset a non-admin account and revokes that account’s sessions. Admin targets and non-admin callers are refused.
+
+## Scoped Admission And Public Error Details
+
+Browser chat/session/history bearer support requires chat scope and resolves the token owner. Delegated callers cannot approve actions, inherit browser chat grants, supply raw session credentials or bypass route validation. Resolved persistent chat grants are HMAC signed and checked; client metadata removes authority-bearing fields. Parent/child task and teacher authority intersects, and local file/workspace/PDF reads have delegated early denials independent of the optional action gate. The automatic high-impact gate defaults on, disabled only by explicit normalized false values; stale threat-model prose describing unrestricted model filesystem access is not the current native contract.
+
+Local-first URL checks classify IPv4-mapped addresses by embedded IPv4 and decode exactly `64:ff9b::/96` with strict embedded-target policy, even when the caller allows private services. Other translation prefixes receive no inferred exemption. IPv6 loopback is checked before reserved-address denial and follows the configured private policy. Mail connection helpers validate the resolved address set and pin actual TCP connection; scholarly metadata validation does not inherit that stronger transport claim.
+
+Host/client run/read/write/patch/poll/cancel bridge clients disable environment proxy trust and carry exact admitted authority, while external execution remains unattested local containment. MCP backend/config and Vault unlock/catalog identities are epoch/revision bound. Native browser page actions and raw global Playwright calls are currently denied unconditionally; metadata-only `session_info` does not restore them. Native filesystem root checks reject NUL/CRLF and all hardlinked regular files, but do not imply every OS path operation is atomic.
+
+Preview validation may expose bounded schema-derived argument guidance before dispatch; caught execution exceptions use fixed public errors/categories. Raw exception text can remain in server logs. Transport/provider terminal errors are distinct from successful completion, and public assertion filtering is not a general secret scrubber. Upload reference reservations, scoped owners and runtime credential custody continue to apply independently.
+
+## Configuration And Generated-Media Boundaries
+
+Auth-route app configuration uses `_require_admin_user()` to honor explicit disabled-auth operator mode for settings/features, document-style extraction and integrations; user-store administration still requires an admin identity. Settings GET exposes full settings to the disabled-auth operator, while auth-enabled anonymous/non-admin reads remain scrubbed. This is a trusted deployment mode, not an anonymous multi-user grant.
+
+Generated-image serving checks filename syntax before identity, then `effective_user()` (cookie or API-token owner) before disk access. A live process-local registration, gallery owner, linked session owner, or owned-chat metadata reference can authorize access; absence/mismatch returns 404 and database verification errors return 503. Disabled auth skips ownership checks. Responses use private revalidation and nosniff headers. Tool argument parsers strip caller `_odysseus_*` fields before server context injects trusted image/email owner/session attribution; see `gallery-editor-media.md` and `agent-tools.md`.
+
+## Upload Route Authorization
+
+Upload routes distinguish disabled-auth operation from unavailable/unconfigured auth infrastructure: explicit no-login bypasses owner gates; auth-enabled missing manager is 503, unconfigured manager 401 and missing/sentinel identity 403, without loopback fallback. Interactive admin override remains available for non-owned/legacy ownerless files. Delegated API credentials require a real token owner, matching non-null file ownership and an appropriate scope; even an admin-owned token has no cross-owner or ownerless override. Read scopes are any of `chat`, `documents:read`, `documents:write`; upload creation/OCR mutation requires `chat` or `documents:write`. See `documents-rag-uploads.md` for transition behavior.
+
 ## Current Gaps
 
-- There is no shell/filesystem sandbox for admin tools.
+- Direct operator/admin HTTP shell execution remains powerful; model-code containment and typed admission must not be generalized into a sandbox claim for every administrative surface.
 - Token scopes remain coarse for some surfaces.
-- `app.py` AuthMiddleware lacks direct regression coverage for bearer-token state/cache behavior, trusted-loopback proxy-header rejection, and internal-tool owner stamping.
+- Auth policy, scoped tokens, and request authority have focused regression tests; full middleware composition and live proxy deployments still need separate validation.
 - Codex/Claude scoped route enforcement still needs stronger regression coverage.
 - `THREAT_MODEL.md` still has stale token-scope and `/api/v1/chat` SSRF gap text that should be reconciled with current route validation.
 - The Default/Local owner contract is canonical but only incrementally adopted; route helper `""`, chat/agent `None`, SQL/JSON null-owner compatibility, and calendar fallback owner behavior still need domain-by-domain migration decisions.

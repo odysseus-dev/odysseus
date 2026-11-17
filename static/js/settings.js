@@ -212,9 +212,11 @@ function _bindFallbackWidget(opts) {
   var endpointsRef = opts.endpoints;       // mutable list reference
   var modelsFilter = opts.modelsFilter || function() { return true; };
   var settingKey = opts.settingKey;
-  var current = opts.initial || [];        // [{endpoint_id, model}]
+  var current = opts.initial || [];        // [{endpoint_id, model, reasoning_effort}]
+  var supportsEffort = Boolean(opts.supportsEffort);
+  var getEffortLevels = opts.getEffortLevels;
 
-  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {} };
+  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {}, refresh: function() {} };
 
   function enabledEps() { return (endpointsRef() || []).filter(function(e) { return e.is_enabled; }); }
 
@@ -233,8 +235,36 @@ function _bindFallbackWidget(opts) {
     if (selected) selectEl.value = selected;
   }
 
+  function fillEffort(selectEl, epId, modelId, selected) {
+    if (!selectEl) return;
+    while (selectEl.options.length) selectEl.remove(0);
+    var levels = getEffortLevels ? getEffortLevels(epId, modelId) : [];
+    var base = document.createElement('option');
+    base.value = '';
+    base.textContent = 'Provider default';
+    selectEl.appendChild(base);
+    levels.forEach(function(lvl) {
+      var val = typeof lvl === 'string' ? lvl : (lvl && lvl.effort);
+      if (val) {
+        var o = document.createElement('option');
+        o.value = val.toLowerCase();
+        o.textContent = val;
+        selectEl.appendChild(o);
+      }
+    });
+    var validValues = [''].concat(levels.map(function(l) { return (typeof l === 'string' ? l : l.effort).toLowerCase(); }));
+    selectEl.value = validValues.indexOf((selected || '').toLowerCase()) >= 0 ? (selected || '').toLowerCase() : '';
+    selectEl.style.display = levels.length > 0 ? '' : 'none';
+  }
+
   async function save() {
-    var clean = current.filter(function(f) { return f.endpoint_id && f.model; });
+    var clean = current.filter(function(f) { return f.endpoint_id && f.model; }).map(function(f) {
+      var item = { endpoint_id: f.endpoint_id, model: f.model };
+      if (supportsEffort && typeof f.reasoning_effort !== 'undefined') {
+        item.reasoning_effort = f.reasoning_effort || '';
+      }
+      return item;
+    });
     var body = {};
     body[settingKey] = clean;
     try {
@@ -270,13 +300,36 @@ function _bindFallbackWidget(opts) {
       fb.endpoint_id = epS.value;
       fb.model = mS.value;
 
+      var effS = null;
+      if (supportsEffort) {
+        effS = document.createElement('select');
+        effS.className = 'settings-select settings-fallback-effort';
+        fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
+        fb.reasoning_effort = effS.value;
+        effS.addEventListener('change', function() {
+          fb.reasoning_effort = effS.value;
+          save();
+        });
+      }
+
       epS.addEventListener('change', function() {
         fb.endpoint_id = epS.value;
         fillModels(mS, epS.value, '');
         fb.model = mS.value;
+        if (effS) {
+          fillEffort(effS, epS.value, mS.value, '');
+          fb.reasoning_effort = effS.value;
+        }
         save();
       });
-      mS.addEventListener('change', function() { fb.model = mS.value; save(); });
+      mS.addEventListener('change', function() {
+        fb.model = mS.value;
+        if (effS) {
+          fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
+          fb.reasoning_effort = effS.value;
+        }
+        save();
+      });
 
       var rm = document.createElement('button');
       rm.type = 'button';
@@ -292,6 +345,7 @@ function _bindFallbackWidget(opts) {
       row.appendChild(num);
       row.appendChild(epS);
       row.appendChild(mS);
+      if (effS) row.appendChild(effS);
       row.appendChild(rm);
       fbContainer.appendChild(row);
     });
@@ -299,7 +353,7 @@ function _bindFallbackWidget(opts) {
 
   addBtn.addEventListener('click', function() {
     var first = enabledEps()[0];
-    current.push({ endpoint_id: first ? first.id : '', model: '' });
+    current.push({ endpoint_id: first ? first.id : '', model: '', reasoning_effort: '' });
     render();
     save();
   });
@@ -371,9 +425,14 @@ async function initDefaultChat() {
 async function initUtilityModel() {
   var epSel = el('set-utilityEpSelect');
   var modelSel = el('set-utilityModelSelect');
+  var effortSel = el('set-utilityEffortSelect');
+  var effortRow = el('set-utilityEffortRow');
+  var effortHelp = el('set-utilityEffortHelp');
+  var effortQualifier = el('set-utilityEffortQualifier');
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
   var fallbackWidget = null;
+  var _levelsByEndpoint = {};
   if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
   if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
 
@@ -382,24 +441,110 @@ async function initUtilityModel() {
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
 
+  // Effort levels come from /api/models `models_metadata` (same evidence the
+  // chat composer uses); /api/model-endpoints does not carry them.
+  async function loadEffortLevels() {
+    try {
+      var r = await fetch('/api/models', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      var data = await r.json();
+      var items = Array.isArray(data) ? data : (data.models || data.items || []);
+      _levelsByEndpoint = {};
+      items.forEach(function(item) {
+        if (item && item.endpoint_id) _levelsByEndpoint[item.endpoint_id] = item.models_metadata || {};
+      });
+    } catch (e) { console.warn('Failed to load reasoning levels for utility model', e); }
+  }
+
+  function refreshEffort(selected) {
+    if (!effortSel) return;
+    var targetEp = epSel.value;
+    var targetModel = modelSel.value;
+    if (!targetEp) {
+      var defEp = el('set-defaultEpSelect');
+      var defModel = el('set-defaultModelSelect');
+      if (defEp) targetEp = defEp.value;
+      if (defModel) targetModel = defModel.value;
+    }
+    var meta = (_levelsByEndpoint[targetEp] || {})[targetModel] || {};
+    var levels = Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels.slice() : [];
+    var isInherited = !epSel.value;
+    if (isInherited && levels.length === 0) {
+      var allLevels = {};
+      Object.keys(_levelsByEndpoint).forEach(function(epId) {
+        var models = _levelsByEndpoint[epId] || {};
+        Object.keys(models).forEach(function(mId) {
+          var mLevels = (models[mId] || {}).supported_reasoning_levels;
+          if (Array.isArray(mLevels)) {
+            mLevels.forEach(function(lvl) {
+              var val = typeof lvl === 'string' ? lvl : (lvl && lvl.effort);
+              if (val) allLevels[val.toLowerCase()] = true;
+            });
+          }
+        });
+      });
+      levels = Object.keys(allLevels);
+      if (levels.length === 0) {
+        levels = ['low', 'medium', 'high'];
+      }
+    }
+    while (effortSel.options.length) effortSel.remove(0);
+    var base = document.createElement('option');
+    base.value = '';
+    base.textContent = isInherited ? 'Same as chat' : 'Provider default';
+    if (effortQualifier) effortQualifier.style.display = isInherited ? '' : 'none';
+    effortSel.appendChild(base);
+    if (isInherited) {
+      var offOpt = document.createElement('option');
+      offOpt.value = 'off';
+      offOpt.textContent = 'Provider default';
+      effortSel.appendChild(offOpt);
+    }
+    levels.forEach(function(level) {
+      var opt = document.createElement('option');
+      opt.value = level;
+      opt.textContent = level;
+      effortSel.appendChild(opt);
+    });
+    var validValues = [''].concat(isInherited ? ['off'] : []).concat(levels);
+    effortSel.value = validValues.indexOf(selected) >= 0 ? selected : '';
+    var show = isInherited || levels.length > 0;
+    if (effortRow) effortRow.style.display = show ? '' : 'none';
+    if (effortHelp) effortHelp.style.display = show ? '' : 'none';
+  }
+
   function refreshModels(selectedModel) {
     var epId = epSel.value;
     var ep = _endpoints.find(function(e) { return e.id === epId; });
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
+  await loadEffortLevels();
+
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.utility_endpoint_id) epSel.value = settings.utility_endpoint_id;
     refreshModels(settings.utility_model || '');
+    refreshEffort(settings.utility_reasoning_effort || '');
     fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
       endpoints: function() { return _endpoints; },
       settingKey: 'utility_model_fallbacks',
+      supportsEffort: true,
+      getEffortLevels: function(epId, modelId) {
+        var meta = (_levelsByEndpoint[epId] || {})[modelId] || {};
+        return Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels : [];
+      },
       initial: Array.isArray(settings.utility_model_fallbacks)
-        ? settings.utility_model_fallbacks.map(function(f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
+        ? settings.utility_model_fallbacks.map(function(f) {
+            return {
+              endpoint_id: (f && f.endpoint_id) || '',
+              model: (f && f.model) || '',
+              reasoning_effort: (f && f.reasoning_effort) || '',
+            };
+          })
         : [],
     });
   } catch (e) { console.warn('Failed to load utility model settings', e); }
@@ -411,20 +556,30 @@ async function initUtilityModel() {
     try {
       await _postSettings({
         utility_endpoint_id: epSel.value || '',
-        utility_model: modelSel.value || ''
+        utility_model: modelSel.value || '',
+        utility_reasoning_effort: effortSel ? (effortSel.value || '') : ''
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
     } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
-  modelSel.addEventListener('change', saveUtility);
+  // A new endpoint/model may not advertise the saved effort; refreshEffort
+  // resets it to the provider default, and saveUtility persists that.
+  epSel.addEventListener('change', function() { refreshModels(''); refreshEffort(''); saveUtility(); });
+  modelSel.addEventListener('change', function() { refreshEffort(effortSel ? effortSel.value : ''); saveUtility(); });
+  if (effortSel) effortSel.addEventListener('change', saveUtility);
+  var defEp = el('set-defaultEpSelect');
+  var defModel = el('set-defaultModelSelect');
+  if (defEp) defEp.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
+  if (defModel) defModel.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(async function(endpoints) {
     _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
     refreshModels(modelSel.value);
+    await loadEffortLevels();
+    refreshEffort(effortSel ? effortSel.value : '');
     if (fallbackWidget && fallbackWidget.refresh) fallbackWidget.refresh();
   });
 }
@@ -626,16 +781,21 @@ var _searchProviderHints = {
   google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at ' + _LINK('https://programmablesearchengine.google.com/', 'programmablesearchengine.google.com'),
   tavily: 'AI-optimized search. 1,000 free credits/month at ' + _LINK('https://tavily.com/', 'tavily.com'),
   serper: 'Google results via API. 2,500 free queries at ' + _LINK('https://serper.dev/', 'serper.dev'),
+  you_com: 'Works with no key, but keyless requests are subject to usage limits and Deep Research can consume multiple requests. Optional API key from ' + _LINK('https://you.com/platform?utm_source=odysseus-dev-odysseus&utm_medium=oss_integration&utm_campaign=2026-10-oss-integrations&utm_content=settings', 'you.com/platform') + ' for higher limits.',
   disabled: 'Web search and deep research tools will be unavailable.',
 };
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
+// Optional key: show the key field but do not treat a missing key as misconfigured.
+var _searchOptionalKey = { you_com: 1 };
 var _searchLabels = {
   searxng: 'SearXNG', duckduckgo: 'DuckDuckGo', brave: 'Brave Search',
-  google_pse: 'Google PSE', tavily: 'Tavily', serper: 'Serper', disabled: 'Disabled',
+  google_pse: 'Google PSE', tavily: 'Tavily', serper: 'Serper',
+  you_com: 'You.com', disabled: 'Disabled',
 };
 var _searchKeyFields = {
   brave: 'brave_api_key', google_pse: 'google_pse_key',
   tavily: 'tavily_api_key', serper: 'serper_api_key',
+  you_com: 'ydc_api_key',
 };
 
 async function initSearchSettings() {
@@ -656,19 +816,23 @@ async function initSearchSettings() {
 
   function loadKeyForProvider(prov) {
     var field = keyFieldFor(prov);
-    keyInput.value = field ? (_settings[field] || _settings.search_api_key || '') : '';
+    // Optional-key providers ignore the legacy shared key so a stale key from
+    // another provider is not silently copied over.
+    var legacy = _searchOptionalKey[prov] ? '' : (_settings.search_api_key || '');
+    keyInput.value = field ? (_settings[field] || legacy) : '';
   }
 
   function updateVisibility() {
     var prov = provSel.value;
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
-    keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
+    keyRow.style.display = (_searchNeedsKey[prov] || _searchOptionalKey[prov]) ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
     hint.innerHTML = _searchProviderHints[prov] || '';
     if (prov === 'brave') keyInput.placeholder = 'Brave API key';
     else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
     else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
     else if (prov === 'serper') keyInput.placeholder = 'Serper API key';
+    else if (prov === 'you_com') keyInput.placeholder = 'YDC_API_KEY (optional)';
     else keyInput.placeholder = 'API key';
     loadKeyForProvider(prov);
   }
@@ -715,9 +879,26 @@ async function initSearchSettings() {
       var label = _searchLabels[active] || active;
       var extra = '';
       var kf = keyFieldFor(active);
-      var hasKey = kf ? ((s[kf] || '').trim() || (s.search_api_key || '').trim()) : false;
+      var legacyKey = _searchOptionalKey[active] ? '' : (s.search_api_key || '').trim();
+      // hasKey from saved settings (what /api/auth/settings returns).
+      var hasKey = kf ? ((s[kf] || '').trim() || legacyKey) : false;
+      // For optional-key providers, also check runtime key presence via
+      // /api/search/config so that a configured key (from settings or
+      // environment) is reflected even when credentials are hidden or
+      // empty in /api/auth/settings (#6809).
+      if (_searchOptionalKey[active] && !hasKey) {
+        try {
+          var cfgRes = await fetch('/api/search/config', { credentials: 'same-origin' });
+          var cfg = await cfgRes.json();
+          if (cfg.active_provider === active && cfg.has_api_key) {
+            hasKey = true;
+          }
+        } catch (_) { /* /api/search/config is best-effort */ }
+      }
       if (_searchNeedsKey[active]) {
         extra = hasKey ? ' (key set)' : ' (no key)';
+      } else if (_searchOptionalKey[active]) {
+        extra = hasKey ? ' (key active)' : ' (keyless)';
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
@@ -1102,7 +1283,9 @@ async function initResearchSearchSettings() {
       var kf = _searchKeyFields[prov];
       if (!kf) return;
       var hasKey = ((settings[kf] || '').trim() || (settings.search_api_key || '').trim());
-      if (!hasKey) {
+      // Optional-key providers work without a key; do not flag them as
+      // misconfigured when no key is saved in settings (#6809).
+      if (!hasKey && !_searchOptionalKey[prov]) {
         opt.textContent = (_searchLabels[prov] || prov) + ' (no key)';
         opt.style.color = 'var(--red)';
       } else {
@@ -1521,6 +1704,7 @@ async function initShortcuts() {
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
     } catch (e) {
       console.error('Failed to save keybinds:', e);
+      if (uiModule && uiModule.showToast) uiModule.showToast('Failed to save shortcut');
     }
   }
 
@@ -1539,6 +1723,169 @@ async function initShortcuts() {
 /* ═══════════════════════════════════════════
    INIT & REFRESH
    ═══════════════════════════════════════════ */
+// ── Personal API Tokens (Account tab) ──
+const SELF_TOKEN_SCOPES = [
+  { key: 'chat', label: 'Chat', detail: 'Chat and companion access' },
+  { key: 'todos:read', label: 'Todos', detail: 'Read notes and checklists' },
+  { key: 'todos:write', label: 'Todos write', detail: 'Create, update, delete, and toggle todo items' },
+  { key: 'documents:read', label: 'Documents', detail: 'Read documents' },
+  { key: 'documents:write', label: 'Documents write', detail: 'Create and update draft documents' },
+  { key: 'email:read', label: 'Email', detail: 'Read email' },
+  { key: 'email:draft', label: 'Email drafts', detail: 'Create email reply drafts' },
+  { key: 'email:send', label: 'Email send', detail: 'Send email directly' },
+  { key: 'calendar:read', label: 'Calendar', detail: 'Read calendar events' },
+  { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
+  { key: 'memory:read', label: 'Memory', detail: 'Read memory' },
+  { key: 'memory:write', label: 'Memory write', detail: 'Write memory' },
+  { key: 'cookbook:read', label: 'Cookbook', detail: 'Read model inventory and presets', adminOnly: true },
+  { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Start and stop model servers', adminOnly: true },
+];
+
+function initSelfApiTokens(isAdmin) {
+  const listEl = el('settings-api-tokens-list');
+  const createPanel = el('settings-api-tokens-create');
+  const newBtn = el('settings-api-token-new-btn');
+  const createBtn = el('settings-api-token-create-btn');
+  const nameInput = el('settings-api-token-name');
+  const scopesEl = el('settings-api-token-scopes');
+  const msgEl = el('settings-api-token-create-msg');
+  const revealEl = el('settings-api-token-reveal');
+  const tokenValueEl = el('settings-api-token-value');
+  const copyBtn = el('settings-api-token-copy-btn');
+
+  if (!listEl || !newBtn) return;
+
+  // Build scope checkboxes once
+  scopesEl.innerHTML = SELF_TOKEN_SCOPES.filter(s => !s.adminOnly || isAdmin).map(s => `
+    <label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;cursor:pointer;">
+      <input type="checkbox" class="self-token-scope" value="${esc(s.key)}" title="${esc(s.detail)}">
+      <span>${esc(s.label)}</span>
+    </label>
+  `).join('');
+
+  async function loadTokens() {
+    try {
+      const res = await fetch('/api/tokens/self', { credentials: 'same-origin' });
+      const tokens = await res.json();
+      if (!tokens.length) {
+        listEl.innerHTML = '<div style="font-size:11px;opacity:0.4;padding:4px 0;">No tokens yet</div>';
+        return;
+      }
+      listEl.innerHTML = tokens.map(t => {
+        const scopes = (t.scopes || []).join(', ') || 'chat';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb, var(--fg) 3%, transparent);">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:600;">${esc(t.name)}</div>
+            <div style="font-size:10px;opacity:0.5;display:flex;gap:8px;flex-wrap:wrap;">
+              <span>${esc(t.token_prefix)}...</span>
+              <span>${esc(scopes)}</span>
+              ${t.last_used_at ? `<span>Last used ${new Date(t.last_used_at).toLocaleDateString()}</span>` : '<span>Never used</span>'}
+            </div>
+          </div>
+          <button class="admin-btn-delete self-token-revoke" data-token-id="${esc(t.id)}" title="Revoke token" style="flex-shrink:0;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>`;
+      }).join('');
+
+      // Wire revoke buttons
+      listEl.querySelectorAll('.self-token-revoke').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const tokenId = btn.dataset.tokenId;
+          if (!await window.styledConfirm('Revoke this token? Any scripts or apps using it will stop working.', { confirmText: 'Revoke', danger: true })) return;
+          try {
+            const r = await fetch(`/api/tokens/self/${tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
+            if (r.ok) loadTokens();
+          } catch (_) {}
+        });
+      });
+    } catch (_) {
+      listEl.innerHTML = '<div style="font-size:11px;opacity:0.4;">Could not load tokens</div>';
+    }
+  }
+
+  loadTokens();
+
+  // New token button
+  newBtn.addEventListener('click', () => {
+    createPanel.style.display = '';
+    newBtn.style.display = 'none';
+    nameInput.value = '';
+    nameInput.focus();
+    revealEl.style.display = 'none';
+    msgEl.textContent = '';
+    scopesEl.querySelectorAll('.self-token-scope').forEach(cb => { cb.checked = false; });
+  });
+
+  // Cancel create — hide panel, show button
+  const cancelCreate = () => {
+    createPanel.style.display = 'none';
+    newBtn.style.display = '';
+    revealEl.style.display = 'none';
+    msgEl.textContent = '';
+  };
+
+  // Create token
+  createBtn.addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    if (!name) { msgEl.textContent = 'Token name is required'; msgEl.style.color = 'var(--red)'; return; }
+    const checked = Array.from(scopesEl.querySelectorAll('.self-token-scope:checked')).map(cb => cb.value);
+    const fd = new FormData();
+    fd.append('name', name);
+    if (checked.length) fd.append('scopes', checked.join(','));
+    msgEl.textContent = '';
+    msgEl.style.color = '';
+    createBtn.disabled = true;
+    try {
+      const res = await fetch('/api/tokens/self', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const data = await res.json();
+      if (res.ok) {
+        tokenValueEl.textContent = data.token;
+        revealEl.style.display = '';
+        nameInput.value = '';
+        scopesEl.querySelectorAll('.self-token-scope').forEach(cb => { cb.checked = false; });
+        loadTokens();
+      } else {
+        msgEl.textContent = data.detail || 'Failed';
+        msgEl.style.color = 'var(--red)';
+      }
+    } catch (_) {
+      msgEl.textContent = 'Request failed';
+      msgEl.style.color = 'var(--red)';
+    } finally {
+      createBtn.disabled = false;
+    }
+  });
+
+  // Copy button
+  if (copyBtn) {
+    const COPY_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const CHECK_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    copyBtn.addEventListener('click', () => {
+      const val = tokenValueEl.textContent;
+      navigator.clipboard.writeText(val).then(() => {
+        copyBtn.innerHTML = CHECK_ICON;
+        copyBtn.style.color = 'var(--accent, var(--red))';
+        copyBtn.style.opacity = '1';
+        setTimeout(() => {
+          copyBtn.innerHTML = COPY_ICON;
+          copyBtn.style.color = '';
+          copyBtn.style.opacity = '';
+        }, 1600);
+      });
+    });
+  }
+
+  // Allow Enter key in name input to create
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      createBtn.click();
+    }
+  });
+}
+
 function initAccount() {
   // Populate user info
   fetch('/api/auth/status', { credentials: 'same-origin' })
@@ -1552,6 +1899,11 @@ function initAccount() {
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
+      }
+      const tokenCard = el('settings-api-tokens-card');
+      if (tokenCard && d.authenticated) {
+        tokenCard.style.display = '';
+        initSelfApiTokens(!!d.is_admin);
       }
     }).catch(() => {});
 

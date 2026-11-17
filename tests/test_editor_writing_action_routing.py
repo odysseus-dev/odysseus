@@ -11,6 +11,7 @@ from src.clean_agent_preview import (
 from src.turn_contract import (
     editor_request_instructions, requested_capabilities, selected_tools_for_request,
     preserve_bound_editor_selected_tools, resolve_turn_contract,
+    targets_bound_editor_request,
 )
 from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
 from src.tool_policy import ToolPolicy
@@ -70,6 +71,16 @@ def test_direct_edits_share_the_capability_router(prompt):
     assert requested_capabilities(prompt, active_document=True) == {'documents'}
     assert targets_active_editor(doc, prompt)
     assert not active_editor_suggestion_request(doc, prompt)
+
+
+@pytest.mark.parametrize('prompt', [
+    'ga mer ut pa att vi tanker pa framtid for bjorn och att vi faktist trivs sa bra har',
+    'Go more into how we are thinking about the future.',
+])
+def test_implicit_revision_followups_route_to_active_document_only(prompt):
+    assert requested_capabilities(prompt, active_document=True) == {'documents'}
+    assert requested_capabilities(prompt, active_document=False) == frozenset()
+    assert targets_bound_editor_request(prompt)
 
 
 def test_source_review_still_requires_tool_completion_after_research():
