@@ -448,3 +448,26 @@ describe('Markdown draft recovery', () => {
     assert.equal(local._markdownRecoveryStored, false);
   });
 });
+
+it('warns before leaving an unsaved draft even when tab-scoped recovery was stored', async () => {
+  const { guardMarkdownDraftUnload } = await import('../frontend/src/features/documents/application/documentSession.js');
+  const previousStorage = globalThis.sessionStorage;
+  const recovery = new Map();
+  clearDocuments();
+  _closingDocs.clear();
+  try {
+    globalThis.sessionStorage = {
+      getItem: key => recovery.get(key) ?? null,
+      setItem: (key, value) => recovery.set(key, value),
+      removeItem: key => recovery.delete(key),
+    };
+    registerDocument({ id: 'tab-close', sessionId: 's1', language: 'markdown', content: 'Unsaved', _persistedContent: 'Original', _saveState: 'dirty' });
+    let warned = false;
+    guardMarkdownDraftUnload({ preventDefault() { warned = true; } });
+    assert.equal(recovery.size, 1);
+    assert.equal(warned, true, 'sessionStorage disappears when the browser tab closes');
+  } finally {
+    globalThis.sessionStorage = previousStorage;
+    clearDocuments();
+  }
+});

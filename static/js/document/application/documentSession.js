@@ -123,12 +123,17 @@ function recoverMarkdownDraft(doc) {
 }
 
 export function guardMarkdownDraftUnload(event) {
+  let hasUnsavedChanges = false;
   for (const doc of [...docs.values(), ..._closingDocs.values()]) {
     if (doc.language !== 'markdown' || (!doc._visualSyncBlocked && !['dirty', 'saving', 'error'].includes(doc._saveState))) continue;
-    if (!persistMarkdownDraft(doc)) {
-      event.preventDefault();
-      event.returnValue = '';
-      return;
-    }
+    persistMarkdownDraft(doc);
+    // Tab storage survives reload but is removed when the browser tab closes.
+    // beforeunload cannot distinguish those operations, so retain the warning
+    // until the current content and formatting have actually been saved.
+    if (doc._visualSyncBlocked || doc.content !== doc._persistedContent) hasUnsavedChanges = true;
+  }
+  if (hasUnsavedChanges) {
+    event.preventDefault();
+    event.returnValue = true;
   }
 }

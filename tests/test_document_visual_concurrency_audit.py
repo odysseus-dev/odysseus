@@ -73,3 +73,22 @@ def test_failed_visual_save_recovers_after_reload_without_acknowledging(status):
     assert data["recovered"]["content"] == "Persisted baseline recovered edit"
     assert "recovered edit" in data["recovered"]["richHtml"]
     assert data["recoveredState"] != "saved"
+
+
+def test_browser_unload_warns_for_unsaved_markdown():
+    data = _run_browser(r"""
+      await boot('audit-browser-unload');
+      await open({ id: 'close-warning', title: 'Unsaved', language: 'markdown', current_content: 'Persisted' });
+      await page.locator('#doc-email-richbody').click();
+      await caretAtEnd();
+      await page.keyboard.type(' pending');
+      let warnings = 0;
+      page.on('dialog', dialog => { if (dialog.type() === 'beforeunload') warnings++; });
+      // Navigation exercises the trusted native beforeunload event. This
+      // Chromium's CDP Page.close skips it, including in the minimal control.
+      await page.goto(`${process.env.ODYSSEUS_TEST_STATIC_ORIGIN}/static/js/documentOutline.js?after-unload`);
+      await finish({ warnings, puts: api.puts, server: api.store.get('close-warning').current_content });
+    """)
+    assert data['warnings'] == 1
+    assert data['puts'] == []
+    assert data['server'] == 'Persisted'

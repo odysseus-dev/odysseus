@@ -22,6 +22,13 @@ HARNESS = r"""
   const page = await browser.newPage({ viewport: { width: 1024, height: 760 } });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(String(error?.message || error)));
+  page.on('dialog', async dialog => {
+    if (dialog.type() === 'beforeunload') await dialog.accept();
+    else {
+      pageErrors.push(`Unexpected browser dialog: ${dialog.type()}`);
+      await dialog.dismiss();
+    }
+  });
 
   const api = { creates: [], puts: [], store: new Map(), versions: new Map() };
   await page.route('**/api/**', async (route) => {
