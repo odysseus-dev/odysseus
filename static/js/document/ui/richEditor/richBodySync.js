@@ -4,7 +4,6 @@ import { _persistEmailLocalDraftSoon } from '../email/localDraft.js';
 // frontend/src/features/documents/ui/richEditor/richBodySync.js
 /**
  * Document Editor Rich-Text Subsystem: richBodySync
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { activeDocId, docs } from '../../application/documentState.js';

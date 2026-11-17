@@ -3,7 +3,6 @@ import { _richSelectionCell, _richTableCanMergeRight, _richTableCanSplitCell, _f
 // frontend/src/features/documents/ui/richEditor/formatMenus.js
 /**
  * Document Editor Rich-Text Subsystem: formatMenus
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { activeDocId, docs } from '../../application/documentState.js';

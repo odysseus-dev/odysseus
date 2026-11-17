@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/richEditor/imageMenus.js
 /**
  * Document Editor Rich-Text Subsystem: imageMenus
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { API_BASE } from '../../application/documentState.js';

@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/header/overflow.js
 /**
  * Document action overflow and recent-action order.
- * Declarations moved from static/js/document.js under Appendix A (ui/header/overflow).
  */
 
 import { showExportMenu } from '../exportDocx.js';

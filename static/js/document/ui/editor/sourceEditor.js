@@ -52,20 +52,6 @@ export function _replaceRange(ta, from, to, text) {
     }
   }
 
-function populateEditor(doc) {
-    const titleInput = document.getElementById('doc-title-input');
-    const textarea = document.getElementById('doc-editor-textarea');
-    const langSelect = document.getElementById('doc-language-select');
-    const badge = document.getElementById('doc-version-badge');
-
-    if (titleInput) titleInput.value = doc.title || '';
-    if (textarea) textarea.value = doc.current_content || doc.content || '';
-    if (langSelect) langSelect.value = doc.language || 'markdown';
-    if (badge) { const _v = doc.version_count || doc.version || 1; badge.textContent = `v${_v}`; badge.style.display = _v > 1 ? '' : 'none'; }
-    { const _v = doc.version_count || doc.version || 1; const _dbtn = document.getElementById('doc-diff-toggle-btn'); if (_dbtn) _dbtn.style.display = _v > 1 ? '' : 'none'; }
-    syncHighlighting();
-  }
-
 function _postProcessMarkdown(codeEl) {
     const walker = document.createTreeWalker(codeEl, NodeFilter.SHOW_TEXT);
     const textNodes = [];

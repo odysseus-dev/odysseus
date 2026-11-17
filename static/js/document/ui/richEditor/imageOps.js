@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/richEditor/imageOps.js
 /**
  * Document Editor Rich-Text Subsystem: imageOps
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { _markdownImageAlt } from '../../domain/documentKinds.js';

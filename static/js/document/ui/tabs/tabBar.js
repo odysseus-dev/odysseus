@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/tabs/tabBar.js
 /**
  * Document tab bar, tab menu, and empty state.
- * Declarations moved from static/js/document.js under Appendix A (ui/tabs/tabBar).
  */
 
 import { _hideLoadingOverlay, switchToDoc } from '../../application/documentCommands.js';

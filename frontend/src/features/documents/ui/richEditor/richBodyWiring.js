@@ -6,7 +6,6 @@ import { _uploadMarkdownImages } from '../editor/markdownImages.js';
 // frontend/src/features/documents/ui/richEditor/richBodyWiring.js
 /**
  * Document Editor Rich-Text Subsystem: richBodyWiring
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { activeDocId, docs } from '../../application/documentState.js';

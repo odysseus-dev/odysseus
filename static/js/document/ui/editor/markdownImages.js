@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/editor/markdownImages.js
 /**
  * Markdown image upload, insertion, and autosave scheduling.
- * Declarations moved from static/js/document.js under Appendix A (ui/editor/markdownImages).
  */
 
 import { API_BASE, activeDocId } from '../../application/documentState.js';

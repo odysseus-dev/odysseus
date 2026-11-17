@@ -1,8 +1,7 @@
 // frontend/src/features/documents/ui/aiUpdates/documentUpdate.js
 /**
  * AI document update, line diff, and animated change presentation.
- * Declarations moved from static/js/document.js under Appendix A
- * (ui/aiUpdates/documentUpdate). State writes use documentState setters.
+ * State writes use documentState setters.
  */
 
 import {

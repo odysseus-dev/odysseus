@@ -4,7 +4,6 @@ import { _replaceRange } from '../editor/sourceEditor.js';
 // frontend/src/features/documents/ui/richEditor/formatting.js
 /**
  * Document Editor Rich-Text Subsystem: formatting
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { _RICH_FONT_SIZE_PX } from '../../domain/richTextRules.js';

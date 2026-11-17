@@ -1,8 +1,7 @@
 // frontend/src/features/documents/ui/aiUpdates/liveStream.js
 /**
  * Live AI document streaming.
- * Declarations moved from static/js/document.js under Appendix A
- * (ui/aiUpdates/liveStream). State writes use documentState setters.
+ * State writes use documentState setters.
  */
 
 import {

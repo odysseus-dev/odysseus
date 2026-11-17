@@ -1,8 +1,6 @@
 // frontend/src/features/documents/ui/status/documentStatus.js
 /**
  * Document save state, editor placeholder, stats, history controls, and outline.
- * Declarations moved from static/js/document.js under Appendix A
- * (ui/status/documentStatus).
  */
 
 import { activeDocId, docs, _closingDocs } from '../../application/documentState.js';

@@ -2,7 +2,6 @@ import { topPortalZ } from '../host.js';
 // frontend/src/features/documents/ui/richEditor/selectionToolbar.js
 /**
  * Document Editor Rich-Text Subsystem: selectionToolbar
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { _richSelectionHasFormatting, applyMdFormat } from './formatting.js';

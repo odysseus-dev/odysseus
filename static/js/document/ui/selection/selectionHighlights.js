@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/selection/selectionHighlights.js
 /**
  * Editor and rich-text selection highlights.
- * Declarations moved from static/js/document.js under Appendix A (ui/selection/selectionHighlights).
  */
 
 import { activeDocId, docs } from '../../application/documentState.js';

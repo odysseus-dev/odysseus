@@ -601,7 +601,7 @@ describe('liveStream', () => {
     assert.equal(dom.toolbar.dataset.mode, '');
   });
 
-  it('keeps only the Appendix A export', () => {
+  it('keeps the bounded live-stream export surface', () => {
     const source = fs.readFileSync(entryPath, 'utf8');
     const ownerExports = [...source.matchAll(/^export function (\w+)/gm)].map(match => match[1]).sort();
     assert.deepEqual(ownerExports, ['streamDocDelta', 'streamDocFinalize', 'streamDocOpen']);

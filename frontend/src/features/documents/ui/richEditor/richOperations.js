@@ -3,7 +3,6 @@ import { markdownModule } from '../host.js';
 // frontend/src/features/documents/ui/richEditor/richOperations.js
 /**
  * Document Editor Rich-Text Subsystem: richOperations
- * Conforms to 087e6c88 baseline AST and Appendix A specifications.
  */
 
 import { _isRichInlineCodeMarker, _normalizeRichLinkUrl } from '../../domain/richTextRules.js';

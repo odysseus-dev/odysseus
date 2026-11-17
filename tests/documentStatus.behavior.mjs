@@ -718,7 +718,7 @@ describe('documentStatus', () => {
     assert.equal(calls.dismissCloses, 1);
   });
 
-  it('exports only the Appendix A status surface', () => {
+  it('exports only the status module surface', () => {
     const source = fs.readFileSync(entryPath, 'utf8');
     const exported = [...source.matchAll(/^export function (\w+)/gm)].map(match => match[1]).sort();
     assert.deepEqual(exported, [

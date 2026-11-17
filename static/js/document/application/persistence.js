@@ -30,15 +30,6 @@ let _lastAutoSaveErrorAt = 0;
 export let _emailRichbodySaveDebounce = null;
 export const _pendingAutoSaves = new Map();
 
-const REQUIRED_PERSISTENCE_HOOKS = [
-  '_hasPendingPdfPaneSave',
-  '_renderDocumentSaveState',
-  'getChatDocumentId',
-  '_cancelPdfPaneSave',
-  '_syncPdfPaneToDoc',
-  '_renderVersionBadge'
-];
-
 let _boundHooks = null;
 
 const _ports = {
@@ -179,15 +170,6 @@ export function _cancelAutoSave(docId = activeDocId) {
     if (_emailRichbodySaveDebounce === entry.timer) _emailRichbodySaveDebounce = null;
     _pendingAutoSaves.delete(docId);
   }
-}
-
-function _cancelAllAutoSaves() {
-  for (const [id, entry] of _pendingAutoSaves) {
-    clearTimeout(entry.timer);
-  }
-  _pendingAutoSaves.clear();
-  _autoSaveDebounce = null;
-  _emailRichbodySaveDebounce = null;
 }
 
 export function _flushAutoSave(docId = activeDocId) {

@@ -1,8 +1,6 @@
 // frontend/src/features/documents/ui/history/versionHistory.js
 /**
  * Document version history panel.
- * Declarations moved from static/js/document.js under Appendix A
- * (ui/history/versionHistory).
  */
 
 import { API_BASE, activeDocId, docs, isOpen } from '../../application/documentState.js';

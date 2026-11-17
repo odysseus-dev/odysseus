@@ -1,7 +1,6 @@
 // frontend/src/features/documents/ui/toolbar/toolbar.js
 /**
  * Document formatting toolbar and AI writing menu.
- * Declarations moved from static/js/document.js under Appendix A (ui/toolbar/toolbar).
  */
 
 import { activeDocId, docs } from '../../application/documentState.js';
