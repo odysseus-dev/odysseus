@@ -16,7 +16,8 @@ let MAIL_DIR = null;
 let RUNTIME_DIR = null;
 const ARTIFACT_DIR =
   process.env.ARTIFACT_DIR ||
-  '/home/alteixeira20/.local/share/agy02-profile/home/.gemini/antigravity-cli/brain/e1b1620f-ab1b-4f96-b34a-7b51c1679e7b/evidence';
+  process.env.NOTES_NATIVE_EVIDENCE_DIR ||
+  join(tmpdir(), 'odysseus-fallback-recovery-evidence');
 
 export function resolveAppPort(rawPort = process.env.PORT) {
   if (rawPort === undefined || rawPort === null || rawPort === '') {
@@ -311,7 +312,7 @@ export async function runBrowserTests() {
     await page.waitForFunction(() => {
       const toggle = document.getElementById('set-foregroundFallbackToggle');
       return toggle && !toggle.disabled;
-    }, { timeout: 10000 });
+    }, undefined, { timeout: 10000 });
 
     const toggle = page.locator('#set-foregroundFallbackToggle');
     const toggleLabel = page.locator('label:has(#set-foregroundFallbackToggle)');
@@ -341,7 +342,7 @@ export async function runBrowserTests() {
     await page.waitForFunction(() => {
       const ed = document.getElementById('set-foregroundFallbackEditor');
       return ed && !ed.hidden;
-    }, { timeout: 5000 });
+    }, undefined, { timeout: 5000 });
 
     const enabledChecked = await toggle.isChecked();
     console.log(`Toggle checked=${enabledChecked}, editor hidden=${await editor.getAttribute('hidden')}`);
@@ -360,7 +361,7 @@ export async function runBrowserTests() {
 
     await page.waitForFunction(() => {
       return document.querySelectorAll('#set-foregroundFallbacks .settings-fallback-row').length === 1;
-    }, { timeout: 5000 });
+    }, undefined, { timeout: 5000 });
 
     // Add second candidate
     const add2Promise = page.waitForResponse(
@@ -373,7 +374,7 @@ export async function runBrowserTests() {
 
     await page.waitForFunction(() => {
       return document.querySelectorAll('#set-foregroundFallbacks .settings-fallback-row').length === 2;
-    }, { timeout: 5000 });
+    }, undefined, { timeout: 5000 });
 
     const candidateRows = page.locator('#set-foregroundFallbacks .settings-fallback-row');
     const rowCount = await candidateRows.count();
@@ -426,7 +427,7 @@ export async function runBrowserTests() {
     await page.waitForFunction(() => {
       const retryBtn = document.getElementById('set-foregroundFallbackRetry');
       return retryBtn && !retryBtn.hidden;
-    }, { timeout: 6000 });
+    }, undefined, { timeout: 6000 });
 
     if (!interceptedPutA) throw new Error('Expected candidate list PUT to be intercepted');
     testReport.testA.intercepted.push({
@@ -490,7 +491,7 @@ export async function runBrowserTests() {
     await page.waitForFunction(() => {
       const retryBtn = document.getElementById('set-foregroundFallbackRetry');
       return retryBtn && retryBtn.hidden;
-    }, { timeout: 10000 });
+    }, undefined, { timeout: 10000 });
 
     page.off('request', requestListener);
 
@@ -625,7 +626,7 @@ export async function runBrowserTests() {
     await page.waitForFunction(() => {
       const retryBtn = document.getElementById('set-foregroundFallbackRetry');
       return retryBtn && !retryBtn.hidden;
-    }, { timeout: 6000 });
+    }, undefined, { timeout: 6000 });
 
     if (!interceptedPutB) throw new Error('Expected candidate list PUT to be intercepted for Test B');
     testReport.testB.intercepted.push({
@@ -707,7 +708,7 @@ export async function runBrowserTests() {
     await page.waitForFunction(() => {
       const retryBtn = document.getElementById('set-foregroundFallbackRetry');
       return retryBtn && retryBtn.hidden;
-    }, { timeout: 10000 });
+    }, undefined, { timeout: 10000 });
 
     page.off('request', recordReqB);
 
@@ -730,12 +731,36 @@ export async function runBrowserTests() {
     testReport.testB.status = 'PASS';
     testReport.testB.evidence.push('Preferences write failed -> preferences unavailable (500) -> model catalog refreshed (200) -> editor remained disabled -> preferences unblocked & Retry clicked -> editor and controls enabled after both conditions satisfied.');
 
-    // Mobile Responsive Verification
+    // Mobile Viewport Layout Verification and Evidence Capture
     console.log('\n======================================================');
-    console.log('Mobile Viewport Inspection (390x844)');
+    console.log('Mobile Viewport Verification & Evidence Capture (390x844)');
     console.log('======================================================\n');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(500);
+
+    // Assert mobile layout: no document-level horizontal overflow and editor visible within viewport
+    const mobileLayout = await page.evaluate(() => {
+      const editorEl = document.getElementById('set-foregroundFallbackEditor');
+      const docEl = document.documentElement;
+      if (!editorEl) return { ok: false, reason: 'editor not found' };
+      const hasDocOverflow = docEl.scrollWidth > docEl.clientWidth;
+      const editorRect = editorEl.getBoundingClientRect();
+      const editorVisible = editorRect.width > 0 && editorRect.height > 0;
+      const fitsViewport = editorRect.right <= docEl.clientWidth + 2;
+      return {
+        ok: !hasDocOverflow && editorVisible && fitsViewport,
+        hasDocOverflow,
+        editorVisible,
+        fitsViewport,
+        docScrollWidth: docEl.scrollWidth,
+        docClientWidth: docEl.clientWidth,
+        editorWidth: editorRect.width,
+      };
+    });
+    console.log(`Mobile layout check: ${JSON.stringify(mobileLayout)}`);
+    if (!mobileLayout.ok) {
+      throw new Error(`Mobile layout check failed: ${JSON.stringify(mobileLayout)}`);
+    }
 
     const mobileScreenshotPath = join(ARTIFACT_DIR, 'mobile-01-settings-ai-fallback.png');
     await page.screenshot({ path: mobileScreenshotPath });
