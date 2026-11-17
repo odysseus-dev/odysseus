@@ -21,6 +21,7 @@ approval.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -31,6 +32,7 @@ import zipfile
 from pathlib import Path
 
 LLAMA_RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+INSTALL_MANIFEST = "odysseus-install.json"
 LLAMA_RELEASES_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20"
 
 # Asset name fragments, most specific first. llama.cpp publishes Windows builds
@@ -99,12 +101,17 @@ def llama_runtime_summary() -> dict:
                 if not child.is_dir() or child.name.endswith(".previous"):
                     continue
                 exe = _find_server_exe(child)
-                installed.append({
+                entry = {
                     "tag": child.name,
                     "path": str(child),
                     "executable": str(exe) if exe else None,
                     "previous": llama_previous_dir(child.name).is_dir(),
-                })
+                }
+                if exe:
+                    from src.gpu_runtime import inspect_runtime
+                    entry.update({k: v for k, v in inspect_runtime(exe.parent).items()
+                                  if k in ("build", "cuda_ready", "cuda_major", "missing_libs", "detail")})
+                installed.append(entry)
     except OSError:
         pass
     return {"root": str(root), "installed": installed}
@@ -194,6 +201,7 @@ def select_llama_asset(release: dict, variant_id: str, driver_version: str = "",
                     "url": asset.get("browser_download_url") or asset.get("url"),
                     "size": asset.get("size"),
                     "id": asset.get("id"),
+                    "sha256": asset_sha256(asset),
                 }
                 warning = cuda_driver_warning(asset["name"], driver_version, cuda_driver_major)
                 if warning:
@@ -301,7 +309,8 @@ def extract_llama_archive(archive: Path, dest: Path) -> tuple[bool, str, Path | 
     return True, detail, exe
 
 
-def install_llama_archive(archive: Path, tag: str) -> tuple[bool, str, dict | None]:
+def install_llama_archive(archive: Path, tag: str, *, dependencies: tuple = (),
+                          manifest: dict | None = None) -> tuple[bool, str, dict | None]:
     """Install a downloaded archive atomically, keeping the previous runtime.
 
     The archive is extracted to a staging directory first; only a fully
@@ -327,6 +336,23 @@ def install_llama_archive(archive: Path, tag: str) -> tuple[bool, str, dict | No
     if not ok:
         shutil.rmtree(staging, ignore_errors=True)
         return False, message, None
+
+    from src.gpu_runtime import inspect_runtime
+    for dep in dependencies:
+        dep_ok, dep_msg = extract_runtime_libraries(Path(dep), exe.parent)
+        if not dep_ok:
+            shutil.rmtree(staging, ignore_errors=True)
+            return False, dep_msg, None
+    check = inspect_runtime(exe.parent)
+    if check["build"] == "cuda" and check["missing_libs"]:
+        shutil.rmtree(staging, ignore_errors=True)
+        return False, f"Incomplete CUDA runtime: {check['detail']}", None
+    if manifest:
+        try:
+            (staging / INSTALL_MANIFEST).write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+        except OSError as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            return False, f"Could not record the install manifest: {exc}", None
 
     shutil.rmtree(previous, ignore_errors=True)
     if target.exists():
@@ -505,3 +531,203 @@ def is_wsl_host() -> bool:
         return bool(is_wsl())
     except Exception:
         return False
+
+
+
+# --- release integrity, companion libraries, resumable verified download -------
+
+_DIGEST_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
+_LIB_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.dll$")
+
+
+class DownloadError(RuntimeError):
+    """A download could not be completed or failed verification."""
+
+
+def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def asset_sha256(asset: dict) -> str:
+    """Published SHA-256 from the GitHub release API (``sha256:<hex>``), else ''."""
+    match = _DIGEST_RE.match(str(asset.get("digest") or "").strip().lower()) if isinstance(asset, dict) else None
+    return match.group(1) if match else ""
+
+
+def verify_archive(path: Path, sha256: str, size: int | None = None) -> tuple[bool, str]:
+    if not re.fullmatch(r"[0-9a-f]{64}", str(sha256 or "")):
+        return False, "No published SHA-256 digest is available for this archive; refusing to install it."
+    path = Path(path)
+    if not path.is_file():
+        return False, "The archive is missing."
+    if size and path.stat().st_size != size:
+        return False, f"Archive size {path.stat().st_size} does not match the published size {size}."
+    actual = sha256_file(path)
+    if actual != sha256:
+        return False, f"SHA-256 mismatch: expected {sha256}, got {actual}."
+    return True, actual
+
+
+def cuda_version_of(asset_name: str) -> str:
+    match = re.search(r"cuda-(\d+(?:\.\d+)?)", str(asset_name).lower())
+    return match.group(1) if match else ""
+
+
+def install_key(tag: str, asset_name: str) -> str:
+    """Install directory name. CUDA builds are keyed by CUDA version so a CUDA 13
+    install never displaces a CUDA 12 install of the same release."""
+    cuda = cuda_version_of(asset_name)
+    return f"{tag}-cuda-{cuda}" if cuda else str(tag)
+
+
+def select_runtime_dependencies(release: dict, asset_name: str) -> list[dict]:
+    """Companion archives a build needs: ``cudart-llama-bin-win-cuda-<same ver>-<arch>.zip``."""
+    cuda = cuda_version_of(asset_name)
+    if not cuda:
+        return []
+    arch = "arm64" if "arm64" in asset_name.lower() else "x64"
+    wanted = f"cudart-llama-bin-win-cuda-{cuda}-{arch}.zip"
+    for asset in release.get("assets") or []:
+        if isinstance(asset, dict) and str(asset.get("name", "")).lower() == wanted:
+            return [{"name": asset["name"], "url": asset.get("browser_download_url") or asset.get("url"),
+                     "size": asset.get("size"), "sha256": asset_sha256(asset)}]
+    return []
+
+
+def extract_runtime_libraries(archive: Path, dest: Path) -> tuple[bool, str]:
+    """Extract flat ``*.dll`` members next to llama-server. Never overwrites a file."""
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            members = [m for m in zf.infolist() if not m.is_dir()]
+            bad = [m.filename for m in members if not _LIB_NAME_RE.match(m.filename)]
+            if bad or not members:
+                return False, f"Unexpected runtime-library archive contents: {bad[:3] or 'empty'}"
+            for member in members:
+                target = Path(dest) / member.filename
+                if target.exists():
+                    continue
+                part = target.with_name(target.name + ".part")
+                with zf.open(member) as src, part.open("wb") as out:
+                    shutil.copyfileobj(src, out, 1 << 20)
+                if part.stat().st_size != member.file_size:
+                    part.unlink(missing_ok=True)
+                    return False, f"Size mismatch extracting {member.filename}"
+                os.replace(part, target)
+    except (zipfile.BadZipFile, OSError) as exc:
+        return False, f"Runtime libraries could not be extracted: {exc}"
+    return True, ""
+
+
+def fetch_release_by_tag(tag: str, timeout: int = 30) -> dict:
+    import urllib.request
+
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(tag or "")):
+        raise ValueError("Invalid release tag")
+    url = f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                               "User-Agent": "Odysseus-Cookbook"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        release = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(release, dict):
+        raise RuntimeError("unexpected release response")
+    return release
+
+
+def download_verified(url: str, dest: Path, *, sha256: str, size: int | None = None,
+                      timeout: int = 60, chunk: int = 1 << 20):
+    """Generator: download ``url`` to ``dest`` with resume, yielding ``(received, total)``.
+
+    The partial file lives at ``dest.part`` with a ``.part.json`` sidecar naming the
+    URL and digest it belongs to; it is resumed only when both match. The finished
+    file is size- and SHA-256-checked before it is moved to ``dest``. A mismatch
+    deletes the partial and raises; cancelling (closing the generator) keeps a
+    resumable partial and never produces ``dest``.
+    """
+    import urllib.error
+    import urllib.request
+
+    if not re.fullmatch(r"[0-9a-f]{64}", str(sha256 or "")):
+        raise DownloadError("No published SHA-256 digest is available; refusing to download.")
+    dest = Path(dest)
+    part = dest.with_name(dest.name + ".part")
+    sidecar = dest.with_name(dest.name + ".part.json")
+    if dest.is_file() and verify_archive(dest, sha256, size)[0]:
+        yield dest.stat().st_size, dest.stat().st_size
+        return
+    dest.unlink(missing_ok=True)
+    have = 0
+    if part.is_file():
+        try:
+            meta = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        if meta.get("url") == url and meta.get("sha256") == sha256:
+            have = part.stat().st_size
+        else:
+            part.unlink(missing_ok=True)
+    if size and have > size:
+        part.unlink(missing_ok=True)
+        have = 0
+    sidecar.write_text(json.dumps({"url": url, "sha256": sha256, "size": size}), encoding="utf-8")
+    headers = {"User-Agent": "Odysseus-Cookbook"}
+    if have and (not size or have < size):
+        headers["Range"] = f"bytes={have}-"
+    if not size or have < size:
+        try:
+            resp = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416 and have:  # already complete on the server's view
+                resp = None
+            else:
+                raise DownloadError(f"Download failed: HTTP {exc.code}") from None
+        except (OSError, urllib.error.URLError) as exc:
+            raise DownloadError(f"Download failed: {exc}") from None
+        if resp is not None:
+            with resp:
+                resumed = have and getattr(resp, "status", 200) == 206
+                if have and not resumed:
+                    have = 0  # server ignored Range: restart cleanly
+                total = (have + int(resp.headers.get("Content-Length") or 0)) if resumed else \
+                    int(resp.headers.get("Content-Length") or 0)
+                with part.open("ab" if resumed else "wb") as handle:
+                    received = have
+                    while True:
+                        try:
+                            block = resp.read(chunk)
+                        except OSError as exc:
+                            raise DownloadError(f"Download interrupted (partial kept for resume): {exc}") from None
+                        if not block:
+                            break
+                        handle.write(block)
+                        received += len(block)
+                        yield received, total or size or 0
+    ok, detail = verify_archive(part, sha256, size)
+    if not ok:
+        part.unlink(missing_ok=True)
+        sidecar.unlink(missing_ok=True)
+        raise DownloadError(detail)
+    os.replace(part, dest)
+    sidecar.unlink(missing_ok=True)
+    yield dest.stat().st_size, dest.stat().st_size
+
+
+def existing_install_matches(key: str, archives: list[dict]) -> dict | None:
+    """Return install info when ``key`` already holds exactly these verified archives."""
+    target = llama_install_dir(key)
+    try:
+        recorded = json.loads((target / INSTALL_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    want = sorted((a["name"], a["sha256"]) for a in archives)
+    have = sorted((a.get("name"), a.get("sha256")) for a in recorded.get("archives", []))
+    exe = _find_server_exe(target)
+    if want != have or exe is None:
+        return None
+    from src.gpu_runtime import inspect_runtime
+    if inspect_runtime(exe.parent)["missing_libs"]:
+        return None
+    return {"tag": target.name, "path": str(target), "executable": str(exe), "already_installed": True}

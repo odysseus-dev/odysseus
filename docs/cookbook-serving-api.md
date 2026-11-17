@@ -234,3 +234,17 @@ Plans with `gpu_layers > 0` take a fresh VRAM reading, refuse CPU-only or incomp
 CUDA runtimes and missing GPUs, and clamp layers so that
 `max(1.25 GiB, 15% of VRAM)` stays free. The clamp is a dense-F16 estimate from GGUF
 geometry; unknown geometry is passed through with a warning.
+
+## Verified llama.cpp runtime install
+
+`POST /api/cookbook/llama-runtime/install` (asset `url` + `tag`) now resolves the release by tag,
+requires the asset's published SHA-256 (GitHub release `digest`), and for CUDA builds also
+downloads the matching `cudart-llama-bin-win-cuda-<ver>-<arch>.zip` (cudart + cuBLAS) and extracts
+its DLLs next to `llama-server.exe` without overwriting. CUDA builds install under
+`<tag>-cuda-<ver>` so CUDA 12 and 13 coexist. Downloads resume (`.part` + `.part.json` naming
+URL and digest), are size/SHA-256 checked before publication, and a mismatch deletes the partial and
+installs nothing. Cancelling keeps a resumable partial. A CUDA backend whose imported libraries are
+missing is refused (`Incomplete CUDA runtime`), never installed as a silent CPU fallback. Re-running
+with identical verified archives reports `already_installed` without downloading. Local
+`archive_path` installs now also require a `sha256`. Runtime summary entries carry
+`build`, `cuda_ready`, `missing_libs`.

@@ -1679,6 +1679,9 @@ def setup_shell_routes() -> APIRouter:
                 archive.resolve().relative_to(root)
             except ValueError:
                 raise HTTPException(400, "A local archive must be inside the runtime directory.")
+            verified, detail = llama_runtime.verify_archive(archive, str(payload.get("sha256") or "").lower())
+            if not verified:
+                raise HTTPException(400, detail)
             ok, message, info = llama_runtime.install_llama_archive(archive, tag)
             if not ok:
                 raise HTTPException(400, message)
@@ -1695,9 +1698,8 @@ def setup_shell_routes() -> APIRouter:
 
         root = llama_runtime.llama_runtime_root()
         root.mkdir(parents=True, exist_ok=True)
-        archive = root / (re.sub(r"[^A-Za-z0-9._-]+", "-", tag) + ".download.zip")
         return StreamingResponse(
-            _stream_llama_download(url, archive, tag),
+            _stream_llama_download(url, tag),
             media_type="text/event-stream",
         )
 
@@ -1715,40 +1717,63 @@ def setup_shell_routes() -> APIRouter:
             raise HTTPException(400, message)
         return {"ok": True, "executable": message}
 
-    async def _stream_llama_download(url: str, archive: Path, tag: str):
-        """Download with progress; abort the install if the client goes away."""
-        import urllib.request
+    async def _stream_llama_download(url: str, tag: str):
+        """Verified install: digest from the release API, companion libraries, resumable, cancel-safe.
+
+        Nothing is extracted until every archive matches its published SHA-256.
+        A cancelled or interrupted download keeps a resumable partial; a corrupt
+        one is deleted. An already-complete matching install is not re-downloaded.
+        """
         from src import llama_runtime
 
-        yield f"data: {json.dumps({'stream': 'progress', 'detail': 'starting'})}\n\n"
-        tmp = archive.with_suffix(".part")
-        activated = False
+        def event(**kw):
+            return f"data: {json.dumps(kw)}\n\n"
+
+        yield event(stream="progress", detail="resolving release")
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Odysseus-Cookbook"})
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                total = int(resp.headers.get("Content-Length") or 0)
-                received = 0
-                with open(tmp, "wb") as fh:
-                    while True:
-                        chunk = resp.read(1 << 16)
-                        if not chunk:
-                            break
-                        fh.write(chunk)
-                        received += len(chunk)
-                        yield (f"data: {json.dumps({'stream': 'progress', 'received': received, 'total': total})}\n\n")
-            ok, message, info = llama_runtime.install_llama_archive(tmp, tag)
-            activated = ok
-            if not ok:
-                yield f"data: {json.dumps({'stream': 'error', 'error': message})}\n\n"
+            release = await asyncio.to_thread(llama_runtime.fetch_release_by_tag, tag)
+            main = next((a for a in release.get("assets", [])
+                         if isinstance(a, dict) and a.get("browser_download_url") == url), None)
+            if main is None:
+                raise ValueError("The URL is not an asset of that release.")
+            archives = [{"name": main["name"], "url": url, "size": main.get("size"),
+                         "sha256": llama_runtime.asset_sha256(main)}]
+            archives += llama_runtime.select_runtime_dependencies(release, main["name"])
+            if any(not a["sha256"] for a in archives):
+                raise ValueError("The release publishes no SHA-256 digest for this build; refusing to install it.")
+            key = llama_runtime.install_key(tag, main["name"])
+            done = llama_runtime.existing_install_matches(key, archives)
+            if done:
+                yield event(stream="done", info=done)
                 return
-            yield f"data: {json.dumps({'stream': 'done', 'info': info})}\n\n"
+            root = llama_runtime.llama_runtime_root()
+            work = root / (key + ".downloads")
+            work.mkdir(parents=True, exist_ok=True)
+            paths = []
+            for index, item in enumerate(archives):
+                dest = work / re.sub(r"[^A-Za-z0-9._-]+", "-", item["name"])
+                gen = llama_runtime.download_verified(item["url"], dest, sha256=item["sha256"], size=item["size"])
+                try:
+                    while True:
+                        step = await asyncio.to_thread(next, gen, None)
+                        if step is None:
+                            break
+                        yield event(stream="progress", received=step[0], total=step[1],
+                                    detail=item["name"], part=index + 1, parts=len(archives))
+                finally:
+                    gen.close()  # cancellation keeps a resumable partial, never a final file
+                paths.append(dest)
+            manifest = {"tag": tag, "archives": [{"name": a["name"], "sha256": a["sha256"]} for a in archives]}
+            ok, message, info = await asyncio.to_thread(
+                llama_runtime.install_llama_archive, paths[0], key, dependencies=tuple(paths[1:]),
+                manifest=manifest)
+            if not ok:
+                yield event(stream="error", error=message)
+                return
+            shutil.rmtree(work, ignore_errors=True)
+            yield event(stream="done", info=info)
         except Exception as exc:
-            yield f"data: {json.dumps({'stream': 'error', 'error': str(exc)})}\n\n"
-        finally:
-            # A cancelled or failed download must never leave a partial archive
-            # that could later be mistaken for a complete one.
-            if not activated:
-                tmp.unlink(missing_ok=True)
+            yield event(stream="error", error=str(exc))
 
     @router.get("/api/cookbook/packages")
     async def list_packages(

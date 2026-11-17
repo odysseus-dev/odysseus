@@ -201,8 +201,9 @@ def gpu_status(runtime_root: Path, *, driver_loader=None) -> dict:
             exe = next((m for n in names for m in sorted(child.rglob(n))[:1]), None)
         if exe:
             runtimes.append({"tag": child.name, "executable": str(exe),
+                             "managed": (exe.parent / "odysseus-install.json").is_file(),
                              **inspect_runtime(exe.parent, cuda_driver_major=major)})
     usable = [r for r in runtimes if r["build"] == "cuda" and r["cuda_ready"]]
-    usable.sort(key=lambda r: r.get("cuda_major") or 0)
+    usable.sort(key=lambda r: (r.get("cuda_major") or 0, r["managed"]))
     return {"gpu": gpu, "runtimes": runtimes,
             "selected_runtime": usable[-1]["executable"] if gpu.get("available") and usable else None}
