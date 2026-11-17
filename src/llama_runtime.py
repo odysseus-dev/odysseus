@@ -79,7 +79,8 @@ def llama_runtime_root() -> Path:
     """Application-managed runtime directory (never on the global PATH)."""
     from src.runtime_paths import get_default_data_dir
 
-    return Path(get_default_data_dir()) / "runtimes" / "llama.cpp"
+    data_dir = (os.environ.get("ODYSSEUS_DATA_DIR") or "").strip() or get_default_data_dir()
+    return Path(data_dir) / "runtimes" / "llama.cpp"
 
 
 def llama_install_dir(tag: str) -> Path:
