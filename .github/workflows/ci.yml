@@ -113,6 +113,8 @@ jobs:
       - name: Test document behavior suites
         run: |
           node --test tests/domainModules.test.mjs \
+            tests/documentBehaviorRunner.test.mjs \
+            tests/documentPersistence.test.mjs \
             tests/documentActions.test.mjs \
             tests/documentUpdate.test.mjs \
             tests/documentStatus.test.mjs \

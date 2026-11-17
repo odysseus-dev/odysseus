@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Runs a behavior suite ESM module in an isolated node process with VM modules enabled.
- * Portable across Node versions and reporter defaults (spec vs tap).
+ * Uses an explicit reporter, independent of Node's reporter defaults.
  * Ensures failures propagate correctly and empty or unexecuted suites fail.
  */
 export function runBehaviorSuite(suiteUrlOrPath) {
@@ -18,7 +18,9 @@ export function runBehaviorSuite(suiteUrlOrPath) {
 
   const result = spawnSync(
     process.execPath,
-    ['--experimental-vm-modules', '--test', '--test-reporter=spec', suitePath],
+    // Direct mode still runs node:test registrations. --test would count an empty
+    // module as a passing file-level test, defeating the positive-test-count check.
+    ['--experimental-vm-modules', '--test-reporter=spec', suitePath],
     { encoding: 'utf8', env }
   );
 
@@ -29,15 +31,14 @@ export function runBehaviorSuite(suiteUrlOrPath) {
 
   assert.equal(result.status, 0, `Suite process failed with exit code ${result.status}:\n${output}`);
 
-  // Portable match for passing tests in both spec reporter and TAP reporter
-  const passMatch = output.match(/(?:ℹ|#)\s+pass\s+([1-9]\d*)/i);
+  const passMatch = output.match(/^ℹ pass ([1-9]\d*)$/m);
   assert.ok(
     passMatch && parseInt(passMatch[1], 10) > 0,
     `Suite did not execute any passing tests:\n${output}`
   );
 
   // Ensure no failing tests occurred
-  const failMatch = output.match(/(?:ℹ|#)\s+fail\s+([1-9]\d*)/i);
+  const failMatch = output.match(/^ℹ fail ([1-9]\d*)$/m);
   assert.ok(
     !failMatch,
     `Suite reported test failures:\n${output}`
