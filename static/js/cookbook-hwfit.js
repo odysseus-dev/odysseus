@@ -373,7 +373,10 @@ export function _renderGpuToggles(system) {
 // service restart, and a reload still shows a spinner while it re-fetches. Cache
 // the last successful /models result per param-signature in localStorage so a
 // reload paints instantly, then we refresh in the background and swap.
-const _SCAN_CACHE_KEY = 'hwfit_scan_cache_v1';
+// v2: v1 entries may hold a CPU-only result for an NVIDIA GPU that older builds could not
+// detect; the key bump retires them without users clearing browser storage.
+const _SCAN_CACHE_KEY = 'hwfit_scan_cache_v2';
+try { localStorage.removeItem('hwfit_scan_cache_v1'); } catch {}
 const _MANUAL_HW_KEY = 'hwfit_manual_hardware_v1';
 const _CTX_KEY = 'hwfit_target_context_v1';
 const _CTX_PRESETS = [8192, 16384, 32768, 50000, 131072, 0]; // 0 = model max

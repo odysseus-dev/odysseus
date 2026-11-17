@@ -129,7 +129,8 @@ def build_launch_plan(*, engine: str, executable: str, port: int, model_path: st
         if kv_estimate:
             kv_estimate['bytes_at_planned_context'] = context * derived_kv
             kv_estimate['used_for_memory_limit'] = bool(available_memory_bytes and gpu_layers == 0)
-            warnings.append('GGUF dense F16 KV estimate is an assumption; runtime cache layout/type and scratch are unverified')
+            kind = 'hybrid (attention + recurrent)' if kv_estimate.get('attention_layers') else 'dense'
+            warnings.append(f'GGUF {kind} F16 KV estimate is an assumption; runtime cache layout/type and scratch are unverified')
         if memory_validation == 'unknown':
             warnings.append('KV/VRAM memory fit is unknown; explicit acknowledgement is required to start')
         argv += ['--model', model, '--host', '127.0.0.1', '--port', str(port),
@@ -175,6 +176,13 @@ class LocalServingController:
         self.state_path = Path(state_path)
         self.log_dir = Path(log_dir)
         self._children = {}
+
+    @staticmethod
+    def _gpu_snapshot(gpu_layers: int) -> dict | None:
+        if not gpu_layers:
+            return None
+        from src import gpu_runtime
+        return gpu_runtime.probe_cuda_driver()
 
     def _receipt(self, sid: str) -> dict | None:
         import re
@@ -334,6 +342,7 @@ class LocalServingController:
                 model_context_limit=previous.get('model_context_limit'),
                 kv_bytes_per_token=previous.get('kv_bytes_per_token'),
                 available_memory_bytes=available_memory_bytes(),
+                gpu=self._gpu_snapshot(previous['gpu_layers']),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError('Invalid saved runtime recipe; no restart was attempted') from exc
@@ -348,6 +357,18 @@ class LocalServingController:
             return {'ok': False, 'state': 'restart-failed', 'previous_session_id': sid,
                     'process_stopped': True, 'error': str(exc)}
         return {**result, 'previous_session_id': sid, 'process_stopped': True}
+
+    def annotate(self, sid: str, **fields) -> None:
+        """Attach UI-facing fields (e.g. the registered chat endpoint) to this session's task."""
+        @store_transaction(lambda: self.state_path)
+        def apply():
+            state = self._state()
+            for task in state.get('tasks', []):
+                if isinstance(task, dict) and task.get('sessionId') == sid:
+                    task.update(fields)
+                    atomic_write_json(str(self.state_path), state, indent=2)
+                    return
+        apply()
 
     def stop(self, sid: str) -> dict:
         @store_transaction(lambda: self.state_path)

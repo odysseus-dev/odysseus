@@ -3882,6 +3882,74 @@ function _rerenderCachedModels() {
   });
 }
 
+// First-use runtime setup: detect GPU/driver, offer a one-click verified install of the
+// llama.cpp build (plus matching CUDA libraries) into the app-managed runtime folder.
+// Returns {exe, cpuOnly}; exe is '' when nothing usable resulted.
+async function _ensureManagedRuntime(wantCpu) {
+  const get = async (url, ms = 60000) => _fetchCookbookWithTimeout(url, { credentials: 'same-origin' }, ms);
+  let g;
+  try { g = await (await get('/api/cookbook/serving/gpu', 30000)).json(); } catch { return { exe: '' }; }
+  if (!wantCpu && g.selected_runtime) return { exe: g.selected_runtime, cpuOnly: false };
+  const cpuRt = (g.runtimes || []).find(r => r.build === 'cpu');
+  if (wantCpu && cpuRt) return { exe: cpuRt.executable, cpuOnly: true };
+
+  const res = await get('/api/cookbook/llama-runtime/setup-plan?variant=' + (wantCpu ? 'cpu' : 'auto'));
+  const plan = await res.json().catch(() => ({}));
+  if (!res.ok) { uiModule.showToast('Runtime setup unavailable: ' + String(plan.detail || res.status).slice(0, 240), 9000); return { exe: '' }; }
+  const opt = plan[plan.chosen];
+  if (!opt) { uiModule.showToast('No compatible llama.cpp build: ' + (plan.reason || 'unknown'), 9000); return { exe: '' }; }
+  const mb = n => `${Math.round(n / 1048576)} MB`;
+  const files = opt.archives.map(a => `${a.name} (${mb(a.size)}${a.cached ? ', already downloaded' : ''})`).join('\n');
+  const cpuOnly = plan.chosen === 'cpu';
+  const intro = cpuOnly
+    ? (wantCpu ? 'Set up CPU inference?' : `GPU acceleration is not available: ${plan.cuda_unavailable_reason || plan.reason}\n\nInstall the CPU runtime instead?`)
+    : `Set up GPU inference?\n\n${plan.reason}.`;
+  const ok = await window.styledConfirm(
+    `${intro}\n\nDownload: ${mb(opt.download_bytes)} of ${mb(opt.total_bytes)}${plan.offline ? ' (offline: using cached packages)' : ''}\n${files}\n\nEvery file is checked against its published SHA-256 and installed into Odysseus's own runtime folder. No CUDA Toolkit is needed and no driver is installed or changed.`,
+    { title: cpuOnly ? 'Set up CPU runtime' : 'Set up GPU runtime', confirmText: 'Download & install', cancelText: 'Cancel' });
+  if (!ok) return { exe: '' };
+
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:10060;background:var(--panel,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:12px 14px;width:320px;font-size:13px;';
+  box.innerHTML = '<div data-rt-title style="font-weight:600;margin-bottom:6px">Setting up inference runtime…</div><div data-rt-detail style="opacity:.8;margin-bottom:6px;word-break:break-all"></div><div style="height:6px;background:rgba(128,128,128,.3);border-radius:3px"><div data-rt-bar style="height:6px;width:0;background:var(--accent,#4a9);border-radius:3px"></div></div><button data-rt-cancel style="margin-top:8px">Cancel</button>';
+  document.body.appendChild(box);
+  const ctl = new AbortController();
+  box.querySelector('[data-rt-cancel]').onclick = () => ctl.abort();
+  let failure = '', info = null;
+  try {
+    const resp = await fetch('/api/cookbook/llama-runtime/setup', {
+      method: 'POST', credentials: 'same-origin', signal: ctl.signal,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variant: cpuOnly ? 'cpu' : 'auto' }),
+    });
+    if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(typeof d.detail === 'string' ? d.detail : `HTTP ${resp.status}`); }
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const line = buf.slice(0, i).replace(/^data: /, ''); buf = buf.slice(i + 2);
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        if (ev.stream === 'error') failure = ev.error || 'failed';
+        else if (ev.stream === 'done') info = ev.info;
+        else {
+          if (ev.detail) box.querySelector('[data-rt-detail]').textContent = ev.parts > 1 ? `${ev.detail} (${ev.part}/${ev.parts})` : ev.detail;
+          if (ev.total) box.querySelector('[data-rt-bar]').style.width = Math.min(100, Math.round(100 * ev.received / ev.total)) + '%';
+        }
+      }
+    }
+  } catch (e) {
+    failure = e && e.name === 'AbortError' ? 'Cancelled. Downloaded data is kept, so setup resumes where it stopped.' : String(e && e.message || e);
+  } finally { box.remove(); }
+  if (failure || !info) { uiModule.showToast('Runtime setup did not finish: ' + (failure || 'no result'), 9000); return { exe: '' }; }
+  uiModule.showToast('Inference runtime ready.');
+  const after = await (await get('/api/cookbook/serving/gpu', 30000)).json().catch(() => ({}));
+  const exe = cpuOnly ? (((after.runtimes || []).find(r => r.build === 'cpu') || {}).executable || info.executable || '')
+                      : (after.selected_runtime || '');
+  return { exe, cpuOnly };
+}
+
 // ── Managed local llama.cpp serving (native Windows) ──
 // Uses the typed serving API (/api/cookbook/serving/*): app-managed CUDA runtime,
 // VRAM-safe layer/context planning and ownership-verified stop. Returns true when
@@ -3892,18 +3960,15 @@ async function _launchManagedLlama(name, repo, m, st) {
   if (!rel || !m || !m.path) return false;
   const base = String(m.path).replace(/[\\/]+$/, '');
   const modelPath = (m.is_local_dir ? `${base}/${repo}/${rel}` : `${base}/models--${repo.replace(/\//g, '--')}/snapshots/${rel}`).replace(/\//g, '\\');
-  const cpu = st.llama_mode === 'cpu';
-  let exe = '';
-  try {
-    const g = await (await _fetchCookbookWithTimeout('/api/cookbook/serving/gpu', { credentials: 'same-origin' }, 30000)).json();
-    if (!cpu) exe = g.selected_runtime || '';
-    if (!exe) exe = ((g.runtimes || []).find(r => r.build === 'cpu') || {}).executable || '';
-  } catch { return false; }
-  if (!exe) return false;
+  let cpu = st.llama_mode === 'cpu';
+  const rt = await _ensureManagedRuntime(cpu);
+  if (!rt.exe) return true;  // user declined or setup failed; the reason was shown
+  const exe = rt.exe;
+  cpu = cpu || rt.cpuOnly;
   const body = {
     engine: 'llamacpp', executable: exe, model_path: modelPath,
     port: parseInt(st.port, 10) || 8000, context_length: parseInt(st.ctx, 10) || 4096,
-    gpu_layers: cpu ? 0 : 999,
+    gpu_layers: cpu ? 0 : 999, display_name: name,
   };
   const res = await _fetchCookbookWithTimeout('/api/cookbook/serving/start', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -3917,6 +3982,7 @@ async function _launchManagedLlama(name, repo, m, st) {
   }
   uiModule.showToast(`Starting ${name} (managed)...`);
   try {
+    window.modelsModule?.refreshModels?.(false);
     const running = await import('./cookbookRunning.js');
     await running._syncFromServer({ force: true });
     running._renderRunningTab();

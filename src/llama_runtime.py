@@ -192,6 +192,11 @@ def select_llama_asset(release: dict, variant_id: str, driver_version: str = "",
     ]
     if not windows:
         return None
+    if variant_id == "cuda" and cuda_driver_major:
+        best = pick_cuda_asset(windows, cuda_driver_major)
+        if best is None:
+            return None
+        fragments = [f"cuda-{cuda_version_of(best['name'])}"]
     for frag in fragments:
         for asset in windows:
             name = asset["name"].lower()
@@ -581,7 +586,13 @@ def install_key(tag: str, asset_name: str) -> str:
     """Install directory name. CUDA builds are keyed by CUDA version so a CUDA 13
     install never displaces a CUDA 12 install of the same release."""
     cuda = cuda_version_of(asset_name)
-    return f"{tag}-cuda-{cuda}" if cuda else str(tag)
+    if cuda:
+        return f"{tag}-cuda-{cuda}"
+    low = str(asset_name).lower()
+    for backend in ("cpu", "vulkan", "sycl"):
+        if f"win-{backend}-" in low:
+            return f"{tag}-{backend}"  # never the bare tag: that name may hold a legacy install
+    return str(tag)
 
 
 def select_runtime_dependencies(release: dict, asset_name: str) -> list[dict]:
@@ -731,3 +742,121 @@ def existing_install_matches(key: str, archives: list[dict]) -> dict | None:
     if inspect_runtime(exe.parent)["missing_libs"]:
         return None
     return {"tag": target.name, "path": str(target), "executable": str(exe), "already_installed": True}
+
+
+# --- one-click setup planning ---------------------------------------------------
+
+PACKAGE_CACHE = "_packages"
+
+
+def package_cache_dir() -> Path:
+    return llama_runtime_root() / PACKAGE_CACHE
+
+
+def pick_cuda_asset(assets: list[dict], cuda_driver_major: int, compute_capability: str = "") -> dict | None:
+    """Newest x64 CUDA build whose CUDA major the driver supports.
+
+    CUDA 13 builds drop pre-Turing GPUs (compute capability < 7.5), so those
+    cards are limited to CUDA 12.
+    """
+    ceiling = cuda_driver_major
+    try:
+        if compute_capability and float(compute_capability) < 7.5:
+            ceiling = min(ceiling, 12)
+    except ValueError:
+        pass
+    best, best_key = None, None
+    for asset in assets:
+        name = str(asset.get("name", "")).lower()
+        version = cuda_version_of(name)
+        if not version or "arm64" in name or name.startswith("cudart-"):
+            continue
+        key = tuple(int(p) for p in version.split("."))
+        if key[0] <= ceiling and (best_key is None or key > best_key):
+            best, best_key = asset, key
+    return best
+
+
+def _describe_option(release: dict, asset: dict, tag: str) -> dict:
+    archives = [{"name": asset["name"], "url": asset.get("browser_download_url") or asset.get("url"),
+                 "size": asset.get("size") or 0, "sha256": asset_sha256(asset)}]
+    archives += select_runtime_dependencies(release, asset["name"])
+    key = install_key(tag, asset["name"])
+    cache = package_cache_dir()
+    for item in archives:
+        path = cache / re.sub(r"[^A-Za-z0-9._-]+", "-", item["name"])
+        item["cached"] = bool(item["size"]) and path.is_file() and path.stat().st_size == item["size"]
+    return {"install_key": key, "archives": archives,
+            "total_bytes": sum(a["size"] for a in archives),
+            "download_bytes": sum(a["size"] for a in archives if not a["cached"]),
+            "verifiable": all(a["sha256"] for a in archives),
+            "already_installed": existing_install_matches(key, archives) is not None}
+
+
+def plan_setup(release: dict, gpu: dict, variant: str = "auto") -> dict:
+    """What a one-click setup would install here, and what it would download.
+
+    Never installs a driver: CUDA is offered only when the installed NVIDIA driver
+    already supports the build's CUDA major. CPU is always offered as the alternative.
+    """
+    tag = str(release.get("tag_name") or "")
+    windows = [a for a in release.get("assets") or []
+               if isinstance(a, dict) and isinstance(a.get("name"), str) and "win" in a["name"].lower()
+               and a["name"].lower().endswith(".zip") and not any(x in a["name"].lower() for x in ASSET_EXCLUDE)]
+    cpu_asset = next((a for a in windows if "win-cpu-" in a["name"].lower()), None)
+    cuda_asset, unavailable = None, ""
+    if gpu.get("kind") != "nvidia":
+        unavailable = "No NVIDIA GPU was detected."
+    elif not gpu.get("cuda_driver_major"):
+        unavailable = ("An NVIDIA GPU was found but the driver reports no CUDA support. "
+                       "Update the NVIDIA driver (Odysseus never installs drivers).")
+    else:
+        cuda_asset = pick_cuda_asset(windows, gpu["cuda_driver_major"], gpu.get("compute_capability", ""))
+        if cuda_asset is None:
+            unavailable = (f"This release has no CUDA build compatible with CUDA {gpu['cuda_driver_major']} "
+                           "(driver) and this GPU generation.")
+    plan = {"tag": tag, "gpu": {k: gpu.get(k) for k in ("kind", "name", "driver", "cuda_driver_major",
+                                                         "compute_capability", "total_bytes")},
+            "cuda": _describe_option(release, cuda_asset, tag) if cuda_asset else None,
+            "cuda_unavailable_reason": unavailable,
+            "cpu": _describe_option(release, cpu_asset, tag) if cpu_asset else None}
+    chosen = "cuda" if (variant in ("auto", "cuda") and plan["cuda"]) else ("cpu" if plan["cpu"] else None)
+    plan["chosen"] = chosen
+    plan["reason"] = (f"{gpu.get('name')} with CUDA {gpu.get('cuda_driver_major')} driver support"
+                      if chosen == "cuda" else (unavailable or "CPU runtime requested"))
+    return plan
+
+
+def save_release_snapshot(release: dict) -> None:
+    """Keep the verified asset list so a later setup can reinstall from cached packages offline."""
+    tag = str(release.get("tag_name") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", tag):
+        return
+    slim = {"tag_name": tag, "assets": [
+        {k: a.get(k) for k in ("name", "size", "digest", "browser_download_url")}
+        for a in release.get("assets") or [] if isinstance(a, dict)]}
+    try:
+        cache = package_cache_dir()
+        cache.mkdir(parents=True, exist_ok=True)
+        tmp = cache / f"{tag}.release.json.tmp"
+        tmp.write_text(json.dumps(slim), encoding="utf-8")
+        os.replace(tmp, cache / f"{tag}.release.json")
+    except OSError:
+        pass
+
+
+def load_release_snapshot() -> dict | None:
+    """Newest saved release whose packages are actually cached (offline reinstall)."""
+    cache = package_cache_dir()
+    try:
+        snapshots = sorted(cache.glob("*.release.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return None
+    for path in snapshots:
+        try:
+            release = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(release, dict) and release.get("assets"):
+            return release
+    return None

@@ -143,7 +143,7 @@ def test_companion_matches_cuda_version_and_arch_and_carries_digest():
 def test_cuda_versions_install_side_by_side():
     assert lr.install_key("b9", "llama-b9-bin-win-cuda-13.5-x64.zip") == "b9-cuda-13.5"
     assert lr.install_key("b9", "llama-b9-bin-win-cuda-12.4-x64.zip") == "b9-cuda-12.4"
-    assert lr.install_key("b9", "llama-b9-bin-win-cpu-x64.zip") == "b9"
+    assert lr.install_key("b9", "llama-b9-bin-win-cpu-x64.zip") == "b9-cpu", "never the bare tag"
 
 
 def _main_zip(path, imports=(b"cudart64_13.dll", b"cublas64_13.dll")):

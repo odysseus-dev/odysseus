@@ -115,7 +115,7 @@ async def test_install_streams_progress_and_installs_complete_cuda_runtime(lab):
     assert done["stream"] == "done" and done["info"]["tag"] == "b9-cuda-13.5"
     target = lab["root"] / "b9-cuda-13.5"
     assert (target / "cudart64_13.dll").is_file() and (target / "cublas64_13.dll").is_file()
-    assert not (lab["root"] / "b9-cuda-13.5.downloads").exists(), "download scratch cleaned up"
+    assert (lab["root"] / "_packages" / MAIN).is_file(), "verified archives are kept for offline reinstall"
     assert not list(lab["root"].glob("*.staging"))
 
 
@@ -134,8 +134,7 @@ async def test_digest_mismatch_reports_error_and_installs_nothing(lab):
     events = await _events(lab)
     assert events[-1]["stream"] == "error" and "SHA-256 mismatch" in events[-1]["error"]
     assert not (lab["root"] / "b9-cuda-13.5").exists()
-    assert not list((lab["root"] / "b9-cuda-13.5.downloads").glob("*.zip"))
-    assert not list((lab["root"] / "b9-cuda-13.5.downloads").glob("*.part"))
+    assert not list((lab["root"] / "_packages").glob(MAIN + "*")), "a mismatching archive leaves nothing behind"
 
 
 @pytest.mark.asyncio
@@ -159,7 +158,7 @@ async def test_cancel_mid_download_installs_nothing_and_leaves_a_resumable_parti
     events = await _events(lab, stop_after=2)
     assert not any(e["stream"] in ("done", "error") for e in events)
     assert not (lab["root"] / "b9-cuda-13.5").exists()
-    work = lab["root"] / "b9-cuda-13.5.downloads"
+    work = lab["root"] / "_packages"
     assert not list(work.glob("*.zip")), "an unfinished archive must never look complete"
     # A later run completes (resume or restart) and installs.
     events = await _events(lab)

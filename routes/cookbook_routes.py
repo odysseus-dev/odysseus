@@ -4099,6 +4099,7 @@ def setup_cookbook_routes() -> APIRouter:
         model_context_limit: int | None = None
         kv_bytes_per_token: int | None = None
         allow_unestimated_context: bool = False
+        display_name: str = ""  # model label for the chat picker; never used for launching
 
     class ServingStopRequest(BaseModel):
         session_id: str
@@ -4122,7 +4123,7 @@ def setup_cookbook_routes() -> APIRouter:
             from src import gpu_runtime
             gpu = gpu_runtime.probe_cuda_driver()
         return serving_control.build_launch_plan(
-            **req.model_dump(exclude={"allow_unestimated_context"}),
+            **req.model_dump(exclude={"allow_unestimated_context", "display_name"}),
             available_memory_bytes=serving_control.available_memory_bytes(),
             gpu=gpu,
         )
@@ -4144,6 +4145,36 @@ def setup_cookbook_routes() -> APIRouter:
             return status
         return await asyncio.to_thread(collect)
 
+    def _register_managed_endpoint(session_id, plan, display_name):
+        """Make the managed server selectable in chat through the existing endpoint registry.
+
+        Reuses _auto_register_llm_endpoint, which updates an endpoint already pointing at
+        this base URL instead of creating a duplicate and never touches credentials.
+        """
+        from types import SimpleNamespace
+        label = (display_name or Path(plan["model_path"]).stem or "Local model").strip()
+        fake = SimpleNamespace(repo_id=label, cmd=" ".join(plan["argv"]))
+        try:
+            endpoint_id = _auto_register_llm_endpoint(fake, None, serve_session_id=session_id)
+        except Exception:
+            logging.getLogger(__name__).warning("managed endpoint registration failed", exc_info=True)
+            return None
+        if endpoint_id:
+            serving_controller.annotate(session_id, _endpointId=endpoint_id)
+        return endpoint_id
+
+    def _drop_managed_endpoint(session_id):
+        """Remove only the endpoint registered for this exact serve session."""
+        from core.database import SessionLocal, ModelEndpoint
+        db = SessionLocal()
+        try:
+            db.query(ModelEndpoint).filter(ModelEndpoint.cookbook_serve_session_id == session_id).delete()
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+
     @router.post("/api/cookbook/serving/plan")
     async def cookbook_serving_plan(request: Request, req: ServingLaunchRequest):
         serving_admin(request)
@@ -4159,6 +4190,9 @@ def setup_cookbook_routes() -> APIRouter:
             plan = await asyncio.to_thread(serving_plan, req)
             result = await asyncio.to_thread(serving_controller.start, plan,
                                             allow_unestimated_context=req.allow_unestimated_context)
+            if result.get("ok") and not result.get("reused"):
+                result["endpoint_id"] = await asyncio.to_thread(
+                    _register_managed_endpoint, result["session_id"], plan, req.display_name)
             _state_get_cache.pop("value", None)
             _tasks_status_cache.pop("value", None)
             return result
@@ -4170,6 +4204,8 @@ def setup_cookbook_routes() -> APIRouter:
         serving_admin(request)
         try:
             result = await asyncio.to_thread(serving_controller.stop, req.session_id)
+            if result.get("process_stopped"):
+                await asyncio.to_thread(_drop_managed_endpoint, req.session_id)
             _state_get_cache.pop("value", None)
             _tasks_status_cache.pop("value", None)
             return result

@@ -1718,11 +1718,28 @@ def setup_shell_routes() -> APIRouter:
         return {"ok": True, "executable": message}
 
     async def _stream_llama_download(url: str, tag: str):
+        """Install the asset at ``url`` from release ``tag`` (see _stream_runtime_install)."""
+        from src import llama_runtime
+
+        try:
+            release = await asyncio.to_thread(llama_runtime.fetch_release_by_tag, tag)
+            main = next((a for a in release.get("assets", [])
+                         if isinstance(a, dict) and a.get("browser_download_url") == url), None)
+            if main is None:
+                raise ValueError("The URL is not an asset of that release.")
+        except Exception as exc:
+            yield f"data: {json.dumps({'stream': 'error', 'error': str(exc)})}\n\n"
+            return
+        async for chunk in _stream_runtime_install(release, main, tag):
+            yield chunk
+
+    async def _stream_runtime_install(release: dict, main: dict, tag: str):
         """Verified install: digest from the release API, companion libraries, resumable, cancel-safe.
 
         Nothing is extracted until every archive matches its published SHA-256.
-        A cancelled or interrupted download keeps a resumable partial; a corrupt
-        one is deleted. An already-complete matching install is not re-downloaded.
+        Verified archives are kept in the package cache so a reinstall works offline;
+        a cancelled or interrupted download keeps a resumable partial, a corrupt one is
+        deleted. An already-complete matching install is not re-downloaded.
         """
         from src import llama_runtime
 
@@ -1731,13 +1748,8 @@ def setup_shell_routes() -> APIRouter:
 
         yield event(stream="progress", detail="resolving release")
         try:
-            release = await asyncio.to_thread(llama_runtime.fetch_release_by_tag, tag)
-            main = next((a for a in release.get("assets", [])
-                         if isinstance(a, dict) and a.get("browser_download_url") == url), None)
-            if main is None:
-                raise ValueError("The URL is not an asset of that release.")
-            archives = [{"name": main["name"], "url": url, "size": main.get("size"),
-                         "sha256": llama_runtime.asset_sha256(main)}]
+            archives = [{"name": main["name"], "url": main.get("browser_download_url"),
+                         "size": main.get("size"), "sha256": llama_runtime.asset_sha256(main)}]
             archives += llama_runtime.select_runtime_dependencies(release, main["name"])
             if any(not a["sha256"] for a in archives):
                 raise ValueError("The release publishes no SHA-256 digest for this build; refusing to install it.")
@@ -1746,8 +1758,7 @@ def setup_shell_routes() -> APIRouter:
             if done:
                 yield event(stream="done", info=done)
                 return
-            root = llama_runtime.llama_runtime_root()
-            work = root / (key + ".downloads")
+            work = llama_runtime.package_cache_dir()
             work.mkdir(parents=True, exist_ok=True)
             paths = []
             for index, item in enumerate(archives):
@@ -1764,16 +1775,69 @@ def setup_shell_routes() -> APIRouter:
                     gen.close()  # cancellation keeps a resumable partial, never a final file
                 paths.append(dest)
             manifest = {"tag": tag, "archives": [{"name": a["name"], "sha256": a["sha256"]} for a in archives]}
+            yield event(stream="progress", detail="installing", part=len(archives), parts=len(archives))
             ok, message, info = await asyncio.to_thread(
                 llama_runtime.install_llama_archive, paths[0], key, dependencies=tuple(paths[1:]),
                 manifest=manifest)
             if not ok:
                 yield event(stream="error", error=message)
                 return
-            shutil.rmtree(work, ignore_errors=True)
+            llama_runtime.save_release_snapshot(release)
             yield event(stream="done", info=info)
         except Exception as exc:
             yield event(stream="error", error=str(exc))
+
+    async def _setup_release():
+        """Latest release for setup planning; falls back to the saved snapshot when offline."""
+        from src import llama_runtime
+
+        try:
+            release = await asyncio.to_thread(llama_runtime.fetch_release_manifest)
+            llama_runtime.save_release_snapshot(release)
+            return release, False
+        except Exception:
+            snapshot = llama_runtime.load_release_snapshot()
+            if snapshot is None:
+                raise HTTPException(503, "Cannot reach the llama.cpp release service and no cached "
+                                         "packages exist for an offline setup.")
+            return snapshot, True
+
+    @router.get("/api/cookbook/llama-runtime/setup-plan")
+    async def llama_runtime_setup_plan(request: Request, variant: str = "auto"):
+        """What one-click GPU/CPU setup would install and download (nothing is changed)."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        from src import llama_runtime
+
+        if variant not in ("auto", "cuda", "cpu"):
+            raise HTTPException(400, "variant must be auto, cuda or cpu")
+        release, offline = await _setup_release()
+        gpu = await asyncio.to_thread(llama_runtime.detect_gpu)
+        plan = llama_runtime.plan_setup(release, gpu, variant)
+        plan["offline"] = offline
+        return plan
+
+    @router.post("/api/cookbook/llama-runtime/setup")
+    async def llama_runtime_setup(request: Request, payload: dict):
+        """One-click setup: download, verify and install the planned runtime (streamed)."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        from src import llama_runtime
+
+        variant = str((payload or {}).get("variant") or "auto")
+        if variant not in ("auto", "cuda", "cpu"):
+            raise HTTPException(400, "variant must be auto, cuda or cpu")
+        release, _offline = await _setup_release()
+        gpu = await asyncio.to_thread(llama_runtime.detect_gpu)
+        plan = llama_runtime.plan_setup(release, gpu, variant)
+        option = plan.get(plan["chosen"]) if plan["chosen"] else None
+        if not option:
+            raise HTTPException(409, plan["reason"] or "No compatible runtime build is available.")
+        if variant == "cuda" and plan["chosen"] != "cuda":
+            raise HTTPException(409, plan["cuda_unavailable_reason"] or "CUDA is not available on this host.")
+        main = next(a for a in release["assets"] if a.get("name") == option["archives"][0]["name"])
+        return StreamingResponse(_stream_runtime_install(release, main, plan["tag"]),
+                                 media_type="text/event-stream")
 
     @router.get("/api/cookbook/packages")
     async def list_packages(
