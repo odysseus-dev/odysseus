@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import re
 import shutil
 import stat
@@ -684,38 +685,53 @@ def download_verified(url: str, dest: Path, *, sha256: str, size: int | None = N
         part.unlink(missing_ok=True)
         have = 0
     sidecar.write_text(json.dumps({"url": url, "sha256": sha256, "size": size}), encoding="utf-8")
-    headers = {"User-Agent": "Odysseus-Cookbook"}
-    if have and (not size or have < size):
-        headers["Range"] = f"bytes={have}-"
-    if not size or have < size:
+    last_error = ""
+    for attempt in range(6):
+        have = part.stat().st_size if part.is_file() else 0
+        if size and have >= size:
+            break
+        headers = {"User-Agent": "Odysseus-Cookbook"}
+        if have:
+            headers["Range"] = f"bytes={have}-"
         try:
             resp = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout)
         except urllib.error.HTTPError as exc:
-            if exc.code == 416 and have:  # already complete on the server's view
-                resp = None
-            else:
+            if exc.code == 416 and have:
+                break  # the server considers what we hold complete; verification decides
+            if exc.code < 500 and exc.code != 429:
                 raise DownloadError(f"Download failed: HTTP {exc.code}") from None
+            last_error = f"HTTP {exc.code}"
+            time.sleep(min(2 ** attempt, 10))
+            continue
         except (OSError, urllib.error.URLError) as exc:
-            raise DownloadError(f"Download failed: {exc}") from None
-        if resp is not None:
-            with resp:
-                resumed = have and getattr(resp, "status", 200) == 206
-                if have and not resumed:
-                    have = 0  # server ignored Range: restart cleanly
-                total = (have + int(resp.headers.get("Content-Length") or 0)) if resumed else \
-                    int(resp.headers.get("Content-Length") or 0)
+            last_error = str(exc)
+            time.sleep(min(2 ** attempt, 10))
+            continue
+        with resp:
+            resumed = bool(have) and getattr(resp, "status", 200) == 206
+            if have and not resumed:
+                have = 0  # server ignored Range: restart cleanly
+            length = int(resp.headers.get("Content-Length") or 0)
+            total = size or ((have + length) if length else 0)
+            received = have
+            try:
                 with part.open("ab" if resumed else "wb") as handle:
-                    received = have
                     while True:
-                        try:
-                            block = resp.read(chunk)
-                        except OSError as exc:
-                            raise DownloadError(f"Download interrupted (partial kept for resume): {exc}") from None
+                        block = resp.read(chunk)
                         if not block:
                             break
                         handle.write(block)
                         received += len(block)
-                        yield received, total or size or 0
+                        yield received, total
+            except OSError as exc:
+                last_error = f"connection interrupted: {exc}"
+        if not total or received >= total:
+            break  # complete (or size unknown: verification decides)
+        last_error = last_error or f"connection closed early at {received} of {total} bytes"
+        time.sleep(min(2 ** attempt, 10))
+    else:
+        raise DownloadError(f"Download interrupted and not completed after retries ({last_error}); "
+                            "the partial file is kept and will resume next time.")
     ok, detail = verify_archive(part, sha256, size)
     if not ok:
         part.unlink(missing_ok=True)

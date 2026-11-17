@@ -23,7 +23,7 @@ def _sha(data: bytes) -> str:
 
 @pytest.fixture()
 def server():
-    state = {"body": b"", "ranges": [], "ignore_range": False}
+    state = {"body": b"", "ranges": [], "ignore_range": False, "cut": 0, "cuts_left": 0}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -41,7 +41,12 @@ def server():
                 chunk = body
             self.send_header("Content-Length", str(len(chunk)))
             self.end_headers()
+            if state["cuts_left"] > 0:  # advertise the full length, then drop the connection early
+                state["cuts_left"] -= 1
+                chunk = chunk[:state["cut"]]
             self.wfile.write(chunk)
+            self.wfile.flush()
+            self.close_connection = True
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -209,3 +214,26 @@ def test_extract_runtime_libraries_never_overwrites(tmp_path):
     ok, _ = lr.extract_runtime_libraries(_dep_zip(tmp_path / "d.zip"), tmp_path)
     assert ok and (tmp_path / "cudart64_13.dll").read_bytes() == b"original"
     assert (tmp_path / "cublas64_13.dll").is_file()
+
+
+def test_connection_closed_early_resumes_automatically_and_completes(tmp_path, server, monkeypatch):
+    monkeypatch.setattr(lr.time, "sleep", lambda s: None)
+    server["body"] = bytes(range(256)) * 4096
+    server["cut"], server["cuts_left"] = 300_000, 2
+    dest, digest = tmp_path / "a.zip", _sha(server["body"])
+    _drain(lr.download_verified(server["url"], dest, sha256=digest, size=len(server["body"])))
+    assert dest.read_bytes() == server["body"]
+    assert server["ranges"][0] is None and server["ranges"][1:] == ["bytes=300000-", "bytes=600000-"]
+
+
+def test_endless_early_closes_fail_but_keep_the_partial_for_a_later_resume(tmp_path, server, monkeypatch):
+    monkeypatch.setattr(lr.time, "sleep", lambda s: None)
+    server["body"] = b"z" * 400_000
+    server["cut"], server["cuts_left"] = 1000, 99
+    dest = tmp_path / "a.zip"
+    with pytest.raises(lr.DownloadError, match="interrupted"):
+        _drain(lr.download_verified(server["url"], dest, sha256=_sha(server["body"]), size=len(server["body"])))
+    assert not dest.exists() and (tmp_path / "a.zip.part").stat().st_size > 0
+    server["cuts_left"] = 0
+    _drain(lr.download_verified(server["url"], dest, sha256=_sha(server["body"]), size=len(server["body"])))
+    assert dest.read_bytes() == server["body"]
