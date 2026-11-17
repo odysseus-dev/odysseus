@@ -891,7 +891,8 @@ async function initDefaultChat() {
   function refreshModels(selectedModel) {
     fillModels(modelSel, epSel.value, selectedModel);
     // No endpoint means no personal default yet; there is no model to pick.
-    modelSel.disabled = !epSel.value;
+    // Until the stored values load, the card stays read-only.
+    modelSel.disabled = !epSel.value || !(defaultLoader && defaultLoader.isLoaded());
   }
   function refreshEndpointOptions(selectedEndpoint, selectedModel) {
     _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, personalDefault);

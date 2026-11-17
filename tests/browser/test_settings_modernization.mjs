@@ -611,6 +611,37 @@ async function testMemberScope(instance, cookies) {
   await member.context.close();
 }
 
+async function testAdminLoadFailure(instance, cookies) {
+  const admin = await pageAs(instance, cookies.adminCookie);
+  await admin.page.route('**/api/auth/settings', route => (
+    route.request().method() === 'GET'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.continue()
+  ));
+  await openSettings(admin.page, 'ai');
+  await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
+  // Leave and return: the AI panel refreshes its endpoint lists on entry.
+  await admin.page.click('[data-settings-tab="search"]');
+  await admin.page.click('[data-settings-tab="ai"]');
+  await admin.page.waitForTimeout(1200);
+  const state = await admin.page.evaluate(() => ({
+    endpointDisabled: document.querySelector('#set-defaultEpSelect').disabled,
+    modelDisabled: document.querySelector('#set-defaultModelSelect').disabled,
+    retryShown: Boolean(document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry')),
+  }));
+  check('admin card stays read-only through an endpoint refresh while its values are unknown', state.endpointDisabled && state.modelDisabled && state.retryShown, JSON.stringify(state));
+  await admin.page.unroute('**/api/auth/settings');
+  await admin.page.click('[data-settings-section="default-chat"] .settings-model-default-retry');
+  await admin.page.waitForFunction(() => !document.querySelector('#set-defaultEpSelect').disabled
+    && !document.querySelector('#set-defaultModelSelect').disabled, null, { timeout: 8000 }).catch(() => {});
+  const recovered = await admin.page.evaluate(() => ({
+    endpointDisabled: document.querySelector('#set-defaultEpSelect').disabled,
+    modelDisabled: document.querySelector('#set-defaultModelSelect').disabled,
+  }));
+  check('admin Retry re-enables the card', !recovered.endpointDisabled && !recovered.modelDisabled, JSON.stringify(recovered));
+  await admin.context.close();
+}
+
 async function testAdminScope(instance, cookies) {
   // A stale personal value (as a Cookbook serve can leave) must not keep
   // shadowing the server default the admin just chose.
@@ -672,6 +703,14 @@ async function testAuthDisabledOperator(instance) {
     approval: document.querySelector('#set-toolApprovalMode').value,
   }));
   check('auth-disabled operator Agent Tools panel loads its content', tools.builtinTools > 0 && Boolean(tools.approval), JSON.stringify(tools));
+  // The newly exposed panels must also accept the operator's writes.
+  await operator.page.fill('#set-agentMaxRounds', '37');
+  await operator.page.press('#set-agentMaxRounds', 'Tab');
+  await operator.page.waitForFunction(() => document.querySelector('#set-agentMsg').textContent.includes('37 steps'), null, { timeout: 8000 }).catch(() => {});
+  const agentSettings = (await api(instance, null, '/api/auth/settings')).body;
+  check('auth-disabled operator can save Agent Tools limits', agentSettings.agent_max_rounds === 37, JSON.stringify({ rounds: agentSettings.agent_max_rounds, msg: await operator.page.textContent('#set-agentMsg') }));
+  const exportStatus = await operator.page.evaluate(async () => (await fetch('/api/export', { credentials: 'same-origin' })).status);
+  check('auth-disabled operator can use System backup export', exportStatus === 200, String(exportStatus));
   await operator.page.click('[data-settings-tab="system"]');
   await operator.page.waitForTimeout(800);
   const system = await operator.page.evaluate(() => ({
@@ -694,6 +733,7 @@ async function main() {
   await testMemberLoadFailureAndFallbackCompatibility(authInstance, cookies);
   await testMemberScope(authInstance, cookies);
   await testAdminScope(authInstance, cookies);
+  await testAdminLoadFailure(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
   seedEndpoints(openInstance);
