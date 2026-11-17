@@ -232,3 +232,28 @@ def test_mode_caret_accounts_for_heading_and_inline_markdown_delimiters():
     for result in data['results']:
         assert result['sourceOffset'] == result['expected']
         assert result['restored']['offset'] == result['offset']
+
+
+def test_unrepresentable_heading_and_table_breaks_are_recoverable_without_saving():
+    data = _run_browser(r"""
+      await boot('audit-structural-breaks');
+      const results = [];
+      for (const [id, source, selector] of [['heading-break', '# One Two', 'h1'], ['table-break', '| A |\n| --- |\n| One Two |', 'td']]) {
+        await open({ id, title: id, language: 'markdown', current_content: source });
+        await page.locator('#doc-email-richbody').evaluate((el, selector) => {
+          el.focus();const text=el.querySelector(selector).firstChild;
+          const r=document.createRange();r.setStart(text,3);r.collapse(true);getSelection().removeAllRanges();getSelection().addRange(r);
+        }, selector);
+        await page.keyboard.press('Shift+Enter');
+        await page.keyboard.type('X');
+        const saved=await page.evaluate(()=>window.__doc.saveDocument({silent:true}));
+        const local=await state();
+        results.push({id,source,saved,local,server:api.store.get(id).current_content});
+      }
+      await finish({results});
+    """)
+    for result in data['results']:
+        assert result['saved'] is False, result
+        assert result['local']['content'] == result['server'] == result['source']
+        assert result['local']['bannerVisible'] is True
+        assert 'X' in result['local']['richHtml']

@@ -118,7 +118,7 @@ export function domToVisualNodes(root) {
       for (let j = 0; j < child.attributes.length; j++) {
         const attr = child.attributes[j];
         const name = String(attr.name || '').toLowerCase();
-        if (name === 'href' || name === 'src' || name === 'alt' || name === 'data-checked' || name === 'data-lang' || name === 'start') {
+        if (name === 'href' || name === 'src' || name === 'alt' || name === 'data-checked' || name === 'data-lang' || name === 'start' || name === 'colspan' || name === 'rowspan') {
           attrs[name] = attr.value;
         }
       }

@@ -1298,6 +1298,12 @@ function _listStart(listNode) {
   return Number.isInteger(start) && start >= 0 ? start : 1;
 }
 
+function _reportVisualStructureLoss(context, reason) {
+  if (!context) return;
+  context.lossless = false;
+  if (!context.reasons.includes(reason)) context.reasons.push(reason);
+}
+
 function _serializeListNode(listNode, indent = '', context = null) {
   const isChecklist = listNode.tag === 'ul' && (listNode.classes || []).includes('rich-checklist');
   const isOrdered = listNode.tag === 'ol';
@@ -1323,6 +1329,7 @@ function _serializeListNode(listNode, indent = '', context = null) {
         inlineParts.push(liChild);
       }
     }
+    if (inlineParts.some(_isBlockElement)) _reportVisualStructureLoss(context, 'multi-paragraph list content');
     const rawText = _serializeInlineBlock(inlineParts, context).trim();
     const text = _escapeBlockStart(rawText, { bulletItem: !isChecklist && !isOrdered });
     let prefix;
@@ -1361,13 +1368,20 @@ function _serializeTableNode(tableNode, context = null) {
   const parsedRows = rows.map(tr =>
     (tr.children || [])
       .filter(c => c?.type === 'element' && (c.tag === 'th' || c.tag === 'td'))
-      .map(cell => ({
-        align: String(cell.style?.textAlign || '').toLowerCase(),
-        text: _serializeInlineBlock(cell.children || [], context)
-          .replace(/\n+/g, ' ')
-          .replace(/\|/g, '\\|')
-          .trim(),
-      }))
+      .map(cell => {
+        const children = cell.children || [];
+        const text = _serializeInlineBlock(children, context);
+        if (text.includes('\n') || children.some(_isBlockElement)) {
+          _reportVisualStructureLoss(context, 'line breaks or paragraphs in table cells');
+        }
+        if (Number(cell.attrs?.colspan || 1) > 1 || Number(cell.attrs?.rowspan || 1) > 1) {
+          _reportVisualStructureLoss(context, 'merged table cells');
+        }
+        return {
+          align: String(cell.style?.textAlign || '').toLowerCase(),
+          text: text.replace(/\n+/g, ' ').replace(/\|/g, '\\|').trim(),
+        };
+      })
   ).filter(r => r.length > 0);
 
   if (!parsedRows.length) return '';
@@ -1397,7 +1411,9 @@ function _serializeBlockNode(node, context = null) {
 
   if (/^h[1-6]$/.test(tag)) {
     const level = Number(tag.slice(1));
-    let text = _serializeInlineBlock(node.children || [], context).replace(/\n+/g, ' ').trim();
+    const inline = _serializeInlineBlock(node.children || [], context);
+    if (inline.includes('\n')) _reportVisualStructureLoss(context, 'line breaks in headings');
+    let text = inline.replace(/\n+/g, ' ').trim();
     // Protect trailing hashes from being read as an ATX closing sequence.
     if (/^#+$/.test(text)) text = `\\${text}`;
     else text = text.replace(/([ \t])(#+)$/, '$1\\$2');
@@ -1408,6 +1424,12 @@ function _serializeBlockNode(node, context = null) {
 
   if (tag === 'pre') {
     const codeChild = (node.children || []).find(c => c?.type === 'element' && c.tag === 'code');
+    const hasFormatting = child => child?.type === 'element' && (
+      !['pre', 'code', 'span', 'br'].includes(child.tag)
+      || _isBoldNode(child) || _isItalicNode(child) || _isStrikeNode(child)
+      || (child.children || []).some(hasFormatting)
+    );
+    if ((node.children || []).some(hasFormatting)) _reportVisualStructureLoss(context, 'formatting inside code blocks');
     const langFromData = codeChild?.attrs?.['data-lang'] || node.attrs?.['data-lang'] || '';
     const langFromClass = ((codeChild?.classes || node.classes || []).find(c => c.startsWith('language-')) || '').slice('language-'.length);
     const lang = (langFromData || langFromClass || '').trim();
@@ -1442,6 +1464,7 @@ function _serializeBlockNode(node, context = null) {
   }
 
   if (tag === 'figure') {
+    if (_nodePlainText(node).trim()) _reportVisualStructureLoss(context, 'image captions');
     const img = (node.children || []).find(c => c?.type === 'element' && c.tag === 'img');
     if (!img) return '';
     return _serializeInlineNodes([img]).trim();

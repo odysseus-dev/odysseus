@@ -786,3 +786,17 @@ it('preserves code trailing newlines and list soft breaks through serialization 
   assert.match(markdownToVisualHtml(result.markdown), /<li>One<br>Two<\/li>/);
   assert.equal(inspectMarkdownVisualCompatibility(result.markdown).supported, true);
 });
+
+it('refuses block structures whose meaning would be discarded by serialization', () => {
+  const cases = [
+    [el('h1', [txt('One'), el('br'), txt('Two')])],
+    [el('table', [el('tr', [el('td', [txt('One'), el('br'), txt('Two')])])])],
+    [el('ul', [el('li', [el('p', [txt('One')]), el('p', [txt('Two')])])])],
+    [el('pre', [el('code', [el('strong', [txt('Rich code')])])])],
+    [el('figure', [el('img', [], { attrs: { src: 'https://example.com/image.png' } }), el('figcaption', [txt('Caption')])])],
+    [el('table', [el('tr', [el('td', [txt('Merged')], { attrs: { colspan: '2' } })])])],
+  ];
+  const results = cases.map(nodes => serializeVisualNodesWithFidelity(nodes));
+  assert.deepEqual(results.map(result => result.lossless), cases.map(() => false));
+  assert.ok(results.every(result => result.reasons.length));
+});
