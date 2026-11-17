@@ -1036,7 +1036,7 @@ async function loadEndpoints() {
       if (listLocal) listLocal.innerHTML = empty;
       if (listApi) listApi.innerHTML = '<div class="admin-empty">None</div>';
       refreshDependentModelUi();
-      return;
+      return res.ok;
     }
     const rowHtml = data.map(ep => {
       const epModels = Array.isArray(ep.models) ? ep.models : [];
@@ -1248,8 +1248,13 @@ async function loadEndpoints() {
         } finally {
           let reloaded = false;
           try {
-            await loadEndpoints();
-            reloaded = true;
+            reloaded = await loadEndpoints();
+            if (!reloaded &&
+                typeof uiModule !== 'undefined' &&
+                uiModule &&
+                typeof uiModule.showError === 'function') {
+              uiModule.showError('Failed to reload endpoints');
+            }
           } catch (reloadErr) {
             console.error('Failed to reload endpoints after tool update', reloadErr);
             if (typeof uiModule !== 'undefined' && uiModule && typeof uiModule.showError === 'function') {
@@ -1564,9 +1569,11 @@ async function loadEndpoints() {
       const err = '<div class="admin-error">Failed to load</div>';
       [listLocal, listApi].forEach(c => { if (c) c.innerHTML = err; });
     }
-    throw e;
+    console.error('Failed to load endpoints', e);
+    return false;
   }
   initModelCustomization();
+  return true;
 }
 
 async function _saveEpModelState(epId, panel) {

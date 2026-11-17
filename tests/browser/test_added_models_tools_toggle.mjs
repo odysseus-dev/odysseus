@@ -566,6 +566,77 @@ export async function runBrowserTests() {
       'PATCH payloads, UI state, and persistence are correct.'
     );
 
+    // 8. Ordinary endpoint refresh must not reject when its GET fails.
+    console.log('Testing non-throwing endpoint refresh...');
+
+    await page.evaluate(() => {
+      window.__endpointLoadUnhandled = [];
+      window.addEventListener('unhandledrejection', (event) => {
+        window.__endpointLoadUnhandled.push(String(event.reason));
+      });
+    });
+
+    await page.route('**/api/model-endpoints', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+
+    try {
+      // This click calls loadEndpoints() without awaiting its result.
+      // A rejected promise here was the original regression.
+      await Promise.all([
+        page.waitForEvent('requestfailed', {
+          predicate: (request) =>
+            new URL(request.url()).pathname === '/api/model-endpoints' &&
+            request.method() === 'GET',
+          timeout: 10000,
+        }),
+        page.locator('#adm-epSelectBtn').click(),
+      ]);
+
+      // Allow the unhandledrejection event to be dispatched if present.
+      await page.waitForTimeout(200);
+
+      const unhandled = await page.evaluate(
+        () => window.__endpointLoadUnhandled
+      );
+
+      if (unhandled.length !== 0) {
+        throw new Error(
+          `Ordinary endpoint refresh produced unhandled rejections: ${JSON.stringify(unhandled)}`
+        );
+      }
+
+      if (await page.locator('[data-adm-ep-id="ep-ollama-local"]').count() !== 1) {
+        throw new Error('Failed refresh removed the previously mounted endpoint');
+      }
+    } finally {
+      await page.unroute('**/api/model-endpoints');
+    }
+
+    // Select is hidden while selection mode is active.
+    // Cancel exits selection mode and reloads after connectivity returns.
+    await page.locator('#adm-epCancelSelectBtn').click();
+
+    if (!(await page.locator('#adm-epSelectBtn').isVisible())) {
+      throw new Error('Select button was not restored after cancellation');
+    }
+
+    await page.waitForFunction(() => {
+      const button = document.querySelector(
+        '[data-adm-tools-ep="ep-ollama-local"]'
+      );
+      return button && !button.disabled;
+    });
+
+    console.log(
+      'Verified: Ordinary endpoint refresh failure preserves the DOM ' +
+      'without unhandled promise rejections.'
+    );
+
     // Capture desktop screenshot if evidence directory configured
     if (ARTIFACT_DIR) {
       try {
