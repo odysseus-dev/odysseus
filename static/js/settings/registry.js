@@ -9,9 +9,17 @@ function defineGroup(definition) {
   return Object.freeze({ ...definition });
 }
 
+// Section scopes describe who a card's values apply to:
+// - 'model-default': per account for signed-in users, server-wide for admins
+//   (see settings/modelDefaults.js);
+// - 'server': one value for everyone; only an administrator may change it.
+// Sections without a scope manage their own storage.
+export const SETTINGS_SECTION_SCOPES = Object.freeze(['model-default', 'server']);
+
 function defineSection(definition) {
   return Object.freeze({
     description: '',
+    scope: '',
     ...definition,
     keywords: Object.freeze([...(definition.keywords || [])]),
   });
@@ -24,6 +32,7 @@ function definePanel(definition) {
   return Object.freeze({
     controller: 'settings',
     adminOnly: false,
+    requiresAccounts: false,
     ...definition,
     keywords: Object.freeze([...(definition.keywords || [])]),
     sections: Object.freeze((definition.sections || []).map(defineSection)),
@@ -106,24 +115,28 @@ export const SETTINGS_PANELS = Object.freeze([
     sections: [
       {
         id: 'default-chat',
+        scope: 'model-default',
         label: 'Default chat model',
         description: 'Model used for new chats, with optional fallback when it is unavailable.',
         keywords: ['default model', 'default', 'chat', 'model', 'endpoint', 'fallback', 'fallback order', 'unavailable', 'strict'],
       },
       {
         id: 'utility-model',
+        scope: 'model-default',
         label: 'Utility model',
         description: 'Model for titles, summaries and background work.',
         keywords: ['utility', 'background', 'titles', 'summaries', 'effort', 'reasoning', 'fallback'],
       },
       {
         id: 'vision',
+        scope: 'server',
         label: 'Vision',
         description: 'Model that describes images and attachments.',
         keywords: ['vision', 'image understanding', 'attachments', 'fallback'],
       },
       {
         id: 'research-model',
+        scope: 'model-default',
         label: 'Research model',
         description: 'Model used by Deep Research.',
         keywords: ['research', 'deep research', 'model', 'endpoint'],
@@ -136,12 +149,14 @@ export const SETTINGS_PANELS = Object.freeze([
       },
       {
         id: 'text-to-speech',
+        scope: 'server',
         label: 'Text to speech',
         description: 'Provider, model, voice and speed for read-aloud.',
         keywords: ['tts', 'speech', 'voice', 'read aloud', 'kokoro', 'speed'],
       },
       {
         id: 'writing-style',
+        scope: 'server',
         label: 'Writing style',
         description: 'General voice for documents.',
         keywords: ['writing', 'style', 'tone', 'voice', 'documents'],
@@ -156,12 +171,14 @@ export const SETTINGS_PANELS = Object.freeze([
     sections: [
       {
         id: 'web-search',
+        scope: 'server',
         label: 'Web search',
         description: 'Search provider, API keys and fallback providers.',
         keywords: ['web', 'provider', 'searxng', 'duckduckgo', 'brave', 'google', 'tavily', 'serper', 'you.com', 'api key', 'results', 'fallback'],
       },
       {
         id: 'deep-research',
+        scope: 'server',
         label: 'Deep research',
         description: 'Deep Research search provider, token and timeout limits.',
         keywords: ['research', 'deep research', 'max tokens', 'timeout', 'extract', 'parallel'],
@@ -224,18 +241,21 @@ export const SETTINGS_PANELS = Object.freeze([
     sections: [
       {
         id: 'delivery',
+        scope: 'server',
         label: 'Reminder delivery',
         description: 'How fired note reminders are delivered.',
         keywords: ['reminders', 'channel', 'browser notification', 'email', 'ntfy', 'webhook', 'test'],
       },
       {
         id: 'ai-synthesis',
+        scope: 'server',
         label: 'AI reminder synthesis',
         description: 'Let the utility model write a short reminder line.',
         keywords: ['ai', 'synthesis', 'persona', 'utility'],
       },
       {
         id: 'public-url',
+        scope: 'server',
         label: 'Public app URL',
         description: 'Base URL for links inside outgoing emails.',
         keywords: ['public', 'url', 'links', 'domain', 'base url'],
@@ -343,6 +363,9 @@ export const SETTINGS_PANELS = Object.freeze([
     group: 'administration',
     controller: 'admin',
     adminOnly: true,
+    // User management needs real accounts; with authentication disabled the
+    // server refuses it, so the panel is not offered.
+    requiresAccounts: true,
     keywords: ['users', 'accounts', 'admin'],
     sections: [
       {
@@ -422,6 +445,19 @@ export function isAdminOnlySettingsTab(id) {
   return getSettingsPanel(id)?.adminOnly === true;
 }
 
+/**
+ * Whether a panel is offered to this caller. `isAdmin` means "may change
+ * server-wide settings"; `accountsEnabled` is false when authentication is
+ * disabled. Both default to the most restrictive reading.
+ */
+export function isSettingsPanelOffered(panelOrId, options = {}) {
+  const panel = typeof panelOrId === 'string' ? getSettingsPanel(panelOrId) : panelOrId;
+  if (!panel) return false;
+  if (panel.adminOnly && options.isAdmin !== true) return false;
+  if (panel.requiresAccounts && options.accountsEnabled === false) return false;
+  return true;
+}
+
 export function getSettingsPanelSearchText(panelOrId) {
   const panel = typeof panelOrId === 'string'
     ? getSettingsPanel(panelOrId)
@@ -499,12 +535,11 @@ export function searchSettings(query, options = {}) {
   if (!normalized) return [];
 
   const terms = normalized.split(' ');
-  const isAdmin = options.isAdmin === true;
   const results = [];
   let order = 0;
 
   for (const panel of SETTINGS_PANELS) {
-    if (panel.adminOnly && !isAdmin) continue;
+    if (!isSettingsPanelOffered(panel, options)) continue;
 
     const panelScore = scoreEntry([
       { text: panel.label, weight: 10 },

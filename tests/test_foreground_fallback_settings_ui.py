@@ -111,7 +111,15 @@ def test_default_chat_controls_use_only_owner_scoped_new_preferences():
     assert "if (focusTarget) focusTarget.focus()" in _SETTINGS_SOURCE
     assert "onReordered: function(event)" in source
     assert "default_model_fallbacks" not in source
-    assert "/api/auth/settings" in source  # Existing default endpoint/model only.
+    # The default endpoint/model come from the model-defaults store (per
+    # account for signed-in users, server-wide for admins); the fallback
+    # policy never does.
+    assert "modelDefaults.load()" in source
+    assert "modelDefaults.save({" in source
+    model_defaults_source = (
+        _REPO / "static" / "js" / "settings" / "modelDefaults.js"
+    ).read_text(encoding="utf-8")
+    assert "foreground_" not in model_defaults_source
 
 
 def test_service_worker_precaches_new_module_and_bumps_cache():

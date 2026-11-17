@@ -66,7 +66,7 @@ export async function initImageSettings() {
   syncImgDisabled();
 
   function checkIsAdmin() {
-    return typeof window !== 'undefined' && !!window._isAdmin;
+    return typeof window !== 'undefined' && !!(window._canManageSettings ?? window._isAdmin);
   }
 
   function applyAdminToggleState() {

@@ -16,7 +16,7 @@ import {
   revealSettingsSection,
 } from './navigation.js';
 import { showSettingsModal, hideSettingsModal } from './lifecycle.js';
-import { isAdminManagedSettingsTab } from './registry.js';
+import { getSettingsPanel, isAdminManagedSettingsTab } from './registry.js';
 import { syncSettingsPeek } from './peek.js';
 
 /**
@@ -25,7 +25,8 @@ import { syncSettingsPeek } from './peek.js';
  * @param {() => void} options.ensureInitialized         first-open panel initialization
  * @param {() => void} options.syncAppearanceCheckboxes  Appearance panel state refresh
  * @param {() => void} options.refreshAiModelEndpoints   AI panel endpoint refresh
- * @param {() => boolean} options.isAdmin                current admin status
+ * @param {() => boolean} options.isAdmin                may change server-wide settings
+ * @param {() => boolean} [options.accountsEnabled]      false when authentication is disabled
  * @param {() => object|null} options.getAdminModule     the lazily loaded admin module
  */
 export function createSettingsShell(options = {}) {
@@ -34,6 +35,7 @@ export function createSettingsShell(options = {}) {
   const syncAppearanceCheckboxes = options.syncAppearanceCheckboxes;
   const refreshAiModelEndpoints = options.refreshAiModelEndpoints;
   const isAdmin = options.isAdmin;
+  const accountsEnabled = options.accountsEnabled;
   const getAdminModule = options.getAdminModule;
 
   const _modal = () => (typeof getModal === 'function' ? getModal() : null);
@@ -65,6 +67,13 @@ export function createSettingsShell(options = {}) {
     const admin = typeof isAdmin === 'function' ? !!isAdmin() : false;
     modalEl.querySelectorAll('.admin-only').forEach(el => {
       el.style.display = admin ? '' : 'none';
+    });
+    // Panels that need real accounts (user management) are not offered when
+    // authentication is disabled, even to the local operator.
+    const accounts = typeof accountsEnabled === 'function' ? accountsEnabled() !== false : true;
+    modalEl.querySelectorAll('[data-settings-tab]').forEach(button => {
+      const panel = getSettingsPanel(button.dataset.settingsTab);
+      if (panel && panel.requiresAccounts && !accounts) button.style.display = 'none';
     });
   }
 

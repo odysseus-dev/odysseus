@@ -1,12 +1,13 @@
 """User preferences API — per-user key/value store backed by a JSON file."""
 import json
 from typing import Optional
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from core.atomic_io import atomic_write_json
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
 
 PREFS_FILE = USER_PREFS_FILE
+_MAX_PATCH_KEYS = 32
 _FOREGROUND_POLICY_KEYS = (
     "foreground_fallback_enabled",
     "foreground_model_fallbacks",
@@ -125,5 +126,31 @@ def setup_prefs_routes():
             prefs[key] = val
         _save_for_user(user, prefs)
         return {"key": key, "value": prefs.get(key)}
+
+    @router.patch("")
+    async def set_prefs(request: Request, body: dict):
+        """Write several preferences for the caller in one store write.
+
+        Body: ``{"values": {key: value, ...}}``. A ``None`` value removes the
+        key, matching ``PUT /api/prefs/{key}``. Related keys such as an
+        endpoint and its model are applied together, so a failed request
+        cannot leave half of a pair saved.
+        """
+        values = body.get("values") if isinstance(body, dict) else None
+        if not isinstance(values, dict) or not values:
+            raise HTTPException(400, "values must be a non-empty object")
+        if len(values) > _MAX_PATCH_KEYS:
+            raise HTTPException(400, f"at most {_MAX_PATCH_KEYS} preferences per request")
+        if not all(isinstance(key, str) and key.strip() for key in values):
+            raise HTTPException(400, "preference keys must be non-empty strings")
+        user = get_current_user(request)
+        prefs = _load_for_user(user)
+        for key, val in values.items():
+            if val is None:
+                prefs.pop(key, None)
+            else:
+                prefs[key] = val
+        _save_for_user(user, prefs)
+        return {"values": {key: prefs.get(key) for key in values}}
 
     return router

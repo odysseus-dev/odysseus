@@ -32,6 +32,9 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/oauthReturn.js'),
   path.join(JS, 'searchProviderIcons.js'),
   path.join(JS, 'foregroundFallbackSettings.js'),
+  path.join(JS, 'authStatus.js'),
+  path.join(JS, 'settings/scope.js'),
+  path.join(JS, 'settings/modelDefaults.js'),
 ]);
 
 const realModulesLoaded = new Set();

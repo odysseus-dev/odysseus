@@ -1324,6 +1324,39 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
     outline-offset: 2px;
   }
 }
+.settings-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  vertical-align: 2px;
+  white-space: nowrap;
+  opacity: 0.72;
+  cursor: help;
+}
+.settings-scope-badge[data-scope="model-default"] {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+}
+.settings-scope-note {
+  margin: 0 0 8px;
+  padding: 6px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 11px;
+  opacity: 0.75;
+}
+.settings-scope-locked [inert] {
+  opacity: 0.55;
+}
 .settings-search-empty {
   padding: 8px;
   color: var(--fg);

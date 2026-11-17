@@ -36,6 +36,10 @@ export function bindSettingsSearch(modalEl, options = {}) {
     ? options.isAdmin
     : () => false;
 
+  const accountsEnabled = typeof options.accountsEnabled === 'function'
+    ? options.accountsEnabled
+    : () => true;
+
   const openPanel = typeof options.openPanel === 'function'
     ? options.openPanel
     : () => {};
@@ -154,7 +158,7 @@ export function bindSettingsSearch(modalEl, options = {}) {
     }
 
     const admin = isAdmin() === true;
-    const matches = searchSettings(query, { isAdmin: admin })
+    const matches = searchSettings(query, { isAdmin: admin, accountsEnabled: accountsEnabled() !== false })
       .filter(entry => !entry.section
         || sectionIsAvailable(entry.panel.id, entry.section.id, admin))
       .slice(0, MAX_RESULTS);
