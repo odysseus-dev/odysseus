@@ -48,8 +48,8 @@ just composed.
 | Service | Image | Purpose | License |
 |---|---|---|---|
 | [SearXNG](https://github.com/searxng/searxng) | `searxng/searxng:2026.9.25-12f8b6515` (pinned tag; see compose) | Default metasearch backend | AGPL-3.0 |
-| [ChromaDB](https://github.com/chroma-core/chroma) | `chromadb/chroma:latest` | Vector store for memory / RAG | Apache-2.0 |
-| [ntfy](https://github.com/binwiederhier/ntfy) | `binwiederhier/ntfy` | Push notifications (self-hosted reminders) | Apache-2.0 / GPL-2.0 |
+| [ChromaDB](https://github.com/chroma-core/chroma) | `chromadb/chroma:1.5.9` (pinned digest; see compose) | Vector store for memory / RAG | Apache-2.0 |
+| [ntfy](https://github.com/binwiederhier/ntfy) | `binwiederhier/ntfy:v2.32.0` (pinned digest; see compose) | Push notifications (self-hosted reminders) | Apache-2.0 / GPL-2.0 |
 
 ## Bundled front-end libraries
 

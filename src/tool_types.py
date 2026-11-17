@@ -28,5 +28,6 @@ TOOL_TAGS = {
     "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models",
     "list_cached_models", "list_serve_presets", "serve_preset", "adopt_served_model",
     "list_cookbook_servers", "edit_image", "trigger_research", "manage_research",
+    "plan_edit", "run_editor_command", "get_editor_screenshot", "ai_edit_image",
     "app_api",
 } | BUILTIN_EMAIL_TOOLS

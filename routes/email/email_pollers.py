@@ -1031,6 +1031,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             fallback_url=url, fallback_model=model, fallback_headers=headers,
                             owner=account_owner or None,
                             temperature=0.7, max_tokens=1024, timeout=90,
+                            reasoning_effort="",
                         )
                         reply = _apply_email_style_mechanics(_extract_reply(reply or ""))
                         if reply:

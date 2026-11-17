@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 
@@ -8,11 +9,42 @@ def _src(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def _utility_kwargs(source: str, function_name: str) -> dict:
+    tree = ast.parse(source)
+
+    functions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
+    assert len(functions) == 1, function_name
+
+    calls = [
+        node for node in ast.walk(functions[0])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "resolve_endpoint"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "utility"
+    ]
+    assert len(calls) == 1, function_name
+
+    return {
+        kw.arg: ast.unparse(kw.value)
+        for kw in calls[0].keywords
+    }
+
+
 def test_registered_manual_compaction_uses_session_owner_for_utility_endpoint():
     session_src = _src("routes/session_routes.py")
 
     assert 'owner = getattr(session, "owner", None) or effective_user(request)' in session_src
-    assert 'resolve_endpoint("utility", owner=owner)' in session_src
+    kwargs = _utility_kwargs(session_src, "compact_session")
+    assert kwargs["owner"] == "owner"
+    assert kwargs["fallback_url"] == "getattr(session, 'endpoint_url', None)"
+    assert kwargs["fallback_model"] == "getattr(session, 'model', None)"
+    assert kwargs["fallback_headers"] == "getattr(session, 'headers', None)"
 
 
 def test_task_name_generation_uses_owner_scoped_session_endpoint():
@@ -31,7 +63,11 @@ def test_auto_compaction_utility_endpoint_keeps_chat_owner():
 
     assert "owner=user" in helper_src
     assert "owner: Optional[str] = None" in compact_src
-    assert 'resolve_endpoint("utility", owner=owner)' in compact_src
+    kwargs = _utility_kwargs(compact_src, "maybe_compact")
+    assert kwargs["owner"] == "owner"
+    assert kwargs["fallback_url"] == "endpoint_url"
+    assert kwargs["fallback_model"] == "model"
+    assert kwargs["fallback_headers"] == "headers"
 
 
 def test_background_session_sort_uses_owner_task_endpoint():

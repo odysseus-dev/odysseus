@@ -22,7 +22,7 @@ import {
 } from './utils.js';
 import { state } from './state.js';
 import { getSettings } from '../appConfig.js';
-import { collapseSidebarToRail } from '../modalSnap.js';
+import { clampWindowLeft, collapseSidebarToRail, leftNavRight, safeInsetPx } from '../modalSnap.js';
 import { emailApiUrl } from '../emailShared.js';
 import {
   bindMenuDismiss,
@@ -823,7 +823,7 @@ function _readCssPx(name) {
 }
 
 function _emailSplitLeftEdge() {
-  return _readCssPx('--icon-rail-w') + _readCssPx('--sidebar-w');
+  return leftNavRight();
 }
 
 function _setEmailDocumentSplit(leftEdge, emailWidth) {
@@ -899,7 +899,8 @@ function _clearEmailDocumentSplit() {
 // rail. Used by the "try collapsing the sidebar first" path so we can decide
 // whether collapsing recovers enough room before minimizing email.
 function _emailSplitLeftEdgeIfSidebarCollapsed() {
-  return _readCssPx('--icon-rail-w');
+  const navOnRight = document.getElementById('sidebar')?.classList.contains('right-side');
+  return safeInsetPx('left') + (navOnRight ? 0 : _readCssPx('--icon-rail-w'));
 }
 
 function _hasDesktopRoomForEmailAndDocument(modal, opts = {}) {
@@ -1122,7 +1123,175 @@ function _filenameFromContentDisposition(header) {
   return bare ? bare[1].trim() : '';
 }
 
-export async function _exportSelectedAttachments() {
+async function _printSelectedEmails(messages) {
+  if (messages.length > 20) throw new Error('Print / save PDF supports up to 20 emails at a time');
+  if (typeof window.print !== 'function') throw new Error('Browser printing is unavailable');
+
+  const loaded = new Array(messages.length);
+  let nextIndex = 0;
+  const readWorker = async () => {
+    while (nextIndex < messages.length) {
+      const index = nextIndex++;
+      const message = messages[index];
+      try {
+        const account = message.account_id ? `&account_id=${encodeURIComponent(message.account_id)}` : '';
+        const url = `${API_BASE}/api/email/read/${encodeURIComponent(message.uid)}?folder=${encodeURIComponent(message.folder || 'INBOX')}${account}&mark_seen=false&full=true`;
+        const response = await fetch(url, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (data?.error) throw new Error(data.error);
+        loaded[index] = { ok: true, message, data };
+      } catch (err) {
+        loaded[index] = { ok: false, message, error: err?.message || 'Failed to load' };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, messages.length) }, readWorker));
+
+  const successful = loaded.filter(item => item && item.ok);
+  const omitted = loaded.filter(item => !item || !item.ok);
+
+  if (successful.length === 0) {
+    throw new Error('None of the selected emails could be loaded for printing');
+  }
+
+  // Build sanitized HTML for the print frame -- scripts and event handlers
+  // cannot execute inside the sandboxed iframe.
+  const articles = [];
+  if (omitted.length > 0) {
+    const count = omitted.length;
+    articles.push(
+      `<div class="email-export-pdf-omitted-notice">Note: ${count} selected email${count === 1 ? ' was' : 's were'} unavailable and omitted from this print.</div>`
+    );
+  }
+
+  for (const { message, data } of successful) {
+    const subject = String(data.subject || message.subject || '(no subject)');
+    const from = data.from_name && data.from_address
+      ? `${data.from_name} <${data.from_address}>`
+      : data.from_name || data.from_address;
+
+    const safeBody = new DOMParser().parseFromString(_safeRenderEmailBody(data), 'text/html');
+
+    // Replace interactive image placeholder components with clean print-safe notices
+    safeBody.querySelectorAll('.email-inline-image-placeholder').forEach(ph => {
+      const title = ph.querySelector('.email-inline-image-title')?.textContent?.trim();
+      const ariaLabel = ph.getAttribute('aria-label')?.trim();
+      const label = title || ariaLabel || '';
+      const isGeneric = !label || /^inline image$|^remote image$|^image unavailable$|^image$/i.test(label);
+      const span = safeBody.createElement('span');
+      span.className = 'email-export-image-notice';
+      span.textContent = isGeneric ? '[Image omitted]' : `[Image: ${label}]`;
+      ph.replaceWith(span);
+    });
+
+    // Replace any remaining raw <img> tags
+    safeBody.querySelectorAll('img').forEach(img => {
+      const alt = (img.getAttribute('alt') || img.getAttribute('title') || '').trim();
+      const span = safeBody.createElement('span');
+      span.className = 'email-export-image-notice';
+      span.textContent = alt ? `[Image: ${alt}]` : '[Image omitted]';
+      img.replaceWith(span);
+    });
+
+    // Strip interactive controls (buttons, inputs, actions) from the print document
+    safeBody.querySelectorAll('button, input, select, textarea, .email-inline-image-actions, .email-inline-image-btn').forEach(el => el.remove());
+
+    safeBody.querySelectorAll('details').forEach(detail => { detail.open = true; });
+    const bodyHtml = safeBody.body.innerHTML;
+
+    const fieldParts = [];
+    for (const [lbl, val] of [['From', from], ['To', data.to], ['Cc', data.cc], ['Date', data.date_display || data.date || message.date]]) {
+      if (!val) continue;
+      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      fieldParts.push(`<div class="email-export-pdf-field"><span class="email-export-pdf-label">${esc(lbl)}</span><span>${esc(val)}</span></div>`);
+    }
+
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    articles.push(
+      `<article class="email-export-pdf-message">` +
+      `<h1>${esc(subject)}</h1>` +
+      `<div class="email-export-pdf-fields">${fieldParts.join('')}</div>` +
+      `<div class="email-export-pdf-body">${bodyHtml}</div>` +
+      `</article>`
+    );
+  }
+
+  const printCss = [
+    'html,body{background:#fff;color:#171717;font:12px/1.55 Arial,Helvetica,sans-serif;margin:0;padding:0}',
+    '.email-export-pdf{max-width:794px;margin:0 auto;padding:38px;box-sizing:border-box}',
+    '.email-export-pdf-message{page-break-after:always;break-after:page}',
+    '.email-export-pdf-message:last-child{page-break-after:auto;break-after:auto}',
+    '.email-export-pdf-message h1{margin:0 0 18px;font-size:20px;line-height:1.3;overflow-wrap:anywhere}',
+    '.email-export-pdf-fields{margin:0 0 20px;padding:0 0 14px;border-bottom:1px solid #d8d8d8}',
+    '.email-export-pdf-field{display:flex;gap:10px;margin:3px 0;overflow-wrap:anywhere}',
+    '.email-export-pdf-label{width:54px;flex:0 0 54px;color:#666}',
+    '.email-export-pdf-body{overflow-wrap:anywhere;word-break:break-word}',
+    '.email-export-pdf-body img{max-width:100%}',
+    '.email-export-pdf-body a{color:#135f9b;text-decoration:underline}',
+    '.email-export-pdf-body blockquote{margin-left:12px;padding-left:10px;border-left:2px solid #ccc;color:#555}',
+    '.email-export-pdf-body pre{white-space:pre-wrap}',
+    '.email-inline-image-placeholder,.email-inline-image-actions,.email-inline-image-btn{display:none !important}',
+    '.email-export-image-notice{display:inline-block;color:#666;font-style:italic;font-size:11px;margin:4px 0}',
+    '.email-export-pdf-omitted-notice{margin:0 0 16px;padding:8px 12px;background:#f8f9fa;border:1px solid #e2e8f0;border-radius:4px;font-size:11px;color:#64748b}',
+    '@page{margin:10mm}',
+  ].join('\n');
+
+  const safeBaseName = successful.length === 1
+    ? String(successful[0]?.data?.subject || successful[0]?.message?.subject || 'email').replace(/[^\p{L}\p{N} ._-]+/gu, '_').trim().slice(0, 100) || 'email'
+    : 'selected-emails';
+
+  // Use a sandboxed same-origin iframe following the established document.js
+  // Print / save PDF pattern (SAN-157). The browser opens a print dialog;
+  // saving, cancellation and pagination belong to the browser.
+  document.getElementById('email-browser-print-frame')?.remove();
+  const frame = document.createElement('iframe');
+  frame.id = 'email-browser-print-frame';
+  frame.title = 'Email print view';
+  frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+  frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:800px;height:600px;border:0;';
+  document.body.appendChild(frame);
+
+  let cleanedUp = false;
+  const cleanupFrame = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try {
+      frame.remove();
+    } catch (_) {}
+    window.removeEventListener('afterprint', cleanupFrame);
+  };
+
+  try {
+    const printDoc = frame.contentDocument;
+    printDoc.open();
+    printDoc.write('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>');
+    printDoc.close();
+    printDoc.title = safeBaseName;
+    const printStyle = printDoc.createElement('style');
+    printStyle.textContent = printCss;
+    printDoc.head.appendChild(printStyle);
+    const container = printDoc.createElement('div');
+    container.className = 'email-export-pdf';
+    container.innerHTML = articles.join('');
+    printDoc.body.appendChild(container);
+    await printDoc.fonts.ready;
+    frame.contentWindow?.addEventListener('afterprint', cleanupFrame, { once: true });
+    window.addEventListener('afterprint', cleanupFrame, { once: true });
+    setTimeout(cleanupFrame, 60000);
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+    if (omitted.length > 0) {
+      const msg = `Prepared ${successful.length} email${successful.length === 1 ? '' : 's'} for printing; ${omitted.length} unavailable`;
+      showToast(msg);
+    }
+  } catch (error) {
+    cleanupFrame();
+    throw error;
+  }
+}
+
+async function _exportSelectedBundle(kind) {
   const messages = _selectedEmailExportPayload();
   if (!messages.length) {
     showToast('Select emails first');
@@ -1150,8 +1319,14 @@ export async function _exportSelectedAttachments() {
     if (deleteBtn) deleteBtn.disabled = true;
     if (cancelBtn) cancelBtn.disabled = true;
     if (selectAll) selectAll.disabled = true;
-    if (countEl) countEl.textContent = `Exporting attachments from ${messages.length}…`;
-    const res = await fetch(`${API_BASE}/api/email/attachments-download-bulk`, {
+    const isEmailExport = kind === 'emails';
+    const isPrintExport = kind === 'print';
+    if (countEl) countEl.textContent = `${isPrintExport ? 'Preparing print' : 'Exporting'} ${isPrintExport ? 'for' : isEmailExport ? 'emails from' : 'attachments from'} ${messages.length}…`;
+    if (isPrintExport) {
+      await _printSelectedEmails(messages);
+      return;
+    }
+    const res = await fetch(`${API_BASE}/api/email/${isEmailExport ? 'messages' : 'attachments'}-download-bulk`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1169,12 +1344,21 @@ export async function _exportSelectedAttachments() {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const blob = await res.blob();
-    const filename = _filenameFromContentDisposition(res.headers.get('Content-Disposition')) || 'selected-email-attachments.zip';
+    const filename = _filenameFromContentDisposition(res.headers.get('Content-Disposition'))
+      || (isEmailExport
+        ? (messages.length === 1 ? 'selected-email.eml' : 'selected-emails.zip')
+        : 'selected-email-attachments.zip');
     _downloadBlob(blob, filename);
-    showToast(`Exported attachments from ${messages.length} selected email${messages.length === 1 ? '' : 's'}`);
+    const exported = Number(res.headers.get('X-Exported-Emails')) || messages.length;
+    const skipped = Number(res.headers.get('X-Skipped-Emails')) || 0;
+    showToast(skipped
+      ? `Exported ${exported} email${exported === 1 ? '' : 's'}; ${skipped} unavailable`
+      : isEmailExport
+        ? `Exported ${exported} email${exported === 1 ? '' : 's'} as ${exported === 1 ? 'an .eml file' : '.eml files'}`
+        : `Exported attachments from ${messages.length} selected email${messages.length === 1 ? '' : 's'}`);
   } catch (err) {
-    console.error('Failed to export selected email attachments:', err);
-    showToast(err?.message || 'Failed to export attachments');
+    console.error(`Failed to export selected email ${kind}:`, err);
+    showToast(err?.message || (kind === 'emails' ? 'Failed to export emails' : kind === 'print' ? 'Could not open browser print' : 'Failed to export attachments'));
   } finally {
     if (busySpinner) busySpinner.destroy();
     if (actionsBtn) {
@@ -1188,6 +1372,18 @@ export async function _exportSelectedAttachments() {
     if (countEl) countEl.textContent = originalCountText;
     _updateBulkBar();
   }
+}
+
+export async function _exportSelectedEmails() {
+  return _exportSelectedBundle('emails');
+}
+
+export async function _exportSelectedEmailPdf() {
+  return _exportSelectedBundle('print');
+}
+
+export async function _exportSelectedAttachments() {
+  return _exportSelectedBundle('attachments');
 }
 
 // URL-suffix helper — appends &account_id=... when an account is actively selected.
@@ -1302,8 +1498,11 @@ let _libSyncStatus = {
   source: '',
   warming: false,
   loading: false,
+  stale: false,
 };
 let _libSyncTicker = null;
+let _libStaleRefetchTimer = null;
+let _libStaleRefetchCount = 0;
 
 function _libSyncDateFrom(value) {
   if (!value) return null;
@@ -1358,7 +1557,35 @@ function _setEmailSyncStatus(next = {}) {
   if (Object.prototype.hasOwnProperty.call(next, 'loading')) {
     _libSyncStatus.loading = Boolean(next.loading);
   }
+  if (Object.prototype.hasOwnProperty.call(next, 'stale')) {
+    _libSyncStatus.stale = Boolean(next.stale);
+  }
   _renderEmailSyncStatus();
+}
+
+// A server-side stale (sync.stale) response means the SWR snapshot was served
+// while a background IMAP refresh is still running. Re-fetch in place after a
+// short delay (bounded) so the fresh rows land with no skeleton and no scroll
+// jump. We only keep retrying while the response is still marked stale.
+function _clearStaleEmailRefetch() {
+  if (_libStaleRefetchTimer) {
+    clearTimeout(_libStaleRefetchTimer);
+    _libStaleRefetchTimer = null;
+  }
+  _libStaleRefetchCount = 0;
+}
+
+function _scheduleStaleEmailRefetch() {
+  if (_libStaleRefetchTimer || _libStaleRefetchCount >= 3) return;
+  const folderAtSchedule = state._libFolder;
+  const accountAtSchedule = state._libAccountId || '';
+  _libStaleRefetchCount++;
+  _libStaleRefetchTimer = setTimeout(() => {
+    _libStaleRefetchTimer = null;
+    if (document.hidden) return;
+    if (folderAtSchedule !== state._libFolder || accountAtSchedule !== (state._libAccountId || '')) return;
+    _loadEmails({ force: false, useCache: false, skipFastPath: true });
+  }, 2500);
 }
 
 function _libCacheKeyFor(accountId, folder, filter, hasAttachments) {
@@ -2415,7 +2642,7 @@ export function openEmailLibrary(opts = {}) {
       requestAnimationFrame(() => {
         const w = content.offsetWidth;
         const refH = window.innerHeight * 0.85;
-        content.style.left = Math.max(20, (window.innerWidth - w) / 2) + 'px';
+        content.style.left = clampWindowLeft(Math.max(20, (window.innerWidth - w) / 2), w) + 'px';
         content.style.top = Math.max(20, (window.innerHeight - refH) / 2) + 'px';
         content.style.transform = 'none';
       });
@@ -2423,7 +2650,14 @@ export function openEmailLibrary(opts = {}) {
   }
 
   // Wire events
-  document.getElementById('email-lib-close').addEventListener('click', closeEmailLibrary);
+  document.getElementById('email-lib-close').addEventListener('click', () => {
+    const modal = document.getElementById('email-lib-modal');
+    if (modal?.classList.contains('email-reading') || modal?.querySelector('.doclib-card-expanded')) {
+      _exitEmailReaderModeForList();
+      return;
+    }
+    closeEmailLibrary();
+  });
   document.getElementById('email-settings-header-back')?.addEventListener('click', _hideEmailSettingsPage);
 
   // Clicking the modal header (anywhere except buttons/inputs) collapses
@@ -4794,7 +5028,7 @@ export async function _refreshUnreadBadge({ unreadCountOverride = null, preserve
   } catch (_) { _syncUnreadTabBadge(0); }
 }
 
-export async function _loadEmails({ force = false, useCache = true } = {}) {
+export async function _loadEmails({ force = false, useCache = true, skipFastPath = false } = {}) {
   const seq = ++_libLoadSeq;
   state._libLoading = true;
   const accountAtStart = state._libAccountId || '';
@@ -4848,11 +5082,15 @@ export async function _loadEmails({ force = false, useCache = true } = {}) {
     }
     const stats = document.getElementById('email-lib-stats');
     if (stats) stats.textContent = `${state._libTotal} emails`;
+    const _isStale = Boolean(sync.stale);
     _setEmailSyncStatus({
       updatedAt: sync.updated_at || '',
       source: sync.source || (cacheSource ? 'client_cache' : ''),
       loading: false,
+      stale: _isStale,
     });
+    if (_isStale) _scheduleStaleEmailRefetch();
+    else _clearStaleEmailRefetch();
     if (cacheable && !cacheSource) {
       _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal, sync });
     }
@@ -4888,7 +5126,7 @@ export async function _loadEmails({ force = false, useCache = true } = {}) {
       const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
       const attQS = hasAttachmentsAtStart ? '&has_attachments=1' : '';
       const dateQS = `${dateFromAtStart ? `&date_from=${encodeURIComponent(dateFromAtStart)}` : ''}${dateToAtStart ? `&date_to=${encodeURIComponent(dateToAtStart)}` : ''}`;
-      if (!cached && cacheable && !force) {
+      if (!cached && cacheable && !force && !skipFastPath) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 450);
         try {

@@ -162,6 +162,20 @@ def test_gallery_body_uses_available_window_height_without_grid_crop():
     assert "max-height: 60vh;" not in grid_rule
 
 
+def test_gallery_detail_container_drops_grid_margin_so_body_does_not_scroll():
+    # With a photo open on desktop, the modal body, the images container and
+    # the detail view are each `height: 100%`. The container's inline 2px top
+    # margin (grid-view spacing) would then overflow the body by 2px, which
+    # shows a second, outer scrollbar next to the inspector's own.
+    js = _read("static/js/gallery.js")
+    css = app_css()
+
+    assert 'id="gallery-images-container" style="margin-top:2px"' in js
+    rule = '.gallery-images-container:has(> #gallery-detail[style*="flex"]) {'
+    idx = css.index(rule)
+    assert "margin-top: 0 !important;" in css[idx:idx + 120]
+
+
 def test_gallery_photo_search_is_not_vertically_offset():
     css = app_css()
 

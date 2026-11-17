@@ -390,11 +390,11 @@ export function runHTML(code, panel) {
  * Main entry point — called when a Run button is clicked
  */
 export function run(btn) {
-  const code = btn.getAttribute('data-code');
-  const lang = (btn.getAttribute('data-lang') || '').toLowerCase();
-
   const pre = btn.closest('pre');
   if (!pre) return;
+  const codeEl = pre.querySelector('code');
+  const code = codeEl ? codeEl.textContent : btn.getAttribute('data-code');
+  const lang = (btn.getAttribute('data-lang') || '').toLowerCase();
 
   const panel = getOrCreatePanel(pre);
   if (!code || !code.trim()) {

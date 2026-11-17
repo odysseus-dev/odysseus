@@ -1,15 +1,16 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers');
 
 test('layer mask link controls independent movement and survives reopen', async ({ page, request }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Linked layer mask');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.2, y: 0.35 }, { x: 0.75, y: 0.6 });
 
   let current = await editorState(page);
   const layerId = current.activeLayerId;
   const layerRow = page.locator(`.ge-layer-item[data-layer-id="${layerId}"]`);
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
   const maskRow = page.locator('.ge-mask-sub-item').filter({ hasText: 'Layer Mask' });
   await expect(maskRow).toBeVisible();
 
@@ -63,7 +64,7 @@ test('layer mask link controls independent movement and survives reopen', async 
 
   await maskRow.locator('.ge-mask-link-btn').click();
   await expect(maskRow.locator('.ge-mask-link-btn')).toHaveAttribute('aria-pressed', 'false');
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await dragOnCanvas(page, { x: 0.45, y: 0.45 }, { x: 0.55, y: 0.5 });
 
   current = await editorState(page);
@@ -90,7 +91,7 @@ test('layer mask link controls independent movement and survives reopen', async 
   }).toEqual(fixedDocumentMask);
 
   const beforeTransform = layer;
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await page.locator('#ge-transform-w').fill('280');
   await page.locator('#ge-transform-w').dispatchEvent('input');
   await page.locator('#ge-transform-apply').click();

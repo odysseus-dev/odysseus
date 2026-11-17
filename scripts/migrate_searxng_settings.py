@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import sys
@@ -69,7 +70,7 @@ def _block_mapping_position(text: str, root: MappingNode | None) -> tuple[int, i
 
 
 def _add_block_default_inheritance(
-    contents: bytes, text: str, root: MappingNode | None
+    contents: bytes, text: str, root: MappingNode | None, inheritance: bytes
 ) -> bytes:
     newline = _newline_for(contents)
     character_offset, indent_width = _block_mapping_position(text, root)
@@ -81,10 +82,28 @@ def _add_block_default_inheritance(
     addition = (
         separator
         + b" " * indent_width
-        + b"use_default_settings: true"
+        + b"use_default_settings: " + inheritance
         + newline
     )
     return contents[:offset] + addition + contents[offset:]
+
+
+def _default_inheritance(loaded: dict) -> bytes:
+    """Retain an explicit engine set instead of merging in unrelated defaults."""
+    if "engines" not in loaded:
+        return b"true"
+    engines = loaded["engines"]
+    if not isinstance(engines, list) or any(
+        not isinstance(engine, dict)
+        or not isinstance(engine.get("name"), str)
+        or not engine["name"].strip()
+        for engine in engines
+    ):
+        raise ValueError("retained engines must be a list of mappings with nonempty names")
+    # Keep disabled definitions too: the unchanged top-level list still owns
+    # their enabled state and custom-engine options. An empty list keeps none.
+    names = list(dict.fromkeys(engine["name"] for engine in engines))
+    return json.dumps({"engines": {"keep_only": names}}, ensure_ascii=False).encode("utf-8")
 
 
 def migrate_settings(path: Path) -> bool:
@@ -102,6 +121,7 @@ def migrate_settings(path: Path) -> bool:
     if "use_default_settings" in loaded:
         return False
 
+    inheritance = _default_inheritance(loaded)
     if root is not None and root.flow_style:
         start = _flow_mapping_start(text)
         bom_length = len(_UTF8_BOM) if contents.startswith(_UTF8_BOM) else 0
@@ -109,12 +129,12 @@ def migrate_settings(path: Path) -> bool:
         separator = b", " if root.value else b""
         updated = (
             contents[:offset]
-            + b"use_default_settings: true"
+            + b"use_default_settings: " + inheritance
             + separator
             + contents[offset:]
         )
     else:
-        updated = _add_block_default_inheritance(contents, text, root)
+        updated = _add_block_default_inheritance(contents, text, root, inheritance)
     fd, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.odysseus-", dir=path.parent
     )

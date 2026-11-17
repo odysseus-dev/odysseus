@@ -34,10 +34,11 @@ import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
 import { isLayerPixelLocked, isLayerTransparencyLocked } from '../layer-groups.js';
 
-const STROKE_TOOLS = new Set(['brush', 'eraser', 'smudge', 'dodge', 'burn', 'inpaint']);
+const STROKE_TOOLS = new Set(['brush', 'pixel', 'eraser', 'smudge', 'dodge', 'burn', 'inpaint']);
 
 function strokeLabel(tool) {
   if (tool === 'brush') return 'Brush stroke';
+  if (tool === 'pixel') return 'Pixel stroke';
   if (tool === 'eraser') return 'Eraser stroke';
   if (tool === 'inpaint') return state.inpaintEraseStroke ? 'Erase mask' : 'Paint mask';
   if (tool === 'smudge') return 'Smudge stroke';
@@ -53,7 +54,7 @@ function pointerPressure(e) {
 
 function eventSample(e) {
   const coords = canvasCoords(e, state.mainCanvas);
-  return { x: coords.x, y: coords.y, pressure: pointerPressure(e) };
+  return { x: coords.x, y: coords.y, pressure: pointerPressure(e), shift: !!e?.shiftKey };
 }
 
 export function createStrokeTool({
@@ -72,11 +73,11 @@ export function createStrokeTool({
       const activeMask = state.quickMaskActive && state.wandMask
         ? { mode: 'quick-selection', canvas: state.wandMask, ctx: state.wandMask.getContext('2d') }
         : getActiveMaskLayer();
-      if (['brush', 'eraser', 'smudge', 'dodge', 'burn'].includes(state.tool) && !activeMask && parent?.kind === 'placed') {
+      if (['brush', 'pixel', 'eraser', 'smudge', 'dodge', 'burn'].includes(state.tool) && !activeMask && parent?.kind === 'placed') {
         showToast?.('Rasterize the placed layer before painting its pixels');
         return true;
       }
-      if (['brush', 'eraser', 'smudge', 'dodge', 'burn'].includes(state.tool) && !activeMask && isLayerPixelLocked(state, parent)) {
+      if (['brush', 'pixel', 'eraser', 'smudge', 'dodge', 'burn'].includes(state.tool) && !activeMask && isLayerPixelLocked(state, parent)) {
         showToast?.('Unlock image pixels before painting');
         return true;
       }

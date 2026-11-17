@@ -15,6 +15,7 @@ text.
 import re
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -241,12 +242,21 @@ def test_page_has_no_emoji_or_other_non_ascii(built):
 
 
 def test_check_mode_reports_a_stale_page(generator, tmp_path, monkeypatch):
+    # Run the CLI state transitions on an owned input tree. The separate
+    # whole-tree completeness and subprocess checks retain repository coverage.
+    _write(tmp_path, "app.py", 'import os\nvalue = os.getenv("ODYSSEUS_EXAMPLE")\n')
+    monkeypatch.setattr(generator, "SOURCE_ROOTS", ("app.py",))
+    monkeypatch.setattr(generator, "VARIABLE_NOTES", {
+        "ODYSSEUS_EXAMPLE": ("Search", generator.USER, "A synthetic flag."),
+    })
+    monkeypatch.setattr(generator, "build", partial(generator.build, tmp_path))
     stale = tmp_path / "configuration-reference.md"
     stale.write_text("out of date\n", encoding="utf-8")
     monkeypatch.setattr(generator, "OUTPUT_PATH", stale)
 
     assert generator.main(["--check"]) == 1
     assert generator.main([]) == 0
+    assert "ODYSSEUS_EXAMPLE" in stale.read_text(encoding="utf-8")
     assert generator.main(["--check"]) == 0
 
 

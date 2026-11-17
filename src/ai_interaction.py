@@ -179,8 +179,13 @@ def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[
                 # served internal id. Include pinned/cached ids in the match set
                 # so chat sessions using the HF repo id still resolve. Do not use
                 # stale cached aliases when the endpoint itself is unreachable.
-                if model_type == "image" and endpoint_reachable:
-                    for extra in _json_list(getattr(ep, "pinned_models", None)) + _json_list(getattr(ep, "cached_models", None)):
+                if endpoint_reachable:
+                    # Gateway image models may live in a dedicated catalogue,
+                    # so explicitly pinned IDs are valid on mixed endpoints too.
+                    extras = _json_list(getattr(ep, "pinned_models", None))
+                    if model_type == "image":
+                        extras += _json_list(getattr(ep, "cached_models", None))
+                    for extra in extras:
                         if extra not in model_ids:
                             model_ids.append(extra)
 
@@ -965,7 +970,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
     elif action == "open_panel":
         # Open a top-level panel/modal: documents/library, gallery,
-        # calendar, email, sessions, notes, memories, skills, settings, theme, cookbook.
+        # calendar, email, sessions, notes, tasks, memories, skills, settings, theme, cookbook.
         panel = parts[1].lower() if len(parts) > 1 else ""
         view = ""
         view_label = ""
@@ -993,6 +998,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "note": "notes",
             "todo": "notes",
             "todos": "notes",
+            "tasks": "tasks",
+            "task": "tasks",
             "memories": "memories",
             "memory": "memories",
             "brain": "memories",
@@ -1010,7 +1017,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, calendar, email, sessions, notes, memories, skills, settings, theme, cookbook."}
+            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, calendar, email, sessions, notes, tasks, memories, skills, settings, theme, cookbook."}
         if target == "cookbook":
             cookbook_views = {
                 "models": ("Search", "models"), "model": ("Search", "models"),
@@ -1155,14 +1162,90 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+# Message used whenever a generative image edit (object add/remove/replace,
+# image generation) is requested but no image provider is configured. The
+# photo-editor agent and the image tools surface this verbatim so the user gets
+# a plain, actionable explanation instead of a silent substitute edit.
+IMAGE_PROVIDER_REQUIRED_MESSAGE = (
+    "Removing/adding objects needs an image generation provider; enable one in "
+    "Settings > Models."
+)
+
+
+def image_editing_provider_available(owner: Optional[str] = None) -> bool:
+    """True when an enabled, owner-visible image endpoint can serve AI edits.
+
+    Generative operations (object add/remove/replace, image generation) require
+    a configured image model. Local transforms (remove-bg, upscale, denoise,
+    enhance-face) do not, but the photo-editor agent gates the whole generative
+    request on this so it never falls back to deterministic approximations.
+    """
+    try:
+        from src.settings import get_user_setting, load_settings
+
+        if not load_settings().get("image_gen_enabled", True) or not get_user_setting("image_gen_enabled", owner=owner or "", default=True):
+            return False
+    except Exception:
+        pass
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+        from src.auth_helpers import owner_filter
+
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(
+                ModelEndpoint.is_enabled == True,  # noqa: E712
+                ModelEndpoint.model_type == "image",
+            )
+            q = owner_filter(q, ModelEndpoint, owner)
+            return q.first() is not None
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
+def _uses_openrouter_chat_images(model_id: str) -> bool:
+    # GPT-5 Image is an LLM wrapper, unlike native gpt-image-* image models.
+    leaf = model_id_leaf(model_id).lower()
+    return leaf.startswith("gpt-") and "-image" in leaf and not leaf.startswith("gpt-image-")
+
+
+def _chat_image_results(data: dict) -> list:
+    images = []
+    for choice in data.get("choices") or []:
+        message = choice.get("message") or {}
+        for item in message.get("images") or []:
+            url = (item.get("image_url") or {}).get("url")
+            if not isinstance(url, str):
+                continue
+            if url.startswith("data:image/") and ";base64," in url:
+                images.append({"b64_json": url.split(",", 1)[1]})
+            elif url.startswith(("https://", "http://")):
+                images.append({"url": url})
+    return images
+
+
+def _image_response_error(data: dict, model_id: str) -> Optional[str]:
+    errors = [data.get("error")]
+    errors.extend(choice.get("error") for choice in data.get("choices") or [])
+    for error in errors:
+        if not error:
+            continue
+        message = str(error.get("message") or "Image provider failed") if isinstance(error, dict) else str(error)
+        hint = " Choose a currently supported image model in AI settings." if "deprecated" in message.lower() else ""
+        return f"Image provider failed for '{model_id}': {message}{hint}"
+    return None
+
+
+async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None, *, incognito: bool = False) -> Dict:
     """Generate an image using an image-capable model (e.g. gpt-image-1).
 
     Content format:
       Line 1: prompt describing the image
       Line 2: model name (optional, default auto-detects: prefers gpt-image-1.5 > gpt-image-1)
       Line 3: size (optional, defaults to 1024x1024)
-      Line 4: quality (optional, defaults to medium — options: low, medium, high, auto)
+      Line 4: quality (optional, defaults to configured quality or medium — low, medium, high, auto)
     """
     import base64
     import httpx
@@ -1180,32 +1263,38 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         prompt = str(args.get('prompt') or '').strip()
         model_spec = str(args.get('model') or '').strip()
         size = str(args.get('size') or '1024x1024')
-        quality = str(args.get('quality') or 'medium')
+        quality = str(args.get('quality') or '')
     else:
         lines = content.strip().split("\n")
         prompt = lines[0].strip() if lines else ""
         model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
         size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
-        quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
+        quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else ""
 
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
 
-    # Load admin settings for defaults
+    # Load settings for defaults
     try:
-        from src.settings import load_settings
+        from src.settings import get_user_setting, load_settings
         _settings = load_settings()
     except Exception:
         _settings = {}
+        def get_user_setting(key, owner="", default=None):
+            return default
 
+    # The administrator's global image-generation disable switch is authoritative.
+    # Non-admin preferences cannot re-enable generation when disabled globally.
     if not _settings.get("image_gen_enabled", True):
         return {"error": "Image generation is disabled by the administrator."}
+    if not get_user_setting("image_gen_enabled", owner=owner or "", default=True):
+        return {"error": "Image generation is disabled by user preference."}
 
-    # Use admin-configured model/quality if not specified by the tool call
+    # Use user- or admin-configured model/quality if not specified by the tool call
     if not model_spec:
-        model_spec = _settings.get("image_model", "")
-    if quality == "medium" and _settings.get("image_quality"):
-        quality = _settings["image_quality"]
+        model_spec = get_user_setting("image_model", owner=owner, default="") or ""
+    if not quality:
+        quality = get_user_setting("image_quality", owner=owner, default="medium") or "medium"
 
     # Auto-detect best available image model if still not set
     if not model_spec:
@@ -1255,6 +1344,14 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     async def _resolve_image_model(model_name: str):
         def _call():
+            # Try a plain by-name lookup first. Gateway endpoints (OpenRouter)
+            # register as `llm` yet serve image models, and the image-typed
+            # query's last-resort fallback would otherwise hijack a cloud model
+            # onto the local image endpoint (gpt-5-image -> qwen-image-edit).
+            try:
+                return _resolve_model(model_name, owner=owner)
+            except ValueError:
+                pass
             try:
                 return _resolve_model(model_name, owner=owner, model_type="image")
             except TypeError as exc:
@@ -1289,8 +1386,19 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
     images_url = base_url + "/images/generations"
     from src.model_capability_readers.base import detect_vendor
+    chat_images = detect_vendor(url) == "openrouter" and _uses_openrouter_chat_images(model_id)
     if detect_vendor(url) == "openrouter":
         images_url = base_url + "/images"
+    if chat_images:
+        images_url = base_url + "/chat/completions"
+
+    # Capture the requested geometry before older OpenAI size restrictions.
+    from src.image_model_ids import image_aspect_ratio
+    try:
+        requested_width, requested_height = (int(value) for value in size.lower().split("x"))
+        requested_ratio = image_aspect_ratio(requested_width, requested_height)
+    except (TypeError, ValueError):
+        requested_ratio = "1:1"
 
     # Validate size for cloud image models (local diffusion accepts any WxH)
     valid_gpt_sizes = {"1024x1024", "1024x1536", "1536x1024", "auto"}
@@ -1306,6 +1414,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         "n": 1,
         "size": size,
     }
+    if detect_vendor(url) == "openrouter":
+        payload.pop("size", None)
+        payload["aspect_ratio"] = requested_ratio
 
     # GPT image models and local diffusion support quality; DALL-E does not
     if is_gpt_image or is_local_diffusion:
@@ -1314,12 +1425,21 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         else:
             payload["quality"] = "medium"
 
-    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
+    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={'[private]' if incognito else prompt[:80]}")
 
     try:
         # GPT image models can take 30-120s+ depending on quality
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
-            resp = await client.post(images_url, json=payload, headers=headers)
+            request_payload = payload
+            if chat_images:
+                request_payload = {
+                    "model": model_id,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "modalities": ["image", "text"],
+                    "stream": False,
+                    "image_config": {"aspect_ratio": requested_ratio},
+                }
+            resp = await client.post(images_url, json=request_payload, headers=headers)
 
             if resp.status_code != 200:
                 error_text = resp.text[:500]
@@ -1334,9 +1454,15 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 }
 
             data = resp.json()
-            images = data.get("data", [])
+            provider_error = _image_response_error(data, model_id)
+            if provider_error:
+                return {"error": provider_error, "untrusted_content": True}
+            images = _chat_image_results(data) if chat_images else data.get("data", [])
             if not images:
-                return {"error": "No images returned from API"}
+                return {"error": (
+                    f"Image model '{model_id}' returned no image. "
+                    "Choose another image generation model in AI settings."
+                )}
 
             img = images[0]
             image_url = None
@@ -1365,15 +1491,22 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                     logger.warning(f"Failed to save gallery record: {_ge}")
                     return ""
 
-            # GPT image models always return b64_json; DALL-E may return url
-            if img.get("b64_json"):
+            def _store_image(image_bytes):
+                if incognito:
+                    return 'data:image/png;base64,' + base64.b64encode(image_bytes).decode('ascii'), None
                 img_dir = Path(GENERATED_IMAGES_DIR)
                 img_dir.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename
-                img_path.write_bytes(base64.b64decode(img.get("b64_json")))
-                image_url = f"/api/generated-image/{filename}"
-                image_id = _save_to_gallery(filename)
+                img_path.write_bytes(image_bytes)
+                if owner:
+                    from src.generated_images import register_generated_image
+                    register_generated_image(filename, owner)
+                return f"/api/generated-image/{filename}", _save_to_gallery(filename)
+
+            # Private results stay in the response, never in the gallery or on disk.
+            if img.get("b64_json"):
+                image_url, image_id = _store_image(base64.b64decode(img['b64_json']))
 
             elif img.get("url"):
                 # Download external URL and save locally (DALL-E returns temp URLs)
@@ -1387,13 +1520,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 try:
                     dl_resp = httpx.get(result_url, timeout=60)
                     if dl_resp.status_code == 200:
-                        img_dir = Path(GENERATED_IMAGES_DIR)
-                        img_dir.mkdir(parents=True, exist_ok=True)
-                        filename = f"{uuid.uuid4().hex[:12]}.png"
-                        img_path = img_dir / filename
-                        img_path.write_bytes(dl_resp.content)
-                        image_url = f"/api/generated-image/{filename}"
-                        image_id = _save_to_gallery(filename)
+                        image_url, image_id = _store_image(dl_resp.content)
                     else:
                         image_url = result_url  # fallback to external URL
                 except Exception as _dl_e:
@@ -1428,8 +1555,9 @@ async def do_edit_image(
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
     size: str = "auto",
-    quality: str = "medium",
+    quality: Optional[str] = None,
     progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    incognito: bool = False,
 ) -> Dict:
     """Edit an uploaded image using the configured image endpoint."""
     import base64
@@ -1447,21 +1575,27 @@ async def do_edit_image(
         return {"error": "Attached image file was not found"}
 
     try:
-        from src.settings import load_settings
+        from src.settings import get_user_setting, load_settings
         _settings = load_settings()
     except Exception:
         _settings = {}
+        def get_user_setting(key, owner="", default=None):
+            return default
 
     if not model_spec:
-        model_spec = _settings.get("image_model", "")
-    if quality == "medium" and _settings.get("image_quality"):
-        quality = _settings["image_quality"]
+        model_spec = get_user_setting("image_edit_model", owner=owner) or get_user_setting("image_model", owner=owner, default="")
+    if quality is None:
+        quality = get_user_setting("image_quality", owner=owner, default="medium") or "medium"
     if not model_spec:
         return {"error": "No image model selected for image editing"}
 
     try:
         try:
             def _call():
+                try:
+                    return _resolve_model(model_spec, owner=owner)
+                except ValueError:
+                    pass
                 try:
                     return _resolve_model(model_spec, owner=owner, model_type="image")
                 except TypeError as exc:
@@ -1474,6 +1608,7 @@ async def do_edit_image(
     except ValueError:
         return {"error": f"No endpoint found with image model '{model_spec}'."}
 
+    requested_edit_size = size
     if not size or size == "auto":
         from PIL import Image
         from src.image_model_ids import image_edit_size
@@ -1503,7 +1638,7 @@ async def do_edit_image(
     request_id = uuid.uuid4().hex
     payload["request_id"] = request_id
 
-    logger.info("Image edit: model=%s, size=%s, quality=%s, image=%s, prompt=%s", model_id, size, quality, path.name, prompt[:80])
+    logger.info("Image edit: model=%s, size=%s, quality=%s, image=%s, prompt=%s", model_id, size, quality, '[private]' if incognito else path.name, '[private]' if incognito else prompt[:80])
 
     def _save_edited_image_to_gallery(filename: str) -> str:
         try:
@@ -1533,10 +1668,16 @@ async def do_edit_image(
         from PIL import Image
         with Image.open(BytesIO(image_bytes)) as output:
             size = f"{output.width}x{output.height}"
+            image_mime = Image.MIME.get(output.format, 'image/png')
+        if incognito:
+            return 'data:' + image_mime + ';base64,' + base64.b64encode(image_bytes).decode('ascii'), ''
         img_dir = Path(GENERATED_IMAGES_DIR)
         img_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex[:12]}{suffix}"
         (img_dir / filename).write_bytes(image_bytes)
+        if owner:
+            from src.generated_images import register_generated_image
+            register_generated_image(filename, owner)
         return f"/api/generated-image/{filename}", _save_edited_image_to_gallery(filename)
 
     async def _try_local_img2img_fallback(client: httpx.AsyncClient) -> Optional[Dict[str, Any]]:
@@ -1643,7 +1784,35 @@ async def do_edit_image(
                             "image_url": {"url": f"data:{mime};base64,{image_b64}"},
                         }],
                     }
-                    resp = await client.post(base_url + "/images", json=edit_payload, headers=headers)
+                    from src.image_model_ids import image_aspect_ratio
+                    from PIL import Image as ReferenceImage
+                    with ReferenceImage.open(path) as reference:
+                        reference_width, reference_height = reference.size
+                        if reference.getexif().get(274) in {5, 6, 7, 8}:
+                            reference_width, reference_height = reference_height, reference_width
+                    if requested_edit_size and requested_edit_size != "auto":
+                        try:
+                            reference_width, reference_height = (int(value) for value in requested_edit_size.lower().split("x"))
+                        except (TypeError, ValueError):
+                            pass
+                    edit_payload.pop("size", None)
+                    edit_payload["aspect_ratio"] = image_aspect_ratio(reference_width, reference_height)
+                    if _uses_openrouter_chat_images(model_id):
+                        edit_payload = {
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {
+                                    "url": f"data:{mime};base64,{image_b64}",
+                                }},
+                            ]}],
+                            "modalities": ["image", "text"],
+                            "stream": False,
+                            "image_config": {"aspect_ratio": edit_payload["aspect_ratio"]},
+                        }
+                        resp = await client.post(base_url + "/chat/completions", json=edit_payload, headers=headers)
+                    else:
+                        resp = await client.post(base_url + "/images", json=edit_payload, headers=headers)
                 else:
                     with path.open("rb") as f:
                         files = {"image": (path.name, f, mime)}
@@ -1686,7 +1855,12 @@ async def do_edit_image(
                 }
 
             data = resp.json()
-            images = data.get("data", [])
+            provider_error = _image_response_error(data, model_id)
+            if provider_error:
+                return {"error": provider_error, "untrusted_content": True}
+            images = (_chat_image_results(data)
+                      if is_openrouter and _uses_openrouter_chat_images(model_id)
+                      else data.get("data", []))
             if not images:
                 return {"error": "No image returned from edit API"}
 

@@ -36,7 +36,26 @@ def test_task_parse_resolves_with_owner_scope():
 def test_history_compact_resolves_with_owner_scope():
     body = _function_source("routes/history/history_routes.py", "compact_session")
     assert "owner = effective_user(request)" in body
-    assert 'resolve_endpoint("utility", owner=owner or None)' in body
+    tree = ast.parse(body)
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "resolve_endpoint"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "utility"
+    ]
+    assert len(calls) == 1
+
+    kwargs = {
+        kw.arg: ast.unparse(kw.value)
+        for kw in calls[0].keywords
+    }
+    assert kwargs["owner"] == "owner or None"
+    assert kwargs["fallback_url"] == "getattr(session, 'endpoint_url', None)"
+    assert kwargs["fallback_model"] == "getattr(session, 'model', None)"
+    assert kwargs["fallback_headers"] == "getattr(session, 'headers', None)"
 
 
 def test_note_reminder_synthesis_resolves_with_owner_scope():

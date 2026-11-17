@@ -17,6 +17,7 @@ clear_fake_database_modules()
 import core.database as cdb
 import routes.task_routes as task_routes
 from core.database import ScheduledTask
+from routes.task.task_routes import TaskCreate
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(
@@ -125,3 +126,32 @@ def test_scheduler_cycle_guard_treats_cross_owner_chain_as_unsafe():
         assert scheduler._has_chain_cycle(db, "bob-target-cycle", owner="alice") is True
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_generated_task_name_turns_thinking_off(monkeypatch):
+    sent = {}
+
+    async def fake_call(**kwargs):
+        sent.update(kwargs)
+        return "Daily AI News"
+
+    monkeypatch.setattr("src.llm_core.llm_call_async", fake_call)
+    db = _TS()
+    try:
+        db.add(cdb.Session(
+            id="task-name-session", name="s", owner="alice",
+            endpoint_url="http://127.0.0.1:8081/v1", model="gemma4-26b",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    create_task = _endpoint("POST", "/api/tasks")
+    created = await create_task(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice"), headers={}),
+        TaskCreate(prompt="Summarize AI news", task_type="llm", trigger_type="webhook"),
+    )
+
+    assert sent["thinking_mode"] == "off"
+    assert sent["max_tokens"] == 20
+    assert created["name"] == "Daily AI News"

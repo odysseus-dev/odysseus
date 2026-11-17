@@ -9,7 +9,7 @@ export function effectsWithPreview(owner) {
   return index < 0 ? [...effects, preview] : effects.map((effect, i) => i === index ? preview : effect);
 }
 
-const EFFECT_TYPES = new Set(['gaussian-blur', 'sharpen', 'color-overlay', 'drop-shadow', 'stroke', 'linear-gradient', 'radial-gradient']);
+const EFFECT_TYPES = new Set(['gaussian-blur', 'sharpen', 'motion-blur', 'zoom-blur', 'pixelate', 'color-overlay', 'drop-shadow', 'stroke', 'linear-gradient', 'radial-gradient']);
 for (const type of Object.keys(LAYER_STYLES)) EFFECT_TYPES.add(type);
 
 export const EFFECT_PRESETS = {
@@ -41,6 +41,9 @@ export function defaultEffectParams(type) {
   if (LAYER_STYLES[type]) return styleParams(type);
   if (type === 'gaussian-blur') return { radius: 6 };
   if (type === 'sharpen') return { amount: 0.5 };
+  if (type === 'motion-blur') return { distance: 20, angle: 0 };
+  if (type === 'zoom-blur') return { amount: 40 };
+  if (type === 'pixelate') return { size: 8 };
   if (type === 'color-overlay') return { color: '#ffffff', opacity: 0.2, blendMode: 'source-atop' };
   if (type === 'drop-shadow') return { color: '#000000', opacity: 0.45, blur: 12, x: 4, y: 6 };
   if (type === 'stroke') return { color: '#ffffff', opacity: 1, width: 3 };
@@ -66,12 +69,19 @@ export function normalizeEffect(effect) {
   if (LAYER_STYLES[type]) Object.assign(params, styleParams(type, params));
   if (type === 'gaussian-blur') params.radius = Math.max(0, Math.min(200, Number(params.radius) || 0));
   if (type === 'sharpen') params.amount = Math.max(0, Math.min(1, Number(params.amount) || 0));
+  if (type === 'motion-blur') {
+    params.distance = Math.max(0, Math.min(200, Number(params.distance) || 0));
+    params.angle = Math.max(-180, Math.min(180, Number(params.angle) || 0));
+  }
+  if (type === 'zoom-blur') params.amount = Math.max(0, Math.min(100, Number(params.amount) || 0));
+  if (type === 'pixelate') params.size = Math.max(1, Math.min(200, Math.round(Number(params.size) || 1)));
   if (type === 'color-overlay') {
     params.color = /^#[0-9a-f]{6}$/i.test(params.color) ? params.color : defaults.color;
     params.opacity = Math.max(0, Math.min(1, Number(params.opacity) || 0));
     params.blendMode = typeof params.blendMode === 'string' ? params.blendMode : defaults.blendMode;
   }
   if (type === 'drop-shadow') {
+    params.inside = params.inside === true || params.inside === 1;
     params.color = /^#[0-9a-f]{6}$/i.test(params.color) ? params.color : defaults.color;
     for (const key of ['opacity', 'blur', 'x', 'y']) params[key] = Number(params[key]) || 0;
     params.opacity = Math.max(0, Math.min(1, params.opacity));
@@ -114,6 +124,9 @@ export function effectLabel(type) {
   return {
     'gaussian-blur': 'Gaussian Blur',
     sharpen: 'Sharpen',
+    'motion-blur': 'Motion Blur',
+    'zoom-blur': 'Zoom Blur',
+    pixelate: 'Pixelate',
     'color-overlay': 'Color Overlay',
     'drop-shadow': 'Drop Shadow',
     'stroke': 'Stroke',
@@ -212,6 +225,44 @@ export function renderEffects(source, effects = [], shouldContinue = () => true)
       const sharpened = sharpenCanvas(current, effect.params.amount, shouldContinue);
       if (!sharpened) return current;
       ctx.drawImage(sharpened, 0, 0);
+    } else if (effect.type === 'motion-blur') {
+      const dist = effect.params.distance;
+      const rad = (effect.params.angle || 0) * Math.PI / 180;
+      const dx = Math.cos(rad);
+      const dy = Math.sin(rad);
+      const samples = Math.max(1, Math.min(64, Math.round(dist) || 1));
+      ctx.globalAlpha = 1 / samples;
+      for (let s = 0; s < samples; s += 1) {
+        const t = (samples > 1 ? (s / (samples - 1) - 0.5) : 0) * dist;
+        ctx.drawImage(current, dx * t, dy * t);
+      }
+      ctx.globalAlpha = 1;
+    } else if (effect.type === 'zoom-blur') {
+      const amt = effect.params.amount / 100;
+      const samples = Math.max(1, Math.min(48, Math.round(amt * 48) || 1));
+      const cx = next.width / 2;
+      const cy = next.height / 2;
+      ctx.globalAlpha = 1 / samples;
+      for (let s = 0; s < samples; s += 1) {
+        const scale = 1 + (s / samples) * amt * 0.5;
+        const dw = next.width * scale;
+        const dh = next.height * scale;
+        ctx.drawImage(current, cx - dw / 2, cy - dh / 2, dw, dh);
+      }
+      ctx.globalAlpha = 1;
+    } else if (effect.type === 'pixelate') {
+      const size = Math.max(1, effect.params.size);
+      const sw = Math.max(1, Math.round(next.width / size));
+      const sh = Math.max(1, Math.round(next.height / size));
+      const tiny = document.createElement('canvas');
+      tiny.width = sw;
+      tiny.height = sh;
+      const tctx = tiny.getContext('2d');
+      tctx.imageSmoothingEnabled = false;
+      tctx.drawImage(current, 0, 0, sw, sh);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tiny, 0, 0, next.width, next.height);
+      ctx.imageSmoothingEnabled = true;
     } else if (effect.type === 'color-overlay') {
       ctx.drawImage(current, 0, 0);
       ctx.globalAlpha = effect.params.opacity;
@@ -241,7 +292,7 @@ export function renderEffects(source, effects = [], shouldContinue = () => true)
       : next;
     const blended = copyCanvas(current);
     const blendCtx = blended.getContext('2d');
-    if (effect.type === 'drop-shadow') blendCtx.globalCompositeOperation = 'destination-over';
+    if (effect.type === 'drop-shadow' && !effect.params.inside) blendCtx.globalCompositeOperation = 'destination-over';
     blendCtx.globalAlpha = effect.opacity;
     blendCtx.drawImage(contribution, 0, 0);
     blendCtx.globalAlpha = 1;

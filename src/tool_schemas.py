@@ -8,6 +8,7 @@ Extracted from agent_tools.py to keep schema definitions separate from
 tool parsing / execution logic.
 """
 
+import os
 import json
 import logging
 import re
@@ -40,6 +41,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "write_file": ("path",),
     "edit_file": ("path",),
     "apply_patch": ("patch_text", "patchText", "patch"),
+    "generate_image": ("prompt",),
     "host_shell": ("command",),
 }
 
@@ -113,6 +115,15 @@ def _repair_function_arg_aliases(tool_type: str, args: dict[str, Any]) -> dict[s
             args["url"] = path
             args.pop("path", None)
             args.pop("file_path", None)
+    elif (
+        tool_type == "ui_control"
+        and str(args.get("action") or "").casefold() == "open_panel"
+        and not str(args.get("name") or "").strip()
+    ):
+        panel = _first_nonempty_string(args, ("panel",))
+        if panel:
+            args["name"] = panel
+            args.pop("panel", None)
     if tool_type == "manage_documents" and "limit" not in args and "max_results" in args:
         # Collection APIs use both names across the native tool surface. The
         # document contract calls this integer ``limit``.
@@ -904,13 +915,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ui_control",
-            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, calendar/schedule, email, sessions, notes, memories/brain, skills, settings, theme, cookbook; calendar supports month/week/year/agenda plus a date; Cookbook supports models/download, launch/serve, active/running, dependencies, and settings views), open_email_reply (legacy UI-only reply opener; prefer email MCP draft_email_reply for assistant-written reply drafts so a normal document-backed email draft is created), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, cyberpunk, retrowave, forest, ocean, ume, terminal, organs, gpt, claude, cute, eclipse, porcelain, arcade, blueprint, monolith, yoyo), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation), get_theme, and get_toggles. When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
+            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, calendar/schedule, email, sessions, notes, tasks, memories/brain, skills, settings, theme, cookbook; calendar supports month/week/year/agenda plus a date; Cookbook supports models/download, launch/serve, active/running, dependencies, and settings views), open_email_reply (legacy UI-only reply opener; prefer email MCP draft_email_reply for assistant-written reply drafts so a normal document-backed email draft is created), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, cyberpunk, retrowave, forest, ocean, ume, terminal, organs, gpt, claude, cute, eclipse, porcelain, arcade, blueprint, monolith, yoyo), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation), get_theme, and get_toggles. When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_theme", "get_toggles"],
                                "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
-                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, calendar/schedule, email, sessions, notes, brain/memories, skills, settings, theme/themes, cookbook; models and serve are Cookbook-view aliases. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
+                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, calendar/schedule, email, sessions, notes, tasks, brain/memories, skills, settings, theme/themes, cookbook; models and serve are Cookbook-view aliases. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
                     "view": {"type": "string", "description": "Optional open_panel subview: calendar day/week/month/year/agenda, or Cookbook models/download, launch/serve, active/running, dependencies, settings."},
                     "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
@@ -1282,14 +1293,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_settings",
-            "description": "Manage user preferences and settings. Use `disable_tool`/`enable_tool`/`list_tools` to turn individual tools on or off globally (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Use list/get/set/delete for free-form preferences.",
+            "description": "Manage user preferences and settings. Use `disable_tool`/`list_tools` to turn individual tools off globally or list what is disabled (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Disabled tools can only be re-enabled by the user in Settings > Agent Tools, never from chat. Use list/get/set/delete for free-form preferences.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "enable_tool", "list_tools"]},
+                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "list_tools"]},
                     "key": {"type": "string", "description": "Setting key (for get/set/delete)"},
                     "value": {"description": "Setting value (for set) — can be string, number, boolean, or object"},
-                    "tool": {"type": "string", "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
+                    "tool": {"type": "string", "description": "Tool name to disable (for disable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
                 },
                 "required": ["action"]
             }
@@ -1507,6 +1518,75 @@ FUNCTION_TOOL_SCHEMAS = [
                     "quality": {"type": "string", "description": "Optional output quality"}
                 },
                 "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_edit",
+            "description": "Plan a photo-editing program for the currently open image editor. Returns an ordered list of editor ops to run against the canvas. Route object removal, added content, or replaced content to ai_edit_image/generate_image; use deterministic ops only for tone/colour/filter/crop/text/selection edits. If no image provider is configured for a generative request, say so instead of planning a substitute deterministic edit. Use the canonical adjustment/filter shapes (adjustments.apply/applyMasked params {\"type\", \"params\"}; filters.apply/applyMasked params {\"id\"}); never invent adjustment types or filter ids. New ops: photo.autoTone; retouch.skin/blemish/teeth; selection.face/background. Portrait/look-better ('fix the skin', 'fix my teeth') -> selection.face then retouch.skin (and retouch.teeth for teeth) then ONE gentle photo.autoTone; never a timid single step. Low-key/'fix the lighting' on a dark image: at most ONE global lift (prefer photo.autoTone once or shadows-highlights); never stack autoTone/brightness/exposure/levels, and keep highlights <= 0. Temperature sign: moody/cool/cinematic -> white-balance temperature NEGATIVE; warm/golden/sunset -> POSITIVE. Background softer -> selection.background then filters.applyMasked {id:'blur-gaussian'} (never a plain global blur). A vague prompt with no concrete defect ('clean this up') -> return {\"reply\": <question>, \"steps\": [], \"ask_user\": {\"question\":..., \"options\":[...]}} with 2-3 concrete options instead of guessing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "What the user wants done to the image"},
+                    "state": {"type": "object", "description": "Optional current editor state (layers, selection, document info)"}
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_editor_command",
+            "description": "Run a single deterministic operation on the open image editor and return its result. Use catalog ops such as adjustments.*, filters.applyMasked, selection.*, layers.*, document.importImage, layers.placeImage, export.png, screenshot. Do NOT use for AI/masked edits (use ai_edit_image) or new imagery (use generate_image). Canonical shapes: adjustments.apply/applyMasked params = {\"type\": <brightness-contrast|exposure|white-balance|hue-saturation|vibrance|black-white|shadows-highlights|levels|curves|color-balance|photo-filter|selective-color|gradient-map|invert|posterize|threshold|channel-mixer|color-lookup>, \"params\": {...}}; filters.apply/applyMasked params = {\"id\": <blur-gaussian|blur-motion|blur-zoom|sharpen|sharpen-edges|unsharp-mask|noise-add|noise-despeckle|pixelate-mosaic|pixelate-crystallize|stylize-emboss|stylize-find-edges|stylize-solarize|distort-twirl|distort-pinch|distort-spherize|distort-ripple|render-clouds>}. Never nest a numeric bag under {\"adjustments\": {...}} and never invent adjustment types or filter ids (no \"vignette\" or \"clarity\"). Additional canonical ops: photo.autoTone {}; retouch.skin {smooth,opacity,blemish,radius,threshold}; retouch.blemish {radius,threshold}; retouch.teeth {desat,bright}; selection.face {mode}; selection.background {mode,subject,fuzziness}. At most one global brightness/exposure lift (prefer shadows-highlights; keep highlights <= 0). Never stack global lifts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "description": "Editor op name from the catalog, e.g. adjustments.applyMasked"},
+                    "params": {"type": "object", "description": "Parameters for the op"},
+                    "session": {"type": "string", "description": "Editor session id when no turn-bound session is available; the bound session takes precedence"},
+                    "wait": {"type": "boolean", "description": "Wait for the editor result (default true)"}
+                },
+                "required": ["op"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_editor_screenshot",
+            "description": "Capture the open image editor's current canvas as a PNG data URL. Use to inspect the result before choosing the next edit.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session": {"type": "string", "description": "Editor session id when no turn-bound session is available; the bound session takes precedence"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ai_edit_image",
+            "description": "Apply an AI image edit and place the result as a NEW layer, never overwriting the original. Two modes. mode='instruction' (default): send the WHOLE image with a clear prompt and no mask — use a rephrased instruction that NAMES what must stay unchanged, e.g. 'replace the background with a sunny beach, keep the woman exactly the same'. Use this for background/scene replacement, changing the season or style, adding an object to the scene (a moon, a person), and removing diffuse distractions. mode='masked': masked inpaint on a selected region — use ONLY for an explicit regional removal of a clearly identified object ('remove the person on the left'); select the object first so the mask is tight. NEVER approximate object removal/addition/replacement with selection, adjustment, filter or transform ops; if no image provider is configured, report that instead of substituting a deterministic edit. Other ops: remove-bg, upscale (2x/4x), denoise, enhance-face.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["remove-bg", "upscale", "denoise", "enhance-face", "inpaint", "generative"], "description": "AI edit operation"},
+                    "mode": {"type": "string", "enum": ["instruction", "masked"], "description": "instruction = whole-image edit with no mask (background/season/style/add-object/diffuse removal); masked = tight-mask regional removal of a selected object. Default instruction."},
+                    "prompt": {"type": "string", "description": "Instruction for inpaint/generative (in instruction mode, name what must stay unchanged)"},
+                    "image": {"type": "string", "description": "Optional source (data URL or gallery image id); defaults to the current canvas/screenshot"},
+                    "mask": {"type": "string", "description": "Optional base64 PNG mask (white = region to edit); required for mode='masked'"},
+                    "scale": {"type": "number", "description": "Upscale factor (2 or 4)"},
+                    "strength": {"type": "number", "description": "Denoise strength (0-1)"},
+                    "steps": {"type": "integer", "description": "Optional sampler steps. Use 8 for removal/expand edits (default 4 is too weak for those)."},
+                    "place": {"type": "boolean", "description": "Place the result as a new layer (default true)"},
+                    "model": {"type": "string", "description": "Optional image model id to route this edit to (from GET /api/editor/image-models); omit to use the configured default"},
+                    "session": {"type": "string", "description": "Editor session id when no turn-bound session is available; the bound session takes precedence"}
+                },
+                "required": ["op"]
             }
         }
     },
@@ -1920,6 +2000,15 @@ FUNCTION_TOOL_SCHEMAS = [
         }
     },
 ]
+
+if os.getenv("ODYSSEUS_PRIVATE_BROWSER_LEGACY", "0").strip().lower() not in {"", "0", "false", "no", "off"}:
+    # Restored pre-Wave-3 private_browser (see src.tool_execution._legacy_private_browser).
+    from src.private_browser_legacy_schema import PRIVATE_BROWSER_SCHEMA as _PB_LEGACY
+
+    FUNCTION_TOOL_SCHEMAS[:] = [
+        _PB_LEGACY if (schema.get("function") or {}).get("name") == "private_browser" else schema
+        for schema in FUNCTION_TOOL_SCHEMAS
+    ]
 
 
 # ---------------------------------------------------------------------------

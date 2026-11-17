@@ -6,6 +6,7 @@ import re
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
@@ -36,6 +37,19 @@ def _ics_naive_dtstart(dt):
     if isinstance(dt, date):
         return datetime(dt.year, dt.month, dt.day)
     return dt
+
+
+def _source_tzid(dt) -> str | None:
+    """IANA zone name of an imported tz-aware DTSTART, or None for naive/UTC values."""
+    tz = getattr(dt, "tzinfo", None) if isinstance(dt, datetime) else None
+    name = getattr(tz, "key", None) or getattr(tz, "zone", None)
+    if not name or name.upper() in {"UTC", "ETC/UTC"}:
+        return None
+    try:
+        ZoneInfo(name)
+    except Exception:
+        return None
+    return name
 
 
 def _ensure_positive_duration(start_dt, end_dt, all_day):
@@ -78,6 +92,18 @@ def _require_user(request: Request) -> str:
     # require_user returned "" — auth is off or unconfigured (single-user).
     # Use FALLBACK_OWNER so calendar rows have a stable owner for filtering.
     return FALLBACK_OWNER
+
+
+async def _json_object_body(request: Request) -> dict:
+    """Parse a JSON object body. An unreadable body counts as empty; a body
+    that is valid JSON but not an object (a list, string or number) is a 400."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Request body must be a JSON object")
+    return body
 
 
 def _get_or_404_calendar(db, cal_id: str, owner: str) -> CalendarCal:
@@ -487,10 +513,13 @@ def _parse_dt_pair(s: str):
             return parsed.astimezone(_tz.utc).replace(tzinfo=None), True
         return parsed, False
     except ValueError:
-        return _parse_dt(s), False
+        parsed = _parse_dt(s, preserve_timezone=True)
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(_tz.utc).replace(tzinfo=None), True
+        return parsed, False
 
 
-def _parse_dt(s: str) -> datetime:
+def _parse_dt(s: str, *, preserve_timezone: bool = False) -> datetime:
     """Parse a date/datetime string.
 
     Strict ISO first (cheapest path; this is what most callers pass). On
@@ -503,7 +532,8 @@ def _parse_dt(s: str) -> datetime:
       - YYYY-MM-DD optionally followed by time
     Anything still unparsed falls to dateutil.parser, which handles most
     other absolute formats. Local-naive datetimes returned to match the
-    DB schema (CalendarEvent.dtstart is naive).
+    DB schema (CalendarEvent.dtstart is naive). ``preserve_timezone`` lets
+    _parse_dt_pair retain explicit offsets until it records UTC provenance.
     """
     import re as _re
     s = (s or "").strip()
@@ -517,7 +547,7 @@ def _parse_dt(s: str) -> datetime:
         parsed = datetime.fromisoformat(_s2)
         # Strip tz for the legacy callers — they expect naive. Real tz
         # handling lives in _parse_dt_pair.
-        if parsed.tzinfo is not None:
+        if parsed.tzinfo is not None and not preserve_timezone:
             from datetime import timezone as _tz
             return parsed.astimezone(_tz.utc).replace(tzinfo=None)
         return parsed
@@ -609,13 +639,13 @@ def _parse_dt(s: str) -> datetime:
     try:
         from dateutil import parser as _du
         parsed = _du.parse(s)
-        # Strip tz like every other return path above — this function's
-        # contract is naive datetimes (CalendarEvent.dtstart is naive). An
+        # By default strip tz like the ISO path above — legacy callers
+        # require naive datetimes (CalendarEvent.dtstart is naive). An
         # offset-bearing non-ISO input (e.g. RFC-2822 "Mon, 05 Jan 2026
         # 14:00:00 +0900") otherwise leaked tz-aware into the naive column and
         # crashed read-back comparisons in _expand_rrule with "can't compare
         # offset-naive and offset-aware datetimes".
-        if parsed.tzinfo is not None:
+        if parsed.tzinfo is not None and not preserve_timezone:
             from datetime import timezone as _tz
             return parsed.astimezone(_tz.utc).replace(tzinfo=None)
         return parsed
@@ -820,6 +850,19 @@ def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
     return suffix[:16]
 
 
+def _source_zone(ev: CalendarEvent):
+    """Zone to expand a UTC-stored recurring event in, when its source TZID is known."""
+    tzid = getattr(ev, "tzid", None)
+    if not tzid or not getattr(ev, "is_utc", False) or ev.all_day:
+        return None
+    try:
+        zone = ZoneInfo(tzid)
+        rrulestr(ev.rrule, dtstart=ev.dtstart.replace(tzinfo=timezone.utc).astimezone(zone))
+    except Exception:
+        return None
+    return zone
+
+
 def _expand_rrule(
     ev: CalendarEvent, start: datetime, end: datetime, db=None, owner: str | None = None
 ) -> List[dict]:
@@ -846,8 +889,13 @@ def _expand_rrule(
         return [d]
 
     # Parse the rrule, applying it to the base dtstart.
+    source_zone = _source_zone(ev)
+    dtstart = (
+        ev.dtstart.replace(tzinfo=timezone.utc).astimezone(source_zone)
+        if source_zone else ev.dtstart
+    )
     rrule_str = ev.rrule
-    if ev.dtstart is not None and getattr(ev.dtstart, "tzinfo", None) is None:
+    if dtstart is not None and getattr(dtstart, "tzinfo", None) is None:
         # Events are stored with a naive (UTC) dtstart, but standard .ics
         # exporters (Google/Apple/Outlook/Fastmail) write the bound as an
         # absolute UTC value, e.g. UNTIL=20240105T090000Z. dateutil refuses to
@@ -860,7 +908,7 @@ def _expand_rrule(
             r"(UNTIL=\d{8}(?:T\d{6})?)Z", r"\1", rrule_str, flags=_re.IGNORECASE
         )
     try:
-        rule = rrulestr(rrule_str, dtstart=ev.dtstart)
+        rule = rrulestr(rrule_str, dtstart=dtstart)
     except Exception as ex:
         logger.warning(
             "Failed to parse rrule=%r for event %s: %s", ev.rrule, ev.uid, ex
@@ -886,7 +934,10 @@ def _expand_rrule(
     base = _event_to_dict(ev, db=db, owner=owner)
     exdates = set(_recurrence_exdates(ev))
 
-    for occ_start in rule.xafter(expand_start, inc=True):
+    xafter_start = expand_start.replace(tzinfo=timezone.utc) if source_zone else expand_start
+    for occ_start in rule.xafter(xafter_start, inc=True):
+        if source_zone:
+            occ_start = occ_start.astimezone(timezone.utc).replace(tzinfo=None)
         if occ_start >= end:
             break
 
@@ -994,10 +1045,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def save_config(request: Request):
         """Legacy single-account endpoint — upserts the first account."""
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         accounts = _get_caldav_accounts(owner)
         if not (body.get("url") or "").strip():
             _save_caldav_accounts(owner, [])
@@ -1052,10 +1100,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         """Add a new CalDAV account."""
         import uuid as _uuid
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         from src.caldav_sync import validate_caldav_url
         try:
             url = validate_caldav_url(body.get("url", ""))
@@ -1080,10 +1125,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def update_caldav_account(account_id: str, request: Request):
         """Update an existing CalDAV account by id."""
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         accounts = _get_caldav_accounts(owner)
         idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
         if idx is None:
@@ -1124,10 +1166,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         test an already-saved account. Falls back to the first saved account
         when nothing is provided."""
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         url = (body.get("url") or "").strip()
         user = (body.get("username") or "").strip()
         pw = body.get("password") or ""
@@ -1709,6 +1748,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     all_day=all_day,
                     is_utc=row_is_utc,
                     rrule=(comp.get("rrule").to_ical().decode() if comp.get("rrule") else ""),
+                    tzid=None if all_day else _source_tzid(dt_val),
                 )
                 db.add(ev)
                 event_uids.append(uid_val)

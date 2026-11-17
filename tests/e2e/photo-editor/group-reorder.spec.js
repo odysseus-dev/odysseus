@@ -10,7 +10,6 @@ test('group drag reorders the complete subtree with undo and server persistence'
   const originalOrder = current.layers.map(layer => layer.id);
 
   await page.locator('#ge-add-layer').click();
-  await page.locator('.ge-add-layer-menu [data-layer-kind="raster"]').click();
   current = await editorState(page);
   const looseId = current.activeLayerId;
   expect(current.layers.map(layer => layer.id)).toEqual([...originalOrder, looseId]);
@@ -66,7 +65,7 @@ test('mobile layer drag handle supports long-press reorder', async ({ browser, b
   const page = await context.newPage();
   try {
     await openBlankEditor(page, { width: 320, height: 240 }, 'Mobile layer reorder');
-    await page.locator('.ge-layers-header').click();
+    await page.locator('.ge-layers-title').click();
     await expect(page.locator('.ge-right-panel')).toHaveClass(/expanded/);
     const before = await editorState(page);
     // State is bottom-to-top; the panel is top-to-bottom.

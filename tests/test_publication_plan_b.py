@@ -30,23 +30,49 @@ def test_retained_artifacts_match_distributed_provenance_and_notices():
 
 def test_removed_resource_ledger_has_no_runtime_references():
     ledger = (ROOT / 'PUBLICATION_ASSET_DECISIONS.md').read_text()
-    removed = re.findall(r'^- SAN-\d+: `([^`]+)`$', ledger, re.M)
-    assert len(removed) == 21
-    # Inspect tracked text, including files omitted by parity-audit exclusions.
+    san_entries = re.findall(r'^- SAN-\d+: `([^`]+)`$', ledger, re.M)
+    assert len(san_entries) == 21
+
+    restore_entries = re.findall(r'^- RESTORE-\d+: `([^`]+)` \(SHA-256: `([a-f0-9]{64})`\)', ledger, re.M)
+    assert len(restore_entries) == 14
+
+    restored_paths = {path for path, _ in restore_entries}
+    for path, expected_sha in restore_entries:
+        target = ROOT / path
+        assert target.is_file(), f"restored asset missing on disk: {path}"
+        actual_sha = hashlib.sha256(target.read_bytes()).hexdigest()
+        assert actual_sha == expected_sha, f"sha256 mismatch for {path}"
+
+    still_omitted = [path for path in san_entries if path not in restored_paths]
+    assert len(still_omitted) == 7
+
+    expected_omitted_names = {
+        'GohuFont.ttf',
+        'html2pdf.bundle.min.js',
+        'qrcode.min.js',
+        'ollama-mark.png',
+        'ollama-mark-crop.png',
+        'sglang-logo.png',
+        'sglang-mark.png',
+    }
+    assert {Path(p).name for p in still_omitted} == expected_omitted_names
+
+    # Inspect tracked text for references to still-omitted resources.
     tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().split('\0')
-    for path in removed:
-        assert not (ROOT / path).exists()
+    for path in still_omitted:
+        assert not (ROOT / path).exists(), f"omitted asset must not exist: {path}"
+        filename = Path(path).name
         for name in tracked:
-            if name == "PUBLICATION_ASSET_DECISIONS.md":
-                continue  # Historical ledger entries are intentionally non-resource references.
+            if name in {"PUBLICATION_ASSET_DECISIONS.md", "tests/test_publication_plan_b.py"}:
+                continue  # Historical ledger and test assertions are intentionally non-resource references.
             file = ROOT / name
             if not file.is_file():
                 continue
             try:
-                content = file.read_text()
+                content = file.read_text(encoding="utf-8")
             except UnicodeError:
                 continue
-            assert Path(path).name not in content, (path, name)
+            assert filename not in content, (path, name)
 
 
 def test_cold_catalog_and_refresh_use_mutable_data(monkeypatch, tmp_path):
@@ -113,12 +139,20 @@ def test_distribution_paths_include_all_notices():
     ignore = (ROOT / '.dockerignore').read_text()
     assert '!ACKNOWLEDGMENTS.md' in ignore
     manifest = json.loads((ROOT / 'static/manifest.json').read_text())
-    assert not manifest.get('icons')
+    assert manifest.get('icons')
     assert manifest['display'] == 'standalone'
+    expected_icons = [
+        {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+        {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        {"src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    ]
+    assert manifest['icons'] == expected_icons
+    for icon in manifest['icons']:
+        assert (ROOT / 'static' / icon['src']).is_file()
 
 
 def test_browser_publication_behaviors():
-    """Real Chromium DOM: text-only website, saved fonts, escaped print/math."""
+    """Real Chromium DOM: restored website media, saved fonts, escaped print/math."""
     if not shutil.which('node'):
         pytest.skip('Node is required')
     probe = subprocess.run(['node', '-e', "require.resolve('playwright')"], cwd=ROOT, capture_output=True)
