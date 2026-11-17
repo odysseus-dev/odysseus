@@ -23,6 +23,8 @@ import {
   _syncDocIndicator
 } from './documentCommands.js';
 
+import { persistMarkdownDraft } from './documentSession.js';
+
 import { _DOC_SAVE_STATE } from '../domain/documentKinds.js';
 
 export let _autoSaveDebounce = null;
@@ -197,6 +199,7 @@ export function _setDocumentSaveState(state, docId = activeDocId) {
   if (!doc || !_DOC_SAVE_STATE[state]) return;
   if (doc._saveState === state) return;
   doc._saveState = state;
+  persistMarkdownDraft(doc);
   if (docId === activeDocId) _ports._renderDocumentSaveState();
 }
 
@@ -205,6 +208,7 @@ export function _markDocumentDirty(docId = activeDocId) {
   if (!doc) return;
   doc._editRevision = (doc._editRevision || 0) + 1;
   _setDocumentSaveState('dirty', docId);
+  persistMarkdownDraft(doc);
 }
 
 /** Save manual edits */
@@ -291,18 +295,20 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
       const previousVersion = targetDoc.version || 1;
       targetDoc.version = Math.max(previousVersion, doc.version_count || 1);
       versionChanged = targetDoc.version !== previousVersion;
+      targetDoc._persistedContent = contentToSave;
+      persistMarkdownDraft(targetDoc);
       if (targetDoc._saveRequest === saveRequest) {
         // A response acknowledges a snapshot; it never owns the current draft.
         // In particular, the editor DOM may already have been torn down.
         _setDocumentSaveState(
-          (targetDoc._editRevision || 0) === saveRevision ? 'saved' : 'dirty',
+          targetDoc._visualSyncBlocked ? 'error' : (targetDoc._editRevision || 0) === saveRevision && targetDoc.content === contentToSave ? 'saved' : 'dirty',
           savingDocId,
         );
       }
     }
     if (versionChanged) renderTabs();
     _syncDocIndicator();
-    if (!silent && uiModule) uiModule.showToast(forceVersion ? 'New version saved' : 'Document saved');
+    if (!silent && uiModule && targetDoc?._saveState === 'saved') uiModule.showToast(forceVersion ? 'New version saved' : 'Document saved');
     return true;
   } catch (e) {
     if (_deletedDocIds.has(savingDocId)) {

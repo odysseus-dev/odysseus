@@ -4,6 +4,7 @@
  * State writes use documentState setters.
  */
 
+import { persistMarkdownDraft } from '../../application/documentSession.js';
 import {
   activeDocId,
   docs,
@@ -253,7 +254,7 @@ export function handleDocUpdate(data) {
         for (const [existingId, existingDoc] of docs) {
           if (existingDoc.sessionId === curSession &&
               (!existingDoc.title || existingDoc.title === 'Untitled') &&
-              (!existingDoc.content || existingDoc.content.trim() === '')) {
+              !existingDoc._visualSyncBlocked && (!existingDoc.content || existingDoc.content.trim() === '')) {
             reuseId = existingId;
             break;
           }
@@ -301,6 +302,9 @@ export function handleDocUpdate(data) {
     if (isExistingDoc) {
       const doc = docs.get(docId);
       doc.content = newContent;
+      doc._persistedContent = newContent;
+      if (doc._visualSyncBlocked) doc._visualCompatReasons = ['document source changed while visual edits were pending'];
+      persistMarkdownDraft(doc);
       doc.version = data.version || doc.version;
       if (data.title) doc.title = data.title;
       if (data.language) doc.language = data.language;

@@ -224,6 +224,11 @@ document.getElementById('doc-language-select').addEventListener('change', () => 
       } else if (changingDoc && isMarkdownVisualModeActive()) {
         const rich = document.getElementById('doc-email-richbody');
         syncVisualMarkdownToDoc(rich, { doc: changingDoc });
+        if (changingDoc._visualSyncBlocked) {
+          document.getElementById('doc-language-select').value = previousLanguage;
+          _syncLangPicker();
+          return;
+        }
         _hideMarkdownVisualEditor();
         hideMarkdownCompatBanner();
       } else if (changingDoc && previousLanguage === 'email') {

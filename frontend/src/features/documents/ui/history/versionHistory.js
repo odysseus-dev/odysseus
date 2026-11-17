@@ -150,7 +150,7 @@ async function loadVersionHistory(state = _versionHistory) {
 
 async function previewVersion(num) {
     const state = _versionHistory;
-    if (!_historyOwnsView(state) || state.restoring) return;
+    if (!_historyOwnsView(state) || state.restoring || state.doc._visualSyncBlocked) return;
     const operation = ++state.operation;
     const revision = state.doc._editRevision || 0;
     try {
@@ -194,7 +194,7 @@ async function previewVersion(num) {
 
 async function restoreVersion(num) {
     const state = _versionHistory;
-    if (!_historyOwnsView(state) || state.restoring) return;
+    if (!_historyOwnsView(state) || state.restoring || state.doc._visualSyncBlocked) return;
     state.restoring = true;
     const operation = ++state.operation;
     const doc = state.doc;

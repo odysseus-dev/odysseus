@@ -4,7 +4,7 @@
  */
 
 import { _ensureDocChipRegistered, _hideLoadingOverlay, _minimizeNotesForDocumentOpen, _showLoadingOverlay, _syncDocIndicator, closePanel, openPanel, renderTabs, saveCurrentToMap, showEmptyState, switchToDoc } from '../application/documentCommands.js';
-import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs } from '../application/documentSession.js';
+import { _docActiveKey, _docMinimizedKey, _docOpenKey, _forgetActiveDoc, _markDocVisibleState, addDocToTabs, clearMarkdownDraft } from '../application/documentSession.js';
 import { API_BASE, _closingDocs, _deletedDocIds, _documentNavigationGeneration, _inFlightDeletes, _lastSessionId, _minimizedDocId, activeDocId, beginDelete, bumpNavigationGeneration, docs, endDelete, isOpen, markDeleted, registerDocument, releaseClosingDraft, removeDocument, retainClosingDraft, setActiveDocId, setLastSessionId, setMinimizedDocId, setPanelOpen } from '../application/documentState.js';
 import { _cancelAutoSave, _pendingAutoSaves, _saveClosingDraft, _scheduleAutoSave, saveDocument } from '../application/persistence.js';
 import { _isRichTextLang } from '../domain/documentKinds.js';
@@ -42,6 +42,7 @@ export function _closeWithoutDeleting(deleteDoc = false) {
     _cancelAutoSave(closingId);
     _cancelPdfPaneSave(closingId);
     if (deleteDoc) {
+      clearMarkdownDraft(docs.get(closingId));
       markDeleted(closingId);
       _cleanupPdfDocState(closingId);
       fetch(`${API_BASE}/api/document/${closingId}`, { method: 'DELETE' }).catch(() => {});
@@ -69,11 +70,12 @@ export function _detachDocFromSession(docId, { toast = false } = {}) {
     _cancelAutoSave(docId);
     _cancelPdfPaneSave(docId);
     _syncPdfPaneToDoc(docId, { markDirty: false });
-    const hasContent = doc && doc.content && doc.content.trim().length > 0;
+    const hasContent = doc && (doc._visualSyncBlocked || (doc.content || '').trim().length > 0);
     if (hasContent) {
       _saveClosingDraft(docId, doc);
       if (toast && uiModule) uiModule.showToast('Document closed');
     } else {
+      clearMarkdownDraft(doc);
       markDeleted(docId);
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
     }
@@ -570,6 +572,7 @@ export async function deleteActiveDocument() {
         const res = await fetch(`${API_BASE}/api/document/${idToDelete}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(`Delete failed: HTTP ${res.status}`);
 
+        clearMarkdownDraft(docs.get(idToDelete) || _closingDocs.get(idToDelete));
         markDeleted(idToDelete);
         _cleanupPdfDocState(idToDelete);
         // Remove tab

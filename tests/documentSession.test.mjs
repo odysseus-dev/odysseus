@@ -370,3 +370,81 @@ describe('Document Session Module', () => {
     });
   });
 });
+
+describe('Markdown draft recovery', () => {
+  let draftStorage;
+  beforeEach(() => {
+    draftStorage = new Map();
+    globalThis.sessionStorage = {
+      getItem: key => draftStorage.get(key) ?? null,
+      setItem: (key, value) => draftStorage.set(key, value),
+      removeItem: key => draftStorage.delete(key),
+    };
+    clearDocuments();
+    _closingDocs.clear();
+  });
+
+  it('recovers unsaved source after server-authorized adoption and rejects a different session', async () => {
+    const { persistMarkdownDraft } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'recovery', current_content: 'Server', language: 'markdown' }, 's1');
+    const local = docs.get('recovery');
+    local.content = 'Local pending';
+    assert.equal(persistMarkdownDraft(local), true);
+    clearDocuments();
+    addDocToTabs({ id: 'recovery', current_content: 'Server', language: 'markdown' }, 's2');
+    assert.equal(docs.get('recovery').content, 'Server');
+    clearDocuments();
+    addDocToTabs({ id: 'recovery', current_content: 'Server', language: 'markdown' }, 's1');
+    assert.equal(docs.get('recovery').content, 'Local pending');
+    assert.equal(docs.get('recovery')._saveState, 'dirty');
+  });
+
+  it('retains diverged source as a blocked conflict instead of overwriting newer server content', async () => {
+    const { persistMarkdownDraft } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'conflict', current_content: 'Server', language: 'markdown' }, 's1');
+    const local = docs.get('conflict');
+    local.content = 'Local edit';
+    persistMarkdownDraft(local);
+    clearDocuments();
+    addDocToTabs({ id: 'conflict', current_content: 'Server changed', language: 'markdown' }, 's1');
+    const recovered = docs.get('conflict');
+    assert.equal(recovered.content, 'Server changed');
+    assert.equal(recovered._visualSyncBlocked, true);
+    assert.equal(recovered._visualRecoveryMarkdown, 'Local edit');
+  });
+
+  it('clears only acknowledged source and retains blocked formatting even at the acknowledged revision', async () => {
+    const { persistMarkdownDraft } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'ack', current_content: 'Original', language: 'markdown' }, 's1');
+    const local = docs.get('ack');
+    local.content = 'Newer';
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 1);
+    local._persistedContent = 'Older write';
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 1);
+    local._persistedContent = 'Newer';
+    local._visualSyncBlocked = true;
+    local._visualDraftHtml = '<p>Unrepresentable draft</p>';
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 1);
+    local._visualSyncBlocked = false;
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 0);
+  });
+
+  it('warns on unload when draft storage is unavailable without losing the live draft', async () => {
+    const { guardMarkdownDraftUnload } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'quota', current_content: 'Original', language: 'markdown' }, 's1');
+    const local = docs.get('quota');
+    local.content = 'Unsaved';
+    local._saveState = 'dirty';
+    globalThis.sessionStorage.setItem = () => { throw Error('quota'); };
+    let warned = false;
+    const event = { preventDefault() { warned = true; } };
+    guardMarkdownDraftUnload(event);
+    assert.equal(warned, true);
+    assert.equal(local.content, 'Unsaved');
+    assert.equal(local._markdownRecoveryStored, false);
+  });
+});

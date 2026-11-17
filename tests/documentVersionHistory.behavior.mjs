@@ -105,11 +105,15 @@ function installDom() {
 
 const MOCKS = {
   'host.js': {
-    names: ['uiModule'],
+    names: ['uiModule', 'markdownModule'],
     evaluate(module) {
       module.setExport('uiModule', {
         showError(message) { calls.errors.push(message); },
         showToast(message) { calls.toasts.push(message); },
+      });
+      module.setExport('markdownModule', {
+        sanitizeAllowedHtml(value) { return String(value || ''); },
+        mdToHtml(value) { return String(value || ''); },
       });
     },
   },
@@ -133,11 +137,12 @@ const MOCKS = {
     },
   },
   'persistence.js': {
-    names: ['_cancelAutoSave', '_scheduleAutoSave', '_setDocumentSaveState'],
+    names: ['_cancelAutoSave', '_scheduleAutoSave', '_setDocumentSaveState', '_markDocumentDirty'],
     evaluate(module) {
       module.setExport('_cancelAutoSave', (...args) => { calls.cancelSave.push(args); });
       module.setExport('_scheduleAutoSave', (...args) => { calls.scheduleSave.push(args); });
       module.setExport('_setDocumentSaveState', (...args) => { calls.saveState.push(args); });
+      module.setExport('_markDocumentDirty', () => {});
     },
   },
 };

@@ -33,6 +33,7 @@ const MOCK_FILES = new Set([
   'versionHistory.js',
   'documentStatus.js',
   'documentActions.js',
+  'documentSession.js',
 ]);
 
 function classList() {
@@ -207,6 +208,10 @@ function mockEvaluate(fileName, module) {
     });
     return;
   }
+  if (fileName === 'documentSession.js') {
+    set('persistMarkdownDraft', () => true);
+    return;
+  }
   if (fileName === 'diffViewer.js') {
     set('diffLines', (...args) => realDiffLines(...args));
     set('exitDiffMode', (...args) => { calls.exitDiff.push(args); });
@@ -308,6 +313,7 @@ async function loadDocumentUpdate() {
         'versionHistory.js': ['_closeVersionPanel'],
         'documentStatus.js': ['_syncEditorPlaceholder'],
         'documentActions.js': ['autoTitleFromContent'],
+        'documentSession.js': ['persistMarkdownDraft'],
       }[fileName];
       if (!exportNames) {
         throw new Error(`Unexpected unresolved import ${specifier} from ${parent}`);

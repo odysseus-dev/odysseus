@@ -1,6 +1,6 @@
 """Characterization tests for content mutations and query-string test isolation.
 
-Verifies the editor's 24 content mutation sites across document editor source
+Verifies the editor's 25 content mutation sites across document editor source
 files and validates that test files importing document.js query variants maintain
 page-level isolation.
 """
@@ -36,10 +36,13 @@ EXPECTED_MUTATION_FUNCTIONS = {
     "syncVisualMarkdownToDoc": 1,
     "streamDocDelta": 1,
     "handleDocUpdate": 2,
+    # Session adoption restores a valid local Markdown recovery draft before the
+    # server document is rendered, preserving the draft's content as the owner.
+    "recoverMarkdownDraft": 1,
 }
 
 
-def test_seventeen_document_content_mutation_sites():
+def test_document_content_mutation_sites():
     """Verify all content mutation sites and their owning functions across modules."""
     script = r"""
     const acorn = require('acorn');
@@ -97,7 +100,7 @@ def test_seventeen_document_content_mutation_sites():
     assert result.returncode == 0, result.stderr
     sites = json.loads(result.stdout)
 
-    assert len(sites) == 24, f"Expected exactly 24 content mutation sites across editor modules, got {len(sites)}"
+    assert len(sites) == 25, f"Expected exactly 25 content mutation sites across editor modules, got {len(sites)}"
 
     counts = {}
     for site in sites:

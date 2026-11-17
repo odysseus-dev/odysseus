@@ -7,6 +7,7 @@ import { _setDocxPreviewActive, _setMarkdownPreviewActive, exitHtmlPreview, setH
 import { _isFormBackedDoc, _releasePdfPane, _syncPdfPaneToDoc } from '../pdfTools.js';
 import { _restoreSuggestionsFromStorage } from '../suggestions.js';
 
+import { clearMarkdownDraft, persistMarkdownDraft } from '../../application/documentSession.js';
 import { _cancelAutoSave, _flushAutoSave } from '../../application/persistence.js';
 
 import { _isDocxLang, _isRichTextLang } from '../../domain/documentKinds.js';
@@ -80,7 +81,8 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
     const prevId = activeDocId;
     if (prevId && prevId !== docId && docs.has(prevId)) {
       const prev = docs.get(prevId);
-      if (prev.language !== 'email' && !(prev.content || '').trim() && !(prev.title || '').trim()) {
+      if (!prev._visualSyncBlocked && prev.language !== 'email' && !(prev.content || '').trim() && !(prev.title || '').trim()) {
+        clearMarkdownDraft(prev);
         markDeleted(prevId);
         _cancelAutoSave(prevId);
         fetch(`${API_BASE}/api/document/${prevId}`, { method: 'DELETE' }).catch(() => {});
@@ -314,7 +316,12 @@ export function saveCurrentToMap() {
         // (it's hidden behind the rendered PDF view, so its value isn't the source
         // of truth). Overwriting here dropped the pdf_form_source marker, so after
         // minimize->restore the doc came back blank.
-        doc.content = textarea.value;
+        // Textareas normalize line endings even without an edit. Capturing a
+        // source fallback must retain the original bytes until its text changes.
+        if (textarea.value !== String(doc.content || '').replace(/\r\n?/g, '\n')) {
+          doc.content = textarea.value;
+        }
+        persistMarkdownDraft(doc);
       }
     }
   }

@@ -16,6 +16,9 @@
  *   untouched content.
  */
 
+import { persistMarkdownDraft } from '../../application/documentSession.js';
+import { _markDocumentDirty, _scheduleAutoSave, _setDocumentSaveState } from '../../application/persistence.js';
+import { markdownModule } from '../host.js';
 import { activeDocId, docs } from '../../application/documentState.js';
 import {
   inspectMarkdownVisualCompatibility,
@@ -27,6 +30,7 @@ import {
 import {
   applyLocalizedEdits,
   computeSourceRevision,
+  compareSemanticHtml,
   matches,
 } from '../../domain/sourceFidelity.js';
 import {
@@ -399,6 +403,19 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   }
 
   const { markdown: serialized, lossless, reasons: fidelityReasons } = visualRichToMarkdownWithFidelity(rich);
+  const blockSync = (reasons) => {
+    targetDoc._visualCompatReasons = reasons;
+    targetDoc._visualSyncBlocked = true;
+    targetDoc._visualDraftHtml = rich.innerHTML;
+    persistMarkdownDraft(targetDoc);
+    renderMarkdownSyncWarningBanner(reasons);
+    return targetDoc.content;
+  };
+  if (!lossless) return blockSync(fidelityReasons.length ? fidelityReasons : ['unsupported visual formatting']);
+  if (typeof targetDoc._visualBaselineMarkdown === 'string'
+      && targetDoc.content !== targetDoc._visualBaselineMarkdown) {
+    return blockSync(['document source changed while visual edits were pending']);
+  }
   const unchanged = typeof targetDoc._visualBaselineMarkdown === 'string'
     && typeof targetDoc._visualBaselineCanonical === 'string'
     && serialized === targetDoc._visualBaselineCanonical;
@@ -408,16 +425,6 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   if (unchanged) {
     nextMarkdown = targetDoc._visualBaselineMarkdown;
   } else {
-    if (!lossless) {
-      targetDoc._visualCompatReasons = fidelityReasons.length
-        ? fidelityReasons
-        : ['formatting the visual editor cannot represent in Markdown'];
-      targetDoc._visualSyncBlocked = true;
-      targetDoc._visualDraftHtml = rich.innerHTML;
-      renderMarkdownSyncWarningBanner(targetDoc._visualCompatReasons);
-      return targetDoc.content;
-    }
-
     // Attempt localized block-level source preservation
     const originalSource = typeof targetDoc._visualBaselineMarkdown === 'string'
       ? targetDoc._visualBaselineMarkdown
@@ -428,7 +435,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
 
     let localizedApplied = false;
 
-    if (Array.isArray(baselineBlocks) && Array.isArray(blockSegments)) {
+    if (Array.isArray(baselineBlocks) && Array.isArray(blockSegments) && baselineBlocks.length === blockSegments.length) {
       const ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments);
       if (ops && ops.length > 0) {
         const localizedResult = applyLocalizedEdits(originalSource, ops, {
@@ -449,15 +456,14 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     }
 
     if (!localizedApplied) {
-      const compat = assessMarkdownVisualSupport(serialized);
-      if (!compat.supported) {
-        targetDoc._visualCompatReasons = compat.reasons;
-        targetDoc._visualSyncBlocked = true;
-        targetDoc._visualDraftHtml = rich.innerHTML;
-        renderMarkdownSyncWarningBanner(targetDoc._visualCompatReasons);
-        return targetDoc.content;
+      return blockSync(['source ranges could not be verified for this visual edit']);
+    }
+    try {
+      if (!compareSemanticHtml(markdownToVisualHtml(nextMarkdown), markdownToVisualHtml(serialized))) {
+        return blockSync(['source reconciliation changed the meaning of this visual edit']);
       }
-      nextMarkdown = serialized;
+    } catch (_) {
+      return blockSync(['source reconciliation could not be verified']);
     }
   }
 
@@ -466,6 +472,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   targetDoc._visualDraftHtml = null;
   hideMarkdownSyncWarningBanner();
   targetDoc.content = nextMarkdown;
+  persistMarkdownDraft(targetDoc);
 
   // Advance baseline for subsequent visual edits
   targetDoc._visualBaselineMarkdown = nextMarkdown;
@@ -626,11 +633,18 @@ export function discardVisualDraft(doc) {
   doc._visualSyncBlocked = false;
   doc._visualDraftHtml = null;
   doc._visualCompatReasons = null;
-  doc._saveState = 'saved';
+  doc._visualRecoveryMarkdown = null;
+  if (doc.content === doc._persistedContent) _setDocumentSaveState('saved', doc.id);
+  else {
+    _markDocumentDirty(doc.id);
+    _scheduleAutoSave(doc.id);
+  }
+  persistMarkdownDraft(doc);
   hideMarkdownSyncWarningBanner(true);
   const rich = document.getElementById('doc-email-richbody');
   if (rich && isVisualSurfaceBoundTo(rich, doc)) {
     rich.innerHTML = markdownToVisualHtml(doc.content || '');
+    doc._visualBaselineMarkdown = doc.content || '';
     captureVisualBaseline(rich, doc);
   }
   const ta = typeof document !== 'undefined' ? document.getElementById('doc-editor-textarea') : null;
@@ -645,8 +659,14 @@ export function discardVisualDraft(doc) {
  */
 export function renderMarkdownIntoVisualRich(rich, doc) {
   if (!rich || !doc) return;
-  if (doc._visualSyncBlocked && typeof doc._visualDraftHtml === 'string') {
-    rich.innerHTML = doc._visualDraftHtml;
+  if (doc._visualSyncBlocked) {
+    const baseline = document.createElement('div');
+    baseline.innerHTML = markdownToVisualHtml(doc._visualBaselineMarkdown ?? doc.content ?? '');
+    captureVisualBaseline(baseline, doc);
+    const draft = typeof doc._visualDraftHtml === 'string' ? doc._visualDraftHtml
+      : markdownToVisualHtml(doc._visualRecoveryMarkdown ?? doc.content ?? '');
+    rich.innerHTML = markdownModule.sanitizeAllowedHtml(draft);
+    doc._visualDraftHtml = rich.innerHTML;
     rich.dataset.visualDocId = String(doc.id);
     renderMarkdownSyncWarningBanner(doc._visualCompatReasons);
     return;

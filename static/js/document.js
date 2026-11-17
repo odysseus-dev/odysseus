@@ -35,7 +35,7 @@ import { bindDocumentCommands } from './document/application/documentCommands.js
 
 import { saveDocument, bindPersistenceHooks } from './document/application/persistence.js';
 
-import { addDocToTabs } from './document/application/documentSession.js';
+import { addDocToTabs, guardMarkdownDraftUnload } from './document/application/documentSession.js';
 
 import './document/ui/editor/sourceEditor.js';
 
@@ -68,6 +68,9 @@ import { _syncHeaderActions } from './document/ui/header/headerActions.js';
 import { discardVisualDraft } from './document/ui/richEditor/markdownVisualSync.js';
 import { activateModuleWiring, _wireDiffViewer, _wireExportDocx, _wirePreviewModes, _wireSuggestions } from './document/ui/moduleWiring.js';
 import { installEscapeLayering } from './document/ui/panel/panelLifecycle.js';
+
+// Recovery failures must be visible before an unsaved Markdown view is unloaded.
+window.addEventListener('beforeunload', guardMarkdownDraftUnload);
 
 // Existing external integrations read these legacy singletons.
 globalThis.uiModule = uiModule;
