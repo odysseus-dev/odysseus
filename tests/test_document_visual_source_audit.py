@@ -208,3 +208,27 @@ def test_list_tab_outdent_and_accessible_visual_textbox():
     assert '  - Child' in data['nested']['content']
     assert data['restoredCount'] == 0
     assert data['saved'] == '- Parent\n- Child'
+
+
+def test_mode_caret_accounts_for_heading_and_inline_markdown_delimiters():
+    data = _run_browser(r"""
+      await boot('audit-caret-delimiters');
+      await open({ id: 'caret-md', title: 'Caret', language: 'markdown', current_content: '# Heading\n\n**Bold** tail' });
+      const results = [];
+      for (const [selector, offset, expected] of [['h1', 3, 5], ['strong', 2, 15]]) {
+        await page.locator('#doc-email-richbody').evaluate((el, {selector, offset}) => {
+          const text = el.querySelector(selector).firstChild;
+          const range = document.createRange(); range.setStart(text, offset); range.collapse(true);
+          el.focus(); getSelection().removeAllRanges(); getSelection().addRange(range);
+        }, {selector, offset});
+        await page.locator('[data-mdview="edit"]').click();
+        const sourceOffset = await page.locator('#doc-editor-textarea').evaluate(el => el.selectionStart);
+        await page.locator('[data-mdview="visual"]').click();
+        const restored = await page.evaluate(() => ({ text: getSelection().anchorNode?.textContent, offset: getSelection().anchorOffset }));
+        results.push({sourceOffset, expected, restored, offset});
+      }
+      await finish({results});
+    """)
+    for result in data['results']:
+        assert result['sourceOffset'] == result['expected']
+        assert result['restored']['offset'] == result['offset']

@@ -22,6 +22,8 @@ import { _dismissDocKb, _wireSwipeDismiss } from '../panel/paneLayout.js';
 
 import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from '../richEditor/richBodySync.js';
 import { _hideMarkdownVisualEditor, _showMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import { alignText } from '../../domain/sourceFidelity.js';
+import { markdownToVisualHtml } from '../../domain/markdownVisualCodec.js';
 import { segmentMarkdownBlocks } from '../../domain/sourceSegmentation.js';
 import {
   assessMarkdownVisualSupport,
@@ -367,6 +369,20 @@ document.getElementById('doc-version-badge').addEventListener('click', toggleVer
 document.getElementById('doc-version-close').addEventListener('click', () => _closeVersionPanel({ restoreFocus: true }));
 }
 
+// Map text boundaries rather than counting Markdown delimiters as visible text.
+function mapCaretTextOffset(from, to, offset) {
+  const at = Math.min(Math.max(0, offset), from.length);
+  const alignment = alignText(from, to);
+  if (!alignment) return Math.min(at, to.length);
+  for (let index = at; index < alignment.length; index++) {
+    if (alignment[index] >= 0) return alignment[index];
+  }
+  for (let index = at - 1; index >= 0; index--) {
+    if (alignment[index] >= 0) return alignment[index] + 1;
+  }
+  return 0;
+}
+
 /**
  * Switch the active Markdown document between the Visual editor and the Markdown
  * source editor. The current content is captured through `saveCurrentToMap`, which
@@ -384,6 +400,12 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
     const mdPrev = document.getElementById('doc-md-preview');
     const wasPreview = !!(mdPrev && mdPrev.style.display !== 'none');
 
+    if (requestedMode === 'visual' && !wasPreview && isMarkdownVisualModeActive()) {
+      doc._markdownEditorMode = 'visual';
+      if (persistPreference) setMarkdownModePreference('visual');
+      return true;
+    }
+
     let visualCaretInfo = null;
     if (requestedMode === 'markdown' && rich && rich.classList.contains('markdown-visual-mode')) {
       visualCaretInfo = getVisualCaretBlockInfo(rich);
@@ -392,13 +414,13 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
     let targetOffset = 0;
     if (requestedMode === 'visual' && ta && (document.activeElement === ta || focus)) {
       const sourceCaretPos = ta.selectionStart || 0;
-      const currentContent = doc.content || '';
-      const segments = segmentMarkdownBlocks(currentContent);
+      const segments = segmentMarkdownBlocks(ta.value);
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         if (sourceCaretPos >= seg.startOffset && sourceCaretPos <= seg.endOffset) {
           targetBlockIndex = i;
-          targetOffset = sourceCaretPos - seg.startOffset;
+          const rendered = new DOMParser().parseFromString(markdownToVisualHtml(seg.raw), 'text/html');
+          targetOffset = mapCaretTextOffset(seg.raw, rendered.body.textContent || '', sourceCaretPos - seg.startOffset);
           break;
         }
       }
@@ -428,7 +450,8 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
         const segments = segmentMarkdownBlocks(ta.value);
         const seg = segments[Math.min(caretInfo.blockIndex, segments.length - 1)];
         if (seg) {
-          const pos = Math.min(seg.endOffset, seg.startOffset + (caretInfo.offsetInBlock || 0));
+          const localOffset = mapCaretTextOffset(caretInfo.blockText ?? seg.raw, seg.raw, caretInfo.offsetInBlock || 0);
+          const pos = Math.min(seg.endOffset, seg.startOffset + localOffset);
           try {
             ta.setSelectionRange(pos, pos);
           } catch (_) {}

@@ -708,7 +708,7 @@ export function captureVisualBaseline(rich, doc) {
  * Identify which top-level block inside the visual editor contains the current caret,
  * along with its character offset within that block.
  * @param {HTMLElement} rich
- * @returns {{ blockIndex: number, offsetInBlock: number }|null}
+ * @returns {{ blockIndex: number, offsetInBlock: number, blockText: string }|null}
  */
 export function getVisualCaretBlockInfo(rich) {
   if (!rich || typeof window === 'undefined') return null;
@@ -751,7 +751,7 @@ export function getVisualCaretBlockInfo(rich) {
     offsetInBlock = prefix.toString().length;
   } catch (_) {}
 
-  return { blockIndex, offsetInBlock };
+  return { blockIndex, offsetInBlock, blockText: topNode.textContent || '' };
 }
 
 /**
@@ -822,4 +822,3 @@ export function restoreVisualCaret(rich, blockIndex, offsetInBlock = 0) {
   selection.addRange(range);
   return true;
 }
-

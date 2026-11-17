@@ -1277,6 +1277,3 @@ def test_visual_markdown_interaction_quality_shortcuts_and_caret_mapping():
 
     assert data["inSource"]["inParagraphBlock"] is True
     assert data["backInVisual"]["visualActive"] is True
-
-
-

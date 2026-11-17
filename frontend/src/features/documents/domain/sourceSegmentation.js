@@ -498,4 +498,3 @@ export function extractBlockSegments(segments) {
 export function segmentMarkdownBlocks(source) {
   return extractBlockSegments(segmentMarkdown(source));
 }
-
