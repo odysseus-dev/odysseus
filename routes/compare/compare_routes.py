@@ -11,6 +11,7 @@ import logging
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
+from core.guard_deco import content_type, suspicious_frequency
 from src.auth_helpers import get_current_user
 from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
 
@@ -68,6 +69,7 @@ def setup_compare_routes(session_manager: SessionManager):
     """Setup comparison routes."""
 
     @router.post("/start")
+    @suspicious_frequency(0.5, 60, "log")
     def start_comparison(
         request: Request,
         prompt: str = Form(...),
@@ -281,6 +283,7 @@ def setup_compare_routes(session_manager: SessionManager):
             db.close()
 
     @router.post("/record")
+    @content_type(["application/json"])
     def record_comparison(request: Request, body: RecordVoteRequest):
         """Lightweight endpoint to record a comparison vote from the frontend."""
         user = get_current_user(request)

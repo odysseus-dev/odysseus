@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Form, Depends
 from core.constants import EMBEDDING_ENDPOINT_FILE, FASTEMBED_CACHE_DIR
 from core.middleware import require_admin
 from src.runtime_paths import get_app_root
+from core.guard_deco import usage_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,7 @@ def setup_embedding_routes():
         }
 
     @router.post("/endpoint")
+    @usage_monitor(5, 3600, "log")
     def set_endpoint(url: str = Form(...), model: str = Form(""), api_key: str = Form("")):
         """Save a custom embedding endpoint URL."""
         url = url.strip()
