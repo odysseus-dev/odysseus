@@ -71,18 +71,21 @@ const { extractThemeBootstrap } = require('./helpers/theme_bootstrap.cjs');
     await page.route('**/publication-harness', route => route.fulfill({ contentType: 'text/html', body: '<!DOCTYPE html><body><textarea id="doc-editor-textarea"></textarea><select id="doc-language-select"><option value="markdown">Markdown</option><option value="text">Text</option><option value="html">HTML</option></select><div id="theme-grid"></div><select id="theme-font-select"><option value="mono">Fira Code</option><option value="sans">Sans</option></select><select id="theme-density-select"><option value="comfortable">Comfortable</option></select></body>' }));
     await page.route('**/api/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ fonts: {}, value: null }) }));
     await page.goto(origin + '/publication-harness');
-    const source = readFileSync('static/js/document.js', 'utf8');
-    const fn = source.match(/\n  async function exportAsPdf\(\) \{(.*?)\n  \}\n/s)[0];
-    const result = await page.evaluate(async ({ origin, fn }) => {
+    const result = await page.evaluate(async origin => {
       const module = await import(origin + '/static/js/markdown.js');
       const markdownModule = module.default || module;
-      const _isRichTextLang = lang => lang === 'html';
-      const _isDocxLang = () => false;
-      const _richTextExportCss = () => 'p { color: black; }';
-      const _getExportBaseName = () => 'Print test';
-      const activeDocId = 'test';
+      const exporter = await import(origin + '/static/js/document/ui/exportDocx.js');
       const errors = [];
-      const uiModule = { showError: message => errors.push(message) };
+      const docs = new Map([['test', { id: 'test', title: 'Print test', language: 'markdown' }]]);
+      exporter.initExportDocx({
+        getActiveDocId: () => 'test',
+        getActiveDoc: () => docs.get('test'),
+        getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getLanguage: () => document.getElementById('doc-language-select').value,
+        getMarkdownModule: () => markdownModule,
+        getUiModule: () => ({ showError: message => errors.push(message) }),
+      });
       const originalRender = markdownModule.renderMath;
       const prints = [];
       markdownModule.renderMath = async container => {
@@ -93,7 +96,7 @@ const { extractThemeBootstrap } = require('./helpers/theme_bootstrap.cjs');
           frame.contentWindow.dispatchEvent(new Event('afterprint'));
         };
       };
-      const run = eval('(' + fn.trim() + ')');
+      const run = () => exporter.exportAsPdf();
       const textarea = document.getElementById('doc-editor-textarea');
       textarea.value = 'Formula $E = mc^2$ here.';
       await run();
@@ -108,7 +111,7 @@ const { extractThemeBootstrap } = require('./helpers/theme_bootstrap.cjs');
       await run();
       window.print = oldPrint;
       return { prints, errors, unsafe: !!window.unsafe, frameRemaining: !!document.getElementById('doc-browser-print-frame') };
-    }, { origin, fn });
+    }, origin);
     assert.equal(result.prints.length, 3);
     assert(result.prints[0].body.includes('class="katex"'));
     assert(!result.prints[0].body.includes('ody-math-pending'));

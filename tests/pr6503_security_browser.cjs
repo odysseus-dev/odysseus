@@ -2,12 +2,31 @@ const playwright = require('playwright');
 const { readFileSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert/strict');
+const acorn = require('acorn');
 
-const source = readFileSync('static/js/document.js', 'utf8');
-function documentFunction(name, text = source) {
-  const match = text.match(new RegExp('^  (?:async )?function ' + name + '\\(.*?^  }', 'ms'));
-  assert(match, name);
-  return match[0];
+const sourceFiles = [
+  'static/js/document.js',
+  'static/js/document/domain/emailMessage.js',
+  'static/js/document/domain/documentKinds.js',
+  'static/js/document/domain/richTextRules.js',
+  'static/js/document/ui/email/localDraft.js',
+  'static/js/document/ui/email/aiReply.js',
+  'static/js/document/ui/email/attachments.js',
+  'static/js/document/ui/richEditor/richBodySync.js',
+  'static/js/document/ui/richEditor/richOperations.js',
+].map(file => typeof file === 'string' ? readFileSync(file, 'utf8') : file);
+function documentFunction(name, text) {
+  const candidates = text === undefined ? sourceFiles : [text];
+  for (const source of candidates) {
+    const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    for (const node of ast.body) {
+      const declaration = node.type === 'ExportNamedDeclaration' ? node.declaration : node;
+      if (declaration?.type === 'FunctionDeclaration' && declaration.id?.name === name) {
+        return source.slice(declaration.start, declaration.end);
+      }
+    }
+  }
+  assert.fail(name);
 }
 
 (async () => {
@@ -196,19 +215,16 @@ function documentFunction(name, text = source) {
     assert.equal(ledger.legacyReservedCost, 3);
     assert.equal(ledger.clearedReserved, true);
 
-    const names = ['_unfoldEmailHeaderLines', '_parseEmailHeader', '_looksLikeWrappedEmailContent', '_decodeBase64EmailWrapper',
-      '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_aiReply',
+    const names = ['_aiReply',
       '_loadOdysseusAttachItems', '_odysseusAttachLabel', '_escHtml',
-      '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml', 'exportAsPdf'];
+      '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml'];
     const functions = Object.fromEntries(names.map(name => [name, documentFunction(name)]));
     const email = await page.evaluate(async functions => {
       window.executed = 0;
-      const _unfoldEmailHeaderLines = eval('(' + functions._unfoldEmailHeaderLines + ')');
-      const _parseEmailHeader = eval('(' + functions._parseEmailHeader + ')');
-      const _looksLikeWrappedEmailContent = eval('(' + functions._looksLikeWrappedEmailContent + ')');
-      const _decodeBase64EmailWrapper = eval('(' + functions._decodeBase64EmailWrapper + ')');
-      const _sanitizeOutgoingEmailBody = eval('(' + functions._sanitizeOutgoingEmailBody + ')');
-      const _emailHtmlToPlainText = eval('(' + functions._emailHtmlToPlainText + ')');
+      // Exercise the published modules with their real dependency graph.
+      const { _htmlToPlainText, _hasRichHtmlElement } = await import('/static/js/document/domain/documentKinds.js');
+      const { _sanitizeOutgoingEmailBody } = await import('/static/js/document/ui/email/localDraft.js');
+      const { _emailHtmlToPlainText, _emailPlainTextToHtml } = await import('/static/js/document/ui/richEditor/richBodySync.js');
       const activeDocId = 'fixture';
       const docs = new Map();
       const toasts = [];
@@ -238,15 +254,41 @@ function documentFunction(name, text = source) {
       }
       const normal = _emailHtmlToPlainText('<p>Hello <b>world</b> &amp; friends</p>');
       const literal = _emailHtmlToPlainText('&lt;img src=x onerror="window.executed++"&gt;');
+      const reRenderedLiteral = _emailPlainTextToHtml(literal);
+      const renderedProbe = document.createElement('div');
+      renderedProbe.innerHTML = reRenderedLiteral;
+      const malformedText = _htmlToPlainText('<scr<script>ipt>window.executed++</script><img alt="a > b" src="/inert-probe" onerror="window.executed++">');
+      const commentRich = _hasRichHtmlElement('<!-- <img src="/inert-probe"> --><span>[AI reply draft will appear here]</span>');
       const outgoing = _sanitizeOutgoingEmailBody('Hello\n\nworld');
+      const sanitized = _sanitizeOutgoingEmailBody('<p>Safe</p><script>window.executed++</script><img src="/inert-probe" onerror="window.executed++">');
       const wrapped = _sanitizeOutgoingEmailBody(btoa('To: person@example.com\nSubject: Test\n---\nValid reply'));
+      const htmlWrapped = _sanitizeOutgoingEmailBody('<div>' + btoa('To: person@example.com\nSubject: Test\n---\nWrapped html reply') + '</div>');
       await new Promise(resolve => setTimeout(resolve, 150));
-      return { normal, literal, outgoing, wrapped, toasts, executed: window.executed };
+      return {
+        normal,
+        literal,
+        reRenderedLiteral,
+        renderedTagCount: renderedProbe.querySelectorAll('img').length,
+        malformedText,
+        commentRich,
+        outgoing,
+        sanitized,
+        wrapped,
+        htmlWrapped,
+        toasts,
+        executed: window.executed,
+      };
     }, functions);
     assert.equal(email.normal, 'Hello world & friends');
     assert.equal(email.literal, '<img src=x onerror="window.executed++">');
+    assert.equal(email.renderedTagCount, 0);
+    assert.ok(email.reRenderedLiteral.startsWith('&lt;img'));
+    assert.equal(email.malformedText, 'ipt>window.executed++');
+    assert.equal(email.commentRich, false);
     assert.equal(email.outgoing, 'Hello\n\nworld');
+    assert.equal(email.sanitized, 'Safe');
     assert.equal(email.wrapped, 'Valid reply');
+    assert.equal(email.htmlWrapped, 'Wrapped html reply');
     assert.deepEqual(email.toasts, Array(9).fill('Reply already has text'));
     assert.equal(email.executed, 0);
     assert.deepEqual(probes, []);
@@ -353,6 +395,12 @@ function documentFunction(name, text = source) {
       getSelection().addRange(collapsed);
       result.collapsed = insert(rich, 'https://outside.example/\"><svg/onload=window.executed++>');
       result.quoteUnsafe = rich.querySelectorAll('svg,[onload]').length;
+      result.mailInserted = insert(rich, 'person@example.com');
+      result.telInserted = insert(rich, 'tel:+12345');
+      result.badSchemeInserted = insert(rich, 'javascript:window.executed++');
+      const pastedHrefs = Array.from(rich.querySelectorAll('a')).map(a => a.getAttribute('href'));
+      result.hasMailHref = pastedHrefs.includes('mailto:person@example.com');
+      result.hasTelHref = pastedHrefs.includes('tel:+12345');
 
       rich.innerHTML = '<p>First</p><p>Second</p>';
       const crossing = document.createRange();
@@ -386,6 +434,11 @@ function documentFunction(name, text = source) {
     assert.equal(links.cleanUnsafe, 0);
     assert.equal(links.collapsed, true);
     assert.equal(links.quoteUnsafe, 0);
+    assert.equal(links.mailInserted, true);
+    assert.equal(links.telInserted, true);
+    assert.equal(links.badSchemeInserted, false);
+    assert.equal(links.hasMailHref, true);
+    assert.equal(links.hasTelHref, true);
     assert.equal(links.crossing, false);
     assert.equal(links.outside, false);
 
@@ -451,13 +504,16 @@ function documentFunction(name, text = source) {
     // frame policy and renderMath are the production implementations.
     const print = await page.evaluate(async functions => {
       const mod = await import('/static/js/markdown.js');
-      const activeDocId = 'fixture';
-      const _isRichTextLang = lang => lang === 'richtext';
-      const _isDocxLang = () => false;
-      const _getExportBaseName = () => 'Print <test>';
-      const _richTextExportCss = () => 'b { font-weight: bold; }';
+      const exporter = await import('/static/js/document/ui/exportDocx.js');
       const failures = [];
-      const uiModule = { showError: text => failures.push(text) };
+      const doc = { id: 'fixture', title: 'Print <test>', language: 'richtext' };
+      const docs = new Map([['fixture', doc]]);
+      exporter.initExportDocx({
+        getActiveDocId: () => 'fixture', getActiveDoc: () => doc, getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getLanguage: () => 'richtext', getMarkdownModule: () => markdownModule,
+        getUiModule: () => ({ showError: text => failures.push(text) }),
+      });
       let prints = 0;
       const markdownModule = { ...mod, renderMath(container) {
         container.ownerDocument.defaultView.print = () => { prints++; };
@@ -471,7 +527,7 @@ function documentFunction(name, text = source) {
         + '<iframe sandbox="allow-scripts allow-same-origin" srcdoc="<script>top.executed++</script><img src=x onerror=top.executed++>"></iframe>'
         + '<a href="javascript:parent.executed++">bad link</a>';
       document.getElementById('doc-editor-textarea').value = payload;
-      await eval('(' + functions.exportAsPdf + ')')();
+      await exporter.exportAsPdf();
       const frame = document.getElementById('doc-browser-print-frame');
       frame.contentDocument.querySelector('a').click();
       await new Promise(resolve => setTimeout(resolve, 150));
@@ -487,15 +543,52 @@ function documentFunction(name, text = source) {
       result.controlExecuted = window.executed;
       control.remove();
       window.executed = 0;
+
+      // Print and preview fail closed if sanitizeAllowedHtml is unavailable.
+      exporter.initExportDocx({
+        getActiveDocId: () => 'fixture', getActiveDoc: () => doc, getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getLanguage: () => 'richtext', getMarkdownModule: () => ({ renderMath: markdownModule.renderMath }),
+        getUiModule: () => ({ showError: text => failures.push(text) }),
+      });
+      await exporter.exportAsPdf();
+      result.prints = prints;
+      const failClosedFrame = document.getElementById('doc-browser-print-frame');
+      result.failClosedPrintScripts = failClosedFrame.contentDocument.querySelectorAll('script,img[onerror],svg,iframe').length;
+      result.failClosedPrintText = failClosedFrame.contentDocument.body.textContent;
+      failClosedFrame.remove();
+
+      const previewModes = await import('/static/js/document/ui/previewModes.js');
+      previewModes.initPreviewModes({
+        getActiveDocId: () => 'fixture', getDocs: () => docs,
+        getTextarea: () => document.getElementById('doc-editor-textarea'),
+        getMdPreview: () => document.getElementById('doc-md-preview'),
+        getEditorWrap: () => document.getElementById('doc-editor-wrap'),
+        getLanguage: () => 'richtext', getMarkdownModule: () => ({}),
+      });
+      const previewEl = document.createElement('div');
+      previewEl.id = 'doc-md-preview';
+      const wrapEl = document.createElement('div');
+      wrapEl.id = 'doc-editor-wrap';
+      document.body.append(previewEl, wrapEl);
+      previewModes._setMarkdownPreviewActive(true, { remember: false });
+      result.previewUnsafe = previewEl.querySelectorAll('script,img[onerror],svg[onload],iframe').length;
+      result.previewExecuted = window.executed;
+      previewEl.remove();
+      wrapEl.remove();
       return result;
     }, functions);
-    assert.equal(print.prints, 1);
+    assert.equal(print.prints, 2);
     assert.deepEqual(print.failures, []);
     assert.equal(print.sandbox, 'allow-same-origin allow-modals');
     assert.equal(print.text, 'Printable');
-    assert.equal(print.title, 'Print <test>');
+    assert.equal(print.title, 'Print _test_');
     assert.equal(print.executed, 0);
     assert(print.controlExecuted > 0);
+    assert.equal(print.failClosedPrintScripts, 0);
+    assert.ok(print.failClosedPrintText.includes('<b>Printable</b>'));
+    assert.equal(print.previewUnsafe, 0);
+    assert.equal(print.previewExecuted, 0);
 
     // Both appendChild findings follow tainted card._md, an ordinary JS
     // property. Rendering and re-rendering must keep that markdown as text.

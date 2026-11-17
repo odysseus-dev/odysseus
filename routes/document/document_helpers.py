@@ -36,6 +36,8 @@ class DocumentPatch(BaseModel):
     title: Optional[str] = None
     language: Optional[str] = None
     session_id: Optional[str] = None  # link/unlink document to a session
+    if_untitled: Optional[bool] = False
+    expected_title: Optional[str] = None
 
 
 # ---- Helpers ----
