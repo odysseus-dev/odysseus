@@ -257,3 +257,37 @@ def test_unrepresentable_heading_and_table_breaks_are_recoverable_without_saving
         assert result['local']['content'] == result['server'] == result['source']
         assert result['local']['bannerVisible'] is True
         assert 'X' in result['local']['richHtml']
+
+
+def test_duplicate_visual_blocks_never_delete_a_different_source_spelling():
+    data = _run_browser(r"""
+      await boot('audit-duplicate-identity');
+      const original='~~~js\nsame\n~~~\n\n```js\nsame\n```';
+      await open({id:'duplicate-normal',title:'Normal edit',language:'markdown',current_content:original});
+      await page.locator('#doc-email-richbody').evaluate(el=>{
+        const code=el.querySelector('code');el.focus();const r=document.createRange();r.setStart(code.firstChild,4);r.collapse(true);getSelection().removeAllRanges();getSelection().addRange(r);
+      });
+      await page.keyboard.type('X');
+      const normalSaved=await page.evaluate(()=>window.__doc.saveDocument({silent:true}));
+      const normal=api.store.get('duplicate-normal').current_content;
+      const cases=[];
+      for(const [id,append] of [['duplicate-delete',false],['duplicate-replace',true]]) {
+        await open({id,title:id,language:'markdown',current_content:original});
+        await page.locator('#doc-email-richbody').evaluate((el,append)=>{
+          el.querySelector('pre').remove();
+          if(append){const p=document.createElement('p');p.textContent='New block';el.appendChild(p);}
+          el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'}));
+        },append);
+        const saved=await page.evaluate(()=>window.__doc.saveDocument({silent:true}));
+        const local=await state();
+        cases.push({saved,local,server:api.store.get(id).current_content});
+      }
+      await finish({original,normalSaved,normal,cases});
+    """)
+    assert data['normalSaved'] is True
+    assert data['normal'] == data['original'].replace('same', 'sameX', 1)
+    for case in data['cases']:
+        assert case['saved'] is False, case['server']
+        assert case['server'] == case['local']['content'] == data['original']
+        assert case['local']['bannerVisible'] is True
+        assert case['local']['richHtml'].count('<pre>') == 1

@@ -46,6 +46,20 @@ const ASSESSMENT_CACHE_LIMIT = 16;
 const _assessmentCache = new Map();
 
 let _syncingVisualToTextarea = false;
+const _visualNodeIdentities = new WeakMap();
+let _nextVisualNodeIdentity = 0;
+const _visualRootBlockSelector = 'p,div,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table,hr,figure';
+
+// Identity evidence must not keep detached editor DOM alive across documents.
+function visualRootBlockIdentities(rich) {
+  const nodes = Array.from(rich?.childNodes || []);
+  if (nodes.some(node => node.nodeType !== 1 || !node.matches(_visualRootBlockSelector)
+      || (/^(P|DIV)$/.test(node.tagName) && node.querySelector(_visualRootBlockSelector)))) return null;
+  return nodes.map(node => {
+    if (!_visualNodeIdentities.has(node)) _visualNodeIdentities.set(node, ++_nextVisualNodeIdentity);
+    return _visualNodeIdentities.get(node);
+  });
+}
 
 export function isSyncingVisualToTextarea() {
   return _syncingVisualToTextarea;
@@ -179,9 +193,10 @@ export function extractVisualBlocks(rich) {
  * @param {string[]} baselineBlocks
  * @param {string[]} currentBlocks
  * @param {Array<object>} [blockSegments]
+ * @param {{ stableBlockPositions?: boolean }} [options] Runtime evidence that root blocks did not move.
  * @returns {Array<object>|null}
  */
-export function diffBlockOperations(baselineBlocks, currentBlocks, blockSegments = null) {
+export function diffBlockOperations(baselineBlocks, currentBlocks, blockSegments = null, { stableBlockPositions = false } = {}) {
   if (!Array.isArray(baselineBlocks) || !Array.isArray(currentBlocks)) return null;
 
   // Identity check
@@ -194,6 +209,21 @@ export function diffBlockOperations(baselineBlocks, currentBlocks, blockSegments
       }
     }
     if (same) return [];
+  }
+
+  // Canonical equality cannot distinguish repeated source spellings. A
+  // deletion/replacement may otherwise target a different identical block.
+  if (!stableBlockPositions) {
+    const counts = blocks => {
+      const result = new Map();
+      for (const block of blocks) result.set(block, (result.get(block) || 0) + 1);
+      return result;
+    };
+    const before = counts(baselineBlocks);
+    const after = counts(currentBlocks);
+    for (const [block, count] of before) {
+      if (count > 1 && after.get(block) !== count) return null;
+    }
   }
 
   // 1-to-1 replacements when block counts match
@@ -403,6 +433,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   }
 
   const { markdown: serialized, blocks: currentBlocks, lossless, reasons: fidelityReasons } = visualRichToMarkdownWithFidelity(rich);
+  const currentNodeIds = visualRootBlockIdentities(rich);
   const blockSync = (reasons) => {
     targetDoc._visualCompatReasons = reasons;
     targetDoc._visualSyncBlocked = true;
@@ -435,7 +466,12 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     let localizedApplied = false;
 
     if (Array.isArray(baselineBlocks) && Array.isArray(blockSegments) && baselineBlocks.length === blockSegments.length) {
-      const ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments);
+      const baselineNodeIds = targetDoc._visualBlockNodeIds;
+      const stableBlockPositions = Array.isArray(baselineNodeIds) && Array.isArray(currentNodeIds)
+        && baselineNodeIds.length === baselineBlocks.length && currentNodeIds.length === currentBlocks.length
+        && baselineNodeIds.length === currentNodeIds.length
+        && baselineNodeIds.every((id, index) => id === currentNodeIds[index]);
+      const ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments, { stableBlockPositions });
       if (ops && ops.length > 0) {
         const localizedResult = applyLocalizedEdits(originalSource, ops, {
           expectedRevision: targetDoc._visualExpectedRevision,
@@ -480,6 +516,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   targetDoc._visualBlockSegments = extractBlockSegments(targetDoc._visualSegments);
   targetDoc._visualBaselineCanonical = serialized;
   targetDoc._visualBaselineBlocks = currentBlocks;
+  targetDoc._visualBlockNodeIds = currentNodeIds;
 
   if (ta && ta.value !== nextMarkdown) {
     _syncingVisualToTextarea = true;
@@ -676,6 +713,7 @@ export function renderMarkdownIntoVisualRich(rich, doc) {
   doc._visualBaselineMarkdown = rawMarkdown;
   doc._visualBaselineCanonical = null;
   doc._visualBaselineBlocks = null;
+  doc._visualBlockNodeIds = null;
   doc._visualBlockSegments = null;
   doc._visualExpectedRevision = computeSourceRevision(rawMarkdown);
 }
@@ -700,6 +738,7 @@ export function captureVisualBaseline(rich, doc) {
   doc._visualSegments = segments;
   doc._visualBlockSegments = blockSegments;
   doc._visualBaselineBlocks = visualBlocks;
+  doc._visualBlockNodeIds = visualRootBlockIdentities(rich);
 
   return _rewriteReason(rawMarkdown, canonical);
 }
