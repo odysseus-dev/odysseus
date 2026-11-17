@@ -1775,9 +1775,6 @@ def setup_model_routes(model_discovery):
                     "category": category,
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
-                    "category": category,
-                    "endpoint_kind": kind,
-                    "model_type": ep_model_type,
                     "models_metadata": models_metadata,
                     "_foreground_model_catalog_unknown": False,
                 })
