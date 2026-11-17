@@ -70,3 +70,19 @@ def test_chinese_calendar_and_notes_requests_select_personal_tools() -> None:
         intent = _intent(prompt)
         assert intent["low_signal"] is False
         assert "notes_calendar_tasks" in intent["domains"]
+
+
+def test_swedish_price_lookup_selects_web_domain() -> None:
+    intent = _intent("Vad kostar en Makita 40V borrmaskin idag?")
+
+    assert intent["low_signal"] is False
+    assert "web" in intent["domains"], f"domains={intent['domains']!r}"
+
+
+def test_bare_online_or_internet_words_do_not_select_web_domain() -> None:
+    for prompt in (
+        "my online course notes",
+        "internet connection is slow",
+    ):
+        intent = _intent(prompt)
+        assert "web" not in intent["domains"], f"{prompt!r} domains={intent['domains']!r}"
