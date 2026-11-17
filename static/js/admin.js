@@ -1215,6 +1215,7 @@ async function loadEndpoints() {
         const cur = btn.dataset.admToolsState;
         // Cycle Auto -> On -> Off -> Auto (supports_tools null -> true -> false -> null).
         const next = cur === 'auto' ? true : cur === 'on' ? false : null;
+        let confirmedState = null;
         btn.disabled = true;
         try {
           const res = await fetch(`/api/model-endpoints/${encodeURIComponent(epId)}`, {
@@ -1227,6 +1228,16 @@ async function loadEndpoints() {
             const data = await res.json().catch(() => ({}));
             throw new Error(data.detail || 'Failed to update tool setting');
           }
+          // The PATCH response contains the persisted endpoint state.
+          // Retain it in case the subsequent list reload fails.
+          const saved = await res.json();
+          if (String(saved?.id) !== String(epId) ||
+              !Object.prototype.hasOwnProperty.call(saved, 'supports_tools') ||
+              ![true, false, null].includes(saved.supports_tools)) {
+            throw new Error('Tool update response did not confirm persisted state');
+          }
+          confirmedState = saved.supports_tools === true ? 'on'
+            : saved.supports_tools === false ? 'off' : 'auto';
           await _refreshAfterEndpointChange();
         } catch (err) {
           if (typeof uiModule !== 'undefined' && uiModule && typeof uiModule.showError === 'function') {
@@ -1235,8 +1246,10 @@ async function loadEndpoints() {
             console.error('Failed to update tool setting', err);
           }
         } finally {
+          let reloaded = false;
           try {
             await loadEndpoints();
+            reloaded = true;
           } catch (reloadErr) {
             console.error('Failed to reload endpoints after tool update', reloadErr);
             if (typeof uiModule !== 'undefined' && uiModule && typeof uiModule.showError === 'function') {
@@ -1247,12 +1260,17 @@ async function loadEndpoints() {
               ? `[data-adm-tools-ep="${CSS.escape(epId)}"]`
               : `[data-adm-tools-ep="${epId}"]`;
             const updatedBtn = document.querySelector(targetSel);
-            if (updatedBtn) {
-              updatedBtn.disabled = false;
-              updatedBtn.focus();
-            } else if (btn && document.contains(btn)) {
-              btn.disabled = false;
-              btn.focus();
+            const targetBtn = updatedBtn || (document.contains(btn) ? btn : null);
+            if (targetBtn) {
+              if (!reloaded && confirmedState !== null) {
+                const stateLabel = confirmedState[0].toUpperCase() + confirmedState.slice(1);
+                targetBtn.dataset.admToolsState = confirmedState;
+                targetBtn.textContent = `Tools: ${stateLabel}`;
+                targetBtn.setAttribute('aria-label', `Native tool calling: ${stateLabel}`);
+              }
+              // Never repeat a write when both confirmation and reload failed.
+              targetBtn.disabled = !reloaded && confirmedState === null;
+              targetBtn.focus();
             }
           }
         }

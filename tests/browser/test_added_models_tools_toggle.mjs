@@ -455,8 +455,46 @@ export async function runBrowserTests() {
     await page.unroute('**/api/model-endpoints/*');
     console.log('Verified: Network rejection during PATCH is handled, button is re-enabled, and focus is restored.');
 
-    // 7. Test recovery when endpoint reload fails after PATCH
-    console.log('Testing reload failure recovery...');
+    // 7. Successful PATCH + failed reload must preserve the persisted state.
+    console.log('Testing persisted state after endpoint reload failure...');
+
+    const toggleSelector = '[data-adm-tools-ep="ep-ollama-local"]';
+
+    // Previous tests may leave the endpoint On or Off.
+    // Restore Auto through the real UI before exercising this regression.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const previous = await page.locator(toggleSelector)
+        .getAttribute('data-adm-tools-state');
+
+      if (previous === 'auto') break;
+
+      await page.locator(toggleSelector).click();
+
+      await page.waitForFunction(({ selector, previous }) => {
+        const button = document.querySelector(selector);
+        return button && !button.disabled &&
+          button.dataset.admToolsState !== previous;
+      }, { selector: toggleSelector, previous });
+    }
+
+    const startingState = await page.locator(toggleSelector)
+      .getAttribute('data-adm-tools-state');
+
+    if (startingState !== 'auto') {
+      throw new Error(`Expected Auto before regression, got ${startingState}`);
+    }
+
+    const observedPayloads = [];
+
+    await page.route('**/api/model-endpoints/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        const body = route.request().postDataJSON();
+        observedPayloads.push(body.supports_tools);
+      }
+      await route.continue();
+    });
+
+    // PATCH reaches the real server, but the follow-up GET fails.
     await page.route('**/api/model-endpoints', async (route) => {
       if (route.request().method() === 'GET') {
         await route.abort('failed');
@@ -465,26 +503,68 @@ export async function runBrowserTests() {
       await route.continue();
     });
 
-    // Click button: PATCH succeeds, but subsequent reload GET aborts
-    await page.locator('[data-adm-tools-ep="ep-ollama-local"]').click();
-    await page.waitForTimeout(500);
+    await page.locator(toggleSelector).click();
 
-    // Verify button was re-enabled by the nested finally block
-    await page.waitForFunction(() => {
-      const b = document.querySelector('[data-adm-tools-ep="ep-ollama-local"]');
-      return b && !b.disabled;
-    });
+    await page.waitForFunction((selector) => {
+      const button = document.querySelector(selector);
+      return button && !button.disabled &&
+        button.dataset.admToolsState === 'on' &&
+        button.textContent.trim() === 'Tools: On' &&
+        button.getAttribute('aria-label') === 'Native tool calling: On';
+    }, toggleSelector);
 
-    // Unroute GET failure mock and test retry after recovery
+    if (observedPayloads.length !== 1 ||
+        observedPayloads[0] !== true) {
+      throw new Error(
+        `Expected first PATCH supports_tools=true, got ${JSON.stringify(observedPayloads)}`
+      );
+    }
+
+    console.log('Verified: Successful PATCH retained Tools: On despite failed GET.');
+
+    // Restore connectivity and perform the next real toggle.
     await page.unroute('**/api/model-endpoints');
-    console.log('Testing retry after recovery...');
-    await page.locator('[data-adm-tools-ep="ep-ollama-local"]').click();
-    await page.waitForTimeout(500);
-    await page.waitForFunction(() => {
-      const b = document.querySelector('[data-adm-tools-ep="ep-ollama-local"]');
-      return b && !b.disabled;
-    });
-    console.log('Verified: Toggle button recovers and is re-enabled when reload fails; retry succeeds.');
+
+    await page.locator(toggleSelector).click();
+
+    await page.waitForFunction((selector) => {
+      const button = document.querySelector(selector);
+      return button && !button.disabled &&
+        button.dataset.admToolsState === 'off' &&
+        button.textContent.trim() === 'Tools: Off';
+    }, toggleSelector);
+
+    if (observedPayloads.length !== 2 ||
+        observedPayloads[1] !== false) {
+      throw new Error(
+        `Expected second PATCH supports_tools=false, got ${JSON.stringify(observedPayloads)}`
+      );
+    }
+
+    await page.unroute('**/api/model-endpoints/*');
+
+    // Verify the final value was persisted, not merely rendered.
+    const persistedResponse = await page.request.get(
+      `${baseUrl}/api/model-endpoints`
+    );
+
+    if (!persistedResponse.ok()) {
+      throw new Error(`Endpoint verification GET failed: ${persistedResponse.status()}`);
+    }
+
+    const persistedEndpoints = await persistedResponse.json();
+    const persistedEndpoint = persistedEndpoints.find(
+      (ep) => ep.id === 'ep-ollama-local'
+    );
+
+    if (!persistedEndpoint || persistedEndpoint.supports_tools !== false) {
+      throw new Error('Expected persisted supports_tools=false after retry');
+    }
+
+    console.log(
+      'Verified: Auto -> On (reload failed) -> Off; ' +
+      'PATCH payloads, UI state, and persistence are correct.'
+    );
 
     // Capture desktop screenshot if evidence directory configured
     if (ARTIFACT_DIR) {
