@@ -43,6 +43,9 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/apiTokens.js'),
   path.join(JS, 'settings/email.js'),
   path.join(JS, 'settings/reminders.js'),
+  path.join(JS, 'settings/integrations/events.js'),
+  path.join(JS, 'settings/integrations/legacy.js'),
+  path.join(JS, 'settings/integrations/unified.js'),
 ]);
 
 const realModulesLoaded = new Set();
