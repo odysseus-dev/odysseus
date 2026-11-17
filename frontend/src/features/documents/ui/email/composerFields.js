@@ -24,6 +24,7 @@ export function _hideEmailFields() {
     _hideRichSlashMenu();
     const emailHeader = document.getElementById('doc-email-header');
     const emailActions = document.getElementById('doc-email-actions');
+    if (emailHeader) delete emailHeader.dataset.activeDocumentId;
     if (emailHeader) emailHeader.style.display = 'none';
     if (emailActions) emailActions.style.display = 'none';
     // Restore toolbar items that were hidden for email (Code dropdown).
@@ -105,6 +106,10 @@ function _shouldAutoCollapseEmailHeader() {
 export function _showEmailFields(doc, { applyLocalDraft = true, forceHeaderFields = false } = {}) {
     const emailHeader = document.getElementById('doc-email-header');
     const emailActions = document.getElementById('doc-email-actions');
+    // The pane owner may already have changed before this shared header renders.
+    // Only the document that populated these inputs may preserve their edits.
+    forceHeaderFields = forceHeaderFields || !doc?.id || emailHeader?.dataset.activeDocumentId !== doc.id;
+    if (emailHeader) emailHeader.dataset.activeDocumentId = doc?.id || '';
     document.getElementById('doc-email-richbody')?.classList.remove('richtext-mode');
     // Show MD toolbar for email too (B, I, etc.)
     const mdToolbar = document.getElementById('doc-md-toolbar');
@@ -325,7 +330,8 @@ export function _syncStreamingEmailFields(doc) {
     const rich = document.getElementById('doc-email-richbody');
     const srcWrap = document.getElementById('doc-editor-wrap');
     const textarea = document.getElementById('doc-editor-textarea');
-    if (!rich || rich.style.display === 'none') {
+    if (!rich || rich.style.display === 'none'
+        || document.getElementById('doc-email-header')?.dataset.activeDocumentId !== doc.id) {
       _showEmailFields(doc);
       return;
     }
