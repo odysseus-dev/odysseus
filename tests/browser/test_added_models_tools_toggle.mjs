@@ -3,35 +3,71 @@ import { chromium } from 'playwright';
 import { existsSync, unlinkSync, mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
 import { tmpdir, homedir } from 'os';
+import { fileURLToPath } from 'url';
 import net from 'net';
 
 const REPO_ROOT = resolve(process.env.REPO_ROOT || '.');
 const isPosix = process.platform !== 'win32';
-const TEST_TEMP_DIR = mkdtempSync(join(tmpdir(), 'odysseus-test-ep-'));
-const DATA_DIR = join(TEST_TEMP_DIR, 'data');
-mkdirSync(DATA_DIR, { recursive: true });
-const DB_PATH = join(TEST_TEMP_DIR, 'test.db');
-const FASTEMBED_DIR = join(TEST_TEMP_DIR, 'fastembed');
-mkdirSync(FASTEMBED_DIR, { recursive: true });
-const MAIL_DIR = join(TEST_TEMP_DIR, 'mail');
-mkdirSync(MAIL_DIR, { recursive: true });
-const RUNTIME_DIR = join(TEST_TEMP_DIR, 'runtime');
-mkdirSync(RUNTIME_DIR, { recursive: true });
+let TEST_TEMP_DIR = null;
+let DATA_DIR = null;
+let DB_PATH = null;
+let FASTEMBED_DIR = null;
+let MAIL_DIR = null;
+let RUNTIME_DIR = null;
 const ARTIFACT_DIR = process.env.ARTIFACT_DIR || process.env.NOTES_NATIVE_EVIDENCE_DIR || null;
 
-async function getAvailablePort() {
-  if (process.env.PORT) return parseInt(process.env.PORT, 10);
-  return new Promise((resolvePort, rejectPort) => {
-    const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
-      const port = srv.address().port;
-      srv.close((err) => {
-        if (err) rejectPort(err);
-        else resolvePort(port);
+export function resolveAppPort(rawPort = process.env.PORT) {
+  if (rawPort === undefined || rawPort === null || rawPort === '') {
+    return null;
+  }
+  const parsed = Number(rawPort);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`Invalid PORT configured: "${rawPort}". Must be an integer between 1 and 65535.`);
+  }
+  if (parsed === 8100) {
+    throw new Error('Configured PORT cannot be 8100 (reserved for persistent ChromaDB guard isolation).');
+  }
+  return parsed;
+}
+
+export async function getEphemeralPort(excludePorts = new Set(), maxAttempts = 10) {
+  const excluded = excludePorts instanceof Set ? excludePorts : new Set(excludePorts || []);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const port = await new Promise((resolvePort, rejectPort) => {
+      const srv = net.createServer();
+      srv.unref();
+      srv.on('error', rejectPort);
+      srv.listen(0, '127.0.0.1', () => {
+        const addr = srv.address();
+        const p = typeof addr === 'object' && addr ? addr.port : null;
+        srv.close((err) => {
+          if (err) rejectPort(err);
+          else resolvePort(p);
+        });
       });
     });
-    srv.on('error', rejectPort);
-  });
+    if (port && !excluded.has(port)) {
+      return port;
+    }
+  }
+  throw new Error(`Failed to allocate an ephemeral port not in [${Array.from(excluded).join(', ')}] after ${maxAttempts} attempts.`);
+}
+
+export async function fetchChromaToolCount(host = '127.0.0.1', port = 8100, timeoutMs = 1000) {
+  try {
+    const hbRes = await fetch(`http://${host}:${port}/api/v2/heartbeat`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!hbRes.ok) return null;
+    const colRes = await fetch(`http://${host}:${port}/api/v2/tenants/default_tenant/databases/default_database/collections`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!colRes.ok) return null;
+    const cols = await colRes.json();
+    const toolCol = cols.find((c) => c.name && c.name.includes('tool_index'));
+    if (!toolCol) return 0;
+    const countRes = await fetch(`http://${host}:${port}/api/v2/tenants/default_tenant/databases/default_database/collections/${toolCol.id}/count`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!countRes.ok) return null;
+    return await countRes.json();
+  } catch (_) {
+    return null;
+  }
 }
 
 function resolvePython() {
@@ -57,46 +93,59 @@ function resolvePython() {
   return 'python3';
 }
 
-if (existsSync(DB_PATH)) {
-  try { unlinkSync(DB_PATH); } catch (_) {}
+function initTestEnvironment() {
+  TEST_TEMP_DIR = mkdtempSync(join(tmpdir(), 'odysseus-test-ep-'));
+  DATA_DIR = join(TEST_TEMP_DIR, 'data');
+  mkdirSync(DATA_DIR, { recursive: true });
+  DB_PATH = join(TEST_TEMP_DIR, 'test.db');
+  FASTEMBED_DIR = join(TEST_TEMP_DIR, 'fastembed');
+  mkdirSync(FASTEMBED_DIR, { recursive: true });
+  MAIL_DIR = join(TEST_TEMP_DIR, 'mail');
+  mkdirSync(MAIL_DIR, { recursive: true });
+  RUNTIME_DIR = join(TEST_TEMP_DIR, 'runtime');
+  mkdirSync(RUNTIME_DIR, { recursive: true });
+
+  if (existsSync(DB_PATH)) {
+    try { unlinkSync(DB_PATH); } catch (_) {}
+  }
+
+  const initSql = `
+    CREATE TABLE IF NOT EXISTS model_endpoints (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      api_key TEXT,
+      is_enabled INTEGER DEFAULT 1,
+      hidden_models TEXT,
+      cached_models TEXT,
+      pinned_models TEXT,
+      cookbook_serve_session_id TEXT,
+      model_type TEXT DEFAULT 'llm',
+      endpoint_kind TEXT DEFAULT 'auto',
+      model_refresh_mode TEXT DEFAULT 'auto',
+      model_refresh_interval INTEGER,
+      model_refresh_timeout INTEGER,
+      supports_tools INTEGER,
+      model_tool_modes TEXT,
+      owner TEXT,
+      provider_auth_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    INSERT INTO model_endpoints (id, name, base_url, model_type, is_enabled, supports_tools)
+    VALUES ('ep-ollama-local', 'Ollama Local (Qwen)', 'http://127.0.0.1:11434/v1', 'llm', 1, NULL);
+
+    INSERT INTO model_endpoints (id, name, base_url, model_type, is_enabled, supports_tools)
+    VALUES ('ep-flux-image', 'Flux Dev Image Server', 'http://127.0.0.1:8080/v1', 'image', 1, NULL);
+
+    INSERT INTO model_endpoints (id, name, base_url, model_type, is_enabled, supports_tools)
+    VALUES ('ep-chatgpt-sub', 'ChatGPT Subscription', 'https://chatgpt.com/backend-api/codex', 'llm', 1, 0);
+  `;
+
+  execSync(`sqlite3 "${DB_PATH}"`, { input: initSql });
+  console.log(`Initialized test database at ${DB_PATH}`);
 }
-
-const initSql = `
-  CREATE TABLE IF NOT EXISTS model_endpoints (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    base_url TEXT NOT NULL,
-    api_key TEXT,
-    is_enabled INTEGER DEFAULT 1,
-    hidden_models TEXT,
-    cached_models TEXT,
-    pinned_models TEXT,
-    cookbook_serve_session_id TEXT,
-    model_type TEXT DEFAULT 'llm',
-    endpoint_kind TEXT DEFAULT 'auto',
-    model_refresh_mode TEXT DEFAULT 'auto',
-    model_refresh_interval INTEGER,
-    model_refresh_timeout INTEGER,
-    supports_tools INTEGER,
-    model_tool_modes TEXT,
-    owner TEXT,
-    provider_auth_id TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  INSERT INTO model_endpoints (id, name, base_url, model_type, is_enabled, supports_tools)
-  VALUES ('ep-ollama-local', 'Ollama Local (Qwen)', 'http://127.0.0.1:11434/v1', 'llm', 1, NULL);
-
-  INSERT INTO model_endpoints (id, name, base_url, model_type, is_enabled, supports_tools)
-  VALUES ('ep-flux-image', 'Flux Dev Image Server', 'http://127.0.0.1:8080/v1', 'image', 1, NULL);
-
-  INSERT INTO model_endpoints (id, name, base_url, model_type, is_enabled, supports_tools)
-  VALUES ('ep-chatgpt-sub', 'ChatGPT Subscription', 'https://chatgpt.com/backend-api/codex', 'llm', 1, 0);
-`;
-
-execSync(`sqlite3 "${DB_PATH}"`, { input: initSql });
-console.log(`Initialized test database at ${DB_PATH}`);
 
 let serverProc = null;
 let browserInstance = null;
@@ -141,33 +190,16 @@ async function waitForServer(url, timeoutMs = 25000) {
   throw new Error(`Server failed to start within ${timeoutMs}ms at ${url}`);
 }
 
-async function runBrowserTests() {
-  const port = await getAvailablePort();
-  let chromaGuardPort = await getAvailablePort();
-  while (chromaGuardPort === 8100 || chromaGuardPort === port) {
-    chromaGuardPort = await getAvailablePort();
-  }
+export async function runBrowserTests() {
+  initTestEnvironment();
+  const explicitPort = resolveAppPort();
+  const port = explicitPort ?? (await getEphemeralPort(new Set([8100])));
+  const chromaGuardPort = await getEphemeralPort(new Set([8100, port]));
 
   // Preflight isolation check: if host ChromaDB is running at port 8100, record count
-  let preChromaCount = null;
-  try {
-    const hbRes = await fetch('http://127.0.0.1:8100/api/v2/heartbeat', { signal: AbortSignal.timeout(1000) });
-    if (hbRes.ok) {
-      const colRes = await fetch('http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections', { signal: AbortSignal.timeout(1000) });
-      if (colRes.ok) {
-        const cols = await colRes.json();
-        const toolCol = cols.find(c => c.name && c.name.includes('tool_index'));
-        if (toolCol) {
-          const countRes = await fetch(`http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections/${toolCol.id}/count`, { signal: AbortSignal.timeout(1000) });
-          if (countRes.ok) {
-            preChromaCount = await countRes.json();
-            console.log(`[isolation-check] Live ChromaDB detected at 8100; tool_index item count = ${preChromaCount}`);
-          }
-        }
-      }
-    }
-  } catch (_) {
-    // Port 8100 not running or unreachable
+  const preChromaCount = await fetchChromaToolCount('127.0.0.1', 8100);
+  if (preChromaCount !== null) {
+    console.log(`[isolation-check] Live ChromaDB detected at 8100; tool_index item count = ${preChromaCount}`);
   }
 
   const pythonBin = resolvePython();
@@ -234,6 +266,9 @@ async function runBrowserTests() {
     const desktopContext = await browserInstance.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await desktopContext.newPage();
     page.on('pageerror', (err) => console.error('[browser page error]', err));
+    await page.route('**/api/tasks/notification-logs', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
 
     await page.goto(`${baseUrl}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(800);
@@ -348,11 +383,6 @@ async function runBrowserTests() {
     console.log('Verified: In-flight concurrency protection disables button during requests.');
 
     // 5. Test HTTP error recovery & UI re-sync
-    // Prevent unauthenticated notification logging from triggering 401 redirect
-    await page.route('**/api/tasks/notification-logs', (route) => {
-      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-    });
-
     // Mock 403 response for the next PATCH
     await page.route('**/api/model-endpoints/*', async (route) => {
       if (route.request().method() === 'PATCH') {
@@ -396,8 +426,65 @@ async function runBrowserTests() {
       throw new Error(`Expected button to re-sync back to "${preErrorText}", got: "${postErrorText}"`);
     }
     await page.unroute('**/api/model-endpoints/*');
-    await page.unroute('**/api/tasks/notification-logs');
     console.log('Verified: HTTP error handling triggers user error notification and re-syncs state.');
+
+    // 6. Test network rejection during PATCH
+    console.log('Testing network rejection during PATCH...');
+    await page.route('**/api/model-endpoints/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+
+    const preNetErrorText = (await page.locator('[data-adm-tools-ep="ep-ollama-local"]').textContent()).trim();
+    await page.locator('[data-adm-tools-ep="ep-ollama-local"]').click();
+    await page.waitForTimeout(400);
+
+    // Verify button is re-enabled despite network rejection
+    await page.waitForFunction(() => {
+      const b = document.querySelector('[data-adm-tools-ep="ep-ollama-local"]');
+      return b && !b.disabled;
+    });
+
+    const postNetErrorText = (await page.locator('[data-adm-tools-ep="ep-ollama-local"]').textContent()).trim();
+    if (postNetErrorText !== preNetErrorText) {
+      throw new Error(`Expected button state to remain "${preNetErrorText}" after network rejection, got: "${postNetErrorText}"`);
+    }
+    await page.unroute('**/api/model-endpoints/*');
+    console.log('Verified: Network rejection during PATCH is handled, button is re-enabled, and focus is restored.');
+
+    // 7. Test recovery when endpoint reload fails after PATCH
+    console.log('Testing reload failure recovery...');
+    await page.route('**/api/model-endpoints', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+
+    // Click button: PATCH succeeds, but subsequent reload GET aborts
+    await page.locator('[data-adm-tools-ep="ep-ollama-local"]').click();
+    await page.waitForTimeout(500);
+
+    // Verify button was re-enabled by the nested finally block
+    await page.waitForFunction(() => {
+      const b = document.querySelector('[data-adm-tools-ep="ep-ollama-local"]');
+      return b && !b.disabled;
+    });
+
+    // Unroute GET failure mock and test retry after recovery
+    await page.unroute('**/api/model-endpoints');
+    console.log('Testing retry after recovery...');
+    await page.locator('[data-adm-tools-ep="ep-ollama-local"]').click();
+    await page.waitForTimeout(500);
+    await page.waitForFunction(() => {
+      const b = document.querySelector('[data-adm-tools-ep="ep-ollama-local"]');
+      return b && !b.disabled;
+    });
+    console.log('Verified: Toggle button recovers and is re-enabled when reload fails; retry succeeds.');
 
     // Capture desktop screenshot if evidence directory configured
     if (ARTIFACT_DIR) {
@@ -456,24 +543,13 @@ async function runBrowserTests() {
 
     // Post-test isolation verification: if live ChromaDB was present, assert count is unchanged
     if (preChromaCount !== null) {
-      try {
-        const colRes = await fetch('http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections', { signal: AbortSignal.timeout(1000) });
-        if (colRes.ok) {
-          const cols = await colRes.json();
-          const toolCol = cols.find(c => c.name && c.name.includes('tool_index'));
-          if (toolCol) {
-            const countRes = await fetch(`http://127.0.0.1:8100/api/v2/tenants/default_tenant/databases/default_database/collections/${toolCol.id}/count`, { signal: AbortSignal.timeout(1000) });
-            if (countRes.ok) {
-              const postChromaCount = await countRes.json();
-              if (postChromaCount !== preChromaCount) {
-                throw new Error(`Isolation breach: ChromaDB tool_index count changed from ${preChromaCount} to ${postChromaCount}`);
-              }
-              console.log(`[isolation-check] Verified: Persistent ChromaDB count unchanged (${postChromaCount}). Zero mutations detected.`);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`[isolation-check] Post-check warning: ${e.message}`);
+      const postChromaCount = await fetchChromaToolCount('127.0.0.1', 8100);
+      if (postChromaCount === null) {
+        console.warn('[isolation-check] Live ChromaDB at 8100 became unreachable during post-test check.');
+      } else if (postChromaCount !== preChromaCount) {
+        throw new Error(`Isolation breach: ChromaDB tool_index count changed from ${preChromaCount} to ${postChromaCount}`);
+      } else {
+        console.log(`[isolation-check] Verified: Persistent ChromaDB count unchanged (${postChromaCount}). Zero mutations detected.`);
       }
     }
 
@@ -483,8 +559,14 @@ async function runBrowserTests() {
   }
 }
 
-runBrowserTests().catch((err) => {
-  console.error('Browser validation test failed:', err);
-  cleanup();
-  process.exit(1);
-});
+const isMainScript = Boolean(
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
+);
+
+if (isMainScript) {
+  runBrowserTests().catch((err) => {
+    console.error('Browser validation test failed:', err);
+    cleanup();
+    process.exit(1);
+  });
+}

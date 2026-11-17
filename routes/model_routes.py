@@ -2895,15 +2895,17 @@ def setup_model_routes(model_discovery):
     @router.patch("/model-endpoints/{ep_id}")
     async def toggle_model_endpoint(ep_id: str, request: Request):
         require_admin(request)
-        # Optional JSON body for field-targeted updates. No body → toggle is_enabled (legacy behaviour).
+        # Optional JSON body for field-targeted updates. No body -> toggle is_enabled (legacy behavior).
+        raw_body = await request.body()
         body: Dict[str, Any] = {}
-        try:
-            if int(request.headers.get("content-length") or 0) > 0:
-                body = await request.json()
-                if not isinstance(body, dict):
-                    body = {}
-        except Exception:
-            body = {}
+        if raw_body and raw_body.strip():
+            try:
+                parsed = json.loads(raw_body)
+                if not isinstance(parsed, dict):
+                    raise HTTPException(400, "JSON body must be an object")
+                body = parsed
+            except json.JSONDecodeError as exc:
+                raise HTTPException(400, f"Invalid JSON body: {exc}")
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()

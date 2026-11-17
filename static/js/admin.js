@@ -1085,7 +1085,7 @@ async function loadEndpoints() {
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
               ${_endpointSelectMode ? '' : `
-                ${ep.model_type === 'image' || isChatgptAccount || ep.provider === 'chatgpt-subscription' || (typeof ep.base_url === 'string' && ep.base_url.includes('chatgpt.com/backend-api')) ? '' : `<button type="button" class="admin-btn-sm" data-adm-tools-ep="${ep.id}" data-adm-tools-state="${ep.supports_tools === true ? 'on' : ep.supports_tools === false ? 'off' : 'auto'}" aria-label="Native tool calling: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}" title="Native tool calling for this endpoint.&#10;Auto: decide from the model name / endpoint host.&#10;On: always send function schemas - needed for local models (e.g. Qwen on Ollama) that support tools but aren't auto-detected.&#10;Off: always use text parsing.">Tools: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}</button>`}
+                ${ep.model_type === 'image' || isChatgptAccount || ep.provider === 'chatgpt-subscription' || (typeof ep.base_url === 'string' && ep.base_url.includes('chatgpt.com/backend-api')) ? '' : `<button type="button" class="admin-btn-sm" data-adm-tools-ep="${ep.id}" data-adm-tools-state="${ep.supports_tools === true ? 'on' : ep.supports_tools === false ? 'off' : 'auto'}" aria-label="Native tool calling: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}" title="Native tool calling for this endpoint.&#10;Auto: decide from the model name / endpoint host.&#10;On: send function schemas by default (needed for local endpoints like Ollama that aren't auto-detected).&#10;Off: use text parsing by default (explicit per-model tool settings and Odysseus models still apply).">Tools: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}</button>`}
                 <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
                 <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
                 ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
@@ -1235,12 +1235,26 @@ async function loadEndpoints() {
             console.error('Failed to update tool setting', err);
           }
         } finally {
-          await loadEndpoints();
-          const targetSel = (typeof CSS !== 'undefined' && CSS.escape)
-            ? `[data-adm-tools-ep="${CSS.escape(epId)}"]`
-            : `[data-adm-tools-ep="${epId}"]`;
-          const updatedBtn = document.querySelector(targetSel);
-          if (updatedBtn) updatedBtn.focus();
+          try {
+            await loadEndpoints();
+          } catch (reloadErr) {
+            console.error('Failed to reload endpoints after tool update', reloadErr);
+            if (typeof uiModule !== 'undefined' && uiModule && typeof uiModule.showError === 'function') {
+              uiModule.showError(reloadErr.message || 'Failed to reload endpoints');
+            }
+          } finally {
+            const targetSel = (typeof CSS !== 'undefined' && CSS.escape)
+              ? `[data-adm-tools-ep="${CSS.escape(epId)}"]`
+              : `[data-adm-tools-ep="${epId}"]`;
+            const updatedBtn = document.querySelector(targetSel);
+            if (updatedBtn) {
+              updatedBtn.disabled = false;
+              updatedBtn.focus();
+            } else if (btn && document.contains(btn)) {
+              btn.disabled = false;
+              btn.focus();
+            }
+          }
         }
       });
     });
@@ -1527,8 +1541,12 @@ async function loadEndpoints() {
     });
     refreshDependentModelUi();
   } catch (e) {
-    const err = '<div class="admin-error">Failed to load</div>';
-    [listLocal, listApi].forEach(c => { if (c) c.innerHTML = err; });
+    const hasMounted = [listLocal, listApi].some(c => c && c.querySelector('[data-adm-ep-id]'));
+    if (!hasMounted) {
+      const err = '<div class="admin-error">Failed to load</div>';
+      [listLocal, listApi].forEach(c => { if (c) c.innerHTML = err; });
+    }
+    throw e;
   }
   initModelCustomization();
 }
