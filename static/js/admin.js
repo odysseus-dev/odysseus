@@ -4270,6 +4270,10 @@ function initAll() {
 }
 
 function refreshAll() {
+  // Everything below reads admin-only routes. Signed-in users still reach
+  // admin-managed panels such as Integrations, whose own setup runs in
+  // initAll(); loading admin data for them only produces refused requests.
+  if (!(window._canManageSettings ?? window._isAdmin)) return;
   loadUsers();
   loadEndpoints();
   loadBuiltinTools();
