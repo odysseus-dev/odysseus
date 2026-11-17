@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { documentSource } from './helpers/document_source.mjs';
 
-const source = readFileSync(new URL('../static/js/document.js', import.meta.url), 'utf8');
-const build = source.slice(source.indexOf('  function _buildAnnotation('), source.indexOf('  // Prompt user for an instruction'));
-const state = source.slice(source.indexOf('  let _pdfAnnotationDragging'), source.indexOf('  // Per-doc last-used line spacing'));
-const placement = source.slice(source.indexOf('      const isBlankPageTarget'), source.indexOf('      pane.appendChild(pageWrap);', source.indexOf('      const isBlankPageTarget')));
+const source = documentSource();
+const buildStart = source.search(/(?:^|\n)[ \t]*function _buildAnnotation\(/);
+const buildEnd = source.indexOf('// Prompt user for an instruction');
+const build = source.slice(buildStart, buildEnd);
+const stateStart = source.search(/(?:^|\n)[ \t]*let _pdfAnnotationDragging/);
+const stateEnd = source.indexOf('// Per-doc last-used line spacing');
+const state = source.slice(stateStart, stateEnd);
+const placementStart = source.search(/(?:^|\n)[ \t]*const isBlankPageTarget/);
+const placementEnd = source.indexOf('pane.appendChild(pageWrap);', placementStart);
+const placement = source.slice(placementStart, placementEnd);
 const browser = await chromium.launch({ headless: true });
 try {
   for (const touch of [true, false]) {

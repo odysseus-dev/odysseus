@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
 from src.model_profiles import is_odysseus_merged_tools_model
+from src import model_customization
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -252,17 +253,24 @@ def _cache_header_identity(headers) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def _sampling_cache_kwargs(url: str, model: str) -> Dict[str, Dict]:
+    """Pass ``sampling`` only for customized models so uncustomized calls keep their call shape."""
+    sampling = model_customization.cache_key_settings(url, model)
+    return {"sampling": sampling} if sampling else {}
+
+
 def _get_cache_key(url: str, model: str, messages: List[Dict],
                    temperature: float, max_tokens: int, headers=None,
                    thinking_mode: Optional[str] = None,
-                   reasoning_effort: Optional[str] = None) -> str:
+                   reasoning_effort: Optional[str] = None,
+                   sampling: Optional[Dict] = None) -> str:
     """Generate a cache key partitioned by endpoint and credential identity."""
     hashable_messages = []
     for msg in messages:
         sorted_items = tuple(sorted(msg.items()))
         hashable_messages.append(sorted_items)
     
-    content = json.dumps({
+    key = {
         'url': url,
         'model': model, 
         'messages': hashable_messages,
@@ -274,7 +282,11 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
         # digest only prevents responses from one configured account/route
         # being returned under another route with the same URL and model.
         'header_identity': _cache_header_identity(headers),
-    }, sort_keys=True)
+    }
+    if sampling:
+        # Only customized calls carry this, so uncustomized keys stay unchanged.
+        key['sampling'] = sampling
+    content = json.dumps(key, sort_keys=True)
     return hashlib.sha256(content.encode()).hexdigest()
 
 _response_cache = {}
@@ -2321,12 +2333,32 @@ def _apply_explicit_nonstream_reasoning_effort(
         payload["reasoning_effort"] = effort
 
 
-def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+def _nonstream_openai_response_text(msg: Dict, thinking_mode: Optional[str]) -> str:
+    """Return the answer text of an OpenAI-compatible non-streaming message.
+
+    With thinking off the caller wants only the answer, so an empty answer
+    stays empty even when the model spent its whole budget on reasoning.
+    Otherwise reasoning stands in for a missing answer, and Mistral's
+    structured thinking is kept ahead of its text.
+    """
+    thinking_off = _normalize_thinking_mode(thinking_mode) == "off"
+    reasoning = "" if thinking_off else msg.get("reasoning_content")
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return content or reasoning or ""
+    text_part, thinking_part = _normalize_mistral_content(content)
+    if thinking_part and not thinking_off:
+        return thinking_part + "\n\n" + (text_part or "")
+    return text_part or reasoning or ""
+
+
+def llm_call(url: str, model: str, messages: List[Dict], temperature: Optional[float] = None,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
              thinking_mode: Optional[str] = None,
              reasoning_effort: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
+    temperature = model_customization.resolve_temperature(url, model, temperature)
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
@@ -2358,6 +2390,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
         thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
+        **_sampling_cache_kwargs(url, model),
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2374,6 +2407,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+        model_customization.apply_sampling(payload, url, model)
     else:
         target_url = _normalize_openai_chat_url(url)
         if provider == "copilot":
@@ -2389,6 +2423,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        model_customization.apply_sampling(payload, url, model)
         _apply_local_generation_stability(payload, target_url, model)
         _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
         _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
@@ -2412,17 +2447,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         elif provider == "ollama":
             response = _parse_ollama_response(data)
         else:
-            msg = data["choices"][0]["message"]
-            content = msg.get("content")
-            if isinstance(content, list):
-                # Mistral structured content — extract thinking + text
-                text_part, thinking_part = _normalize_mistral_content(content)
-                if thinking_part:
-                    response = thinking_part + "\n\n" + (text_part or "")
-                else:
-                    response = text_part or msg.get("reasoning_content") or ""
-            else:
-                response = content or msg.get("reasoning_content") or ""
+            response = _nonstream_openai_response_text(
+                data["choices"][0]["message"], thinking_mode
+            )
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -2643,7 +2670,7 @@ async def llm_call_async(
     url: str,
     model: str,
     messages: List[Dict],
-    temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+    temperature: Optional[float] = None,
     max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS,
     headers: Optional[Dict] = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
@@ -2657,6 +2684,7 @@ async def llm_call_async(
     reasoning_effort: Optional[str] = None,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    temperature = model_customization.resolve_temperature(url, model, temperature)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -2694,6 +2722,7 @@ async def llm_call_async(
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
         thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
+        **_sampling_cache_kwargs(url, model),
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2779,6 +2808,7 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+        model_customization.apply_sampling(payload, url, model)
     else:
         target_url = _normalize_openai_chat_url(url)
         h = _provider_headers(provider, headers)
@@ -2805,6 +2835,7 @@ async def llm_call_async(
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_local_cache_affinity(payload, url, session_id)
+        model_customization.apply_sampling(payload, url, model)
         _apply_local_generation_stability(payload, target_url, model)
         _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
         _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
@@ -2860,18 +2891,9 @@ async def llm_call_async(
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
                 else:
-                    msg = data["choices"][0]["message"]
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        # Mistral structured content — extract thinking + text
-                        # (same contract as llm_call / stream_llm; see #5435).
-                        text_part, thinking_part = _normalize_mistral_content(content)
-                        if thinking_part:
-                            response = thinking_part + "\n\n" + (text_part or "")
-                        else:
-                            response = text_part or msg.get("reasoning_content") or ""
-                    else:
-                        response = content or msg.get("reasoning_content") or ""
+                    response = _nonstream_openai_response_text(
+                        data["choices"][0]["message"], thinking_mode
+                    )
                 _set_cached_response(
                     cache_key,
                     response,
@@ -2969,7 +2991,7 @@ def _stream_target_url(url: str) -> str:
     return _normalize_openai_chat_url(url)
 
 
-async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+async def stream_llm(url: str, model: str, messages: List[Dict], temperature: Optional[float] = None,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
@@ -2995,7 +3017,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield chunk
 
 
-async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: Optional[float] = None,
                             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
@@ -3010,6 +3032,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
+    temperature = model_customization.resolve_temperature(url, model, temperature)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -3040,6 +3063,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+        model_customization.apply_sampling(payload, url, model)
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
@@ -3082,6 +3106,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         ):
             payload["think"] = False
         _apply_local_cache_affinity(payload, url, session_id)
+        model_customization.apply_sampling(payload, url, model)
         _apply_local_generation_stability(payload, target_url, model)
         _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
         _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)

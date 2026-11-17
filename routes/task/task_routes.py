@@ -340,6 +340,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 max_tokens=20,
                 headers=headers,
                 timeout=15,
+                thinking_mode="off",
             )
             title = result.strip().strip('"\'').strip()
             return title[:60] if title else prompt[:50].strip()

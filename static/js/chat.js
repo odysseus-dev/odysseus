@@ -1,3 +1,4 @@
+import { effectiveTemperature, temperatureHint } from './sessionTemperature.js';
 // static/js/chat.js
 
 /**
@@ -871,7 +872,13 @@ import { invalidateSettings } from './appConfig.js';
       input.addEventListener('change', () => _saveChatGenerationSettings({ [key]: key === 'max_tokens_override' && Number(input.value) > 8192 ? null : Number(input.value) }));
       row.appendChild(input); popup.appendChild(row);
     };
-    addGenerationSlider('Temperature', d.temperature_override ?? 1, 0, 2, 0.1, v => Number(v).toFixed(1), 'temperature_override');
+    addGenerationSlider('Temperature', effectiveTemperature(d), 0, 2, 0.1, v => Number(v).toFixed(1), 'temperature_override');
+    if (temperatureHint(d)) {
+      const hintEl = document.createElement('div');
+      hintEl.style.cssText = 'font-size:11px;opacity:0.65;margin-top:2px;';
+      hintEl.textContent = temperatureHint(d);
+      popup.appendChild(hintEl);
+    }
     addGenerationSlider('Max tokens', d.max_tokens_override ?? 8448, 256, 8448, 256, v => Number(v) > 8192 ? 'No limit' : Number(v).toLocaleString(), 'max_tokens_override');
 
 	    const threshold = _clampAutoCompactThreshold(d.auto_compact_threshold || 85);
@@ -2588,6 +2595,7 @@ import { invalidateSettings } from './appConfig.js';
     currentHolder = null;
     
     let abortCtrl = null;
+    let _isAgent = false;  // read by the catch block's timeout message
     let streamingTTS = false;
     try {
       // Re-enable auto-scroll when user sends a message
@@ -2985,7 +2993,7 @@ import { invalidateSettings } from './appConfig.js';
       currentAbort = abortCtrl;
 
 	      const _tState = Storage.loadToggleState();
-	      const _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
+	      _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
