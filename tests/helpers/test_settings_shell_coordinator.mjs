@@ -54,6 +54,15 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/integrations/forms/mcp.js'),
   path.join(JS, 'settings/integrations/forms/vault.js'),
   path.join(JS, 'settings/access.js'),
+  path.join(JS, 'settings/defaultChat.js'),
+  path.join(JS, 'settings/endpointCatalog.js'),
+  path.join(JS, 'settings/fallbackWidget.js'),
+  path.join(JS, 'settings/modelDefaultCards.js'),
+  path.join(JS, 'settings/modelSelects.js'),
+  path.join(JS, 'settings/researchModel.js'),
+  path.join(JS, 'settings/teacherModel.js'),
+  path.join(JS, 'settings/utilityModel.js'),
+  path.join(JS, 'settings/visionModel.js'),
 ]);
 
 const realModulesLoaded = new Set();
