@@ -640,7 +640,7 @@ async function initDefaultChat() {
     function() {
       fallbackPrefsLoaded = false;
       if (fallbackToggle) fallbackToggle.disabled = true;
-      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(true);
+      syncFallbackEditorReadiness();
       syncFallbackRetry();
       applyFallbackVisibility();
     }
@@ -648,6 +648,14 @@ async function initDefaultChat() {
 
   function saveForegroundPref(key, value) {
     return fallbackPreferenceWriter.save(key, value);
+  }
+
+  function syncFallbackEditorReadiness() {
+    if (fallbackWidget && fallbackWidget.setDisabled) {
+      fallbackWidget.setDisabled(
+        !fallbackPrefsLoaded || !fallbackCatalogLoaded
+      );
+    }
   }
 
   function applyFallbackVisibility() {
@@ -727,12 +735,12 @@ async function initDefaultChat() {
     try {
       _foregroundFallbackEndpoints = await _fetchForegroundFallbackEndpoints();
       fallbackCatalogLoaded = true;
-      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(false);
+      syncFallbackEditorReadiness();
       return true;
     } catch (error) {
       console.warn('Failed to load foreground fallback model choices', error);
       fallbackCatalogLoaded = false;
-      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(true);
+      syncFallbackEditorReadiness();
       showFallbackMessage('Failed to load fallback model choices', true);
       return false;
     }
@@ -804,7 +812,7 @@ async function initDefaultChat() {
     },
     onRender: applyFallbackVisibility,
   });
-  fallbackWidget.setDisabled(!fallbackCatalogLoaded);
+  syncFallbackEditorReadiness();
   applyFallbackVisibility();
   syncFallbackRetry();
 
@@ -826,6 +834,7 @@ async function initDefaultChat() {
           }
         }
       }
+      syncFallbackEditorReadiness();
       fallbackRetry.disabled = false;
       syncFallbackRetry();
       applyFallbackVisibility();
@@ -883,7 +892,7 @@ async function initDefaultChat() {
         && fallbackList.contains(document.activeElement)
       );
       fallbackCatalogLoaded = false;
-      if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(true);
+      syncFallbackEditorReadiness();
       syncFallbackRetry();
       if (focusWasInList && fallbackRetry && typeof fallbackRetry.focus === 'function') {
         fallbackRetry.focus();
@@ -894,7 +903,7 @@ async function initDefaultChat() {
     }
     _foregroundFallbackEndpoints = endpoints;
     fallbackCatalogLoaded = true;
-    if (fallbackWidget && fallbackWidget.setDisabled) fallbackWidget.setDisabled(false);
+    syncFallbackEditorReadiness();
     syncFallbackRetry();
   });
 }

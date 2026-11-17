@@ -80,9 +80,16 @@ def test_default_chat_controls_use_only_owner_scoped_new_preferences():
     assert "_registerForegroundFallbackEndpointRefresh(function(endpoints, error)" in source
     assert "fallbackCatalogLoaded = false" in source
     assert "Failed to refresh fallback model choices" in source
-    assert "fallbackWidget.setDisabled(!fallbackCatalogLoaded)" in source
-    assert "fallbackWidget.setDisabled(true)" in source
-    assert "fallbackWidget.setDisabled(false)" in source
+    assert "function syncFallbackEditorReadiness()" in source
+    assert (
+        "fallbackWidget.setDisabled(\n"
+        "        !fallbackPrefsLoaded || !fallbackCatalogLoaded"
+    ) in source
+    assert source.count("syncFallbackEditorReadiness();") == 7
+    assert (
+        "syncFallbackEditorReadiness();\n"
+        "      fallbackRetry.disabled = false;"
+    ) in source
     assert "focusWasInList" in source
     assert "fallbackWidget.setInitial(loadedPolicy.candidates)" in source
     assert "fallbackPreferenceWriter.reset();" in source
