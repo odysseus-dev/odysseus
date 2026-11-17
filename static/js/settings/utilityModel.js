@@ -170,7 +170,6 @@ export async function initUtilityModel({ catalog, cards }) {
       bindUtilityFallbacks(settings);
     },
   });
-  await utilityLoader.run();
 
   // Persist whatever's currently selected. Empty endpoint or model → backend
   // transparently falls back to the chat model (mirrors the teacher panel:
@@ -199,6 +198,8 @@ export async function initUtilityModel({ catalog, cards }) {
   var defModel = el('set-defaultModelSelect');
   if (defEp) defEp.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
   if (defModel) defModel.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
+
+  await utilityLoader.run();
 
   catalog.registerAiEndpointRefresh(async function(endpoints) {
     _endpoints = endpoints;

@@ -46,7 +46,9 @@ export function createModelDefaultCards({ resolveAccess, catalog }) {
         if (!store) store = await getModelDefaultsStore();
         if (!endpointsLoaded) {
           try {
-            onEndpoints(await catalog.fetchModelDefaultEndpoints(), store);
+            var cached = typeof catalog.getLastModelDefaultEndpoints === 'function' ? catalog.getLastModelDefaultEndpoints() : null;
+            var endpoints = cached || await catalog.fetchModelDefaultEndpoints();
+            onEndpoints(endpoints, store);
             endpointsLoaded = true;
           } catch (e) { console.warn('Failed to load endpoints for ' + label, e); }
         }
@@ -102,10 +104,10 @@ function createModelDefaultLoader(opts) {
   async function run() {
     try {
       var stored = await opts.load();
+      opts.apply(stored);
+      clearFailure();
       loaded = true;
       setControlsDisabled(false);
-      clearFailure();
-      opts.apply(stored);
       return true;
     } catch (error) {
       console.warn('Failed to load ' + opts.label, error);

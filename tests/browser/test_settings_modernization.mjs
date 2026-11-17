@@ -386,7 +386,7 @@ async function cardState(page, sectionId) {
 async function waitForAiDefaults(page) {
   await page.waitForFunction(() => {
     const select = document.querySelector('#set-defaultEpSelect');
-    return select && Array.from(select.options).some(option => option.value === 'ep-alpha');
+    return select && !select.disabled && Array.from(select.options).some(option => option.value === 'ep-alpha');
   }, null, { timeout: 15000 });
   await page.waitForFunction(() => document.querySelector('[data-settings-section="vision"] .settings-scope-badge'), null, { timeout: 15000 });
 }
@@ -1105,6 +1105,67 @@ async function testDelayedAuthorizationResolution(instance, cookies) {
   await admin.context.close();
 }
 
+async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
+  const session = await pageAs(instance, cookies.adminCookie);
+
+  // 1. Invoke refreshAiModelEndpoints() BEFORE Settings is opened or initialized.
+  const earlyRefreshResult = await session.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    const settings = await import(src);
+    try {
+      await settings.refreshAiModelEndpoints();
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  });
+  check('early refreshAiModelEndpoints() before Settings opens succeeds without error', earlyRefreshResult.success, JSON.stringify(earlyRefreshResult));
+
+  // 2. Open Settings for the first time.
+  await openSettings(session.page, 'ai');
+  await waitForAiDefaults(session.page);
+  const initialOptionsCount = await session.page.$$eval('#set-defaultEpSelect option', opts => opts.length);
+  check('cards populated with endpoints after early refresh', initialOptionsCount >= 2, String(initialOptionsCount));
+
+  // 3. Close Settings and reopen repeatedly (lifecycle preservation).
+  await session.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    const settings = await import(src);
+    settings.close();
+  });
+  await session.page.waitForTimeout(300);
+
+  const closedHidden = await session.page.evaluate(() => document.querySelector('#settings-modal').classList.contains('hidden'));
+  check('Settings modal closes cleanly', closedHidden);
+
+  // Track write requests to verify no duplicate event handlers fire on repeated opens.
+  let saveWrites = 0;
+  session.page.on('request', req => {
+    if (req.method() === 'POST' && req.url().includes('/api/auth/settings')) {
+      saveWrites++;
+    }
+  });
+
+  // Reopen
+  await openSettings(session.page, 'ai');
+  await waitForAiDefaults(session.page);
+
+  // Change selection and verify save succeeds with single dispatch.
+  saveWrites = 0;
+  await session.page.selectOption('#set-defaultEpSelect', 'ep-beta');
+  await session.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
+  check('single change event triggers exactly one settings write (no listener duplication)', saveWrites === 1, `saveWrites=${saveWrites}`);
+
+  // Re-select alpha to leave state clean.
+  saveWrites = 0;
+  await session.page.selectOption('#set-defaultEpSelect', 'ep-alpha');
+  await session.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
+  check('subsequent change event also triggers exactly one write', saveWrites === 1, `saveWrites=${saveWrites}`);
+
+  check('early refresh and repeated open session has no script errors', session.errors.length === 0, session.errors.join(' | '));
+  await session.context.close();
+}
+
 async function main() {
   browser = await chromium.launch({ headless: true });
   const authInstance = await launchInstance('auth', { authEnabled: true });
@@ -1120,6 +1181,7 @@ async function main() {
   await testMemberUtilityFallbackRecovery(authInstance, cookies);
   await testMemberStatusRecovery(authInstance, cookies);
   await testDelayedAuthorizationResolution(authInstance, cookies);
+  await testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
   seedEndpoints(openInstance);

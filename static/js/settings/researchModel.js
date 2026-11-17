@@ -45,20 +45,6 @@ export async function initResearchSettings({ catalog, cards }) {
     load: researchSource.load,
     apply: applyStoredResearchModel,
   });
-  await researchLoader.run();
-
-  // Run limits are server-wide (Search → Deep Research).
-  try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    var settings = await res.json();
-    if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
-    if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
-    if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
-    if (settings.research_run_timeout_seconds !== undefined && settings.research_run_timeout_seconds !== null) {
-      runTimeoutInput.value = settings.research_run_timeout_seconds;
-    }
-  } catch (e) { console.warn('Failed to load research settings', e); }
 
   function showStatus() {
     // Keep a load failure and its Retry visible.
@@ -92,7 +78,6 @@ export async function initResearchSettings({ catalog, cards }) {
       msg.style.color = 'var(--fg)';
     }
   }
-  showStatus();
 
   // The endpoint and model are a model default (per account for signed-in
   // users); the run limits below are server-wide. They save separately so a
@@ -111,6 +96,29 @@ export async function initResearchSettings({ catalog, cards }) {
       if (restored) { msg.textContent = modelDefaultSaveError(e); msg.style.color = 'var(--red)'; }
     }
   }
+
+  epSel.addEventListener('change', async function() {
+    refreshModels('');
+    saveResearchModel();
+  });
+  modelSel.addEventListener('change', saveResearchModel);
+
+  await researchLoader.run();
+
+  // Run limits are server-wide (Search → Deep Research).
+  try {
+    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var settings = await res.json();
+    if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
+    if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
+    if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
+    if (settings.research_run_timeout_seconds !== undefined && settings.research_run_timeout_seconds !== null) {
+      runTimeoutInput.value = settings.research_run_timeout_seconds;
+    }
+  } catch (e) { console.warn('Failed to load research settings', e); }
+
+  showStatus();
 
   async function saveResearch() {
     var payload = {};
@@ -135,11 +143,6 @@ export async function initResearchSettings({ catalog, cards }) {
     } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', async function() {
-    refreshModels('');
-    saveResearchModel();
-  });
-  modelSel.addEventListener('change', saveResearchModel);
   tokensInput.addEventListener('change', saveResearch);
   extractTimeoutInput.addEventListener('change', saveResearch);
   extractConcurrencyInput.addEventListener('change', saveResearch);

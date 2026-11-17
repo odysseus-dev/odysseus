@@ -12,6 +12,9 @@ export function createEndpointCatalog({ resolveAccess }) {
   const _aiEndpointRefreshers = new Set();
   const _foregroundFallbackEndpointRefreshers = new Set();
   let _aiEndpointRefreshInFlight = null;
+  let _lastModelDefaultEndpoints = null;
+  let _lastForegroundFallbackEndpoints = null;
+  let _lastForegroundFallbackError = null;
 
   async function fetchModelEndpoints() {
     const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
@@ -42,10 +45,16 @@ export function createEndpointCatalog({ resolveAccess }) {
 
   function registerAiEndpointRefresh(fn) {
     _aiEndpointRefreshers.add(fn);
+    if (_lastModelDefaultEndpoints !== null) {
+      try { fn(_lastModelDefaultEndpoints); } catch (e) { console.warn('[settings] endpoint refresh handler failed', e); }
+    }
   }
 
   function registerForegroundFallbackEndpointRefresh(fn) {
     _foregroundFallbackEndpointRefreshers.add(fn);
+    if (_lastForegroundFallbackEndpoints !== null || _lastForegroundFallbackError !== null) {
+      try { fn(_lastForegroundFallbackEndpoints, _lastForegroundFallbackError); } catch (e) { console.warn('[settings] foreground fallback endpoint refresh handler failed', e); }
+    }
   }
 
   async function refresh() {
@@ -53,6 +62,7 @@ export function createEndpointCatalog({ resolveAccess }) {
     _aiEndpointRefreshInFlight = (async function() {
       try {
         const endpoints = await fetchModelDefaultEndpoints();
+        _lastModelDefaultEndpoints = endpoints;
         _aiEndpointRefreshers.forEach(function(fn) {
           try { fn(endpoints); } catch (e) { console.warn('[settings] endpoint refresh handler failed', e); }
         });
@@ -61,11 +71,15 @@ export function createEndpointCatalog({ resolveAccess }) {
       }
       try {
         const endpoints = await fetchForegroundFallbackEndpoints();
+        _lastForegroundFallbackEndpoints = endpoints;
+        _lastForegroundFallbackError = null;
         _foregroundFallbackEndpointRefreshers.forEach(function(fn) {
           try { fn(endpoints, null); } catch (e) { console.warn('[settings] foreground fallback endpoint refresh handler failed', e); }
         });
       } catch (e) {
         console.warn('[settings] failed to refresh foreground fallback endpoints', e);
+        _lastForegroundFallbackEndpoints = null;
+        _lastForegroundFallbackError = e;
         _foregroundFallbackEndpointRefreshers.forEach(function(fn) {
           try { fn(null, e); } catch (handlerError) { console.warn('[settings] foreground fallback endpoint refresh handler failed', handlerError); }
         });
@@ -83,5 +97,7 @@ export function createEndpointCatalog({ resolveAccess }) {
     registerAiEndpointRefresh,
     registerForegroundFallbackEndpointRefresh,
     refresh,
+    getLastModelDefaultEndpoints: function() { return _lastModelDefaultEndpoints; },
+    getLastForegroundFallbackEndpoints: function() { return _lastForegroundFallbackEndpoints; },
   };
 }

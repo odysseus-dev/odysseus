@@ -216,6 +216,25 @@ export async function initDefaultChat({ catalog, cards }) {
     load: defaultSource.load,
     apply: applyStoredDefault,
   });
+
+  async function saveDefault() {
+    if (!defaultLoader.isLoaded()) return;
+    try {
+      await defaultSource.store().save({
+        default_endpoint_id: epSel.value,
+        default_model: modelSel.value
+      });
+      cards.showMessage(msg, 'Saved', false);
+    } catch (e) {
+      // Show what is actually stored instead of the choice that was not saved.
+      var restored = (e && e.serverSaved) ? true : await defaultLoader.run();
+      if (restored) cards.showMessage(msg, modelDefaultSaveError(e), true);
+    }
+  }
+
+  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
+  modelSel.addEventListener('change', saveDefault);
+
   await defaultLoader.run();
 
   var foregroundPolicy = await loadForegroundPolicy();
@@ -304,24 +323,6 @@ export async function initDefaultChat({ catalog, cards }) {
         fallbackToggle.disabled = !fallbackPrefsLoaded;
       }
     });
-  }
-
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
-  modelSel.addEventListener('change', saveDefault);
-
-  async function saveDefault() {
-    if (!defaultLoader.isLoaded()) return;
-    try {
-      await defaultSource.store().save({
-        default_endpoint_id: epSel.value,
-        default_model: modelSel.value
-      });
-      cards.showMessage(msg, 'Saved', false);
-    } catch (e) {
-      // Show what is actually stored instead of the choice that was not saved.
-      var restored = (e && e.serverSaved) ? true : await defaultLoader.run();
-      if (restored) cards.showMessage(msg, modelDefaultSaveError(e), true);
-    }
   }
 
   catalog.registerAiEndpointRefresh(function(endpoints) {
