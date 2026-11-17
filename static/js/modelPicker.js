@@ -136,7 +136,8 @@ async function _ensureDefaultPendingChat() {
     try {
       dc = window.__odysseusDefaultChat || null;
     } catch (_) {}
-    if (!dc || !dc.endpoint_url || !dc.model) {
+    const _knownEmpty = Date.now() - (window.__odysseusDefaultChatEmptyAt || 0) < 5000;
+    if ((!dc || !dc.endpoint_url || !dc.model) && !_knownEmpty) {
       try {
         const res = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
         if (res.ok) dc = await res.json();

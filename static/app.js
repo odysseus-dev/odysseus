@@ -265,7 +265,9 @@ async function _refreshDefaultChat() {
 }
 // Prime the cache once at load for initial paint paths that read _defaultChat
 // synchronously; later reads should call _refreshDefaultChat() first.
-_refreshDefaultChat();
+// The inline first-paint script may have just learned that no default exists;
+// asking again within a few seconds can only get the same answer.
+if (!(Date.now() - (window.__odysseusDefaultChatEmptyAt || 0) < 5000)) _refreshDefaultChat();
 
 async function _createDirectChatFromPreferredModel(opts = {}) {
   if (!sessionModule) return false;
