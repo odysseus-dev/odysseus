@@ -492,6 +492,7 @@ if (diffToggleBtn) {
       const ta = document.getElementById('doc-editor-textarea');
       if (!doc || !ownerPane || !ta) return;
       const generation = _documentNavigationGeneration;
+      const revision = doc._editRevision || 0;
       const current = ta.value;
       const isCompareOwnerValid = () => (
         requestSeq === _compareRequestSeq &&
@@ -499,6 +500,10 @@ if (diffToggleBtn) {
         _documentNavigationGeneration === generation &&
         activeDocId === docId &&
         docs.get(docId) === doc &&
+        (doc._editRevision || 0) === revision &&
+        ta.isConnected &&
+        ta === document.getElementById('doc-editor-textarea') &&
+        ta.value === current &&
         ownerPane.isConnected &&
         ownerPane === document.getElementById('doc-editor-pane') &&
         ownerPane.dataset.activeDocumentId === docId

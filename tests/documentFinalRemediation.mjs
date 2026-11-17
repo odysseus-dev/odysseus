@@ -159,3 +159,142 @@ test('email ownership: cleared local recipients and delayed draft writes retain 
   });
   assert.equal((await envelope(page)).cc, ''); assert.equal((await envelope(page))['source-uid'], 'a');
 });
+
+async function trackCompareResponses(page) {
+  await page.evaluate(() => {
+    window.compareSettled = 0;
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (String(args[0]).endsWith('/versions')) {
+        const json = response.json.bind(response);
+        response.json = async () => {
+          const data = await json();
+          // The timer runs after the awaiting production handler has consumed JSON.
+          setTimeout(() => { window.compareSettled++; }, 0);
+          return data;
+        };
+      }
+      return response;
+    };
+  });
+}
+
+async function editSource(page, content) {
+  await page.evaluate(async content => {
+    const ta = document.getElementById('doc-editor-textarea');
+    ta.value = content;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    (await import('/static/js/document/application/persistence.js'))._cancelAutoSave('a');
+  }, content);
+}
+
+for (const mode of ['edit', 'edit-revert', 'programmatic', 'edit-save', 'replace-textarea']) {
+  test(`compare ownership: pending history cannot replace a superseded snapshot (${mode})`, async t => {
+    let release, started;
+    const held = new Promise(resolve => { release = resolve; });
+    const inFlight = new Promise(resolve => { started = resolve; });
+    const { page, requests } = await setup(t, async (route, request) => {
+      if (!request.path.endsWith('/versions')) return false;
+      started(); await held;
+      await route.fulfill({ json: [{ content: 'Current source' }, { content: 'Previous source' }] });
+      return true;
+    });
+    await inject(page, 'a', 'Current source', 'text');
+    await trackCompareResponses(page);
+    await page.locator('#doc-diff-toggle-btn').click(); await inFlight;
+    let expected = 'Intervening unsaved edit';
+    if (mode === 'programmatic') {
+      await page.evaluate(value => { document.getElementById('doc-editor-textarea').value = value; }, expected);
+    } else if (mode === 'replace-textarea') {
+      expected = 'Current source';
+      await page.locator('#doc-editor-textarea').evaluate(ta => ta.replaceWith(ta.cloneNode(true)));
+    } else {
+      await editSource(page, expected);
+      if (mode === 'edit-revert') { expected = 'Current source'; await editSource(page, expected); }
+      if (mode === 'edit-save') await page.evaluate(() => editor.saveDocument({ silent: true }));
+    }
+    const putsBeforeResponse = requests.filter(req => req.method === 'PUT').length;
+    release(); await page.waitForFunction(() => window.compareSettled === 1);
+    const snapshot = await page.evaluate(async () => {
+      const diff = await import('/static/js/document/ui/diffViewer.js');
+      const active = diff._diffModeActive;
+      // An ignored comparison has no exit state capable of replacing newer edits.
+      diff.exitDiffMode(true, { persist: false });
+      return { active, content: document.getElementById('doc-editor-textarea').value, cached: state.docs.get('a').content };
+    });
+    assert.equal(snapshot.active, false, 'a stale response must not enter diff mode');
+    assert.equal(snapshot.content, expected, 'exiting an ignored comparison preserves current source');
+    if (mode !== 'programmatic') assert.equal(snapshot.cached, expected);
+    assert.equal(requests.filter(req => req.method === 'PUT').length, putsBeforeResponse, 'stale comparison must not persist content');
+    if (process.env.ODYSSEUS_REMEDIATION_SCREENSHOTS && mode === 'edit') {
+      await page.screenshot({ path: `${process.env.ODYSSEUS_REMEDIATION_SCREENSHOTS}/stale-compare-preserved-edit.png`, fullPage: true });
+    }
+  });
+}
+
+test('compare ownership: repeated requests resolve in latest-click order and normal save/accept/reject still work', async t => {
+  const pending = [];
+  let notify;
+  const { page } = await setup(t, async (route, request) => {
+    if (!request.path.endsWith('/versions')) return false;
+    await new Promise(resolve => {
+      pending.push(async previous => { await route.fulfill({ json: [{ content: 'Current source' }, { content: previous }] }); resolve(); });
+      notify?.();
+    });
+    return true;
+  });
+  await inject(page, 'a', 'Current source', 'text');
+  await trackCompareResponses(page);
+  async function clickCompare(count) {
+    const started = pending.length >= count ? Promise.resolve() : new Promise(resolve => { notify = resolve; });
+    await page.locator('#doc-diff-toggle-btn').click(); await started;
+  }
+  await clickCompare(1); await clickCompare(2);
+  // Save completion without a new edit does not invalidate an otherwise valid request.
+  await page.evaluate(() => editor.saveDocument({ silent: true }));
+  await pending[1]('Second previous');
+  await page.waitForFunction(() => window.compareSettled === 1);
+  assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive), true);
+  assert.match(await page.locator('#doc-editor-code').textContent(), /Second previous/);
+  await pending[0]('First previous');
+  await page.waitForFunction(() => window.compareSettled === 2);
+  assert.doesNotMatch(await page.locator('#doc-editor-code').textContent(), /First previous/);
+  await page.locator('#doc-diff-accept-all-btn').click();
+  assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'Current source');
+  await clickCompare(3); await pending[2]('Third previous');
+  await page.waitForFunction(() => window.compareSettled === 3);
+  await page.locator('#doc-diff-reject-all-btn').click();
+  assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'Third previous');
+  await clickCompare(4); await pending[3]('Fourth previous');
+  await page.waitForFunction(() => window.compareSettled === 4);
+  await page.locator('#doc-diff-toggle-btn').click();
+  assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'Fourth previous');
+});
+
+for (const mode of ['navigate-away-back', 'close-remount']) {
+  test(`compare ownership: pending history loses ownership on ${mode}`, async t => {
+    let release, started;
+    const held = new Promise(resolve => { release = resolve; });
+    const inFlight = new Promise(resolve => { started = resolve; });
+    const { page } = await setup(t, async (route, request) => {
+      if (!request.path.endsWith('/versions')) return false;
+      started(); await held;
+      await route.fulfill({ json: [{ content: 'Current source' }, { content: 'Stale previous' }] });
+      return true;
+    });
+    await inject(page, 'b', 'B source', 'text'); await inject(page, 'a', 'Current source', 'text');
+    await trackCompareResponses(page);
+    await page.locator('#doc-diff-toggle-btn').click(); await inFlight;
+    if (mode === 'navigate-away-back') { await load(page, 'b'); await load(page, 'a'); }
+    else {
+      await page.evaluate(() => editor.closePanel('down'));
+      await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
+      await load(page, 'a');
+    }
+    release(); await page.waitForFunction(() => window.compareSettled === 1);
+    assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive), false);
+    assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'Current source');
+    assert.equal(await page.evaluate(() => state.docs.get('b').content), 'B source');
+  });
+}
