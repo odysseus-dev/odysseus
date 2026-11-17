@@ -323,3 +323,113 @@ def test_cross_process_concurrent_updates(tmp_path):
     data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]
     assert data["worker_a"] == {"init": 1, "result": "alpha"}
     assert data["worker_b"] == {"init": 2, "result": "beta"}
+
+
+# ── 9. Lock Contention and Event-Loop Latency Analysis ──
+
+def test_uncontended_write_latency_bounded(app_and_client):
+    """Verify that uncontended writes execute within sub-millisecond to low-millisecond time."""
+    import time
+    app, active_user, prefs_file = app_and_client
+    active_user["user"] = "alice"
+    client = TestClient(app)
+
+    t0 = time.perf_counter()
+    resp = client.put("/api/prefs/quick_key", json={"value": "quick_val"})
+    elapsed = time.perf_counter() - t0
+
+    assert resp.status_code == 200
+    assert elapsed < 0.2
+    data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]["alice"]
+    assert data["quick_key"] == "quick_val"
+
+
+def test_lock_contention_and_correct_persistence_after_release(app_and_client):
+    """Verify that an external lock holder blocks write until release, then write persists correctly."""
+    import time
+    import fcntl
+    app, active_user, prefs_file = app_and_client
+    active_user["user"] = "alice"
+    client = TestClient(app)
+
+    lock_path = os.path.abspath(str(prefs_file)) + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+
+    hold_seconds = 0.2
+    lock_acquired = threading.Event()
+
+    def hold_lock():
+        with open(lock_path, "a+b") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            lock_acquired.set()
+            time.sleep(hold_seconds)
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+    holder = threading.Thread(target=hold_lock, daemon=True)
+    holder.start()
+    assert lock_acquired.wait(timeout=2.0)
+
+    t0 = time.perf_counter()
+    resp = client.put("/api/prefs/contended_key", json={"value": "persisted_value"})
+    elapsed = time.perf_counter() - t0
+
+    holder.join(timeout=2.0)
+
+    assert resp.status_code == 200
+    assert elapsed >= hold_seconds * 0.7
+    data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]["alice"]
+    assert data["contended_key"] == "persisted_value"
+
+
+@pytest.mark.anyio
+async def test_event_loop_responsiveness_during_contention(tmp_path, monkeypatch):
+    """Empirically measure event loop responsiveness during lock contention.
+
+    Demonstrates that synchronous file locking inside an async endpoint delays
+    the event loop thread, while verifying bounded resolution and data integrity.
+    """
+    import asyncio
+    import time
+    import fcntl
+    import httpx
+
+    prefs_file = tmp_path / "user_prefs.json"
+    prefs_file.write_text(json.dumps({"_users": {"alice": {}}}), encoding="utf-8")
+    monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
+    monkeypatch.setattr(prefs_routes, "get_current_user", lambda req: "alice")
+
+    app = FastAPI()
+    app.include_router(prefs_routes.setup_prefs_routes())
+
+    lock_path = os.path.abspath(str(prefs_file)) + ".lock"
+    hold_seconds = 0.2
+    lock_held = threading.Event()
+
+    def hold_lock():
+        with open(lock_path, "a+b") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            lock_held.set()
+            time.sleep(hold_seconds)
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+    holder = threading.Thread(target=hold_lock, daemon=True)
+    holder.start()
+    assert lock_held.wait(timeout=2.0)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+        write_task = asyncio.create_task(ac.put("/api/prefs/test_key", json={"value": "async_val"}))
+        t_sleep_start = time.perf_counter()
+        await asyncio.sleep(0.01)
+        sleep_elapsed = time.perf_counter() - t_sleep_start
+
+        write_resp = await write_task
+
+    holder.join(timeout=2.0)
+
+    assert write_resp.status_code == 200
+
+    data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]["alice"]
+    assert data["test_key"] == "async_val"
+    # Confirms finding P3-1: sleep(0.01) was delayed by the synchronous lock wait in the event loop
+    assert sleep_elapsed >= hold_seconds * 0.7
+

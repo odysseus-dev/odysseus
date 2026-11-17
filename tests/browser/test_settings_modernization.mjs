@@ -1314,6 +1314,7 @@ async function testIntegrationForms(instance, cookies) {
   // Test clicking the card to open edit view and verify populated values
   await admin.page.click('.intg-card[data-intg-type="api"]');
   await admin.page.waitForSelector('#uf-api-name');
+  await admin.page.waitForFunction(() => document.querySelector('#uf-api-name')?.value === 'Phase4 Automated Service', null, { timeout: 8000 });
   const editVals = await admin.page.evaluate(() => ({
     name: document.querySelector('#uf-api-name').value,
     url: document.querySelector('#uf-api-url').value,
