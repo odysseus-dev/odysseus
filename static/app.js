@@ -224,7 +224,10 @@ window.fetch = async function(...args) {
 };
 async function _fetchChecked(...args) {
   const res = await _origFetch.apply(this, args);
-  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
+  // The toast history log is best-effort. With auth disabled it answers 401
+  // for every toast, which must not bounce the page to /login (that looked
+  // like a random reload after any error/success toast).
+  if (res.status === 401 && !String(args[0]).includes('/api/auth/') && !String(args[0]).includes('/api/tasks/notification-logs')) {
     window.location.href = '/login';
   }
   return res;
