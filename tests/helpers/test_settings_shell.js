@@ -906,6 +906,141 @@ function moduleSource(relativePath) {
     fixture.modal.classList.contains('hidden') && !fixture.content.classList.contains('modal-closing'),
   );
 
+  // ── Explicit open(tab) respects what this caller is offered ──
+  vm.runInContext(moduleSource('peek.js'), context, { filename: 'peek.js' });
+  vm.runInContext(moduleSource('shell.js'), context, { filename: 'shell.js' });
+
+  const MEMBER = { isAdmin: false, accountsEnabled: true };
+  const ADMIN = { isAdmin: true, accountsEnabled: true };
+  const OPERATOR = { isAdmin: true, accountsEnabled: false };
+  const UNKNOWN = { isAdmin: false, accountsEnabled: true };
+  const shellFor = (initialAccess, known = true) => {
+    const probe = buildFixture(document);
+    const state = { access: initialAccess, known, adminInits: 0 };
+    const shell = context.createSettingsShell({
+      getModal: () => probe.modal,
+      ensureInitialized() {},
+      syncAppearanceCheckboxes() {},
+      refreshAiModelEndpoints() {},
+      isAdmin: () => state.access.isAdmin,
+      accountsEnabled: () => state.access.accountsEnabled,
+      accessKnown: () => state.known,
+      getAdminModule: () => ({ _initialized: false, _initData() { state.adminInits += 1; } }),
+    });
+    const shownPanels = () => Object.entries(probe.settingsPanels)
+      .filter(([, tab]) => !tab.panel.classList.contains('hidden'))
+      .map(([id]) => id);
+    const landing = () => `${context.getActiveSettingsTab(probe.modal, '')}|${shownPanels().join(',')}`;
+    return { probe, shell, state, landing };
+  };
+
+  const restricted = ['services', 'added-models', 'tools', 'users', 'system'];
+  const member = shellFor(MEMBER);
+  const memberLandings = restricted.map(tab => {
+    member.shell.open(tab);
+    return member.landing();
+  });
+  check(
+    'open(tab) never activates an admin-only panel for a member',
+    memberLandings.every(value => value === 'ai|ai') && member.state.adminInits === 0,
+    `${memberLandings.join(' ; ')} adminInits=${member.state.adminInits}`,
+  );
+  member.shell.open('account');
+  member.shell.open('tools', { section: 'agent-limits' });
+  check(
+    'a refused open(tab) keeps a member on the panel they were using and reveals nothing',
+    member.landing() === 'account|account'
+      && member.probe.settingsPanels.tools.sections['agent-limits'].getAttribute('tabindex') === null,
+    member.landing(),
+  );
+  member.shell.open('no-such-panel');
+  check('open(tab) with an unknown panel id lands on an offered panel', member.landing() === 'account|account', member.landing());
+
+  const admin = shellFor(ADMIN);
+  const adminLandings = restricted.map(tab => {
+    admin.shell.open(tab);
+    return admin.landing();
+  });
+  check(
+    'open(tab) still activates every admin panel for an administrator',
+    adminLandings.join(' ; ') === restricted.map(tab => `${tab}|${tab}`).join(' ; '),
+    adminLandings.join(' ; '),
+  );
+  admin.shell.open('tools', { section: 'agent-limits' });
+  check(
+    'open(tab, { section }) still reveals an admin card for an administrator',
+    admin.probe.settingsPanels.tools.sections['agent-limits'].getAttribute('tabindex') === '-1',
+  );
+
+  const operator = shellFor(OPERATOR);
+  operator.shell.open('tools');
+  const operatorTools = operator.landing();
+  operator.shell.open('users');
+  check(
+    'auth-disabled operator opens admin panels but not user management',
+    operatorTools === 'tools|tools' && operator.landing() === 'tools|tools',
+    `${operatorTools} ; ${operator.landing()}`,
+  );
+
+  const early = shellFor(UNKNOWN, false);
+  early.shell.open('tools', { section: 'agent-limits' });
+  const beforeAccess = early.landing();
+  early.state.access = ADMIN;
+  early.state.known = true;
+  early.shell.syncAdminVisibility();
+  check(
+    'an admin panel requested before access is known opens once it is known',
+    beforeAccess === 'ai|ai' && early.landing() === 'tools|tools'
+      && early.probe.settingsPanels.tools.sections['agent-limits'].getAttribute('tabindex') === '-1',
+    `${beforeAccess} ; ${early.landing()}`,
+  );
+
+  const earlyMember = shellFor(UNKNOWN, false);
+  earlyMember.shell.open('tools');
+  earlyMember.state.access = MEMBER;
+  earlyMember.state.known = true;
+  earlyMember.shell.syncAdminVisibility();
+  check(
+    'a request made before access is known is dropped for a member',
+    earlyMember.landing() === 'ai|ai',
+    earlyMember.landing(),
+  );
+
+  const closedEarly = shellFor(UNKNOWN, false);
+  closedEarly.shell.open('tools');
+  closedEarly.shell.close();
+  closedEarly.state.access = ADMIN;
+  closedEarly.state.known = true;
+  closedEarly.shell.syncAdminVisibility();
+  check(
+    'closing Settings cancels a request made before access was known',
+    closedEarly.landing() === 'ai|ai',
+    closedEarly.landing(),
+  );
+
+  const movedEarly = shellFor(UNKNOWN, false);
+  movedEarly.shell.open('tools');
+  // The sidebar path: activate, then the shell's activation callback.
+  context.activateSettingsPanel(movedEarly.probe.modal, 'appearance');
+  movedEarly.shell.onPanelActivated('appearance');
+  movedEarly.state.access = ADMIN;
+  movedEarly.state.known = true;
+  movedEarly.shell.syncAdminVisibility();
+  check(
+    'choosing another panel cancels a request made before access was known',
+    movedEarly.landing() === 'appearance|appearance',
+    movedEarly.landing(),
+  );
+
+  const stale = shellFor(MEMBER);
+  // The fixture starts on Add Models, which a member is not offered.
+  stale.shell.syncAdminVisibility();
+  check(
+    'access resolution moves a member off a panel they are not offered',
+    stale.landing() === 'ai|ai',
+    stale.landing(),
+  );
+
   console.log(JSON.stringify(results));
   if (results.some(result => !result.pass)) process.exitCode = 1;
 })();

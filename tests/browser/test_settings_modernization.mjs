@@ -616,6 +616,53 @@ async function testMemberScope(instance, cookies) {
   await member.context.close();
 }
 
+// Calls the app's own Settings module, the way other modules deep-link into it.
+async function openViaModule(page, tab, section, via = 'settings') {
+  return page.evaluate(async ({ tab, section, via }) => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    const settings = await import(src);
+    if (via === 'admin' && window.adminModule) window.adminModule.open(tab);
+    else settings.open(tab, section ? { section } : undefined);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const active = document.querySelector('#settings-modal [data-settings-tab].active');
+    const shown = Array.from(document.querySelectorAll('#settings-modal [data-settings-panel]'))
+      .filter(panel => !panel.classList.contains('hidden'))
+      .map(panel => panel.dataset.settingsPanel);
+    return { active: active ? active.dataset.settingsTab : null, shown, focused: document.activeElement?.dataset?.settingsSection || null };
+  }, { tab, section, via });
+}
+
+const RESTRICTED_PANELS = ['services', 'added-models', 'tools', 'users', 'system'];
+
+async function testRestrictedNavigation(instance, cookies) {
+  const member = await pageAs(instance, cookies.memberCookie);
+  await openSettings(member.page);
+  const memberLandings = {};
+  for (const tab of RESTRICTED_PANELS) memberLandings[tab] = await openViaModule(member.page, tab);
+  memberLandings['added-models#per-model-settings'] = await openViaModule(member.page, 'added-models', 'per-model-settings');
+  memberLandings['admin.open(services)'] = await openViaModule(member.page, 'services', null, 'admin');
+  const leaked = Object.entries(memberLandings).filter(([key, landing]) => {
+    const tab = key.split(/[#(]/)[0].replace('admin.open', 'services');
+    return landing.active === tab || landing.shown.some(id => RESTRICTED_PANELS.includes(id)) || landing.shown.length !== 1;
+  });
+  check('member: explicit open(tab) never activates an admin-only panel', leaked.length === 0, JSON.stringify(memberLandings));
+  const memberAccount = await openViaModule(member.page, 'account', 'two-factor');
+  check('member: explicit open(tab) still opens panels the member is offered', memberAccount.active === 'account' && memberAccount.focused === 'two-factor', JSON.stringify(memberAccount));
+  check('member restricted-navigation page has no script errors', member.errors.length === 0, member.errors.join(' | '));
+  await member.context.close();
+
+  const admin = await pageAs(instance, cookies.adminCookie);
+  await openSettings(admin.page);
+  const adminLandings = {};
+  for (const tab of RESTRICTED_PANELS) adminLandings[tab] = await openViaModule(admin.page, tab);
+  const adminMissed = RESTRICTED_PANELS.filter(tab => adminLandings[tab].active !== tab || adminLandings[tab].shown.join(',') !== tab);
+  check('admin: explicit open(tab) still activates every admin panel', adminMissed.length === 0, JSON.stringify(adminLandings));
+  const adminDeep = await openViaModule(admin.page, 'tools', 'agent-limits');
+  check('admin: open(tab, { section }) still reveals an admin card', adminDeep.active === 'tools' && adminDeep.focused === 'agent-limits', JSON.stringify(adminDeep));
+  check('admin restricted-navigation page has no script errors', admin.errors.length === 0, admin.errors.join(' | '));
+  await admin.context.close();
+}
+
 async function utilityControls(page) {
   return page.evaluate(() => {
     const rows = Array.from(document.querySelectorAll('#set-utilityFallbacks .settings-fallback-row'));
@@ -859,6 +906,11 @@ async function testAuthDisabledOperator(instance) {
   const usersSearch = await searchResults(operator.page, 'signup');
   check('auth-disabled finder omits user management', usersSearch.length === 0, usersSearch.join(','));
   await operator.page.fill('#settings-nav-search', '');
+  const operatorTools = await openViaModule(operator.page, 'tools', 'agent-limits');
+  const operatorUsers = await openViaModule(operator.page, 'users');
+  check('auth-disabled operator: explicit open(tab) reaches admin panels', operatorTools.active === 'tools' && operatorTools.focused === 'agent-limits', JSON.stringify(operatorTools));
+  check('auth-disabled operator: explicit open(tab) does not activate user management', operatorUsers.active !== 'users' && !operatorUsers.shown.includes('users') && operatorUsers.shown.length === 1, JSON.stringify(operatorUsers));
+  await operator.page.fill('#settings-nav-search', '');
   await operator.page.click('[data-settings-tab="ai"]');
   await operator.page.waitForFunction(() => Array.from(document.querySelector('#set-defaultEpSelect').options).some(o => o.value === 'ep-alpha'), null, { timeout: 15000 });
   await operator.page.waitForTimeout(300);
@@ -911,6 +963,7 @@ async function main() {
   await testMemberScope(authInstance, cookies);
   await testAdminScope(authInstance, cookies);
   await testAdminLoadFailure(authInstance, cookies);
+  await testRestrictedNavigation(authInstance, cookies);
   await testMemberUtilityFallbackRecovery(authInstance, cookies);
   await testMemberStatusRecovery(authInstance, cookies);
 

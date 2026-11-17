@@ -59,6 +59,9 @@ function _canManageSettings() {
 function _accountsEnabled() {
   return !_settingsAccess || _settingsAccess.authEnabled;
 }
+function _settingsAccessKnown() {
+  return Boolean(_settingsAccess) || typeof window._canManageSettings === 'boolean';
+}
 // Show the caller's access in the modal: offered panels and scope labels.
 // Safe to repeat; scope labels are replaced, not added.
 function _applySettingsAccess(access) {
@@ -248,6 +251,7 @@ const _shell = createSettingsShell({
   refreshAiModelEndpoints: () => refreshAiModelEndpoints(),
   isAdmin: () => _canManageSettings(),
   accountsEnabled: () => _accountsEnabled(),
+  accessKnown: () => _settingsAccessKnown(),
   getAdminModule: () => window.adminModule,
 });
 

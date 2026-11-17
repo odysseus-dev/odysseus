@@ -1019,7 +1019,9 @@ for (const required of REAL_MODULES) {
 }
 
 
-// First open drives initAll() and therefore the real shell bindings.
+// First open drives initAll() and therefore the real shell bindings. The
+// stubbed /api/auth/status never answers, so this caller's access is unknown:
+// the admin-only Services panel is not activated for them.
 settings.open('services');
 
 assert(
@@ -1028,8 +1030,9 @@ assert(
 );
 
 assert(
-  fixture.services.button.classList.contains('active'),
-  'first open("services") did not activate Services',
+  !fixture.services.button.classList.contains('active')
+    && fixture.services.panel.classList.contains('hidden'),
+  'open("services") activated an admin-only panel while access was unknown',
 );
 
 
@@ -1201,6 +1204,12 @@ settings.open('services');
 assert(
   fixture.adminOnly.style.display === '',
   'open() did not reveal .admin-only for an admin',
+);
+
+assert(
+  fixture.services.button.classList.contains('active')
+    && !fixture.services.panel.classList.contains('hidden'),
+  'open("services") did not activate Services for an admin',
 );
 
 

@@ -32,6 +32,7 @@ import { syncSettingsPeek } from './peek.js';
  * @param {() => void} options.refreshAiModelEndpoints   AI panel endpoint refresh
  * @param {() => boolean} options.isAdmin                may change server-wide settings
  * @param {() => boolean} [options.accountsEnabled]      false when authentication is disabled
+ * @param {() => boolean} [options.accessKnown]          false until /api/auth/status has answered
  * @param {() => object|null} options.getAdminModule     the lazily loaded admin module
  */
 export function createSettingsShell(options = {}) {
@@ -41,12 +42,44 @@ export function createSettingsShell(options = {}) {
   const refreshAiModelEndpoints = options.refreshAiModelEndpoints;
   const isAdmin = options.isAdmin;
   const accountsEnabled = options.accountsEnabled;
+  const accessKnown = options.accessKnown;
   const getAdminModule = options.getAdminModule;
 
   const _modal = () => (typeof getModal === 'function' ? getModal() : null);
   const _admin = () => (typeof getAdminModule === 'function' ? getAdminModule() : null);
+  const _access = () => ({
+    isAdmin: typeof isAdmin === 'function' ? !!isAdmin() : false,
+    accountsEnabled: typeof accountsEnabled === 'function' ? accountsEnabled() !== false : true,
+  });
+  const _accessKnown = () => (typeof accessKnown === 'function' ? accessKnown() !== false : true);
+  // Panels any caller could be offered once their access is known.
+  const _MOST_PERMISSIVE = Object.freeze({ isAdmin: true, accountsEnabled: true });
+
+  // A panel requested by open() before access was known, applied (or
+  // dropped) once it is. Cleared when the user goes to another panel, by the
+  // next open() and by close().
+  let _pendingOpen = null;
+
+  function _afterActivation(modalEl, tab, section) {
+    // Preserve existing panel-specific side effects when Settings is opened
+    // directly to a tab as well as when the user navigates there.
+    onPanelActivated(tab);
+
+    // Auto-init admin data if showing an admin tab.
+    const admin = _admin();
+    if (isAdminManagedSettingsTab(tab) && admin && !admin._initialized) {
+      admin._initData();
+    }
+
+    if (section) revealSettingsSection(modalEl, tab, section);
+  }
+
+  function _isOpen(modalEl) {
+    return Boolean(modalEl) && !modalEl.classList.contains('hidden');
+  }
 
   function onPanelActivated(tab) {
+    _pendingOpen = null;
     // Appearance keeps its existing transparent preview behavior.
     document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
     syncSettingsPeek(_modal(), tab === 'appearance');
@@ -66,9 +99,7 @@ export function createSettingsShell(options = {}) {
     return false;
   }
 
-  function syncAdminVisibility() {
-    const modalEl = _modal();
-    if (!modalEl) return;
+  function _syncVisibility(modalEl) {
     const admin = typeof isAdmin === 'function' ? !!isAdmin() : false;
     modalEl.querySelectorAll('.admin-only').forEach(el => {
       el.style.display = admin ? '' : 'none';
@@ -83,6 +114,34 @@ export function createSettingsShell(options = {}) {
   }
 
   /**
+   * Re-apply what this caller is offered. Called again once
+   * /api/auth/status answers, which also settles a panel requested before
+   * then.
+   */
+  function syncAdminVisibility() {
+    const modalEl = _modal();
+    if (!modalEl) return;
+    _syncVisibility(modalEl);
+
+    if (!_accessKnown()) return;
+    const access = _access();
+    const pending = _pendingOpen;
+    _pendingOpen = null;
+    if (pending && _isOpen(modalEl) && isSettingsPanelOffered(pending.tab, access)) {
+      activateSettingsPanel(modalEl, pending.tab);
+      _afterActivation(modalEl, pending.tab, pending.section);
+      return;
+    }
+    // Never leave this caller on a panel they are not offered.
+    const current = getActiveSettingsTab(modalEl);
+    if (!isSettingsPanelOffered(current, access)) {
+      const next = getFirstOfferedSettingsPanelId(access);
+      activateSettingsPanel(modalEl, next);
+      if (_isOpen(modalEl)) _afterActivation(modalEl, next, '');
+    }
+  }
+
+  /**
    * Open Settings, optionally on a panel and a section within it:
    * `open('ai', { section: 'default-chat' })` lands on that card.
    */
@@ -93,41 +152,41 @@ export function createSettingsShell(options = {}) {
 
     const modalEl = _modal();
     showSettingsModal(modalEl);
-    syncAdminVisibility();
+    _pendingOpen = null;
+    if (modalEl) _syncVisibility(modalEl);
 
-    if (tab) {
-      activateSettingsPanel(modalEl, tab);
+    const section = openOptions && typeof openOptions.section === 'string'
+      ? openOptions.section
+      : '';
+    // Explicit navigation (other modules, slash commands, deep links) gets
+    // the same rule as the sidebar: never a panel this caller is not offered,
+    // such as the admin-only panels for a signed-in user or user management
+    // when authentication is disabled. The server still authorizes every
+    // request; this only keeps the UI from presenting controls that fail.
+    const access = _access();
+    const requested = tab && getSettingsPanel(tab) ? tab : '';
+    const allowed = Boolean(requested) && isSettingsPanelOffered(requested, access);
+
+    if (allowed) {
+      activateSettingsPanel(modalEl, requested);
     } else {
-      // Never land on a panel this caller is not offered (for example the
-      // admin-only Add Models default for a signed-in user).
-      const access = {
-        isAdmin: typeof isAdmin === 'function' ? !!isAdmin() : false,
-        accountsEnabled: typeof accountsEnabled === 'function' ? accountsEnabled() !== false : true,
-      };
       const current = getActiveSettingsTab(modalEl);
       if (!isSettingsPanelOffered(current, access)) {
         activateSettingsPanel(modalEl, getFirstOfferedSettingsPanelId(access));
       }
     }
 
-    // Preserve existing panel-specific side effects when Settings is opened
-    // directly to a tab as well as when the user navigates there.
-    const activeTab = tab || getActiveSettingsTab(modalEl);
-    onPanelActivated(activeTab);
+    _afterActivation(modalEl, getActiveSettingsTab(modalEl), allowed ? section : '');
 
-    // Auto-init admin data if showing an admin tab.
-    const admin = _admin();
-    if (isAdminManagedSettingsTab(activeTab) && admin && !admin._initialized) {
-      admin._initData();
+    if (requested && !allowed && !_accessKnown()
+        && isSettingsPanelOffered(requested, _MOST_PERMISSIVE)) {
+      // Who the caller is is not known yet; decide when it is.
+      _pendingOpen = { tab: requested, section };
     }
-
-    const section = openOptions && typeof openOptions.section === 'string'
-      ? openOptions.section
-      : '';
-    if (tab && section) revealSettingsSection(modalEl, tab, section);
   }
 
   function close() {
+    _pendingOpen = null;
     const modalEl = _modal();
     if (!modalEl) return;
 
