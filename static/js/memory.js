@@ -347,6 +347,20 @@ function syncToggleDim(toggle) {
   }
 }
 
+/** One bulk /api/prefs read shared by every pref control loaded together
+ *  (opening the panel used to issue one GET per pref). The snapshot is only
+ *  reused for a moment, so reopening the panel always re-reads. */
+let _prefsSnapshot = null;
+function _readPref(prefKey) {
+  if (!_prefsSnapshot) {
+    _prefsSnapshot = fetch(`${window.location.origin}/api/prefs`, { credentials: 'same-origin' })
+      .then(async (res) => (res.ok ? { ok: true, prefs: await res.json() } : { ok: false }));
+    const drop = () => setTimeout(() => { _prefsSnapshot = null; }, 1500);
+    _prefsSnapshot.then(drop, drop);
+  }
+  return _prefsSnapshot.then((r) => ({ ok: r.ok, json: async () => ({ key: prefKey, value: r.ok ? r.prefs[prefKey] : undefined }) }));
+}
+
 /** Load/save a confidence slider backed by a float pref (0 = "All", else
  *  0.50–1.00). Slider position is the percent; the MAX position means "All"
  *  (no minimum), and sliding down sets the bar to 95%, 90%, 85%… */
@@ -357,7 +371,7 @@ async function syncPrefSlider(elementId, prefKey, labelId, defaultVal) {
   const maxPos = Number(slider.max);
   const fmt = (pos) => (Number(pos) >= maxPos ? 'All' : `≥ ${pos}%`);
   try {
-    const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`);
+    const res = await _readPref(prefKey);
     if (res.ok) {
       const data = await res.json();
       let pref = (data.value === undefined || data.value === null) ? defaultVal : Number(data.value);
@@ -405,7 +419,7 @@ async function syncPrefNumber(elementId, prefKey, defaultVal) {
     return v;
   };
   try {
-    const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`);
+    const res = await _readPref(prefKey);
     if (res.ok) {
       const data = await res.json();
       input.value = String((data.value === undefined || data.value === null) ? defaultVal : clamp(data.value));
@@ -438,7 +452,7 @@ async function syncPrefToggle(elementId, prefKey, onMsg, offMsg, dimBelow = true
   const toggle = document.getElementById(elementId);
   if (!toggle) return;
   try {
-    const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`);
+    const res = await _readPref(prefKey);
     if (res.ok) {
       const data = await res.json();
       toggle.checked = data.value !== false;
