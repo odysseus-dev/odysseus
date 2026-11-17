@@ -880,8 +880,21 @@ async function testAdminScope(instance, cookies) {
   const blankOption = await admin.page.$$eval('#set-defaultEpSelect option', nodes => nodes.some(node => node.value === ''));
   check('admin server default keeps its existing required endpoint choice', !blankOption);
 
+  const preSelect = await admin.page.evaluate(() => ({
+    value: document.querySelector('#set-defaultEpSelect').value,
+    disabled: document.querySelector('#set-defaultEpSelect').disabled,
+    message: document.querySelector('#set-defaultChatMsg').textContent,
+  }));
   await admin.page.selectOption('#set-defaultEpSelect', 'ep-alpha');
-  await admin.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
+  const savedShown = await admin.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 }).then(() => true, () => false);
+  if (!savedShown) {
+    const postSelect = await admin.page.evaluate(() => ({
+      value: document.querySelector('#set-defaultEpSelect').value,
+      disabled: document.querySelector('#set-defaultEpSelect').disabled,
+      message: document.querySelector('#set-defaultChatMsg').textContent,
+    }));
+    check('admin default save reports Saved', false, JSON.stringify({ preSelect, postSelect, writes: admin.settingsWrites.length }));
+  }
   const globalSettings = (await api(instance, cookies.adminCookie, '/api/auth/settings')).body;
   check('admin save writes the server-wide default', globalSettings.default_endpoint_id === 'ep-alpha' && globalSettings.default_model === 'alpha-large', JSON.stringify({ ep: globalSettings.default_endpoint_id, model: globalSettings.default_model }));
   const adminPrefs = (await api(instance, cookies.adminCookie, '/api/prefs')).body;
