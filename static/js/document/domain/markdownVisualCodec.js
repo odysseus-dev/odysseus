@@ -128,22 +128,46 @@ function _stripInlineCodeSpans(line) {
 function _splitTableCells(line) {
   let trimmed = String(line || '').trim();
   if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
-  if (trimmed.endsWith('|') && !trimmed.endsWith('\\|')) trimmed = trimmed.slice(0, -1);
+  if (trimmed.endsWith('|')) {
+    let slashes = 0;
+    let idx = trimmed.length - 2;
+    while (idx >= 0 && trimmed[idx] === '\\') {
+      slashes++;
+      idx--;
+    }
+    if (slashes % 2 === 0) {
+      trimmed = trimmed.slice(0, -1);
+    }
+  }
   const cells = [];
   let current = '';
-  for (let i = 0; i < trimmed.length; i++) {
+  let i = 0;
+  while (i < trimmed.length) {
     const ch = trimmed[i];
+    if (ch === '`') {
+      let tickLen = 0;
+      while (i + tickLen < trimmed.length && trimmed[i + tickLen] === '`') tickLen++;
+      const closer = '`'.repeat(tickLen);
+      const end = trimmed.indexOf(closer, i + tickLen);
+      if (end !== -1 && (end + tickLen >= trimmed.length || trimmed[end + tickLen] !== '`')) {
+        current += trimmed.slice(i, end + tickLen);
+        i = end + tickLen;
+        continue;
+      }
+    }
     if (ch === '\\' && i + 1 < trimmed.length) {
       current += trimmed[i + 1] === '|' ? '|' : trimmed.slice(i, i + 2);
-      i++;
+      i += 2;
       continue;
     }
     if (ch === '|') {
       cells.push(current.trim());
       current = '';
+      i++;
       continue;
     }
     current += ch;
+    i++;
   }
   cells.push(current.trim());
   return cells;
@@ -1369,6 +1393,38 @@ function _serializeListNode(listNode, indent = '', context = null) {
   return lines.join('\n');
 }
 
+function _escapeTableCellPipes(text) {
+  const s = String(text || '').replace(/\n+/g, ' ');
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === '\\' && i + 1 < s.length) {
+      out += s.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if (s[i] === '`') {
+      let tickLen = 0;
+      while (i + tickLen < s.length && s[i + tickLen] === '`') tickLen++;
+      const closer = '`'.repeat(tickLen);
+      const end = s.indexOf(closer, i + tickLen);
+      if (end !== -1 && (end + tickLen >= s.length || s[end + tickLen] !== '`')) {
+        out += s.slice(i, end + tickLen);
+        i = end + tickLen;
+        continue;
+      }
+    }
+    if (s[i] === '|') {
+      out += '\\|';
+      i++;
+      continue;
+    }
+    out += s[i];
+    i++;
+  }
+  return out.trim();
+}
+
 function _serializeTableNode(tableNode, context = null) {
   const rows = [];
   const collectRows = (node) => {
@@ -1398,7 +1454,7 @@ function _serializeTableNode(tableNode, context = null) {
         }
         return {
           align: String(cell.style?.textAlign || '').toLowerCase(),
-          text: String(text || '').replace(/\n+/g, ' ').split('|').join('\\|').trim(),
+          text: _escapeTableCellPipes(text),
         };
       })
   ).filter(r => r.length > 0);

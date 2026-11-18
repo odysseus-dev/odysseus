@@ -930,6 +930,86 @@ describe('Table cell backslash and delimiter escaping', () => {
       assert.equal(_htmlToPlainText(html).replace('Header', '').trim(), text);
     }
   });
+
+  it('verifies complete matrix of zero to four backslashes before pipes, boundaries, and formatting', () => {
+    const matrix = [
+      { name: 'zero slashes before pipe', text: 'foo | bar', expectedPlain: 'foo | bar' },
+      { name: 'one slash before pipe', text: 'foo \\| bar', expectedPlain: 'foo \\| bar' },
+      { name: 'two slashes before pipe', text: 'foo \\\\| bar', expectedPlain: 'foo \\\\| bar' },
+      { name: 'three slashes before pipe', text: 'foo \\\\\\| bar', expectedPlain: 'foo \\\\\\| bar' },
+      { name: 'four slashes before pipe', text: 'foo \\\\\\\\| bar', expectedPlain: 'foo \\\\\\\\| bar' },
+      { name: 'literal pipe without backslash', text: 'just a | pipe', expectedPlain: 'just a | pipe' },
+      { name: 'leading pipe', text: '| leading pipe', expectedPlain: '| leading pipe' },
+      { name: 'trailing pipe', text: 'trailing pipe |', expectedPlain: 'trailing pipe |' },
+      { name: 'multiple pipes in cell', text: 'one | two | three', expectedPlain: 'one | two | three' },
+      { name: 'slash before cell boundary', text: 'end with slash\\', expectedPlain: 'end with slash\\' },
+      { name: 'two slashes at end of cell', text: 'end with two\\\\', expectedPlain: 'end with two\\\\' },
+      { name: 'three slashes at end of cell', text: 'end with three\\\\\\', expectedPlain: 'end with three\\\\\\' },
+      { name: 'four slashes at end of cell', text: 'end with four\\\\\\\\', expectedPlain: 'end with four\\\\\\\\' },
+      { name: 'empty cell', text: '', expectedPlain: '' },
+    ];
+
+    for (const entry of matrix) {
+      const tableNodes = [el('table', [el('tbody', [
+        el('tr', [el('th', 'Header')]),
+        el('tr', [el('td', entry.text === '' ? [el('br')] : [txt(entry.text)])]),
+      ])])];
+
+      const md1 = serializeVisualNodesToMarkdown(tableNodes);
+      const html1 = markdownToVisualHtml(md1);
+      assert.ok(html1.includes('<table>'), `${entry.name}: must render table`);
+      assert.equal(_htmlToPlainText(html1).replace('Header', '').trim(), entry.expectedPlain, `${entry.name}: plain text mismatch`);
+
+      const parsedNodes2 = parseCodecHtml(html1);
+      const md2 = serializeVisualNodesToMarkdown(parsedNodes2);
+      const html2 = markdownToVisualHtml(md2);
+      assert.equal(html1, html2, `${entry.name}: HTML must be idempotent across cycles`);
+      assert.equal(md1, md2, `${entry.name}: Markdown must be idempotent across cycles`);
+    }
+  });
+
+  it('verifies inline code, formatting, and adjacent delimiters in table cells', () => {
+    const formattedCases = [
+      {
+        name: 'inline code containing pipe',
+        nodes: [txt('code '), el('code', 'a | b'), txt(' inside')],
+        expectedPlain: 'code a | b inside',
+      },
+      {
+        name: 'escaped markdown formatting characters',
+        nodes: [txt('escaped *not bold*')],
+        expectedPlain: 'escaped *not bold*',
+      },
+      {
+        name: 'adjacent emphasis delimiters',
+        nodes: [el('strong', 'bold'), el('em', 'italic')],
+        expectedPlain: 'bolditalic',
+      },
+      {
+        name: 'cells containing both formatting and literal backslashes',
+        nodes: [el('strong', 'bold'), txt(' and C:\\path')],
+        expectedPlain: 'bold and C:\\path',
+      },
+    ];
+
+    for (const entry of formattedCases) {
+      const tableNodes = [el('table', [el('tbody', [
+        el('tr', [el('th', 'Col')]),
+        el('tr', [el('td', entry.nodes)]),
+      ])])];
+
+      const md1 = serializeVisualNodesToMarkdown(tableNodes);
+      const html1 = markdownToVisualHtml(md1);
+      assert.ok(html1.includes('<table>'));
+      assert.equal(_htmlToPlainText(html1).replace('Col', '').trim(), entry.expectedPlain);
+
+      const parsedNodes2 = parseCodecHtml(html1);
+      const md2 = serializeVisualNodesToMarkdown(parsedNodes2);
+      const html2 = markdownToVisualHtml(md2);
+      assert.equal(html1, html2, `${entry.name}: HTML must be idempotent across cycles`);
+      assert.equal(md1, md2, `${entry.name}: Markdown must be idempotent across cycles`);
+    }
+  });
 });
 
 describe('URL scheme security policies for links and images', () => {

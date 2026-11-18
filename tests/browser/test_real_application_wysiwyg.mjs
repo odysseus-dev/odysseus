@@ -448,6 +448,70 @@ try {
     'Reopened document retains exact byte-for-byte source fidelity from backend'
   );
 
+  // Verify no-op Visual/Source mode switching preserves untouched Markdown bytes
+  await page.locator('[data-mdview="edit"]').click();
+  await page.waitForSelector('#doc-editor-wrap', { state: 'visible' });
+  await page.locator('[data-mdview="visual"]').click();
+  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
+  await page.evaluate(async () => {
+    const p = await import('/static/js/document/application/persistence.js');
+    await p.saveDocument({ silent: true });
+  });
+  await waitForSaveState(page, 'saved');
+  const noopSwitchRes = await context.request.get(`${origin}/api/document/${t4Doc.id}`);
+  const noopSwitchDoc = await noopSwitchRes.json();
+  assert.equal(
+    noopSwitchDoc.current_content,
+    expectedModifiedSource,
+    'No-op Visual/Source switching must preserve untouched Markdown bytes'
+  );
+
+  // Verify real-backend table delimiter and literal backslash persistence
+  const tableDocRes = await context.request.post(`${origin}/api/document`, {
+    data: {
+      title: 'Table Escaping Fidelity',
+      content: [
+        '| Header 1 | Header 2 |',
+        '| :--- | ---: |',
+        '| foo \\| bar | `code | pipe` |',
+        '| path | C:\\foo\\bar |',
+      ].join('\n'),
+      language: 'markdown',
+    },
+  });
+  assert.equal(tableDocRes.ok(), true, 'Table document creation succeeded');
+  const tableDoc = await tableDocRes.json();
+
+  await page.evaluate(async (id) => {
+    const docMod = await import('/static/js/document.js');
+    await docMod.loadDocument(id);
+  }, tableDoc.id);
+  await page.waitForSelector('#doc-email-richbody.markdown-visual-mode', { state: 'visible' });
+
+  // Make an edit in the second row to trigger persistence
+  await page.evaluate(() => {
+    const rich = document.getElementById('doc-email-richbody');
+    const cells = Array.from(rich.querySelectorAll('td'));
+    const targetCell = cells.find((c) => c.textContent.includes('C:\\foo\\bar'));
+    if (targetCell) {
+      targetCell.textContent = 'C:\\foo\\bar_updated';
+      rich.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+
+  await page.evaluate(async () => {
+    const p = await import('/static/js/document/application/persistence.js');
+    await p.saveDocument({ silent: true });
+  });
+  await waitForSaveState(page, 'saved');
+
+  const tableBackendRes = await context.request.get(`${origin}/api/document/${tableDoc.id}`);
+  const tableBackend = await tableBackendRes.json();
+  assert.ok(
+    tableBackend.current_content.includes('foo \\| bar') && tableBackend.current_content.includes('`code | pipe`') && tableBackend.current_content.includes('C:\\foo\\bar_updated'),
+    'Table with pipes, code spans, and backslashes preserved through real backend save and reload'
+  );
+
   suiteResults.scenarios.push({
     id: 4,
     name: 'Source fidelity',
