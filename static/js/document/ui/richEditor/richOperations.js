@@ -44,6 +44,60 @@ export function _normalizeRichChecklists(root) {
     });
   }
 
+export function _setRichAlertType(rich, type) {
+    const safeType = String(type || '').toUpperCase();
+    if (!['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'].includes(safeType)) return false;
+    const element = _richSelectionElement(rich);
+    const alert = element?.closest?.('blockquote.markdown-alert');
+    if (!alert || !rich.contains(alert)) return false;
+    for (const name of ['note', 'tip', 'important', 'warning', 'caution']) alert.classList.remove(`markdown-alert-${name}`);
+    const normalized = safeType.toLowerCase();
+    alert.classList.add(`markdown-alert-${normalized}`);
+    alert.dataset.alert = safeType;
+    const label = alert.querySelector('[data-alert-label]');
+    if (label) {
+      label.dataset.alertLabel = safeType;
+      label.textContent = normalized[0].toUpperCase() + normalized.slice(1);
+    }
+    rich.dispatchEvent(new Event('input', { bubbles: true }));
+    rich._syncActive?.();
+    return true;
+  }
+
+const _richCodeLanguages = Object.freeze({
+    plain: '',
+    javascript: 'js',
+    python: 'python',
+    shell: 'bash',
+    json: 'json',
+  });
+
+export function _setRichCodeBlockLanguage(rich, requested) {
+    const languageKey = String(requested || '').toLowerCase();
+    if (!Object.hasOwn(_richCodeLanguages, languageKey)) return false;
+    const element = _richSelectionElement(rich);
+    const pre = element?.closest?.('pre');
+    if (!pre || !rich.contains(pre)) return false;
+    let code = Array.from(pre.children).find(child => child.tagName === 'CODE');
+    if (!code) {
+      code = document.createElement('code');
+      while (pre.firstChild) code.appendChild(pre.firstChild);
+      pre.appendChild(code);
+    }
+    const language = _richCodeLanguages[languageKey];
+    code.removeAttribute('data-lang');
+    code.classList.remove(...Array.from(code.classList).filter(name => name.startsWith('language-')));
+    pre.removeAttribute('data-lang');
+    pre.classList.remove(...Array.from(pre.classList).filter(name => name.startsWith('language-')));
+    if (language) {
+      code.dataset.lang = language;
+      code.classList.add(`language-${language}`);
+    }
+    rich.dispatchEvent(new Event('input', { bubbles: true, inputType: 'formatBlock' }));
+    rich._syncActive?.();
+    return true;
+  }
+
 function _richTextOffsetWithin(root) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !root.contains(selection.anchorNode)) return null;
@@ -214,16 +268,23 @@ function _replaceRichChecklist(rich, original, replacement, targetIndex = 0, tex
   }
 
 export function _setRichChecklistItemChecked(rich, item, checked) {
-    const list = item.parentElement;
-    const items = _richChecklistItems(list);
-    const itemIndex = items.indexOf(item);
-    const textOffset = _richTextOffsetWithin(item);
-    const clone = list.cloneNode(true);
-    const cloneItem = _richChecklistItems(clone)[itemIndex];
-    if (!cloneItem) return;
-    cloneItem.dataset.checked = checked ? 'true' : 'false';
-    cloneItem.setAttribute('aria-checked', checked ? 'true' : 'false');
-    _replaceRichChecklist(rich, list, clone, itemIndex, textOffset);
+    const value = checked ? 'true' : 'false';
+    if (rich.classList.contains('markdown-visual-mode')) {
+      // Replacing an entire list through insertHTML can reparent its items,
+      // especially in the browser wrappers created after inserting a divider.
+      item.dataset.checked = value;
+      item.setAttribute('aria-checked', value);
+    } else {
+      const list = item.parentElement;
+      const itemIndex = _richChecklistItems(list).indexOf(item);
+      const textOffset = _richTextOffsetWithin(item);
+      const clone = list.cloneNode(true);
+      const cloneItem = _richChecklistItems(clone)[itemIndex];
+      if (!cloneItem) return;
+      cloneItem.dataset.checked = value;
+      cloneItem.setAttribute('aria-checked', value);
+      _replaceRichChecklist(rich, list, clone, itemIndex, textOffset);
+    }
     _syncEmailRichbody(rich);
     _scheduleEmailRichbodySave();
     rich._syncActive?.();

@@ -10,7 +10,7 @@ import { _RICH_COLOR_PALETTE, _RICH_FONT_SIZE_PX } from '../../domain/richTextRu
 import { _currentBlockTag, _normalizedRichMenuColor, _richMenuColorHex, applyMdFormat } from './formatting.js';
 import { _restoreRichLinkRange } from './links.js';
 import { _emailRichbodyActive } from './richBodySync.js';
-import { _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage } from './richOperations.js';
+import { _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage, _setRichAlertType, _setRichCodeBlockLanguage } from './richOperations.js';
 
 export let _mdDdActivationSerial = 0;
 
@@ -19,6 +19,14 @@ let _mdDdLastActivation = { kind: '', token: 0, time: 0 };
 export function nextMdDropdownActivationToken() {
     return ++_mdDdActivationSerial;
   }
+
+function _richSelectionNode(rich) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  const node = selection.getRangeAt(0).startContainer;
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  return element && rich.contains(element) ? element : null;
+}
 
 function _richColorMenuItems(kind) {
     const prefix = kind === 'color' ? 'forecolor' : 'highlight';
@@ -40,8 +48,25 @@ export function _richDropdownCurrentActions(kind, rich, selectedImage, selectedC
       if (kind === 'heading') {
         current.add(/^h[1-6]$/.test(block) ? block : 'paragraph');
       } else if (kind === 'code') {
-        if (block === 'pre') current.add('codeblock');
+        const pre = _richSelectionNode(rich)?.closest?.('pre');
+        if (block === 'pre') {
+          current.add('codeblock');
+          const code = pre?.querySelector('code');
+          const lang = String(code?.dataset?.lang || '').toLowerCase();
+          const languageKeys = { js: 'javascript', javascript: 'javascript', py: 'python', python: 'python', bash: 'shell', sh: 'shell', json: 'json' };
+          if (!lang) current.add('code-lang:plain');
+          else if (languageKeys[lang]) current.add(`code-lang:${languageKeys[lang]}`);
+        }
         if (_richInlineCodeTypingArmed || _richSelectionInlineCode(rich)) current.add('code');
+      } else if (kind === 'alert') {
+        const selection = window.getSelection();
+        const node = selection?.anchorNode;
+        const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        const type = element?.closest?.('blockquote.markdown-alert')?.dataset?.alert;
+        if (type) {
+          current.add('alert:selected');
+          current.add(`alert:${String(type).toUpperCase()}`);
+        }
       } else if (kind === 'list') {
         if (_richSelectionChecklistItem(rich)) current.add('check');
         else if (document.queryCommandState('insertOrderedList')) current.add('ol');
@@ -93,6 +118,11 @@ export function _richDropdownCurrentActions(kind, rich, selectedImage, selectedC
         const table = selectedCell.closest('table');
         const cellAlignment = selectedCell.style.verticalAlign || 'top';
         current.add(`table:cell-align:${['middle', 'bottom'].includes(cellAlignment) ? cellAlignment : 'top'}`);
+        const columnAlignments = Array.from(table.rows).map(row => row.cells[selectedCell.cellIndex]?.style.textAlign || '');
+        if (columnAlignments.length && columnAlignments.every(value => value === columnAlignments[0])) {
+          const alignment = columnAlignments[0];
+          current.add(`table:column-align:${['left', 'center', 'right'].includes(alignment) ? alignment : 'reset'}`);
+        }
         const firstRow = table?.rows?.[0];
         if (firstRow && Array.from(firstRow.cells).every(item => item.tagName === 'TH')) {
           current.add('table:toggle-header-row');
@@ -140,7 +170,18 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
         ['fontname:Verdana', 'Verdana', 'Vv'],
         ['fontname:Courier New', 'Courier New', 'Cc'],
       ],
-      code: [['code', 'Inline code', '`'], ['codeblock', 'Code block', '```']],
+      code: [
+        ['code', 'Inline code', '`'], ['codeblock', 'Code block', '```'],
+        ['code-lang:plain', 'Language: Plain text', 'T'],
+        ['code-lang:javascript', 'Language: JavaScript', 'JS'],
+        ['code-lang:python', 'Language: Python', 'Py'],
+        ['code-lang:shell', 'Language: Shell', '$'],
+        ['code-lang:json', 'Language: JSON', '{}'],
+      ],
+      alert: [
+        ['alert:NOTE', 'Note', 'N'], ['alert:TIP', 'Tip', 'T'], ['alert:IMPORTANT', 'Important', '!'],
+        ['alert:WARNING', 'Warning', '⚠'], ['alert:CAUTION', 'Caution', '×'],
+      ],
       list: [
         ['ul', 'Bullet list', '•'],
         ['ol', 'Numbered list', '1.'],
@@ -176,6 +217,10 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
         ['table:cell-align:top', 'Align cell top', '↑'],
         ['table:cell-align:middle', 'Align cell middle', '↕'],
         ['table:cell-align:bottom', 'Align cell bottom', '↓'],
+        ['table:column-align:left', 'Column: align left', '←'],
+        ['table:column-align:center', 'Column: align center', '↔'],
+        ['table:column-align:right', 'Column: align right', '→'],
+        ['table:column-align:reset', 'Column: clear alignment', '↺'],
         ['table:row-above', 'Add row above', '↑'],
         ['table:row-below', 'Add row below', '↓'],
         ['table:column-left', 'Add column left', '←'],
@@ -222,6 +267,7 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
         || action === 'table:column-right'
         || action === 'table:delete-row'
         || action === 'table:delete-column'
+        || action.startsWith('table:column-align:')
         || action === 'table:delete'
       ));
     }
@@ -245,10 +291,11 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
     menu.style.left = rect.left + 'px';
     menu.style.zIndex = String(topPortalZ());
     const rich = _emailRichbodyActive();
+    if (kind === 'code' && !rich) items = items?.filter(([action]) => !action.startsWith('code-lang:'));
     const selectedCell = rich ? _richSelectionCell(rich) : null;
     const selectedImage = rich ? _selectedRichImage(rich) : null;
     const currentActions = _richDropdownCurrentActions(kind, rich, selectedImage, selectedCell);
-    const statefulKinds = new Set(['heading', 'code', 'list', 'font', 'textsize', 'align', 'spacing', 'color', 'highlight', 'image']);
+    const statefulKinds = new Set(['heading', 'code', 'list', 'font', 'textsize', 'align', 'spacing', 'color', 'highlight', 'image', 'alert']);
     const checkboxKinds = new Set(['code', 'image']);
     let savedRichRange = null;
     const selection = window.getSelection();
@@ -284,7 +331,8 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
       it.className = 'doc-overflow-item';
       const tableHeaderToggle = md === 'table:toggle-header-row' || md === 'table:toggle-header-column';
       const tableCellAlignment = md.startsWith('table:cell-align:');
-      const statefulItem = tableHeaderToggle || tableCellAlignment || (statefulKinds.has(kind) && !md.endsWith(':alt') && !md.endsWith(':delete'));
+      const columnAlignment = md.startsWith('table:column-align:');
+      const statefulItem = tableHeaderToggle || tableCellAlignment || columnAlignment || (statefulKinds.has(kind) && !md.endsWith(':alt') && !md.endsWith(':delete'));
       it.setAttribute('role', statefulItem ? ((checkboxKinds.has(kind) || tableHeaderToggle) ? 'menuitemcheckbox' : 'menuitemradio') : 'menuitem');
       it.tabIndex = -1;
       if (statefulItem) it.setAttribute('aria-checked', currentActions.has(md) ? 'true' : 'false');
@@ -296,7 +344,9 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
         (md === 'table:merge-right' && !_richTableCanMergeRight(selectedCell))
         || (md === 'table:split-cell' && !_richTableCanSplitCell(selectedCell))
       );
-      if ((needsTableSelection && (!selectedCell || unavailableTableAction)) || (needsImageSelection && !selectedImage)) {
+      if ((needsTableSelection && (!selectedCell || unavailableTableAction)) || (needsImageSelection && !selectedImage)
+          || (md.startsWith('alert:') && !currentActions.has('alert:selected'))
+          || (md.startsWith('code-lang:') && !currentActions.has('codeblock'))) {
         it.disabled = true;
         it.setAttribute('aria-disabled', 'true');
       }
@@ -355,7 +405,9 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
           } else if (rich && savedRichRange) {
             _restoreRichLinkRange(rich, savedRichRange);
           }
-          applyMdFormat(md);
+          if (md.startsWith('alert:')) _setRichAlertType(rich, md.slice('alert:'.length));
+          else if (md.startsWith('code-lang:')) _setRichCodeBlockLanguage(rich, md.slice('code-lang:'.length));
+          else applyMdFormat(md);
         };
         if (md.startsWith('table:')) requestAnimationFrame(applyDropdownAction);
         else applyDropdownAction();
@@ -533,7 +585,13 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
     });
 
     const close = (ev) => {
-      if (ev?.type === 'scroll' && ev.target?.closest?.('.md-toolbar-items')) return;
+      if (ev?.type === 'scroll') {
+        const scroller = ev.target;
+        // Autosave can scroll the document's tab strip without moving this
+        // menu anchor. Only scroll affecting the anchor can invalidate it.
+        if (scroller !== window && scroller !== document && !scroller?.contains?.(toggleBtn)) return;
+        if (scroller?.closest?.('.md-toolbar-items')) return;
+      }
       if (ev && ev.type === 'keydown') {
         if (ev.key !== 'Escape') return;
         // Let the menu's own key handler restore focus to its toggle.
@@ -549,6 +607,7 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
       dismiss(ev?.type === 'keydown');
     };
     setTimeout(() => {
+      if (!menu.isConnected) return;
       document.addEventListener('click', close, true);
       document.addEventListener('keydown', close, true);
       window.addEventListener('scroll', close, true);

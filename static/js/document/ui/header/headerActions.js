@@ -230,7 +230,10 @@ export function _syncHeaderActions() {
     }
 
     if (lang === 'markdown') {
-      show = false;
+      show = Boolean(doc);
+      actionBtn.textContent = _mdActive ? 'Edit' : 'Preview';
+      actionBtn.title = _mdActive ? 'Return to editor' : 'Preview Markdown';
+      actionBtn.setAttribute('aria-pressed', String(Boolean(_mdActive)));
       if (mdToggle) {
         const visualBtn = mdToggle.querySelector('[data-mdview="visual"]');
         const editBtn = mdToggle.querySelector('[data-mdview="edit"]');
@@ -280,7 +283,8 @@ export function _syncHeaderActions() {
     // The unified segmented Code/Run-or-View toggle (`#doc-render-view-toggle`)
     // covers CSV / Python / JS / bash / HTML / SVG / XML. When it's shown,
     // suppress the single morph button to avoid two redundant controls.
-    if (_hasViewToggle(lang)) show = false;
+    if (_hasViewToggle(lang) && lang !== 'markdown') show = false;
+    if (lang !== 'markdown') actionBtn.removeAttribute('aria-pressed');
     actionBtn.style.display = show ? '' : 'none';
     document.querySelectorAll('.md-toolbar-edit-only').forEach(el => {
       el.style.display = (lang === 'markdown' && _mdActive) ? 'none' : '';
@@ -292,7 +296,7 @@ export function _syncHeaderActions() {
     }
     document.querySelectorAll('.md-toolbar-rich-only').forEach(el => {
       const action = el.dataset.md || el.dataset.dd;
-      const allowInMdVisual = visualMdActive && (action === 'quote' || action === 'table');
+      const allowInMdVisual = visualMdActive && (action === 'quote' || action === 'table' || action === 'alert' || action === 'code');
       el.style.display = (_isRichTextLang(lang) || allowInMdVisual) ? '' : 'none';
     });
     const richMode = _isRichTextLang(lang);
@@ -430,10 +434,6 @@ export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPre
 
     if (requestedMode === 'markdown' && doc._visualSyncBlocked) {
       if (!forceDiscard) {
-        if (notifyBlocked) {
-          const reason = doc._visualCompatReasons?.[0] || 'unsupported formatting';
-          uiModule?.showError?.(`Cannot switch to Markdown: visual editor contains ${reason}. Resolve formatting or discard visual changes first.`);
-        }
         _syncHeaderActions();
         _scheduleDocumentHistoryControls();
         return false;

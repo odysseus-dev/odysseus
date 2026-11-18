@@ -651,6 +651,34 @@ def test_block_shortcuts_exit_quotes_and_keep_adjacent_list_types():
     assert rt["tasks"] == ["Task"], rt
 
 
+def test_checklist_toggle_after_divider_keeps_the_list_and_caret():
+    data = _run_browser(r"""
+      await boot('task-after-divider');
+      await open({ id: 'task-md', title: 'Task', language: 'markdown', current_content: '' });
+      const rich = page.locator('#doc-email-richbody.markdown-visual-mode');
+      await rich.click();
+      await page.keyboard.type('Keep this paragraph');
+      await page.keyboard.press('Enter');
+      await page.locator('[data-dd="separator"]').click();
+      await page.getByText('Solid line', { exact: true }).click();
+      await page.keyboard.type('[] Review the scope');
+      const before = await state();
+      await page.keyboard.press('Control+Enter');
+      const after = await state();
+      const caret = await page.evaluate(() => {
+        const selection = getSelection();
+        return { text: selection.anchorNode?.textContent, offset: selection.anchorOffset };
+      });
+      const saved = await page.evaluate(() => window.__doc.saveDocument({ silent: true }));
+      await finish({ before, after, caret, saved, persisted: api.store.get('task-md').current_content });
+    """)
+    assert data["before"]["content"] == "Keep this paragraph\n\n---\n\n- [ ] Review the scope"
+    assert data["after"]["content"] == data["persisted"] == "Keep this paragraph\n\n---\n\n- [x] Review the scope"
+    assert '<ul class="rich-checklist">' in data["after"]["richHtml"]
+    assert data["caret"] == {"text": "Review the scope", "offset": len("Review the scope")}
+    assert data["saved"] is True
+
+
 def test_streamed_ai_updates_never_leave_a_stale_visual_surface():
     """A streamed AI document must render its final content in the visual editor.
 

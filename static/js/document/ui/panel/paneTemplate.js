@@ -87,6 +87,15 @@ pane.innerHTML = `
             <button type="button" class="md-view-opt" data-mdview="visual" title="Visual editor"><span class="md-view-label">Visual</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
             <button type="button" class="md-view-opt" data-mdview="edit" title="Markdown source"><span class="md-view-label">Markdown</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
           </span>
+          <select id="doc-source-insert" class="doc-source-insert" aria-label="Insert Markdown template">
+            <option value="">Insert Markdown…</option>
+            <option value="reference">Reference link</option>
+            <option value="footnote">Footnote</option>
+            <option value="math">Inline math</option>
+            <option value="equation">Display math</option>
+            <option value="mermaid">Mermaid diagram</option>
+            <option value="details">Collapsible section</option>
+          </select>
           <span class="md-view-toggle" id="doc-render-view-toggle" style="display:none" role="group" aria-label="Code or run">
             <button type="button" class="md-view-opt" data-renderview="code" title="Edit code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
             <button type="button" class="md-view-opt" data-renderview="run" title="Run / Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
@@ -108,6 +117,7 @@ pane.innerHTML = `
           <button type="button" class="md-toolbar-rich-only" data-md="subscript" title="Subscript" style="display:none"><span class="rich-script-icon">x<sub>2</sub></span></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
           <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="heading" title="Heading (Ctrl+Alt+1-6)"><b>H</b><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only md-toolbar-email-hide" data-dd="alert" title="GitHub alert type" aria-label="GitHub alert type" style="display:none"><span aria-hidden="true">!</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="font" title="Font family" aria-label="Font family" style="display:none"><span>Aa</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <span id="md-toolbar-sep-after-heading" class="md-toolbar-sep md-toolbar-manual-sep md-toolbar-edit-only" aria-hidden="true"></span>
           <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="list" title="Bulleted list"><svg class="rich-list-bullet-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="4" cy="6" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="4" cy="18" r="1.5"/><path d="M9 5h12v2H9zM9 11h12v2H9zM9 17h12v2H9z"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>

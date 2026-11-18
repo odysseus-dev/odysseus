@@ -840,12 +840,16 @@ export function markdownToVisualHtml(markdown) {
         i++;
       }
       if (current.length) paragraphs.push(current);
-      const isAlert = paragraphs.length > 0 && paragraphs[0].length > 0
-        && /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(paragraphs[0][0].trim());
-      const alertType = isAlert ? paragraphs[0][0].trim().match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i)[1].toLowerCase() : null;
+      const alertMatch = paragraphs.length > 0 && paragraphs[0].length > 0
+        ? paragraphs[0][0].trim().match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i) : null;
+      const alertType = alertMatch ? alertMatch[1].toLowerCase() : null;
       const bqClass = alertType ? ` class="markdown-alert markdown-alert-${alertType}" data-alert="${alertType.toUpperCase()}"` : '';
+      if (alertType) {
+        paragraphs[0].shift();
+        if (!paragraphs[0].length) paragraphs.shift();
+      }
       const inner = paragraphs.length
-        ? paragraphs.map(p => `<p>${p.map(_renderInlineMarkdown).join('<br>')}</p>`).join('')
+        ? `${alertType ? `<p><span class="markdown-alert-label" contenteditable="false" data-alert-label="${alertType.toUpperCase()}">${alertType[0].toUpperCase()}${alertType.slice(1)}</span></p>` : ''}${paragraphs.map(p => `<p>${p.map(_renderInlineMarkdown).join('<br>')}</p>`).join('')}`
         : '<p><br></p>';
       blocks.push(`<blockquote${bqClass}>${inner}</blockquote>`);
       continue;
@@ -1007,7 +1011,7 @@ function _nodePlainText(node) {
 function _isBoldNode(node) {
   if (!node || node.type !== 'element') return false;
   if (node.tag === 'strong' || node.tag === 'b') return true;
-  if (node.tag === 'span' && node.style?.fontWeight) {
+  if (node.style?.fontWeight) {
     const w = String(node.style.fontWeight).toLowerCase();
     return w === 'bold' || w === 'bolder' || Number(w) >= 600;
   }
@@ -1017,7 +1021,7 @@ function _isBoldNode(node) {
 function _isItalicNode(node) {
   if (!node || node.type !== 'element') return false;
   if (node.tag === 'em' || node.tag === 'i') return true;
-  if (node.tag === 'span' && node.style?.fontStyle) {
+  if (node.style?.fontStyle) {
     return String(node.style.fontStyle).toLowerCase() === 'italic';
   }
   return false;
@@ -1026,8 +1030,8 @@ function _isItalicNode(node) {
 function _isStrikeNode(node) {
   if (!node || node.type !== 'element') return false;
   if (node.tag === 'del' || node.tag === 's' || node.tag === 'strike') return true;
-  if (node.tag === 'span') {
-    const deco = String(node.style?.textDecorationLine || node.style?.textDecoration || '').toLowerCase();
+  if (node.style?.textDecorationLine || node.style?.textDecoration) {
+    const deco = String(node.style.textDecorationLine || node.style.textDecoration).toLowerCase();
     return deco.includes('line-through');
   }
   return false;
@@ -1198,7 +1202,11 @@ function _extractHtmlRuns(html) {
 function _coalesceRuns(runs) {
   if (!runs || !runs.length) return [];
   const out = [];
-  for (const r of runs) {
+  for (const run of runs) {
+    // The text comparison checks spaces separately. Emphasis markers move
+    // adjacent spaces outside delimiters, but code and link spaces matter.
+    const r = run.c || run.a || run.img ? run : { ...run, text: run.text.replace(/[ \t]/g, '') };
+    if (!r.text && !r.img) continue;
     const prev = out[out.length - 1];
     if (prev
         && prev.b === r.b
@@ -1384,7 +1392,10 @@ function _serializeTableNode(tableNode, context = null) {
       .filter(c => c?.type === 'element' && (c.tag === 'th' || c.tag === 'td'))
       .map(cell => {
         const children = cell.children || [];
-        const text = _serializeInlineBlock(children, context);
+        // A single break is the contenteditable placeholder in an empty cell.
+        // Multiple breaks or text around a break are actual cell content.
+        const placeholder = children.length === 1 && children[0]?.tag === 'br';
+        const text = placeholder ? '' : _serializeInlineBlock(children, context);
         if (text.includes('\n') || children.some(_isBlockElement)) {
           _reportVisualStructureLoss(context, 'line breaks or paragraphs in table cells');
         }
@@ -1464,7 +1475,16 @@ function _serializeBlockNode(node, context = null) {
   }
 
   if (tag === 'blockquote') {
-    const innerBlocks = serializeVisualNodesToMarkdown(node.children || [], context);
+    const alertType = String(node.attrs?.['data-alert'] || '').toUpperCase();
+    const safeAlert = ['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'].includes(alertType) ? alertType : '';
+    const children = (node.children || []).filter(child => !(child?.type === 'element'
+      && child.tag === 'p'
+      && (child.children || []).some(item => item?.type === 'element' && item.attrs?.['data-alert-label'])));
+    const innerBlocks = serializeVisualNodesToMarkdown(children, context);
+    if (safeAlert) {
+      const body = innerBlocks ? `\n${innerBlocks}` : '';
+      return `> [!${safeAlert}]${body.split('\n').map((line, index) => index === 0 ? line : `\n> ${line}`).join('')}`;
+    }
     if (!innerBlocks) return '>';
     return innerBlocks.split('\n').map(line => (line ? `> ${line}` : '>')).join('\n');
   }

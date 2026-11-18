@@ -919,6 +919,21 @@
 .doc-md-toolbar.md-preview-active {
   border-bottom-color: var(--bg);
 }
+.doc-source-insert {
+  display: none;
+  min-width: 0;
+  max-width: 9rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 11px;
+}
+.doc-md-toolbar.md-write-active:not(.md-visual-active) .doc-source-insert {
+  display: block;
+}
 .doc-md-toolbar.md-write-active {
   border-bottom-color: var(--sidebar-bg, var(--panel));
 }
@@ -3324,6 +3339,15 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .doc-md-preview blockquote.markdown-alert {
   padding: 8px 16px;
   border-left-width: 4px;
+}
+.doc-email-richbody.markdown-visual-mode .markdown-alert-label {
+  display: inline-block;
+  margin: 0 0 5px;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+  user-select: none;
 }
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-note,
 .doc-md-preview blockquote.markdown-alert-note {

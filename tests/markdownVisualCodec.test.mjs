@@ -142,6 +142,16 @@ describe('markdownVisualCodec', () => {
   });
 
   describe('markdownToVisualHtml', () => {
+    it('renders GitHub alert markers as fixed labels and keeps alert bodies editable', () => {
+      for (const type of ['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION']) {
+        const html = markdownToVisualHtml(`> [!${type}]\n> Keep this text`);
+        assert.match(html, new RegExp(`data-alert="${type}"`));
+        assert.match(html, new RegExp(`data-alert-label="${type}"`));
+        assert.match(html, /contenteditable="false"/);
+        assert.match(html, /<p>Keep this text<\/p>/);
+        assert.doesNotMatch(html, /<p>\[!/);
+      }
+    });
     it('renders headings, inline styles, lists, checklists, quotes, code fences, hr, and tables', () => {
       const md = [
         '# Title',
@@ -190,6 +200,13 @@ describe('markdownVisualCodec', () => {
   });
 
   describe('serializeVisualNodesToMarkdown', () => {
+    it('serializes alert type and edited body while ignoring its fixed label', () => {
+      const nodes = [el('blockquote', [
+        el('p', [el('span', 'Warning', { attrs: { 'data-alert-label': 'WARNING' } })]),
+        el('p', 'Edited body'),
+      ], { attrs: { 'data-alert': 'WARNING' }, classes: ['markdown-alert', 'markdown-alert-warning'] })];
+      assert.equal(serializeVisualNodesToMarkdown(nodes), '> [!WARNING]\n> Edited body');
+    });
     it('serializes descriptor nodes cleanly back to canonical Markdown', () => {
       const nodes = [
         el('h1', 'Project Spec'),
@@ -797,7 +814,7 @@ it('ignores empty paragraph caret placeholders without ignoring actual breaks', 
     el('div', [el('br'), el('br')]),
     el('h1', [el('br')]),
     el('ul', [el('li', [el('br')])]),
-    el('table', [el('tr', [el('td', [el('br')])])]),
+    el('table', [el('tr', [el('td', [el('br'), el('br')])])]),
   ]) {
     assert.equal(serializeVisualNodesWithFidelity([node]).lossless, false);
   }
@@ -825,4 +842,40 @@ it('refuses block structures whose meaning would be discarded by serialization',
   const results = cases.map(nodes => serializeVisualNodesWithFidelity(nodes));
   assert.deepEqual(results.map(result => result.lossless), cases.map(() => false));
   assert.ok(results.every(result => result.reasons.length));
+});
+
+describe('Empty Visual Markdown table cells', () => {
+  it('saves inserted rows and columns with placeholder breaks', () => {
+    const markdown = '| Stage |  |\n| :---: | --- |\n|  |  |';
+    const nodes = parseCodecHtml(markdownToVisualHtml(markdown));
+    assert.deepEqual(serializeVisualNodesWithFidelity(nodes), {
+      markdown,
+      blocks: [markdown],
+      lossless: true,
+      reasons: [],
+    });
+  });
+
+  it('still rejects a user-authored line break in a table cell', () => {
+    const nodes = [el('table', [el('tbody', [
+      el('tr', [el('th', 'Column')]),
+      el('tr', [el('td', [txt('Before'), el('br'), txt('After')])]),
+    ])])];
+    const result = serializeVisualNodesWithFidelity(nodes);
+    assert.equal(result.lossless, false);
+    assert.ok(result.reasons.includes('line breaks or paragraphs in table cells'));
+  });
+});
+
+it('retains combined button formatting represented as style on an inline tag', () => {
+  const nodes = [el('p', [
+    el('b', 'Bold'), txt(' '), el('i', 'combined', { style: { fontWeight: 'bold' } }),
+    txt(' '), el('strike', 'deprecated '), el('code', 'command'),
+  ])];
+  assert.deepEqual(serializeVisualNodesWithFidelity(nodes), {
+    markdown: '**Bold** ***combined*** ~~deprecated~~ ' + String.fromCharCode(96) + 'command' + String.fromCharCode(96),
+    blocks: ['**Bold** ***combined*** ~~deprecated~~ ' + String.fromCharCode(96) + 'command' + String.fromCharCode(96)],
+    lossless: true,
+    reasons: [],
+  });
 });

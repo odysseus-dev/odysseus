@@ -10,7 +10,7 @@ import { _autoCreateFromInput, _creatingDoc, deleteActiveDocument } from '../doc
 
 import { _uploadMarkdownImages } from './markdownImages.js';
 
-import { scheduleSourceEditorWork, syncGutterScroll, updateLineNumbers } from './sourceEditor.js';
+import { _replaceRange, scheduleSourceEditorWork, syncGutterScroll, updateLineNumbers } from './sourceEditor.js';
 
 import { _uploadComposeFiles } from '../email/attachments.js';
 
@@ -39,10 +39,53 @@ import {
   resolveMarkdownEditorMode,
 } from '../richEditor/markdownVisualSync.js';
 
+const sourceTemplates = {
+  reference: id => ({ text: `[Link text][${id}]\n\n[${id}]: https://example.org/`, block: true }),
+  footnote: id => ({ text: `Text with a note.[^${id}]\n\n[^${id}]: Footnote text.`, block: true }),
+  math: () => ({ text: '$x^2 + y^2 = r^2$', block: false }),
+  equation: () => ({ text: '$$\nE = mc^2\n$$', block: true }),
+  mermaid: () => ({ text: '```mermaid\nflowchart LR\n  Draft --> Review --> Publish\n```', block: true }),
+  details: () => ({ text: '<details>\n<summary>Details</summary>\n<p>More information.</p>\n</details>', block: true }),
+};
+
+function insertSourceTemplate(ta, kind) {
+  if (!Object.hasOwn(sourceTemplates, kind)) return;
+  const source = ta.value;
+  let id = kind;
+  if (kind === 'reference' || kind === 'footnote') {
+    for (let index = 2; source.toLowerCase().includes(`[${kind === 'footnote' ? '^' : ''}${id}]`); index++) {
+      id = `${kind}-${index}`;
+    }
+  }
+  const { text, block } = sourceTemplates[kind](id);
+  let offset = ta.selectionEnd;
+  if (!block) {
+    _replaceRange(ta, offset, offset, text);
+    return;
+  }
+  // Insert after the current line so an existing line stays intact.
+  const newline = source.indexOf('\n', offset);
+  offset = newline === -1 ? source.length : newline + 1;
+  const before = source.slice(0, offset);
+  const prefix = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const suffix = source[offset] === '\n' || offset === source.length ? '\n' : '\n\n';
+  _replaceRange(ta, offset, offset, prefix + text + suffix);
+}
+
 export function bindSourceEditor({ pane, paneLifetime }) {
 const ta = document.getElementById('doc-editor-textarea');
 const pre = document.getElementById('doc-editor-highlight');
 if (ta && pre) {
+      const sourceInsert = document.getElementById('doc-source-insert');
+      sourceInsert?.addEventListener('change', () => {
+        const kind = sourceInsert.value;
+        sourceInsert.value = '';
+        const doc = docs.get(activeDocId);
+        if (isVisualMarkdownDoc(doc) && !doc._visualSyncBlocked && ta.offsetParent && !ta.readOnly) {
+          insertSourceTemplate(ta, kind);
+        }
+      }, { signal: paneLifetime.signal });
+
       ta.addEventListener('input', () => {
         if (isSyncingVisualToTextarea()) return;
         // Typing invalidates any pinned selection highlight

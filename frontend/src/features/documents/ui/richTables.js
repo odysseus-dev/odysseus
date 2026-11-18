@@ -609,6 +609,16 @@ export function _applyRichTableAction(rich, action) {
     if (alignment === 'top') target.style.removeProperty('vertical-align');
     else target.style.verticalAlign = alignment;
     if (!target.getAttribute('style')) target.removeAttribute('style');
+  } else if (action.startsWith('table:column-align:')) {
+    const alignment = action.slice('table:column-align:'.length);
+    if (!['left', 'center', 'right', 'reset'].includes(alignment)) return false;
+    for (const row of Array.from(clone.rows)) {
+      const target = row.cells[cellIndex];
+      if (!target) continue;
+      if (alignment === 'reset') target.style.removeProperty('text-align');
+      else target.style.textAlign = alignment;
+      if (!target.getAttribute('style')) target.removeAttribute('style');
+    }
   } else if (action === 'table:column-left' || action === 'table:column-right') {
     const insertAt = cellIndex + (action.endsWith('right') ? 1 : 0);
     Array.from(clone.rows).forEach(row => {

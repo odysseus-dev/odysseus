@@ -159,6 +159,7 @@ export function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     const rich = typeof document !== 'undefined' ? document.getElementById('doc-email-richbody') : null;
     if (!richMode && rich && rich.style.display !== 'none' && rich.classList.contains('markdown-visual-mode')) {
       _deps.syncEmailRichbody?.(rich);
+      if (docMap?.get(docId)?._visualSyncBlocked) return;
       rich.style.display = 'none';
     }
     _deps.hideMarkdownCompatBanner?.();
