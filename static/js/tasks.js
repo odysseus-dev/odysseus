@@ -2,7 +2,7 @@
  * Tasks Module — scheduled recurring LLM prompts.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';

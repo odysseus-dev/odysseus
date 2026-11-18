@@ -13,7 +13,7 @@ import spinnerModule from '../spinner.js';
 import { SELECT_MENU_ICON, actionMenuRank, orderActionMenuItems } from '../actionMenuOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '../escMenuStack.js';
 import { topPortalZ } from '../toolWindowZOrder.js';
-import { showError as showEmailMoveError, showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
+import { showError as showEmailMoveError, showToast, styledConfirm } from '../ui.js?v=20261104ttspause1';
 import { state } from './state.js';
 import {
   _handleAiReplyButton,
@@ -211,7 +211,7 @@ export function _showReaderMoreMenu(em, card, reader, anchor, data) {
       action: async () => {
         const email = (em.from_address || em.from || '').trim();
         if (!email) {
-          import('../ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('No sender address')).catch(() => {});
+          import('../ui.js?v=20261104ttspause1').then(m => m.showError && m.showError('No sender address')).catch(() => {});
           return;
         }
         const name = (em.from_name || '').trim() || email.split('@')[0];
@@ -222,14 +222,14 @@ export function _showReaderMoreMenu(em, card, reader, anchor, data) {
             body: JSON.stringify({ name, email }),
           });
           const d = await r.json();
-          import('../ui.js?v=20260916largetoolscroll1').then(m => {
+          import('../ui.js?v=20261104ttspause1').then(m => {
             if (!m.showToast) return;
             if (d.success && d.message === 'Already exists') m.showToast('Already in contacts');
             else if (d.success) m.showToast('Saved to contacts');
             else m.showError && m.showError('Failed to save contact');
           }).catch(() => {});
         } catch (_) {
-          import('../ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
+          import('../ui.js?v=20261104ttspause1').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
         }
       },
     },

@@ -5,7 +5,7 @@
 // content), publish/draft toggle, delete, and "run as slash" via the
 // /<skill-name> path.
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import * as spinnerModule from './spinner.js';
 import {
   bindMenuDismiss,

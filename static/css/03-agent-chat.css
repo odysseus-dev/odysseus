@@ -1145,6 +1145,67 @@ body.fullwidth-chat .chat-history {
   opacity: 0.8;
 }
 
+/* ── TTS wave playback indicator ── */
+@keyframes tts-wave-bounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+.ai-tts-button.playing .tts-wave-bar {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tts-wave-bounce 0.7s ease-in-out infinite;
+}
+.ai-tts-button.playing .tts-wave-bar:nth-child(2) { animation-delay: 0.1s; animation-duration: 0.82s; }
+.ai-tts-button.playing .tts-wave-bar:nth-child(3) { animation-delay: 0.2s; animation-duration: 0.62s; }
+.ai-tts-button.playing .tts-wave-bar:nth-child(4) { animation-delay: 0.3s; animation-duration: 0.9s; }
+.ai-tts-button.analyser.playing .tts-wave-bar { animation: none; }
+@keyframes tts-play-spin-in {
+  from { transform: rotate(-180deg) scale(0.4); opacity: 0; }
+  to { transform: rotate(0deg) scale(1); opacity: 1; }
+}
+.ai-tts-button:not(.playing) > svg {
+  transform-origin: center;
+  animation: tts-play-spin-in 0.26s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-tts-button.playing .tts-wave-bar { animation: none; }
+  .ai-tts-button:not(.playing) > svg { animation: none; }
+}
+
+/* ── In-place TTS read-along highlighting ── */
+.tts-word {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition:
+    color 0.18s ease,
+    background-color 0.24s ease,
+    background-size 0.16s linear,
+    text-decoration-color 0.24s ease;
+}
+.tts-word-active {
+  color: var(--fg);
+  background-color: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+  background-image: linear-gradient(to right, var(--accent, var(--red)) 0 100%, transparent 100%);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: calc(var(--tts-word-progress, 1) * 100%) 2px;
+  text-decoration: underline;
+  text-decoration-color: var(--accent, var(--red));
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+@media (max-width: 600px) {
+  .tts-word-active {
+    background-color: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 1px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tts-word { transition: none; }
+}
+
 /* ── Sources section — collapsible source citations ── */
 .sources-section {
   margin: 8px 0 12px;
@@ -1509,9 +1570,6 @@ body.fullwidth-chat .chat-history {
   0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 20%, transparent); }
   50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--red) 10%, transparent); }
 }
-.agent-thread-node.error .agent-thread-dot {
-  background: var(--color-error);
-}
 .agent-thread-header {
   display: flex;
   align-items: center;
@@ -1552,9 +1610,6 @@ body.fullwidth-chat .chat-history {
 .agent-thread-tool-icon-link:hover {
   color: var(--red);
   opacity: 1;
-}
-.agent-thread-node.error .agent-thread-icon {
-  color: var(--color-error);
 }
 .agent-thread-tool {
   font-weight: 600;

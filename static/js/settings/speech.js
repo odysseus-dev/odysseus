@@ -5,6 +5,15 @@
 
 import { byId as el } from './dom.js';
 import { postSettings as _postSettings } from './api.js';
+import {
+  inferTtsProvider,
+  voiceOptionsForProvider,
+  defaultVoiceForProvider,
+  isTtsCapableEndpoint,
+  isTtsModelForProvider,
+  ttsModelsForEndpoint,
+  ttsProviderForEndpoint,
+} from './ttsVoices.js?v=20261103ttsclean1';
 
 export async function initTtsSettings() {
   var provSel = el('set-ttsProviderSelect');
@@ -16,49 +25,224 @@ export async function initTtsSettings() {
   var voiceRow = el('set-ttsVoiceRow');
   var speedSelect = el('set-ttsSpeedSelect');
   var speedRow = el('set-ttsSpeedRow');
+  var endpointUrlRow = el('set-ttsEndpointUrlRow');
+  var endpointUrlInput = el('set-ttsEndpointUrlInput');
+  var apiKeyRow = el('set-ttsApiKeyRow');
+  var apiKeyInput = el('set-ttsApiKeyInput');
+  var endpointHint = el('set-ttsEndpointHint');
+  var ttsEmptyState = el('set-ttsEmptyState');
   var ttsMsg = el('set-ttsSettingsMsg');
   var ttsEnabledToggle = el('set-ttsEnabledToggle');
   var ttsConfigWrap = provSel ? provSel.closest('div[style*="flex-direction"]') : null;
 
-  function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
-  function getModel() { return isEndpoint() ? modelSelect.value : modelInput.value; }
-  function getVoice() { return isEndpoint() ? voiceSelect.value : voiceInput.value; }
+  var endpointDetails = {};
+  var useVoiceSelect = false;
+  var savedApiKey = false;
+  var initialModel = '';
+  var ttsCapableEndpointCount = 0;
+  var endpointsLoaded = false;
 
-  function updateVisibility() {
-    var prov = provSel.value;
-    modelRow.style.display = prov.startsWith('endpoint:') ? 'flex' : 'none';
-    voiceRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    speedRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    if (isEndpoint()) {
-      modelSelect.style.display = ''; modelInput.style.display = 'none';
-      voiceSelect.style.display = ''; voiceInput.style.display = 'none';
+  function providerKind() {
+    var prov = provSel.value || '';
+    if (prov === 'custom') return 'custom';
+    if (prov.startsWith('endpoint:')) return 'endpoint';
+    if (prov === 'browser' || prov === 'disabled') return prov;
+    return 'disabled';
+  }
+  function isEndpoint() { return providerKind() === 'endpoint'; }
+  function optionExists(select, value) {
+    return Array.prototype.some.call(select.options, function(option) {
+      return option.value === value;
+    });
+  }
+  function updateTtsEmptyState() {
+    if (!ttsEmptyState) return;
+    ttsEmptyState.style.display = ttsCapableEndpointCount > 0 ? 'none' : 'block';
+  }
+  function getModel() {
+    if (isEndpoint()) return modelSelect.value;
+    return modelInput.value;
+  }
+  function getEndpointId() {
+    var prov = provSel.value || '';
+    return prov.startsWith('endpoint:') ? prov.slice('endpoint:'.length) : '';
+  }
+  function getEndpointDetails() {
+    return endpointDetails[getEndpointId()] || null;
+  }
+  function getVoice() {
+    return useVoiceSelect ? voiceSelect.value : voiceInput.value;
+  }
+  function getInferredProvider() {
+    return inferTtsProvider({
+      provider: provSel.value,
+      endpoint: getEndpointDetails(),
+      endpointUrl: providerKind() === 'custom' ? endpointUrlInput.value : '',
+      model: getModel(),
+    });
+  }
+  function voiceLabel(voice) {
+    if (voice.indexOf('_') !== -1) return voice;
+    return voice.charAt(0).toUpperCase() + voice.slice(1);
+  }
+  function populateVoiceSelect(voices, selected) {
+    voiceSelect.innerHTML = '';
+    voices.forEach(function(voice) {
+      var opt = document.createElement('option');
+      opt.value = voice;
+      opt.textContent = voiceLabel(voice);
+      voiceSelect.appendChild(opt);
+    });
+    voiceSelect.value = voices.indexOf(selected) !== -1 ? selected : voices[0];
+  }
+
+  function updateVoicePicker(options) {
+    options = options || {};
+    var provider = getInferredProvider();
+    var voices = voiceOptionsForProvider(provider);
+    var current = getVoice();
+    if (options.resetForBrowser && provider === 'browser') current = '';
+
+    if (voices && voices.length) {
+      var selected = voices.indexOf(current) !== -1
+        ? current
+        : (defaultVoiceForProvider(provider) || voices[0]);
+      populateVoiceSelect(voices, selected);
+      voiceSelect.style.display = '';
+      voiceInput.style.display = 'none';
+      voiceInput.value = selected;
+      voiceInput.placeholder = provider === 'xai' ? 'eve' : 'alloy';
+      voiceInput.title = '';
+      useVoiceSelect = true;
     } else {
-      modelSelect.style.display = 'none'; modelInput.style.display = '';
-      voiceSelect.style.display = 'none'; voiceInput.style.display = prov === 'disabled' ? 'none' : '';
+      voiceSelect.style.display = 'none';
+      voiceInput.style.display = provider === 'disabled' ? 'none' : '';
+      voiceInput.value = current;
+      voiceInput.placeholder = provider === 'browser' ? 'OS default voice'
+        : 'voice id (provider-specific; check docs)';
+      voiceInput.title = provider === 'generic'
+        ? 'No built-in list for this endpoint; enter the voice ID from the provider documentation.'
+        : '';
+      useVoiceSelect = false;
     }
   }
 
-  var ttsKeywords = ['tts', 'audio'];
+  function rebuildModelOptions(endpointId, selected) {
+    var endpoint = endpointDetails[endpointId];
+    var models = ttsModelsForEndpoint(endpoint);
+    var endpointProvider = ttsProviderForEndpoint(endpoint);
+    if (selected && models.indexOf(selected) < 0 &&
+        isTtsModelForProvider(endpointProvider, selected)) {
+      models.unshift(selected);
+    }
+    modelSelect.innerHTML = '';
+    models.forEach(function(m) {
+      var opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      modelSelect.appendChild(opt);
+    });
+    if (selected) modelSelect.value = selected;
+    if (!modelSelect.value && models.length) modelSelect.value = models[0];
+  }
+
+  function updateVisibility(selectedModel, voiceOptions) {
+    var kind = providerKind();
+    var showApi = kind === 'endpoint' || kind === 'custom';
+    endpointUrlRow.style.display = kind === 'custom' ? 'flex' : 'none';
+    apiKeyRow.style.display = kind === 'custom' ? 'flex' : 'none';
+    if (endpointHint) endpointHint.style.display = showApi ? 'block' : 'none';
+    modelRow.style.display = showApi ? 'flex' : 'none';
+    voiceRow.style.display = kind === 'disabled' ? 'none' : 'flex';
+    speedRow.style.display = kind === 'disabled' ? 'none' : 'flex';
+    if (kind === 'endpoint') {
+      modelSelect.style.display = ''; modelInput.style.display = 'none';
+      rebuildModelOptions(getEndpointId(), selectedModel || modelSelect.value);
+    } else {
+      modelSelect.style.display = 'none'; modelInput.style.display = '';
+    }
+    updateVoicePicker(voiceOptions);
+  }
+
   try {
     var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    if (!epRes.ok) throw new Error('HTTP ' + epRes.status);
     var endpoints = await epRes.json();
+    if (!Array.isArray(endpoints)) throw new Error('Unexpected endpoint list');
     endpoints.forEach(function(ep) {
+      endpointDetails[ep.id] = ep;
       if (!ep.is_enabled) return;
-      var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
-      if (!hasTTS) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      if (!isTtsCapableEndpoint(ep)) return;
+      ttsCapableEndpointCount += 1;
+      var opt = document.createElement('option');
+      opt.value = 'endpoint:' + ep.id;
+      opt.textContent = ep.name + ' (API)';
+      provSel.appendChild(opt);
     });
-  } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
+    endpointsLoaded = true;
+    updateTtsEmptyState();
+  } catch (e) { console.warn('Failed to load endpoints for TTS', e); updateTtsEmptyState(); }
 
+  var migration = {};
   try {
     var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await settingsRes.json();
-    if (settings.tts_provider) provSel.value = settings.tts_provider;
-    if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
+    var savedProvider = settings.tts_provider;
+    if (savedProvider === 'local') {
+      savedProvider = 'disabled';
+      settings.tts_provider = 'disabled';
+      migration.tts_provider = 'disabled';
+    } else if (savedProvider === 'api' || savedProvider === 'custom_endpoint') {
+      savedProvider = 'custom';
+      settings.tts_provider = 'custom';
+      migration.tts_provider = 'custom';
+    }
+    if (savedProvider && !optionExists(provSel, savedProvider)) {
+      if (savedProvider.indexOf('endpoint:') === 0 && !endpointsLoaded) {
+        // A failed endpoint fetch is not proof that a saved TTS endpoint is
+        // invalid; keep it selectable instead of destructively disabling it.
+        var unavailable = document.createElement('option');
+        unavailable.value = savedProvider;
+        unavailable.textContent = savedProvider + ' (unavailable)';
+        provSel.appendChild(unavailable);
+      } else {
+        savedProvider = 'disabled';
+        settings.tts_provider = 'disabled';
+        migration.tts_provider = 'disabled';
+      }
+    }
+    if (savedProvider) provSel.value = savedProvider;
+    if (settings.tts_model) { initialModel = settings.tts_model; modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
     if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
     if (settings.tts_speed) { speedSelect.value = settings.tts_speed; }
+    if (settings.tts_endpoint_url) endpointUrlInput.value = settings.tts_endpoint_url;
+    savedApiKey = !!settings.tts_api_key;
+    apiKeyInput.value = '';
+    apiKeyInput.placeholder = savedApiKey ? 'Saved key (leave blank to keep)' : 'Optional API key';
     if (ttsEnabledToggle) ttsEnabledToggle.checked = settings.tts_enabled !== false;
+
+    if (isEndpoint() && initialModel) {
+      var endpoint = getEndpointDetails();
+      var allowedModels = ttsModelsForEndpoint(endpoint);
+      var endpointProvider = ttsProviderForEndpoint(endpoint);
+      if (allowedModels.indexOf(initialModel) === -1 &&
+          !isTtsModelForProvider(endpointProvider, initialModel)) {
+        var nearestModel = allowedModels[0] || '';
+        if (nearestModel) {
+          initialModel = nearestModel;
+          settings.tts_model = nearestModel;
+          migration.tts_model = nearestModel;
+          modelSelect.value = nearestModel;
+          modelInput.value = nearestModel;
+        }
+      }
+    }
   } catch (e) { console.warn('Failed to load TTS settings', e); }
+
+  if (Object.keys(migration).length) {
+    try { await _postSettings(migration); }
+    catch (e) { console.warn('Failed to migrate TTS settings', e); }
+  }
 
   function syncTtsDisabled() {
     var off = ttsEnabledToggle && !ttsEnabledToggle.checked;
@@ -67,11 +251,29 @@ export async function initTtsSettings() {
     if (ttsConfigWrap) ttsConfigWrap.style.pointerEvents = off ? 'none' : '';
   }
   syncTtsDisabled();
-  updateVisibility();
+  updateVisibility(initialModel || modelSelect.value || modelInput.value);
 
   async function saveTTS() {
     try {
-      await _postSettings({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' });
+      var kind = providerKind();
+      var payload = {
+        tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true,
+        tts_provider: provSel.value,
+        tts_model: getModel() || 'tts-1',
+        tts_voice: getVoice() || defaultVoiceForProvider(getInferredProvider()) || 'alloy',
+        tts_speed: speedSelect.value || '1'
+      };
+      if (kind === 'custom') {
+        payload.tts_endpoint_url = endpointUrlInput.value.trim();
+        var newKey = apiKeyInput.value.trim();
+        if (newKey) payload.tts_api_key = newKey;
+      }
+      await _postSettings(payload);
+      if (kind === 'custom' && apiKeyInput.value.trim()) {
+        savedApiKey = true;
+        apiKeyInput.value = '';
+        apiKeyInput.placeholder = 'Saved key (leave blank to keep)';
+      }
       ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
@@ -83,18 +285,30 @@ export async function initTtsSettings() {
   }
 
   provSel.addEventListener('change', function() {
-    var prov = provSel.value;
-    if (prov === 'local') voiceInput.value = 'af_heart';
-    else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
-    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
-    updateVisibility();
+    var kind = providerKind();
+    if (kind === 'custom' && !modelInput.value) modelInput.value = 'tts-1';
+    updateVisibility(
+      kind === 'endpoint' ? modelSelect.value : modelInput.value,
+      { resetForBrowser: kind === 'browser' }
+    );
     saveTTS();
   });
-  modelSelect.addEventListener('change', saveAndClearCache);
-  modelInput.addEventListener('change', saveTTS);
+  modelSelect.addEventListener('change', function() {
+    updateVoicePicker();
+    saveAndClearCache();
+  });
+  modelInput.addEventListener('change', function() {
+    updateVoicePicker();
+    saveTTS();
+  });
   voiceSelect.addEventListener('change', saveAndClearCache);
   voiceInput.addEventListener('change', saveTTS);
   speedSelect.addEventListener('change', saveAndClearCache);
+  endpointUrlInput.addEventListener('change', function() {
+    updateVoicePicker();
+    saveAndClearCache();
+  });
+  apiKeyInput.addEventListener('change', saveTTS);
   if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function() { syncTtsDisabled(); saveTTS(); });
 
   // Preview / test button
@@ -118,7 +332,7 @@ export async function initTtsSettings() {
       var testText = 'Hello, this is a test of text to speech.';
       previewPlaying = true; previewBtn.textContent = 'Loading...';
       try {
-        if (prov === 'browser') {
+        if (providerKind() === 'browser') {
           if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
           var utt = new SpeechSynthesisUtterance(testText);
           var voiceVal = getVoice();

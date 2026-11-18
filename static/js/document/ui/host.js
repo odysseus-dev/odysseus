@@ -4,7 +4,7 @@
  * Only UI layer modules may import this bridge; domain and application must not.
  */
 
-export { default as uiModule } from '/static/js/ui.js?v=20260916largetoolscroll1';
+export { default as uiModule } from '/static/js/ui.js?v=20261104ttspause1';
 export { default as sessionModule } from '/static/js/sessions.js';
 export { default as emojiPicker } from '/static/js/emojiPicker.js';
 export { readEmailReplyResponse } from '/static/js/emailReplyStream.js';
@@ -32,5 +32,5 @@ export { parseMarkdownOutline } from '/static/js/documentOutline.js?v=20260831ri
 export { attachColorPicker } from '/static/js/colorPicker.js?v=20260910eyedropper1';
 
 export function loadEmailLibrary() {
-  return import('/static/js/emailLibrary.js?v=20260915trashmove2');
+  return import('/static/js/emailLibrary.js?v=20261105emailrobust1');
 }

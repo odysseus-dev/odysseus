@@ -46,7 +46,9 @@ def test_scroll_restoration_cancels_the_stale_smooth_scroll_target():
 
     assert "cancelAnimationFrame(_scrollRafId)" in restore
     assert "snapshot.stickToBottom" in restore
-    assert "snapshot.scrollTop" in restore
+    assert "const shouldPin = autoScrollEnabled" in restore
+    assert "if (!shouldPin) return;" in restore
+    assert "snapshot.scrollTop" not in restore
     assert "overflow-anchor: none" in STYLE
 
 

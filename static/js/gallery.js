@@ -2,7 +2,7 @@
  * Gallery Module — photo backup + AI-generated image library.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
@@ -2626,7 +2626,7 @@ export function openGallery() {
   if (visionLink) {
     visionLink.addEventListener('click', (e) => {
       e.preventDefault();
-      import('./settings.js?v=20260912writingstyle3').then(m => {
+      import('./settings.js?v=20261105hinttooltip1').then(m => {
         m.open('ai');
         // The gallery modal gets a bumped z-index from modalManager; settings
         // opens with its lower static z-index and lands BEHIND it. Raise it above.

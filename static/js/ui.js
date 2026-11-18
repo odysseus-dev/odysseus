@@ -569,16 +569,66 @@ export function showError(msg) {
 /**
  * Smooth-scroll chat history to bottom using rAF lerp.
  * Throttled during streaming so it doesn't fight user scrolling.
+ *
+ * ``force`` bypasses the 500ms throttle for structural changes (thinking
+ * collapse, tool card insertion, completion) so a followed view re-pins even
+ * when the last streamed token started an animation a moment ago.
  */
+const NEAR_BOTTOM_PX = 120;
 let _scrollThrottleTimer = null;
-export function scrollHistory() {
+let _programmaticScrollDepth = 0;
+let _programmaticScrollUntil = 0;
+
+function _now() {
+  return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+}
+
+function _markProgrammaticScroll(ms = 300) {
+  _programmaticScrollUntil = Math.max(_programmaticScrollUntil, _now() + ms);
+}
+
+/** Mark a layout/animation window whose scroll events are not user intent. */
+export function beginProgrammaticScroll(ms = 1000) {
+  _programmaticScrollDepth++;
+  _markProgrammaticScroll(ms);
+}
+
+export function endProgrammaticScroll(ms = 300) {
+  if (_programmaticScrollDepth > 0) _programmaticScrollDepth--;
+  _markProgrammaticScroll(ms);
+}
+
+/** True while auto-scroll, a snap, or a collapse animation owns scrollTop. */
+export function isProgrammaticScroll() {
+  return _programmaticScrollDepth > 0 || !!_scrollRafId || _now() < _programmaticScrollUntil;
+}
+
+/** Whether the chat viewport is within the near-bottom follow threshold. */
+export function isNearHistoryBottom(threshold = NEAR_BOTTOM_PX) {
+  const box = document.getElementById('chat-history');
+  if (!box) return true;
+  return box.scrollHeight - box.scrollTop - box.clientHeight <= threshold;
+}
+
+export function scrollHistory(options = {}) {
   if (!autoScrollEnabled) return;
+  // Do not animate a hidden tab. The next visible token/repin can resume;
+  // returning to the page must not force a jump on its own.
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   if (!_scrollBox || !_scrollBox.isConnected) {
     _scrollBox = document.getElementById('chat-history');
   }
-  // Throttle: only start a new scroll animation every 500ms
-  if (_scrollThrottleTimer) return;
-  _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
+  if (options.force) {
+    if (_scrollThrottleTimer) {
+      clearTimeout(_scrollThrottleTimer);
+      _scrollThrottleTimer = null;
+    }
+  } else {
+    // Throttle: only start a new scroll animation every 500ms
+    if (_scrollThrottleTimer) return;
+    _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
+  }
+  _markProgrammaticScroll(300);
   if (!_scrollRafId) {
     _scrollRafId = requestAnimationFrame(_smoothScrollStep);
   }
@@ -599,7 +649,8 @@ export function captureHistoryScroll() {
   return {
     box,
     scrollTop: box.scrollTop,
-    stickToBottom: maxScrollTop - box.scrollTop <= 120,
+    stickToBottom: maxScrollTop - box.scrollTop <= NEAR_BOTTOM_PX,
+    following: autoScrollEnabled,
   };
 }
 
@@ -615,11 +666,18 @@ export function restoreHistoryScroll(snapshot) {
     _scrollThrottleTimer = null;
   }
   _scrollBox = box;
+  // Only re-pin a snapshot that was taken in follow mode AND is still in
+  // follow mode now. If the user scrolled up while the async render was in
+  // flight, autoScrollEnabled is false: leave their viewport exactly where
+  // they put it instead of restoring the pre-render scrollTop.
+  const shouldPin = autoScrollEnabled
+    && snapshot.following !== false
+    && (snapshot.following === true || !!snapshot.stickToBottom);
+  if (!shouldPin) return;
   const apply = () => {
-    if (!box.isConnected) return;
-    box.scrollTop = snapshot.stickToBottom
-      ? Math.max(0, box.scrollHeight - box.clientHeight)
-      : snapshot.scrollTop;
+    if (!box.isConnected || !autoScrollEnabled) return;
+    _markProgrammaticScroll(300);
+    box.scrollTop = Math.max(0, box.scrollHeight - box.clientHeight);
   };
   apply();
   // Footer metrics and highlighted code settle on the following frames.
@@ -631,7 +689,8 @@ export function restoreHistoryScroll(snapshot) {
 
 function _smoothScrollStep() {
   const box = _scrollBox;
-  if (!box || !autoScrollEnabled) {
+  if (!box || !autoScrollEnabled
+      || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
     _scrollRafId = null;
     return;
   }
@@ -642,6 +701,7 @@ function _smoothScrollStep() {
   if (diff <= 1) {
     box.scrollTop = target;
     _scrollRafId = null;
+    _markProgrammaticScroll(200);
     return;
   }
 
@@ -660,6 +720,15 @@ export function scrollHistoryInstant() {
     _scrollBox = document.getElementById('chat-history');
   }
   if (_scrollBox) {
+    if (_scrollRafId) {
+      cancelAnimationFrame(_scrollRafId);
+      _scrollRafId = null;
+    }
+    if (_scrollThrottleTimer) {
+      clearTimeout(_scrollThrottleTimer);
+      _scrollThrottleTimer = null;
+    }
+    _markProgrammaticScroll(300);
     _scrollBox.scrollTop = _scrollBox.scrollHeight;
   }
 }
@@ -668,7 +737,9 @@ export function scrollHistoryInstant() {
  * Enable/disable auto-scroll
  */
 export function setAutoScroll(enabled) {
-  autoScrollEnabled = enabled;
+  const next = !!enabled;
+  if (autoScrollEnabled === next) return;
+  autoScrollEnabled = next;
 }
 
 /**
@@ -1043,6 +1114,10 @@ const uiModule = {
   setAutoScroll,
   getAutoScroll,
   isAutoScrolling,
+  isProgrammaticScroll,
+  isNearHistoryBottom,
+  beginProgrammaticScroll,
+  endProgrammaticScroll,
   autoResize,
   debounce,
   el,

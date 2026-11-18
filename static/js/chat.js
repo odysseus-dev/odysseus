@@ -7,23 +7,24 @@ import { effectiveTemperature, temperatureHint } from './sessionTemperature.js';
 // ES6 module — IIFE removed
 
 import Storage from './storage.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
-import chatStream from './chatStream.js?v=20261026devsync1';
-import { addAITTSButton } from './tts-ai.js';
+import chatRenderer, { renderToolIcon, linkifyEmailReferences } from './chatRenderer.js?v=20261105ttsscroll1';
+import { generatedImageResult } from './generatedImageResult.js';
+import chatStream from './chatStream.js?v=20261103imagefix1';
+import { addAITTSButton } from './tts-ai.js?v=20261105ttsscroll1';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js?v=20260908personaname1';
 import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
 import searchModule from './search.js';
 import documentModule from './document.js?v=20260916docctx2';
-import * as emailInbox from './emailInbox.js?v=20260914aireply4';
+import * as emailInbox from './emailInbox.js?v=20261105emailrobust1';
 import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260921chatgptusage1';
+import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20261105autosearchgate2';
 import createResearchSynapse from './researchSynapse.js?v=20260910roundlabels2';
 import { createStreamRenderer } from './streamingRenderer.js';
-import { createTurnRendering, startsContinuationRound } from './turnRendering.js?v=20260910round1stable1';
+import { createTurnRendering, startsContinuationRound } from './turnRendering.js?v=20261104searxngkeep1';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
 import {
   createIncrementalDisplayProjector,
@@ -37,6 +38,8 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
+import { providerLabel, providerBillingUrl } from './providers.js';
+import settingsModule from './settings.js?v=20261105hinttooltip1';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import { invalidateSettings } from './appConfig.js';
 
@@ -335,6 +338,7 @@ import { invalidateSettings } from './appConfig.js';
   let _stallBannerShown = false;
   const STALL_THRESHOLD_MS = 60000;
   let _sendInFlight = false;   // covers the window from click → streaming start
+  let _agentSearchPreviewShown = false;
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
   // The user bubble a regenerate keeps on screen. Its resubmitted message is
@@ -358,6 +362,11 @@ import { invalidateSettings } from './appConfig.js';
       || name.includes('__browser_');
   }
 
+  function _isWebFetchTool(tool) {
+    const name = String(tool || '').toLowerCase();
+    return name === 'web_fetch' || name.endsWith('web_fetch') || name.includes('__web_fetch');
+  }
+
   function _privateBrowserActionLabel(command) {
     const raw = String(command || '').trim();
     if (!raw) return 'running';
@@ -368,8 +377,21 @@ import { invalidateSettings } from './appConfig.js';
         const target = parsed.url || parsed.selector || parsed.target || parsed.key || '';
         return target ? `${action}: ${String(target).slice(0, 90)}` : action;
       }
+      if (parsed && typeof parsed.url === 'string' && parsed.url) {
+        return `open: ${parsed.url.slice(0, 90)}`;
+      }
     } catch (_) {}
     return raw.slice(0, 110);
+  }
+
+  const _PRIVATE_BROWSER_READ_ICON = '<svg class="private-browser-preview-read" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const _PRIVATE_BROWSER_MOUSE_ICON = '<svg class="private-browser-preview-mouse" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v6"/></svg>';
+  function _privateBrowserStatusHtml(command) {
+    const full = _privateBrowserActionLabel(command);
+    const action = full.split(':')[0].trim().toLowerCase();
+    const label = full.includes(': ') ? full.split(': ')[0] : full;
+    const icon = action === 'read' ? _PRIVATE_BROWSER_READ_ICON : '';
+    return icon + uiModule.esc(label);
   }
 
   function _privateBrowserUrlFromCommand(command) {
@@ -410,7 +432,7 @@ import { invalidateSettings } from './appConfig.js';
     const imgHtml = screenshotSrc
       ? `<img class="private-browser-preview-img" src="${uiModule.esc(screenshotSrc)}" alt="Private browser screenshot" />`
       : '<div class="private-browser-preview-empty"><span>Browsing…</span><span class="private-browser-preview-spinner" aria-hidden="true"></span></div><img class="private-browser-preview-img" alt="Private browser screenshot" />';
-    const html = `<div class="private-browser-preview"${urlAttr}><div class="private-browser-preview-header"><span class="private-browser-preview-title">Private Browser</span><span class="private-browser-preview-status">${uiModule.esc(_privateBrowserActionLabel(command))}</span><button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button></div><div class="private-browser-preview-frame">${imgHtml}</div></div>`;
+    const html = `<div class="private-browser-preview${screenshotSrc ? '' : ' folded'}"${urlAttr}><div class="private-browser-preview-header"><span class="private-browser-preview-title">Private Browser</span><span class="private-browser-preview-status">${_privateBrowserStatusHtml(command)}</span><button type="button" class="private-browser-preview-fold" title="Open browser page" aria-label="Open browser page">${_PRIVATE_BROWSER_MOUSE_ICON}</button></div><div class="private-browser-preview-frame">${imgHtml}</div></div>`;
     setTimeout(() => _mountPrivateBrowserSpinners(document), 0);
     return html;
   }
@@ -430,12 +452,12 @@ import { invalidateSettings } from './appConfig.js';
       };
     }
     root = document.createElement('div');
-    root.className = 'private-browser-preview';
+    root.className = 'private-browser-preview folded';
     root.innerHTML = `
       <div class="private-browser-preview-header">
         <span class="private-browser-preview-title">Private Browser</span>
         <span class="private-browser-preview-status"></span>
-        <button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button>
+        <button type="button" class="private-browser-preview-fold" title="Open browser page" aria-label="Open browser page">${_PRIVATE_BROWSER_MOUSE_ICON}</button>
       </div>
       <div class="private-browser-preview-frame">
         <div class="private-browser-preview-empty"><span>Browsing…</span><span class="private-browser-preview-spinner" aria-hidden="true"></span></div>
@@ -455,7 +477,8 @@ import { invalidateSettings } from './appConfig.js';
   function _showPrivateBrowserPreview(command, contentEl) {
     const preview = _ensurePrivateBrowserPreview(contentEl);
     if (!preview || !preview.root) return;
-    if (preview.status) preview.status.textContent = _privateBrowserActionLabel(command);
+    if (preview.root) preview.root.classList.add('folded');
+    if (preview.status) preview.status.innerHTML = _privateBrowserStatusHtml(command);
     const url = _privateBrowserUrlFromCommand(command);
     if (url) {
       _lastPrivateBrowserUrl = url;
@@ -470,10 +493,12 @@ import { invalidateSettings } from './appConfig.js';
   }
 
   function _updatePrivateBrowserPreview(json, contentEl) {
-    if (!json || !_isPrivateBrowserTool(json.tool)) return;
+    if (!json) return;
+    if (!_isPrivateBrowserTool(json.tool) && !(_isWebFetchTool(json.tool) && json.screenshot)) return;
     const preview = _ensurePrivateBrowserPreview(contentEl);
     if (!preview || !preview.root) return;
-    if (preview.status) preview.status.textContent = _privateBrowserActionLabel(json.command || '');
+    if (preview.root) preview.root.classList.add('folded');
+    if (preview.status) preview.status.innerHTML = _privateBrowserStatusHtml(json.command || '');
     const url = _privateBrowserUrlFromCommand(json.command || '');
     if (url) {
       _lastPrivateBrowserUrl = url;
@@ -488,8 +513,19 @@ import { invalidateSettings } from './appConfig.js';
       return;
     }
     if (preview.img) {
+      preview.img.onload = () => {
+        if (preview.img && preview.img.naturalWidth > 0) {
+          preview.root.classList.remove('folded');
+        }
+      };
+      preview.img.onerror = () => {
+        if (preview.root) preview.root.classList.add('folded');
+      };
       preview.img.src = screenshotSrc;
       preview.img.hidden = false;
+      if (preview.img.complete && preview.img.naturalWidth > 0) {
+        preview.root.classList.remove('folded');
+      }
     }
     if (preview.empty) preview.empty.hidden = true;
   }
@@ -1680,11 +1716,93 @@ import { invalidateSettings } from './appConfig.js';
     return probes[item.endpoint_id] || null;
   }
 
+  const SEARCH_MODE_BODY_CLASS = 'search-mode-active';
+  const SEARCH_MODE_PLACEHOLDER = 'Search with SearXNG...';
+
+  function _isSearchMode() {
+    try { return !!Storage.getToggle('search_mode', false); } catch (_) { return false; }
+  }
+
+  function _syncSearchModePlaceholder() {
+    if (typeof window._syncComposerPlaceholder === 'function') {
+      window._syncComposerPlaceholder();
+      return;
+    }
+    const input = uiModule.el('message');
+    if (input) {
+      input.setAttribute('placeholder', _isSearchMode() ? SEARCH_MODE_PLACEHOLDER : 'Message Odysseus...');
+    }
+  }
+
+  function _setSearchMode(active, options = {}) {
+    const on = !!active;
+    try { Storage.setToggle('search_mode', on); } catch (_) {}
+    document.body.classList.toggle(SEARCH_MODE_BODY_CLASS, on);
+    _syncSearchModePlaceholder();
+    if (!options.silent && uiModule.showToast) {
+      uiModule.showToast(on ? 'Search mode on' : 'Search mode off', 1600);
+    }
+  }
+
+  function _toggleSearchMode() {
+    _setSearchMode(!_isSearchMode());
+  }
+
+  function _wireComposerSwipeSearch(composer) {
+    const bar = composer && composer.closest ? composer.closest('.chat-input-bar') : null;
+    if (!bar || bar.dataset.swipeSearchWired === 'true') return false;
+    bar.dataset.swipeSearchWired = 'true';
+    let startX = 0;
+    let startY = 0;
+    let startedAt = 0;
+    let tracking = false;
+    bar.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { tracking = false; return; }
+      const target = e.target;
+      if (target && target.closest && target.closest('button, a, .model-picker-menu, .overflow-menu')) {
+        tracking = false;
+        return;
+      }
+      const touch = e.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      startedAt = Date.now();
+      tracking = true;
+    }, { passive: true });
+    bar.addEventListener('touchend', (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const touch = e.changedTouches && e.changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Date.now() - startedAt > 700) return;
+      if (dx < 64 || Math.abs(dy) > 50 || dx < Math.abs(dy) * 1.4) return;
+      if (composer.selectionStart !== composer.selectionEnd) return;
+      e.preventDefault();
+      _toggleSearchMode();
+    }, { passive: false });
+    bar.addEventListener('keydown', (e) => {
+      if (e.target !== composer) return;
+      if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (!_isSearchMode() && composer.value.trim()) return;
+      e.preventDefault();
+      _toggleSearchMode();
+    });
+    return true;
+  }
+
   /**
    * Initialize with dependencies
    */
   export function init(apiBase) {
     API_BASE = apiBase;
+    _setSearchMode(_isSearchMode(), { silent: true });
+    window.__odysseusSetSearchMode = (active) => _setSearchMode(active, { silent: true });
+    window.__odysseusQueueComposerText = (text) => {
+      if (!isStreaming && !_sendInFlight) return false;
+      return _queueAgentRequest(text);
+    };
     initSlashCommands({ apiBase, isStreaming: () => !!_getForegroundStreamState() });
     // Initialize email inbox
     emailInbox.init(documentModule);
@@ -1707,6 +1825,10 @@ import { invalidateSettings } from './appConfig.js';
       // Init can run before #message exists (templated UI); short retries only.
       try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
       setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
+    if (!_wireComposerSwipeSearch(composer)) {
+      try { requestAnimationFrame(() => _wireComposerSwipeSearch(document.getElementById('message'))); } catch (_) {}
+      setTimeout(() => _wireComposerSwipeSearch(document.getElementById('message')), 250);
     }
   }
 
@@ -2266,6 +2388,7 @@ import { invalidateSettings } from './appConfig.js';
     if (_sendInFlight) return;
     const _sendPerf = _createChatSendPerf();
     const _ttftStartedAt = performance.now();
+    _agentSearchPreviewShown = false;
     _sendInFlight = true;
     const approvalForSend = _pendingToolApproval;
     _setForegroundChatBusy(true);
@@ -2318,10 +2441,29 @@ import { invalidateSettings } from './appConfig.js';
         el('message').value = '';
         if (window._syncModelPickerAutohide) window._syncModelPickerAutohide();
         if (uiModule.autoResize) uiModule.autoResize(el('message'));
+        _setForegroundChatBusy(false);
         _releaseSendFlag();
         return;
       }
     }
+
+    // --- Search mode: send the typed text straight to SearXNG ---
+    if (!approvalForSend && msg.trim() && !isCommand(msg.trim()) && _isSearchMode()) {
+      const searchQuery = msg.trim();
+      el('message').value = '';
+      if (window._syncModelPickerAutohide) window._syncModelPickerAutohide();
+      if (uiModule.autoResize) uiModule.autoResize(el('message'));
+      try {
+        await slashCommands.runInlineSearch(searchQuery);
+      } finally {
+        _setForegroundChatBusy(false);
+        _releaseSendFlag();
+      }
+      return;
+    }
+
+    let _pendingQuickLookup = null;
+    let _autoQuickLookupReply = null;
 
     const incognitoChkForSend = el('incognito-toggle');
     const isIncognitoForSend = !!(incognitoChkForSend && incognitoChkForSend.checked);
@@ -2642,6 +2784,22 @@ import { invalidateSettings } from './appConfig.js';
           }
         }
       }
+      // The instant lookup card is a first-turn shortcut only. Later turns must
+      // be driven by the agent's own web_search decision, never by the composer.
+      // Check after session adoption and against session history because a
+      // freshly opened chat may not have painted its message bubbles yet.
+      const autoLookupText = msg.trim();
+      const _currentSession = sessionModule.getSessions
+        ? sessionModule.getSessions().find(item => item.id === sessionModule.getCurrentSessionId?.())
+        : null;
+      const _hasPriorUserMessage = !!document.querySelector('#chat-history .msg-user')
+        || Number(_currentSession?.message_count || 0) > 0;
+      if (!_hasPriorUserMessage && !approvalForSend && autoLookupText && !isCommand(autoLookupText)
+          && !_pendingAttachInfo
+          && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) {
+        _pendingQuickLookup = slashCommands.autoQuickLookup(autoLookupText);
+      }
+
       let _userMsgEl = null;
       if (!skipBubble) {
         const _toggleStateForBubble = Storage.loadToggleState();
@@ -2653,6 +2811,10 @@ import { invalidateSettings } from './appConfig.js';
           _bubbleMeta.document_selections = Array.isArray(docSel) ? docSel : [docSel];
         }
         _userMsgEl = addMessage('user', userDisplay, null, _bubbleMeta);
+      }
+      if (_pendingQuickLookup && _userMsgEl) {
+        _autoQuickLookupReply = slashCommands.showQuickLookupCard(_pendingQuickLookup, { persist: true });
+        _pendingQuickLookup = null;
       }
       _sendPerf.mark('user_bubble_visible');
       messageInput.value = approvalForSend ? (approvalForSend.draft || '') : '';
@@ -3197,7 +3359,7 @@ import { invalidateSettings } from './appConfig.js';
       let thinkingStartTime = null;
       // Streaming TTS: synthesize sentence-by-sentence during streaming
       streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
-      if (streamingTTS) window.aiTTSManager.streamingStart();
+      if (streamingTTS) window.aiTTSManager.streamingStart(holder);
       // Multi-bubble agent tracking
       let roundHolder = holder;       // Current AI text bubble (changes per round)
       let roundText = '';             // Text accumulated for current round
@@ -3272,13 +3434,13 @@ import { invalidateSettings } from './appConfig.js';
           + markdownModule.processWithThinking(markdownModule.squashOutsideCode(markdownModule.normalizeThinkingMarkup(_streamDisplayText(text, { final: _docFenceOpened }))))
           + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
       }
-      function _renderTerminalAnswer(text, messageId = '', renderOwner, replacementScope) {
-        if (renderOwner && !_turnRendering.accepts({ type: 'final_response', render_owner: renderOwner, replacement_scope: replacementScope })) return false;
+      function _renderTerminalAnswer(text, messageId = '', renderOwner, replacementScope, force = false) {
+        if (!force && renderOwner && !_turnRendering.accepts({ type: 'final_response', render_owner: renderOwner, replacement_scope: replacementScope })) return false;
         _ensureVisibleRoundForDelta();
         const body = roundHolder?.querySelector('.body');
         if (!body) return false;
         const result = _turnRendering.render({
-          body, html: _terminalAnswerHtml(text, body), raw: text, messageId, render_owner: renderOwner, replacement_scope: replacementScope,
+          body, html: _terminalAnswerHtml(text, body), raw: text, messageId, render_owner: renderOwner, replacement_scope: replacementScope, force,
         });
         if (result.changed && window.hljs) body.querySelectorAll('pre code').forEach(block => window.hljs.highlightElement(block));
         if (result.accepted) _turnRendering.settle();
@@ -3309,8 +3471,9 @@ import { invalidateSettings } from './appConfig.js';
           }
           if (!saved || !String(saved.content || '').trim()) return false;
           const scrollSnapshot = uiModule.captureHistoryScroll?.();
-          const rendered = _renderTerminalAnswer(saved.content, _savedAssistantMessageId, saved.metadata?.render_owner, saved.metadata?.replacement_scope);
+          const rendered = _renderTerminalAnswer(saved.content, _savedAssistantMessageId, saved.metadata?.render_owner, 'turn', true);
           uiModule.restoreHistoryScroll?.(scrollSnapshot);
+          if (rendered) _repinChatIfFollowing({ force: true });
           if (rendered) _streamTurnMarker.remove();
           return rendered;
         } catch (err) {
@@ -3495,6 +3658,47 @@ import { invalidateSettings } from './appConfig.js';
         return match ? match[1] : '';
       }
 
+      function _emailSearchResults(args = {}, data = null) {
+        const raw = [data && data.output, data && data.response, data && data.results, data && data.content]
+          .filter(v => v !== undefined && v !== null).map(String).join('\n');
+        const text = raw.replace(/\\n/g, '\n');
+        const results = [];
+        for (const block of text.split(/\n(?=\s*\d+\.\s+)/)) {
+          const uidMatch = block.match(/\bUID:\s*(\d+)\b/i);
+          if (!uidMatch) continue;
+          const folderMatch = block.match(/\bFolder:\s*([^\r\n]+)/i);
+          const accountMatch = block.match(/\bAccount:\s*[^\r\n<]*<([^>\r\n]+)>/i);
+          const subjectMatch = block.match(/^\s*\d+\.\s+(?:\*\*)?(.+?)(?:\*\*)?\s*$/m);
+          results.push({
+            uid: uidMatch[1],
+            folder: (folderMatch ? folderMatch[1].trim() : '') || String(args?.folder || 'INBOX'),
+            account: (accountMatch ? accountMatch[1].trim() : '') || String(args?.account || args?.account_id || ''),
+            subject: subjectMatch ? subjectMatch[1].replace(/\*\*/g, '').replace(/\\"/g, '"').replace(/\s+/g, ' ').trim() : '',
+          });
+        }
+        if (!results.length && /^\d+$/.test(String(args?.uid || '').trim())) {
+          results.push({ uid: String(args.uid).trim(), folder: String(args.folder || 'INBOX'), account: String(args.account || args.account_id || ''), subject: '' });
+        }
+        return results;
+      }
+
+      function _emailSearchResultTarget(args = {}, data = null) {
+        const result = _emailSearchResults(args, data)[0];
+        if (!result) return null;
+        const clean = value => String(value || '').replace(/[^A-Za-z0-9_.@-]/g, '_');
+        const id = [clean(result.folder), result.uid, result.account ? clean(result.account) : ''].filter(Boolean).join(':');
+        return { ...result, href: `#email-${id}` };
+      }
+
+      function _emailResultLinksHtml(results) {
+        return (results || []).slice(0, 6).map(result => {
+          const clean = value => String(value || '').replace(/[^A-Za-z0-9_.@-]/g, '_');
+          const href = result.href || `#email-${[clean(result.folder), result.uid, result.account ? clean(result.account) : ''].filter(Boolean).join(':')}`;
+          const label = result.subject || `UID ${result.uid}`;
+          return `<a class="agent-thread-summary agent-thread-summary-link" href="${uiModule.esc(href)}" title="Open ${uiModule.esc(result.folder)} · UID ${uiModule.esc(result.uid)}">${uiModule.esc(label)}</a>`;
+        }).join('<span class="agent-thread-result-sep"> · </span>');
+      }
+
       function _emailToolHash(args = {}, data = null) {
         const uid = String((data && data.uid) || args.uid || '').trim();
         if (!/^\d+$/.test(uid)) return '';
@@ -3521,7 +3725,7 @@ import { invalidateSettings } from './appConfig.js';
         if (lower === 'web_fetch' || lower.endsWith('web_fetch') || lower.includes('__web_fetch')) {
           const url = _webFetchUrlFromCommand(command);
           return {
-            label: '',
+            label: data?.screenshot ? 'Private Browser' : '',
             headerActionHtml: _toolHeaderLinkHtml(url, 'Open fetched page'),
             commandHtml: url
               ? `<a class="agent-thread-summary agent-thread-summary-link" href="${uiModule.esc(url)}" target="_blank" rel="noopener noreferrer" title="Open ${uiModule.esc(url)}">${uiModule.esc(url)}</a>`
@@ -3569,16 +3773,26 @@ import { invalidateSettings } from './appConfig.js';
           const max = args && args.max_results ? String(args.max_results) : '';
           const folder = args && args.folder ? String(args.folder) : 'INBOX';
           const bits = [folder, max ? `${max} latest` : 'latest'].filter(Boolean).join(' · ');
+          const results = _emailSearchResults(args || {}, data);
+          const first = _emailSearchResultTarget(args || {}, data);
+          const links = _emailResultLinksHtml(results);
           return {
             label: 'Check email',
-            commandHtml: `<div class="agent-thread-summary">${uiModule.esc(bits)}</div>`,
+            headerActionHtml: first ? _toolHeaderHashLinkHtml(first.href, 'Open found email') : '',
+            commandHtml: `<div class="agent-thread-summary">${uiModule.esc(bits)}</div>` +
+              (links ? `<div class="agent-thread-email-results">${links}</div>` : ''),
           };
         }
         if (emailTool && (lower.includes('search_emails') || lower.endsWith('search_emails'))) {
           const q = args && args.query ? String(args.query) : '';
+          const results = _emailSearchResults(args || {}, data);
+          const first = _emailSearchResultTarget(args || {}, data);
+          const links = _emailResultLinksHtml(results);
           return {
             label: 'Search email',
-            commandHtml: q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '',
+            headerActionHtml: first ? _toolHeaderHashLinkHtml(first.href, 'Open found email') : '',
+            commandHtml: (q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '') +
+              (links ? `<div class="agent-thread-email-results">${links}</div>` : ''),
           };
         }
         return { label: '', commandHtml: '' };
@@ -3838,9 +4052,70 @@ import { invalidateSettings } from './appConfig.js';
         }
       };
 
+      function _repinChatIfFollowing({ force = true } = {}) {
+        if (uiModule.getAutoScroll && !uiModule.getAutoScroll()) return;
+        try { uiModule.scrollHistory?.({ force }); } catch (_) {}
+      }
+
+      // Smoothly fold the live thinking drawer before a tool/answer replaces the round.
+      function _collapseLiveThinkingSmooth(content = _liveThinkContent) {
+        if (!content || !content.classList.contains('expanded')) return Promise.resolve();
+        const wasFollowing = !uiModule.getAutoScroll || uiModule.getAutoScroll();
+        // The drawer shrink clamps scrollTop and fires a scroll event. Mark the
+        // animation window so the chat scroll listener never mistakes it for
+        // the user scrolling away from the bottom.
+        uiModule.beginProgrammaticScroll?.(1000);
+        const finishLayout = () => {
+          uiModule.endProgrammaticScroll?.(400);
+          if (wasFollowing) _repinChatIfFollowing({ force: true });
+        };
+        const toggle = content.closest('.thinking-section')?.querySelector('.thinking-toggle') || _liveThinkToggle;
+        const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        if (reduce) {
+          content.classList.remove('expanded');
+          toggle?.classList.remove('expanded');
+          finishLayout();
+          return Promise.resolve();
+        }
+        return new Promise(resolve => {
+          // Start from the drawer's rendered content height, not scrollHeight.
+          // An expanded drawer is capped at 300px with internal scrolling, so
+          // scrollHeight can be thousands of px; using it makes the drawer
+          // snap open to full height for one frame before collapsing.
+          const styles = getComputedStyle(content);
+          const start = Math.max(0,
+            content.getBoundingClientRect().height
+            - (parseFloat(styles.paddingTop) || 0)
+            - (parseFloat(styles.paddingBottom) || 0));
+          content.style.maxHeight = start + 'px';
+          content.style.overflow = 'hidden';
+          content.style.transition = 'max-height 0.3s ease, padding 0.3s ease';
+          void content.offsetHeight;
+          content.classList.remove('expanded');
+          if (toggle) toggle.classList.remove('expanded');
+          content.style.maxHeight = '0px';
+          content.style.paddingTop = '0px';
+          content.style.paddingBottom = '0px';
+          let done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            content.style.maxHeight = '';
+            content.style.overflow = '';
+            content.style.transition = '';
+            content.style.paddingTop = '';
+            content.style.paddingBottom = '';
+            finishLayout();
+            resolve();
+          };
+          content.addEventListener('transitionend', finish, { once: true });
+          setTimeout(finish, 380);
+        });
+      }
+
       // Shared teardown for the terminal paths that end thinking without the
       // normal </think> transition (tool_start, agent_step, [DONE], errors).
-      function _endLiveThinkingSection({ rich = true } = {}) {
+      async function _endLiveThinkingSection({ rich = true } = {}) {
         isThinking = false;
         _thinkingMode = null;
         _thinkingRecheckAt = 0;
@@ -3849,6 +4124,7 @@ import { invalidateSettings } from './appConfig.js';
         if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
         if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = elapsed ? _formatThinkStats(elapsed, _liveThinkTokenCount) : '';
         _removeLiveThinkingSpinner();
+        await _collapseLiveThinkingSmooth(_liveThinkContent);
       }
 
       function _cancelThinkingGrace() {
@@ -3905,6 +4181,7 @@ import { invalidateSettings } from './appConfig.js';
         if (liveHeader) liveHeader.dataset.thinkingId = thinkingId;
         if (_liveThinkContent) _liveThinkContent.id = thinkingId;
         if (_liveThinkToggle) _liveThinkToggle.id = thinkingId + '-toggle';
+        _collapseLiveThinkingSmooth(_liveThinkContent);
 
         const streamElement = _liveThinkSection ? _liveThinkSection.parentElement : roundHolder.querySelector('.stream-content');
         const replyHost = streamElement || roundHolder.querySelector('.body');
@@ -4355,7 +4632,7 @@ import { invalidateSettings } from './appConfig.js';
                 _removeThinkingSpinner();
                 _closeOpenThinkingMarkup(_isBg);
                 if (isThinking) {
-                  _endLiveThinkingSection({ rich: false });
+                  await _endLiveThinkingSection({ rich: false });
                 } else {
                   _cancelLiveThinkingWork();
                 }
@@ -4385,7 +4662,7 @@ import { invalidateSettings } from './appConfig.js';
                 terminalFinalResponseRendered = _renderTerminalAnswer(finalText, '', json.render_owner, json.replacement_scope);
                 if (json.photo_editor_action) renderPhotoEditorApplyButton(roundHolder, json.photo_editor_action);
                 lastContentRoundHolder = roundHolder || lastContentRoundHolder;
-                uiModule.scrollHistory();
+                _repinChatIfFollowing({ force: true });
                 continue;
               }
               if (json.delta) {
@@ -4843,7 +5120,9 @@ import { invalidateSettings } from './appConfig.js';
                   });
                   note.appendChild(contBtn);
                   _chatBox.appendChild(note);
-                  try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                  if (uiModule.getAutoScroll?.() !== false) {
+                    try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                  }
                 }
               } else if (json.type === 'model_actual') {
                 if (!_isBg) {
@@ -5037,11 +5316,40 @@ import { invalidateSettings } from './appConfig.js';
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
                 if (isThinking) {
-                  _endLiveThinkingSection({ rich: false });
+                  await _endLiveThinkingSection({ rich: false });
                 }
                 // --- Finalize current text bubble (only once per round) ---
                 if (spinner && spinner.element) spinner.destroy();
                 _finalizeRoundRender();
+
+                // Show the SearXNG results for this exact query immediately.
+                // The agent's own web_search call may still be fetching pages;
+                // this preview uses the fast metadata path so the user sees
+                // results while the model is still synthesizing.
+                const _toolNameLower = String(json.tool || '').toLowerCase();
+                const _isSearchTool = _toolNameLower === 'web_search'
+                  || _toolNameLower.endsWith('web_search')
+                  || _toolNameLower.includes('__web_search');
+                if (_isSearchTool && !_agentSearchPreviewShown) {
+                  const _searchQuery = _webSearchQueryFromCommand(json.full_command || json.command || '');
+                  if (_searchQuery) {
+                    const _autoReady = _autoQuickLookupReply?.el?.isConnected
+                      && _autoQuickLookupReply.el.dataset.quickLookupReady === 'true';
+                    if (_autoReady) {
+                      // The instant card already resolved. Keep it and skip
+                      // the agent preview so the turn never shows two cards.
+                      _agentSearchPreviewShown = true;
+                      _autoQuickLookupReply = null;
+                    } else {
+                      // The instant lookup was still pending or failed; drop
+                      // it and use the preview for the agent's exact query.
+                      _autoQuickLookupReply?.el?.remove();
+                      _autoQuickLookupReply = null;
+                      _agentSearchPreviewShown = true;
+                      slashCommands.showInlineSearchPreview(_searchQuery, { expanded: false, persist: true }).catch(() => {});
+                    }
+                  }
+                }
 
                 // Track tool name for contextual spinner labels
                 _lastToolName = json.tool || '';
@@ -5125,7 +5433,7 @@ import { invalidateSettings } from './appConfig.js';
                   // Hundredths so it visibly counts sub-second (1.00, 1.05, …).
                   el2.textContent = s < 60 ? `${s.toFixed(2)}s` : `${Math.floor(s / 60)}m ${(s % 60).toFixed(2).padStart(5, '0')}s`;
                 }, 50);
-                uiModule.scrollHistory();
+                _repinChatIfFollowing({ force: true });
 
               } else if (json.type === 'editor_progress') {
                 if (_isBg) continue;
@@ -5232,7 +5540,7 @@ import { invalidateSettings } from './appConfig.js';
                   // For file edits the "command" is the raw JSON args — redundant
                   // next to the diff, so hide it when we have a diff to show.
 	                  const toolInfo2 = _toolDisplayInfo(json.tool, cmd, json);
-		                  const browserTool = _isPrivateBrowserTool(json.tool);
+		                  const browserTool = _isPrivateBrowserTool(json.tool) || (_isWebFetchTool(json.tool) && !!json.screenshot);
 		                  const toolHeaderAction2 = toolInfo2.headerActionHtml || '';
                   const toolIcon2 = renderToolIcon(json.tool, cmd, json);
 		                  const cmdHtml2 = browserTool ? '' : (toolInfo2.commandHtml || ((cmd && !(json.diff && json.diff.text)) ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : ''));
@@ -5245,16 +5553,25 @@ import { invalidateSettings } from './appConfig.js';
                     outHtml = _privateBrowserPreviewHtml(cmd, json.screenshot) + outHtml;
                   }
 	                  const _wasOpen = currentToolBubble.classList.contains('open') || browserTool;
-                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '') + (browserTool ? ' browser-preview-node' : '');
+                  let _emailArgs = null;
+                  try { _emailArgs = JSON.parse(cmd || '{}'); } catch (_) {}
+                  const _emailAutoOpen = _emailSearchResults(_emailArgs || {}, json).length > 0;
+                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen || _emailAutoOpen ? ' open' : '') + (browserTool ? ' browser-preview-node' : '');
                   currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span>${toolIcon2}<span class="agent-thread-tool">${esc(toolInfo2.label || json.tool)}</span>${toolHeaderAction2}<span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron" aria-hidden="true"></span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
-                  uiModule.scrollHistory();
+                  _repinChatIfFollowing({ force: true });
                 }
                 // --- Render generated images inline ---
-                if (json.image_url) {
-                  _rememberGeneratedImage(json);
-                  _appendGeneratedImageBubble(json, streamSessionId);
+                // Tools may carry the image URL either as a structured field
+                // or as JSON inside `output` (older MCP/agent shapes). Saved
+                // history already normalizes both via generatedImageResult;
+                // use the same normalizer live so the image does not wait for
+                // a refresh.
+                const liveImage = generatedImageResult(json);
+                if (liveImage) {
+                  _rememberGeneratedImage(liveImage);
+                  _appendGeneratedImageBubble(liveImage, streamSessionId);
                 }
                 // --- Render browser screenshots in tool output ---
                 if (json.screenshot && currentToolBubble) {
@@ -5262,7 +5579,8 @@ import { invalidateSettings } from './appConfig.js';
                   if (contentEl) {
                     _updatePrivateBrowserPreview(json, contentEl);
                     const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
-                    if (screenshotSrc && !_isPrivateBrowserTool(json.tool)) {
+                    const browserVisual = _isPrivateBrowserTool(json.tool) || (_isWebFetchTool(json.tool) && !!screenshotSrc);
+                    if (screenshotSrc && !browserVisual) {
                       const details = document.createElement('details');
                       details.className = 'agent-tool-output';
                       const summary = document.createElement('summary');
@@ -5379,7 +5697,7 @@ import { invalidateSettings } from './appConfig.js';
 
               } else if (json.type === 'email_open') {
                 if (_isBg) continue;
-                import('./emailLibrary.js?v=20260915trashmove2').then(mod =>
+                import('./emailLibrary.js?v=20261105emailrobust1').then(mod =>
                   mod.openEmailFromTool(json, () => sessionModule.getCurrentSessionId() === streamSessionId)
                 ).catch(err => uiModule.showToast(`Could not open email: ${err.message}`));
 
@@ -5415,7 +5733,7 @@ import { invalidateSettings } from './appConfig.js';
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 if (isThinking) {
-                  _endLiveThinkingSection({ rich: false });
+                  await _endLiveThinkingSection({ rich: false });
                 } else {
                   _cancelLiveThinkingWork();
                 }
@@ -5473,7 +5791,7 @@ import { invalidateSettings } from './appConfig.js';
                   spinner.start();
                 }
                 if (streamingTTS) window.aiTTSManager._streamSentencesSent = 0;
-                uiModule.scrollHistory();
+                _repinChatIfFollowing({ force: true });
               } else if (json.type === 'budget_exceeded') {
                 if (_isBg) continue;
                 _cancelThinkingTimer();
@@ -5687,7 +6005,7 @@ import { invalidateSettings } from './appConfig.js';
 	          if (_suppressThinkingForPersona()) {
 	            const _personaFinal = _visiblePersonaReplyText(finalDisplay);
 	            _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
-	              + (_personaFinal.trim() ? markdownModule.mdToHtml(markdownModule.squashOutsideCode(_personaFinal)) : '')
+	              + (_personaFinal.trim() ? linkifyEmailReferences(markdownModule.mdToHtml(markdownModule.squashOutsideCode(_personaFinal))) : '')
 	              + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
 	          } else {
 
@@ -5730,7 +6048,7 @@ import { invalidateSettings } from './appConfig.js';
 	            }
 	            if (_liveReplyEl && _finalReply) {
 	              // Render reply into the live-reply container (thinking bar already showing)
-	              var _replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply));
+	              var _replyHtml = linkifyEmailReferences(markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply)));
 	              _liveReplyEl.innerHTML = _replyHtml;
 	              _liveReplyEl.classList.remove('live-reply-content');
 	              if (_sourcesData) {
@@ -5742,7 +6060,7 @@ import { invalidateSettings } from './appConfig.js';
 	            } else {
 	              // Full re-render (reply empty or no live-reply container)
 	              _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
-	                + markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
+	                + linkifyEmailReferences(markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay)))
 	                + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
 	            }
 	          }
@@ -5828,7 +6146,7 @@ import { invalidateSettings } from './appConfig.js';
           const ttsBtn = holder.querySelector('.ai-tts-button');
           if (ttsBtn) {
             var ICON_PLAY_TTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
-            var ICON_STOP_TTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
+            var ICON_STOP_TTS = '<svg class="tts-wave" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect class="tts-wave-bar" x="3" y="9" width="3" height="6" rx="1.5"/><rect class="tts-wave-bar" x="8" y="5" width="3" height="14" rx="1.5"/><rect class="tts-wave-bar" x="13" y="2" width="3" height="20" rx="1.5"/><rect class="tts-wave-bar" x="18" y="7" width="3" height="10" rx="1.5"/></svg>';
             const resetFn = () => {
               ttsBtn.innerHTML = ICON_PLAY_TTS;
               ttsBtn.classList.remove('playing', 'loading');
@@ -5843,12 +6161,12 @@ import { invalidateSettings } from './appConfig.js';
               if (window.aiTTSManager.isPlaying || window.aiTTSManager._processing) {
                 ttsBtn.innerHTML = ICON_STOP_TTS;
                 ttsBtn.classList.add('playing');
-                ttsBtn.style.color = '#ccc';
+                ttsBtn.style.color = 'var(--brand-color, var(--red))';
                 ttsBtn.title = 'Stop';
               }
             } else {
               // Non-streaming fallback (autoPlay toggled mid-stream, etc.)
-              window.aiTTSManager.enqueue(accumulated, ttsBtn, resetFn);
+              window.aiTTSManager.enqueue(accumulated, ttsBtn, resetFn, footerTarget);
             }
           }
         }
@@ -5896,6 +6214,7 @@ import { invalidateSettings } from './appConfig.js';
         }
         // Reconcile only the final answer; the tool timeline retains its DOM.
         uiModule.restoreHistoryScroll?.(_terminalScrollSnapshot);
+        _repinChatIfFollowing({ force: true });
 
         // A saved answer can correct the live answer without rebuilding the turn.
         if (!_pendingContinue) {
@@ -8521,7 +8840,7 @@ import { invalidateSettings } from './appConfig.js';
       }
     } catch (e) {
       console.error('open attachment as document failed', e);
-      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
+      import('./ui.js?v=20261104ttspause1').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
       window.open(url, '_blank');  // fallback so the file is still reachable
     }
   }
@@ -8584,6 +8903,15 @@ import { invalidateSettings } from './appConfig.js';
   // per-node listeners on every innerHTML rewrite was the source of the
   // "needs many clicks" bug.
   if (!window.__odysseus_thread_click_bound) {
+    document.addEventListener('click', (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('.private-browser-preview-fold, .private-browser-preview-header') : null;
+      if (!target) return;
+      const preview = target.closest('.private-browser-preview');
+      const url = preview && preview.dataset ? String(preview.dataset.browserUrl || '') : '';
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    }, true);
 	    document.body.addEventListener('click', (e) => {
 	      const browserFrame = e.target.closest('.private-browser-preview-frame');
 	      if (browserFrame && browserFrame.querySelector('.private-browser-preview-img[src]')) {

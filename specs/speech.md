@@ -57,14 +57,16 @@ Frontend behavior:
 
 ## TTS
 
-`services.tts.TTSService` owns text-to-speech provider behavior, speed parsing, cache behavior, and local/provider-specific synthesis. `routes/tts_routes.py` owns `/api/tts/stats`, `/api/tts/synthesize`, and cache clearing. `static/js/tts-ai.js` owns frontend playback, client object-URL caching, browser TTS, queueing, and streaming button state.
+`services.tts.TTSService` owns text-to-speech provider behavior, speed parsing, cache behavior, and provider-specific synthesis. `routes/tts_routes.py` owns `/api/tts/stats`, `/api/tts/synthesize`, and cache clearing. `static/js/tts-ai.js` owns frontend playback, client object-URL caching, browser TTS, queueing, and streaming button state.
 
 Provider runtime:
 
 - `disabled` returns unavailable and avoids provider calls;
 - `browser` is client-side only through `speechSynthesis`;
-- `local` currently means Kokoro and requires `torch`, `kokoro`, `soundfile`, and CUDA/import availability;
-- `endpoint:<id>` resolves a `ModelEndpoint` and posts to `/audio/speech`.
+- `endpoint:<id>` resolves a `ModelEndpoint` and posts to `/audio/speech`, except xAI/Grok endpoints, which use the native `/v1/tts` contract, and OpenRouter GPT Audio models, which use `/chat/completions` with `modalities`/`audio` and return base64 audio;
+- `custom` posts to the URL in `tts_endpoint_url` with optional `tts_api_key`, model, voice, and speed. A base URL or a full `/audio/speech` URL is accepted. URLs that point at xAI (or carry xAI/Grok endpoint/model hints) use native `/v1/tts`; OpenRouter URLs with `gpt-audio` models use chat-completions audio; all other URLs use the OpenAI-compatible `/audio/speech` contract. This also covers local OpenAI-compatible servers;
+- the TTS settings UI lists only speech-capable endpoints/models: OpenAI TTS, xAI, OpenRouter GPT Audio, and custom/local OpenAI-compatible providers. Text-only endpoints such as DeepSeek are omitted, and `google/lyria-*` music models are never treated as speech;
+- retired `local` settings are migrated to `disabled`; no local synthesis backend is bundled;
 - unknown or non-string `tts_provider` values are treated as unavailable rather
   than being parsed as endpoint strings.
 
@@ -74,20 +76,22 @@ Route behavior:
 - binary responses choose WAV or MP3 MIME by audio magic bytes;
 - synthesis input is passed to the service as submitted and capped there;
 - malformed or nonpositive `tts_speed` falls back to `1.0`;
-- provider unavailable returns 503; failed synthesis/transcription generally returns route-level failure.
+- provider unavailable returns 503; failed synthesis/transcription generally returns route-level failure;
+- custom/endpoint HTTP failures return a 502 with an actionable message, and provider-side error text is redacted of the configured key;
+- native xAI requests send `text`, `voice_id`, `language`, `output_format`, and a speed clamped to xAI's `0.7`-`1.5` range, and return raw audio bytes from `/v1/tts`.
 
 ## Settings, Endpoints, And Cache
 
-Speech providers are global settings under `data/settings.json`, with defaults in `src/settings.py`. Settings reads are scrubbed for non-admin callers, writes are admin-only, and `manage_settings` can change non-secret speech settings through aliases.
+Speech providers are global settings under `data/settings.json`, with defaults in `src/settings.py`. TTS uses `tts_enabled`, `tts_provider`, `tts_model`, `tts_voice`, `tts_speed`, `tts_endpoint_url`, and `tts_api_key`. Settings reads are scrubbed for non-admin callers, writes are admin-only, and `manage_settings` can change non-secret speech settings through aliases. `tts_api_key` is secret-shaped and is masked for non-admin callers.
 
-`static/js/settings/speech.js` owns TTS/STT settings initialization and provider selectors; the Settings coordinator imports those initializers. Visible UI state is not complete: backend and JS speech settings exist, the TTS settings card is currently hidden, and the STT settings JS exits when its removed DOM nodes are absent.
+The TTS settings card is visible. It filters the provider/model list to TTS-capable choices, shows an empty-state hint when no TTS endpoints exist, and migrates invalid saved providers/models to disabled or the nearest valid option. `static/js/settings/speech.js` owns TTS/STT settings initialization and provider selectors; the Settings coordinator imports those initializers. The STT settings JS exits when its removed DOM nodes are absent.
 
 `routes.model_routes` clears `tts_provider` and `stt_provider` references when a referenced model endpoint is deleted.
 
 TTS cache behavior:
 
 - server cache lives under `data/tts_cache/`;
-- cache keys include provider, model, voice, safe speed, and text;
+- cache keys include provider, model, voice, safe speed, and text (custom URLs are part of the provider namespace);
 - cache files are stored as MP3 or WAV;
 - route stats expose global cache state;
 - cache clear is global;
@@ -109,8 +113,7 @@ TTS cached audio can contain sensitive assistant text rendered as speech. The ca
 
 - Optional local speech packages may be absent.
 - Local STT can run CPU-only and tolerates missing/broken torch by falling back to CPU/int8 behavior.
-- Local TTS/Kokoro extras are declared as `kokoro==0.9.4` plus `soundfile` only for Python 3.11-3.12; Python 3.13+ intentionally skips them because Kokoro excludes those runtimes. Even where installed, local Kokoro remains unavailable without a CUDA-capable torch build/GPU.
-- External endpoint providers can be offline or misconfigured and may only fail at request time.
+- External endpoint providers can be offline or misconfigured and may only fail at request time. xAI/Grok endpoints use native `/v1/tts`; other providers must implement OpenAI-compatible `/audio/speech` or be reached through a compatible proxy. Failures return a clear HTTP error rather than a fabricated voice.
 - Browser `speechSynthesis`, `SpeechRecognition`, `webkitSpeechRecognition`, secure context, and microphone permissions can be absent.
 - Docker GPU overlays are passthrough-only and do not install speech engines by themselves.
 - Optional dependency errors and route error wording are not fully consistent across STT and TTS.

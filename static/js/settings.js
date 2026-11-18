@@ -1,11 +1,11 @@
 // static/js/settings.js — Settings panel module (ES6)
 // User-facing preferences: AI models, search, appearance
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import searchModule from './search.js';
 import { byId } from './settings/dom.js';
 import { postSettings as _postSettings } from './settings/api.js';
-import { initTtsSettings, initSttSettings } from './settings/speech.js';
+import { initTtsSettings, initSttSettings } from './settings/speech.js?v=20261103ttsclean1';
 import { initDocumentWritingStyle } from './settings/writingStyle.js';
 import { initImageSettings } from './settings/imageModels.js';
 import { initAgentSettings } from './settings/agent.js';
@@ -3097,7 +3097,7 @@ async function initEmailAccountsSettings() {
   if (emailPreferences && emailPreferences.dataset.emailSettingsBound !== '1') {
     emailPreferences.dataset.emailSettingsBound = '1';
     try {
-      const mod = await import('./emailLibrary.js?v=20260915trashmove2');
+      const mod = await import('./emailLibrary.js?v=20261105emailrobust1');
       if (typeof mod.mountEmailSettings === 'function') {
         await mod.mountEmailSettings(emailPreferences);
       }

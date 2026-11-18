@@ -1,7 +1,7 @@
 // Memory Management Functions
 // This module handles all memory-related operations
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';

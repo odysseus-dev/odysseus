@@ -62,7 +62,6 @@ Use `node --check static/js/<changed-file>.js` for syntax checks on changed JS f
 `requirements-optional.txt` owns optional feature dependencies:
 
 - `faster-whisper` for local STT;
-- `kokoro==0.9.4` and `soundfile` for local TTS on Python 3.11-3.12 only; Kokoro is deliberately skipped on Python 3.13+ because its package metadata excludes those runtimes, and a CUDA-capable torch/GPU is still required at runtime;
 - `ddgs` for DDG library support, while provider code can fall back to HTML scraping;
 - `rapidocr==3.9.2` and `onnxruntime>=1.20,<2` for local OCR, and `psd-tools` for PSD previews/layer inspection;
 - `PyMuPDF` for PDF forms/rendering with AGPL implications for a network-served app;
@@ -243,7 +242,7 @@ Notes tests include domain/characterization/application/infrastructure/reminder/
 - Fresh install smoke coverage across Linux native, Docker, macOS native/app, Windows native, WSL/Git Bash, missing Node/npm, missing Chroma service, and GPU overlays remains a roadmap item.
 - Frontend source/output and architecture gates exist; they do not establish full browser or platform correctness.
 - Real deployment, GPU and cross-platform install verification still require separate runs beyond CI gates.
-- Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper`, Kokoro's Python/GPU degraded matrix, and provider/OAuth combinations not covered by focused tests.
+- Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper`, and provider/OAuth combinations not covered by focused tests.
 - GitHub description-check scripts and `scripts/pr_blocker_audit.py` need continued local fixtures for section parsing, placeholder stripping, label swaps, workflow-safe behavior, and duplicate/hot-file heuristics.
 - Spec bootstrap rules lack meta tests for reading `_readme.md`, spec shape, `.env*` handling, draft/report placement, and shared helper conventions.
 - NVIDIA helper install/`.env` mutation paths and real Docker/GPU startup are not covered by local tests.

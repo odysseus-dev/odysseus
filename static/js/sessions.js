@@ -2,8 +2,8 @@
 // This module handles all session-related operations
 
 import Storage from './storage.js';
-import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260916largetoolscroll1';
-import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
+import uiModule, { autoResize, styledPrompt } from './ui.js?v=20261104ttspause1';
+import chatRenderer from './chatRenderer.js?v=20261105ttsscroll1';
 import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260909routeidentity1';
 import themeModule from './theme.js?v=20260911organsrain1';
