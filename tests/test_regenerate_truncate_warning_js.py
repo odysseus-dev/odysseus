@@ -59,9 +59,16 @@ def _versioned_js_uri(entry_js: Path, target_name: str) -> str:
     return (entry_js.parent / target_name).resolve().as_uri() + suffix
 
 
+_STATIC_LOADER_REGISTER = (
+    'data:text/javascript,import{register}from"node:module";'
+    'import{pathToFileURL}from"node:url";'
+    'register("./tests/helpers/static_js_loader.mjs",pathToFileURL("./"));'
+)
+
+
 def _run_node(source: str) -> dict:
     proc = subprocess.run(
-        ["node", "--input-type=module"],
+        ["node", "--import", _STATIC_LOADER_REGISTER, "--input-type=module"],
         input=source,
         capture_output=True,
         text=True,

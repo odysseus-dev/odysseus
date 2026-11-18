@@ -97,6 +97,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check frontend architecture
         run: node scripts/check_frontend.mjs
+      - name: Check document references and exports
+        run: node scripts/check_document_references.mjs
       # Syntax-check our own JS (skip vendored libs in static/lib).
       - name: node --check
         run: |
@@ -105,8 +107,25 @@ jobs:
             node --check "$f"
           done
           node --check scripts/check_frontend.mjs
-      - name: Test frontend architecture gates and stateless proof
-        run: node --test tests/frontendArchitecture.test.mjs
+          node --check scripts/check_document_references.mjs
+      - name: Test frontend architecture gates and reference checks
+        run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs
+      - name: Test document behavior suites
+        run: |
+          node --test tests/domainModules.test.mjs \
+            tests/documentBehaviorRunner.test.mjs \
+            tests/documentPersistence.test.mjs \
+            tests/documentActions.test.mjs \
+            tests/documentUpdate.test.mjs \
+            tests/documentStatus.test.mjs \
+            tests/documentVersionHistory.test.mjs \
+            tests/markdownImages.test.mjs \
+            tests/documentTabBar.test.mjs \
+            tests/selectionHighlights.test.mjs \
+            tests/documentLiveStream.test.mjs \
+            tests/documentToolbar.test.mjs \
+            tests/documentOverflow.test.mjs \
+            tests/documentFlows.test.mjs
 
   python-tests:
     name: Python tests (pytest ${{ matrix.shard }})
