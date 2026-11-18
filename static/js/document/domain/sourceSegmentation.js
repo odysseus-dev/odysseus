@@ -315,7 +315,11 @@ export function segmentMarkdown(source) {
       continue;
     }
 
-    // 7. List (tight, loose, and continuation lines)
+    // 7. List. A blank line ends the block, exactly as the visual codec starts a
+    // new list there, so `- a\n\n- b` is two blocks joined by their original
+    // blank-line separator and each item keeps its own source bytes. Only an
+    // indented line after a blank belongs to the previous item (continuation
+    // paragraph or nested content); the codec rejects those documents.
     if (parseListItemLine(startLine)) {
       const firstItem = parseListItemLine(startLine);
       const listKind = item => item[3] !== undefined ? 'ordered'
@@ -326,27 +330,20 @@ export function segmentMarkdown(source) {
       while (i < rawLines.length) {
         const cur = rawLines[i];
         if (isBlank(cur)) {
-          // Look ahead to check if the list continues after blank line (loose list)
           let lookAhead = i + 1;
           while (lookAhead < rawLines.length && isBlank(rawLines[lookAhead])) {
             lookAhead++;
           }
-          if (lookAhead < rawLines.length) {
-            const nextNonBlank = rawLines[lookAhead];
-            const nextTrim = lineContent(nextNonBlank);
-            const followingItem = parseListItemLine(nextNonBlank);
-            if ((followingItem && listKind(followingItem) === listKind(firstItem)) || /^[ \t]{2,}/.test(nextTrim)) {
-              // Internal blank lines of a loose list
-              while (i < lookAhead) {
-                blockLines[blockLines.length - 1] += lastEnding;
-                blockLines.push(lineContent(rawLines[i]));
-                lastEnding = lineEnding(rawLines[i]);
-                i++;
-              }
-              continue;
+          if (lookAhead < rawLines.length && /^[ \t]{2,}/.test(lineContent(rawLines[lookAhead]))) {
+            // Indented content after a blank line continues the item.
+            while (i < lookAhead) {
+              blockLines[blockLines.length - 1] += lastEnding;
+              blockLines.push(lineContent(rawLines[i]));
+              lastEnding = lineEnding(rawLines[i]);
+              i++;
             }
+            continue;
           }
-          // Not a loose list continuation; list ends here
           break;
         }
 

@@ -40,6 +40,9 @@ import { _isFormBackedDoc } from '../pdf/annotations.js';
 export const MD_EDITOR_MODE_KEY = 'odysseus-doc-md-editor-mode';
 
 const REWRITE_REASON = 'formatting the visual editor would rewrite';
+// The visual surface and the source segmenter must agree on how many top-level blocks
+// a document has; otherwise no edit could be mapped back to exact source ranges.
+const LAYOUT_REASON = 'a block layout the visual editor cannot map back to the source';
 const ASSESSMENT_CACHE_LIMIT = 16;
 const _assessmentCache = new Map();
 
@@ -357,7 +360,12 @@ function _canonicalizeMarkdown(markdown) {
   if (typeof DOMParser === 'undefined') return null;
   // DOMParser documents are inert: no script execution and no resource loads.
   const parsed = new DOMParser().parseFromString(`<body>${markdownToVisualHtml(markdown)}</body>`, 'text/html');
-  return parsed.body ? visualRichToMarkdown(parsed.body) : null;
+  if (!parsed.body) return null;
+  return { canonical: visualRichToMarkdown(parsed.body), blockCount: extractVisualBlocks(parsed.body).length };
+}
+
+function _sourceBlockCount(markdown) {
+  return extractBlockSegments(segmentMarkdown(markdown)).length;
 }
 
 function _comparableAppRendering(html) {
@@ -409,8 +417,9 @@ export function assessMarkdownVisualSupport(markdown) {
   if (_assessmentCache.has(src)) return _assessmentCache.get(src);
   let result = inspectMarkdownVisualCompatibility(src);
   if (result.supported && src.trim()) {
-    const canonical = _canonicalizeMarkdown(src);
-    const reason = canonical === null ? '' : _rewriteReason(src, canonical);
+    const rendered = _canonicalizeMarkdown(src);
+    let reason = rendered === null ? '' : _rewriteReason(src, rendered.canonical);
+    if (!reason && rendered && rendered.blockCount !== _sourceBlockCount(src)) reason = LAYOUT_REASON;
     if (reason) result = { supported: false, reasons: [reason] };
   }
   if (_assessmentCache.size >= ASSESSMENT_CACHE_LIMIT) {
@@ -819,7 +828,9 @@ export function captureVisualBaseline(rich, doc) {
   doc._visualBaselineBlocks = visualBlocks;
   doc._visualBlockNodeIds = visualRootBlockIdentities(rich);
 
-  return _rewriteReason(rawMarkdown, canonical);
+  const rewriteReason = _rewriteReason(rawMarkdown, canonical);
+  if (rewriteReason) return rewriteReason;
+  return visualBlocks.length === blockSegments.length ? '' : LAYOUT_REASON;
 }
 
 /**

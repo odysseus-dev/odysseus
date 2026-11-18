@@ -861,3 +861,57 @@ describe('Full visual-intent verification', () => {
     });
   }
 });
+
+describe('Segmenter and visual codec agree on list blocks', () => {
+  // A blank line ends a list in both models, so every supported document has the
+  // same number of blocks on both sides and edits map to exact source ranges.
+  const rootBlockCount = (html) => {
+    let depth = 0;
+    let count = 0;
+    for (const token of parseHtmlTokens(html)) {
+      if (token.type === 'open') {
+        if (depth === 0) count++;
+        if (!token.selfClosing && !/^(br|hr|img)$/i.test(token.tag)) depth++;
+      } else if (token.type === 'close') {
+        depth--;
+      }
+    }
+    return count;
+  };
+  const cases = [
+    'para\n\n- a\n\n- b',
+    '- a\n\n- b\n\n- c',
+    '1. a\n\n2. b\n\n3. c',
+    '- [ ] a\n\n- [x] b',
+    '- a\n  - a1\n\n- b',
+    '- x\n\n- x\n\n- x',
+    '- a\n\n1. b\n\n- c',
+    '- a\n- b\n\npara\n\n- c\n- d',
+    '- a\n\n\n\n- b',
+    'para\r\n\r\n- a\r\n\r\n- b',
+  ];
+  for (const source of cases) {
+    it(`maps ${JSON.stringify(source)} one to one`, () => {
+      assert.equal(inspectMarkdownVisualCompatibility(source).supported, true);
+      const blocks = extractBlockSegments(segmentMarkdown(source));
+      assert.equal(rootBlockCount(markdownToVisualHtml(source)), blocks.length);
+      assert.equal(joinSegments(segmentMarkdown(source)), source, 'segments rebuild the source byte for byte');
+    });
+  }
+
+  it('keeps indented continuation content inside the item block', () => {
+    const blocks = extractBlockSegments(segmentMarkdown('- a\n\n  more\n\n- b'));
+    assert.deepEqual(blocks.map(b => b.raw), ['- a\n\n  more', '- b']);
+    assert.equal(inspectMarkdownVisualCompatibility('- a\n\n  more\n\n- b').supported, false);
+  });
+
+  it('does not let a loose-list edit touch sibling items or separators', () => {
+    const source = 'para\n\n- a\n\n- b\n\n- c';
+    const blocks = extractBlockSegments(segmentMarkdown(source));
+    const result = applyLocalizedEdits(source, [
+      { op: 'replace', index: 2, edited: '- bX', baseline: '- b', range: [blocks[2].startOffset, blocks[2].endOffset], blockId: blocks[2].blockId },
+    ], { render: markdownToVisualHtml, allowCanonicalFallback: false });
+    assert.equal(result.status, 'preserved');
+    assert.equal(result.markdown, 'para\n\n- a\n\n- bX\n\n- c');
+  });
+});
