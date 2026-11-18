@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from src.model_context import estimate_tokens
+
+logger = logging.getLogger(__name__)
 
 
 _CONTEXT_ERROR_MARKERS = (
@@ -69,10 +72,10 @@ def context_safety_margin(context_length: int) -> int:
     # adds chat-template and multimodal serialization tokens that are not
     # visible to that estimate.  A 32k Qwen-VL request previously reached the
     # provider with ``input + max_tokens == context + 1`` and paid for a full
-    # failed request/retry.  Keep a 1k floor for normal large local windows;
-    # this is small relative to the window but makes the proactive clamp
-    # robust to the observed tokenizer drift.
-    return max(256, min(2048, max(1024, int(context_length * 0.02))))
+    # failed request/retry. Keep that headroom for windows >=8K, but scale
+    # small text windows so the reserve cannot consume their entire context.
+    large_window_margin = min(2048, max(1024, int(context_length * 0.02)))
+    return min(large_window_margin, max(32, context_length // 8))
 
 
 def estimate_tool_schema_tokens(tools: Optional[List[Dict]]) -> int:
@@ -128,12 +131,15 @@ def fit_output_token_budget(
     tools: Optional[List[Dict]] = None,
     *,
     observed_input_tokens: Optional[int] = None,
+    details: Optional[Dict] = None,
 ) -> int:
     """Clamp a positive output allowance to the remaining context window.
 
     A non-positive allowance retains its existing provider-default semantics.
     """
 
+    if details is not None:
+        details.clear()
     try:
         requested = int(requested_max_tokens or 0)
         context = int(context_length or 0)
@@ -148,8 +154,25 @@ def fit_output_token_budget(
         estimated_input = int(observed_input_tokens) + estimate_tool_schema_tokens(tools)
     else:
         estimated_input = estimate_request_tokens(messages, tools)
-    available = context - estimated_input - context_safety_margin(context)
-    return max(1, min(requested, available))
+    margin = context_safety_margin(context)
+    available = context - estimated_input - margin
+    effective = max(1, min(requested, available))
+    warning = None
+    if available < requested:
+        warning = (
+            f'Requested output {requested} tokens exceeds the safe allowance '
+            f'{max(0, available)} at context {context} '
+            f'(estimated prompt {estimated_input}, safety margin {margin}). '
+            'Choose a larger context or shorten the prompt; the configured generation limit is unchanged.'
+        )
+        logger.warning(warning)
+    if details is not None:
+        details.update(requested_max_tokens=requested,
+                       effective_max_tokens=effective if available > 0 else 0,
+                       context_length=context, estimated_input_tokens=estimated_input,
+                       safety_margin_tokens=margin, available_output_tokens=available,
+                       safe_to_generate=available > 0, warning=warning)
+    return effective
 
 
 def parse_context_error(text: str) -> Optional[ContextErrorDetails]:

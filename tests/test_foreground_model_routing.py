@@ -1162,12 +1162,14 @@ def _chat_endpoint(
     *,
     owner="alice",
     endpoint_url="https://selected.example/v1",
+    generation_limit=None,
 ):
     saved = []
     session = SimpleNamespace(
         endpoint_url=endpoint_url,
         model="selected-model",
         headers={"Authorization": "Bearer selected"},
+        max_tokens_override=generation_limit,
         history=[],
         add_message=saved.append,
     )
@@ -1218,6 +1220,26 @@ def _chat_endpoint(
     )
     endpoint = next(route.endpoint for route in router.routes if route.path == "/api/chat")
     return endpoint, saved
+
+
+@pytest.mark.asyncio
+async def test_nonstream_chat_exposes_budget_warning_without_mutating_setting(monkeypatch):
+    from src.generation_budget import fit_output_token_budget
+    monkeypatch.setattr(foreground_model_routing, "_load_policy_preferences", lambda owner: {})
+
+    async def fake_call(url, model, messages, **kwargs):
+        assert kwargs['max_tokens'] == 32
+        fit_output_token_budget(kwargs['max_tokens'], 512, messages,
+                                observed_input_tokens=438, details=kwargs['generation_budget'])
+        return 'metadata-fixture-only'
+
+    monkeypatch.setattr(llm_core, 'llm_call_async', fake_call)
+    endpoint, saved = _chat_endpoint(monkeypatch, generation_limit=32)
+    response = await endpoint(_RouteRequest('chat'), ChatRequest(message='hello', session='session-1'))
+    budget = response['generation_budget']
+    assert budget['requested_max_tokens'] == 32 and budget['effective_max_tokens'] == 10
+    assert 'larger context' in budget['warning']
+    assert saved[-1].metadata['generation_budget'] == budget
 
 
 @pytest.mark.asyncio

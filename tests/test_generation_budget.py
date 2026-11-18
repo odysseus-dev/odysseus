@@ -210,7 +210,7 @@ def test_fallback_stream_proactively_caps_output_to_context(monkeypatch):
             chunk
             async for chunk in llm_core.stream_llm_with_fallback(
                 [("u1", "primary", {})],
-                [{"role": "user", "content": "x" * 12000}],
+                [{"role": "user", "content": "x" * 10000}],
                 max_tokens=4096,
             )
         ]

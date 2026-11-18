@@ -2666,6 +2666,7 @@ async def llm_call_async(
     return_model_metadata: bool = False,
     thinking_mode: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    generation_budget: Optional[Dict] = None,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2688,6 +2689,9 @@ async def llm_call_async(
     # default even when the selected local endpoint exposed a smaller context
     # window.  Streaming requests already apply this bound; enforce the same
     # invariant here before cache-key construction and payload creation.
+    budget_details = {}
+    if generation_budget is not None:
+        generation_budget.clear()
     if max_tokens and max_tokens > 0:
         try:
             from src.generation_budget import fit_output_token_budget
@@ -2696,11 +2700,18 @@ async def llm_call_async(
                 max_tokens,
                 get_context_length(url, model),
                 messages_copy,
+                details=budget_details,
             )
         except Exception:
             # Context discovery is best-effort. Preserve the established call
             # path when endpoint metadata is unavailable.
             pass
+
+    if generation_budget is not None:
+        generation_budget.update(budget_details)
+    if budget_details and not budget_details['safe_to_generate']:
+        raise _FallbackIneligibleHTTPException(400, {
+            'message': budget_details['warning'], 'generation_budget': budget_details})
 
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
@@ -4568,6 +4579,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
             )
         except (TypeError, ValueError):
             requested_max_tokens = 0
+        budget_details = {}
         if requested_max_tokens > 0:
             try:
                 from src.generation_budget import fit_output_token_budget
@@ -4577,6 +4589,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     get_context_length(url, model),
                     candidate_messages,
                     candidate_kwargs.get("tools"),
+                    details=budget_details,
                 )
             except Exception:
                 bounded_max_tokens = requested_max_tokens
@@ -4585,6 +4598,16 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     **candidate_kwargs,
                     "max_tokens": bounded_max_tokens,
                 }
+
+        if budget_details and not budget_details['safe_to_generate']:
+            yield 'event: error\ndata: ' + json.dumps({
+                'status': 400, 'text': budget_details['warning'], 'fallback_eligible': False,
+                'generation_budget': budget_details}) + '\n\n'
+            return
+        if budget_details:
+            yield 'data: ' + json.dumps({
+                'type': 'generation_budget', 'candidate_index': i, 'model': model,
+                **budget_details}) + '\n\n'
 
         candidate_stream = _stream_candidate_with_context_recovery(
             url,

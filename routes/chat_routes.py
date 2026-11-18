@@ -2402,6 +2402,7 @@ def setup_chat_routes(
                 owner=owner,
             )
         requested_model = sess.model
+        generation_budget = {}
         reply, actual_candidate, actual_model = await llm_call_async_with_route_fallback(
             foreground_candidates,
             request_messages,
@@ -2413,6 +2414,7 @@ def setup_chat_routes(
             session_id=session,
             thinking_mode=thinking_mode,
             reasoning_effort=reasoning_effort,
+            generation_budget=generation_budget,
         )
         actual_index = _candidate_index(foreground_candidates, actual_candidate)
         apply_compaction_state(
@@ -2431,6 +2433,7 @@ def setup_chat_routes(
                 "endpoint_label": actual_route.get("endpoint_label"),
                 "requested_endpoint_id": requested_route.get("endpoint_id"),
                 "requested_endpoint_label": requested_route.get("endpoint_label"),
+                **({"generation_budget": generation_budget} if generation_budget else {}),
                 "context_length": candidate_request_state["context_lengths"].get(
                     actual_index,
                     selected_context_length,
@@ -2467,6 +2470,7 @@ def setup_chat_routes(
             "requested_endpoint_label": requested_route.get("endpoint_label"),
             "endpoint_id": actual_route.get("endpoint_id"),
             "endpoint_label": actual_route.get("endpoint_label"),
+            **({"generation_budget": generation_budget} if generation_budget else {}),
         }
 
     # ------------------------------------------------------------------ #
@@ -4310,6 +4314,8 @@ def setup_chat_routes(
                                     else:
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
+                                    yield chunk
+                                elif data.get("type") == "generation_budget":
                                     yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
