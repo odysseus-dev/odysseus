@@ -553,11 +553,11 @@ async function testMemberScope(instance, cookies) {
   const reopened = await member.page.$eval('#set-defaultEpSelect', node => node.value);
   check('reopened Settings shows the persisted personal default', reopened === 'ep-beta', reopened);
 
-  // Clearing returns the account to the server default.
+  // Clearing removes the personal choice; any fallback is the server's call.
   await member.page.selectOption('#set-defaultEpSelect', '');
   await member.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
   const cleared = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
-  check('choosing "Not set" removes the personal default', !('default_endpoint_id' in cleared) && !('default_model' in cleared), JSON.stringify(cleared));
+  check('choosing "No personal default" removes the personal default', !('default_endpoint_id' in cleared) && !('default_model' in cleared), JSON.stringify(cleared));
 
   // Utility personal save also stays personal.
   await member.page.selectOption('#set-utilityEpSelect', 'ep-alpha');
@@ -837,6 +837,62 @@ async function testMemberStatusRecovery(instance, cookies) {
   await api(instance, cookies.memberCookie, '/api/prefs', { method: 'PATCH', body: JSON.stringify({ values: {
     default_endpoint_id: null, default_model: null, utility_endpoint_id: null, utility_model: null, utility_reasoning_effort: null,
   } }) });
+}
+
+async function testPersonalDefaultLabel(instance, cookies) {
+  const original = (await api(instance, cookies.adminCookie, '/api/auth/settings')).body.share_defaults_with_users;
+  const blank = page => page.$eval('#set-defaultEpSelect', select => {
+    const first = select.options[0];
+    return {
+      value: first?.value,
+      text: first?.textContent,
+      selected: select.selectedOptions[0]?.value,
+      label: select.closest('.settings-row')?.querySelector('label.settings-label')?.textContent,
+      texts: Array.from(select.options).map(option => option.textContent),
+    };
+  });
+  try {
+    for (const sharing of [false, true]) {
+      await api(instance, cookies.adminCookie, '/api/auth/settings', { method: 'POST', body: JSON.stringify({ share_defaults_with_users: sharing }) });
+      const mode = sharing ? 'sharing enabled' : 'sharing disabled';
+      const member = await pageAs(instance, cookies.memberCookie);
+      await openSettings(member.page, 'ai');
+      await waitForAiDefaults(member.page);
+      const initial = await blank(member.page);
+      check(`member (${mode}): the unset choice reads "No personal default"`, initial.value === '' && initial.text === 'No personal default', JSON.stringify(initial));
+      check(`member (${mode}): no option promises a server default`, !initial.texts.some(text => /server default/i.test(text)), initial.texts.join(' | '));
+      check(`member (${mode}): the endpoint row keeps its label`, initial.label === 'Endpoint', String(initial.label));
+
+      // Wait on the write itself; the "Saved" text of an earlier save can linger.
+      const savedChoice = value => Promise.all([
+        member.page.waitForResponse(response => response.request().method() === 'PATCH' && new URL(response.url()).pathname === '/api/prefs' && response.ok(), { timeout: 8000 }),
+        member.page.selectOption('#set-defaultEpSelect', value),
+      ]);
+      await savedChoice('ep-beta');
+      await savedChoice('');
+      const prefs = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
+      check(`member (${mode}): clearing removes the personal preference`, !('default_endpoint_id' in prefs) && !('default_model' in prefs), JSON.stringify(prefs));
+      const shared = (await api(instance, cookies.adminCookie, '/api/auth/settings')).body;
+      check(`member (${mode}): clearing selects no server default and changes no server setting`, shared.share_defaults_with_users === sharing && !('default_endpoint_id' in prefs), JSON.stringify({ sharing: shared.share_defaults_with_users }));
+
+      await member.page.reload({ waitUntil: 'domcontentloaded' });
+      await member.page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
+      await openSettings(member.page, 'ai');
+      await waitForAiDefaults(member.page);
+      const reopened = await blank(member.page);
+      check(`member (${mode}): reopened Settings shows "No personal default" selected`, reopened.selected === '' && reopened.text === 'No personal default', JSON.stringify(reopened));
+      check(`member (${mode}) label page has no script errors`, member.errors.length === 0, member.errors.join(' | '));
+      await member.context.close();
+    }
+    const admin = await pageAs(instance, cookies.adminCookie);
+    await openSettings(admin.page, 'ai');
+    await waitForAiDefaults(admin.page);
+    const adminOptions = await blank(admin.page);
+    check('admin: the server-wide card has no personal-default option', adminOptions.value !== '' && !adminOptions.texts.includes('No personal default'), JSON.stringify(adminOptions));
+    await admin.context.close();
+  } finally {
+    await api(instance, cookies.adminCookie, '/api/auth/settings', { method: 'POST', body: JSON.stringify({ share_defaults_with_users: original }) });
+  }
 }
 
 async function testAdminLoadFailure(instance, cookies) {
@@ -1694,6 +1750,7 @@ async function main() {
   await testMemberLoadFailureAndFallbackCompatibility(authInstance, cookies);
   await testMemberScope(authInstance, cookies);
   await testAdminScope(authInstance, cookies);
+  await testPersonalDefaultLabel(authInstance, cookies);
   await testAdminLoadFailure(authInstance, cookies);
   await testRestrictedNavigation(authInstance, cookies);
   await testMemberUtilityFallbackRecovery(authInstance, cookies);

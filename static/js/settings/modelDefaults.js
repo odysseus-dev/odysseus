@@ -90,8 +90,8 @@ export function createModelDefaultsStore(options = {}) {
   async function write(patch) {
     const keys = assertModelDefaultKeys(patch);
     if (personal) {
-      // An empty choice removes the personal value so the server default
-      // applies again, rather than storing an empty override.
+      // An empty choice removes the personal value, rather than storing an
+      // empty override; any fallback is decided where defaults are resolved.
       const values = {};
       for (const key of keys) values[key] = isUnset(patch[key]) ? null : patch[key];
       await patchPreferences(values);

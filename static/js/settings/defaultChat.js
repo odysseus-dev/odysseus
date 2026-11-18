@@ -177,9 +177,10 @@ export async function initDefaultChat({ catalog, cards }) {
   var personalDefault = false;
   var defaultSource = cards.createSource('default chat', function(endpoints, store) {
     personalDefault = store.personal;
-    // A personal default can be left unset; the server then applies its own
-    // default for this account.
-    if (personalDefault) _ensureBlankOption(epSel, 'Not set (server default)');
+    // A personal default can be left unset. Whether a server default then
+    // applies depends on the server's sharing setting, so the label only says
+    // that this account has no personal choice.
+    if (personalDefault) _ensureBlankOption(epSel, 'No personal default');
     _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, personalDefault);
   });
