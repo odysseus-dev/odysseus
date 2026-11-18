@@ -1,8 +1,9 @@
-"""Ordinary model-picker safety for Cookbook-managed endpoints. Runs the real _getAllModels() and the real models.js verdict code
-(extracted from source, DOM-free); the shared verifier is the real managedBackendGate.js. No model runs."""
+"""Run the real catalog refresh, _getAllModels(), and chat send guard with mocked HTTP and no DOM or inference."""
 import json
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = ROOT / "static" / "js"
@@ -12,34 +13,73 @@ const fs = require('node:fs'), vm = require('node:vm');
 const gate = require(process.argv[1]);
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const read = f => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
-const models = read(process.argv[2]), picker = read(process.argv[3]);
+const models = read(process.argv[2]), picker = read(process.argv[3]), chat = read(process.argv[4]);
 const slice = (s, a, b) => s.slice(s.indexOf(a), s.indexOf(b, s.indexOf(a)));
-const modelsSrc = slice(models, 'let _rawItems = [];', 'export async function refreshModels(').replace(/^let /gm, 'var ').replace(/export async function/g, 'async function');
-const getSrc = 'function getCachedItems() { return _cachedItems; }\nfunction getManagedVerdicts() { return _managedVerdicts; }';
+const modelsSrc = slice(models, 'let API_BASE', 'export function init(')
+  + slice(models, 'function _startChat(', 'function _buildModelRow(')
+  + slice(models, 'let _managedVerdicts =', '  if (!box) return;\n  try {') + '}\n'
+  + slice(models, 'export function getCachedItems(', 'const modelsModule');
 const pickerSrc = slice(picker, '  function _getAllModels() {', '  function _hasModelCache()');
+const pickSrc = slice(picker, 'async function _pick(m) {', "  document.addEventListener('odysseus:auto-select-model'");
+const sendGuard = slice(chat, '    // Fail closed for Cookbook-managed endpoints:', '    // Materialize pending session');
 const events = [], fetches = [];
+let step, finishStatus;
 const context = {
-  API_BASE: '', isManagedEndpointId: gate.isManagedEndpointId, filterManagedCatalog: gate.filterManagedCatalog, JSON, Object,
-  _cachedItems: [], _localProbe: {}, sortModelObjects: x => x, _pickerModelKey: m => `${m.endpointId || m.url}::${m.mid}`,
+  isManagedEndpointId: gate.isManagedEndpointId, filterManagedCatalog: gate.filterManagedCatalog,
+  document: { getElementById: () => null }, console: { error: () => {} },
+  _localProbe: {}, sortModelObjects: x => x, _pickerModelKey: m => `${m.endpointId || m.url}::${m.mid}`,
+  uiModule: { showToast: () => events.push('toast') }, _releaseSendFlag: () => events.push('released'),
+  sessionModule: { getSessions: () => [] },
   CustomEvent: class { constructor(t){this.type=t;} },
   window: { dispatchEvent: e => events.push(e.type), sessionModule: { updateModelPicker: () => events.push('picker') } },
   fetch: async url => { fetches.push(url);
-    if (input.statusThrows) throw new Error('down');
-    return { ok: input.statusOk !== false, json: async () => input.status }; },
+    const catalog = url.startsWith('/api/models?');
+    const failure = catalog ? step.catalogFailure : step.statusFailure;
+    if (!catalog && step.holdStatus) {
+      const status = input.status;
+      return new Promise(resolve => { finishStatus = () => resolve({ ok: true, json: async () => status }); });
+    }
+    if (failure === 'timeout') throw new DOMException('timed out', 'TimeoutError');
+    if (!catalog && input.statusThrows) throw new Error('down');
+    return { ok: failure !== '503' && (catalog || input.statusOk !== false), status: 503,
+      json: async () => {
+        if (failure === 'json') throw new SyntaxError('invalid JSON');
+        if (failure === 'shape') return { items: {} };
+        return catalog ? { items: step.items } : input.status;
+      } }; },
+  AbortSignal, DOMException,
 };
-context.refreshModels = async () => { await context._applyManagedVerdicts(); };
 vm.createContext(context);
-vm.runInContext(modelsSrc + '\n' + getSrc + '\n' + pickerSrc, context);
-context.window.modelsModule = { getCachedItems: context.getCachedItems };
+vm.runInContext(modelsSrc.replace(/^export /gm, '') + '\n' + pickerSrc + '\n' + pickSrc
+  + '\nasync function send(endpoint_id) { const selectedRouteForSend = { endpoint_id };\n'
+  + sendGuard + '\nreturn "passed guard"; }', context);
+context.window.modelsModule = { getCachedItems: context.getCachedItems, getManagedVerdicts: context.getManagedVerdicts,
+  checkManagedSelection: context.checkManagedSelection };
 (async () => {
   const out = [];
-  for (const step of input.steps) {
-    context._rawItems = step.items; context._cachedItems = step.items;
+  let olderSend;
+  for (step of input.steps) {
     if (step.status !== undefined) input.status = step.status;
-    await context._applyManagedVerdicts();
+    let check, send;
+    if (step.holdStatus) {
+      olderSend = context.send(step.send);
+      await new Promise(resolve => setImmediate(resolve));
+      if (!finishStatus) throw new Error('did not reach serving/status');
+    } else {
+      if (!step.send && !gate.isManagedEndpointId(step.check)) await context.refreshModels(true);
+      if (step.check) check = await context.checkManagedSelection(step.check);
+      if (step.send) send = await context.send(step.send) ?? 'blocked';
+      if (step.finishStatus) {
+        finishStatus();
+        send = await olderSend ?? 'blocked';
+      }
+    }
+    if (step.staleClick) {
+      await context._pick({ endpointId: step.staleClick });
+      context._startChat('', '', step.staleClick);
+    }
     const picked = vm.runInContext('_getAllModels()', context);
-    const check = step.check ? await context.checkManagedSelection(step.check) : undefined;
-    out.push({ picked: picked.map(m => ({ mid: m.mid, endpointId: m.endpointId })), verdicts: Object.fromEntries(Object.entries(context.getManagedVerdicts()).map(([k, v]) => [k, v.ok])), check, events: events.splice(0) });
+    out.push({ picked: picked.map(m => ({ mid: m.mid, endpointId: m.endpointId })), verdicts: Object.fromEntries(Object.entries(context.getManagedVerdicts()).map(([k, v]) => [k, v.ok])), check, send, events: events.splice(0) });
   }
   process.stdout.write(JSON.stringify({ out, fetches }));
 })().catch(e => { console.error(e); process.exit(1); });
@@ -50,7 +90,7 @@ URL = "http://127.0.0.1:18101/v1"
 
 
 def run(payload):
-    r = subprocess.run(["node", "-e", NODE, str(JS / "managedBackendGate.js"), str(JS / "models.js"), str(JS / "modelPicker.js")],
+    r = subprocess.run(["node", "-e", NODE, str(JS / "managedBackendGate.js"), str(JS / "models.js"), str(JS / "modelPicker.js"), str(JS / "chat.js")],
                        input=json.dumps(payload), text=True, capture_output=True, timeout=20)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -128,7 +168,7 @@ def test_same_url_user_configured_and_external_endpoints_are_unaffected():
     assert mids(out) == sorted([("user-configured", "user-model"), ("ollama-ext", "llama3"), ("cloud", "big-model")])
     # with no managed endpoint registered no status request is made at all
     result = run({"steps": [{"items": ORDINARY, "status": status()}]})
-    assert result["fetches"] == [] and len(result["out"][0]["picked"]) == 3
+    assert result["fetches"] == ["/api/models?refresh=true"] and len(result["out"][0]["picked"]) == 3
 
 
 def test_previously_selected_managed_endpoint_becomes_unavailable_when_ownership_is_lost():
@@ -151,3 +191,47 @@ def test_send_path_and_picker_label_wiring():
     picker = (JS / "modelPicker.js").read_text(encoding="utf-8")
     assert "_managedUnverified" in picker and "Unavailable" in picker and "setPendingChat(null)" in picker
     assert "isManagedEndpointId(selectedId)" in picker
+
+
+@pytest.mark.parametrize(("stage", "failure"), [(stage, failure) for stage in ("catalog", "status")
+                                                for failure in ("503", "timeout", "json", "shape")])
+def test_failed_refresh_revokes_previous_approval(stage, failure):
+    good = {"items": [managed_item(), *ORDINARY], "status": status(row())}
+    bad = {**good, f"{stage}Failure": failure}
+    result = run({"steps": [good, {**bad, "check": EID}, good, {**bad, "send": EID},
+                            {**bad, "send": USER["endpoint_id"]}, {**good, "send": EID}]})
+    primed, checked, reprimed, blocked, ordinary, recovered = result["out"]
+    assert primed["verdicts"] == reprimed["verdicts"] == {EID: True}
+    assert checked["check"]["ok"] is False
+    assert checked["verdicts"].get(EID) is not True
+    assert blocked["send"] == "blocked" and {"toast", "released"} <= set(blocked["events"])
+    assert mids(checked) == mids(blocked) == sorted((i["endpoint_id"], i["models"][0]) for i in ORDINARY)
+    assert ordinary["send"] == recovered["send"] == "passed guard"
+    assert (EID, "runtime-id") in mids(recovered)
+    assert result["fetches"].count("/api/cookbook/serving/status") == (3 if stage == "catalog" else 5)
+
+
+def test_incomplete_refresh_cannot_reapprove_after_newer_503():
+    good = {"items": [managed_item(), *ORDINARY], "status": status(row())}
+    primed, incomplete, failed = run({"steps": [good, {**good, "holdStatus": True, "send": EID},
+                                               {**good, "catalogFailure": "503", "finishStatus": True}]})["out"]
+    assert primed["verdicts"] == {EID: True}
+    assert failed["send"] == "blocked"
+    for step in (incomplete, failed):
+        assert step["verdicts"].get(EID) is not True
+        assert mids(step) == sorted((i["endpoint_id"], i["models"][0]) for i in ORDINARY)
+
+
+def test_stale_rendered_rows_cannot_select_after_503():
+    good = {"items": [managed_item(), *ORDINARY], "status": status(row())}
+    _, failed = run({"steps": [good, {**good, "catalogFailure": "503", "staleClick": EID}]})["out"]
+    assert failed["events"].count("toast") == 2
+
+
+def test_malformed_managed_model_list_cannot_verify():
+    good = {"items": [managed_item(models=["x"]), *ORDINARY], "status": status(row(models=["x"]))}
+    bad = {**good, "items": [{**good["items"][0], "models": "x"}, *ORDINARY], "send": EID}
+    primed, failed = run({"steps": [good, bad]})["out"]
+    assert primed["verdicts"] == {EID: True}
+    assert failed["send"] == "blocked"
+    assert mids(failed) == sorted((i["endpoint_id"], i["models"][0]) for i in ORDINARY)

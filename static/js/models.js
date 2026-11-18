@@ -78,6 +78,10 @@ function _setSortMode(mode) {
  * Build a single model row element.
  */
 function _startChat(url, mid, endpointId) {
+  if (isManagedEndpointId(endpointId) && !getManagedVerdicts()[endpointId]?.ok) {
+    uiModule.showToast('This managed model is unavailable.');
+    return;
+  }
   // Block model switching while compare mode is active
   if (window.compareModule && window.compareModule.isActive()) return;
   _trackUsage(mid);
@@ -168,30 +172,55 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
 // Ordinary selection never bypasses the managed-endpoint verdict: Cookbook-managed endpoints are listed only while the shared
 // verifier (managedBackendGate.js) confirms backend contract, owned listener, exact endpoint_id and runtime model ids.
 // Everything else (user-configured, external, same-URL) passes through untouched. Unknown state is unavailable.
-let _rawItems = [];
 let _managedVerdicts = {};
-const _hasManaged = items => items.some(i => isManagedEndpointId(i && i.endpoint_id));
+let _verifiedFetchSeq = -1;
 
-async function _applyManagedVerdicts() {
-  if (!_hasManaged(_rawItems)) { _cachedItems = _rawItems; _managedVerdicts = {}; return; }
-  let status = null;
-  try {
-    const res = await fetch(`${API_BASE}/api/cookbook/serving/status`, { credentials: 'same-origin' });
-    status = res.ok ? await res.json() : null;
-  } catch (_) { status = null; }
+function _publishManagedCatalog({ items, verdicts }) {
   const before = JSON.stringify(Object.keys(_managedVerdicts).filter(k => _managedVerdicts[k].ok).sort());
-  const result = filterManagedCatalog(_rawItems, status);
-  _cachedItems = result.items;
-  _managedVerdicts = result.verdicts;
+  _cachedItems = items;
+  _managedVerdicts = verdicts;
   if (before !== JSON.stringify(Object.keys(_managedVerdicts).filter(k => _managedVerdicts[k].ok).sort())) {
     try { window.sessionModule?.updateModelPicker?.(); window.dispatchEvent(new CustomEvent('ge:managed-selectability-changed')); } catch (_) {}
+  }
+}
+
+async function _refreshCatalog(url, seq) {
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data?.items)) throw new Error('Invalid models catalog');
+    if (seq !== _fetchSeq) return;
+
+    let status = null;
+    if (data.items.some(i => isManagedEndpointId(i?.endpoint_id))) {
+      try {
+        const res = await fetch(`${API_BASE}/api/cookbook/serving/status`, {
+          credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok) status = await res.json();
+      } catch (_) { /* No status means no managed approval. */ }
+    }
+    if (seq !== _fetchSeq) return;
+
+    const result = filterManagedCatalog(data.items, status);
+    _lastFetchTime = Date.now();
+    _verifiedFetchSeq = seq;
+    _publishManagedCatalog(result);
+  } catch (e) {
+    if (seq !== _fetchSeq) return;
+    // Keep the last ordinary catalog, but never the previous managed approval.
+    _publishManagedCatalog({ items: _cachedItems, verdicts: {} });
+    throw e;
   }
 }
 
 /** Fresh check for the endpoint a message is about to use; null when it is not a managed endpoint. */
 export async function checkManagedSelection(endpointId) {
   if (!isManagedEndpointId(endpointId)) return null;
-  try { await refreshModels(true); } catch (_) {}
+  const seq = _fetchSeq + 1;
+  try { await refreshModels(true); } catch (_) { /* Fail closed below. */ }
+  if (seq !== _fetchSeq || seq !== _verifiedFetchSeq) return { ok: false, reason: 'managed ownership could not be freshly verified' };
   const verdict = _managedVerdicts[endpointId];
   return verdict && verdict.ok ? { ok: true } : { ok: false, reason: verdict ? verdict.reason : 'the managed endpoint is no longer registered' };
 }
@@ -222,31 +251,23 @@ export async function refreshModels(force = false, opts = {}) {
       }
     }
     try {
-      if (force) _fetchInflight = null;
-      if (!_fetchInflight) {
+      if (force || !_fetchInflight) {
         // Pass ?refresh=true on forced refreshes so the BACKEND's 30s
         // per-user cache also gets bypassed. Without this, `force=true`
         // only clears the frontend cache and the same stale list comes
         // back — newly-served endpoints don't appear until the cache
         // ages out. (Bug repro: serve a model, picker is empty for ~30s
         // even though the endpoint is in the DB and online.)
-        const _seq = ++_fetchSeq;
+        const seq = ++_fetchSeq;
+        // While this refresh is incomplete, only ordinary items remain selectable.
+        _cachedItems = _cachedItems.filter(i => !isManagedEndpointId(i?.endpoint_id));
         const _url = `${API_BASE}/api/models` + (force
           ? `?refresh=true${opts.waitForRefresh ? '&wait_refresh=true' : ''}`
           : '?background=false');
-        _fetchInflight = fetch(_url, { credentials: 'same-origin' })
-          .then(async (res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            return { data, seq: _seq };
-          })
-          .finally(() => { _fetchInflight = null; });
+        _fetchInflight = _refreshCatalog(_url, seq)
+          .finally(() => { if (seq === _fetchSeq) _fetchInflight = null; });
       }
-      const { data, seq } = await _fetchInflight;
-      if (seq < _fetchSeq) return;
-      _lastFetchTime = Date.now();
-      _rawItems = data.items || [];
-      await _applyManagedVerdicts();
+      await _fetchInflight;
     } catch (e) {
       console.error(e);
       if (box) box.textContent = '(scan failed)';
@@ -671,7 +692,7 @@ export async function refreshProviders() {
 }
 
 export function getCachedItems() { return _cachedItems; }
-export function getManagedVerdicts() { return _managedVerdicts; }
+export function getManagedVerdicts() { return _verifiedFetchSeq === _fetchSeq ? _managedVerdicts : {}; }
 
 const modelsModule = {
   init,

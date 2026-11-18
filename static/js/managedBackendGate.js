@@ -61,7 +61,9 @@ export function verifyManagedService({ sessionId, endpointId, status, catalogIte
   if (items.length !== 1) return fail('chat catalog has no unique entry for this endpoint_id');
   const item = items[0];
   if (item.offline) return fail('chat catalog marks the endpoint offline');
-  const listed = [...(item.models || []), ...(item.models_extra || [])];
+  const models = item.models ?? [], extra = item.models_extra ?? [];
+  if (!Array.isArray(models) || !Array.isArray(extra)) return fail('chat catalog has an invalid model list');
+  const listed = [...models, ...extra];
   if (!ids.every(id => listed.includes(id))) return fail('chat catalog does not list the runtime model id');
   return { ok: true, reason: 'ok', modelIds: ids };
 }

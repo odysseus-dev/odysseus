@@ -664,6 +664,11 @@ function _initModelPickerDropdown() {
   }
 
 async function _pick(m) {
+    // A row rendered before the latest refresh may still be on screen.
+    if (isManagedEndpointId(m.endpointId) && !window.modelsModule?.getManagedVerdicts?.()[m.endpointId]?.ok) {
+      uiModule.showToast('This managed model is unavailable.');
+      return;
+    }
     _defaultPendingSeq++;
     try {
       window.__odysseusLastPickedRoute = {
