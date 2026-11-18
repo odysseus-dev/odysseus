@@ -301,9 +301,10 @@ def test_legacy_migration_race_add_before_migration(calendar_env):
 
     # Legacy migration is triggered afterwards
     accounts = caldav_sync._load_caldav_accounts("alice")
-    account_urls = [a["url"] for a in accounts]
-    assert "https://legacy.example.com" in account_urls
-    assert "https://cal.example.com/new" in account_urls
+    assert {a.get("url") for a in accounts} == {
+        "https://legacy.example.com",
+        "https://cal.example.com/new",
+    }
 
     alice = _users(env.prefs_file)["alice"]
     assert "caldav" not in alice
@@ -335,9 +336,10 @@ def test_legacy_migration_race_migration_before_add(calendar_env):
 
     alice = _users(env.prefs_file)["alice"]
     assert "caldav" not in alice
-    urls = [a["url"] for a in alice["caldav_accounts"]]
-    assert "https://legacy.example.com" in urls
-    assert "https://cal.example.com/new2" in urls
+    assert {a.get("url") for a in alice["caldav_accounts"]} == {
+        "https://legacy.example.com",
+        "https://cal.example.com/new2",
+    }
 
 
 def test_legacy_migration_rechecks_inside_transaction(calendar_env, monkeypatch):
@@ -368,8 +370,10 @@ def test_legacy_migration_rechecks_inside_transaction(calendar_env, monkeypatch)
     race.finish()
 
     alice = _users(env.prefs_file)["alice"]
-    urls = [a["url"] for a in alice["caldav_accounts"]]
-    assert "https://cal.example.com/interleaved" in urls
+    assert {a.get("url") for a in alice["caldav_accounts"]} == {
+        "https://legacy.example.com",
+        "https://cal.example.com/interleaved",
+    }
     assert "caldav" not in alice
 
 
