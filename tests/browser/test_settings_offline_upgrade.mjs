@@ -1,10 +1,14 @@
 // Real-browser proof that Settings opens offline after a service-worker upgrade.
 //
 //   node tests/browser/test_settings_offline_upgrade.mjs
+//   python -m pytest tests/test_settings_offline_upgrade_browser.py
 //
 // Environment (all optional):
 //   PREVIOUS_REF   git ref of the application version being upgraded from
-//                  (default origin/dev). It must be resolvable locally.
+//                  (default origin/dev). It must be resolvable locally. The
+//                  default moves with dev, so once these modules are on dev the
+//                  'previous version predates the new Settings modules' check
+//                  needs a pinned earlier commit.
 //   ARTIFACT_DIR   directory for a screenshot of the offline Settings panel.
 //
 // Procedure
