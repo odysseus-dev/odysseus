@@ -1321,6 +1321,23 @@ async function testIntegrationForms(instance, cookies) {
   }));
   check('editing API integration populates existing values', editVals.name === 'Phase4 Automated Service' && editVals.url === 'http://127.0.0.1:8080', JSON.stringify(editVals));
 
+  // API form hints are plain text: no markup, and title matches aria-label.
+  const apiHints = await admin.page.$$eval('#uf-api-name >> xpath=ancestor::*[contains(@class,"admin-card")][1]//*[contains(@class,"uf-hint")]', nodes => nodes.map(n => ({
+    title: n.getAttribute('title') || '',
+    aria: n.getAttribute('aria-label') || '',
+  })));
+  check('API form renders its three field hints', apiHints.length === 3, JSON.stringify(apiHints));
+  check(
+    'API form hint tooltips are plain text matching aria-label',
+    apiHints.length > 0 && apiHints.every(h => h.title.length > 20 && h.title === h.aria && !/[<>]/.test(h.title)),
+    JSON.stringify(apiHints),
+  );
+  check(
+    'API auth hint keeps its mode descriptions without markup',
+    apiHints.some(h => /Bearer = sends/.test(h.title) && /None = the API is open/.test(h.title)),
+    JSON.stringify(apiHints.map(h => h.title.slice(0, 80))),
+  );
+
   // Cancel edit view
   await admin.page.click('#uf-api-cancel');
 

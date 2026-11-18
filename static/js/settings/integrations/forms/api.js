@@ -16,8 +16,9 @@ export async function showApiForm({ formEl, renderList, closeForm }, editId) {
   // Same `?` hint helper as the email form. Native title tooltip,
   // tabbable for keyboard users. Inline-styled so it doesn't need
   // a CSS dependency.
+  // Tips are plain text; the title attribute never renders markup.
   const _apiHint = (tip) =>
-    `<span class="uf-hint" title="${esc(tip.replace(/<[^>]+>/g, ''))}" aria-label="${esc(tip.replace(/<[^>]+>/g, ''))}" tabindex="0" `
+    `<span class="uf-hint" title="${esc(tip)}" aria-label="${esc(tip)}" tabindex="0" `
     + `style="display:inline-block;width:13px;height:13px;border-radius:50%;`
     + `border:1px solid currentColor;font-size:9px;line-height:11px;text-align:center;`
     + `opacity:0.45;margin-left:5px;cursor:help;vertical-align:1px;font-weight:600;">?</span>`;
@@ -69,7 +70,7 @@ export async function showApiForm({ formEl, renderList, closeForm }, editId) {
           <div class="settings-row"><label class="settings-label" for="uf-api-name">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service" required aria-required="true"></div>
           <div class="settings-row"><label class="settings-label" for="uf-api-url">Base URL</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080" required aria-required="true"></div>
           <div id="uf-api-ntfy-hint" style="display:none;font-size:11px;line-height:1.35;opacity:0.68;margin:-2px 0 2px 106px;"></div>
-          <div class="settings-row"><label class="settings-label" for="uf-api-auth">Auth${_apiHint('How this service expects the credential to be sent. <b>Bearer</b> = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
+          <div class="settings-row"><label class="settings-label" for="uf-api-auth">Auth${_apiHint('How this service expects the credential to be sent. Bearer = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). Header = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). Basic = HTTP basic auth (user:pass). None = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
           <div class="settings-row" id="uf-api-header-row"><label class="settings-label" for="uf-api-header">Header${_apiHint('The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header.')}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
           <div class="settings-row"><label class="settings-label" for="uf-api-key">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
