@@ -49,6 +49,7 @@ import { applyEdgeDock, clearDockSide } from '/static/js/modalSnap.js';
 import { topToolWindowZ, topPortalZ } from '/static/js/toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '/static/js/escMenuStack.js';
 import { bindTourHintDismiss } from '/static/js/tourHintDismiss.js';
+import { mdToHtml } from '/static/js/markdown.js';
 
 const api = createNotesApi({ origin: window.location.origin, request: (...args) => fetch(...args) });
 const persistence = createNotesPersistence({ storage: typeof localStorage === 'undefined' ? undefined : localStorage });
@@ -72,7 +73,6 @@ const reminders = createNotesReminders({
   scheduler,
   fetchNotes: () => _fetchNotes(),
   isNoteFullyDone: note => _isNoteFullyDone(note),
-  hasItems: note => _hasItems(note),
   dismissedKey: REMINDER_DISMISSED_AT_KEY,
   effects: { badge: () => _updateRailBadge(), highlight: id => {
  _setReminderCardGlow(id, true);
@@ -296,6 +296,7 @@ const cardRendering = createCardRendering({
   _linkify,
   _loadActiveHighlights,
   _renderLabelsInto,
+  _renderNoteMarkdown: source => mdToHtml(source, { tasks: 'interactive', images: 'notes' }),
   _renderQuickAdd,
   _safeImgSrc,
   _sortedVisibleNotes,

@@ -1,5 +1,6 @@
 /** Pure Notes completion, tags, reminder and serialization rules. */
 import { _hasTimeComponent } from './recurrence.js';
+import { parseTaskLines, stripTaskLines } from './markdownTasks.js';
 export function _isCalendarReminderNote(n) {
   return n && n.source === 'calendar' && n.label === 'calendar';
 }
@@ -84,4 +85,40 @@ export function _standardVisualVariant(note) {
   let hash = 0;
   for (let i = 0; i < source.length; i++) hash = ((hash << 5) - hash + source.charCodeAt(i)) | 0;
   return Math.abs(hash) % 5;
+}
+
+// Reminder text, the same rules as the server's `reminder_body` (checked
+// against tests/fixtures/notes_reminder_vectors.json): prose without task
+// lines or markup a notification cannot show, then the open tasks. Fenced
+// code is content and stays as written.
+const REMINDER_TEXT_LIMIT = 400;
+const REMINDER_TASK_LIMIT = 8;
+const REMINDER_IMAGE_RE = /!\[[^\]\n]*\]\([^)\n]*\)/g;
+const REMINDER_LINK_RE = /(?<!!)\[([^\]\n]*)\]\([^)\n]*\)/g;
+const REMINDER_LINE_MARK_RE = /^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?)/;
+const REMINDER_FENCE_RE = /^[ \t]{0,3}(?:`{3,}|~{3,})/;
+const firstChars = (text, n) => Array.from(text).slice(0, n).join('');
+
+/** `text` as plain words for a reminder: no image markdown, links as their text. */
+export function reminderText(text) {
+  let inFence = false;
+  const lines = String(text || '').split('\n').map(line => {
+    if (REMINDER_FENCE_RE.test(line)) inFence = !inFence;
+    else if (!inFence) line = line.replace(REMINDER_IMAGE_RE, '').replace(REMINDER_LINK_RE, (_m, label) => label).replace(REMINDER_LINE_MARK_RE, '');
+    return line.trimEnd();
+  });
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** What a reminder for this note content says. */
+export function reminderBody(content) {
+  const tasks = parseTaskLines(content);
+  if (!tasks.length) return firstChars(reminderText(content), REMINDER_TEXT_LIMIT).trim();
+  const prose = firstChars(reminderText(stripTaskLines(content)), REMINDER_TEXT_LIMIT).trim();
+  const pending = tasks.filter(task => !task.done).map(task => reminderText(task.text)).filter(Boolean);
+  if (!pending.length) return prose || `${tasks.length} item${tasks.length === 1 ? '' : 's'}`;
+  const shown = pending.slice(0, REMINDER_TASK_LIMIT).map(text => `- ${text}`).join('\n');
+  const extra = pending.length > REMINDER_TASK_LIMIT ? `\n...and ${pending.length - REMINDER_TASK_LIMIT} more` : '';
+  const summary = `Pending (${pending.length}):\n${shown}${extra}`;
+  return prose ? `${prose}\n\n${summary}` : summary;
 }

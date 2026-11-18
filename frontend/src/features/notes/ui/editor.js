@@ -1,4 +1,6 @@
 /** Build and wire note, checklist, goal and drawing editor forms. */
+import { applyItemsToContent, itemsToMarkdown, stripTaskLines } from '../domain/markdownTasks.js';
+
 export function createEditor({
   deleteFromEditor,
   submitNote,
@@ -42,6 +44,7 @@ export function createEditor({
     if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
     if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
     let currentImageUrl = _safeImgSrc(note?.image_url || '');
+    const initialImageUrl = currentImageUrl;
     form.innerHTML = `
     <div class="note-form-header">
       <input type="text" class="note-form-title" placeholder="Title" value="${_esc(note?.title || '')}" />
@@ -119,7 +122,7 @@ export function createEditor({
     // *editing* an existing goal-typed note : but the switch handler still
     // accepts Goal→Todo/Note transitions (downgrading legacy goals), so
     // these stashes still earn their keep.
-    let _stashedGoalDesc = (type === 'goal') ? (note?.content || '') : null;
+    let _stashedGoalDesc = (type === 'goal') ? stripTaskLines(note?.content || '') : null;
     let _stashedGoalItems = (type === 'goal' && Array.isArray(note?.items)) ? note.items.slice() : null;
 
     // Drawing also stashes the saved image URL so it survives Note↔Draw flips.
@@ -425,8 +428,10 @@ export function createEditor({
         label: labelVal,
         due_date: form.querySelector('.note-form-due').value || null,
         repeat: form.querySelector('.note-form-repeat')?.value || 'none',
-        image_url: currentImageUrl || null,
       };
+      // image_url is not a column: the server folds it into content, and a
+      // null is refused. Send it only when the photo changed here ('' removes it).
+      if (currentImageUrl !== initialImageUrl) payload.image_url = currentImageUrl || '';
       if (currentType === 'note') {
         payload.content = form.querySelector('.note-form-content')?.value || '';
       } else if (currentType === 'draw') {
@@ -438,13 +443,29 @@ export function createEditor({
         if (!upload?.url) { uiModule.showError('Failed to save drawing'); return; }
         payload.image_url = upload.url;
         if (upload.galleryId) payload.gallery_id = upload.galleryId;
+        // The drawing lives in content as an image line; point it at the new
+        // upload so the card shows one drawing, not the old and the new.
+        const previousUrl = _safeImgSrc(note?.image_url || '');
+        if (isEdit && note?.content && previousUrl) payload.content = note.content.split(`](${previousUrl})`).join(`](${upload.url})`);
       } else if (currentType === 'goal') {
         // Legacy: existing goal-type notes still edit through this branch.
         // No AI involvement : save as a normal note with description + items.
-        payload.content = form.querySelector('.note-form-goal-desc')?.value || '';
+        // Both live in content: the description, then the steps as task lines.
+        const desc = (form.querySelector('.note-form-goal-desc')?.value || '').replace(/\s+$/, '');
         payload.items = _collectItems(form);
+        const steps = itemsToMarkdown(payload.items);
+        payload.content = desc && steps ? `${desc}\n\n${steps}` : (desc || steps);
       } else {
+        // Items are task lines in content. A note that was already a
+        // checklist keeps its other lines; one switched to Todo here becomes
+        // exactly the list on screen.
+        // A former goal keeps its description above the list.
         payload.items = _collectItems(form);
+        const steps = itemsToMarkdown(payload.items);
+        const goalDesc = type === 'goal' ? stripTaskLines(note?.content || '') : '';
+        payload.content = type === 'todo'
+          ? applyItemsToContent(note?.content || '', payload.items)
+          : (goalDesc && steps ? `${goalDesc}\n\n${steps}` : (goalDesc || steps));
       }
       if (isEdit) payload.id = note.id;
       submitNote(payload, note, isEdit);

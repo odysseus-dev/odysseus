@@ -14,6 +14,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 - `routes/assistant_routes.py`;
 - canonical `routes/note/note_routes.py`, compatibility shim
   `routes/note_routes.py`, `src/builtin_actions.py`, and `src/action_intents.py`;
+- the note content model in `core/notes_markdown.py`, its boot migrations in `core/database.py`, and the notes rendering options of `static/js/markdown.js`;
 - agent/tool call sites in `src/tool_index.py` and `src/tool_implementations.py`;
 - scoped Codex wrappers in `routes/codex_routes.py`;
 - database models `CalendarCal`, `CalendarEvent`, `ScheduledTask`, `TaskRun`, `Note`, and `CrewMember`;
@@ -80,6 +81,49 @@ Task runtime behavior:
 
 Notes CRUD/reorder/reminder routes resolve the acting owner through `require_user()`: auth-enabled anonymous requests fail closed before hitting owner-scoped queries, while documented no-login/single-user modes still resolve to the compatibility owner path.
 
+### Note Content Model
+
+A note is one markdown document, `Note.content`. Checklist items are GitHub-style task lines inside it and images are markdown images. `core/notes_markdown.py` owns the rules; it is stdlib-only so the migration, the routes, the agent tool and the CLI share it without import cycles.
+
+Task-line grammar (`_TASK_RE`): optional spaces or tabs, a `-`, `*` or `+` bullet, one or more spaces or tabs, a `[ ]`, `[x]` or `[X]` box, then the item text to the end of the line. Nesting is two spaces per level, a tab counts as one level, and emitted lines are capped at three levels. Lines split on `\n` only (CRLF counts as one break), not `str.splitlines()`, so numbering agrees with the JS mirror.
+
+Fence rule: a line opening with three or more backticks or tildes starts fenced code, and only a delimiter of the same character that is at least as long closes it (CommonMark). An unclosed fence runs to the end of the document. Task-looking lines inside a fence are code, not items: they are not numbered, toggled, counted for `note_type`, or treated as already present by the migration.
+
+A task's index is its 0-based ordinal among task lines outside fences. `core/notes_markdown.py`, `frontend/src/features/notes/domain/markdownTasks.js` and the interactive task renderer in `static/js/markdown.js` all number the same way, pinned by `tests/fixtures/notes_task_vectors.json`, so a toggle by index means the same line in the API, the agent tool and the UI.
+
+### Derived Fields And Write Compatibility
+
+`content` is the source of truth; the API keeps its shape by deriving the legacy fields on read (`_note_to_dict`):
+
+- `items` is `[{index, text, done, indent}]` from the task lines, or `null` when there are none (so a note written with `items: []` reads back `null`). An item's old `id` and any other key a client sent are not kept;
+- `note_type` is `checklist` when the content is only task lines and blank lines, `note` otherwise. `goal` and `draw` are stored modes, not derived (`STORED_NOTE_TYPES`), so the Goals/Today views and drawings keep working;
+- a drawing's `image_url` is the stored column on a not-yet-migrated row, otherwise the last image in content. Any other note reads `image_url: null`; its images are in content.
+
+Writers that still send the legacy fields are folded into content server-side, on `POST /api/notes` and `PUT /api/notes/{id}`:
+
+- `items` rewrites the task lines in place (`apply_items_to_content`): the n-th item rewrites the n-th task line, an unchanged line is kept byte for byte, extra items are inserted after the last task line, task lines past the end of the array are dropped, and prose and fenced code are untouched. An item with blank text removes its task line, so the items read back are the array without it. An omitted `items` leaves the task lines alone;
+- `image_url` names the note's one legacy image: a drawing's canvas image, otherwise the last line that is only `![](url)`. A new URL replaces that line in place, or is appended once when there is none; the same URL again changes nothing; `""` removes it (`_write_image_url`). Spaces, quotes, parentheses and `<>` in the URL are percent-encoded, so a repeated write is recognised instead of stacked. Inline images elsewhere in the text are never touched, and the column itself is never written for new data.
+
+An explicit `null` on `content`, `items` or `image_url` is refused, because none of them is a column of its own: `PUT` answers 422 `content cannot be null; send an empty string to clear the note.` (`items`: `send [] to remove the checklist`; `image_url`: `remove its image line from content`) and saves nothing. The `/api/codex/todos` `update` action answers the same 422, and `manage_notes` `update` returns the message as an error, also for its `checklist_items`. On `PUT`, `null` on a real column (`due_date`, `label`, `color`, `gallery_id`, `agent_session_id`) still clears it. A client that sends back the `items: null` or `image_url: null` it read from `GET` gets the 422, so leave the keys out instead (`null_folded_field_error`).
+
+A `content` write without `items` keeps the note's existing task lines when the new text has none (`keep_task_lines`): an API client or agent that edited the prose of a checklist note does not delete its tasks. `content` with `items: []` writes the text without task lines, which is how a client clears a checklist.
+
+That keeps the CLI, both calendar reminder writers (`routes/calendar_routes.py`, `src/tools/calendar.py`, which now write task lines through `items_to_markdown`), card edits and older API clients working unchanged. A row the boot migration skipped still has legacy `items` or `image_url`; readers use `effective_content()`, which folds both in on the fly (the REST payload, the `manage_notes` list and view, selected-notes chat context, the daily brief, both reminder builders and the CLI), and the first write through the routes or the tool folds them into the row (`fold_legacy_columns`). Unreadable `items` are left in place for the migration to retry. See [`docs/notes-markdown-migration.md`](../docs/notes-markdown-migration.md) for the migration and rollback.
+
+### Checklist Endpoints
+
+- `POST /api/notes/{id}/items/{index}/toggle` flips the done state of task line `index` in content, leaving indent, bullet and text as they were. It returns `{ok, item, items, note}`; a note without task lines or an out-of-range index is 400.
+- `POST /api/notes/{id}/items` with `{text, indent}` appends one open task after the last task line (or as a new block when there are none) so adding an item no longer PUTs the whole checklist. Empty text is 400. It returns `{ok, item, note}`.
+
+Card checkboxes use the toggle route; the card's add-item input uses the append route.
+
+### Note Rendering
+
+Note cards render content with `mdToHtml(content, {tasks: 'interactive', images: 'notes'})`. Only the Notes UI passes these options. Rendered task rows also get the existing `.note-checkbox` classes, so the card, mobile and select-mode handlers apply to them unchanged.
+
+- `tasks: 'interactive'` numbers task lines on the raw source with the fence rule above, before any other pass, and renders them as `li.md-task[data-task-index]` rows with a `role="checkbox"` box. A task line that lands where a list cannot render (inline code, a `<details>` block) keeps its text but is not clickable.
+- `images: 'notes'` loads images from this origin only: an `/api/upload/<id>` path, a base64 `data:image/` PNG, JPEG, GIF or WebP URL, or a same-origin `blob:` URL (`noteImageSrc`). Any other markdown image renders as a plain link. Raw HTML that survives the allowed-HTML sanitizer can still name a resource (`<img src>`, `srcset`, `poster`, `background`, `xlink:href`, a CSS `url()` in `style`), so the rendered markup is parsed on an inert `<template>` and every such attribute that does not point at this origin is removed (`scrubNoteFetches`). Displaying a note therefore never makes the browser fetch a third-party URL, whoever wrote the note.
+
 Reminder policy:
 
 - "remind me at 5pm" should become a todo/note with a due date;
@@ -96,6 +140,8 @@ Reminder dispatch is Note-owned:
 - the notes frontend has a browser-tab fallback for visible sessions;
 - calendar frontend reminder UI stores reminder records as Notes, not calendar-event notification jobs.
 
+Reminder text comes from one builder, `core.notes_markdown.reminder_body()`, shared by `/api/notes/fire-reminder` and the scheduler's `action_ping_notes()`: the note's prose with task lines removed (first 400 characters), then `Pending (N):` and up to eight open tasks as `- text` lines, with `...and K more` past that. A note with tasks but none open gets its prose, or `N items`; a note with no task lines gets its first 400 characters. The daily brief (`action_daily_brief()`) lists up to three open tasks from any note with task lines, not only `note_type == "checklist"`.
+
 Email/ntfy failures degrade into channel result fields rather than blocking every reminder path. ntfy and generic webhook reminder URLs run through outbound URL safety checks, with `REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS` controlling whether private/LAN targets are allowed. ntfy notification titles are converted to ASCII with replacement and capped at 200 characters before entering HTTP headers. Reminder dedupe uses owner-scoped cache files under `data/`.
 
 `src.builtin_actions.action_ping_notes()` counts delivery only when `dispatch_reminder()` reports success for the configured browser/email/ntfy/webhook channel. Typed receipts in `data/note_pings_<owner-slug>.json` record time and channel. A browser fallback or legacy timestamp does not prove external delivery: the next eligible scan retries the configured external channel without queueing the recent browser fallback again. The scanner reloads dispatcher-owned receipts before pruning so it cannot replace a successful channel receipt with a timestamp; total delivery failure is not checkpointed. Retries occur only within 90 seconds of the due time, while recent matching-channel receipts suppress delivery for 25 minutes. Existing retry tests cover webhook/ntfy failures, legacy receipts, browser dedupe, total failure, and receipt-preserving pruning; live channel delivery remains separate validation.
@@ -105,6 +151,8 @@ Email/ntfy failures degrade into channel result fields rather than blocking ever
 `do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `do_manage_calendar` supports batch event creation plus list range aliases (`start`, `start_time`, `start_date`, `range_start`, `from`, `dtstart`, `since`, and matching end aliases), calendar name/short-id lookup, importance/tag aliases, and reminder offsets expressed as numbers, minute/hour words, or common abbreviations such as `min`/`mins`/`hr`/`hrs`. If a model supplies a loose `query`, `date_range`, or `range` without explicit start/end datetimes, `list_events` returns an error asking the caller to resolve the range and call again instead of guessing. Event classification reads `Memory.text` for personal context before LLM classification. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
 
 Agent native tool owner handling is not uniform today. `do_manage_tasks()` filters lists only when `owner` is truthy and creates tasks with the passed owner, so `owner=None` can create legacy/null-owner tasks. For authenticated/non-empty owners, edit/delete/pause/resume/run require an exact stored owner match and reject both cross-owner and null-owner rows; `owner=None` retains single-user compatibility. `do_manage_notes()` list/query behavior distinguishes `None` from `""`, with `None` acting as broader single-user compatibility while `""` filters to empty-owner rows in some paths. `do_manage_calendar()` query helpers filter only when owner is not `None`, while calendar creation routes through the calendar fallback owner for default calendars. These are compatibility behaviors, not a cross-user sharing model.
+
+`do_manage_notes()` reads task lines from content. `get` (aliases `view`, `read`, `show`, `open`) prints each item as `[x] i: text` with the index `toggle_item` takes, and those aliases count as reads in `src/tool_capabilities.py` and `src/clean_agent_preview.py`. `list` stays a locator and does not print bodies. `toggle_item` needs an explicit integer index and an optional boolean `done`. To create or replace a checklist the tool still takes `checklist_items` (written into content through `apply_items_to_content`), because that path carries the validation for empty lists and tasks in titles; content the model writes may contain task lines directly. An `update` with `content` and no `checklist_items` keeps the existing task lines when the new text has none, and `checklist_items: []` clears them; the Codex todo bridge goes through the same code. Selected-notes chat context (`_format_selected_notes_context()` in `routes/chat_routes.py`) sends the content verbatim plus an `Items:` block restating the tasks, with the derived `note_type`. `scripts/odysseus-notes` derives `items` and `note_type` the same way, and `create --item TEXT` (repeatable) writes task lines.
 
 Note and calendar route/tool writers owner-reserve any canonical internal upload references in content, checklist/color/image fields, descriptions, and locations before their database writes. Missing or wrong-owner uploads fail the write instead of creating a dangling durable reference; reservations serialize with upload cleanup.
 
@@ -154,7 +202,7 @@ Because auth-disabled chat owners can arrive as `None`, tool-created rows may no
 
 Task creation/update/manual run/webhook/scheduler execution blocks shell-like and Cookbook serve action types for non-admin users through `src.task_action_policy`, and tool security blocks privileged task/calendar tools for non-admin use. Assistant defaults reject synthetic owners such as `api` and `internal-tool`.
 
-Note routes store caller-provided `source`, `session_id`, `image_url`, and agent-session provenance. Canonical internal upload references in persisted note/calendar fields are owner-reserved before writes, and upload-backed bytes remain protected when fetched through upload routes. Arbitrary non-upload image/provenance URLs are not otherwise normalized or validated by note storage.
+Note routes store caller-provided `source`, `session_id`, and agent-session provenance; a caller-provided `image_url` is folded into content as a markdown image. Canonical internal upload references in persisted note/calendar fields are owner-reserved before writes, and upload-backed bytes remain protected when fetched through upload routes. Arbitrary non-upload image URLs in content are not otherwise normalized or validated by note storage; the boundary is at display, where the notes image policy above refuses to load anything that is not same-origin.
 
 ## Testing Coverage
 
@@ -182,7 +230,7 @@ Task/assistant endpoint updates accept registered owner-visible routes, canonica
 
 The canonical Notes composition entry owns one `createNotesState()` instance, injected HTTP/storage/notification ports, application workflows and UI factories. Domain modules own note rules and local-time recurrence. Application modules own query/order, optimistic submission/card/checklist/deletion, selection, drafts, agent actions and reminders; UI modules delegate mutations and transport through those operations. The legacy facade preserves default/named open/close/toggle/new/openNote/badge methods and aliases, including named-only reminder-dot dismissal, without exposing mutable state.
 
-Background startup is idempotent: after three seconds it loads active notes, then starts a 30-second reminder interval and immediate check. Close/minimize/force-close dispose panel resources but leave that page-owned interval running. Scans use the current shared note collection, skip archived/date-only/fired notes, fire within the previous minute, and advance or mark older reminders; archived-only/error-cleared lists can still defer active reminders. Server synthesis has a 1.5-second local-notification fallback, with toast/highlight persistence. This browser path remains separate from backend delivery receipts.
+Background startup is idempotent: after three seconds it loads active notes (unless the panel is already open on active notes: that list is the panel's, and swapping it without a redraw left stale cards and hid changes from the 20 s re-read), then starts a 30-second reminder interval and immediate check. Close/minimize/force-close dispose panel resources but leave that page-owned interval running. Scans use the current shared note collection, skip archived/date-only/fired notes, fire within the previous minute, and advance or mark older reminders; archived-only/error-cleared lists can still defer active reminders. Server synthesis has a 1.5-second local-notification fallback, with toast/highlight persistence. This browser path remains separate from backend delivery receipts.
 
 Drafts persist synchronously on input/change and serialize existing-note network autosaves after 500 ms; successful saves clear only the matching draft, while failure/new/drawing drafts remain recoverable. Canvas bitmaps are not draft JSON. Explicit drawing save awaits PNG upload before optimistic submission. Selection dispatches `odysseus:notes-context-selected` synchronously and exits only when the consumer sets `accepted`; chat retains context/session authority. Closing releases owned portals/listeners/gestures/observers, and late fetch/masonry work checks panel connectivity/open state. It does not add universal async generation guards: fetch remains last-completion-wins, optimistic creation replaces the first remaining temporary note, and bulk actions can swallow individual failures before refetch/reporting requested counts.
 
@@ -198,3 +246,5 @@ Drafts persist synchronously on input/change and serialize existing-note network
 - `scripts/odysseus-webhook` builds the live `/api/tasks/{task_id}/webhook/{token}` path with percent-encoded path segments; its direct DB token rotation/revocation behavior remains a local compatibility surface.
 - Assistant default documentation/code comments still mention check-ins that are no longer auto-seeded.
 - App backup import/export does not cover the calendar/task/note rows described by this spec.
+- The legacy `Note.items` and `Note.image_url` columns stay in the schema: the rollback restores into them and readers still fold an unmigrated row's `items`. Dropping them needs its own migration once rollback is no longer wanted.
+- `goal` and `draw` are stored editing modes, not derived from content, so a drawing note keeps `note_type = "draw"` even when its content is ordinary markdown.

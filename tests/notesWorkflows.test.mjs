@@ -68,23 +68,50 @@ test('pin and delete failures roll back captured state and order', async () => {
 });
 
 test('item removal, quick add and checkbox errors preserve checklist contents', async () => {
-  const app = owner([{ id: 'a', items: [{ id: 'first', text: 'A', done: false }, { id: 'second', text: 'B', done: true }] }]);
-  const operations = createChecklistOperations({ app, api: { patchNote: async () => { throw Error('offline'); } }, uid: () => 'new', effects: { render() {}, showError() {} } });
+  const content = 'Intro\n- [ ] A\n- [x] B';
+  const app = owner([{ id: 'a', content, items: [{ id: 'first', text: 'A', done: false }, { id: 'second', text: 'B', done: true }] }]);
+  const offline = async () => { throw Error('offline'); };
+  const operations = createChecklistOperations({ app, api: { patchNote: offline, toggleTask: offline, appendTask: offline }, uid: () => 'new', effects: { render() {}, showError() {} } });
   operations.removeItem('a', 0);
   assert.equal(app.state.notes[0].items[0].id, 'second');
+  assert.equal(app.state.notes[0].content, 'Intro\n- [x] B');
   await drain();
   assert.deepEqual(app.state.notes[0].items.map(it => it.id), ['first', 'second']);
+  assert.equal(app.state.notes[0].content, content);
   const done = [];
   operations.toggleItem('a', 0, value => done.push(value), () => {});
+  assert.equal(app.state.notes[0].content, 'Intro\n- [x] A\n- [x] B');
   await drain();
   assert.deepEqual(done, [true, false]);
+  assert.equal(app.state.notes[0].content, content);
   const persist = operations.addItem('a', 'C', () => {});
   assert.equal(app.state.notes[0].items.length, 3);
+  assert.equal(app.state.notes[0].content, content + '\n- [ ] C');
   persist(); await drain();
   assert.equal(app.state.notes[0].items.length, 2);
+  assert.equal(app.state.notes[0].content, content);
   operations.editItem(app.state.notes[0], 1, 'Changed');
+  assert.equal(app.state.notes[0].content, 'Intro\n- [ ] A\n- [x] Changed');
   await drain();
   assert.equal(app.state.notes[0].items[1].text, 'B');
+  assert.equal(app.state.notes[0].content, content);
+});
+
+test('checkbox and quick add use the toggle and append endpoints, not a whole-list PUT', async () => {
+  const calls = [];
+  const app = owner([{ id: 'a', content: '- [ ] A', items: [{ text: 'A', done: false }] }]);
+  const api = {
+    patchNote: async (...args) => { calls.push(['patch', ...args]); },
+    toggleTask: async (...args) => { calls.push(['toggle', ...args]); },
+    appendTask: async (...args) => { calls.push(['append', ...args]); },
+  };
+  const operations = createChecklistOperations({ app, api, uid: () => 'new', effects: { render() {}, showError() {} } });
+  operations.toggleItem('a', 0, () => {}, () => {});
+  operations.addItem('a', 'B', () => {})();
+  await operations.toggleTodayStep('a', 1, () => {}, () => {});
+  await drain();
+  assert.deepEqual(calls, [['toggle', 'a', 0], ['append', 'a', 'B'], ['toggle', 'a', 1]]);
+  assert.equal(app.state.notes[0].content, '- [x] A\n- [x] B');
 });
 
 test('submission preserves top ordering, server ID replacement and newer draft recovery', async () => {

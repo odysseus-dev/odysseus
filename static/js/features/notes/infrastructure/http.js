@@ -11,12 +11,22 @@ export function createNotesApi({ origin, request }) {
     if (!response.ok) throw new Error('Failed to update note');
     return await response.json();
   }
+  async function toggleTask(id, index) {
+    const response = await request(`${origin}/api/notes/${id}/items/${index}/toggle`, { method: 'POST', credentials: 'same-origin' });
+    if (!response.ok) throw new Error('Failed to toggle item');
+    return await response.json();
+  }
+  async function appendTask(id, text, indent = 0) {
+    const response = await request(`${origin}/api/notes/${id}/items`, json('POST', { text, indent }));
+    if (!response.ok) throw new Error('Failed to add item');
+    return await response.json();
+  }
   async function deleteNote(id) {
     const response = await request(`${origin}/api/notes/${id}`, { method: 'DELETE', credentials: 'same-origin' });
     if (!response.ok) throw new Error('HTTP ' + response.status);
   }
   return {
-    saveNote, patchNote, deleteNote,
+    saveNote, patchNote, deleteNote, toggleTask, appendTask,
     listNotes: archived => request(`${origin}/api/notes${archived ? '?archived=true' : ''}`, { credentials: 'same-origin' }),
     reorder: ids => request(`${origin}/api/notes/reorder`, json('POST', { ids })),
     upload: body => request(`${origin}/api/upload`, { method: 'POST', body, credentials: 'same-origin' }),
