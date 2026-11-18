@@ -773,3 +773,91 @@ describe('Canonical fallback permission', () => {
     });
   }
 });
+
+describe('Full visual-intent verification', () => {
+  const options = {
+    render: markdownToVisualHtml,
+    inspectCompatibility: inspectMarkdownVisualCompatibility,
+    allowCanonicalFallback: false,
+  };
+  const cases = [
+    {
+      name: 'adjacent heading and paragraph with mixed line endings',
+      source: '## Old ##\r\nKeep this\n',
+      edits: [{ op: 'replace', index: 0, baseline: '## Old', edited: '## Older' }],
+      intended: '## Older\n\nKeep this',
+      expected: '## Older ##\r\nKeep this\n',
+    },
+    {
+      name: 'nested list followed by code',
+      source: '* Parent\n  * Child\n\n~~~js\nconst x = 1;\n~~~',
+      edits: [{ op: 'replace', index: 0, baseline: '- Parent\n  - Child', edited: '- Parent\n  - New child' }],
+      intended: '- Parent\n  - New child\n\n```js\nconst x = 1;\n```',
+      expected: '* Parent\n  * New child\n\n~~~js\nconst x = 1;\n~~~',
+    },
+    {
+      name: 'a replacement that would consume an adjacent paragraph as lazy quote text',
+      source: '## Old\nKeep this',
+      edits: [{ op: 'replace', index: 0, edited: '> Old' }],
+      intended: '> Old\n\nKeep this',
+      expected: null,
+    },
+    {
+      name: 'table alignment next to a delimiter edit and fenced code',
+      source: 'Keep __this__\n\n| Name | Rank |\n| :--- | ---: |\n| Alpha | 1 |\n\n~~~html\n<strong>literal</strong>\n~~~',
+      edits: [
+        { op: 'replace', index: 0, baseline: 'Keep **this**', edited: 'Keep *this*' },
+        { op: 'replace', index: 1, edited: '| Name | Rank |\n| :--- | ---: |\n| Alpha | 2 |' },
+      ],
+      intended: 'Keep *this*\n\n| Name | Rank |\n| :--- | ---: |\n| Alpha | 2 |\n\n```html\n<strong>literal</strong>\n```',
+      expected: null, // Switching delimiter families would rewrite the edited inline range ambiguously.
+    },
+    {
+      name: 'paragraph split',
+      source: 'Before and after\n\n# Keep ##',
+      edits: [
+        { op: 'replace', index: 0, edited: 'Before' },
+        { op: 'insert', afterIndex: 0, text: 'and after' },
+      ],
+      intended: 'Before\n\nand after\n\n# Keep',
+      expected: 'Before\n\nand after\n\n# Keep ##',
+    },
+    {
+      name: 'paragraph join',
+      source: 'Before\r\n\r\nAfter\r\n\r\n# Keep ##',
+      edits: [
+        { op: 'replace', index: 0, edited: 'Before After' },
+        { op: 'delete', index: 1 },
+      ],
+      intended: 'Before After\n\n# Keep',
+      expected: 'Before After\r\n\r\n# Keep ##',
+    },
+    {
+      name: 'same-count locally consistent replacement with different visual intent',
+      source: '## Old\n\nKeep this',
+      edits: [{ op: 'replace', index: 0, edited: '## New' }],
+      intended: '## New\n\nKeep **this**',
+      expected: null,
+      bypassWouldAccept: true,
+    },
+  ];
+
+  for (const { name, source, edits, intended, expected, bypassWouldAccept } of cases) {
+    it(name, () => {
+      const local = applyLocalizedEdits(source, edits, options);
+      const oracle = local.status === 'preserved'
+        && compareSemanticHtml(markdownToVisualHtml(local.markdown), markdownToVisualHtml(intended));
+      const actual = applyLocalizedEdits(source, edits, { ...options, intendedVisualMarkdown: intended });
+      assert.equal(actual.status === 'preserved', oracle);
+      assert.equal(actual.markdown, expected ?? source);
+      if (expected !== null) {
+        assert.deepEqual(actual.blockSegments, extractBlockSegments(segmentMarkdown(expected)));
+      }
+      if (bypassWouldAccept) {
+        assert.equal(local.status, 'preserved');
+        assert.equal(local.blockSegments.length, extractBlockSegments(segmentMarkdown(source)).length);
+        assert.equal(actual.reason, 'semantic-verification-error');
+      }
+    });
+  }
+});

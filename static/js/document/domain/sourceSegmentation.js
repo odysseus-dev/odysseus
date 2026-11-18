@@ -25,30 +25,8 @@ const INDENTED_CODE_RE = /^(?:[ ]{4}|\t)(.*)$/;
  */
 export function splitLinesExact(str) {
   if (!str) return [];
-  const lines = [];
-  let at = 0;
-  const len = str.length;
-  while (at < len) {
-    const nextLf = str.indexOf('\n', at);
-    const nextCr = str.indexOf('\r', at);
-    if (nextLf === -1 && nextCr === -1) {
-      lines.push(str.slice(at));
-      break;
-    }
-    if (nextLf !== -1 && (nextCr === -1 || nextLf < nextCr)) {
-      lines.push(str.slice(at, nextLf + 1));
-      at = nextLf + 1;
-    } else if (nextCr !== -1 && (nextLf === -1 || nextCr < nextLf)) {
-      if (nextCr + 1 < len && str[nextCr + 1] === '\n') {
-        lines.push(str.slice(at, nextCr + 2));
-        at = nextCr + 2;
-      } else {
-        lines.push(str.slice(at, nextCr + 1));
-        at = nextCr + 1;
-      }
-    }
-  }
-  return lines;
+  // Scan once, even when one kind of newline is rare or absent.
+  return str.match(/[^\r\n]*(?:\r\n|[\r\n])|[^\r\n]+$/g) || [];
 }
 
 /**

@@ -633,6 +633,7 @@ export function preserveBlockSource({
  * @param {object} [options]
  * @param {string} [options.expectedRevision] Expected document revision hash. Rejects if mismatched.
  * @param {function} [options.render] Function converting Markdown to HTML for semantic verification.
+ * @param {string} [options.intendedVisualMarkdown] Full serialization of the edited visual surface, when available.
  * @param {function} [options.compareSemantics] Custom semantic comparator.
  * @param {function} [options.inspectCompatibility] Function verifying visual compatibility.
  * @param {number} [options.maxEditDistance] Difference threshold before falling back.
@@ -642,7 +643,8 @@ export function preserveBlockSource({
  *   markdown: string,
  *   draft: string,
  *   reason: string|null,
- *   blockResults: Array<{ index: number, status: string, reason: string|null }>
+ *   blockResults: Array<{ index: number, status: string, reason: string|null }>,
+ *   blockSegments?: Array<object>
  * }}
  */
 export function applyLocalizedEdits(source, edits, options = {}) {
@@ -855,7 +857,7 @@ export function applyLocalizedEdits(source, edits, options = {}) {
     if (!insertGroups.has(op.afterIndex)) insertGroups.set(op.afterIndex, []);
     insertGroups.get(op.afterIndex).push(op.text);
   }
-  const eol = detectLineEnding(source);
+  const eol = insertGroups.size ? detectLineEnding(source) : '';
   const standardSep = `${eol}${eol}`;
   for (const [afterIndex, texts] of insertGroups) {
     const newBlock = { type: 'block', raw: texts.join(standardSep) };
@@ -902,14 +904,16 @@ export function applyLocalizedEdits(source, edits, options = {}) {
       reason: 'insertion-boundary-collision', blockResults };
   }
 
-  if (hasMutations) {
+  const visualIntent = options.intendedVisualMarkdown;
+  if (hasMutations || (typeof visualIntent === 'string' && candidateMarkdown !== visualIntent)) {
     try {
       // Verify all operations, including insert/delete, against the intended
       // canonical sequence. Renderer failure never authorizes persistence.
       const intended = [];
+      const changes = new Map(operations.filter(op => op.op !== 'insert').map(op => [op.index, op]));
       intended.push(...(insertGroups.get(-1) || []));
       for (let index = 0; index < blockCount; index++) {
-        const op = operations.find(o => o.index === index);
+        const op = changes.get(index);
         if (op?.op !== 'delete') intended.push(op?.op === 'replace' ? op.edited : blockSegments[index].raw);
         intended.push(...(insertGroups.get(index) || []));
       }
@@ -920,9 +924,15 @@ export function applyLocalizedEdits(source, edits, options = {}) {
           }
         }
       }
-      if (compare(verifiedRender(options.render, candidateMarkdown),
-        verifiedRender(options.render, (source.startsWith('\uFEFF') ? '\uFEFF' : '') + intended.join('\n\n'))) !== true) {
+      const mappedIntent = (source.startsWith('\uFEFF') ? '\uFEFF' : '') + intended.join('\n\n');
+      const candidateHtml = verifiedRender(options.render, candidateMarkdown);
+      const mappedHtml = mappedIntent === candidateMarkdown ? candidateHtml : verifiedRender(options.render, mappedIntent);
+      if (compare(candidateHtml, mappedHtml) !== true) {
         throw new Error('Semantic divergence');
+      }
+      if (typeof visualIntent === 'string' && visualIntent !== candidateMarkdown && visualIntent !== mappedIntent
+          && compare(candidateHtml, verifiedRender(options.render, visualIntent)) !== true) {
+        throw new Error('Visual intent diverges from the verified source mapping');
       }
     } catch (_) {
       return { status: 'unsupported', markdown: source, draft: candidateMarkdown,
@@ -936,5 +946,6 @@ export function applyLocalizedEdits(source, edits, options = {}) {
     draft: candidateMarkdown,
     reason: overallReason,
     blockResults,
+    blockSegments: actualBlocks,
   };
 }
