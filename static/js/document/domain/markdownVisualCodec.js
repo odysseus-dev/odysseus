@@ -14,7 +14,7 @@
  *   application renderer treats them as LaTeX delimiters.
  */
 
-import { _escHtml } from './documentKinds.js';
+import { _escHtml, _htmlToPlainText } from './documentKinds.js';
 import { _normalizeRichLinkUrl } from './richTextRules.js';
 
 const FENCE_OPEN_RE = /^[ ]{0,3}(`{3,}|~{3,})([^\n]*)$/;
@@ -692,16 +692,6 @@ function _renderInlineFormattingOnly(text, tokens) {
   return _restoreTokens(out, tokens);
 }
 
-function _htmlToPlainText(html) {
-  return String(html)
-    .replace(/<[^>]*>/g, '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
-}
-
 function _buildListTree(items) {
   const roots = [];
   const stack = [];
@@ -957,7 +947,7 @@ function _textNeedsEscaping(text) {
 
 function _escapeInlineText(text) {
   return String(text)
-    .replace(/\\(?=[!-/:-@[-`{-~]|$)/g, '\\\\')
+    .replace(/\\/g, '\\\\')
     .replace(/[*_`~$]/g, '\\$&')
     .replace(/\](?=[([:])/g, '\\]')
     .replace(/\[\^/g, '[\\^')
@@ -1285,8 +1275,12 @@ function _escapeBlockStart(line, { bulletItem = false } = {}) {
   if (ordered) return `${ordered[1]}\\${s.slice(ordered[1].length)}`;
   if (/^(?:`{3,}|~{3,})/.test(s)) return `\\${s}`;
   if (/^([-*_=])(?:[ \t]*\1)*[ \t]*$/.test(s) || _isTableSeparatorLine(s)) return `\\${s}`;
-  if (REF_DEF_RE.test(s) || FOOTNOTE_DEF_RE.test(s)) return s.replace(/(?<!\\)\]/, '\\]');
-  if (bulletItem && /^\[[ xX]\](?:[ \t]|$)/.test(s)) return s.replace(']', '\\]');
+  if (REF_DEF_RE.test(s) || FOOTNOTE_DEF_RE.test(s)) {
+    return s.replace(/(\\*)\]/g, (match, slashes) => (slashes.length % 2 === 0 ? `${slashes}\\]` : match));
+  }
+  if (bulletItem && /^\[[ xX]\](?:[ \t]|$)/.test(s)) {
+    return s.replace(/(\\*)\]/g, (match, slashes) => (slashes.length % 2 === 0 ? `${slashes}\\]` : match));
+  }
   return s;
 }
 
@@ -1404,7 +1398,7 @@ function _serializeTableNode(tableNode, context = null) {
         }
         return {
           align: String(cell.style?.textAlign || '').toLowerCase(),
-          text: text.replace(/\n+/g, ' ').replace(/\|/g, '\\|').trim(),
+          text: String(text || '').replace(/\n+/g, ' ').split('|').join('\\|').trim(),
         };
       })
   ).filter(r => r.length > 0);

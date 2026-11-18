@@ -773,7 +773,7 @@ try {
     const selection = window.getSelection();
     selection.collapse(rich.querySelector('p').firstChild, 0);
     const dt = new DataTransfer();
-    dt.setData('text/html', '<p>Pasted safe text</p><script>window.__xssExecuted = true;</script><img src="invalid-image" onerror="window.__xssExecuted = true;"><a href="javascript:alert(1)">evil link</a>');
+    dt.setData('text/html', '<p>Pasted safe text</p><script>window.__xssExecuted = true;</script><img src="invalid-image" onerror="window.__xssExecuted = true;"><img src="javascript:alert(1)"><img src="data:image/svg+xml;base64,PHN2Zy8+" onerror="window.__xssExecuted = true;"><a href="javascript:alert(1)">evil js link</a><a href="vbscript:alert(2)">evil vb link</a><a href="data:text/html;base64,PHNjcmlwdD4=">evil data link</a><a href="file:///etc/passwd">evil file link</a><a href="https://example.com/safe">safe link</a><img src="/static/img/logo.png" alt="safe logo">');
     dt.setData('text/plain', 'Pasted safe text');
     const pasteEvent = new ClipboardEvent('paste', {
       bubbles: true,
@@ -790,13 +790,19 @@ try {
     const xssTriggered = window.__xssExecuted === true;
     const scriptTags = rich ? rich.querySelectorAll('script').length : 0;
     const handlers = rich ? Array.from(rich.querySelectorAll('*')).filter((el) => el.getAttributeNames().some((name) => name.startsWith('on'))) : [];
-    const jsLinks = rich ? Array.from(rich.querySelectorAll('a')).filter((a) => (a.getAttribute('href') || '').toLowerCase().startsWith('javascript:')) : [];
+    const isDisallowedUrl = (raw) => {
+      const u = String(raw || '').trim().toLowerCase();
+      return /^(?:javascript|vbscript|data|file):/.test(u);
+    };
+    const disallowedLinks = rich ? Array.from(rich.querySelectorAll('a')).filter((a) => isDisallowedUrl(a.getAttribute('href'))) : [];
+    const disallowedImages = rich ? Array.from(rich.querySelectorAll('img')).filter((img) => isDisallowedUrl(img.getAttribute('src'))) : [];
     const isVisualActive = rich?.classList.contains('markdown-visual-mode') && getComputedStyle(rich).display !== 'none';
     return {
       xssTriggered,
       scriptTags,
       handlersCount: handlers.length,
-      jsLinksCount: jsLinks.length,
+      disallowedLinksCount: disallowedLinks.length,
+      disallowedImagesCount: disallowedImages.length,
       isVisualActive,
     };
   });
@@ -805,7 +811,8 @@ try {
   assert.equal(secState.xssTriggered, false, 'No XSS payload executed on visual editor surface');
   assert.equal(secState.scriptTags, 0, 'No raw script tags admitted into visual editor DOM');
   assert.equal(secState.handlersCount, 0, 'No inline event handlers (onerror/onload) admitted');
-  assert.equal(secState.jsLinksCount, 0, 'No javascript: scheme links permitted in visual editor');
+  assert.equal(secState.disallowedLinksCount, 0, 'No disallowed scheme links (javascript, vbscript, data, file) permitted in visual editor');
+  assert.equal(secState.disallowedImagesCount, 0, 'No disallowed scheme images (javascript, vbscript, data, file) permitted in visual editor');
 
   suiteResults.scenarios.push({
     id: 8,

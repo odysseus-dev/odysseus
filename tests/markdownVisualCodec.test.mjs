@@ -8,6 +8,7 @@ import {
   serializeVisualNodesToMarkdown,
   serializeVisualNodesWithFidelity,
 } from '../frontend/src/features/documents/domain/markdownVisualCodec.js';
+import { _htmlToPlainText } from '../frontend/src/features/documents/domain/documentKinds.js';
 import { loadMarkdown } from './streaming/markdownHarness.mjs';
 
 const el = (tag, children = [], { attrs = {}, classes = [], style = {} } = {}) => ({
@@ -774,8 +775,8 @@ describe('markdownVisualCodec', () => {
       for (const md of testCases) {
         const codecHtml = markdownToVisualHtml(md);
         const previewHtml = mdToHtml(md);
-        const codecText = codecHtml.replace(/<[^>]+>/g, '').trim();
-        const previewText = previewHtml.replace(/<[^>]+>/g, '').trim();
+        const codecText = _htmlToPlainText(codecHtml).trim();
+        const previewText = _htmlToPlainText(previewHtml).trim();
         assert.equal(codecText, previewText, `text content mismatch for ${md}`);
         if (md.includes('foo') && md.includes('bar') && !md.includes('~~')) {
           assert.equal(previewHtml.includes('<em>') && previewHtml.includes('<strong>'), true, `previewHtml must have both tags for ${md}`);
@@ -877,5 +878,93 @@ it('retains combined button formatting represented as style on an inline tag', (
     blocks: ['**Bold** ***combined*** ~~deprecated~~ ' + String.fromCharCode(96) + 'command' + String.fromCharCode(96)],
     lossless: true,
     reasons: [],
+  });
+});
+
+describe('Escaped closing brackets and block-start safety', () => {
+  it('escapes reference link definitions with multiple brackets', () => {
+    const raw = '[ref]: https://example.com [extra] and [more]';
+    const nodes = [el('p', [txt(raw)])];
+    const md = serializeVisualNodesToMarkdown(nodes);
+    assert.equal(md, '[ref\\]: https://example.com [extra\\] and [more\\]');
+    const html = markdownToVisualHtml(md);
+    assert.equal(_htmlToPlainText(html).trim(), raw);
+  });
+
+  it('escapes footnote definitions with multiple brackets and mixed escapes', () => {
+    const raw = '[^note]: see [1] and [2] and \\] escaped';
+    const nodes = [el('p', [txt(raw)])];
+    const md = serializeVisualNodesToMarkdown(nodes);
+    assert.equal(md, '[\\^note\\]: see [1\\] and [2\\] and \\\\\\] escaped');
+    const html = markdownToVisualHtml(md);
+    assert.equal(_htmlToPlainText(html).trim(), raw);
+  });
+
+  it('preserves even number of backslashes preceding bracket', () => {
+    const raw = '[ref\\\\]: https://example.com';
+    const nodes = [el('p', [txt(raw)])];
+    const md = serializeVisualNodesToMarkdown(nodes);
+    assert.equal(md, '[ref\\\\\\\\\\]: https://example.com');
+    const html = markdownToVisualHtml(md);
+    assert.equal(_htmlToPlainText(html).trim(), raw);
+  });
+});
+
+describe('Table cell backslash and delimiter escaping', () => {
+  it('round-trips literal backslashes, pipes, and delimiters in table cells', () => {
+    const cases = [
+      'C:\\foo\\bar',
+      'trailing \\',
+      'cell with | pipe',
+      'slash and \\| pipe',
+      '\\\\double-slash\\\\',
+    ];
+    for (const text of cases) {
+      const tableNodes = [el('table', [el('tbody', [
+        el('tr', [el('th', 'Header')]),
+        el('tr', [el('td', [txt(text)])]),
+      ])])];
+      const md = serializeVisualNodesToMarkdown(tableNodes);
+      const html = markdownToVisualHtml(md);
+      assert.ok(html.includes('<table>'));
+      assert.equal(_htmlToPlainText(html).replace('Header', '').trim(), text);
+    }
+  });
+});
+
+describe('URL scheme security policies for links and images', () => {
+  it('disallows dangerous schemes for links', () => {
+    for (const bad of [
+      'javascript:alert(1)',
+      'vbscript:msgbox(1)',
+      'data:text/html;base64,PHNjcmlwdD4=',
+      'file:///etc/passwd',
+    ]) {
+      const md = `[click](${bad})`;
+      const html = markdownToVisualHtml(md);
+      assert.equal(html.includes(`href="${bad}"`), false, `Must not admit link with scheme: ${bad}`);
+    }
+  });
+
+  it('disallows dangerous and non-image schemes for images', () => {
+    for (const bad of [
+      'javascript:alert(1)',
+      'vbscript:msgbox(1)',
+      'data:image/svg+xml;base64,PHN2Zy8+',
+      'file:///etc/shadow',
+      'mailto:test@example.com',
+      'tel:1234567890',
+    ]) {
+      const md = `![img](${bad})`;
+      const html = markdownToVisualHtml(md);
+      assert.equal(html.includes(`src="${bad}"`), false, `Must not admit image with scheme: ${bad}`);
+    }
+  });
+
+  it('admits safe HTTP and HTTPS URLs for links and images', () => {
+    const linkMd = '[safe](https://example.com/docs)';
+    const imgMd = '![safe](/api/upload/image123.png)';
+    assert.ok(markdownToVisualHtml(linkMd).includes('href="https://example.com/docs"'));
+    assert.ok(markdownToVisualHtml(imgMd).includes('src="/api/upload/image123.png"'));
   });
 });
