@@ -1,6 +1,6 @@
 import { _selections, clearSelection, updateRichSelectionState } from '../selection/selectionHighlights.js';
 import { scheduleAutoTitle } from '../editor/sourceEditor.js';
-import { _scheduleDocumentStats, _refreshDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
+import { _scheduleDocumentStats, _scheduleDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
 import { _richSelectionCell, _appendRichTableRow } from '../richTables.js';
 import { _uploadMarkdownImages } from '../editor/markdownImages.js';
 // frontend/src/features/documents/ui/richEditor/richBodyWiring.js
@@ -168,9 +168,15 @@ export function _wireEmailRichbody(rich) {
         setRichInlineCodeTypingArmed(false);
       }
       if (_activeRichImage && !_activeRichImage.isConnected) _clearRichImageSelection();
-      _normalizeRichTextImages(rich);
-      _normalizeRichChecklists(rich);
-      _normalizeRichInlineCode(rich);
+      const sel = window.getSelection();
+      const anchor = sel?.anchorNode;
+      const anchorEl = anchor?.nodeType === 1 ? anchor : anchor?.parentElement;
+      const activeBlock = anchorEl?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre,table,figure');
+      const normTarget = (activeBlock && rich.contains(activeBlock)) ? activeBlock : rich;
+
+      if (rich.querySelector('figure.richtext-image')) _normalizeRichTextImages(normTarget);
+      if (rich.querySelector('ul.rich-checklist')) _normalizeRichChecklists(normTarget);
+      if (normTarget.querySelector('code, [data-editor-inline-code-token]')) _normalizeRichInlineCode(normTarget);
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
       if (_selections.length) clearSelection({ preserveCaret: true });
@@ -184,10 +190,10 @@ export function _wireEmailRichbody(rich) {
       const pane = rich.closest('#doc-editor-pane');
       if (doc && (_isRichTextLang(doc.language) || isVisualMarkdownDoc(doc)) && !(doc.title || '').trim()
           && rich.isConnected && (!pane || (pane.isConnected && pane.dataset.activeDocumentId === docId))) {
-        scheduleAutoTitle(rich.innerText || '', docId, 500);
+        scheduleAutoTitle(rich.textContent || '', docId, 500);
       }
       _scheduleDocumentStats();
-      _refreshDocumentOutline();
+      _scheduleDocumentOutline();
       _scheduleRichSelectionToolbar(rich);
       _syncRichSlashMenu(rich);
       _scheduleDocumentHistoryControls();

@@ -281,6 +281,15 @@ function _renderDocumentOutlineMenu() {
     });
   }
 
+let _outlineFrame = 0;
+export function _scheduleDocumentOutline() {
+  if (_outlineFrame) return;
+  _outlineFrame = requestAnimationFrame(() => {
+    _outlineFrame = 0;
+    _refreshDocumentOutline();
+  });
+}
+
 export function _refreshDocumentOutline() {
     const anchor = document.getElementById('doc-outline-toolbar-btn');
     const hasEntries = _documentOutlineSupported() && _documentOutlineEntries().length > 0;

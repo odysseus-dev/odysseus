@@ -49,6 +49,50 @@ let _syncingVisualToTextarea = false;
 const _visualNodeIdentities = new WeakMap();
 let _nextVisualNodeIdentity = 0;
 const _visualRootBlockSelector = 'p,div,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table,hr,figure';
+const _dirtyBlockNodes = new WeakSet();
+const _cachedBlockResults = new WeakMap();
+const _richObserverMap = new WeakMap();
+
+function _markMutations(mutations, rich) {
+  for (const m of mutations) {
+    let node = m.target;
+    while (node && node.parentNode !== rich) {
+      node = node.parentNode;
+    }
+    if (node && node.parentNode === rich) {
+      _dirtyBlockNodes.add(node);
+    }
+    if (m.type === 'childList') {
+      for (const added of m.addedNodes) {
+        if (added.parentNode === rich) _dirtyBlockNodes.add(added);
+      }
+    }
+  }
+}
+
+function ensureRichBlockObserver(rich) {
+  if (!rich || _richObserverMap.has(rich) || typeof MutationObserver === 'undefined') return;
+  const observer = new MutationObserver((mutations) => {
+    _markMutations(mutations, rich);
+  });
+  observer.observe(rich, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+  });
+  _richObserverMap.set(rich, observer);
+}
+
+function flushRichBlockObserver(rich) {
+  if (!rich) return;
+  const observer = _richObserverMap.get(rich);
+  if (!observer) return;
+  const mutations = observer.takeRecords();
+  if (mutations && mutations.length > 0) {
+    _markMutations(mutations, rich);
+  }
+}
 
 // Identity evidence must not keep detached editor DOM alive across documents.
 function visualRootBlockIdentities(rich) {
@@ -106,6 +150,42 @@ export function setMarkdownModePreference(mode) {
   } catch (_) {}
 }
 
+function domElementToVisualNode(child) {
+  const tag = String(child.tagName || '').toLowerCase();
+  if (!tag || tag === 'script' || tag === 'style') return null;
+
+  const attrs = {};
+  if (child.attributes) {
+    for (let j = 0; j < child.attributes.length; j++) {
+      const attr = child.attributes[j];
+      const name = String(attr.name || '').toLowerCase();
+      if (name === 'href' || name === 'src' || name === 'alt' || name === 'data-checked' || name === 'data-lang' || name === 'start' || name === 'colspan' || name === 'rowspan') {
+        attrs[name] = attr.value;
+      }
+    }
+  }
+
+  const classes = child.classList ? Array.from(child.classList) : [];
+  const style = {};
+  if (child.style) {
+    if (child.style.fontWeight) style.fontWeight = child.style.fontWeight;
+    if (child.style.fontStyle) style.fontStyle = child.style.fontStyle;
+    if (child.style.textDecorationLine) style.textDecorationLine = child.style.textDecorationLine;
+    if (child.style.textDecoration) style.textDecoration = child.style.textDecoration;
+    if (child.style.fontFamily) style.fontFamily = child.style.fontFamily;
+    if (child.style.textAlign) style.textAlign = child.style.textAlign;
+  }
+
+  return {
+    type: 'element',
+    tag,
+    attrs,
+    classes,
+    style,
+    children: domToVisualNodes(child),
+  };
+}
+
 /**
  * Convert live DOM child nodes inside `root` into normalized descriptor nodes
  * consumed by `serializeVisualNodesToMarkdown`.
@@ -123,40 +203,8 @@ export function domToVisualNodes(root) {
       continue;
     }
     if (child.nodeType !== 1) continue;
-
-    const tag = String(child.tagName || '').toLowerCase();
-    if (!tag || tag === 'script' || tag === 'style') continue;
-
-    const attrs = {};
-    if (child.attributes) {
-      for (let j = 0; j < child.attributes.length; j++) {
-        const attr = child.attributes[j];
-        const name = String(attr.name || '').toLowerCase();
-        if (name === 'href' || name === 'src' || name === 'alt' || name === 'data-checked' || name === 'data-lang' || name === 'start' || name === 'colspan' || name === 'rowspan') {
-          attrs[name] = attr.value;
-        }
-      }
-    }
-
-    const classes = child.classList ? Array.from(child.classList) : [];
-    const style = {};
-    if (child.style) {
-      if (child.style.fontWeight) style.fontWeight = child.style.fontWeight;
-      if (child.style.fontStyle) style.fontStyle = child.style.fontStyle;
-      if (child.style.textDecorationLine) style.textDecorationLine = child.style.textDecorationLine;
-      if (child.style.textDecoration) style.textDecoration = child.style.textDecoration;
-      if (child.style.fontFamily) style.fontFamily = child.style.fontFamily;
-      if (child.style.textAlign) style.textAlign = child.style.textAlign;
-    }
-
-    out.push({
-      type: 'element',
-      tag,
-      attrs,
-      classes,
-      style,
-      children: domToVisualNodes(child),
-    });
+    const el = domElementToVisualNode(child);
+    if (el) out.push(el);
   }
   return out;
 }
@@ -166,25 +214,65 @@ export function domToVisualNodes(root) {
  * @param {HTMLElement|null} rich
  * @returns {string}
  */
-export function visualRichToMarkdown(rich) {
-  if (!rich) return '';
-  return serializeVisualNodesToMarkdown(domToVisualNodes(rich));
-}
-
 export function visualRichToMarkdownWithFidelity(rich) {
   if (!rich) return { markdown: '', blocks: [], lossless: true, reasons: [] };
+  ensureRichBlockObserver(rich);
+  flushRichBlockObserver(rich);
+
+  const nodes = Array.from(rich.childNodes || []);
+  const isAllRootBlocks = nodes.length > 0 && nodes.every(n =>
+    n.nodeType === 1 && n.matches(_visualRootBlockSelector) &&
+    !(/^(P|DIV)$/.test(n.tagName) && n.querySelector(_visualRootBlockSelector))
+  );
+
+  if (isAllRootBlocks) {
+    const blocks = [];
+    let overallLossless = true;
+    const allReasons = [];
+
+    for (const child of nodes) {
+      if (!_dirtyBlockNodes.has(child) && _cachedBlockResults.has(child)) {
+        const cached = _cachedBlockResults.get(child);
+        if (cached.blocks) blocks.push(...cached.blocks);
+        if (!cached.lossless) overallLossless = false;
+        if (cached.reasons?.length) allReasons.push(...cached.reasons);
+      } else {
+        const childNode = domElementToVisualNode(child);
+        const childContext = { lossless: true, reasons: [] };
+        const serializedBlocks = childNode ? serializeVisualNodesToBlocks([childNode], childContext) : [];
+        if (serializedBlocks.length) blocks.push(...serializedBlocks);
+        if (!childContext.lossless) overallLossless = false;
+        if (childContext.reasons.length) allReasons.push(...childContext.reasons);
+
+        _cachedBlockResults.set(child, {
+          blocks: serializedBlocks,
+          lossless: childContext.lossless,
+          reasons: childContext.reasons,
+        });
+        _dirtyBlockNodes.delete(child);
+      }
+    }
+
+    const markdown = blocks.join('\n\n').trim();
+    return {
+      markdown,
+      blocks,
+      lossless: overallLossless,
+      reasons: allReasons,
+    };
+  }
+
   return serializeVisualNodesWithFidelity(domToVisualNodes(rich));
 }
 
-/**
- * Extract an array of individual canonical Markdown block strings from the live visual DOM.
- * Each top-level element in `rich` represents one visual Markdown block.
- * @param {HTMLElement|null} rich
- * @returns {string[]}
- */
+export function visualRichToMarkdown(rich) {
+  if (!rich) return '';
+  return visualRichToMarkdownWithFidelity(rich).markdown;
+}
+
 export function extractVisualBlocks(rich) {
   if (!rich) return [];
-  return serializeVisualNodesToBlocks(domToVisualNodes(rich));
+  return visualRichToMarkdownWithFidelity(rich).blocks;
 }
 
 /**
@@ -452,6 +540,8 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     && serialized === targetDoc._visualBaselineCanonical;
 
   let nextMarkdown = targetDoc._visualBaselineMarkdown;
+  let nextSegments = null;
+  let nextBlockSegments = null;
 
   if (unchanged) {
     nextMarkdown = targetDoc._visualBaselineMarkdown;
@@ -464,6 +554,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     const blockSegments = targetDoc._visualBlockSegments || extractBlockSegments(segmentMarkdown(originalSource));
 
     let localizedApplied = false;
+    let ops = null;
 
     if (Array.isArray(baselineBlocks) && Array.isArray(blockSegments) && baselineBlocks.length === blockSegments.length) {
       const baselineNodeIds = targetDoc._visualBlockNodeIds;
@@ -471,7 +562,7 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
         && baselineNodeIds.length === baselineBlocks.length && currentNodeIds.length === currentBlocks.length
         && baselineNodeIds.length === currentNodeIds.length
         && baselineNodeIds.every((id, index) => id === currentNodeIds[index]);
-      const ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments, { stableBlockPositions });
+      ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments, { stableBlockPositions });
       if (ops && ops.length > 0) {
         const localizedResult = applyLocalizedEdits(originalSource, ops, {
           expectedRevision: targetDoc._visualExpectedRevision,
@@ -493,12 +584,28 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     if (!localizedApplied) {
       return blockSync(['source ranges could not be verified for this visual edit']);
     }
-    try {
-      if (!compareSemanticHtml(markdownToVisualHtml(nextMarkdown), markdownToVisualHtml(serialized))) {
-        return blockSync(['source reconciliation changed the meaning of this visual edit']);
+
+    const onlyReplacements = ops && ops.length > 0 && ops.length <= 4 && ops.every(o => o.op === 'replace');
+    if (onlyReplacements) {
+      nextSegments = segmentMarkdown(nextMarkdown);
+      nextBlockSegments = extractBlockSegments(nextSegments);
+      if (nextBlockSegments.length !== baselineBlocks.length) {
+        try {
+          if (!compareSemanticHtml(markdownToVisualHtml(nextMarkdown), markdownToVisualHtml(serialized))) {
+            return blockSync(['source reconciliation changed the meaning of this visual edit']);
+          }
+        } catch (_) {
+          return blockSync(['source reconciliation could not be verified']);
+        }
       }
-    } catch (_) {
-      return blockSync(['source reconciliation could not be verified']);
+    } else {
+      try {
+        if (!compareSemanticHtml(markdownToVisualHtml(nextMarkdown), markdownToVisualHtml(serialized))) {
+          return blockSync(['source reconciliation changed the meaning of this visual edit']);
+        }
+      } catch (_) {
+        return blockSync(['source reconciliation could not be verified']);
+      }
     }
   }
 
@@ -512,8 +619,8 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
   // Advance baseline for subsequent visual edits
   targetDoc._visualBaselineMarkdown = nextMarkdown;
   targetDoc._visualExpectedRevision = computeSourceRevision(nextMarkdown);
-  targetDoc._visualSegments = segmentMarkdown(nextMarkdown);
-  targetDoc._visualBlockSegments = extractBlockSegments(targetDoc._visualSegments);
+  targetDoc._visualSegments = nextSegments || segmentMarkdown(nextMarkdown);
+  targetDoc._visualBlockSegments = nextBlockSegments || extractBlockSegments(targetDoc._visualSegments);
   targetDoc._visualBaselineCanonical = serialized;
   targetDoc._visualBaselineBlocks = currentBlocks;
   targetDoc._visualBlockNodeIds = currentNodeIds;
