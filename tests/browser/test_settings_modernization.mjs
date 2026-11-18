@@ -222,11 +222,9 @@ async function openSettings(page, tab) {
   if (await page.isVisible('#user-bar-settings')) {
     await page.click('#user-bar-settings');
   } else {
-    // Narrow layouts hide the sidebar; use the app's own Settings module.
-    await page.evaluate(async () => {
-      const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
-      (await import(src)).open();
-    });
+    // Narrow layouts hide the sidebar button, but its click handler remains
+    // available. Exercise the app's existing handler without re-importing.
+    await page.locator('#user-bar-settings').evaluate(button => button.click());
   }
   await page.waitForSelector('#settings-modal:not(.hidden)');
   if (tab) await page.click(`[data-settings-tab="${tab}"]`);
@@ -564,11 +562,24 @@ async function testMemberScope(instance, cookies) {
   // Utility personal save also stays personal.
   await member.page.selectOption('#set-utilityEpSelect', 'ep-alpha');
   await member.page.waitForFunction(() => document.querySelector('#set-utilityChatMsg').textContent === 'Saved', null, { timeout: 8000 });
+  const utilityModelResponse = member.page.waitForResponse(response => {
+    const request = response.request();
+    if (request.method() !== 'PATCH' ||
+        new URL(response.url()).pathname !== '/api/prefs') {
+      return false;
+    }
+    try {
+      return JSON.parse(request.postData() || '{}').values?.utility_model === 'alpha-large';
+    } catch {
+      return false;
+    }
+  }, { timeout: 10000 });
+
   await member.page.selectOption('#set-utilityModelSelect', 'alpha-large');
-  await member.page.waitForFunction(async () => {
-    const prefs = await (await fetch('/api/prefs', { credentials: 'same-origin' })).json();
-    return prefs.utility_model === 'alpha-large';
-  }, null, { timeout: 8000 }).catch(() => {});
+  const utilityModelSaved = await utilityModelResponse;
+  if (!utilityModelSaved.ok()) {
+    throw new Error(`Utility model save failed: HTTP ${utilityModelSaved.status()}`);
+  }
   const utilityPrefs = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
   check('member utility model is stored per account', utilityPrefs.utility_endpoint_id === 'ep-alpha' && utilityPrefs.utility_model === 'alpha-large', JSON.stringify(utilityPrefs));
 
