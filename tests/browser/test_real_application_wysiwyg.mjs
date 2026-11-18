@@ -589,18 +589,15 @@ try {
   };
   page.on('request', onPutRequest);
 
-  // A failed background log POST must leave the blocked draft and editor in place.
-  const notificationPath = '/api/tasks/notification-logs';
-  const notificationRoute = '**' + notificationPath;
-  const onNotificationLog = (route) => route.request().method() === 'POST'
-    ? route.fulfill({ status: 401, json: { error: 'Not authenticated' } })
-    : route.fallback();
-  await page.route(notificationRoute, onNotificationLog);
-  const notificationFailure = page.waitForResponse((res) =>
-    new URL(res.url()).pathname === notificationPath
-    && res.request().method() === 'POST'
-    && res.status() === 401
-    && Boolean(res.request().postDataJSON()?.body?.startsWith('Cannot save document')));
+  const notificationWrites = [];
+  const onNotification = req => {
+    if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/tasks/notification-logs') {
+      notificationWrites.push(req.postDataJSON()?.body || '');
+    }
+  };
+  page.on('request', onNotification);
+  const paragraph = page.locator('#doc-email-richbody h1').last();
+  const beforeWarning = await paragraph.boundingBox();
   const navigations = [];
   const onNavigation = (frame) => {
     if (frame === page.mainFrame()) navigations.push(frame.url());
@@ -626,7 +623,10 @@ try {
     return persistence.saveDocument({ silent: false, docId: id });
   }, t6Doc.id);
   assert.equal(rejectedSave, false);
-  await notificationFailure;
+
+  assert.deepEqual(await paragraph.boundingBox(), beforeWarning, 'A blocked save must not move existing document content');
+  await page.getByRole('button', { name: 'Copy draft text' }).waitFor();
+  await page.getByRole('button', { name: 'Discard visual changes' }).waitFor();
 
   // Wait beyond the autosave debounce interval (2600ms+)
   await page.waitForTimeout(3000);
@@ -650,15 +650,16 @@ try {
 
   page.off('request', onPutRequest);
   page.off('framenavigated', onNavigation);
-  await page.unroute(notificationRoute, onNotificationLog);
-  assert.deepEqual(navigations, [], 'Notification 401 must not navigate or reload the editor');
+  page.off('request', onNotification);
+  assert.deepEqual(notificationWrites, [], 'Repeated blocked saves must not post global notifications');
+  assert.deepEqual(navigations, [], 'A blocked save must not navigate or reload the editor');
 
   // Assert blocked state, visible warning, retained draft, and unsuccessful save
   assert.equal(t6BlockedState.blocked, true, 'Visual sync must be marked blocked');
   assert.equal(t6BlockedState.draftRetained, true, 'Visual draft must be retained in memory for user recovery');
   assert.ok(t6BlockedState.reasons.length > 0, 'Compatibility block reasons must be recorded on document model');
-  assert.ok(t6BlockedState.bannerVisible || t6BlockedState.toastVisible || t6BlockedState.saveState === 'error', 'Visible warning or error state must be communicated');
-  assert.notEqual(t6BlockedState.saveState, 'saved', 'Save state must not be saved when edit is rejected');
+  assert.equal(t6BlockedState.bannerVisible, true, 'A visible recovery warning is required');
+  assert.equal(t6BlockedState.saveState, 'blocked');
   assert.equal(putRequests.length, 0, 'Zero PUT requests must be dispatched while sync is blocked across debounce window');
 
   // Verify backend content was NEVER changed
@@ -671,7 +672,7 @@ try {
     name: 'Rejected edits safeguard',
     status: 'PASSED',
     durationMs: Date.now() - t6Start,
-    details: 'An unsupported merged table blocked sync, retained the draft, and issued zero PUTs. A controlled notification POST 401 caused no editor navigation or reload.',
+    details: 'An unsupported merged table blocked sync, retained the draft, and issued zero PUTs. The recovery banner did not move the editor or post a global notification.',
   });
 
   // -----------------------------------------------------------

@@ -735,6 +735,7 @@ describe('documentStatus', () => {
       '_renderDocumentSaveState',
       '_renderDocumentStats',
       '_scheduleDocumentHistoryControls',
+      '_scheduleDocumentOutline',
       '_scheduleDocumentStats',
       '_setDocumentHistoryControlState',
       '_syncDocumentHistoryControlsNow',

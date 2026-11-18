@@ -920,7 +920,7 @@ def test_visual_adjacent_and_nested_formatting_chromium_roundtrip():
     # Confirms that unsupported edits cannot silently overwrite stored content
     assert data["blockedSaveSuccess"] is False, "Save of unrepresentable formatting must be refused"
     assert data["serverContentAfterBlocked"] == saved, "Server stored content must not be overwritten"
-    assert data["docSaveState"] == "error", "Document save state must indicate error"
+    assert data["docSaveState"] == "blocked", "Document save state must distinguish a blocked draft"
     assert data["stateAfterBlocked"]["bannerVisible"] is True, "Warning banner must be shown to user"
     assert "outer" in data["stateAfterBlocked"]["richHtml"]
     assert "inner" in data["stateAfterBlocked"]["richHtml"]

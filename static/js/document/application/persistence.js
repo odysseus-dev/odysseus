@@ -153,6 +153,7 @@ export function _scheduleAutoSave(docId = activeDocId, delay = 800, options = {}
     clearTimeout(_pendingAutoSaves.get(docId).timer);
     _pendingAutoSaves.delete(docId);
   }
+  if (docs.get(docId)?._visualSyncBlocked) return;
   const timer = setTimeout(async () => {
     _pendingAutoSaves.delete(docId);
     if (_deletedDocIds.has(docId)) return;
@@ -207,7 +208,7 @@ export function _markDocumentDirty(docId = activeDocId) {
   const doc = docId && (docs.get(docId) || _closingDocs.get(docId));
   if (!doc) return;
   doc._editRevision = (doc._editRevision || 0) + 1;
-  _setDocumentSaveState('dirty', docId);
+  _setDocumentSaveState(doc._visualSyncBlocked ? 'blocked' : 'dirty', docId);
   persistMarkdownDraft(doc);
 }
 
@@ -231,7 +232,7 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
   if (!localDoc || _deletedDocIds.has(savingDocId)) return false;
   const saveRequest = (localDoc?._saveRequest || 0) + 1;
   if (localDoc) localDoc._saveRequest = saveRequest;
-  _setDocumentSaveState('saving', savingDocId);
+  if (!localDoc._visualSyncBlocked) _setDocumentSaveState('saving', savingDocId);
   const previousSave = localDoc?._saveQueueTail || Promise.resolve();
   let releaseSaveTurn = () => {};
   const saveTurn = new Promise(resolve => { releaseSaveTurn = resolve; });
@@ -249,11 +250,7 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
   // queued behind a restore must not replay the pre-restore document.
   if (isOpen && activeDocId === savingDocId && !skipPdfSync) saveCurrentToMap();
   if (localDoc._visualSyncBlocked) {
-    _setDocumentSaveState('error', savingDocId);
-    if (uiModule) {
-      const reason = localDoc._visualCompatReasons?.[0] || 'formatting cannot be represented in Markdown';
-      uiModule.showError(silent ? 'Autosave paused: unsupported formatting' : `Cannot save document: ${reason}`);
-    }
+    _setDocumentSaveState('blocked', savingDocId);
     releaseSaveTurn();
     return false;
   }
@@ -301,7 +298,7 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
         // A response acknowledges a snapshot; it never owns the current draft.
         // In particular, the editor DOM may already have been torn down.
         _setDocumentSaveState(
-          targetDoc._visualSyncBlocked ? 'error' : (targetDoc._editRevision || 0) === saveRevision && targetDoc.content === contentToSave ? 'saved' : 'dirty',
+          targetDoc._visualSyncBlocked ? 'blocked' : (targetDoc._editRevision || 0) === saveRevision && targetDoc.content === contentToSave ? 'saved' : 'dirty',
           savingDocId,
         );
       }
@@ -316,7 +313,9 @@ export async function saveDocument({ silent = false, forceVersion = false, docId
     }
     console.error('Failed to save document:', e);
     const failedDoc = docs.get(savingDocId) || _closingDocs.get(savingDocId);
-    if (failedDoc?._saveRequest === saveRequest) _setDocumentSaveState('error', savingDocId);
+    if (failedDoc?._saveRequest === saveRequest) {
+      _setDocumentSaveState(failedDoc._visualSyncBlocked ? 'blocked' : 'error', savingDocId);
+    }
     const now = Date.now();
     if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
       uiModule.showError(silent ? 'Autosave failed' : 'Failed to save document');

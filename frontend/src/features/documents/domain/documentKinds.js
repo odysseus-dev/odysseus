@@ -15,6 +15,7 @@ export const _DOC_SAVE_STATE = {
   dirty: { label: 'Unsaved', title: 'Changes are waiting to be saved' },
   saving: { label: 'Saving', title: 'Saving document' },
   saved: { label: 'Saved', title: 'All changes saved' },
+  blocked: { label: 'Save blocked', title: 'Resolve the visual draft to resume saving' },
   error: { label: 'Save failed', title: 'Document could not be saved' },
 };
 

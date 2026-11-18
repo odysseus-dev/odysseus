@@ -207,7 +207,7 @@ def generate_validation_report(revision: str, origin: str, results: dict, succes
         "",
         f"- Failed browser requests: {len(network_errors)}",
         f"- Captured console and page diagnostics: {len(console_logs)}",
-        f"- Observed HTTP 401 responses: {len(results.get('unauthorizedResponses', []))}. Scenario 6 deliberately returns a notification-log POST 401.",
+        f"- Observed HTTP 401 responses: {len(results.get('unauthorizedResponses', []))}.",
     ])
 
     unauthorized = results.get("unauthorizedResponses", [])

@@ -13,8 +13,6 @@ export let _richSelectionToolbar = null;
 
 let _richSelectionToolbarFrame = 0;
 
-let _richSelectionToolbarFollowFrame = 0;
-
 let _richSelectionToolbarRange = null;
 
 export function _hideRichSelectionToolbar() {
@@ -171,7 +169,6 @@ function _renderRichSelectionToolbar(rich) {
 
     _richSelectionToolbarRange = range.cloneRange();
     const toolbar = _ensureRichSelectionToolbar(rich);
-    toolbar.querySelectorAll('[data-rich-selection-action]').forEach(button => button.classList.remove('is-active'));
     const activeCommands = {
       bold: 'bold',
       italic: 'italic',
@@ -200,11 +197,15 @@ function _renderRichSelectionToolbar(rich) {
     }
     toolbar.style.zIndex = String(topPortalZ());
     const toolbarRect = toolbar.getBoundingClientRect();
-    const richRect = rich.getBoundingClientRect();
-    let safeLeft = Math.max(viewportLeft + 8, richRect.left + 4);
-    let safeRight = Math.min(viewportRight - 8, richRect.right - 4);
-    let safeTop = Math.max(viewportTop + 8, richRect.top + 4);
-    const safeBottom = Math.min(viewportBottom - 8, richRect.bottom - 4);
+    // The toolbar is portalled to body and positioned in viewport coordinates.
+    // Keep it within the usable viewport rather than constraining it to a
+    // narrow editor column or scroll container.
+    const safeLeft = viewportLeft + 8;
+    const safeRight = viewportRight - 8;
+    let safeTop = viewportTop + 8;
+    const footer = document.getElementById('doc-actions-footer');
+    const footerTop = footer?.getBoundingClientRect().top || viewportBottom;
+    const safeBottom = Math.min(viewportBottom, footerTop) - 8;
 
     // Toolbars and find controls sit immediately above the editable surface.
     // Keep the contextual formatter below any visible control that overlaps it.
@@ -218,10 +219,6 @@ function _renderRichSelectionToolbar(rich) {
       if (overlapsHorizontally && blockerRect.top < selectionBottom && blockerRect.bottom > safeTop) {
         safeTop = blockerRect.bottom + 6;
       }
-    }
-    if (safeRight - safeLeft < toolbarRect.width) {
-      safeLeft = viewportLeft + 8;
-      safeRight = viewportRight - 8;
     }
     const maxLeft = Math.max(safeLeft, safeRight - toolbarRect.width);
     const left = Math.max(safeLeft, Math.min(
@@ -250,26 +247,4 @@ function _renderRichSelectionToolbar(rich) {
 export function _scheduleRichSelectionToolbar(rich) {
     if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
     _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
-  }
-
-export function _followRichSelectionToolbarLayout(rich, duration = 200) {
-    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
-      _renderRichSelectionToolbar(rich);
-      return;
-    }
-    if (_richSelectionToolbarFollowFrame) cancelAnimationFrame(_richSelectionToolbarFollowFrame);
-    const deadline = performance.now() + duration;
-    let lastRender = 0;
-    const follow = (now) => {
-      if (now - lastRender >= 32) {
-        lastRender = now;
-        _renderRichSelectionToolbar(rich);
-      }
-      if (now < deadline) {
-        _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
-      } else {
-        _richSelectionToolbarFollowFrame = 0;
-      }
-    };
-    _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
   }

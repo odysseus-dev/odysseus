@@ -24,13 +24,11 @@ import {
   inspectMarkdownVisualCompatibility,
   markdownToVisualHtml,
   serializeVisualNodesToBlocks,
-  serializeVisualNodesToMarkdown,
   serializeVisualNodesWithFidelity,
 } from '../../domain/markdownVisualCodec.js';
 import {
   applyLocalizedEdits,
   computeSourceRevision,
-  compareSemanticHtml,
   matches,
 } from '../../domain/sourceFidelity.js';
 import {
@@ -49,49 +47,39 @@ let _syncingVisualToTextarea = false;
 const _visualNodeIdentities = new WeakMap();
 let _nextVisualNodeIdentity = 0;
 const _visualRootBlockSelector = 'p,div,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table,hr,figure';
-const _dirtyBlockNodes = new WeakSet();
-const _cachedBlockResults = new WeakMap();
-const _richObserverMap = new WeakMap();
+const _richBlockCaches = new WeakMap();
 
-function _markMutations(mutations, rich) {
-  for (const m of mutations) {
-    let node = m.target;
-    while (node && node.parentNode !== rich) {
-      node = node.parentNode;
+function invalidateBlocks(mutations, rich, blocks) {
+  for (const mutation of mutations) {
+    if (mutation.target === rich) {
+      // A reinserted node may have changed while outside the observed tree.
+      for (const added of mutation.addedNodes) blocks.delete(added);
+      for (const removed of mutation.removedNodes) blocks.delete(removed);
+      continue;
     }
-    if (node && node.parentNode === rich) {
-      _dirtyBlockNodes.add(node);
-    }
-    if (m.type === 'childList') {
-      for (const added of m.addedNodes) {
-        if (added.parentNode === rich) _dirtyBlockNodes.add(added);
-      }
-    }
+    let node = mutation.target;
+    while (node && node.parentNode !== rich) node = node.parentNode;
+    if (node) blocks.delete(node);
   }
 }
 
-function ensureRichBlockObserver(rich) {
-  if (!rich || _richObserverMap.has(rich) || typeof MutationObserver === 'undefined') return;
-  const observer = new MutationObserver((mutations) => {
-    _markMutations(mutations, rich);
-  });
-  observer.observe(rich, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-    attributes: true,
-  });
-  _richObserverMap.set(rich, observer);
-}
-
-function flushRichBlockObserver(rich) {
-  if (!rich) return;
-  const observer = _richObserverMap.get(rich);
-  if (!observer) return;
-  const mutations = observer.takeRecords();
-  if (mutations && mutations.length > 0) {
-    _markMutations(mutations, rich);
+function getRichBlockCache(rich) {
+  if (!rich.isConnected || typeof MutationObserver === 'undefined') return null;
+  let cache = _richBlockCaches.get(rich);
+  if (!cache) {
+    const blocks = new WeakMap();
+    const observer = new MutationObserver(records => invalidateBlocks(records, rich, blocks));
+    observer.observe(rich, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+    cache = { observer, blocks };
+    _richBlockCaches.set(rich, cache);
   }
+  invalidateBlocks(cache.observer.takeRecords(), rich, cache.blocks);
+  return cache.blocks;
 }
 
 // Identity evidence must not keep detached editor DOM alive across documents.
@@ -159,7 +147,7 @@ function domElementToVisualNode(child) {
     for (let j = 0; j < child.attributes.length; j++) {
       const attr = child.attributes[j];
       const name = String(attr.name || '').toLowerCase();
-      if (name === 'href' || name === 'src' || name === 'alt' || name === 'data-checked' || name === 'data-lang' || name === 'start' || name === 'colspan' || name === 'rowspan') {
+      if (name === 'href' || name === 'src' || name === 'alt' || name === 'data-checked' || name === 'data-lang' || name === 'start' || name === 'colspan' || name === 'rowspan' || name === 'data-alert' || name === 'data-alert-label' || name === 'contenteditable') {
         attrs[name] = attr.value;
       }
     }
@@ -216,50 +204,33 @@ export function domToVisualNodes(root) {
  */
 export function visualRichToMarkdownWithFidelity(rich) {
   if (!rich) return { markdown: '', blocks: [], lossless: true, reasons: [] };
-  ensureRichBlockObserver(rich);
-  flushRichBlockObserver(rich);
-
+  const cache = getRichBlockCache(rich);
   const nodes = Array.from(rich.childNodes || []);
   const isAllRootBlocks = nodes.length > 0 && nodes.every(n =>
     n.nodeType === 1 && n.matches(_visualRootBlockSelector) &&
     !(/^(P|DIV)$/.test(n.tagName) && n.querySelector(_visualRootBlockSelector))
   );
 
-  if (isAllRootBlocks) {
+  if (cache && isAllRootBlocks) {
     const blocks = [];
-    let overallLossless = true;
-    const allReasons = [];
+    let lossless = true;
+    const reasons = [];
 
     for (const child of nodes) {
-      if (!_dirtyBlockNodes.has(child) && _cachedBlockResults.has(child)) {
-        const cached = _cachedBlockResults.get(child);
-        if (cached.blocks) blocks.push(...cached.blocks);
-        if (!cached.lossless) overallLossless = false;
-        if (cached.reasons?.length) allReasons.push(...cached.reasons);
-      } else {
+      let result = cache.get(child);
+      if (!result) {
         const childNode = domElementToVisualNode(child);
-        const childContext = { lossless: true, reasons: [] };
-        const serializedBlocks = childNode ? serializeVisualNodesToBlocks([childNode], childContext) : [];
-        if (serializedBlocks.length) blocks.push(...serializedBlocks);
-        if (!childContext.lossless) overallLossless = false;
-        if (childContext.reasons.length) allReasons.push(...childContext.reasons);
-
-        _cachedBlockResults.set(child, {
-          blocks: serializedBlocks,
-          lossless: childContext.lossless,
-          reasons: childContext.reasons,
-        });
-        _dirtyBlockNodes.delete(child);
+        const context = { lossless: true, reasons: [] };
+        const childBlocks = childNode ? serializeVisualNodesToBlocks([childNode], context) : [];
+        result = { blocks: childBlocks, ...context };
+        cache.set(child, result);
       }
+      blocks.push(...result.blocks);
+      if (!result.lossless) lossless = false;
+      if (result.reasons.length) reasons.push(...result.reasons);
     }
 
-    const markdown = blocks.join('\n\n').trim();
-    return {
-      markdown,
-      blocks,
-      lossless: overallLossless,
-      reasons: allReasons,
-    };
+    return { markdown: blocks.join('\n\n').trim(), blocks, lossless, reasons };
   }
 
   return serializeVisualNodesWithFidelity(domToVisualNodes(rich));
@@ -488,7 +459,11 @@ export function isVisualSurfaceBoundTo(rich, doc) {
  * @param {HTMLElement|null} rich
  */
 export function unbindVisualSurface(rich) {
-  if (rich?.dataset) delete rich.dataset.visualDocId;
+  if (!rich) return;
+  const cache = _richBlockCaches.get(rich);
+  cache?.observer.disconnect();
+  _richBlockCaches.delete(rich);
+  if (rich.dataset) delete rich.dataset.visualDocId;
 }
 
 /**
@@ -526,7 +501,8 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     targetDoc._visualCompatReasons = reasons;
     targetDoc._visualSyncBlocked = true;
     targetDoc._visualDraftHtml = rich.innerHTML;
-    persistMarkdownDraft(targetDoc);
+    if (targetDoc._saveState === 'blocked') persistMarkdownDraft(targetDoc);
+    else _setDocumentSaveState('blocked', targetDoc.id);
     renderMarkdownSyncWarningBanner(reasons);
     return targetDoc.content;
   };
@@ -540,90 +516,64 @@ export function syncVisualMarkdownToDoc(rich, { doc = null } = {}) {
     && serialized === targetDoc._visualBaselineCanonical;
 
   let nextMarkdown = targetDoc._visualBaselineMarkdown;
-  let nextSegments = null;
-  let nextBlockSegments = null;
+  let nextBlockSegments = targetDoc._visualBlockSegments;
 
-  if (unchanged) {
-    nextMarkdown = targetDoc._visualBaselineMarkdown;
-  } else {
-    // Attempt localized block-level source preservation
-    const originalSource = typeof targetDoc._visualBaselineMarkdown === 'string'
-      ? targetDoc._visualBaselineMarkdown
-      : (targetDoc.content || '');
+  if (!unchanged) {
+    const originalSource = nextMarkdown ?? targetDoc.content ?? '';
     const baselineBlocks = targetDoc._visualBaselineBlocks;
-    const blockSegments = targetDoc._visualBlockSegments || extractBlockSegments(segmentMarkdown(originalSource));
-
-    let localizedApplied = false;
-    let ops = null;
-
-    if (Array.isArray(baselineBlocks) && Array.isArray(blockSegments) && baselineBlocks.length === blockSegments.length) {
-      const baselineNodeIds = targetDoc._visualBlockNodeIds;
-      const stableBlockPositions = Array.isArray(baselineNodeIds) && Array.isArray(currentNodeIds)
-        && baselineNodeIds.length === baselineBlocks.length && currentNodeIds.length === currentBlocks.length
-        && baselineNodeIds.length === currentNodeIds.length
-        && baselineNodeIds.every((id, index) => id === currentNodeIds[index]);
-      ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments, { stableBlockPositions });
-      if (ops && ops.length > 0) {
-        const localizedResult = applyLocalizedEdits(originalSource, ops, {
-          expectedRevision: targetDoc._visualExpectedRevision,
-          render: markdownToVisualHtml,
-          inspectCompatibility: inspectMarkdownVisualCompatibility,
-          allowCanonicalFallback: false,
-        });
-
-        if (localizedResult.status === 'preserved') {
-          nextMarkdown = localizedResult.markdown;
-          localizedApplied = true;
-        }
-      } else if (ops && ops.length === 0) {
-        nextMarkdown = originalSource;
-        localizedApplied = true;
-      }
-    }
-
-    if (!localizedApplied) {
+    const blockSegments = nextBlockSegments || extractBlockSegments(segmentMarkdown(originalSource));
+    if (!Array.isArray(baselineBlocks) || baselineBlocks.length !== blockSegments.length) {
       return blockSync(['source ranges could not be verified for this visual edit']);
     }
 
-    const onlyReplacements = ops && ops.length > 0 && ops.length <= 4 && ops.every(o => o.op === 'replace');
-    if (onlyReplacements) {
-      nextSegments = segmentMarkdown(nextMarkdown);
-      nextBlockSegments = extractBlockSegments(nextSegments);
-      if (nextBlockSegments.length !== baselineBlocks.length) {
-        try {
-          if (!compareSemanticHtml(markdownToVisualHtml(nextMarkdown), markdownToVisualHtml(serialized))) {
-            return blockSync(['source reconciliation changed the meaning of this visual edit']);
-          }
-        } catch (_) {
-          return blockSync(['source reconciliation could not be verified']);
-        }
-      }
-    } else {
-      try {
-        if (!compareSemanticHtml(markdownToVisualHtml(nextMarkdown), markdownToVisualHtml(serialized))) {
-          return blockSync(['source reconciliation changed the meaning of this visual edit']);
-        }
-      } catch (_) {
-        return blockSync(['source reconciliation could not be verified']);
-      }
+    const baselineNodeIds = targetDoc._visualBlockNodeIds;
+    const stableBlockPositions = Array.isArray(baselineNodeIds) && Array.isArray(currentNodeIds)
+      && baselineNodeIds.length === baselineBlocks.length && currentNodeIds.length === currentBlocks.length
+      && baselineNodeIds.length === currentNodeIds.length
+      && baselineNodeIds.every((id, index) => id === currentNodeIds[index]);
+    const ops = diffBlockOperations(baselineBlocks, currentBlocks, blockSegments, { stableBlockPositions });
+    if (!ops) return blockSync(['source ranges could not be verified for this visual edit']);
+
+    const result = applyLocalizedEdits(originalSource, ops, {
+      expectedRevision: targetDoc._visualExpectedRevision,
+      render: markdownToVisualHtml,
+      intendedVisualMarkdown: serialized,
+      inspectCompatibility: inspectMarkdownVisualCompatibility,
+      allowCanonicalFallback: false,
+    });
+    if (result.status !== 'preserved') {
+      const reason = result.reason === 'semantic-verification-error'
+        ? 'the Markdown would change the meaning of this visual edit'
+        : 'source ranges could not be verified for this visual edit';
+      return blockSync([reason]);
     }
+    nextMarkdown = result.markdown;
+    nextBlockSegments = result.blockSegments;
   }
 
+  if (unchanged && !targetDoc._visualSyncBlocked) {
+    // Native undo and normalization can replace DOM nodes with identical content.
+    targetDoc._visualBlockNodeIds = currentNodeIds;
+    return nextMarkdown;
+  }
+
+  const wasBlocked = targetDoc._visualSyncBlocked;
   targetDoc._visualCompatReasons = null;
   targetDoc._visualSyncBlocked = false;
   targetDoc._visualDraftHtml = null;
+  targetDoc._visualRecoveryMarkdown = null;
   hideMarkdownSyncWarningBanner();
   targetDoc.content = nextMarkdown;
-  persistMarkdownDraft(targetDoc);
 
   // Advance baseline for subsequent visual edits
   targetDoc._visualBaselineMarkdown = nextMarkdown;
   targetDoc._visualExpectedRevision = computeSourceRevision(nextMarkdown);
-  targetDoc._visualSegments = nextSegments || segmentMarkdown(nextMarkdown);
-  targetDoc._visualBlockSegments = nextBlockSegments || extractBlockSegments(targetDoc._visualSegments);
+  targetDoc._visualBlockSegments = nextBlockSegments;
   targetDoc._visualBaselineCanonical = serialized;
   targetDoc._visualBaselineBlocks = currentBlocks;
   targetDoc._visualBlockNodeIds = currentNodeIds;
+  if (wasBlocked) _setDocumentSaveState(nextMarkdown === targetDoc._persistedContent ? 'saved' : 'dirty', targetDoc.id);
+  else persistMarkdownDraft(targetDoc);
 
   if (ta && ta.value !== nextMarkdown) {
     _syncingVisualToTextarea = true;
@@ -684,6 +634,7 @@ export function renderMarkdownCompatBanner(reasons = []) {
   if (typeof document === 'undefined') return;
   const banner = document.getElementById('doc-visual-compat-banner');
   if (!banner) return;
+  banner.classList.remove('is-sync-warning');
   const list = Array.isArray(reasons) ? reasons.filter(Boolean) : [];
   if (!list.length) {
     banner.style.display = 'none';
@@ -726,6 +677,10 @@ export function renderMarkdownSyncWarningBanner(reasons = []) {
     return;
   }
   const summary = list.slice(0, 3).join(', ') + (list.length > 3 ? `, and ${list.length - 3} more` : '');
+  if (banner.classList.contains('is-sync-warning') && banner.dataset.reason === summary
+      && banner.style.display !== 'none') return;
+  banner.classList.add('is-sync-warning');
+  banner.dataset.reason = summary;
   banner.textContent = '';
 
   const iconWrap = document.createElement('span');
@@ -735,14 +690,31 @@ export function renderMarkdownSyncWarningBanner(reasons = []) {
 
   const msg = document.createElement('span');
   msg.className = 'doc-visual-compat-text';
-  msg.textContent = `Visual formatting cannot be saved to Markdown (${summary}). Fix formatting in the visual editor, or discard visual changes to resume Markdown editing.`;
+  msg.textContent = `Save blocked: ${summary}. Your draft is still in the editor. Undo or revise the edit to resume saving.`;
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'doc-visual-compat-discard-btn';
+  copyBtn.textContent = 'Copy draft text';
+  copyBtn.addEventListener('click', async () => {
+    const doc = activeDocId ? docs.get(activeDocId) : null;
+    const rich = document.getElementById('doc-email-richbody');
+    if (!isVisualSurfaceBoundTo(rich, doc) || !doc._visualSyncBlocked) return;
+    try {
+      const text = doc._visualDraftHtml != null ? rich.innerText : doc._visualRecoveryMarkdown ?? rich.innerText;
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = 'Copied';
+    } catch (_) {
+      copyBtn.textContent = 'Select and copy the draft';
+    }
+  });
 
   const discardBtn = document.createElement('button');
   discardBtn.type = 'button';
   discardBtn.className = 'doc-visual-compat-discard-btn';
   discardBtn.dataset.action = 'discard-visual-draft';
   discardBtn.textContent = 'Discard visual changes';
-  discardBtn.title = 'Discard un-syncable visual changes and restore last saved content';
+  discardBtn.title = 'Discard the blocked edit and restore the last valid Markdown';
   discardBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -752,7 +724,7 @@ export function renderMarkdownSyncWarningBanner(reasons = []) {
 
   banner.appendChild(iconWrap);
   banner.appendChild(msg);
-  banner.appendChild(discardBtn);
+  banner.append(copyBtn, discardBtn);
   banner.style.display = '';
 }
 
@@ -802,6 +774,7 @@ export function discardVisualDraft(doc) {
  */
 export function renderMarkdownIntoVisualRich(rich, doc) {
   if (!rich || !doc) return;
+  unbindVisualSurface(rich);
   if (doc._visualSyncBlocked) {
     const baseline = document.createElement('div');
     baseline.innerHTML = markdownToVisualHtml(doc._visualBaselineMarkdown ?? doc.content ?? '');
@@ -842,7 +815,6 @@ export function captureVisualBaseline(rich, doc) {
 
   doc._visualBaselineCanonical = canonical;
   doc._visualExpectedRevision = computeSourceRevision(rawMarkdown);
-  doc._visualSegments = segments;
   doc._visualBlockSegments = blockSegments;
   doc._visualBaselineBlocks = visualBlocks;
   doc._visualBlockNodeIds = visualRootBlockIdentities(rich);

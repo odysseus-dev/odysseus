@@ -109,6 +109,7 @@ function recoverMarkdownDraft(doc) {
     doc._editRevision = (doc._editRevision || 0) + 1;
     doc._markdownRecoveryStored = true;
     if (typeof draft.visualHtml === 'string' || conflict) {
+      doc._saveState = 'blocked';
       doc._visualSyncBlocked = true;
       doc._visualDraftHtml = typeof draft.visualHtml === 'string' ? draft.visualHtml : null;
       doc._visualBaselineMarkdown = typeof draft.visualBase === 'string' ? draft.visualBase : draft.content;

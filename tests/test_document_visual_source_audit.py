@@ -362,7 +362,7 @@ def test_large_noncanonical_block_never_silently_falls_back_to_canonical_source(
     assert data['recovery']['blocked'] is True
     assert 'Item 999X' in data['recovery']['draft']
     assert data['recovery']['persisted'] == data['original']
-    assert data['recovery']['saveState'] == data['recovery']['buttonState'] == 'error'
+    assert data['recovery']['saveState'] == data['recovery']['buttonState'] == 'blocked'
     assert data['puts'] == []
     assert data['updateRequests'] == []
     assert data['savedAfterReload'] is False
