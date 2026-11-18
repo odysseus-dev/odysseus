@@ -53,7 +53,6 @@ function _richRangeFromOffsets(rich, start, end) {
 
 export function updateRichSelectionState(rich) {
     if (!rich || !rich.isConnected || rich.style.display === 'none') return;
-    if (isMarkdownVisualModeActive()) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed) return;
     const range = selection.getRangeAt(0);
@@ -69,7 +68,8 @@ export function updateRichSelectionState(rich) {
     const fullText = _richRootText(rich);
     const startLine = fullText.slice(0, start).split('\n').length;
     const endLine = fullText.slice(0, end).split('\n').length;
-    const entry = { kind: 'rich', text: selectedText, startLine, endLine, start, end };
+    const docId = activeDocId;
+    const entry = { kind: 'rich', text: selectedText, startLine, endLine, start, end, docId };
     const overlapIdx = _selections.findIndex(s => s.kind === 'rich' && (
       (start >= s.start && start <= s.end) || (end >= s.start && end <= s.end)
       || (start <= s.start && end >= s.end)
@@ -147,6 +147,10 @@ export function updateSelectionState() {
 
 function showSelectionBadge() {
     let badge = document.getElementById('doc-selection-badge');
+    if (isMarkdownVisualModeActive()) {
+      if (badge) badge.style.display = 'none';
+      return;
+    }
     if (!badge) {
       badge = document.createElement('span');
       badge.id = 'doc-selection-badge';
@@ -228,6 +232,7 @@ function _validateSelections(text) {
     const richText = rich ? _richRootText(rich) : '';
     const survivors = [];
     for (const s of _selections) {
+      if (s.docId && activeDocId && s.docId !== activeDocId) continue;
       const captured = s.text || '';
       if (!captured) continue;
       const source = s.kind === 'rich' ? richText : text;
@@ -292,27 +297,29 @@ function renderAllSelectionHighlights() {
           CSS.highlights.set(_richSelectionHighlightName, new Highlight(...richRanges));
         }
       } catch (_) {}
-      const richSelections = _selections.filter(s => s.kind === 'rich');
-      richRanges.forEach((range, rangeIndex) => {
-        const rects = Array.from(range.getClientRects());
-        const rect = rects[rects.length - 1];
-        if (!rect || (!rect.width && !rect.height)) return;
-        const clearBtn = document.createElement('button');
-        clearBtn.type = 'button';
-        clearBtn.className = 'doc-selection-rich-clear';
-        clearBtn.title = 'Remove this selection';
-        clearBtn.setAttribute('aria-label', 'Remove this selection');
-        clearBtn.textContent = '×';
-        clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
-        clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
-        const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
-        clearBtn.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          clearSelectionAt(selectionIndex);
+      if (!isMarkdownVisualModeActive()) {
+        const richSelections = _selections.filter(s => s.kind === 'rich');
+        richRanges.forEach((range, rangeIndex) => {
+          const rects = Array.from(range.getClientRects());
+          const rect = rects[rects.length - 1];
+          if (!rect || (!rect.width && !rect.height)) return;
+          const clearBtn = document.createElement('button');
+          clearBtn.type = 'button';
+          clearBtn.className = 'doc-selection-rich-clear';
+          clearBtn.title = 'Remove this selection';
+          clearBtn.setAttribute('aria-label', 'Remove this selection');
+          clearBtn.textContent = '×';
+          clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
+          clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
+          const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
+          clearBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            clearSelectionAt(selectionIndex);
+          });
+          document.body.appendChild(clearBtn);
         });
-        document.body.appendChild(clearBtn);
-      });
+      }
     }
     const sourceSelections = _selections.filter(s => s.kind !== 'rich');
     if (_selections.length === 0) { showSelectionBadge(); return; }
@@ -487,12 +494,23 @@ function clearSelectionAt(index) {
   }
 
 export function getSelectionContext() {
+    if (_selections.length === 0) {
+      const rich = _emailRichbodyActive();
+      if (rich) {
+        updateRichSelectionState(rich);
+      } else {
+        const ta = document.getElementById('doc-editor-textarea');
+        if (ta && ta.selectionStart !== ta.selectionEnd) {
+          updateSelectionState();
+        }
+      }
+    }
     if (_selections.length === 0) return null;
     // Re-anchor / drop stale selections before handing them to chat —
     // shipping text from a stale offset would mean the AI sees content
     // from a different region than what the user thinks they highlighted.
     const _ta = document.getElementById('doc-editor-textarea');
-    if (_ta) _validateSelections(_ta.value);
+    _validateSelections(_ta ? _ta.value : '');
     if (_selections.length === 0) return null;
     if (_selections.length === 1) {
       const ctx = _selections[0];

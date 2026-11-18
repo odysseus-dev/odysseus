@@ -153,6 +153,28 @@ function _exitEmptyMarkdownQuoteLine(rich, startEl, selection) {
   return true;
 }
 
+function _hasLayeredDocUi() {
+  if (typeof document === 'undefined') return false;
+  const ddMenu = document.getElementById('doc-md-dd-menu');
+  if (ddMenu && !ddMenu.hidden && ddMenu.style.display !== 'none') {
+    if (typeof getComputedStyle !== 'function' || getComputedStyle(ddMenu).display !== 'none') return true;
+  }
+  const findBar = document.getElementById('doc-find-bar');
+  if (findBar && findBar.style.display !== 'none') {
+    if (typeof getComputedStyle !== 'function' || getComputedStyle(findBar).display !== 'none') return true;
+  }
+  const versionPanel = document.getElementById('doc-version-panel');
+  if (versionPanel && !versionPanel.classList.contains('hidden')) return true;
+  const tabMenu = document.getElementById('doc-tab-menu');
+  if (tabMenu && (tabMenu.style.display === 'block' || (typeof getComputedStyle === 'function' && getComputedStyle(tabMenu).display === 'block'))) return true;
+  const linkModal = document.getElementById('doc-link-modal');
+  if (linkModal && !linkModal.classList.contains('hidden')) {
+    if (typeof getComputedStyle !== 'function' || getComputedStyle(linkModal).display !== 'none') return true;
+  }
+  if (document.querySelector?.('.doc-floating-dropdown:not([hidden])')) return true;
+  return false;
+}
+
 export function _wireEmailRichbody(rich) {
     if (rich._wired) { _syncEmailRichbody(rich); return; }
     rich._wired = true;
@@ -229,16 +251,19 @@ export function _wireEmailRichbody(rich) {
       const tb = document.getElementById('doc-md-toolbar');
       if (!tb) return;
       const set = (sel, on) => { const b = tb.querySelector(sel); if (b) b.classList.toggle('is-active', !!on); };
+      const mdVisual = isMarkdownVisualModeActive();
       try {
         set('[data-md="bold"]',   document.queryCommandState('bold'));
         set('[data-md="italic"]', document.queryCommandState('italic'));
         set('[data-md="strike"]', document.queryCommandState('strikeThrough'));
-        set('[data-md="underline"]', document.queryCommandState('underline'));
-        set('[data-md="superscript"]', document.queryCommandState('superscript'));
-        set('[data-md="subscript"]', document.queryCommandState('subscript'));
-        const sizeValue = String(document.queryCommandValue('fontSize') || '3');
-        const sizeIcon = tb.querySelector('.rich-font-size-icon');
-        if (sizeIcon) sizeIcon.textContent = String(_RICH_FONT_SIZE_PX[sizeValue] || 16);
+        if (!mdVisual) {
+          set('[data-md="underline"]', document.queryCommandState('underline'));
+          set('[data-md="superscript"]', document.queryCommandState('superscript'));
+          set('[data-md="subscript"]', document.queryCommandState('subscript'));
+          const sizeValue = String(document.queryCommandValue('fontSize') || '3');
+          const sizeIcon = tb.querySelector('.rich-font-size-icon');
+          if (sizeIcon) sizeIcon.textContent = String(_RICH_FONT_SIZE_PX[sizeValue] || 16);
+        }
       } catch (_) {}
       // Block-level: heading / list dropdown toggles read their active state
       // from the current block tag.
@@ -249,17 +274,19 @@ export function _wireEmailRichbody(rich) {
         const inList = document.queryCommandState('insertOrderedList') || document.queryCommandState('insertUnorderedList');
         const lBtn = tb.querySelector('[data-dd="list"]');
         if (lBtn) lBtn.classList.toggle('is-active', !!inList);
-        // queryCommandState() is inconsistent between browsers and can report
-        // right alignment for a plain paragraph. Read the selected block's
-        // actual style instead, so the control reflects what the user sees.
-        const alignActions = _richDropdownCurrentActions('align', rich, null, null);
-        const aBtn = tb.querySelector('[data-dd="align"]');
-        const selection = window.getSelection();
-        const node = selection?.anchorNode;
-        const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-        const selectedBlock = element?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre');
-        const hasExplicitAlignment = !!selectedBlock?.style?.textAlign;
-        if (aBtn) aBtn.classList.toggle('is-active', hasExplicitAlignment || !alignActions.has('alignleft'));
+        if (!mdVisual) {
+          // queryCommandState() is inconsistent between browsers and can report
+          // right alignment for a plain paragraph. Read the selected block's
+          // actual style instead, so the control reflects what the user sees.
+          const alignActions = _richDropdownCurrentActions('align', rich, null, null);
+          const aBtn = tb.querySelector('[data-dd="align"]');
+          const selection = window.getSelection();
+          const node = selection?.anchorNode;
+          const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+          const selectedBlock = element?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre');
+          const hasExplicitAlignment = !!selectedBlock?.style?.textAlign;
+          if (aBtn) aBtn.classList.toggle('is-active', hasExplicitAlignment || !alignActions.has('alignleft'));
+        }
       } catch (_) {}
       const tableBtn = tb.querySelector('[data-dd="table"]');
       if (tableBtn) tableBtn.classList.toggle('is-active', !!_richSelectionCell(rich));
@@ -271,26 +298,28 @@ export function _wireEmailRichbody(rich) {
       const selectionRange = selection?.rangeCount ? selection.getRangeAt(0) : null;
       const currentLink = _richLinkAtRange(rich, selectionRange);
       set('[data-md="link"]', !!currentLink);
-      const spacingBtn = tb.querySelector('[data-dd="spacing"]');
-      if (spacingBtn) {
-        const blocks = _richSpacingBlocks(rich);
-        const indexes = _richSelectedSpacingBlockIndexes(rich);
-        spacingBtn.classList.toggle('is-active', indexes.some(index => !!blocks[index]?.style.lineHeight));
+      if (!mdVisual) {
+        const spacingBtn = tb.querySelector('[data-dd="spacing"]');
+        if (spacingBtn) {
+          const blocks = _richSpacingBlocks(rich);
+          const indexes = _richSelectedSpacingBlockIndexes(rich);
+          spacingBtn.classList.toggle('is-active', indexes.some(index => !!blocks[index]?.style.lineHeight));
+        }
+        // Keep dropdown tools visibly latched while their formatting is active.
+        // This is especially useful for color, font, size, and alignment where
+        // the current state is otherwise only visible inside the popup.
+        const dropdownActive = (selector, kind, defaultAction) => {
+          const button = tb.querySelector(selector);
+          if (!button) return;
+          const actions = _richDropdownCurrentActions(kind, rich, null, null);
+          const active = actions.size > 0 && !(defaultAction && actions.size === 1 && actions.has(defaultAction));
+          button.classList.toggle('is-active', active);
+        };
+        dropdownActive('[data-dd="textsize"]', 'textsize', 'fontsize:3');
+        dropdownActive('[data-dd="color"]', 'color', 'forecolor:default');
+        dropdownActive('[data-dd="highlight"]', 'highlight', 'highlight:transparent');
+        dropdownActive('[data-dd="spacing"]', 'spacing');
       }
-      // Keep dropdown tools visibly latched while their formatting is active.
-      // This is especially useful for color, font, size, and alignment where
-      // the current state is otherwise only visible inside the popup.
-      const dropdownActive = (selector, kind, defaultAction) => {
-        const button = tb.querySelector(selector);
-        if (!button) return;
-        const actions = _richDropdownCurrentActions(kind, rich, null, null);
-        const active = actions.size > 0 && !(defaultAction && actions.size === 1 && actions.has(defaultAction));
-        button.classList.toggle('is-active', active);
-      };
-      dropdownActive('[data-dd="textsize"]', 'textsize', 'fontsize:3');
-      dropdownActive('[data-dd="color"]', 'color', 'forecolor:default');
-      dropdownActive('[data-dd="highlight"]', 'highlight', 'highlight:transparent');
-      dropdownActive('[data-dd="spacing"]', 'spacing');
     };
     const syncActive = () => {
       if (syncActiveFrame) return;
@@ -431,12 +460,29 @@ export function _wireEmailRichbody(rich) {
         return;
       }
       const liveSelection = window.getSelection?.();
-      if (e.key === 'Escape' && liveSelection && !liveSelection.isCollapsed) {
-        e.preventDefault();
-        e.stopPropagation();
-        liveSelection.collapseToEnd();
-        _hideRichSelectionToolbar();
-        return;
+      const hasLiveSelection = Boolean(
+        liveSelection
+        && !liveSelection.isCollapsed
+        && liveSelection.rangeCount
+        && rich.contains(liveSelection.anchorNode)
+      );
+      if (e.key === 'Escape' && hasLiveSelection) {
+        const mdVisual = isMarkdownVisualModeActive();
+        if (mdVisual) {
+          if (!_hasLayeredDocUi()) {
+            e.preventDefault();
+            e.stopPropagation();
+            liveSelection.collapseToEnd();
+            clearSelection({ preserveCaret: true });
+            return;
+          }
+        } else if (_richSelectionToolbar) {
+          e.preventDefault();
+          e.stopPropagation();
+          liveSelection.collapseToEnd();
+          _hideRichSelectionToolbar();
+          return;
+        }
       }
       if (_activeRichImage && (e.key === 'Delete' || e.key === 'Backspace')) {
         e.preventDefault();
