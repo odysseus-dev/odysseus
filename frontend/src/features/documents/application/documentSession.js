@@ -67,8 +67,30 @@ export function clearMarkdownDraft(doc) {
   try { sessionStorage.removeItem(key); } catch (_) {}
 }
 
+// Logout lifecycle boundary. Once the account is ending, the outgoing user's
+// draft must not be written back into tab storage by a debounce, a status
+// transition or the unload guard. The boundary is lifted only when the logout
+// request fails and the session therefore continues.
+let draftPersistenceSuspended = false;
+
+export function suspendMarkdownDraftPersistence() {
+  draftPersistenceSuspended = true;
+}
+
+export function resumeMarkdownDraftPersistence() {
+  if (!draftPersistenceSuspended) return;
+  draftPersistenceSuspended = false;
+  // Edits made while suspended were not stored; the session is still live.
+  for (const doc of [...docs.values(), ..._closingDocs.values()]) {
+    if (doc.language === 'markdown' && (doc._visualSyncBlocked || ['dirty', 'saving', 'error'].includes(doc._saveState))) {
+      persistMarkdownDraft(doc);
+    }
+  }
+}
+
 export function persistMarkdownDraft(doc) {
   if (doc?.language !== 'markdown') return true;
+  if (draftPersistenceSuspended) return false;
   const key = markdownDraftKey(doc);
   if (!key) return false;
   try {
@@ -92,7 +114,7 @@ export function persistMarkdownDraft(doc) {
 }
 
 function recoverMarkdownDraft(doc) {
-  if (doc.language !== 'markdown') return;
+  if (doc.language !== 'markdown' || draftPersistenceSuspended) return;
   const key = markdownDraftKey(doc);
   if (!key) return;
   try {
@@ -124,6 +146,8 @@ function recoverMarkdownDraft(doc) {
 }
 
 export function guardMarkdownDraftUnload(event) {
+  // An explicit logout navigates away on purpose and discards local state.
+  if (draftPersistenceSuspended) return;
   let hasUnsavedChanges = false;
   for (const doc of [...docs.values(), ..._closingDocs.values()]) {
     if (doc.language !== 'markdown' || (!doc._visualSyncBlocked && !['dirty', 'saving', 'error'].includes(doc._saveState))) continue;

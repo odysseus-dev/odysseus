@@ -2054,7 +2054,22 @@ function initAccount() {
     logoutBtn.addEventListener('mouseenter', () => { logoutBtn.style.opacity = '1'; logoutBtn.style.borderColor = 'var(--red)'; logoutBtn.style.color = 'var(--red)'; });
     logoutBtn.addEventListener('mouseleave', () => { logoutBtn.style.opacity = ''; logoutBtn.style.borderColor = ''; logoutBtn.style.color = ''; });
     logoutBtn.addEventListener('click', async () => {
-      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+      // The outgoing user's local drafts must not be written again once the
+      // account session is ending (see documentSession.js). Announce first so
+      // no pending timer or the unload guard can recreate them.
+      window.dispatchEvent(new CustomEvent('odysseus:session-ending'));
+      let loggedOut = false;
+      try {
+        const res = await fetch('/api/auth/logout', { method: 'POST' });
+        // An already-expired session (401) is logged out as far as this tab is concerned.
+        loggedOut = res.ok || res.status === 401;
+      } catch (_) {}
+      if (!loggedOut) {
+        // The session continues, so local recovery must keep working.
+        window.dispatchEvent(new CustomEvent('odysseus:session-end-aborted'));
+        if (uiModule && uiModule.showToast) uiModule.showToast('Could not log out. You are still signed in.');
+        return;
+      }
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.

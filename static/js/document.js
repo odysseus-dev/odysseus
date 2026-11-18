@@ -35,7 +35,7 @@ import { bindDocumentCommands } from './document/application/documentCommands.js
 
 import { saveDocument, bindPersistenceHooks } from './document/application/persistence.js';
 
-import { addDocToTabs, guardMarkdownDraftUnload } from './document/application/documentSession.js';
+import { addDocToTabs, guardMarkdownDraftUnload, resumeMarkdownDraftPersistence, suspendMarkdownDraftPersistence } from './document/application/documentSession.js';
 
 import './document/ui/editor/sourceEditor.js';
 
@@ -70,6 +70,10 @@ import { installEscapeLayering } from './document/ui/panel/panelLifecycle.js';
 
 // Recovery failures must be visible before an unsaved Markdown view is unloaded.
 window.addEventListener('beforeunload', guardMarkdownDraftUnload);
+// Settings announces the end of the account session; local drafts belong to
+// the outgoing user and must not be recreated after that point.
+window.addEventListener('odysseus:session-ending', suspendMarkdownDraftPersistence);
+window.addEventListener('odysseus:session-end-aborted', resumeMarkdownDraftPersistence);
 
 // Existing external integrations read these legacy singletons.
 globalThis.uiModule = uiModule;
