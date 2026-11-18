@@ -258,18 +258,23 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
     if (kind === 'separator' && String(activeDoc?.language || '').toLowerCase() === 'markdown') {
       items = items?.filter(([action]) => action === 'separator:solid');
     }
-    if (kind === 'table' && String(activeDoc?.language || '').toLowerCase() === 'markdown') {
-      items = items?.filter(([action]) => (
-        action.startsWith('table:insert:')
-        || action === 'table:row-above'
-        || action === 'table:row-below'
-        || action === 'table:column-left'
-        || action === 'table:column-right'
-        || action === 'table:delete-row'
-        || action === 'table:delete-column'
-        || action.startsWith('table:column-align:')
-        || action === 'table:delete'
-      ));
+    if (kind === 'table') {
+      const isMd = String(activeDoc?.language || '').toLowerCase() === 'markdown';
+      if (isMd) {
+        items = items?.filter(([action]) => (
+          action.startsWith('table:insert:')
+          || action === 'table:row-above'
+          || action === 'table:row-below'
+          || action === 'table:column-left'
+          || action === 'table:column-right'
+          || action === 'table:delete-row'
+          || action === 'table:delete-column'
+          || action.startsWith('table:column-align:')
+          || action === 'table:delete'
+        ));
+      } else {
+        items = items?.filter(([action]) => !action.startsWith('table:column-align:'));
+      }
     }
     if (!items) return;
 
