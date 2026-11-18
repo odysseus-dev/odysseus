@@ -52,22 +52,44 @@ function _richSelectionToolbarButton(action, label, html, title) {
   }
 
 function _ensureRichSelectionToolbar(rich) {
-    if (_richSelectionToolbar?.isConnected) return _richSelectionToolbar;
+    const isMdVisual = rich?.classList?.contains('markdown-visual-mode');
+    if (_richSelectionToolbar?.isConnected) {
+      if (_richSelectionToolbar._isMdVisual !== isMdVisual) {
+        _richSelectionToolbar.remove();
+        _richSelectionToolbar = null;
+      } else {
+        return _richSelectionToolbar;
+      }
+    }
     const toolbar = document.createElement('div');
     toolbar.id = 'doc-rich-selection-toolbar';
     toolbar.className = 'doc-rich-selection-toolbar';
+    toolbar._isMdVisual = isMdVisual;
     toolbar.setAttribute('role', 'toolbar');
     toolbar.setAttribute('aria-label', 'Format selected text');
-    toolbar.append(
+
+    const buttons = [
       _richSelectionToolbarButton('bold', 'Bold', '<b>B</b>', 'Bold (Ctrl+B)'),
       _richSelectionToolbarButton('italic', 'Italic', '<i>I</i>', 'Italic (Ctrl+I)'),
-      _richSelectionToolbarButton('underline', 'Underline', '<u>U</u>', 'Underline (Ctrl+U)'),
-      _richSelectionToolbarButton('strike', 'Strikethrough', '<s>S</s>', 'Strikethrough'),
-      _richSelectionToolbarButton('link', 'Link', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>'),
-      _richSelectionToolbarButton('highlight:#fef08a', 'Highlight', '<svg class="rich-highlight-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-7-7-8.5 8.5 7 7Z"/></svg>'),
+    ];
+
+    if (!isMdVisual) {
+      buttons.push(_richSelectionToolbarButton('underline', 'Underline', '<u>U</u>', 'Underline (Ctrl+U)'));
+    }
+
+    buttons.push(_richSelectionToolbarButton('strike', 'Strikethrough', '<s>S</s>', 'Strikethrough (Ctrl+Shift+X)'));
+    buttons.push(_richSelectionToolbarButton('code', 'Inline code', '<code>&lt;/&gt;</code>', 'Inline code (Ctrl+`)'));
+    buttons.push(_richSelectionToolbarButton('link', 'Link', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>'));
+
+    if (!isMdVisual) {
+      buttons.push(_richSelectionToolbarButton('highlight:#fef08a', 'Highlight', '<svg class="rich-highlight-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-7-7-8.5 8.5 7 7Z"/></svg>'));
+    }
+
+    buttons.push(
       _richSelectionToolbarButton('insert-image', 'Add image', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/><path d="M19 5v6M16 8h6"/></svg>'),
       _richSelectionToolbarButton('removeformat', 'Clear formatting', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M12 5v14M8 19h8"/><path d="m4 4 16 16"/></svg>')
     );
+    toolbar.append(...buttons);
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'doc-rich-selection-close';
@@ -164,6 +186,11 @@ function _renderRichSelectionToolbar(rich) {
     }
     toolbar.querySelector('[data-rich-selection-action="link"]')
       ?.classList.toggle('is-active', !!_richLinkAtRange(rich, range));
+    const isCode = Boolean(
+      range.startContainer?.parentElement?.closest?.('code, [data-editor-inline-code-token]')
+      || range.endContainer?.parentElement?.closest?.('code, [data-editor-inline-code-token]')
+    );
+    toolbar.querySelector('[data-rich-selection-action="code"]')?.classList.toggle('is-active', isCode);
     const clearButton = toolbar.querySelector('[data-rich-selection-action="removeformat"]');
     if (clearButton) clearButton.style.display = _richSelectionHasFormatting(rich, range) ? '' : 'none';
 

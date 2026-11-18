@@ -3309,6 +3309,36 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-radius: 0 4px 4px 0;
   color: color-mix(in srgb, var(--fg) 88%, transparent);
 }
+.doc-email-richbody.markdown-visual-mode blockquote.markdown-alert,
+.doc-md-preview blockquote.markdown-alert {
+  padding: 8px 16px;
+  border-left-width: 4px;
+}
+.doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-note,
+.doc-md-preview blockquote.markdown-alert-note {
+  border-left-color: #0969da;
+  background: color-mix(in srgb, #0969da 6%, transparent);
+}
+.doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-tip,
+.doc-md-preview blockquote.markdown-alert-tip {
+  border-left-color: #1a7f37;
+  background: color-mix(in srgb, #1a7f37 6%, transparent);
+}
+.doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-important,
+.doc-md-preview blockquote.markdown-alert-important {
+  border-left-color: #8250df;
+  background: color-mix(in srgb, #8250df 6%, transparent);
+}
+.doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-warning,
+.doc-md-preview blockquote.markdown-alert-warning {
+  border-left-color: #9a6700;
+  background: color-mix(in srgb, #9a6700 6%, transparent);
+}
+.doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-caution,
+.doc-md-preview blockquote.markdown-alert-caution {
+  border-left-color: #cf222e;
+  background: color-mix(in srgb, #cf222e 6%, transparent);
+}
 .doc-email-richbody.markdown-visual-mode ul,
 .doc-email-richbody.markdown-visual-mode ol {
   margin: 0.55em 0;

@@ -840,10 +840,14 @@ export function markdownToVisualHtml(markdown) {
         i++;
       }
       if (current.length) paragraphs.push(current);
+      const isAlert = paragraphs.length > 0 && paragraphs[0].length > 0
+        && /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(paragraphs[0][0].trim());
+      const alertType = isAlert ? paragraphs[0][0].trim().match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i)[1].toLowerCase() : null;
+      const bqClass = alertType ? ` class="markdown-alert markdown-alert-${alertType}" data-alert="${alertType.toUpperCase()}"` : '';
       const inner = paragraphs.length
         ? paragraphs.map(p => `<p>${p.map(_renderInlineMarkdown).join('<br>')}</p>`).join('')
         : '<p><br></p>';
-      blocks.push(`<blockquote>${inner}</blockquote>`);
+      blocks.push(`<blockquote${bqClass}>${inner}</blockquote>`);
       continue;
     }
 
