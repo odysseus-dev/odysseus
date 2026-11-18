@@ -38,7 +38,10 @@ import { initAccount } from './settings/account.js';
 import { initIntegrations } from './settings/integrations/legacy.js';
 import { initEmailSettings, initEmailAccountsSettings } from './settings/email.js';
 import { initReminderSettings } from './settings/reminders.js';
-import { initUnifiedIntegrations as _initUnifiedIntegrations } from './settings/integrations/unified.js';
+import {
+  initUnifiedIntegrations as _initUnifiedIntegrations,
+  refreshIntegrationsForAccess,
+} from './settings/integrations/unified.js';
 import { initDocumentWritingStyle } from './settings/writingStyle.js';
 
 let initialized = false;
@@ -56,7 +59,15 @@ function _applySettingsAccess(access) {
 // /api/auth/status answers; the first answer is shown in the modal if it is
 // already built. The model catalogs and defaults depend on it, so they are
 // built on the same resolver.
-const _access = createSettingsAccess({ onResolved: _applySettingsAccess });
+const _access = createSettingsAccess({
+  onResolved(access) {
+    _applySettingsAccess(access);
+    // A list built while the lookup was failing is filled in once, now.
+    refreshIntegrationsForAccess().catch(function(error) {
+      console.warn('Could not refresh integrations after access resolved', error);
+    });
+  },
+});
 const _catalog = createEndpointCatalog({ resolveAccess: _access.resolve });
 const _cards = createModelDefaultCards({ resolveAccess: _access.resolve, catalog: _catalog });
 
@@ -156,7 +167,7 @@ export function refreshAiModelEndpoints() { return _catalog.refresh(); }
 // The integrations entry points keep their no-argument contract; the unified
 // panel is handed open() so it never imports this module back.
 function initUnifiedIntegrations() {
-  return _initUnifiedIntegrations({ openSettings: open, restricted: _access.restricted });
+  return _initUnifiedIntegrations({ openSettings: open, restricted: _access.restricted, accessKnown: _access.known });
 }
 function syncAdminVisibility() { _shell.syncAdminVisibility(); }
 

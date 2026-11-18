@@ -1105,6 +1105,201 @@ async function testDelayedAuthorizationResolution(instance, cookies) {
   await admin.context.close();
 }
 
+// Admin-managed lists the Integrations panel reads. A caller who may not manage
+// settings must never cause these to be requested.
+const INTEGRATION_ADMIN_PATHS = [
+  '/api/auth/integrations',
+  '/api/contacts/config',
+  '/api/contacts/list',
+  '/api/mcp/servers',
+  '/api/vault/config',
+  '/api/tokens',
+];
+
+// Opens Settings while /api/auth/status is failing, then lets it recover.
+// `status.mode` is 'fail' (HTTP 503), 'hold' (answer only once `status.release`
+// is called) or 'ok'.
+async function integrationsRecoveryPage(instance, cookie) {
+  const status = { mode: 'fail', requests: 0, release: () => {}, gate: null };
+  const adminRequests = [];
+  let navigations = 0;
+  const session = await pageAs(instance, cookie, undefined, undefined, {
+    waitForStatus: false,
+    async beforeGoto(page) {
+      page.on('load', () => { navigations += 1; });
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname;
+        if (request.method() === 'GET' && INTEGRATION_ADMIN_PATHS.includes(path)) adminRequests.push(path);
+      });
+      await page.route('**/api/auth/status', async route => {
+        status.requests += 1;
+        if (status.mode === 'hold') await status.gate;
+        if (status.mode === 'fail') {
+          return route.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"unavailable"}' });
+        }
+        return route.continue();
+      });
+    },
+  });
+  status.hold = () => {
+    status.mode = 'hold';
+    status.gate = new Promise(resolveGate => { status.release = () => { status.mode = 'ok'; resolveGate(); }; });
+  };
+  return { ...session, status, adminRequests, navigations: () => navigations };
+}
+
+async function closeAndReopenSettings(page, tab) {
+  await page.click('#settings-modal .close-btn');
+  await page.waitForSelector('#settings-modal.hidden', { state: 'attached' });
+  await openSettings(page, tab);
+}
+
+const INTEGRATION_CARD = '#unified-integrations-list .intg-card[data-intg-type="api"]';
+
+async function testIntegrationsAuthRecovery(instance, cookies, { admin, authDisabled = false }) {
+  const label = authDisabled ? 'operator' : admin ? 'admin' : 'member';
+  const cookie = authDisabled ? null : admin ? cookies.adminCookie : cookies.memberCookie;
+  const probeName = 'Recovery Probe';
+  let seededId = null;
+  if (admin) {
+    const created = await api(instance, cookie, '/api/auth/integrations', {
+      method: 'POST',
+      body: JSON.stringify({ name: probeName, base_url: 'http://127.0.0.1:9/v1', api_key: 'recovery-probe-key' }),
+    });
+    seededId = created.body?.integration?.id;
+    check(`${label} recovery: the saved integration was seeded`, Boolean(seededId), JSON.stringify(created));
+  }
+
+  const session = await integrationsRecoveryPage(instance, cookie);
+  const { page } = session;
+  await page.evaluate(() => { window.__noReloadMarker = 'kept'; });
+  await openSettings(page, 'integrations');
+  await page.waitForFunction(() => /No integrations configured/.test(document.querySelector('#unified-integrations-list')?.textContent || ''), null, { timeout: 15000 });
+  check(`${label} recovery: unknown access requests no admin-managed lists`, session.adminRequests.length === 0, session.adminRequests.join(','));
+
+  // Work in progress that recovery must not discard: an open create form.
+  await page.click('#unified-intg-add-btn');
+  await page.click('.uf-type-option[data-value="api"]');
+  await page.fill('#uf-api-name', 'Draft in progress');
+  const adminRequestsBeforeRecovery = session.adminRequests.length;
+
+  session.status.mode = 'ok';
+  await closeAndReopenSettings(page, 'integrations');
+
+  if (admin) {
+    await page.waitForSelector(INTEGRATION_CARD, { timeout: 10000 }).catch(() => {});
+    const shown = await page.$$eval(INTEGRATION_CARD, nodes => nodes.map(node => node.textContent.replace(/\s+/g, ' ').trim()));
+    check(`${label} recovery: the existing integration appears without a reload`, shown.some(text => text.includes(probeName)), JSON.stringify(shown));
+    check(`${label} recovery: no placeholder remains once the list is loaded`, !(await page.textContent('#unified-integrations-list')).includes('No integrations configured'));
+    await page.waitForTimeout(500);
+    const listRequests = session.adminRequests.slice(adminRequestsBeforeRecovery).filter(path => path === '/api/auth/integrations');
+    check(`${label} recovery: the list is requested exactly once`, listRequests.length === 1, String(listRequests.length));
+    const form = await page.evaluate(() => ({
+      open: getComputedStyle(document.querySelector('#unified-intg-form')).display !== 'none',
+      draft: document.querySelector('#uf-api-name')?.value,
+    }));
+    check(`${label} recovery: an open form and its draft survive the refresh`, form.open && form.draft === 'Draft in progress', JSON.stringify(form));
+    // A second, later open must not fetch again or duplicate cards.
+    await closeAndReopenSettings(page, 'integrations');
+    await page.waitForTimeout(500);
+    const cards = await page.$$eval(INTEGRATION_CARD, nodes => nodes.length);
+    const total = session.adminRequests.filter(path => path === '/api/auth/integrations').length;
+    check(`${label} recovery: reopening adds no duplicate cards or list requests`, cards === 1 && total === 1, JSON.stringify({ cards, total }));
+    await screenshot(page, 'integrations-admin-recovered');
+  } else {
+    await page.waitForTimeout(1200);
+    check('member recovery: no admin-managed list is ever requested', session.adminRequests.length === 0, session.adminRequests.join(','));
+    const view = await page.evaluate(() => ({
+      apiCards: document.querySelectorAll('#unified-integrations-list .intg-card[data-intg-type="api"]').length,
+      servicesShown: getComputedStyle(document.querySelector('[data-settings-tab="services"]')).display !== 'none',
+    }));
+    check('member recovery: restricted controls stay unavailable', view.apiCards === 0 && !view.servicesShown, JSON.stringify(view));
+  }
+  check(`${label} recovery: status was asked again after the failure`, session.status.requests >= 2, String(session.status.requests));
+  check(`${label} recovery: the page was never reloaded`, session.navigations() === 1 && await page.evaluate(() => window.__noReloadMarker) === 'kept', String(session.navigations()));
+  check(`${label} recovery page has no script errors`, session.errors.length === 0, session.errors.join(' | '));
+  await session.context.close();
+  if (seededId) await api(instance, cookie, `/api/auth/integrations/${seededId}`, { method: 'DELETE' });
+}
+
+async function testIntegrationsRapidReopenDuringRecovery(instance, cookies) {
+  const created = await api(instance, cookies.adminCookie, '/api/auth/integrations', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Rapid Probe', base_url: 'http://127.0.0.1:9/v1', api_key: 'rapid-probe-key' }),
+  });
+  const seededId = created.body?.integration?.id;
+  const session = await integrationsRecoveryPage(instance, cookies.adminCookie);
+  const { page } = session;
+  await openSettings(page, 'integrations');
+  await page.waitForFunction(() => /No integrations configured/.test(document.querySelector('#unified-integrations-list')?.textContent || ''), null, { timeout: 15000 });
+  const requestsBefore = session.status.requests;
+
+  // The retry is in flight while Settings is closed and reopened repeatedly.
+  session.status.hold();
+  await closeAndReopenSettings(page, 'integrations');
+  await closeAndReopenSettings(page, 'integrations');
+  await closeAndReopenSettings(page, 'integrations');
+  await page.waitForTimeout(300);
+  check('admin rapid reopen: overlapping retries share one status request', session.status.requests - requestsBefore === 1, String(session.status.requests - requestsBefore));
+  check('admin rapid reopen: nothing privileged is requested while the answer is pending', session.adminRequests.length === 0, session.adminRequests.join(','));
+  session.status.release();
+  await page.waitForSelector(INTEGRATION_CARD, { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const cards = await page.$$eval(INTEGRATION_CARD, nodes => nodes.length);
+  const listRequests = session.adminRequests.filter(path => path === '/api/auth/integrations').length;
+  check('admin rapid reopen: the integration appears once with one list request', cards === 1 && listRequests === 1, JSON.stringify({ cards, listRequests }));
+  check('admin rapid reopen page has no script errors', session.errors.length === 0, session.errors.join(' | '));
+  await session.context.close();
+  if (seededId) await api(instance, cookies.adminCookie, `/api/auth/integrations/${seededId}`, { method: 'DELETE' });
+}
+
+async function testIntegrationsIgnoreStaleListResponse(instance, cookies) {
+  const ids = [];
+  for (const name of ['Stale Probe A', 'Stale Probe B']) {
+    const created = await api(instance, cookies.adminCookie, '/api/auth/integrations', {
+      method: 'POST',
+      body: JSON.stringify({ name, base_url: 'http://127.0.0.1:9/v1', api_key: `${name}-key` }),
+    });
+    ids.push(created.body?.integration?.id);
+  }
+  const session = await pageAs(instance, cookies.adminCookie);
+  const { page } = session;
+  await openSettings(page, 'integrations');
+  await page.waitForFunction(() => document.querySelectorAll('#unified-integrations-list .intg-card[data-intg-type="api"]').length === 2, null, { timeout: 15000 });
+  await page.evaluate(() => { window.styledConfirm = async () => true; });
+
+  // The first list refresh answers late with the pre-delete snapshot.
+  const staleBody = JSON.stringify((await api(instance, cookies.adminCookie, '/api/auth/integrations')).body);
+  // Only requests made after the first delete are counted, so the held one is
+  // the refresh that delete triggers and not an unrelated earlier reader.
+  const listCalls = { count: 0, armed: false };
+  let releaseStale = () => {};
+  const staleGate = new Promise(resolveGate => { releaseStale = resolveGate; });
+  await page.route('**/api/auth/integrations', async route => {
+    if (route.request().method() !== 'GET' || !listCalls.armed) return route.continue();
+    listCalls.count += 1;
+    if (listCalls.count === 1) {
+      await staleGate;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: staleBody });
+    }
+    return route.continue();
+  });
+
+  listCalls.armed = true;
+  await page.click(`#unified-integrations-list .intg-del-btn[data-intg-id="${ids[0]}"]`);
+  while (listCalls.count < 1) await new Promise(resolveWait => setTimeout(resolveWait, 25));
+  await page.click(`#unified-integrations-list .intg-del-btn[data-intg-id="${ids[1]}"]`);
+  await page.waitForFunction(() => /No integrations configured/.test(document.querySelector('#unified-integrations-list')?.textContent || ''), null, { timeout: 10000 });
+
+  releaseStale();
+  await page.waitForTimeout(600);
+  const cards = await page.$$eval('#unified-integrations-list .intg-card[data-intg-type="api"]', nodes => nodes.length);
+  check('a late, stale list response does not replace the newer list', cards === 0 && listCalls.count >= 2, JSON.stringify({ cards, calls: listCalls.count }));
+  check('stale list response page has no script errors', session.errors.length === 0, session.errors.join(' | '));
+  await session.context.close();
+  for (const id of ids) if (id) await api(instance, cookies.adminCookie, `/api/auth/integrations/${id}`, { method: 'DELETE' });
+}
+
 async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
   const session = await pageAs(instance, cookies.adminCookie);
 
@@ -1506,12 +1701,17 @@ async function main() {
   await testDelayedAuthorizationResolution(authInstance, cookies);
   await testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies);
   await testIntegrationForms(authInstance, cookies);
+  await testIntegrationsAuthRecovery(authInstance, cookies, { admin: true });
+  await testIntegrationsAuthRecovery(authInstance, cookies, { admin: false });
+  await testIntegrationsRapidReopenDuringRecovery(authInstance, cookies);
+  await testIntegrationsIgnoreStaleListResponse(authInstance, cookies);
   await testUnknownTabAndRepeatedOpen(authInstance, cookies);
   await testAccessibilityAndThemes(authInstance, cookies);
 
   const openInstance = await launchInstance('noauth', { authEnabled: false });
   seedEndpoints(openInstance);
   await testAuthDisabledOperator(openInstance);
+  await testIntegrationsAuthRecovery(openInstance, {}, { admin: true, authDisabled: true });
 
   console.log(`\n401/403 responses seen per persona: ${JSON.stringify(forbiddenReport)}`);
   const failed = results.filter(result => !result.pass);

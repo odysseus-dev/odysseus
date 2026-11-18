@@ -26,8 +26,19 @@ const INTG_TYPES = {
 };
 
 let _unifiedInited = false;
+let _refreshForAccess = null;
 
-export async function initUnifiedIntegrations({ openSettings, restricted = () => false }) {
+/**
+ * Tell the list that Settings access has just been resolved. Only a list that
+ * was built while access was unknown (a failed /api/auth/status lookup) is
+ * rebuilt, once, so recovery shows the caller's integrations without a reload.
+ * Any other case is a no-op, so a normal open never fetches twice.
+ */
+export function refreshIntegrationsForAccess() {
+  return _refreshForAccess ? _refreshForAccess() : Promise.resolve();
+}
+
+export async function initUnifiedIntegrations({ openSettings, restricted = () => false, accessKnown = () => true }) {
   if (_unifiedInited) return;
   _unifiedInited = true;
 
@@ -59,9 +70,15 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
 
   // Admin-managed routes: a caller who may not manage settings gets the empty
   // answer without asking (the server would refuse the request anyway).
+  // Set when an admin-managed list was skipped only because the caller's
+  // access was still unknown, so a later answer can fill it in.
+  let adminListsSkippedWhileUnknown = false;
   const adminJson = async (url, empty) => {
     const isRestricted = typeof restricted === 'function' ? await restricted() : false;
-    if (isRestricted) return empty;
+    if (isRestricted) {
+      if (!accessKnown()) adminListsSkippedWhileUnknown = true;
+      return empty;
+    }
     try {
       const r = await fetch(url, { credentials: 'same-origin' });
       if (!r.ok) {
@@ -171,8 +188,19 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
     </div>`;
   }
 
-  async function renderList() {
+  // Only the newest render may touch the list: an older, slower response
+  // (an overlapping refresh) must not replace what a newer one showed.
+  let renderSeq = 0;
+  let latestRender = Promise.resolve();
+  function renderList() {
+    const seq = ++renderSeq;
+    latestRender = renderListNow(seq);
+    return latestRender;
+  }
+
+  async function renderListNow(seq) {
     const items = await fetchAll();
+    if (seq !== renderSeq) return latestRender;
     const noticeHtml = integrationNotice ? `
       <div class="intg-followup-note" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:5px;background:color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);font-size:11px;">
         <span style="flex:1;line-height:1.35">${integrationNotice}</span>
@@ -341,6 +369,21 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
       }, (ev) => !menu.contains(ev.target) && ev.target !== addBtn);
     });
   }
+
+  _refreshForAccess = async () => {
+    if (!adminListsSkippedWhileUnknown) return;
+    adminListsSkippedWhileUnknown = false;
+    // A caller who may not manage settings was shown exactly what they would
+    // see now, so there is nothing to fetch for them.
+    if (typeof restricted === 'function' && await restricted()) return;
+    const active = listEl.querySelector('.intg-card.intg-card-active');
+    const activeKey = active ? { type: active.dataset.intgType, id: active.dataset.intgId } : null;
+    await renderList();
+    if (!activeKey) return;
+    const card = Array.from(listEl.querySelectorAll('.intg-card')).find(c => (
+      c.dataset.intgType === activeKey.type && c.dataset.intgId === activeKey.id));
+    if (card) card.classList.add('intg-card-active');
+  };
 
   await renderList();
 }
