@@ -193,6 +193,15 @@ def _set_task_status(session_id: str, status: str, *, stamp: bool = False, expec
                     atomic_write_json(str(_COOKBOOK_STATE_PATH), state, indent=2)
                 except Exception as exc:
                     return {"changed": False, "found": True, "previous": previous, "error": str(exc)[:160]}
+            if status in CANCELLED_STATUSES or status == CANCEL_REQUESTED:
+                from src.native_workers import registry_for, WorkerStateUnknown
+                try:
+                    workers = registry_for(str(_COOKBOOK_STATE_PATH.parent / 'process_resources'))
+                    for source in ('cookbook', 'serving'):
+                        workers.request_cancel_source(source, session_id,
+                            confirmed_stop=status != CANCEL_REQUESTED)
+                except (WorkerStateUnknown, OSError):
+                    logger.warning('Native worker cancellation metadata unavailable for %s', session_id)
             return {"changed": changed, "found": True, "previous": previous}
         return {"changed": False, "found": False, "previous": None}
 
@@ -1075,8 +1084,10 @@ def setup_cookbook_routes() -> APIRouter:
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        proc = subprocess.Popen(
-            argv,
+        from src.native_workers import tracked_popen, registry_for
+        proc = tracked_popen(
+            'cookbook', session_id, argv,
+            registry=registry_for(str(_cookbook_state_path.parent / 'process_resources')),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -4088,6 +4099,7 @@ def setup_cookbook_routes() -> APIRouter:
 
     from src import model_serving_control as serving_control
     serving_controller = serving_control.LocalServingController(_cookbook_state_path, TMUX_LOG_DIR)
+    serving_errors = (ValueError, OSError, serving_control.AdmissionClosed, serving_control.WorkerStateUnknown)
 
     class ServingLaunchRequest(BaseModel):
         engine: str
@@ -4146,29 +4158,46 @@ def setup_cookbook_routes() -> APIRouter:
         return await asyncio.to_thread(collect)
 
     def _register_managed_endpoint(session_id, plan, display_name):
-        """Make the managed server selectable in chat through the existing endpoint registry.
-
-        Reuses _auto_register_llm_endpoint, which updates an endpoint already pointing at
-        this base URL instead of creating a duplicate and never touches credentials.
-        """
-        from types import SimpleNamespace
+        """Create an ephemeral chat row, never adopt same-URL user configuration."""
+        from core.database import SessionLocal, ModelEndpoint
         label = (display_name or Path(plan["model_path"]).stem or "Local model").strip()
-        fake = SimpleNamespace(repo_id=label, cmd=" ".join(plan["argv"]))
+        endpoint_id = f"local-managed-{session_id}"
+        base_url = plan['base_url'].rstrip('/') + '/v1'
+        db = SessionLocal()
         try:
-            endpoint_id = _auto_register_llm_endpoint(fake, None, serve_session_id=session_id)
+            existing = db.get(ModelEndpoint, endpoint_id)
+            if existing is None:
+                db.add(ModelEndpoint(id=endpoint_id, name=label, base_url=base_url,
+                    api_key=None, is_enabled=True, model_type='llm',
+                    endpoint_kind='ollama' if plan['engine'] == 'ollama' else 'local',
+                    model_refresh_mode='auto', model_refresh_interval=5,
+                    cookbook_serve_session_id=session_id))
+                db.commit()
+            elif existing.cookbook_serve_session_id != session_id or existing.base_url != base_url:
+                raise ValueError('Managed endpoint ID conflicts with existing configuration')
+            serving_controller.annotate(session_id, _endpointId=endpoint_id, _displayName=label)
+            return endpoint_id
         except Exception:
+            db.rollback()
             logging.getLogger(__name__).warning("managed endpoint registration failed", exc_info=True)
             return None
-        if endpoint_id:
-            serving_controller.annotate(session_id, _endpointId=endpoint_id)
-        return endpoint_id
+        finally:
+            db.close()
+
+    def _invalidate_chat_catalog(request):
+        app = request.scope.get('app')
+        invalidate = getattr(app.state, 'invalidate_models_cache', None) if app else None
+        if callable(invalidate):
+            invalidate()
 
     def _drop_managed_endpoint(session_id):
         """Remove only the endpoint registered for this exact serve session."""
         from core.database import SessionLocal, ModelEndpoint
         db = SessionLocal()
         try:
-            db.query(ModelEndpoint).filter(ModelEndpoint.cookbook_serve_session_id == session_id).delete()
+            db.query(ModelEndpoint).filter(
+                ModelEndpoint.id == f"local-managed-{session_id}",
+                ModelEndpoint.cookbook_serve_session_id == session_id).delete()
             db.commit()
         except Exception:
             db.rollback()
@@ -4190,13 +4219,16 @@ def setup_cookbook_routes() -> APIRouter:
             plan = await asyncio.to_thread(serving_plan, req)
             result = await asyncio.to_thread(serving_controller.start, plan,
                                             allow_unestimated_context=req.allow_unestimated_context)
-            if result.get("ok") and not result.get("reused"):
+            if result.get("ok"):
                 result["endpoint_id"] = await asyncio.to_thread(
                     _register_managed_endpoint, result["session_id"], plan, req.display_name)
+                if result['endpoint_id'] is None:
+                    result.setdefault('warnings', []).append('Chat registration unavailable; check serving status before use.')
+                _invalidate_chat_catalog(request)
             _state_get_cache.pop("value", None)
             _tasks_status_cache.pop("value", None)
             return result
-        except (ValueError, OSError) as exc:
+        except serving_errors as exc:
             raise HTTPException(409, str(exc)) from None
 
     @router.post("/api/cookbook/serving/stop")
@@ -4206,22 +4238,35 @@ def setup_cookbook_routes() -> APIRouter:
             result = await asyncio.to_thread(serving_controller.stop, req.session_id)
             if result.get("process_stopped"):
                 await asyncio.to_thread(_drop_managed_endpoint, req.session_id)
+                _invalidate_chat_catalog(request)
             _state_get_cache.pop("value", None)
             _tasks_status_cache.pop("value", None)
             return result
-        except (ValueError, OSError) as exc:
+        except serving_errors as exc:
             raise HTTPException(409, str(exc)) from None
 
     @router.post("/api/cookbook/serving/restart")
     async def cookbook_serving_restart(request: Request, req: ServingRestartRequest):
         serving_admin(request)
         try:
+            previous = await asyncio.to_thread(serving_controller._state)
+            label = next((task.get('_displayName', '') for task in previous.get('tasks', [])
+                          if isinstance(task, dict) and task.get('sessionId') == req.session_id), '')
             result = await asyncio.to_thread(serving_controller.restart, req.session_id,
                                             allow_unestimated_context=req.allow_unestimated_context)
+            if result.get('process_stopped'):
+                await asyncio.to_thread(_drop_managed_endpoint, req.session_id)
+                _invalidate_chat_catalog(request)
             if not result['ok']:
                 raise HTTPException(409, result)
+            plan = await asyncio.to_thread(serving_controller.recorded_plan, result['session_id'])
+            result['endpoint_id'] = await asyncio.to_thread(
+                _register_managed_endpoint, result['session_id'], plan, label) if plan else None
+            if result['endpoint_id'] is None:
+                result.setdefault('warnings', []).append('Chat registration unavailable; check serving status before use.')
+            _invalidate_chat_catalog(request)
             return result
-        except (ValueError, OSError) as exc:
+        except serving_errors as exc:
             raise HTTPException(409, str(exc)) from None
         finally:
             _state_get_cache.pop("value", None)
@@ -4246,6 +4291,17 @@ def setup_cookbook_routes() -> APIRouter:
         from src.model_serving_status import local_serving_status
 
         return await local_serving_status(_cookbook_state_path, TMUX_LOG_DIR)
+
+    @router.get("/api/cookbook/workers/status")
+    async def cookbook_workers_status(request: Request):
+        """Observe current counters; never initialize inventory or connect peers."""
+        require_admin(request)
+        from src.native_workers import registry_for
+        from src.native_mcp_activity import REGISTRY
+        workers = registry_for(str(_cookbook_state_path.parent / 'process_resources'))
+        return {'schema_version': 1, 'inventory': await asyncio.to_thread(workers.snapshot),
+                'mcp': REGISTRY.snapshot(), 'session_directory': str(TMUX_LOG_DIR)}
+
 
     @router.get("/api/cookbook/tasks/status")
     async def cookbook_tasks_status(request: Request):
@@ -4772,6 +4828,11 @@ def setup_cookbook_routes() -> APIRouter:
                 "remote": remote or "local",
             })
 
+        for result in results:
+            available = bool(result.get('output_tail'))
+            result['log_availability'] = 'available' if available else 'unavailable'
+            result['log_unavailable_reason'] = '' if available else (
+                'Runtime output is unavailable. No archived diagnostic has been restored.')
         return {"tasks": results}
 
     return router

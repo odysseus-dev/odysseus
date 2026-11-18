@@ -1114,7 +1114,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
         if "max_tokens_override" in body:
             max_tokens = body.get("max_tokens_override")
-            max_tokens = None if max_tokens in (None, "", 0) else max(256, min(32768, int(max_tokens)))
+            max_tokens = None if max_tokens in (None, "", 0) else max(1, min(32768, int(max_tokens)))
         else:
             max_tokens = getattr(session, "max_tokens_override", None)
 

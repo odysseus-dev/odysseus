@@ -128,8 +128,11 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     }
     try:
         with open(log_path, "ab") as bootstrap_log:
-            proc = subprocess.Popen(
+            from src.native_workers import tracked_popen, registry_for
+            proc = tracked_popen(
+                'background', job_id,
                 [sys.executable, str(Path(containment.__file__).with_name("containment_worker.py"))],
+                registry=registry_for(str(_STORE.parent / 'process_resources')),
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=bootstrap_log,
                 cwd=str(Path(containment.__file__).resolve().parent.parent),
                 **detached_popen_kwargs(),
@@ -144,6 +147,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "command": command,
         "status": "running",       # running | done | failed
         "pid": proc.pid,
+        "worker_generation": getattr(proc, '_odysseus_worker_generation', None),
         "started_at": time.time(),
         "ended_at": None,
         "exit_code": None,
@@ -419,6 +423,9 @@ def kill(job_id: str, *, expected) -> Optional[Dict[str, Any]]:
         raise ValueError("Job selector changed")
     validate_job(expected, mutation=True)
     if rec.get("status") == "running":
+        if rec.get('worker_generation'):
+            from src.native_workers import registry_for
+            registry_for(str(_STORE.parent / 'process_resources')).request_cancel(rec['worker_generation'])
         outcome = _kill_record(rec)
         rec["teardown"] = outcome.to_dict()
         if outcome.dead:

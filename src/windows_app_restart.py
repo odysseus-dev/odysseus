@@ -69,6 +69,7 @@ supervisors=@($p | Where-Object {$_.CommandLine -match '(containment_worker|bg_w
 
 
 def _uninitialized_background(state_dir):
+    from src.native_workers import registry_for
     directory = Path(state_dir)
     def no_artifacts():
         if not directory.is_dir() or any((directory / name).exists() for name in (
@@ -77,9 +78,20 @@ def _uninitialized_background(state_dir):
         publications = directory / 'process_resources'
         if publications.is_symlink():
             return False
-        return not publications.exists() or (publications.is_dir() and all(
-            file.name == 'publication.lock' and file.is_file() and not file.is_symlink()
-            for file in publications.iterdir()))
+        if not publications.exists():
+            return True
+        if not publications.is_dir():
+            return False
+        for file in publications.iterdir():
+            if file.name == 'publication.lock' and file.is_file() and not file.is_symlink():
+                continue
+            if file.name == 'native_workers' and file.is_dir() and not file.is_symlink():
+                snapshot = registry_for(str(publications)).snapshot()
+                if snapshot['initialized'] and not snapshot['unknown'] and not any(
+                        row['source'] == 'background' for row in snapshot['workers']):
+                    continue
+            return False
+        return True
     try:
         if not no_artifacts():
             return False
@@ -94,6 +106,7 @@ def file_guard(state_dir, workers_dir, gateway_db):
     errors = []
     receipts = []
     background = {'state': 'unknown'}
+    native_workers = None
     try:
         with closing(sqlite3.connect(Path(gateway_db).resolve().as_uri() + '?mode=ro', uri=True, timeout=1)) as db:
             active = db.execute('select count(*) from session_turn_leases where expires_at > ?', (time.time(),)).fetchone()[0]
@@ -131,7 +144,15 @@ def file_guard(state_dir, workers_dir, gateway_db):
                 errors.append('live or unknown worker receipt')
     except Exception:
         errors.append('unknown worker inventory')
-    return {'clear': not errors, 'errors': errors, 'worker_receipts': receipts, 'background_jobs': background}
+    from src.native_workers import registry_for
+    native = registry_for(str(Path(state_dir) / 'process_resources'))
+    if native.path.parent.exists():
+        native_workers = native.snapshot()
+        if native_workers['unknown'] or any(row['state'] not in {'completed', 'failed', 'cancelled'}
+                                           for row in native_workers['workers']):
+            errors.append('live or unknown durable worker inventory')
+    return {'clear': not errors, 'errors': errors, 'worker_receipts': receipts,
+            'background_jobs': background, 'native_workers': native_workers}
 
 
 def health(port, path='/api/health', *, kind='app'):
@@ -271,6 +292,35 @@ async def prepare_shutdown(server, gate, config, identity, protected, timeout: f
 
 
 async def _prepare_shutdown(server, gate, config, identity, protected, timeout: float, deadline: float | None):
+    from src.native_workers import registry_for, WorkerStateUnknown, AdmissionClosed
+    if not math.isfinite(timeout) or not 0 < timeout <= 300:
+        raise ValueError('MCP shutdown observation must be finite, positive and at most 300 seconds')
+    deadline = min(deadline, time.monotonic() + timeout) if deadline is not None else time.monotonic() + timeout
+    if not math.isfinite(deadline) or time.monotonic() >= deadline:
+        return {'ok': False, 'state': 'control-timeout', 'forced': False}
+    if not config.get('state_dir'):
+        return {'ok': False, 'state': 'worker-inventory-unknown', 'forced': False}
+    workers = registry_for(str(Path(config['state_dir']) / 'process_resources'))
+    try:
+        token = await asyncio.to_thread(workers.fence)
+    except (WorkerStateUnknown, AdmissionClosed, OSError):
+        return {'ok': False, 'state': 'worker-admission-unknown', 'forced': False}
+    with gate.lock:
+        previous_pause, gate.paused = gate.paused, True
+    try:
+        snapshot = workers.snapshot()
+        if snapshot['unknown'] or any(row['state'] not in {'completed', 'failed', 'cancelled'}
+                                     for row in snapshot['workers']):
+            return {'ok': False, 'state': 'native-workers-busy-or-unknown', 'workers': snapshot, 'forced': False}
+        return await _prepare_mcp_shutdown(server, gate, config, identity, protected, timeout, deadline)
+    finally:
+        if not server.should_exit:
+            with gate.lock:
+                gate.paused = previous_pause
+            await asyncio.to_thread(workers.resume, token)
+
+
+async def _prepare_mcp_shutdown(server, gate, config, identity, protected, timeout: float, deadline: float | None):
     """Fence, observe accepted work, close owned peers without force, then commit."""
     from src.native_mcp_activity import REGISTRY, AdmissionClosed
     if not math.isfinite(timeout) or not 0 < timeout <= 300:
@@ -447,6 +497,8 @@ async def serve(config):
             raise RuntimeError('An app receipt is still live; refusing duplicate launch')
     os.environ['ODYSSEUS_DATA_DIR'] = config['state_dir']
     os.environ['APP_PORT'] = str(config['port'])
+    from src.native_workers import registry_for
+    await asyncio.to_thread(registry_for(str(Path(config['state_dir']) / 'process_resources')).initialize)
     if config.get('lab_application'):
         if config['port'] in {7000, 9130} or config['gateway_port'] in {7000, 9130} or config['chroma_port'] in {7000, 9130}:
             raise ValueError('Lab application cannot use production ports')

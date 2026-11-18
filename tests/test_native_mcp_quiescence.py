@@ -119,8 +119,10 @@ async def test_bounded_drain_does_not_cancel_existing_call(setup):
 
 
 @pytest.mark.asyncio
-async def test_coordinator_waits_for_accepted_call_before_committing_shutdown(setup, monkeypatch):
+async def test_coordinator_waits_for_accepted_call_before_committing_shutdown(setup, monkeypatch, tmp_path):
     from src import windows_app_restart as control
+    from src.native_workers import registry_for
+    registry_for(str(tmp_path / 'process_resources')).initialize()
     registry, manager = setup
     monkeypatch.setattr(control, 'full_guard', lambda *args, **kwargs: {'clear': True, 'errors': []})
     monkeypatch.setattr(control, '_commit_shutdown', lambda server: setattr(server, 'should_exit', True))
@@ -135,7 +137,7 @@ async def test_coordinator_waits_for_accepted_call_before_committing_shutdown(se
     await asyncio.wait_for(entered.wait(), 2)
     gate = control.Admission(None)
     server = SimpleNamespace(should_exit=False)
-    stopping = asyncio.create_task(control.prepare_shutdown(server, gate, {}, {}, [], timeout=2))
+    stopping = asyncio.create_task(control.prepare_shutdown(server, gate, {'state_dir': str(tmp_path)}, {}, [], timeout=2))
     for _ in range(100):
         if registry.snapshot()['draining']:
             break
@@ -207,8 +209,10 @@ async def test_expired_control_deadline_cannot_commit_late_shutdown(setup, monke
 
 
 @pytest.mark.asyncio
-async def test_deadline_expiring_during_final_snapshot_refuses_commit(setup, monkeypatch):
+async def test_deadline_expiring_during_final_snapshot_refuses_commit(setup, monkeypatch, tmp_path):
     from src import windows_app_restart as control
+    from src.native_workers import registry_for
+    registry_for(str(tmp_path / 'process_resources')).initialize()
     registry, manager = setup
     now, checks = [1.0], [0]
     def guard(*args, **kwargs):
@@ -225,5 +229,5 @@ async def test_deadline_expiring_during_final_snapshot_refuses_commit(setup, mon
     monkeypatch.setattr(control, '_commit_shutdown', lambda server: setattr(server, 'should_exit', True))
     monkeypatch.setattr(registry, 'snapshot', delayed_snapshot)
     server = SimpleNamespace(should_exit=False)
-    result = await control.prepare_shutdown(server, control.Admission(None), {}, {}, [], timeout=2)
+    result = await control.prepare_shutdown(server, control.Admission(None), {'state_dir': str(tmp_path)}, {}, [], timeout=2)
     assert not result['ok'] and not server.should_exit

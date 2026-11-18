@@ -108,13 +108,14 @@ async def _create_bash_subprocess(
     env: Optional[dict] = None,
 ):
     """Create Bash structurally, avoiding cmd.exe and stray Windows tmux."""
+    from src.native_workers import tracked_exec, tracked_shell
     if IS_WINDOWS:
         bash = find_bash()
         if not bash:
             raise RuntimeError(
                 "Git Bash is required for the Bash tool on Windows; install Git for Windows."
             )
-        return await asyncio.create_subprocess_exec(
+        return await tracked_exec(
             bash,
             "-c",
             str(command or ""),
@@ -125,7 +126,7 @@ async def _create_bash_subprocess(
             cwd=cwd,
         )
     kwargs = {"cwd": cwd} if cwd is not None else {}
-    return await asyncio.create_subprocess_shell(command, **kwargs)
+    return await tracked_shell(command, **kwargs)
 
 
 def _host_shell_requires_detach(command: str) -> bool:

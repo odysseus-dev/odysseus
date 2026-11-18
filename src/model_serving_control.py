@@ -23,6 +23,7 @@ from core.platform_compat import detached_popen_kwargs, kill_process_tree, pid_a
 from src.process_lifecycle import pgid_of
 from src.process_ownership import start_token, verify
 from src.gguf_context import planning_metadata
+from src.native_workers import AdmissionClosed, WorkerStateUnknown, registry_for
 
 
 def available_memory_bytes() -> int | None:
@@ -176,6 +177,7 @@ class LocalServingController:
         self.state_path = Path(state_path)
         self.log_dir = Path(log_dir)
         self._children = {}
+        self._workers = registry_for(str(self.state_path.parent / 'process_resources'))
 
     @staticmethod
     def _gpu_snapshot(gpu_layers: int) -> dict | None:
@@ -289,7 +291,7 @@ class LocalServingController:
             sid = 'serve-' + uuid.uuid4().hex[:8]
             log_path = self.log_dir / f'{sid}.log'
             with log_path.open('ab') as log:
-                child = _spawn_runtime(plan, log)
+                child = self._workers.spawn('serving', sid, lambda: _spawn_runtime(plan, log))
             try:
                 token = start_token(child.pid)
                 if not token or not pid_alive(child.pid):
@@ -353,7 +355,7 @@ class LocalServingController:
             return {**stopped, 'previous_session_id': sid}
         try:
             result = self.start(plan, allow_unestimated_context=allow_unestimated_context)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, AdmissionClosed, WorkerStateUnknown) as exc:
             return {'ok': False, 'state': 'restart-failed', 'previous_session_id': sid,
                     'process_stopped': True, 'error': str(exc)}
         return {**result, 'previous_session_id': sid, 'process_stopped': True}
@@ -385,6 +387,8 @@ class LocalServingController:
             if task is not None and alive:
                 task.update(status='cancel_requested', _cancelRequestedAt=time.time())
                 atomic_write_json(str(self.state_path), state, indent=2)
+            if alive:
+                self._workers.request_cancel_source('serving', sid)
             outcome = kill_process_tree(receipt['pid'], start_token=receipt['start_token'],
                                         pgid=receipt.get('pgid'), require_identity=True) if alive else None
             dead = not alive or bool(outcome and outcome.dead)
@@ -394,6 +398,9 @@ class LocalServingController:
             child = self._children.pop(sid, None) if dead else None
             if child is not None:
                 child.wait(timeout=5)
+            if dead and alive:
+                self._workers.confirm_stopped('serving', sid, {
+                    'pid': receipt['pid'], 'start_token': receipt['start_token']})
             return {'ok': dead, 'session_id': sid, 'process_stopped': dead,
                     'state': 'stopped' if dead else 'stopping',
                     'teardown': outcome.to_dict() if outcome else None}

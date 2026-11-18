@@ -1046,8 +1046,11 @@ async def run(
         spawn_kwargs = _spawn_kwargs(grant)
         if info_write is not None:
             spawn_kwargs["pass_fds"] = (info_write,)
-        spawning = asyncio.create_task(asyncio.create_subprocess_exec(
+        from src.native_workers import tracked_exec, registry_for
+        spawning = asyncio.create_task(tracked_exec(
             *launch,
+            source='containment', source_id=grant.id,
+            registry=registry_for(str(_store_path().parent / 'process_resources')),
             stdin=asyncio.subprocess.PIPE if stdin is not None or marker is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

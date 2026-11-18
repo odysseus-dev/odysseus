@@ -832,6 +832,7 @@ app.include_router(setup_embedding_routes())
 # Models
 from routes.model_routes import setup_model_routes
 _model_router = setup_model_routes(model_discovery)
+app.state.invalidate_models_cache = _model_router._invalidate_models_cache
 app.include_router(_model_router)
 
 # Shared provider catalog for Odysseus + Hermes (admin-only, loopback-only, additive).
@@ -1221,6 +1222,8 @@ app.router.lifespan_context = _lifespan
 async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
+    from src.native_workers import initialize_producers
+    await initialize_producers()
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.

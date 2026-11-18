@@ -22,7 +22,8 @@ def jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(bg_jobs, "_STORE", tmp_path / "jobs.json")
     monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "grants.json")
     monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
-    monkeypatch.setattr(containment, "MECHANISMS", tuple(m for m in containment.MECHANISMS if m.name == "process_group"))
+    mechanism = 'windows_tree' if os.name == 'nt' else 'process_group'
+    monkeypatch.setattr(containment, "MECHANISMS", tuple(m for m in containment.MECHANISMS if m.name == mechanism))
     monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
     launched = []
     yield workspace, launched
@@ -52,7 +53,7 @@ def test_detached_execution_owns_boundary_and_reports_death(jobs):
     result = finished(record["id"])
     assert result["output"] == "captured"
     assert result["exit_code"] == 0
-    assert result["containment"]["mechanism"] == "process_group"
+    assert result["containment"]["mechanism"] == ('windows_tree' if os.name == 'nt' else 'process_group')
     assert result["containment"]["contained"] is False
     assert result["teardown"]["dead"] is True
 

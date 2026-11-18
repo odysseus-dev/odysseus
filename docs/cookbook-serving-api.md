@@ -248,3 +248,61 @@ missing is refused (`Incomplete CUDA runtime`), never installed as a silent CPU 
 with identical verified archives reports `already_installed` without downloading. Local
 `archive_path` installs now also require a `sha256`. Runtime summary entries carry
 `build`, `cuda_ready`, `missing_libs`.
+
+## Native producer admission integration
+
+Typed starts now publish intent to the durable application-data worker index
+before invoking the runtime factory. The session ID links that observation to
+the existing controller/task. Fenced or lost/corrupt initialized inventory
+returns HTTP 409 without spawning a runtime; it never bootstraps an empty index
+over lost evidence. A replacement refused after an explicit restart's completed
+stop retains `restart-failed` / `process_stopped: true`, not a still-running claim.
+
+The index confers no stop permission. Existing server receipt + current
+PID/creation identity checks remain mandatory before recording cancellation and
+calling the existing explicit typed stop. Reconstructed confirmed stop can
+record `completion_basis: verified-stop`, `exit_code: null` when the original
+observer was lost. Runtime status `exit` remains null without genuine exit-code
+evidence; no synthetic exit event is created. Windows retained creation tokens
+are additionally checked for actual liveness in the worker index.
+
+Admin `GET /api/cookbook/workers/status` exposes these observations and actual
+process-local MCP counters without creating inventory or connecting peers.
+See `durable-native-workers.md` for coverage and remaining legacy boundaries.
+This increment preserves the integrated GPU planner/installer and Launch UI;
+its focused tests use tiny CPU/HTTP fixtures, not another real inference run.
+
+## Chat catalog binding and ordinary startup
+
+Ordinary application lifespan now awaits producer initialization before starting
+background services, not only in RunOnly mode. This enrolls a genuine epoch;
+it does not certify legacy idleness. A lost initialized index, malformed state
+or live fence owner aborts startup rather than manufacturing replacement state.
+Initialization within the same process is idempotent.
+
+Typed start/reuse/restart returns additive `endpoint_id`, and serving-status
+Cookbook rows expose that link. The endpoint uses the typed plan's exact numeric
+loopback URL/port (including custom Ollama ports), never port inference from a
+display label or argv. The label is cosmetic, not a cached/pinned model ID.
+Runtime metadata/model discovery provides actual model IDs. Consumers join by
+`endpoint_id`, inspect readiness/ownership and select a runtime-reported ID.
+External/legacy inventory without this link remains separate.
+
+Managed entries have a deterministic session-specific ID and never reuse a
+same-URL user-configured endpoint. Stop removes only that exact managed row;
+restart drops the old entry only after confirmed teardown and registers the
+replacement, retaining its friendly label. Reuse repairs missing registration
+without making another runtime. Chat catalog mutation clears the existing
+per-user model cache through its app-owned invalidator, not new synchronous
+network probes on `/api/models`.
+
+Registration failure does not silently turn a running process into a failed
+launch: `endpoint_id` is null and warnings direct consumers to serving status.
+No default provider, unrelated endpoint, credentials or ownership permission is
+changed. Legacy cancellation bookkeeping links existing typed worker intent as
+well as Cookbook-wrapper intent, without inventing a worker or granting signals.
+
+CPU-first end-to-end procedure and approval gates: `serving-cpu-acceptance.md`.
+The backend contract checks do not claim that the native chat UI or a real model
+has passed that acceptance path. Unknown-fit confirmation and unavailable-log
+rendering remain frontend integration prerequisites.

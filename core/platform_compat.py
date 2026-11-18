@@ -44,6 +44,18 @@ IS_APPLE_SILICON = (
 PROC_ROOT = Path("/proc")
 
 
+def native_python_command(argv, env=None):
+    """Avoid Windows venv redirector PIDs while preserving that venv's prefix."""
+    command = list(argv)
+    base = getattr(sys, '_base_executable', None)
+    if (IS_WINDOWS and command and command[0] == sys.executable and base
+            and base != sys.executable and Path(base).is_file()):
+        command[0] = base
+        env = dict(os.environ if env is None else env)
+        env['__PYVENV_LAUNCHER__'] = sys.executable
+    return command, env
+
+
 def has_procfs() -> bool:
     """True when the host exposes a procfs pid tree that can be scanned."""
     return PROC_ROOT.is_dir()

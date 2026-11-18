@@ -184,6 +184,7 @@ def read_local_services(state_path: Path, log_dir: Path) -> list[dict]:
             management = "unmanaged-python"
         services.append({
             "id": sid, "task_status": task.get("status"), "management": management,
+            "endpoint_id": task.get('_endpointId') if plan else None,
             "source": "cookbook", "exit": controller.exit_details(sid) if plan else None, **target, **identity,
         })
     known = {service["id"] for service in services}

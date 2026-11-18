@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, Any
 from core.platform_compat import IS_APPLE_SILICON, which_tool
 from core.middleware import INTERNAL_TOOL_USER
+from src.native_workers import tracked_exec, tracked_shell
 from src.host_docker_access import (
     HOST_DOCKER_ACCESS_HINT,
     host_docker_access_enabled as _host_docker_access_enabled,
@@ -646,11 +647,11 @@ async def _create_shell(command: str, **kwargs):
         # bash -c mangles $env:VAR syntax and breaks the command.
         cmd_trim = command.strip()
         if cmd_trim.startswith("powershell") or cmd_trim.startswith("cmd "):
-            return await asyncio.create_subprocess_shell(command, **kwargs)
+            return await tracked_shell(command, **kwargs)
         bash = find_bash()
         if bash:
-            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
-    return await asyncio.create_subprocess_shell(command, **kwargs)
+            return await tracked_exec(bash, "-c", command, **kwargs)
+    return await tracked_shell(command, **kwargs)
 
 
 async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
@@ -855,7 +856,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
     flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-    proc = await asyncio.create_subprocess_shell(
+    proc = await tracked_shell(
         cmd,
         stdin=slave_fd,
         stdout=slave_fd,
@@ -1128,8 +1129,9 @@ async def _generate_win_detached(cmd: str, request: Request):
         argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
 
     try:
-        subprocess.Popen(
-            argv,
+        from src.native_workers import tracked_popen
+        tracked_popen(
+            'shell', session_id, argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -1182,7 +1184,7 @@ async def _generate_win_detached(cmd: str, request: Request):
         await asyncio.sleep(1.0)
 
     yield f"data: {json.dumps({'exit_code': exit_code})}\n\n"
-    for p in (log_path, exit_path, script_path):
+    for p in (script_path,):
         try:
             p.unlink(missing_ok=True)
         except Exception:
@@ -2563,7 +2565,7 @@ def setup_shell_routes() -> APIRouter:
         if _rule and _rule[0] == "no":
             return {"ok": False, "error": _rule[2]}
         cmd = [_sys.executable, "-m", "pip", "install", pip_name]
-        proc = await asyncio.create_subprocess_exec(
+        proc = await tracked_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await proc.communicate()
