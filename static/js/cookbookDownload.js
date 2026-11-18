@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { quantTagInclude, includeDisplayText } from './cookbookGgufInclude.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -89,12 +90,12 @@ function _ggufDownloadSource(model, backend) {
 
 function _ggufIncludePattern(model, source) {
   if (source?.file) return source.file;
-  if (model?.quant) return `*${model.quant}*`;
+  if (model?.quant) return quantTagInclude(model.quant);
   return '*.gguf';
 }
 
 function _ggufDisplayPartFromInclude(include) {
-  const clean = String(include || '').replace(/\*/g, '');
+  const clean = includeDisplayText(include);
   const parts = clean.split('/').filter(Boolean);
   const file = parts[parts.length - 1] || clean;
   const dir = parts.length > 1 ? parts[parts.length - 2] : '';

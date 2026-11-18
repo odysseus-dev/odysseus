@@ -9,6 +9,7 @@ import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
+import { includeDisplayText } from './cookbookGgufInclude.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
@@ -69,7 +70,7 @@ function _ggufDisplayPartFromPath(path) {
 function _downloadDisplayName(name, task) {
   const include = task?.payload?.include || '';
   if (!include || String(name || '').includes(' · ')) return name;
-  const part = _ggufDisplayPartFromPath(include.replace(/\*/g, ''));
+  const part = _ggufDisplayPartFromPath(includeDisplayText(include));
   return part ? `${name} · ${part}` : name;
 }
 
@@ -87,7 +88,7 @@ function _downloadNameFromPayload(name, payload) {
     : rawName;
   const include = payload?.include || '';
   if (!include || String(base || '').includes(' · ')) return base || rawName || 'download';
-  const part = _ggufDisplayPartFromPath(String(include).replace(/\*/g, ''));
+  const part = _ggufDisplayPartFromPath(includeDisplayText(include));
   return part ? `${base} · ${part}` : (base || rawName || 'download');
 }
 
