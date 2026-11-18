@@ -3,16 +3,18 @@
 //   node tests/browser/test_settings_offline_upgrade.mjs
 //   python -m pytest tests/test_settings_offline_upgrade_browser.py
 //
+// The application version being upgraded from is pinned: e195177f is the dev
+// commit the Settings decomposition was branched from. It has the previous
+// worker (cache v1149) and none of the new Settings modules, and it stays
+// reachable from dev, so the test means the same thing before and after the
+// decomposition merges. A moving ref such as origin/dev would not.
+//
 // Environment (all optional):
-//   PREVIOUS_REF   git ref of the application version being upgraded from
-//                  (default origin/dev). It must be resolvable locally. The
-//                  default moves with dev, so once these modules are on dev the
-//                  'previous version predates the new Settings modules' check
-//                  needs a pinned earlier commit.
+//   PREVIOUS_REF   override the pinned commit for ad-hoc experiments.
 //   ARTIFACT_DIR   directory for a screenshot of the offline Settings panel.
 //
 // Procedure
-//   1. Run the PREVIOUS application from a git archive of PREVIOUS_REF in a
+//   1. Run the PREVIOUS application from a git archive of the pinned commit in a
 //      fresh browser profile. The app registers its own worker; wait until
 //      that worker is activated and its cache exists.
 //   2. Close the browser (the profile now looks like an existing install),
@@ -42,7 +44,8 @@ import { fileURLToPath } from 'url';
 import net from 'net';
 
 const REPO_ROOT = resolve(process.env.REPO_ROOT || join(fileURLToPath(import.meta.url), '..', '..', '..'));
-const PREVIOUS_REF = process.env.PREVIOUS_REF || 'origin/dev';
+const PINNED_PREVIOUS_REVISION = 'e195177ffe7427af30402fcaada715d2e5e35918';
+const PREVIOUS_REF = process.env.PREVIOUS_REF || PINNED_PREVIOUS_REVISION;
 const ARTIFACT_DIR = process.env.ARTIFACT_DIR || null;
 
 const results = [];
