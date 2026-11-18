@@ -64,6 +64,7 @@ const PRECACHE = [
   '/static/css/cookbook-research-memory-settings.css?v=20261114resendphoto1',
   '/static/app.js?v=20261114resendphoto1',
   '/static/js/storage.js',
+  '/static/js/composerAttachments.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
   '/static/js/markdown.js',

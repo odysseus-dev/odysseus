@@ -3,6 +3,7 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
+import { composerHasAttachments } from './js/composerAttachments.js';
 import uiModule from './js/ui.js?v=20260916largetoolscroll1';
 import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
@@ -4005,12 +4006,10 @@ function startOdysseusApp() {
   }
 
   function _hasAttachments() {
-    if (fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount() > 0) return true;
-    // Resend and Edit queue the original message's photos by id and click
-    // Send with the box empty for a photo-only message; without this the
-    // button reads as "New chat" and opens one instead of sending them.
-    const regenIds = _pendingRegenAttachmentIds();
-    return Array.isArray(regenIds) && regenIds.length > 0;
+    return composerHasAttachments(
+      fileHandlerModule.getPendingCount ? fileHandlerModule.getPendingCount() : 0,
+      _pendingRegenAttachmentIds(),
+    );
   }
 
   function _updateStreamingSubmitButton() {
