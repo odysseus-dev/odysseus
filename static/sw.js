@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1150-pr40-editor-precache';
+const CACHE_NAME = 'odysseus-v1151-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -160,6 +160,53 @@ const PRECACHE = [
   '/static/js/bgEffectClock.js',
   '/static/js/censor.js',
   '/static/js/settings.js?v=20260912writingstyle3',
+  // Static import graph of settings.js. A module graph fails to load if any
+  // member is absent, so offline Settings needs every module listed here, at
+  // the exact URL the importing module requests.
+  '/static/js/providers.js',
+  '/static/js/searchProviderIcons.js',
+  '/static/js/settings/access.js',
+  '/static/js/settings/account.js',
+  '/static/js/settings/agent.js',
+  '/static/js/settings/api.js',
+  '/static/js/settings/apiTokens.js',
+  '/static/js/settings/appearance.js',
+  '/static/js/settings/defaultChat.js',
+  '/static/js/settings/dom.js',
+  '/static/js/settings/email.js',
+  '/static/js/settings/endpointCatalog.js',
+  '/static/js/settings/fallbackWidget.js',
+  '/static/js/settings/html.js',
+  '/static/js/settings/imageModels.js',
+  '/static/js/settings/integrations/events.js',
+  '/static/js/settings/integrations/forms/agent.js',
+  '/static/js/settings/integrations/forms/api.js',
+  '/static/js/settings/integrations/forms/caldav.js',
+  '/static/js/settings/integrations/forms/carddav.js',
+  '/static/js/settings/integrations/forms/email.js',
+  '/static/js/settings/integrations/forms/mcp.js',
+  '/static/js/settings/integrations/forms/vault.js',
+  '/static/js/settings/integrations/legacy.js',
+  '/static/js/settings/integrations/unified.js',
+  '/static/js/settings/lifecycle.js',
+  '/static/js/settings/modelDefaultCards.js',
+  '/static/js/settings/modelSelects.js',
+  '/static/js/settings/navigation.js',
+  '/static/js/settings/oauthReturn.js',
+  '/static/js/settings/peek.js',
+  '/static/js/settings/registry.js',
+  '/static/js/settings/reminders.js',
+  '/static/js/settings/researchModel.js',
+  '/static/js/settings/search.js',
+  '/static/js/settings/searchProviders.js',
+  '/static/js/settings/shell.js',
+  '/static/js/settings/shortcuts.js',
+  '/static/js/settings/sidebar.js',
+  '/static/js/settings/speech.js',
+  '/static/js/settings/teacherModel.js',
+  '/static/js/settings/utilityModel.js',
+  '/static/js/settings/visionModel.js',
+  '/static/js/settings/writingStyle.js',
   '/static/js/foregroundFallbackSettings.js',
   '/static/js/admin.js?v=20260929csssplit',
   '/static/js/chatgptSubscriptionUsage.js',
@@ -415,14 +462,22 @@ self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
       // addAll is atomic — if any item fails, none are cached. Use individual
-      // puts so a single 404 can't block the whole install.
+      // puts so a single 404 can't block the whole install. A URL that could
+      // not be cached is reported below instead of being dropped silently.
       Promise.all(
         [...PRECACHE, ...PANEL_PRECACHE].map(url =>
           fetch(url, { cache: 'reload' })
-            .then(res => res.ok ? cache.put(url, res) : null)
-            .catch(() => null)
+            .then(res => (res.ok
+              ? cache.put(url, res).then(() => null)
+              : `${url} (HTTP ${res.status})`))
+            .catch(error => `${url} (${(error && error.message) || 'network error'})`)
         )
-      )
+      ).then(failed => {
+        failed = failed.filter(Boolean);
+        if (failed.length) {
+          console.warn(`[sw] ${CACHE_NAME}: ${failed.length} precache URL(s) were not cached: ${failed.join(', ')}`);
+        }
+      })
     )
   );
   self.skipWaiting();
