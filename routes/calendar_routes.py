@@ -1008,12 +1008,13 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         from src.caldav_sync import _load_caldav_accounts
         return _load_caldav_accounts(owner)
 
-    def _save_caldav_accounts(owner: str, accounts: list) -> None:
-        from routes.prefs_routes import _load_for_user, _save_for_user
-        prefs = _load_for_user(owner) or {}
-        prefs["caldav_accounts"] = accounts
-        prefs.pop("caldav", None)
-        _save_for_user(owner, prefs)
+    async def _save_caldav_accounts(owner: str, accounts: list) -> None:
+        # Update only the keys CalDAV owns, as one locked write on a worker
+        # thread. Rewriting the whole preference record from an earlier copy
+        # would revert a Settings save made in between. None removes the
+        # legacy single-account key.
+        from routes.prefs_routes import _update_off_loop
+        await _update_off_loop(owner, {"caldav_accounts": accounts, "caldav": None})
 
     # ── CalDAV config routes (backward-compat single-account API) ────────────
 
@@ -1048,7 +1049,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         body = await _json_object_body(request)
         accounts = _get_caldav_accounts(owner)
         if not (body.get("url") or "").strip():
-            _save_caldav_accounts(owner, [])
+            await _save_caldav_accounts(owner, [])
             return {"ok": True, "cleared": True}
         from src.caldav_sync import validate_caldav_url
         try:
@@ -1066,7 +1067,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             from src.secret_storage import encrypt
             acc["password"] = encrypt(body["password"])
         new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
-        _save_caldav_accounts(owner, new_accounts)
+        await _save_caldav_accounts(owner, new_accounts)
         return {"ok": True}
 
     # ── CalDAV multi-account CRUD ─────────────────────────────────────────────
@@ -1118,7 +1119,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         }
         accounts = _get_caldav_accounts(owner)
         accounts.append(new_acc)
-        _save_caldav_accounts(owner, accounts)
+        await _save_caldav_accounts(owner, accounts)
         return {"ok": True, "id": new_acc["id"]}
 
     @router.put("/config/accounts/{account_id}")
@@ -1145,7 +1146,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             from src.secret_storage import encrypt
             acc["password"] = encrypt(body["password"])
         accounts[idx] = acc
-        _save_caldav_accounts(owner, accounts)
+        await _save_caldav_accounts(owner, accounts)
         return {"ok": True}
 
     @router.delete("/config/accounts/{account_id}")
@@ -1156,7 +1157,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         new_accounts = [a for a in accounts if a.get("id") != account_id]
         if len(new_accounts) == len(accounts):
             raise HTTPException(404, "Account not found")
-        _save_caldav_accounts(owner, new_accounts)
+        await _save_caldav_accounts(owner, new_accounts)
         return {"ok": True}
 
     @router.post("/test")
