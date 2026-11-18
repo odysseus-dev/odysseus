@@ -925,6 +925,11 @@ function replaceRawSvgBlocks(source, makePlaceholder) {
   return output;
 }
 
+// Fenced code for documents (opts.commonmark): a line-based scanner. A fence opens on
+// a line indented up to three spaces and closes on a line holding only a fence at
+// least as long, and an unclosed fence runs to the end. Chat keeps its historical
+// ``` regex, which tolerates a fence indented under a list step, inside a quote, or
+// followed by text on its closing line.
 function replaceFencedBlocks(source, render) {
   const lines = source.split('\n');
   const output = [];
@@ -942,9 +947,59 @@ function replaceFencedBlocks(source, render) {
       code.push(lines[index]);
     }
     const lang = opening[2].trim().match(/^[a-zA-Z0-9_-]+/)?.[0] || '';
-    output.push(render(marker, lang, code.join('\n') + (index < lines.length ? '\n' : '')));
+    // The content keeps its final line break when the fence was closed.
+    output.push(render(lang, code.join('\n') + (index < lines.length ? '\n' : '')));
   }
   return output.join('\n');
+}
+
+// CommonMark backslash escapes and code spans for documents (opts.commonmark).
+// Both are resolved in one left-to-right pass so an escaped backtick cannot open a
+// span and a backslash inside a span stays literal. An escaped ASCII punctuation
+// character becomes an inert token that no later pass treats as syntax; the token
+// is replaced by the literal character once rendering is finished. Chat keeps its
+// historical behavior, where `\(`, `\[` and `\.` are left for math and plain text.
+const ESCAPE_TOKEN_RE = /___ESC_(\d{2,3})___/g;
+const escapeToken = (char) => `___ESC_${char.charCodeAt(0)}___`;
+const unescapeTokens = (text) => text.replace(ESCAPE_TOKEN_RE, (_, code) => String.fromCharCode(Number(code)));
+const escapedCharHtml = (char) => (char === '&' ? '&amp;' : char === '<' ? '&lt;' : char === '>' ? '&gt;' : char);
+
+function extractCodeSpansAndEscapes(source, makeCodeSpan) {
+  let out = '';
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === '\\' && index + 1 < source.length && /[!-\/:-@\[-`{-~]/.test(source[index + 1])) {
+      out += escapeToken(source[index + 1]);
+      index += 2;
+      continue;
+    }
+    if (char === '`') {
+      let run = 1;
+      while (source[index + run] === '`') run++;
+      let close = -1;
+      for (let probe = index + run; probe < source.length;) {
+        if (source[probe] !== '`') { probe++; continue; }
+        let length = 1;
+        while (source[probe + length] === '`') length++;
+        if (length === run) { close = probe; break; }
+        probe += length;
+      }
+      const code = close === -1 ? '' : source.slice(index + run, close);
+      // A span never crosses a blank line, and an empty one is not a span.
+      if (close !== -1 && code !== '' && !/\n[ \t]*\n/.test(code)) {
+        out += makeCodeSpan(code);
+        index = close + run;
+        continue;
+      }
+      out += source.slice(index, index + run);
+      index += run;
+      continue;
+    }
+    out += char;
+    index++;
+  }
+  return out;
 }
 
 export function mdToHtml(src, opts) {
@@ -960,7 +1015,8 @@ export function mdToHtml(src, opts) {
   // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
   // placeholder gets captured as literal code content and never restored inside
   // the final <pre><code> block.
-  s = replaceFencedBlocks(s, (_fence, lang, code) => {
+  const commonmark = Boolean(opts && opts.commonmark);
+  const renderFence = (lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+$/gm, '')
@@ -986,7 +1042,8 @@ export function mdToHtml(src, opts) {
       return placeholder;
     }
 
-    const escaped = code.replace(/\r\n/g, '\n').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    // Documents keep the fenced text exactly; chat trims it as it always has.
+    const escaped = (commonmark ? code.replace(/\r\n/g, '\n') : cleaned).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
     const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
 
     const langClass = lang ? ` class="language-${lang}"` : '';
@@ -998,7 +1055,11 @@ export function mdToHtml(src, opts) {
     codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
 
     return placeholder;
-  });
+  };
+
+  s = commonmark
+    ? replaceFencedBlocks(s, renderFence)
+    : s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => renderFence(lang, code));
 
   // Extract inline code spans before the link/autolink/HTML passes, mirroring
   // the fenced-block handling above. A URL inside `inline code` (e.g.
@@ -1006,12 +1067,22 @@ export function mdToHtml(src, opts) {
   // autolink matches it, wraps it in an <a> tag, and swaps that for an
   // ___ALLOWED_HTML_ placeholder — corrupting the command. The old inline-code
   // pass ran after those passes, too late to protect it.
-  s = s.replace(/`([^`]+?)`/g, (match, code) => {
-    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_') || code.startsWith('___SVG_BLOCK_')) return match;
-    const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
-    inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
-    return placeholder;
-  });
+  if (commonmark) {
+    s = extractCodeSpansAndEscapes(s, (code) => {
+      const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+      inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+      return placeholder;
+    });
+  } else {
+    s = s.replace(/`([^`]+?)`/g, (match, code) => {
+      if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_') || code.startsWith('___SVG_BLOCK_')) return match;
+      const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+      inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+      return placeholder;
+    });
+  }
+  // Escape tokens must not leak into attribute values.
+  const literal = (text) => (commonmark ? unescapeTokens(text) : text);
 
   // Some models occasionally omit the requested ```svg fence. Treat a
   // complete raw SVG element as the same visual artifact, while fenced and
@@ -1071,21 +1142,21 @@ export function mdToHtml(src, opts) {
   // Convert markdown images before links so ![alt](url) does not become
   // literal "!" plus a normal link.
   s = s.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (match, alt, url, title) => {
-    return imageHtml(alt, url, title);
+    return imageHtml(literal(alt), literal(url), title === undefined ? title : literal(title));
   });
 
   // Convert markdown links [text](url) to clickable links
   // Internal #hash links navigate in-page; external links open in new tab
   s = s.replace(/\[((?:\\.|[^\]\\\n])+)\]\(([^)]+)\)/g, (match, text, url) => {
     const label = text.replace(/\\([\[\]])/g, '$1');
-    return linkHtml(label, url);
+    return linkHtml(label, literal(url));
   });
 
   // Autolink bare URLs (http/https). Skips URLs already inside <a> tags
   // (placed by markdown link replacement above) and URLs in backticks.
   s = s.replace(
     /(^|[\s(<])(https?:\/\/[^\s<>"'`\]]+[^\s<>"'`\].,;:!?])/g,
-    (match, prefix, url) => `${prefix}${linkHtml(url, url)}`
+    (match, prefix, url) => `${prefix}${linkHtml(literal(url), literal(url))}`
   );
 
   // Autolink scheme-less domains the model often emits as plain text
@@ -1101,7 +1172,7 @@ export function mdToHtml(src, opts) {
     (match, prefix, domain) => {
       const trail = (domain.match(/[.,;:!?)]+$/) || [''])[0];
       const core = trail ? domain.slice(0, -trail.length) : domain;
-      return `${prefix}${linkHtml(core, 'https://' + core)}${trail}`;
+      return `${prefix}${linkHtml(literal(core), 'https://' + literal(core))}${trail}`;
     }
   );
 
@@ -1201,11 +1272,17 @@ export function mdToHtml(src, opts) {
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
-  // Bold, italic, strikethrough (supports adjacent and nested emphasis)
-  s = s.replace(/(?<!\\)\*\*\*([^*\n]+)(?<!\\)\*\*\*/g, '<strong><em>$1</em></strong>');
-  s = s.replace(/(?<!\\)\*\*((?:[^*\n]|(?<!\\)\*(?!\s)[^*\n]+(?<!\s)(?<!\\)\*)+)(?<!\\)\*\*/g, '<strong>$1</strong>');
-  s = s.replace(/(?<!\\)\*\*([^*\n]+)(?<!\\)\*\*/g, '<strong>$1</strong>').replace(/(?<!\\)\*(?!\s)([^*\n]+?)(?<!\s)(?<!\\)\*/g, '<em>$1</em>');
-  s = s.replace(/(?<!\\)~~([^~\n]+)(?<!\\)~~/g, '<del>$1</del>');
+  // Bold, italic, strikethrough
+  if (commonmark) {
+    // Documents: adjacent and nested emphasis, with escaped markers left alone.
+    s = s.replace(/(?<!\\)\*\*\*([^*\n]+)(?<!\\)\*\*\*/g, '<strong><em>$1</em></strong>');
+    s = s.replace(/(?<!\\)\*\*((?:[^*\n]|(?<!\\)\*(?!\s)[^*\n]+(?<!\s)(?<!\\)\*)+)(?<!\\)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(?<!\\)\*\*([^*\n]+)(?<!\\)\*\*/g, '<strong>$1</strong>').replace(/(?<!\\)\*(?!\s)([^*\n]+?)(?<!\s)(?<!\\)\*/g, '<em>$1</em>');
+    s = s.replace(/(?<!\\)~~([^~\n]+)(?<!\\)~~/g, '<del>$1</del>');
+  } else {
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  }
 
   // Headers
   s = s.replace(/^###### (.*)$/gm, '<h6>$1</h6>')
@@ -1216,21 +1293,22 @@ export function mdToHtml(src, opts) {
        .replace(/^# (.*)$/gm, '<h1>$1</h1>');
 
   // Ordered lists (1. 2. 3. etc.)
-  s = s.replace(/^[ \t]*(\d+)\. (.*)$/gm, '<oli>$2</oli>');
+  // Documents also accept indented items (nested lists render flat) and `+` bullets.
+  s = s.replace(commonmark ? /^[ \t]*(\d+)\. (.*)$/gm : /^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
   // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
   // the generic unordered-list rule so the "- " prefix isn't consumed first.
   // Emits <uli> (with a class) so the unordered-list wrapper below treats it
   // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^[ \t]*(?:[-*+] )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
+  s = s.replace(commonmark ? /^[ \t]*(?:[-*+] )\[([ xX])\] (.*)$/gm : /^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
     const done = mark.toLowerCase() === 'x';
     return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
   });
 
   // Unordered lists. <uli> may carry attributes (task-item class), so the
   // wrapper preserves them when converting <uli ...> → <li ...>.
-  s = s.replace(/^[ \t]*(?:[-*+] )(.*)$/gm, '<uli>$1</uli>');
+  s = s.replace(commonmark ? /^[ \t]*(?:[-*+] )(.*)$/gm : /^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
   s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
     `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
 
@@ -1290,6 +1368,8 @@ export function mdToHtml(src, opts) {
   inlineCodeBlocks.forEach((block, index) => {
     s = s.replace(`___INLINE_CODE_${index}___`, () => block);
   });
+
+  if (commonmark) s = s.replace(ESCAPE_TOKEN_RE, (_, code) => escapedCharHtml(String.fromCharCode(Number(code))));
 
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }

@@ -35,6 +35,7 @@ import {
   extractBlockSegments,
   segmentMarkdown,
 } from '../../domain/sourceSegmentation.js';
+import { MARKDOWN_DOCUMENT_RENDER_OPTIONS } from '../../domain/documentKinds.js';
 import { _isFormBackedDoc } from '../pdf/annotations.js';
 
 export const MD_EDITOR_MODE_KEY = 'odysseus-doc-md-editor-mode';
@@ -394,8 +395,8 @@ function _rewriteReason(rawOriginal, canonical) {
   const renderer = globalThis.markdownModule?.mdToHtml;
   if (typeof renderer === 'function') {
     try {
-      const before = _comparableAppRendering(renderer(original, { shortcodes: false }));
-      const after = _comparableAppRendering(renderer(canonical, { shortcodes: false }));
+      const before = _comparableAppRendering(renderer(original, MARKDOWN_DOCUMENT_RENDER_OPTIONS));
+      const after = _comparableAppRendering(renderer(canonical, MARKDOWN_DOCUMENT_RENDER_OPTIONS));
       return before === after ? '' : REWRITE_REASON;
     } catch (_) {
       return REWRITE_REASON;

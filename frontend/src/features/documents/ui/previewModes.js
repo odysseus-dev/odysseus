@@ -172,7 +172,7 @@ export function _setMarkdownPreviewActive(active, { remember = true } = {}) {
       preview.classList.add('doc-rich-preview');
       preview.innerHTML = safe || '<p class="doc-rich-preview-empty">No preview yet.</p>';
     } else if (mdMod && mdMod.mdToHtml) {
-      preview.innerHTML = mdMod.mdToHtml(md, { shortcodes: false }); // doc preview: keep :shortcodes: literal
+      preview.innerHTML = mdMod.mdToHtml(md, { shortcodes: false, commonmark: true }); // doc preview: shortcodes stay literal, CommonMark escapes apply
     } else {
       preview.innerHTML = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
     }

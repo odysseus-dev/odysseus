@@ -90,7 +90,7 @@ def test_shared_markdown_renderer_emphasis_fences_and_code_is_inert():
       ];
       const result = await page.evaluate(async (cases) => {
         const mod = await import('/static/js/markdown.js?renderer-audit');
-        const rendered = cases.map(c => ({ name: c.name, html: mod.mdToHtml(c.md, { shortcodes: false }) }));
+        const rendered = cases.map(c => ({ name: c.name, html: mod.mdToHtml(c.md, { shortcodes: false, commonmark: true }) }));
         const host = document.createElement('div');
         document.body.appendChild(host);
         host.innerHTML = rendered.map(r => r.html).join('');
