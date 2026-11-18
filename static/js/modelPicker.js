@@ -1,6 +1,7 @@
 // Model Picker — chatbox model selector dropdown
 // Extracted from sessions.js
 
+import { isManagedEndpointId } from './managedBackendGate.js';
 import { providerLogo, providerLabel } from './providers.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import settingsModule from './settings.js?v=20260912writingstyle3';
@@ -961,6 +962,12 @@ export function updateModelPicker() {
   const candidates = routeItems.filter(item => (item.models || []).concat(item.models_extra || []).includes(modelId));
   const selectedId = s?.endpoint_id || latestPending?.endpointId;
   const selectedUrl = s?.endpoint_url || latestPending?.url || '';
+  // A selected Cookbook-managed endpoint that is no longer verified is not a usable selection (sending is blocked in chat.js).
+  const _managedUnverified = isManagedEndpointId(selectedId) && !(window.modelsModule?.getManagedVerdicts?.()[selectedId]?.ok);
+  if (_managedUnverified && !currentSessionId && latestPending && latestPending.endpointId === selectedId) {
+    _deps.setPendingChat(null);
+    modelId = null;
+  }
   const normalizeRouteUrl = url => String(url || '').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
   const selectedEndpoint = candidates.find(item => selectedId ? item.endpoint_id === selectedId
     : normalizeRouteUrl(item.url) === normalizeRouteUrl(selectedUrl));
@@ -975,6 +982,7 @@ export function updateModelPicker() {
   } catch (_) {}
   const provider = addressLabel ? detectedProvider : routeName;
   if (modelId && provider) displayName = `${provider} · ${displayName}`;
+  if (modelId && _managedUnverified) displayName = `Unavailable · ${displayName}`;
   // Keep route details and the full model ID available without putting raw
   // local addresses in the compact picker label.
   label.title = modelId ? [...new Set([modelId, routeName, endpointUrl].filter(Boolean))].join(' · ') : '';

@@ -2404,6 +2404,20 @@ import { invalidateSettings } from './appConfig.js';
       }
     })();
 
+    // Fail closed for Cookbook-managed endpoints: the picker verdict can be stale, so confirm it now. Nothing is sent otherwise.
+    {
+      const _sessNow = sessionModule.getSessions?.().find(x => x.id === sessionModule.getCurrentSessionId?.());
+      for (const _epId of new Set([selectedRouteForSend.endpoint_id, _sessNow?.endpoint_id])) {
+        const _managed = await window.modelsModule?.checkManagedSelection?.(_epId);
+        if (_managed && !_managed.ok) {
+          uiModule.showToast(`This managed model is unavailable and was not used: ${_managed.reason}.`, 9000);
+          window.sessionModule?.updateModelPicker?.();
+          _releaseSendFlag();
+          return;
+        }
+      }
+    }
+
     // Materialize pending session (deferred from model click) on first message
     if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       _sendPerf.mark('pending_session_begin');

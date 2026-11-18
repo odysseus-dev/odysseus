@@ -12,6 +12,7 @@ import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js?v=20260914metricssummary1';
 import { providerLogo } from './providers.js';
 import { sortModelIds } from './modelSort.js';
+import { filterManagedCatalog, isManagedEndpointId } from './managedBackendGate.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
@@ -164,6 +165,37 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   return row;
 }
 
+// Ordinary selection never bypasses the managed-endpoint verdict: Cookbook-managed endpoints are listed only while the shared
+// verifier (managedBackendGate.js) confirms backend contract, owned listener, exact endpoint_id and runtime model ids.
+// Everything else (user-configured, external, same-URL) passes through untouched. Unknown state is unavailable.
+let _rawItems = [];
+let _managedVerdicts = {};
+const _hasManaged = items => items.some(i => isManagedEndpointId(i && i.endpoint_id));
+
+async function _applyManagedVerdicts() {
+  if (!_hasManaged(_rawItems)) { _cachedItems = _rawItems; _managedVerdicts = {}; return; }
+  let status = null;
+  try {
+    const res = await fetch(`${API_BASE}/api/cookbook/serving/status`, { credentials: 'same-origin' });
+    status = res.ok ? await res.json() : null;
+  } catch (_) { status = null; }
+  const before = JSON.stringify(Object.keys(_managedVerdicts).filter(k => _managedVerdicts[k].ok).sort());
+  const result = filterManagedCatalog(_rawItems, status);
+  _cachedItems = result.items;
+  _managedVerdicts = result.verdicts;
+  if (before !== JSON.stringify(Object.keys(_managedVerdicts).filter(k => _managedVerdicts[k].ok).sort())) {
+    try { window.sessionModule?.updateModelPicker?.(); window.dispatchEvent(new CustomEvent('ge:managed-selectability-changed')); } catch (_) {}
+  }
+}
+
+/** Fresh check for the endpoint a message is about to use; null when it is not a managed endpoint. */
+export async function checkManagedSelection(endpointId) {
+  if (!isManagedEndpointId(endpointId)) return null;
+  try { await refreshModels(true); } catch (_) {}
+  const verdict = _managedVerdicts[endpointId];
+  return verdict && verdict.ok ? { ok: true } : { ok: false, reason: verdict ? verdict.reason : 'the managed endpoint is no longer registered' };
+}
+
 export async function refreshModels(force = false, opts = {}) {
   const box = document.getElementById('models');
   const cacheOnly = !!(opts && opts.cacheOnly);
@@ -213,7 +245,8 @@ export async function refreshModels(force = false, opts = {}) {
       const { data, seq } = await _fetchInflight;
       if (seq < _fetchSeq) return;
       _lastFetchTime = Date.now();
-      _cachedItems = data.items || [];
+      _rawItems = data.items || [];
+      await _applyManagedVerdicts();
     } catch (e) {
       console.error(e);
       if (box) box.textContent = '(scan failed)';
@@ -638,12 +671,15 @@ export async function refreshProviders() {
 }
 
 export function getCachedItems() { return _cachedItems; }
+export function getManagedVerdicts() { return _managedVerdicts; }
 
 const modelsModule = {
   init,
   refreshModels,
   refreshProviders,
   getCachedItems,
+  getManagedVerdicts,
+  checkManagedSelection,
 };
 
 export default modelsModule;
