@@ -12,7 +12,7 @@
 import spinnerModule from '../spinner.js';
 import * as Modals from '../modalManager.js';
 import { clampWindowLeft } from '../modalSnap.js';
-import { showToast } from '../ui.js?v=20260916largetoolscroll1';
+import { showToast } from '../ui.js?v=20261104ttspause1';
 import { state } from './state.js';
 import { _esc, _extractName, _renderEmailSummaryError } from './utils.js';
 import { _aiReplyIcon, _handleAiReplyButton, _hasMultipleRecipients } from './aiReply.js';

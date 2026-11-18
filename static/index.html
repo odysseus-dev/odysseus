@@ -6,6 +6,10 @@
   <title>Odysseus Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
+||||||| base
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="search" type="application/opensearchdescription+xml" title="Odysseus" href="/opensearch.xml">
   <meta name="theme-color" content="#282c34">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,7 +17,7 @@
        in email bodies — was wrapping random digits in <a href="tel:..."> with
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png?v=20261104brand1">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -41,7 +45,7 @@
         // Update favicon to match accent color
         var ac = c.red || '#e06c75';
         var fav = document.querySelector("link[rel='icon']");
-        if (fav) fav.href = 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 4L16 22L6 22Z' fill='" + ac + "'/><path d='M16 8L16 22L24 22Z' fill='" + ac + "' opacity='0.6'/><path d='M4 24Q10 20 16 24Q22 28 28 24' stroke='" + ac + "' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>");
+        if (fav) fav.href = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M16 4v18" stroke="${ac}" stroke-width="1.5" stroke-linecap="round"/><path d="M8 8C13.3 7.3 18.7 7.3 24 8c-2.5 3.3-4.4 7.7-3.2 12.2-5.2-.1-10.5-.1-15.6 0C4.5 15.7 5.9 11.2 8 8Z" fill="${ac}"/><path d="M16 7.5c2.7-.2 5.3 0 8 .5-2.5 3.3-4.4 7.7-3.2 12.2-2.6-.1-5.2.1-7.8.5-.8-4.7.8-9.2 3-13.2Z" fill="#fff" opacity=".18"/><path d="M4 24Q10 20 16 24" stroke="${ac}" stroke-width="2.5" stroke-linecap="round"/><path d="M16 22.75Q22 27.2 28 23.6Q28.6 24 28 24.4Q22 28.8 16 25.25Z" fill="${ac}"/></svg>`);
         // Derive syntax highlighting colors from theme
         function h2hsl(hex) {
           hex = hex.replace('#','');
@@ -238,43 +242,41 @@
        ```mermaid fence. They used to load here from cdn.jsdelivr.net on every
        page load, which cost ~985 KB on the wire, broke offline installs, and
        announced every session to a third party. -->
-  <!-- Preload the two faces first paint actually uses: Fira Code 400 and 600,
-       the app font and the weight the sidebar and header text render at. They
-       are declared in style.css, so without a hint they are only discovered
-       after the stylesheet parses and then queue behind the module graph.
-       crossorigin is required even though these are same-origin: fonts are
-       always fetched in CORS mode, and a preload whose mode does not match the
-       real request is discarded and the font fetched a second time. -->
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/14-email.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/17-research.css?v=20261021confirmalign1">
+  <!-- Fonts load on demand via the @font-face rules in 00-tokens.css. The
+       default UI font is GohuFont (a ~1 KB bitmap font); Fira Code is only
+       pulled in when the user selects the 'mono' font or a message renders a
+       fenced code block. Preloading it here cost ~211 KB on every load for
+       default-font users, so it is intentionally not preloaded. -->
+
+  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/14-email.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/17-research.css?v=20261105followupleft">
   <!-- Panel stylesheets split out of style.css for maintainability. They are
        eager and their order is load-bearing: the cascade is the concatenation of
        these files in this order, so they must stay in this order here and in the
        PRECACHE list in sw.js. None of them is lazy-loaded. -->
-  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261021confirmalign1">
-  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261021confirmalign1">
-  <link rel="modulepreload" href="/static/app.js?v=20261021confirmalign1">
-<link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
-  <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
+  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261105followupleft">
+  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261105followupleft">
+  <link rel="modulepreload" href="/static/app.js?v=20261105followupleft">
+<link rel="modulepreload" href="/static/js/admin.js?v=20261104aigallery10">
+<link rel="modulepreload" href="/static/js/chat.js?v=20261105datefix2">
+  <link rel="modulepreload" href="/static/js/ui.js?v=20261104ttspause1">
   <link rel="modulepreload" href="/static/js/sessions.js">
   <link rel="modulepreload" href="/static/js/markdown.js">
 </head>
@@ -780,7 +782,7 @@
     <div class="sidebar-header">
       <button class="sidebar-hamburger" id="sidebar-toggle-btn" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="sidebar-brand" id="sidebar-brand-btn" style="cursor:pointer;" title="New chat">
-        <span class="sidebar-brand-title">Odysseus</span>
+        <span class="sidebar-brand-title brand-wordmark" role="img" aria-label="Odysseus"></span>
       </div>
     </div>
     <div class="sidebar-inner">
@@ -1008,7 +1010,7 @@
       <button type="button" class="incognito-indicator" id="incognito-indicator" title="Nobody mode active — click to deactivate" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg></button>
       <div class="chat-meta-overlay"><span id="current-meta">Odysseus Chat</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><button type="button" class="chat-context-pill" id="chat-context-pill" title="Chat context" hidden><span class="chat-context-dot"></span><span id="chat-context-pill-label">0%</span></button><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-compact-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M7 12h10"/><path d="M10 17h4"/></svg></span><span class="export-compact-pill">Compact</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item dropdown-item-danger" id="export-delete-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></span><span>Delete Chat</span></div></div></span></div>    </div>
     <div id="welcome-screen">
-      <div class="welcome-name"><svg class="welcome-boat" viewBox="0 0 32 32"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>Odysseus</div>
+      <div class="welcome-name"><span class="welcome-brand" role="img" aria-label="Odysseus"><svg class="brand-ship" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 4v18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 8C13.3 7.3 18.7 7.3 24 8c-2.5 3.3-4.4 7.7-3.2 12.2-5.2-.1-10.5-.1-15.6 0C4.5 15.7 5.9 11.2 8 8Z" fill="currentColor"/><path d="M16 7.5c2.7-.2 5.3 0 8 .5-2.5 3.3-4.4 7.7-3.2 12.2-2.6-.1-5.2.1-7.8.5-.8-4.7.8-9.2 3-13.2Z" fill="#fff" opacity=".18"/><path d="M4 24Q10 20 16 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M16 22.75Q22 27.2 28 23.6Q28.6 24 28 24.4Q22 28.8 16 25.25Z" fill="currentColor"/></svg><span class="brand-wordmark" aria-hidden="true"></span></span></div>
       <div class="welcome-sub" id="welcome-sub">A voyage begins.</div>
       <div class="welcome-tip" id="welcome-tip" role="note"></div>
       <button type="button" class="incognito-btn" id="incognito-btn" title="Enable Nobody mode — no memory or skill injection, no history saved">
@@ -1048,7 +1050,6 @@
     })();
     </script>
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
-
     <!-- Attachments strip -->
     <div id="attach-strip" class="attach-strip"></div>
 
@@ -1065,9 +1066,6 @@
         <textarea id="message" placeholder="Message Odysseus..." required autocomplete="off" aria-label="Message input" rows="1" autofocus></textarea>
         <div id="plan-mode-status" class="plan-mode-status" hidden>
           <span class="plan-mode-status-label">Plan mode</span>
-          <button type="button" id="plan-mode-status-toggle" class="plan-mode-status-toggle" aria-label="Turn off plan mode" aria-pressed="true">
-            <span></span>
-          </button>
         </div>
         <!-- Model picker (inside chatbox, top-right) -->
         <div class="model-picker-wrap" id="model-picker-wrap">
@@ -1080,8 +1078,8 @@
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                 </button>
               </div>
-              <button type="button" class="model-picker-action-btn primary" id="model-picker-add-models-btn" title="Add model endpoints" aria-label="Add model endpoints">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              <button type="button" class="model-picker-action-btn primary" id="model-picker-add-models-btn" title="Model settings" aria-label="Model settings">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </button>
             </div>
             <div class="model-picker-list" id="model-picker-list"></div>
@@ -1146,8 +1144,9 @@
                    #research-toggle checkbox is kept inert so existing JS refs
                    don't break; without this entry point it can't be enabled. -->
               <!-- Group Chat moved to Characters modal Group tab -->
-              <!-- TTS Mode hidden — read-aloud feature is off in this build. -->
-              <button type="button" class="overflow-menu-item" id="overflow-tts-btn" hidden style="display:none">
+              <!-- TTS Mode toggle. Hidden until settings load, then shown when
+                   a TTS provider is configured. -->
+              <button type="button" class="overflow-menu-item" id="overflow-tts-btn" style="display:none">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
                 <span>TTS Mode</span>
                 <span class="overflow-active-dot"></span>
@@ -1356,16 +1355,73 @@
       bottomBtn.style.right = (window.innerWidth - barRect.right + 8) + 'px';
     }
 
+    const TTS_PAUSE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+    const TTS_PLAY_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+    const SCROLL_DOWN_ICON = '<span class="scroll-nav-caret" aria-hidden="true">▾</span>';
+    let _lastBtnMode = 'hidden';
+
+    function spinBottomBtn() {
+      bottomBtn.classList.remove('tts-icon-spin');
+      // Restart the animation even when a previous transition is still playing.
+      void bottomBtn.offsetWidth;
+      bottomBtn.classList.add('tts-icon-spin');
+      clearTimeout(bottomBtn._ttsSpinTimer);
+      bottomBtn._ttsSpinTimer = setTimeout(() => bottomBtn.classList.remove('tts-icon-spin'), 380);
+    }
+
+    function applyButtonMode(mode) {
+      let html = '';
+      let title = 'Scroll to bottom';
+      if (mode === 'pause') {
+        html = TTS_PAUSE_ICON;
+        title = 'Pause reading';
+      } else if (mode === 'play') {
+        html = TTS_PLAY_ICON;
+        title = 'Resume reading';
+      } else if (mode === 'down') {
+        html = SCROLL_DOWN_ICON;
+      }
+      if (!html) {
+        _lastBtnMode = mode;
+        return;
+      }
+      const changed = bottomBtn.innerHTML !== html;
+      if (changed) bottomBtn.innerHTML = html;
+      bottomBtn.title = title;
+      bottomBtn.setAttribute('aria-label', title);
+      if ((mode !== _lastBtnMode || changed) && mode !== 'hidden') spinBottomBtn();
+      _lastBtnMode = mode;
+    }
+
     function update() {
       reposition();
+      const ttsState = bottomBtn.dataset.ttsPause;
       const scrollable = container.scrollHeight > container.clientHeight + 10;
       const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 300;
-      if (scrollable && !atBottom) {
+      const readingVisible = (ttsState === 'playing' || ttsState === 'paused')
+        && (!window.aiTTSManager || typeof window.aiTTSManager.isReadingPositionVisible !== 'function'
+          || window.aiTTSManager.isReadingPositionVisible());
+      let mode = 'hidden';
+      if (ttsState === 'playing') mode = readingVisible ? 'pause' : 'down';
+      else if (ttsState === 'paused') mode = readingVisible ? 'play' : 'down';
+      else if (scrollable && !atBottom) mode = 'down';
+
+      if (mode === 'down' && (ttsState === 'playing' || ttsState === 'paused')) {
+        bottomBtn.dataset.ttsScrollMode = '1';
+      } else {
+        delete bottomBtn.dataset.ttsScrollMode;
+      }
+
+      applyButtonMode(mode);
+
+      if (mode === 'hidden') {
+        if (bottomBtn.classList.contains('show')) {
+          bottomBtn.classList.add('slide-out');
+          bottomBtn.classList.remove('show');
+        }
+      } else {
         bottomBtn.classList.remove('slide-out');
         bottomBtn.classList.add('show');
-      } else if (bottomBtn.classList.contains('show')) {
-        bottomBtn.classList.add('slide-out');
-        bottomBtn.classList.remove('show');
       }
     }
 
@@ -1383,7 +1439,7 @@
     container.addEventListener('wheel', () => { if (_scrollingToBottom) cancelAutoScroll(); }, {passive:true});
     container.addEventListener('touchstart', () => { if (_scrollingToBottom) cancelAutoScroll(); }, {passive:true});
 
-    bottomBtn.addEventListener('click', () => {
+    function scrollToBottom() {
       cancelAutoScroll();
       const target = container.scrollHeight - container.clientHeight;
       _scrollingToBottom = true;
@@ -1396,10 +1452,26 @@
       }
       step();
       _scrollTimeout = setTimeout(() => { if (_scrollingToBottom) { container.scrollTop = target; _scrollingToBottom = false; } }, 1500);
+    }
+
+    bottomBtn.addEventListener('click', () => {
+      if (bottomBtn.dataset.ttsScrollMode) {
+        scrollToBottom();
+        return;
+      }
+      if (bottomBtn.dataset.ttsPause) {
+        if (window.aiTTSManager && typeof window.aiTTSManager.pause === 'function') {
+          window.aiTTSManager.pause();
+        }
+        return;
+      }
+      scrollToBottom();
     });
-    new ResizeObserver(reposition).observe(chatBar);
-    new MutationObserver(update).observe(container, {childList:true, subtree:true});
-    window.addEventListener('resize', reposition);
+    new ResizeObserver(() => { reposition(); update(); }).observe(chatBar);
+    new MutationObserver(update).observe(container, {childList:true, subtree:true, characterData:true});
+    window.addEventListener('resize', () => { reposition(); update(); });
+    window.addEventListener('odysseus-tts-state-change', update);
+    window.addEventListener('odysseus-agent-working-change', update);
     update();
   })();
   </script>
@@ -1714,20 +1786,31 @@
               <div id="set-imgSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <!-- TTS panel hidden — user opted out of read-aloud entirely. Kept
-               in DOM so the JS that wires set-ttsProviderSelect etc. doesn't
-               throw on missing nodes; not visible to anyone. -->
-          <div class="admin-card" hidden style="display:none">
+          <!-- Text to Speech settings: provider/model/voice/speed for read-aloud. -->
+          <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>Text to Speech<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-ttsEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure TTS provider for assistant message read-aloud.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px;color:color-mix(in srgb, var(--fg) 55%, transparent);">Only TTS-capable providers/models are listed.</div>
+            <div id="set-ttsEmptyState" class="admin-toggle-sub" style="display:none;margin-bottom:8px;color:var(--red, #e55);line-height:1.4;">No TTS-capable endpoints found. Use Browser or Custom / OpenAI-compatible API, or add an OpenAI, xAI, or OpenRouter GPT Audio endpoint.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <div style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Provider</label>
                 <select id="set-ttsProviderSelect" class="settings-select">
                   <option value="disabled">Disabled</option>
                   <option value="browser">Browser (built-in)</option>
-                  <option value="local">Local (Kokoro-82M)</option>
+                  <option value="custom">Custom / OpenAI-compatible API</option>
                 </select>
+              </div>
+              <div id="set-ttsEndpointUrlRow" style="display:none;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Endpoint URL</label>
+                <input id="set-ttsEndpointUrlInput" type="url" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" style="flex:1;padding:5px;">
+              </div>
+              <div id="set-ttsApiKeyRow" style="display:none;align-items:center;gap:0.75rem;">
+                <label class="settings-label">API key</label>
+                <input id="set-ttsApiKeyInput" type="password" placeholder="Optional API key" autocomplete="new-password" style="flex:1;padding:5px;">
+              </div>
+              <div id="set-ttsEndpointHint" style="display:none;font-size:11px;line-height:1.35;color:color-mix(in srgb, var(--fg) 45%, transparent);">
+                Uses an OpenAI-compatible POST /audio/speech. xAI/Grok endpoints are detected automatically and use their native POST /v1/tts.
               </div>
               <div id="set-ttsModelRow" style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Model</label>
@@ -1751,7 +1834,7 @@
                   <option value="sage">Sage</option>
                   <option value="shimmer">Shimmer</option>
                 </select>
-                <input id="set-ttsVoiceInput" type="text" placeholder="af_heart" style="flex:1;padding:5px;display:none;">
+                <input id="set-ttsVoiceInput" type="text" placeholder="voice id (provider-specific)" style="flex:1;padding:5px;display:none;">
               </div>
               <div id="set-ttsSpeedRow" style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Speed</label>
@@ -1802,12 +1885,9 @@
                 <!-- Custom picker (with logos). Hidden native <select> mirrors
                      its value so the existing JS that reads
                      set-searchProvider keeps working unchanged. -->
-                <div class="adm-provider-picker search-provider-picker" id="search-provider-picker" style="flex:1;position:relative;top:5px;">
-                  <button type="button" class="adm-provider-btn" id="search-provider-btn">
-                    <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">SearXNG</span></span>
-                    <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                  </button>
-                  <div class="adm-provider-menu hidden" id="search-provider-menu"></div>
+                <div class="adm-provider-picker search-provider-picker" id="search-provider-picker" style="flex:1;position:relative;">
+                  <div class="adm-provider-label">Choose a search provider</div>
+                  <div class="adm-provider-grid" id="search-provider-grid" role="listbox" aria-label="Choose search provider"></div>
                 </div>
                 <select id="set-searchProvider" class="settings-select" style="display:none;">
                   <option value="searxng" data-search-logo="searxng">SearXNG (self-hosted)</option>
@@ -2407,13 +2487,10 @@
             <div class="adm-add-section">
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker" style="flex:1 1 220px;min-width:0;margin-bottom:0;">
-                    <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider" style="border-top-right-radius:0;border-bottom-right-radius:0;border-top-left-radius:6px;border-bottom-left-radius:6px;border-left:1px solid var(--border);border-right:1px solid var(--border);">
-                      <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
-                      <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off" style="border-left:0;border-top-left-radius:0;border-bottom-left-radius:0;border-top-right-radius:6px;border-bottom-right-radius:6px;">
-                    <div class="adm-provider-menu hidden" id="adm-provider-menu"></div>
+                  <div class="adm-provider-picker" id="adm-provider-picker" style="flex:1 1 220px;min-width:0;margin-bottom:0;">
+                    <div class="adm-provider-label">Choose a provider</div>
+                    <div class="adm-provider-grid" id="adm-provider-grid" role="listbox" aria-label="Choose API provider"></div>
+                    <input id="adm-epUrl" type="text" placeholder="Endpoint URL — choose a provider or paste a custom URL" autocomplete="off">
                   </div>
                 </div>
                 <select id="adm-epKind" style="display:none">
@@ -2464,14 +2541,11 @@
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="20 6 9 17 4 12"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
               <span style="flex:1"></span>
-              <button class="admin-btn-sm" id="adm-epProbeAllBtn" title="Re-test every endpoint and refresh online status" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Probe
-              </button>
               <button class="admin-btn-sm" id="adm-epClearOfflineBtn" title="Remove all endpoints currently marked offline" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;opacity:0.85;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear offline <span id="adm-epOfflineCount" style="opacity:0.6;margin-left:2px;"></span>
               </button>
             </h2>
-            <div class="admin-toggle-sub" style="margin-bottom:12px">Endpoints you've connected. Probe re-tests them all; Clear offline removes the dead ones.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:12px">Endpoints you've connected. Clear offline removes the dead ones.</div>
             <div class="adm-ep-section">
               <div class="adm-ep-section-head" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;opacity:0.7;margin-bottom:6px;display:inline-flex;align-items:center;gap:5px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>Local
@@ -2788,7 +2862,7 @@
 
 <!-- Load modules in this order -->
 <script type="module" src="/static/js/storage.js"></script>
-<script type="module" src="/static/js/ui.js?v=20260916largetoolscroll1"></script>
+<script type="module" src="/static/js/ui.js?v=20261104ttspause1"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>
@@ -2803,21 +2877,21 @@
 <script type="module" src="/static/js/presets.js?v=20260908personaname1"></script>
 <script type="module" src="/static/js/search.js"></script>
 <script type="module" src="/static/js/spinner.js"></script>
-<script type="module" src="/static/js/tts-ai.js"></script>
+<script type="module" src="/static/js/tts-ai.js?v=20261105ttsscroll1"></script>
 <script type="module" src="/static/js/document.js?v=20260916docctx2"></script>
-<script type="module" src="/static/js/gallery.js?v=20260910promptcopy1"></script>
-<script type="module" src="/static/js/chatRenderer.js?v=20260914metricssummary1"></script>
+<script type="module" src="/static/js/gallery.js?v=20261103imagefix1"></script>
+<script type="module" src="/static/js/chatRenderer.js?v=20261105ttsscroll1"></script>
 <script type="module" src="/static/js/codeRunner.js?v=20260831richtexttools91"></script>
-<script type="module" src="/static/js/chatStream.js?v=20261026devsync1"></script>
-<script type="module" src="/static/js/chat.js?v=20260917toolttft1"></script>
+<script type="module" src="/static/js/chatStream.js?v=20261103imagefix1"></script>
+<script type="module" src="/static/js/chat.js?v=20261105datefix2"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>
 <script type="module" src="/static/js/theme.js?v=20260911organsrain1"></script>
 <script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
+<script type="module" src="/static/js/settings.js?v=20261105hinttooltip1"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20261021confirmalign1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20261105followupleft"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>

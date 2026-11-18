@@ -1,6 +1,6 @@
 // Lifted verbatim from static/js/settings.js so extracted panels can post
 // settings without importing the module they were extracted from.
-import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import uiModule from '../ui.js?v=20261104ttspause1';
 import { invalidateSettings } from '../appConfig.js';
 
 export async function postSettings(body) {

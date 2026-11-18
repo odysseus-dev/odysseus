@@ -11,7 +11,7 @@ import { streamDocOpen as _streamDocOpenFromLiveStream, streamDocDelta as _strea
  * and theme-aware styling.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 
 import './sessions.js';
 

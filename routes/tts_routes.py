@@ -1,12 +1,14 @@
 # routes/tts_routes.py
 """
-TTS API routes — multi-provider (local Kokoro, API endpoint, browser).
+TTS API routes — multi-provider (native xAI, OpenAI-compatible endpoint, browser).
 """
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 import logging
+
+from services.tts.tts_service import TTSError
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,12 @@ def setup_tts_routes(tts_service):
         
         except HTTPException:
             raise
+        except TTSError as e:
+            logger.warning("TTS synthesis error: %s", e)
+            raise HTTPException(
+                status_code=502,
+                detail={"message": str(e)}
+            )
         except Exception as e:
             logger.error(f"Synthesis error: {e}", exc_info=True)
             raise HTTPException(

@@ -1,6 +1,6 @@
 // Search Chat Module — Ctrl+K command palette for searching conversations
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import sessionModule from './sessions.js';
 
 let API_BASE = '';

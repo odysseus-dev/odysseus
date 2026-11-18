@@ -7,9 +7,9 @@
  */
 
 import spinnerModule from '../spinner.js';
-import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20260916largetoolscroll1';
-import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20260914aireply4';
-import settingsModule from '../settings.js?v=20260912writingstyle3';
+import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20261104ttspause1';
+import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20261105emailrobust1';
+import settingsModule from '../settings.js?v=20261105hinttooltip1';
 import * as Modals from '../modalManager.js';
 import { makeWindowDraggable } from '../windowDrag.js';
 import {
@@ -5239,7 +5239,7 @@ async function _loadScheduled(grid, sp) {
     cancelBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     cancelBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const { styledConfirm } = await import('../ui.js?v=20260916largetoolscroll1');
+      const { styledConfirm } = await import('../ui.js?v=20261104ttspause1');
       const ok = await styledConfirm(`Cancel scheduled email "${subject}"?`, { confirmText: 'Cancel Send', cancelText: 'Keep', danger: true });
       if (!ok) return;
       try {

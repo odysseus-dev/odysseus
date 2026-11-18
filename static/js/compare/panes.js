@@ -9,7 +9,7 @@ import {
 } from './icons.js?v=20260908compareprompts1';
 import { _clearProbeWaves } from './probe.js';
 import Storage from '../storage.js';
-import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import uiModule from '../ui.js?v=20261104ttspause1';
 import spinnerModule from '../spinner.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
 

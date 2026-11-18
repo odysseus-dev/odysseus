@@ -6,7 +6,7 @@
 // to that folder (see routes/chat_routes.py + src/tool_execution.py).
 
 import Storage, { KEYS } from './storage.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import { makeWindowDraggable } from './windowDrag.js';
 
 const API_BASE = window.location.origin;

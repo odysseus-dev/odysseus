@@ -39,7 +39,7 @@ import { createNotesWorkflows } from './application/workflows.js';
 import { createNotesApi } from './infrastructure/http.js';
 import { createNotesPersistence, REMINDER_DISMISSED_AT_KEY, NOTES_FIRST_OPEN_HINT_KEY, NOTES_LABELS_COLLAPSED_KEY } from './infrastructure/storage.js';
 import * as dates from './domain/recurrence.js';
-import uiModule from '/static/js/ui.js?v=20260916largetoolscroll1';
+import uiModule from '/static/js/ui.js?v=20261104ttspause1';
 import { spawnConfetti } from '/static/js/shared/ui/confetti.js';
 import * as Modals from '/static/js/modalManager.js';
 import { attachColorPicker } from '/static/js/colorPicker.js?v=20260910eyedropper1';

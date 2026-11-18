@@ -2,7 +2,7 @@
 // ES6 module
 
 import Storage from './storage.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import { initColorPickers, attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 import { hexToRgb } from './color/hex.js';
 import { runBgEffect, bgChance, bgCount, bgFade } from './bgEffectClock.js';

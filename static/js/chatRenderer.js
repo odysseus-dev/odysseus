@@ -1,13 +1,13 @@
 // static/js/chatRenderer.js
 // Extracted from chat.js — message rendering, sources, images, metrics
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import markdownModule from './markdown.js';
 import { generatedImageResult } from './generatedImageResult.js';
 import { svgifyEmoji } from './markdown.js';
-import { addAITTSButton } from './tts-ai.js';
+import { addAITTSButton } from './tts-ai.js?v=20261105ttsscroll1';
 import { providerLogo, providerLabel } from './providers.js';
-import settingsModule from './settings.js?v=20260912writingstyle3';
+import settingsModule from './settings.js?v=20261105hinttooltip1';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
@@ -123,6 +123,11 @@ function _isPrivateBrowserTool(tool) {
     || name.includes('__browser_');
 }
 
+function _isWebFetchTool(tool) {
+  const name = String(tool || '').toLowerCase();
+  return name === 'web_fetch' || name.endsWith('web_fetch') || name.includes('__web_fetch');
+}
+
 function _privateBrowserActionLabel(command) {
   const raw = String(command || '').trim();
   if (!raw) return 'screenshot';
@@ -132,6 +137,9 @@ function _privateBrowserActionLabel(command) {
     if (action) {
       const target = parsed.url || parsed.selector || parsed.target || parsed.key || '';
       return target ? `${action}: ${String(target).slice(0, 90)}` : action;
+    }
+    if (parsed && typeof parsed.url === 'string' && parsed.url) {
+      return `open: ${parsed.url.slice(0, 90)}`;
     }
   } catch (_) {}
   return raw.slice(0, 110);
@@ -244,6 +252,53 @@ function _target(kind, id, title) {
   return safeId ? { href: `#${kind}-${safeId}`, title } : null;
 }
 
+function _emailSearchResults(args = {}, data = null) {
+  const text = _toolOutputText(data).replace(/\\n/g, '\n');
+  const results = [];
+  for (const block of text.split(/\n(?=\s*\d+\.\s+)/)) {
+    const uidMatch = block.match(/\bUID:\s*(\d+)\b/i);
+    if (!uidMatch) continue;
+    const folderMatch = block.match(/\bFolder:\s*([^\r\n]+)/i);
+    const accountMatch = block.match(/\bAccount:\s*[^\r\n<]*<([^>\r\n]+)>/i);
+    const subjectMatch = block.match(/^\s*\d+\.\s+(?:\*\*)?(.+?)(?:\*\*)?\s*$/m);
+    const subject = subjectMatch ? subjectMatch[1].replace(/\*\*/g, '').replace(/\\"/g, '"').replace(/\s+/g, ' ').trim() : '';
+    results.push({
+      uid: uidMatch[1],
+      folder: (folderMatch ? folderMatch[1].trim() : '') || String(args?.folder || 'INBOX'),
+      account: (accountMatch ? accountMatch[1].trim() : '') || String(args?.account || args?.account_id || ''),
+      subject,
+    });
+  }
+  if (!results.length && /^\d+$/.test(String(args?.uid || '').trim())) {
+    results.push({
+      uid: String(args.uid).trim(),
+      folder: String(args.folder || 'INBOX'),
+      account: String(args.account || args.account_id || ''),
+      subject: '',
+    });
+  }
+  return results;
+}
+
+function _emailSearchResultTarget(args = {}, data = null) {
+  const result = _emailSearchResults(args, data)[0];
+  if (!result) return null;
+  const clean = value => String(value || '').replace(/[^A-Za-z0-9_.@-]/g, '_');
+  const id = [clean(result.folder), result.uid, result.account ? clean(result.account) : ''].filter(Boolean).join(':');
+  return { ...result, href: `#email-${id}` };
+}
+
+function _emailResultLinksHtml(results) {
+  return (results || []).slice(0, 6).map(result => {
+    const label = result.subject || `UID ${result.uid}`;
+    const href = result.href || (() => {
+      const clean = value => String(value || '').replace(/[^A-Za-z0-9_.@-]/g, '_');
+      return `#email-${[clean(result.folder), result.uid, result.account ? clean(result.account) : ''].filter(Boolean).join(':')}`;
+    })();
+    return `<a class="agent-thread-summary agent-thread-summary-link" href="${uiModule.esc(href)}" title="Open ${uiModule.esc(result.folder)} · UID ${uiModule.esc(result.uid)}">${uiModule.esc(label)}</a>`;
+  }).join('<span class="agent-thread-result-sep"> · </span>');
+}
+
 function _emailTarget(args = {}, data = null) {
   const uid = String((data && data.uid) || args.uid || '').trim();
   if (!/^\d+$/.test(uid)) return null;
@@ -313,6 +368,10 @@ export function getToolActionTarget(tool, command, data = null) {
     return { href: `#${definition.fallback}`, title: `Open ${definition.fallback}` };
   }
 
+  if (lower.includes('search_emails') || lower.includes('list_emails')) {
+    const result = _emailSearchResultTarget(args || {}, data);
+    return result ? { href: result.href, title: 'Open found email' } : null;
+  }
   if (lower.includes('read_email') || lower.endsWith('email')) {
     return _emailTarget(args || {}, data) || _target('email', _hashTargetFromText(output, 'email'), 'Open email');
   }
@@ -326,7 +385,8 @@ export function getToolActionTarget(tool, command, data = null) {
 }
 
 export function renderToolIcon(tool, command, data = null) {
-  const icon = getToolIcon(tool);
+  let icon = getToolIcon(tool);
+  if (_isWebFetchTool(tool) && data?.screenshot) icon = TOOL_ICONS.private_browser;
   if (!icon) return '';
   const target = getToolActionTarget(tool, command, data);
   if (!target) return `<span class="agent-thread-tool-icon">${icon}</span>`;
@@ -344,14 +404,41 @@ function _browserPreviewHtml(command, screenshotSrc, fallbackUrl = '') {
   return `<div class="private-browser-preview"${urlAttr}><div class="private-browser-preview-header"><span class="private-browser-preview-title">Private Browser</span><span class="private-browser-preview-status">${uiModule.esc(_privateBrowserActionLabel(command))}</span><button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button></div><div class="private-browser-preview-frame">${imgHtml}</div></div>`;
 }
 
+function _linkifyEmailReferencesInHtml(html) {
+  try {
+    if (String(html || '').includes('email-inline-link')) return html;
+    const re = /Folder:\s*([A-Za-z0-9_.\/\[\] -]{1,80}?)\s*(?:·|\||,)?\s*UID[:\s]+(\d{2,})/gi;
+    const clean = value => String(value || '').replace(/[^A-Za-z0-9_.@-]/g, '_');
+    return String(html || '').replace(/>([^<]+)</g, (full, text) => {
+      const linked = text.replace(re, (match, folder, uid) => {
+        const targetFolder = String(folder || 'INBOX').trim() || 'INBOX';
+        return `<a class="email-inline-link" href="#email-${clean(targetFolder)}:${uid}" title="Open ${targetFolder} · UID ${uid}">${match}</a>`;
+      });
+      return `>${linked}<`;
+    });
+  } catch (_) {
+    return html;
+  }
+}
+
+export function linkifyEmailReferences(html) { return _linkifyEmailReferencesInHtml(html); }
+
 function _renderAssistantBody(text, metadata) {
   const suppressThinking = !!(metadata && metadata.character_name);
   if (suppressThinking) {
     const extracted = markdownModule.extractThinkingBlocks(text || '');
     const visible = (extracted && typeof extracted.content === 'string') ? extracted.content : String(text || '');
-    return markdownModule.mdToHtml(markdownModule.squashOutsideCode(visible));
+    return _linkifyEmailReferencesInHtml(markdownModule.mdToHtml(markdownModule.squashOutsideCode(visible)));
   }
-  return markdownModule.processWithThinking(text);
+  return _linkifyEmailReferencesInHtml(markdownModule.processWithThinking(text));
+}
+
+function _toolHasEmailResults(tool, command, data = null) {
+  const lower = String(tool || '').toLowerCase();
+  if (!lower.includes('search_emails') && !lower.includes('list_emails')) return false;
+  let args = null;
+  try { args = JSON.parse(command || '{}'); } catch (_) {}
+  return _emailSearchResults(args || {}, data).length > 0;
 }
 
 function _toolDisplayInfo(tool, command, data = null) {
@@ -371,7 +458,7 @@ function _toolDisplayInfo(tool, command, data = null) {
   if (lower === 'web_fetch' || lower.endsWith('web_fetch') || lower.includes('__web_fetch')) {
     const url = _webFetchUrlFromCommand(command);
     return {
-      label: '',
+      label: data?.screenshot ? 'Private Browser' : '',
       headerActionHtml: _toolHeaderLinkHtml(url, 'Open fetched page'),
       commandHtml: url
         ? `<a class="agent-thread-summary agent-thread-summary-link" href="${uiModule.esc(url)}" target="_blank" rel="noopener noreferrer" title="Open ${uiModule.esc(url)}">${uiModule.esc(url)}</a>`
@@ -420,16 +507,26 @@ function _toolDisplayInfo(tool, command, data = null) {
     const max = args && args.max_results ? String(args.max_results) : '';
     const folder = args && args.folder ? String(args.folder) : 'INBOX';
     const bits = [folder, max ? `${max} latest` : 'latest'].filter(Boolean).join(' · ');
+    const results = _emailSearchResults(args || {}, data);
+    const first = _emailSearchResultTarget(args || {}, data);
+    const links = _emailResultLinksHtml(results);
     return {
       label: 'Check email',
-      commandHtml: `<div class="agent-thread-summary">${uiModule.esc(bits)}</div>`,
+      headerActionHtml: first ? _toolHeaderHashLinkHtml(first.href, 'Open found email') : '',
+      commandHtml: `<div class="agent-thread-summary">${uiModule.esc(bits)}</div>` +
+        (links ? `<div class="agent-thread-email-results">${links}</div>` : ''),
     };
   }
   if (emailTool && (lower.includes('search_emails') || lower.endsWith('search_emails'))) {
     const q = args && args.query ? String(args.query) : '';
+    const results = _emailSearchResults(args || {}, data);
+    const first = _emailSearchResultTarget(args || {}, data);
+    const links = _emailResultLinksHtml(results);
     return {
       label: 'Search email',
-      commandHtml: q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '',
+      headerActionHtml: first ? _toolHeaderHashLinkHtml(first.href, 'Open found email') : '',
+      commandHtml: (q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '') +
+        (links ? `<div class="agent-thread-email-results">${links}</div>` : ''),
     };
   }
   return { label: '', commandHtml: '' };
@@ -1582,9 +1679,23 @@ export function stripToolBlocks(text) {
  * nothing (e.g. turns interrupted mid-thinking).
  */
 export function copyMessageText(msgElement) {
-  const raw = msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '';
+  let raw = msgElement.dataset.raw || '';
+  if (!raw) {
+    const body = msgElement.querySelector('.body');
+    if (body) {
+      const clone = body.cloneNode(true);
+      clone.querySelectorAll('.thinking-section, .thinking-content, .thinking-header, .msg-footer, .sources-section, .chat-images, .followup-suggestions')
+        .forEach(el => el.remove());
+      raw = clone.textContent || '';
+    }
+  }
+  if (!raw) raw = msgElement.querySelector('.body')?.textContent || '';
   const { content } = markdownModule.extractThinkingBlocks(stripToolBlocks(raw));
-  return content || raw;
+  const cleaned = String(content || raw)
+    .replace(/^\s*(?:view\s+)?thinking process(?:\s+\d+(?:\.\d+)?\s*s)?\s*$/gim, '')
+    .replace(/^\s*thought for \d+(?:\.\d+)?\s*s\s*$/gim, '')
+    .trim();
+  return cleaned || content || raw;
 }
 
 /**
@@ -1618,6 +1729,73 @@ export function buildSourcesBox(sources, type, expanded) {
     + '<div class="sources-content' + expandedClass + '" id="' + id + '">'
     + '<div class="sources-content-inner">' + lines + '</div>'
     + '</div></div>';
+}
+
+/**
+ * Build follow-up question chips chosen by the local spec router after a
+ * web search. Clicking one sends that question (delegated in chat.js).
+ * @param {Array<string|{text: string}>} suggestions
+ */
+export function buildFollowups(suggestions) {
+  if (!suggestions || !suggestions.length) return '';
+  var esc = uiModule.esc;
+  var items = '';
+  var enterIcon = '<svg class="followup-enter" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M4 2.5v5.5a1.5 1.5 0 0 0 1.5 1.5H12.5"/>'
+    + '<path d="M9.5 6.5 12.5 9.5 9.5 12.5"/></svg>';
+  var browserIcon = '<svg class="followup-enter" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<circle cx="12" cy="12" r="9"/>'
+    + '<path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
+  for (var i = 0; i < suggestions.length; i++) {
+    var s = suggestions[i];
+    var text = typeof s === 'string' ? s : (s && s.text) || '';
+    text = String(text || '').trim();
+    if (!text) continue;
+    // The browser chip shows a short label, but sends a full instruction so the
+    // assistant knows what to verify with the browser.
+    var prompt = (s && s.action === 'browser')
+      ? 'Can you use the browser to verify this?'
+      : text;
+    items += '<button type="button" class="followup-chip" data-followup="' + esc(prompt) + '">'
+      + ((s && s.action === 'browser') ? browserIcon : enterIcon) + esc(text) + '</button>';
+  }
+  if (!items) return '';
+  return '<div class="followup-suggestions" aria-label="Suggested follow-up questions">' + items + '</div>';
+}
+
+/**
+ * Build a compact image-results gallery. Two cards are visible by default plus
+ * a skeleton "Show N more" tile; the rest expand in place (handled in chat.js).
+ * @param {Array<{title,thumbnail,image,page_url,source}>} images
+ */
+export function buildImageResults(images) {
+  if (!images || !images.length) return '';
+  var esc = uiModule.esc;
+  var cards = '';
+  var shown = 0;
+  for (var i = 0; i < images.length; i++) {
+    var im = images[i] || {};
+    var thumb = im.thumbnail || im.image || '';
+    var page = im.page_url || im.image || thumb;
+    if (!thumb || !page) continue;
+    var full = im.image || thumb;
+    var title = String(im.title || 'Image result').trim() || 'Image result';
+    var source = String(im.source || '').trim();
+    cards += '<div class="chat-image-card chat-image-real">'
+      + '<a class="chat-image-open" href="' + esc(full) + '" target="_blank" rel="noopener noreferrer" aria-label="Open image: ' + esc(title) + '">'
+      + '<img src="' + esc(thumb) + '" alt="' + esc(title) + '" loading="lazy" decoding="async" referrerpolicy="no-referrer">'
+      + '</a>'
+      + (source ? '<a class="chat-image-source" href="' + esc(page) + '" target="_blank" rel="noopener noreferrer">' + esc(source) + '</a>' : '')
+      + '</div>';
+    shown++;
+  }
+  if (!shown) return '';
+  var more = shown > 2
+    ? '<button type="button" class="chat-image-card chat-image-skeleton chat-images-more" data-images-more>'
+      + '<span class="chat-image-more-label">Show ' + (shown - 2) + ' more</span></button>'
+    : '';
+  return '<div class="chat-images" data-image-count="' + shown + '">'
+    + '<div class="chat-images-grid">' + cards + more + '</div></div>';
 }
 
 /**
@@ -1842,7 +2020,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     } else if (panel === 'skills') {
       document.getElementById('tool-skills-btn')?.click();
     } else if (panel === 'research') {
-        import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+        import('./research/panel.js?v=20261104researchread1').then(mod => {
         const open = mod.openPanel || (mod.default && mod.default.openPanel);
         if (open) open();
       }).catch(() => {});
@@ -1912,12 +2090,12 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'image') {
-    import('./gallery.js?v=20260910promptcopy1').then(mod => {
+    import('./gallery.js?v=20261103imagefix1').then(mod => {
       const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'email') {
-    import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
+    import('./emailLibrary.js?v=20261105emailrobust1').then(mod => {
       const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
       if (!open) return;
       const parts = String(id || '').split(':');
@@ -1925,7 +2103,21 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
         const opts = { folder: parts[0] || 'INBOX', uid: parts[1] };
         const account = parts.slice(2).join(':');
         if (account) opts.account_id = account;
-        open(opts);
+        const fromTool = mod.openEmailFromTool || (mod.default && mod.default.openEmailFromTool);
+        a.classList.add('agent-thread-link-loading');
+        a.setAttribute('aria-busy', 'true');
+        const done = () => {
+          a.classList.remove('agent-thread-link-loading');
+          a.removeAttribute('aria-busy');
+        };
+        if (fromTool) {
+          fromTool({ folder: opts.folder, uid: opts.uid, account })
+            .catch((err) => { console.error('openEmailFromTool failed', err); open(opts); })
+            .finally(done);
+        } else {
+          open(opts);
+          done();
+        }
       } else {
         open({ uid: id });
       }
@@ -1947,7 +2139,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'research') {
-    import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+    import('./research/panel.js?v=20261104researchread1').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
     }).catch(() => {});
@@ -2089,10 +2281,15 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   actions.appendChild(dlBtn);
 
   const reuseBtn = document.createElement('button');
-  reuseBtn.className = 'footer-copy-btn';
+  reuseBtn.className = 'footer-copy-btn footer-edit-btn';
   reuseBtn.type = 'button';
-  reuseBtn.title = 'Attach image to new prompt';
-  reuseBtn.innerHTML = PAPERCLIP_ICON;
+  reuseBtn.title = 'Edit image';
+  reuseBtn.setAttribute('aria-label', 'Edit image');
+  reuseBtn.style.width = 'auto';
+  reuseBtn.style.padding = '0 7px';
+  reuseBtn.style.fontSize = '11px';
+  reuseBtn.style.fontWeight = '600';
+  reuseBtn.textContent = 'Edit';
   reuseBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     reuseBtn.disabled = true;
@@ -2113,13 +2310,13 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
       const input = document.getElementById('message');
       if (input) input.focus();
       reuseBtn.innerHTML = CHECK_ICON;
-      if (window.showToast) window.showToast('Image attached');
-      setTimeout(() => { reuseBtn.innerHTML = PAPERCLIP_ICON; reuseBtn.disabled = false; }, 1400);
+      if (window.showToast) window.showToast('Image attached — type your edit prompt');
+      setTimeout(() => { reuseBtn.textContent = 'Edit'; reuseBtn.disabled = false; }, 1400);
     } catch (err) {
       console.warn('Attach generated image failed', err);
       reuseBtn.textContent = '\u2717';
       if (window.showToast) window.showToast('Could not attach image');
-      setTimeout(() => { reuseBtn.innerHTML = PAPERCLIP_ICON; reuseBtn.disabled = false; }, 1600);
+      setTimeout(() => { reuseBtn.textContent = 'Edit'; reuseBtn.disabled = false; }, 1600);
     }
   });
   actions.appendChild(reuseBtn);
@@ -2133,7 +2330,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     e.stopPropagation();
     try {
       const [galleryMod, editorMod] = await Promise.all([
-        import('./gallery.js?v=20260910promptcopy1'),
+        import('./gallery.js?v=20261103imagefix1'),
         loadPanel('editor'),
       ]);
       // Ensure the Gallery modal is open so the editor has a container
@@ -2167,7 +2364,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     galleryBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       try {
-        const mod = await import('./gallery.js?v=20260910promptcopy1');
+        const mod = await import('./gallery.js?v=20261103imagefix1');
         const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
         if (open) open(imageId);
       } catch (err) {
@@ -2422,6 +2619,16 @@ export function createMsgFooter(msgElement, { animate = false } = {}) {
     actions.appendChild(moreBtn);
   }
 
+  // Restore the footer TTS button for saved/replayed messages. The footer is
+  // appended by the caller after this function returns, so defer one tick.
+  setTimeout(() => {
+    try {
+      if (!window.aiTTSManager?.available || window.aiTTSManager?._provider === 'disabled') return;
+      const ttsText = copyMessageText(msgElement);
+      if (ttsText) addAITTSButton(msgElement, ttsText);
+    } catch (_) {}
+  }, 0);
+
   // Memory-used indicator pill
   const mems = msgElement._memoriesUsed;
   if (mems && mems.length > 0) {
@@ -2431,8 +2638,8 @@ export function createMsgFooter(msgElement, { animate = false } = {}) {
     const pinnedCount = mems.filter(m => m.type === 'pinned').length;
     const recalledCount = mems.filter(m => m.type === 'recalled').length;
     const parts = [];
-    if (pinnedCount) parts.push(`${pinnedCount} pinned`);
-    if (recalledCount) parts.push(`${recalledCount} recalled`);
+    if (pinnedCount) parts.push(`×${pinnedCount}`);
+    if (recalledCount) parts.push(`↻${recalledCount}`);
     pill.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg><span class="memory-used-pill-text">${parts.join(', ')}</span>`;
     pill.title = mems.map(m => `[${m.type}] ${m.text}`).join('\n');
 
@@ -3250,18 +3457,14 @@ export function addMessage(role, content, modelName, metadata) {
         roundTexts[finalIndex] = typeof textRaw === 'string' ? textRaw : '';
       } else if (metadata?._fromHistory && typeof textRaw === 'string' && textRaw.trim()) {
         roundTexts = Array.isArray(roundTexts) ? [...roundTexts] : [];
-        let lastTextIdx = -1;
-        for (let i = roundTexts.length - 1; i >= 0; i--) {
-          if (String(roundTexts[i] || '').trim()) {
-            lastTextIdx = i;
-            break;
-          }
-        }
-        if (lastTextIdx >= 0) {
-          roundTexts[lastTextIdx] = textRaw;
-        } else {
-          roundTexts.push(textRaw);
-        }
+        const lastToolIndex = toolEvents.reduce((max, event) => Math.max(max, Number(event.round ?? 1) || 0), 0);
+        let finalIndex = Math.max(
+          (Number(metadata.agent_rounds) || 1) - 1,
+          lastToolIndex
+        );
+        if (roundTexts.length > finalIndex) finalIndex = roundTexts.length - 1;
+        roundTexts.length = Math.max(roundTexts.length, finalIndex + 1);
+        roundTexts[finalIndex] = textRaw;
       } else if (
         roundTexts.length === 1
         && typeof textRaw === 'string'
@@ -3365,7 +3568,15 @@ export function addMessage(role, content, modelName, metadata) {
           if (isLastTextRound && metadata?.rag_sources?.length) {
             agentFindingsSuffix += buildRagSourcesBox(metadata.rag_sources);
           }
-          body.innerHTML = agentSourcesPrefix + markdownModule.processWithThinking(markdownModule.squashOutsideCode(txt)) + agentFindingsSuffix;
+          var agentImagesSuffix = '';
+          if (isLastTextRound && metadata?.images?.length) {
+            agentImagesSuffix = buildImageResults(metadata.images);
+          }
+          var agentFollowupsSuffix = '';
+          if (isLastTextRound && metadata?.followups?.length) {
+            agentFollowupsSuffix = buildFollowups(metadata.followups);
+          }
+          body.innerHTML = agentSourcesPrefix + _linkifyEmailReferencesInHtml(markdownModule.processWithThinking(markdownModule.squashOutsideCode(txt))) + agentFindingsSuffix + agentImagesSuffix + agentFollowupsSuffix;
           wrap.appendChild(body);
           wrap.dataset.raw = txt;
           if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
@@ -3396,7 +3607,8 @@ export function addMessage(role, content, modelName, metadata) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
             const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
-            if (_isPrivateBrowserTool(ev.tool)) {
+            const browserVisual = _isPrivateBrowserTool(ev.tool) || (_isWebFetchTool(ev.tool) && !!screenshotSrc);
+            if (browserVisual) {
               const currentBrowserUrl = _privateBrowserUrlFromCommand(ev.command) || lastPrivateBrowserUrl;
               if (currentBrowserUrl) lastPrivateBrowserUrl = currentBrowserUrl;
               outHtml += _browserPreviewHtml(ev.command, screenshotSrc, currentBrowserUrl);
@@ -3426,8 +3638,8 @@ export function addMessage(role, content, modelName, metadata) {
               evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
-            const browserTool = _isPrivateBrowserTool(ev.tool);
-            node.className = 'agent-thread-node' + (ok ? '' : ' error') + (browserTool ? ' open browser-preview-node' : '');
+            const browserTool = _isPrivateBrowserTool(ev.tool) || (_isWebFetchTool(ev.tool) && !!screenshotSrc);
+            node.className = 'agent-thread-node' + (ok ? '' : ' error') + (browserTool || _toolHasEmailResults(ev.tool, ev.command, ev) ? ' open' : '') + (browserTool ? ' browser-preview-node' : '');
             // Hide raw JSON for high-level app tools and diffs; show the same
             // compact command summary that live streaming uses.
             const evToolInfo = _toolDisplayInfo(ev.tool, ev.command, ev);
@@ -3829,6 +4041,14 @@ export function addMessage(role, content, modelName, metadata) {
     }
 
     box.appendChild(wrap);
+
+    if (role === 'assistant' && metadata?.quick_lookup && typeof window.__odysseusHydrateQuickLookup === 'function') {
+      try {
+        window.__odysseusHydrateQuickLookup(wrap, metadata.quick_lookup);
+      } catch (err) {
+        console.warn('Failed to hydrate saved SearXNG preview:', err);
+      }
+    }
 
     // TTS is now part of the msg-actions system
     if (role === 'assistant' && markdownModule.renderMermaid) {

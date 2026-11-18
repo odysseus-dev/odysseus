@@ -5,7 +5,7 @@
 // singleton via /api/assistant/session and hands it to selectSession() so we
 // reuse the full existing chat render path.
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import { selectSession } from './sessions.js';
 import { sortModelIds } from './modelSort.js';
 

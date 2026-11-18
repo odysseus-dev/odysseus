@@ -51,7 +51,7 @@ try { (function () {
   async function _getToast() {
     if (_toastFn) return _toastFn;
     try {
-      const m = await import("/static/js/ui.js?v=20260916largetoolscroll1");
+      const m = await import("/static/js/ui.js?v=20261104ttspause1");
       _toastFn = m.default?.showToast || m.showToast || null;
     } catch (_) { _toastFn = null; }
     return _toastFn;

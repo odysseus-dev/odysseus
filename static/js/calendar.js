@@ -2,7 +2,7 @@
  * Calendar Module — CalDAV-backed month/week/year calendar.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';

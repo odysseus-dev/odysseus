@@ -2,7 +2,7 @@
  * Gallery Editor — canvas-based image editor with layers, brush, eraser, text, crop, inpaint mask.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
 import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';

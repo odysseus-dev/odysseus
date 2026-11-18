@@ -22,7 +22,7 @@ import {
   // Plain specifier (no ?v=) — must match every other cookbook.js importer so the
   // browser loads it once. See cookbook-hwfit.js.
 } from './cookbook.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261104ttspause1';
 
 // Tiny HTML-escape — keeps the file standalone instead of leaning on a
 // shared helper that may not be exported from this module's import surface.

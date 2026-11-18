@@ -3,14 +3,14 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
-import uiModule from './js/ui.js?v=20260916largetoolscroll1';
+import uiModule from './js/ui.js?v=20261104ttspause1';
 import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js?v=20260908personaname1';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260917toolttft1';
+import chatModule from './js/chat.js?v=20261105datefix2';
 import compareModule from './js/compare/index.js?v=20260909mobilepaneaddscroll1';
 import documentModule from './js/document.js?v=20260916docctx2';
 import searchChatModule from './js/search-chat.js';
@@ -22,7 +22,7 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer from './js/chatRenderer.js?v=20261105ttsscroll1';
 // Keep this specifier identical to every consumer (especially chat.js).
 // Different query strings create separate ES-module instances with separate
 // current-session state, so the picker can display one model while chat sends
@@ -32,13 +32,13 @@ import { startBackgroundToolJobs } from './js/backgroundToolJobs.js';
 import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js?v=20260910promptcopy1';
+import galleryModule from './js/gallery.js?v=20261103imagefix1';
 import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=20260829chatstyle12';
 import tasksModule from './js/tasks.js?v=20260914taskmodel1';
 import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
-import adminModule from './js/admin.js?v=20260929csssplit';
-import settingsModule from './js/settings.js?v=20260912writingstyle3';
+import adminModule from './js/admin.js?v=20261104aigallery10';
+import settingsModule from './js/settings.js?v=20261105hinttooltip1';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 import './js/chipScroll.js?v=20260903calendarchips1';
@@ -53,8 +53,8 @@ import themeModule from './js/theme.js?v=20260911organsrain1';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260913researchrailerrors1';
-import ttsModule from './js/tts-ai.js';
+import * as researchPanelModule from './js/research/panel.js?v=20261104researchread1';
+import ttsModule from './js/tts-ai.js?v=20261105ttsscroll1';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';
 import { getSettings } from './js/appConfig.js';
@@ -338,34 +338,74 @@ function initializeEventListeners() {
   }
 
   // Scrolling
+  const _chatHistoryEl = el('chat-history');
+  // Explicit user-intent window for scrollbar drags (which have no wheel or
+  // touch event).  A scroll event caused by collapse/layout/auto-scroll must
+  // never disable follow on its own.
+  let _userScrollIntentUntil = 0;
+  const _noteUserScrollIntent = (ms = 600) => {
+    _userScrollIntentUntil = Math.max(_userScrollIntentUntil, performance.now() + ms);
+  };
+
   el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
-    const box = el('chat-history');
-    // scrollHistory() advances in several animation frames.  Its early frames
-    // are intentionally not at the bottom yet, so treating those events as a
-    // user scroll cancels the animation before a synthesis below a large tool
-    // trace can become visible.  Wheel/touch handlers still disable follow
-    // mode immediately for real user input.
-    if (uiModule.isAutoScrolling?.()) return;
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    uiModule.setAutoScroll(atBottom);
+    const box = _chatHistoryEl;
+    // scrollHistory(), scrollHistoryInstant(), restoreHistoryScroll() and the
+    // thinking-drawer collapse all change scrollTop without asking the user.
+    // Ignore those events so a working agent keeps the viewport pinned.
+    if (uiModule.isAutoScrolling?.() || uiModule.isProgrammaticScroll?.()) return;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    if (atBottom) {
+      // Resume follow once the user returns to the near-bottom zone. Unlike
+      // the old unconditional call, a not-at-bottom event only disables follow
+      // after a real wheel/touch/scrollbar/keyboard gesture above.
+      uiModule.setAutoScroll(atBottom);
+    } else if (performance.now() < _userScrollIntentUntil) {
+      uiModule.setAutoScroll(false);
+    }
   }, 100));
   // Close all footer popups immediately on any scroll
-  el('chat-history').addEventListener('scroll', () => {
+  _chatHistoryEl.addEventListener('scroll', () => {
     document.querySelectorAll('.ctx-popup, .memory-used-detail, .msg-overflow-menu').forEach(p => p.remove());
     document.querySelectorAll('.memory-used-pill').forEach(p => { p._openDetail = null; });
   }, { passive: true });
 
-  el('chat-history').addEventListener('wheel', (e) => {
+  _chatHistoryEl.addEventListener('wheel', (e) => {
     // Only disable auto-scroll when user scrolls UP (deltaY < 0)
-    if (e.deltaY < 0) uiModule.setAutoScroll(false);
-  });
-  let _touchThrottled = false;
-  el('chat-history').addEventListener('touchmove', () => {
-    if (_touchThrottled) return;
-    _touchThrottled = true;
-    uiModule.setAutoScroll(false);
-    requestAnimationFrame(() => { _touchThrottled = false; });
+    if (e.deltaY < 0) {
+      _noteUserScrollIntent(600);
+      uiModule.setAutoScroll(false);
+    }
   }, { passive: true });
+  let _touchStartY = null;
+  _chatHistoryEl.addEventListener('touchstart', (e) => {
+    _touchStartY = e.touches && e.touches[0] ? e.touches[0].clientY : null;
+  }, { passive: true });
+  _chatHistoryEl.addEventListener('touchmove', (e) => {
+    const y = e.touches && e.touches[0] ? e.touches[0].clientY : null;
+    // Finger moves DOWN => content scrolls UP (away from the newest line).
+    if (_touchStartY != null && y != null && y > _touchStartY + 6) {
+      _noteUserScrollIntent(600);
+      uiModule.setAutoScroll(false);
+    }
+    _touchStartY = y;
+  }, { passive: true });
+  _chatHistoryEl.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
+    const rect = _chatHistoryEl.getBoundingClientRect();
+    const scrollbarWidth = _chatHistoryEl.offsetWidth - _chatHistoryEl.clientWidth;
+    if (scrollbarWidth > 0 && e.clientX >= rect.left + _chatHistoryEl.clientWidth) {
+      // A scrollbar drag has no wheel/touch event. Disable follow immediately
+      // so an in-flight smooth pin cannot fight the drag while we wait for the
+      // debounced scroll event.
+      _noteUserScrollIntent(2500);
+      uiModule.setAutoScroll(false);
+    }
+  }, { passive: true });
+  _chatHistoryEl.addEventListener('keydown', (e) => {
+    if (!['ArrowUp', 'PageUp', 'Home', 'ArrowDown', 'PageDown', 'End'].includes(e.key)) return;
+    _noteUserScrollIntent(600);
+    if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) uiModule.setAutoScroll(false);
+  });
 
   // Internal #session-id links from AI search results
   el('chat-history').addEventListener('click', (e) => {
@@ -1811,23 +1851,13 @@ function initializeEventListeners() {
   }
 
   function syncPlanToggle(active) {
-    const btn = el('plan-toggle-btn');
     const chk = el('plan-toggle');
     const status = el('plan-mode-status');
-    const statusToggle = el('plan-mode-status-toggle');
     if (chk) chk.checked = !!active;
     document.body.classList.toggle('plan-mode-active', !!active);
-    if (status) status.hidden = !active;
-    if (statusToggle) {
-      statusToggle.setAttribute('aria-pressed', String(!!active));
-      statusToggle.setAttribute('aria-label', active ? 'Turn off plan mode' : 'Turn on plan mode');
-    }
-    if (btn) {
-      btn.classList.toggle('active', !!active);
-      btn.setAttribute('aria-pressed', String(!!active));
-      btn.title = active
-        ? 'Plan mode on - next message proposes a plan only'
-        : 'Plan mode';
+    if (status) {
+      status.hidden = !active;
+      status.title = active ? 'Plan mode — type /plan off to disable' : '';
     }
   }
 
@@ -1909,57 +1939,9 @@ function initializeEventListeners() {
 	  })();
 
   (function initPlanToggle() {
-    const btn = el('plan-toggle-btn');
     const state = loadToggleState();
     syncPlanToggle(!!state.plan_mode);
     window.__odysseusSetPlanMode = (active) => setPlanMode(active, { silent: true });
-    const statusToggle = el('plan-mode-status-toggle');
-    if (btn) {
-      btn.addEventListener('click', () => {
-        const st = loadToggleState();
-        setPlanMode(!st.plan_mode);
-      });
-    }
-    if (statusToggle) {
-      statusToggle.addEventListener('click', () => setPlanMode(false));
-    }
-    const msgInput = el('message');
-    if (msgInput && !msgInput._odysseusPlanTabToggle) {
-      msgInput._odysseusPlanTabToggle = true;
-      msgInput.addEventListener('keydown', (e) => {
-        if (e.key !== 'Tab' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const st = loadToggleState();
-        setPlanMode(!st.plan_mode);
-      });
-    }
-    const chatBar = document.querySelector('.chat-input-bar');
-    if (chatBar && !chatBar._odysseusPlanSwipeToggle) {
-      chatBar._odysseusPlanSwipeToggle = true;
-      let touchStartX = 0;
-      let touchStartY = 0;
-      let touchStartAt = 0;
-      chatBar.addEventListener('touchstart', (e) => {
-        if (!e.touches || e.touches.length !== 1) return;
-        const t = e.touches[0];
-        touchStartX = t.clientX;
-        touchStartY = t.clientY;
-        touchStartAt = Date.now();
-      }, { passive: true });
-      chatBar.addEventListener('touchend', (e) => {
-        if (!touchStartAt || !e.changedTouches || e.changedTouches.length !== 1) return;
-        if (!window.matchMedia || !window.matchMedia('(max-width: 768px)').matches) return;
-        const t = e.changedTouches[0];
-        const dx = t.clientX - touchStartX;
-        const dy = t.clientY - touchStartY;
-        const dt = Date.now() - touchStartAt;
-        touchStartAt = 0;
-        if (dt > 700 || Math.abs(dx) < 56 || Math.abs(dy) > 28 || Math.abs(dx) < Math.abs(dy) * 2) return;
-        const st = loadToggleState();
-        setPlanMode(!st.plan_mode);
-      }, { passive: true });
-    }
   })();
 
   // ── Tool splash explainer messages (shown first 2 times per tool) ──
@@ -2460,18 +2442,24 @@ function initializeEventListeners() {
 	    const textarea = el('message');
 	    const inputBottom = document.querySelector('.chat-input-bottom');
 	    const _isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+	    const _searchModeExitHint = _isMobile ? 'Swipe to swap mode' : 'Tab to swap mode';
 	    let _placeholderHintOn = false;
 
 	    function setComposerPlaceholder(width) {
 	      if (!textarea) return;
+	      if (document.body.classList.contains('search-mode-active')) {
+	        textarea.setAttribute('placeholder', _placeholderHintOn ? _searchModeExitHint : 'Search with SearXNG...');
+	        return;
+	      }
 	      if (_isMobile && _placeholderHintOn) {
-	        textarea.setAttribute('placeholder', 'Swipe to toggle plan');
+	        textarea.setAttribute('placeholder', 'Swipe for search mode');
 	        return;
 	      }
 	      textarea.setAttribute('placeholder', width < PLACEHOLDER_COMPACT_WIDTH ? 'Message...' : 'Message Odysseus...');
 	    }
+	    window._syncComposerPlaceholder = () => setComposerPlaceholder(inputTop.clientWidth || window.innerWidth || 0);
 
-	    if (_isMobile && textarea && !textarea._odysseusPlanPlaceholderHint) {
+	    if (textarea && !textarea._odysseusPlanPlaceholderHint) {
 	      textarea._odysseusPlanPlaceholderHint = true;
 	      setInterval(() => {
 	        _placeholderHintOn = !_placeholderHintOn;
@@ -3435,6 +3423,9 @@ function initializeEventListeners() {
         if (input) { try { input.focus(); } catch (_) {} }
       }
   }
+  // Reviewed email flows (agent unsubscribe) need a fresh chat and agent
+  // authority before they submit a prompt programmatically.
+  window.__odysseusStartNewChat = (options = {}) => _handleNewChatAction(options);
 
   // New session button on icon rail
   const railNewSession = el('rail-new-session');
