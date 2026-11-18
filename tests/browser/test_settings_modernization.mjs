@@ -146,7 +146,9 @@ function seedEndpoints(instance) {
     INSERT INTO model_endpoints (id, name, base_url, is_enabled, cached_models, model_type, endpoint_kind, created_at, updated_at)
     VALUES ('ep-beta', 'Beta Local', 'http://127.0.0.1:9/v1', 1, '["beta-chat"]', 'llm', 'auto', datetime('now'), datetime('now'));
   `;
-  execFileSync('sqlite3', [instance.dbPath], { input: sql });
+  // Python's sqlite3 module, not the sqlite3 command-line tool, which CI does
+  // not guarantee.
+  execFileSync(resolvePython(), ['-c', 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.executescript(sys.stdin.read()); c.commit()', instance.dbPath], { input: sql });
 }
 
 async function apiLogin(instance, user) {
