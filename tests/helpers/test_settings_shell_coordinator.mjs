@@ -32,6 +32,37 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/oauthReturn.js'),
   path.join(JS, 'searchProviderIcons.js'),
   path.join(JS, 'foregroundFallbackSettings.js'),
+  path.join(JS, 'authStatus.js'),
+  path.join(JS, 'settings/scope.js'),
+  path.join(JS, 'settings/modelDefaults.js'),
+  path.join(JS, 'settings/html.js'),
+  path.join(JS, 'settings/shortcuts.js'),
+  path.join(JS, 'settings/searchProviders.js'),
+  path.join(JS, 'settings/appearance.js'),
+  path.join(JS, 'settings/account.js'),
+  path.join(JS, 'settings/apiTokens.js'),
+  path.join(JS, 'settings/email.js'),
+  path.join(JS, 'settings/reminders.js'),
+  path.join(JS, 'settings/integrations/events.js'),
+  path.join(JS, 'settings/integrations/legacy.js'),
+  path.join(JS, 'settings/integrations/unified.js'),
+  path.join(JS, 'settings/integrations/forms/agent.js'),
+  path.join(JS, 'settings/integrations/forms/api.js'),
+  path.join(JS, 'settings/integrations/forms/caldav.js'),
+  path.join(JS, 'settings/integrations/forms/carddav.js'),
+  path.join(JS, 'settings/integrations/forms/email.js'),
+  path.join(JS, 'settings/integrations/forms/mcp.js'),
+  path.join(JS, 'settings/integrations/forms/vault.js'),
+  path.join(JS, 'settings/access.js'),
+  path.join(JS, 'settings/defaultChat.js'),
+  path.join(JS, 'settings/endpointCatalog.js'),
+  path.join(JS, 'settings/fallbackWidget.js'),
+  path.join(JS, 'settings/modelDefaultCards.js'),
+  path.join(JS, 'settings/modelSelects.js'),
+  path.join(JS, 'settings/researchModel.js'),
+  path.join(JS, 'settings/teacherModel.js'),
+  path.join(JS, 'settings/utilityModel.js'),
+  path.join(JS, 'settings/visionModel.js'),
 ]);
 
 const realModulesLoaded = new Set();
@@ -1016,7 +1047,9 @@ for (const required of REAL_MODULES) {
 }
 
 
-// First open drives initAll() and therefore the real shell bindings.
+// First open drives initAll() and therefore the real shell bindings. The
+// stubbed /api/auth/status never answers, so this caller's access is unknown:
+// the admin-only Services panel is not activated for them.
 settings.open('services');
 
 assert(
@@ -1025,8 +1058,9 @@ assert(
 );
 
 assert(
-  fixture.services.button.classList.contains('active'),
-  'first open("services") did not activate Services',
+  !fixture.services.button.classList.contains('active')
+    && fixture.services.panel.classList.contains('hidden'),
+  'open("services") activated an admin-only panel while access was unknown',
 );
 
 
@@ -1198,6 +1232,12 @@ settings.open('services');
 assert(
   fixture.adminOnly.style.display === '',
   'open() did not reveal .admin-only for an admin',
+);
+
+assert(
+  fixture.services.button.classList.contains('active')
+    && !fixture.services.panel.classList.contains('hidden'),
+  'open("services") did not activate Services for an admin',
 );
 
 

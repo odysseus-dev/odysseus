@@ -32,12 +32,11 @@ def _fetch_handler() -> str:
     return SW[start:]
 
 
-def _lazy_editor_graph() -> set[str]:
-    panels = (JS_DIR / "panels.js").read_text(encoding="utf-8")
-    entry = re.search(r"import\(['\"]\./(galleryEditor\.js(?:\?[^'\"]+)?)['\"]\)", panels)
-    assert entry, "panels.js must lazily import galleryEditor.js"
+def _static_import_graph(entry: str) -> set[str]:
+    """Modules reachable from ``entry`` through static imports, as the exact
+    ``path?query`` identity each importer requests (relative to ``static/js``)."""
     seen: set[str] = set()
-    stack = [entry.group(1)]
+    stack = [entry]
     while stack:
         current = stack.pop()
         if current in seen:
@@ -53,6 +52,19 @@ def _lazy_editor_graph() -> set[str]:
     return seen
 
 
+def _lazy_editor_graph() -> set[str]:
+    panels = (JS_DIR / "panels.js").read_text(encoding="utf-8")
+    entry = re.search(r"import\(['\"]\./(galleryEditor\.js(?:\?[^'\"]+)?)['\"]\)", panels)
+    assert entry, "panels.js must lazily import galleryEditor.js"
+    return _static_import_graph(entry.group(1))
+
+
+def _settings_entry() -> str:
+    entries = [url for url in _list("PRECACHE") if url.startswith("/static/js/settings.js?")]
+    assert len(entries) == 1, entries
+    return entries[0].removeprefix("/static/js/")
+
+
 def test_every_module_in_the_lazy_editor_graph_is_precached_with_its_exact_url():
     graph = _lazy_editor_graph()
     assert len(graph) > 100, len(graph)
@@ -62,6 +74,29 @@ def test_every_module_in_the_lazy_editor_graph_is_precached_with_its_exact_url()
         "the editor imports these modules, but the /static/-scoped worker never "
         f"sees the SPA page load that would cache them: {missing}"
     )
+
+
+def test_every_module_in_the_settings_static_graph_is_precached_with_its_exact_url():
+    """Static URL coverage only.
+
+    A module graph fails to load when any member is missing, so the whole
+    static import graph of settings.js needs an entry, not just its newest
+    modules. This does not prove the worker installs or that Settings opens
+    offline; tests/browser/test_settings_offline_upgrade.mjs does.
+    """
+    graph = _static_import_graph(_settings_entry())
+    assert len(graph) > 60, len(graph)
+    assert any(module.startswith("settings/") for module in graph)
+    precached = _list("PRECACHE") | _list("PANEL_PRECACHE")
+    missing = sorted(f"/static/js/{module}" for module in graph if f"/static/js/{module}" not in precached)
+    assert not missing, f"offline Settings needs these modules in the precache lists: {missing}"
+
+
+def test_no_precache_url_is_listed_twice():
+    entries = re.findall(r"^\s+'(/[^']+)',$", SW, re.M)
+    duplicates = sorted({url for url in entries if entries.count(url) > 1})
+    # The editor toolbar module is already listed in both groups by design.
+    assert duplicates == ["/static/js/editor/build/toolbar.js?v=20261010brushpresets"], duplicates
 
 
 def test_worker_keeps_the_static_scope():

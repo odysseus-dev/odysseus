@@ -244,10 +244,12 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
 
         # ── Preferences ──
         if "preferences" in body and isinstance(body["preferences"], dict):
-            from routes.prefs_routes import _load_for_user, _save_for_user
-            current = _load_for_user(user)
-            current.update(body["preferences"])
-            _save_for_user(user, current)
+            from routes.prefs_routes import _update_off_loop
+            # Replace only the keys the backup contains, as one locked update
+            # on a worker thread. Copying the whole record out first and
+            # writing it back would revert a Settings save made in between.
+            # As everywhere in this store, a null value removes the key.
+            await _update_off_loop(user, body["preferences"])
             imported.append("preferences")
 
         if not imported:

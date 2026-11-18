@@ -9,7 +9,7 @@ import { modelCaps } from '../editor/ai-models.js';
 import { sortModelIds } from '../modelSort.js';
 let preferencesListener = null;
 
-export async function initImageSettings() {
+export async function initImageSettings({ restricted = () => false } = {}) {
   const modelSel = el('set-imgModelSelect');
   const editModelSel = el('set-imgEditModelSelect');
   const qualSel = el('set-imgQualitySelect');
@@ -17,8 +17,17 @@ export async function initImageSettings() {
   const enabledToggle = el('set-imgEnabledToggle');
   const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
   try {
-    const endpointsRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    const endpoints = await endpointsRes.json();
+    // The endpoint pool is admin-only; a restricted caller's card is locked.
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    let endpoints = [];
+    if (!isRestricted) {
+      const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+      if (res.ok) {
+        endpoints = await res.json();
+      } else if (res.status !== 401 && res.status !== 403) {
+        console.warn('[settings] unexpected response from /api/model-endpoints: HTTP ' + res.status);
+      }
+    }
     const imageModels = new Set();
     const editModels = new Set();
     (Array.isArray(endpoints) ? endpoints : []).forEach(endpoint => {
@@ -66,7 +75,7 @@ export async function initImageSettings() {
   syncImgDisabled();
 
   function checkIsAdmin() {
-    return typeof window !== 'undefined' && !!window._isAdmin;
+    return typeof window !== 'undefined' && !!(window._canManageSettings ?? window._isAdmin);
   }
 
   function applyAdminToggleState() {

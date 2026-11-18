@@ -17,7 +17,14 @@ from tests.helpers.stylesheets import app_css
 
 
 _REPO = Path(__file__).resolve().parents[1]
-_SETTINGS_SOURCE = (_REPO / "static" / "js" / "settings.js").read_text(
+_SETTINGS_DIR = _REPO / "static" / "js" / "settings"
+# The Default Chat card, the shared fallback widget and the endpoint catalog
+# each own part of what these tests inspect.
+_DEFAULT_CHAT_SOURCE = (_SETTINGS_DIR / "defaultChat.js").read_text(encoding="utf-8")
+_FALLBACK_WIDGET_SOURCE = (_SETTINGS_DIR / "fallbackWidget.js").read_text(
+    encoding="utf-8"
+)
+_ENDPOINT_CATALOG_SOURCE = (_SETTINGS_DIR / "endpointCatalog.js").read_text(
     encoding="utf-8"
 )
 _STATE_MODULE = (
@@ -58,12 +65,10 @@ def test_default_chat_card_exposes_strict_off_fallback_controls():
 
 
 def test_default_chat_controls_use_only_owner_scoped_new_preferences():
-    start = _SETTINGS_SOURCE.index("async function initDefaultChat()")
-    end = _SETTINGS_SOURCE.index("/* ── Utility Model ── */", start)
-    source = _SETTINGS_SOURCE[start:end]
+    source = _DEFAULT_CHAT_SOURCE
 
     assert "fetch('/api/prefs'" in source
-    assert "/api/models?background=false&foreground_fallback=true" in _SETTINGS_SOURCE
+    assert "/api/models?background=false&foreground_fallback=true" in _ENDPOINT_CATALOG_SOURCE
     assert "endpoints: function() { return _foregroundFallbackEndpoints; }" in source
     assert "saveForegroundPref('foreground_fallback_enabled'" in source
     assert "saveForegroundPref('foreground_model_fallbacks'" in source
@@ -77,7 +82,7 @@ def test_default_chat_controls_use_only_owner_scoped_new_preferences():
     assert "return null;" in source
     assert "fallbackRetry.addEventListener('click'" in source
     assert "document.activeElement === fallbackRetry" in source
-    assert "_registerForegroundFallbackEndpointRefresh(function(endpoints, error)" in source
+    assert "catalog.registerForegroundFallbackEndpointRefresh(function(endpoints, error)" in source
     assert "fallbackCatalogLoaded = false" in source
     assert "Failed to refresh fallback model choices" in source
     assert "function syncFallbackEditorReadiness()" in source
@@ -95,23 +100,31 @@ def test_default_chat_controls_use_only_owner_scoped_new_preferences():
     assert "fallbackPreferenceWriter.reset();" in source
     assert "createForegroundPreferenceSaveQueue(" in source
     assert "fallbackPrefsLoaded = false;" in source
-    assert "function selectableEps()" in _SETTINGS_SOURCE
-    assert "function firstUnusedCandidate()" in _SETTINGS_SOURCE
-    assert "nextForegroundFallbackCandidate(" in _SETTINGS_SOURCE
-    assert "summarizeForegroundFallbackCandidateEligibility(" in _SETTINGS_SOURCE
+    assert "function selectableEps()" in _FALLBACK_WIDGET_SOURCE
+    assert "function firstUnusedCandidate()" in _FALLBACK_WIDGET_SOURCE
+    assert "nextForegroundFallbackCandidate(" in _FALLBACK_WIDGET_SOURCE
+    assert "summarizeForegroundFallbackCandidateEligibility(" in _DEFAULT_CHAT_SOURCE
     assert "none is currently eligible; the selected model remains strict" in source
     assert "eligibility cannot be verified from the current model catalog" in source
-    assert "captureFallbackWidgetFocus(fbContainer, document.activeElement)" in _SETTINGS_SOURCE
-    assert "restoreFallbackWidgetFocus(fbContainer, addBtn, focusState)" in _SETTINGS_SOURCE
-    assert "'Fallback ' + (idx + 1) + ' endpoint'" in _SETTINGS_SOURCE
-    assert "'Fallback ' + (idx + 1) + ' model'" in _SETTINGS_SOURCE
-    assert "'Remove fallback ' + (idx + 1)" in _SETTINGS_SOURCE
-    assert "' to position ' + (destination + 1)" in _SETTINGS_SOURCE
-    assert "move.dataset.moveOffset = String(action.offset)" in _SETTINGS_SOURCE
-    assert "if (focusTarget) focusTarget.focus()" in _SETTINGS_SOURCE
+    assert "captureFallbackWidgetFocus(fbContainer, document.activeElement)" in _FALLBACK_WIDGET_SOURCE
+    assert "restoreFallbackWidgetFocus(fbContainer, addBtn, focusState)" in _FALLBACK_WIDGET_SOURCE
+    assert "'Fallback ' + (idx + 1) + ' endpoint'" in _FALLBACK_WIDGET_SOURCE
+    assert "'Fallback ' + (idx + 1) + ' model'" in _FALLBACK_WIDGET_SOURCE
+    assert "'Remove fallback ' + (idx + 1)" in _FALLBACK_WIDGET_SOURCE
+    assert "' to position ' + (destination + 1)" in _FALLBACK_WIDGET_SOURCE
+    assert "move.dataset.moveOffset = String(action.offset)" in _FALLBACK_WIDGET_SOURCE
+    assert "if (focusTarget) focusTarget.focus()" in _FALLBACK_WIDGET_SOURCE
     assert "onReordered: function(event)" in source
     assert "default_model_fallbacks" not in source
-    assert "/api/auth/settings" in source  # Existing default endpoint/model only.
+    # The default endpoint/model come from the model-defaults store (per
+    # account for signed-in users, server-wide for admins); the fallback
+    # policy never does.
+    assert "load: defaultSource.load" in source
+    assert "defaultSource.store().save({" in source
+    model_defaults_source = (
+        _REPO / "static" / "js" / "settings" / "modelDefaults.js"
+    ).read_text(encoding="utf-8")
+    assert "foreground_" not in model_defaults_source
 
 
 def test_service_worker_precaches_new_module_and_bumps_cache():

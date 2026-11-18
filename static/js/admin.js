@@ -4247,9 +4247,11 @@ function initLogsView() {
     });
   }
 
-  // Initial fetch on view loading
+  // Initial fetch on view loading. The log routes are admin-only, and this
+  // runs for anyone who reaches an admin-managed panel (Integrations), so a
+  // caller who may not manage settings loads nothing here.
   setSystemLogTab('terminal');
-  loadLogs(false);
+  if (_canLoadAdminData()) loadLogs(false);
 }
 
 /* ═══════════════════════════════════════════
@@ -4269,7 +4271,20 @@ function initAll() {
   refreshAll();
 }
 
+let _adminDataLoaded = false;
+
+// Whether the caller may read the admin-only routes. Unknown counts as no, so
+// nothing restricted is requested before /api/auth/status has answered.
+function _canLoadAdminData() {
+  return !!(window._canManageSettings ?? window._isAdmin);
+}
+
 function refreshAll() {
+  // Everything below reads admin-only routes. Signed-in users still reach
+  // admin-managed panels such as Integrations, whose own setup runs in
+  // initAll(); loading admin data for them only produces refused requests.
+  if (!_canLoadAdminData()) return;
+  _adminDataLoaded = true;
   loadUsers();
   loadEndpoints();
   loadBuiltinTools();
@@ -4299,5 +4314,5 @@ export function close() {
 
 export { shouldDisplayEndpointBaseUrl, isFeatherlessEndpoint, endpointDetailHtml, renderFeatherlessPanel };
 
-const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
+const adminModule = { open, close, _initData, get _initialized() { return initialized && (!_canLoadAdminData() || _adminDataLoaded); } };
 export default adminModule;

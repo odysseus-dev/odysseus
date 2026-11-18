@@ -142,7 +142,7 @@ async function save() {
 }
 
 export async function initModelCustomization() {
-  if (!byId('adm-modelCustomCard') || !window._isAdmin) return;
+  if (!byId('adm-modelCustomCard') || !(window._canManageSettings ?? window._isAdmin)) return;
   if (!wired) {
     wired = true;
     byId('adm-mcEndpoint').addEventListener('change', renderEndpoint);
