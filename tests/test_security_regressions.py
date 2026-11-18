@@ -262,7 +262,8 @@ def test_outlook_smtp_basic_auth_error_is_actionable():
     )
 
     assert "Microsoft no longer accepts normal mailbox passwords" in msg
-    assert "OAuth/Graph" in msg
+    # Points at the supported Microsoft OAuth sign-in instead of a dead end.
+    assert "Sign in with Microsoft" in msg
     assert "535" not in msg
 
 

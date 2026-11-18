@@ -6,6 +6,7 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parent.parent
 _INDEX = (_REPO / "static" / "index.html").read_text(encoding="utf-8")
 _ADMIN = (_REPO / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+_PANEL = (_REPO / "static" / "js" / "deviceAuthPanel.js").read_text(encoding="utf-8")
 
 
 def _between(src: str, start: str, end: str) -> str:
@@ -66,8 +67,12 @@ def test_device_auth_keeps_manual_auth_button_without_auto_opening_tab():
 
     assert "Authorize with OpenAI" in panel_block
     assert "Authorize on GitHub" in panel_block
-    assert "adm-copilot-panel" in panel_block
-    assert "adm-device-auth-copy" in panel_block
+    # The markup itself lives in the shared panel module (also used by the
+    # Microsoft mail sign-in in settings.js).
+    assert "renderDeviceAuthWaitPanel(status," in panel_block
+    assert "adm-copilot-panel" in _PANEL
+    assert "adm-device-auth-copy" in _PANEL
+    assert "document.execCommand('copy')" in _PANEL
     assert "_renderDeviceAuthWaitPanel(status, providerKey, start, authUrl)" in auth_block
     assert "openWindow: () => {}" in auth_block
     assert "A new tab opened" not in auth_block

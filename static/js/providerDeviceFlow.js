@@ -5,14 +5,27 @@ export const PROVIDER_DEVICE_FLOWS = {
     label: 'GitHub Copilot',
     startUrl: '/api/copilot/device/start',
     pollUrl: '/api/copilot/device/poll',
+    cancelUrl: '/api/copilot/device/cancel',
     authUrl(start) {
       return start?.verification_uri_complete || start?.verification_uri || '';
+    },
+  },
+  // Outlook / Office 365 mail. Microsoft returns only the bare
+  // verification_uri (no code-prefilled link); the panel shows the code.
+  'microsoft-mail': {
+    label: 'Microsoft',
+    startUrl: '/api/email/oauth/microsoft/device/start',
+    pollUrl: '/api/email/oauth/microsoft/device/poll',
+    cancelUrl: '/api/email/oauth/microsoft/device/cancel',
+    authUrl(start) {
+      return start?.verification_uri_complete || start?.verification_uri || 'https://microsoft.com/devicelogin';
     },
   },
   'chatgpt-subscription': {
     label: 'ChatGPT Subscription',
     startUrl: '/api/chatgpt-subscription/device/start',
     pollUrl: '/api/chatgpt-subscription/device/poll',
+    cancelUrl: '/api/chatgpt-subscription/device/cancel',
     authUrl(start) {
       return start?.verification_uri || '';
     },
@@ -62,8 +75,21 @@ async function _fetchJson(fetchImpl, url, options, fallback) {
   return payload;
 }
 
-function _defaultSleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function _defaultSleep(ms, signal) {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    let timer;
+    const onAbort = () => {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    if (signal) signal.addEventListener('abort', onAbort);
+  });
 }
 
 async function _callCallback(fn, payload) {
@@ -77,20 +103,51 @@ export async function runProviderDeviceFlow(provider, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch?.bind(globalThis);
   if (!fetchImpl) throw new Error('Fetch API is unavailable');
 
+  const signal = options.signal;
+  const isCancelled = () => Boolean(signal?.aborted || (typeof options.isCancelled === 'function' && options.isCancelled()));
+
+  async function _notifyCancel(pollId) {
+    if (!pollId || !cfg.cancelUrl) return;
+    try {
+      const fd = _formData();
+      fd.append('poll_id', pollId);
+      await fetchImpl(cfg.cancelUrl, {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+      });
+    } catch (_) {
+      // Best effort cancellation
+    }
+  }
+
+  if (isCancelled()) {
+    return { status: 'cancelled' };
+  }
+
   const openWindow = options.openWindow || ((url) => {
     if (globalThis.window && typeof globalThis.window.open === 'function') {
       globalThis.window.open(url, '_blank', 'noopener');
     }
   });
-  const sleep = options.sleep || _defaultSleep;
+  const sleep = options.sleep || ((ms) => _defaultSleep(ms, signal));
   const now = options.now || (() => Date.now());
   const formData = options.formData || _formData();
 
-  const start = await _fetchJson(fetchImpl, cfg.startUrl, {
-    method: 'POST',
-    body: formData,
-    credentials: 'same-origin',
-  }, `Failed to start ${cfg.label} sign-in`);
+  let start;
+  try {
+    start = await _fetchJson(fetchImpl, cfg.startUrl, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin',
+      signal,
+    }, `Failed to start ${cfg.label} sign-in`);
+  } catch (err) {
+    if (isCancelled() || err?.name === 'AbortError') {
+      return { status: 'cancelled' };
+    }
+    throw err;
+  }
 
   if (!start.poll_id) throw new Error(`${cfg.label} sign-in did not return a poll id`);
   const authUrl = cfg.authUrl(start);
@@ -101,18 +158,44 @@ export async function runProviderDeviceFlow(provider, options = {}) {
   let stepMs = Math.max(Number(start.interval || 5), 2) * 1000;
 
   while (true) {
+    if (isCancelled()) {
+      await _notifyCancel(start.poll_id);
+      return { status: 'cancelled' };
+    }
     if (now() > deadline) return { status: 'expired' };
     await _callCallback(options.onWaiting, { provider, config: cfg, start, authUrl });
+
     await sleep(stepMs);
+
+    if (isCancelled()) {
+      await _notifyCancel(start.poll_id);
+      return { status: 'cancelled' };
+    }
     if (now() > deadline) return { status: 'expired' };
 
     const fd = _formData();
     fd.append('poll_id', start.poll_id);
-    const poll = await _fetchJson(fetchImpl, cfg.pollUrl, {
-      method: 'POST',
-      body: fd,
-      credentials: 'same-origin',
-    }, `${cfg.label} sign-in poll failed`);
+    let poll;
+    try {
+      poll = await _fetchJson(fetchImpl, cfg.pollUrl, {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+        signal,
+      }, `${cfg.label} sign-in poll failed`);
+    } catch (e) {
+      if (isCancelled() || e?.name === 'AbortError') {
+        await _notifyCancel(start.poll_id);
+        return { status: 'cancelled' };
+      }
+      throw e;
+    }
+
+    if (isCancelled()) {
+      await _notifyCancel(start.poll_id);
+      return { status: 'cancelled' };
+    }
+
     await _callCallback(options.onPoll, { provider, config: cfg, start, poll });
 
     if (poll.status === 'authorized') {
