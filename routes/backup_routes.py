@@ -106,7 +106,9 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         if isinstance(body.get("presets"), dict):
             restored_presets = dict(preset_manager.get_all())
             for key, value in body["presets"].items():
-                if key in ("user_templates", "group_presets") and isinstance(value, list):
+                if key in ("user_templates", "group_presets"):
+                    if not isinstance(value, list):
+                        raise HTTPException(400, f"Invalid {key}: expected a list")
                     try:
                         restored_presets[key] = _merge_by_id(restored_presets.get(key), value)
                     except ValueError as exc:

@@ -93,8 +93,11 @@ def test_restore_still_overwrites_the_custom_preset(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("key", ["user_templates", "group_presets"])
-@pytest.mark.parametrize("bad_id", [["bad"], {"bad": "id"}, 42, True, None, ""])
-def test_invalid_id_is_rejected_before_any_import(monkeypatch, tmp_path, key, bad_id):
+@pytest.mark.parametrize("bad_value", [
+    {}, None, "invalid",
+    *([{"id": bad_id, "name": "Malformed"}] for bad_id in (["bad"], {"bad": "id"}, 42, True, None, "")),
+])
+def test_invalid_preset_list_is_rejected_before_any_import(monkeypatch, tmp_path, key, bad_value):
     presets = PresetManager(str(tmp_path))
     presets.save_user_template(_template("keep", "Keep"))
     before = (tmp_path / "presets.json").read_bytes()
@@ -108,7 +111,7 @@ def test_invalid_id_is_rejected_before_any_import(monkeypatch, tmp_path, key, ba
         response = client.post("/api/import", json={
             "memories": [{"text": "Must not be imported"}],
             "skills": [{"name": "must-not-be-imported"}],
-            "presets": {key: [{"id": bad_id, "name": "Malformed"}]},
+            "presets": {key: bad_value},
         })
 
     assert response.status_code == 400
