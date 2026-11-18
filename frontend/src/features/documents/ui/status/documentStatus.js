@@ -104,7 +104,7 @@ function _documentStatsSource() {
     if (rich && rich.style.display !== 'none') {
       const fullText = _normalizeRichStatsText(rich.innerText || rich.textContent || '');
       const selection = window.getSelection?.();
-      if (selection && !selection.isCollapsed && selection.rangeCount) {
+      if (!isMarkdownVisualModeActive() && selection && !selection.isCollapsed && selection.rangeCount) {
         const range = selection.getRangeAt(0);
         if (rich.contains(range.commonAncestorContainer)) {
           return { text: _normalizeRichStatsText(selection.toString()), selected: true };

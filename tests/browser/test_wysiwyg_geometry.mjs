@@ -69,11 +69,16 @@ try {
       await page.mouse.down();
       await page.mouse.move(rangeRect.end.x, rangeRect.end.y, { steps: 8 });
       await page.mouse.up();
-      await page.waitForSelector('#doc-rich-selection-toolbar', { state: 'visible' });
+      await page.waitForTimeout(60);
+      assert.equal(await page.locator('#doc-rich-selection-toolbar').count(), 0,
+        `${profile.name}: floating toolbar must not appear in Markdown visual mode`);
+      assert.equal(await page.locator('#doc-selection-badge').count(), 0,
+        `${profile.name}: selection badge must not appear during ordinary Markdown selection`);
 
       const snapshot = async label => page.evaluate(label => {
         const editor = document.getElementById('doc-email-richbody');
         const toolbar = document.getElementById('doc-rich-selection-toolbar');
+        const badge = document.getElementById('doc-selection-badge');
         const rect = toolbar?.getBoundingClientRect();
         return {
           label,
@@ -82,7 +87,8 @@ try {
           devicePixelRatio,
           visualViewport: { left: visualViewport.offsetLeft, top: visualViewport.offsetTop,
             width: visualViewport.width, height: visualViewport.height, scale: visualViewport.scale },
-          toolbar: rect && { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height },
+          hasFloatingToolbar: Boolean(toolbar && toolbar.offsetParent !== null),
+          hasSelectionBadge: Boolean(badge && badge.style.display !== 'none'),
           editor: (() => { const r = editor.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, scrollTop: editor.scrollTop }; })(),
           pageScroll: { x: scrollX, y: scrollY },
           focus: document.activeElement?.id || document.activeElement?.tagName || null,
@@ -92,38 +98,37 @@ try {
       }, label);
       const before = await snapshot('drag-selection-before');
       assert.equal(before.selectedText, phrase, `${profile.name}: actual drag should select the target text`);
-      const assertInsideViewport = state => {
-        assert.ok(state.toolbar.left >= 0 && state.toolbar.right <= state.viewportCss.width,
-          `${profile.name}: horizontal bounds ${JSON.stringify(state)}`);
-        assert.ok(state.toolbar.top >= 0 && state.toolbar.bottom <= state.viewportCss.height,
-          `${profile.name}: vertical bounds ${JSON.stringify(state)}`);
+      const assertVisualStability = state => {
+        assert.equal(state.hasFloatingToolbar, false, `${profile.name}: floating toolbar should remain absent`);
+        assert.equal(state.hasSelectionBadge, false, `${profile.name}: selection badge should remain absent`);
+        assert.ok(state.editor.width > 0 && state.editor.height > 0, `${profile.name}: editor geometry should remain intact`);
       };
-      assertInsideViewport(before);
+      assertVisualStability(before);
 
       // Resize and scroll the actual editor, verifying a selected range stays
-      // selected and the contextual controls track the changed geometry.
+      // selected and the document geometry remains stable without floating jitter.
       const resized = { width: profile.viewport.width - 40, height: profile.viewport.height - 60 };
       await page.setViewportSize(resized);
       await page.waitForTimeout(80);
       const afterResize = await snapshot('after-resize');
       assert.equal(afterResize.selectedText, phrase, `${profile.name}: resize must preserve selection`);
-      assertInsideViewport(afterResize);
+      assertVisualStability(afterResize);
 
       await rich.evaluate(el => { el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + 120); });
       await page.waitForTimeout(80);
       const afterScroll = await snapshot('after-editor-scroll');
       assert.equal(afterScroll.selectedText, phrase, `${profile.name}: scroll must preserve selection`);
-      assertInsideViewport(afterScroll);
+      assertVisualStability(afterScroll);
 
       // Keyboard selection through real input events and formatting action
-      // verify the toolbar does not steal/collapse the live editor range.
+      // via the static toolbar verify formatting works without stealing/collapsing the range.
       await target.click();
       await page.keyboard.press('Home');
       for (let i = 0; i < 8; i++) await page.keyboard.press('Shift+ArrowRight');
       await page.waitForTimeout(50);
       const keyboardSelection = await snapshot('shift-arrow-selection');
       assert.ok(keyboardSelection.selectedText?.length > 0, `${profile.name}: Shift+Arrow should create selection`);
-      await page.getByRole('button', { name: 'Bold' }).click();
+      await page.locator('#doc-md-toolbar [data-md="bold"]').click();
       const afterBold = await snapshot('after-bold');
       assert.equal(afterBold.text, before.text, `${profile.name}: formatting must not change visible text`);
       assert.equal(afterBold.selectedText, keyboardSelection.selectedText);
@@ -159,7 +164,9 @@ try {
         assert.equal(await page.locator('#doc-rich-selection-toolbar').count(), 0);
         await page.mouse.move(acrossParagraphs.end.x, acrossParagraphs.end.y, { steps: 8 });
         await page.mouse.up();
-        await page.waitForSelector('#doc-rich-selection-toolbar', { state: 'visible' });
+        await page.waitForTimeout(60);
+        assert.equal(await page.locator('#doc-rich-selection-toolbar').count(), 0);
+        assert.equal(await page.locator('#doc-selection-badge').count(), 0);
         const multiline = await snapshot('multiple-paragraphs');
         assert.ok(multiline.selectedText.includes('Paragraph 1:') && multiline.selectedText.includes('Paragraph 2:'));
         assert.deepEqual(multiline.editor, beforeMulti.editor);
@@ -168,7 +175,9 @@ try {
         profileResult.multiline = multiline;
         await page.screenshot({ path: path.join(resultsDir, 'wysiwyg-geometry-multiple-paragraphs.png') });
         await first.dblclick({ position: { x: 30, y: 10 } });
-        await page.waitForSelector('#doc-rich-selection-toolbar', { state: 'visible' });
+        await page.waitForTimeout(60);
+        assert.equal(await page.locator('#doc-rich-selection-toolbar').count(), 0);
+        assert.equal(await page.locator('#doc-selection-badge').count(), 0);
         const doubleClick = await snapshot('double-click');
         assert.ok(doubleClick.selectedText?.length > 0);
         profileResult.doubleClick = doubleClick;
@@ -178,8 +187,7 @@ try {
           await page.waitForTimeout(80);
           const zoom = await snapshot('viewport-page-scale');
           assert.equal(zoom.selectedText, doubleClick.selectedText);
-          assert.ok(zoom.toolbar?.right <= zoom.visualViewport.left + zoom.visualViewport.width);
-          assert.ok(zoom.toolbar?.bottom <= zoom.visualViewport.top + zoom.visualViewport.height);
+          assert.equal(zoom.hasFloatingToolbar, false);
           profileResult.zoom.push(zoom);
         }
         await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });

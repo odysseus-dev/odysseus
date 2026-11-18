@@ -130,7 +130,7 @@ function _ensureRichSelectionToolbar(rich) {
 
 function _renderRichSelectionToolbar(rich) {
     _richSelectionToolbarFrame = 0;
-    if (!rich?.isConnected || rich.style.display === 'none') {
+    if (!rich?.isConnected || rich.style.display === 'none' || rich.classList.contains('markdown-visual-mode')) {
       _hideRichSelectionToolbar();
       return;
     }
@@ -197,6 +197,8 @@ function _renderRichSelectionToolbar(rich) {
     }
     toolbar.style.zIndex = String(topPortalZ());
     const toolbarRect = toolbar.getBoundingClientRect();
+    const richRect = rich.getBoundingClientRect();
+    const isMobileViewport = viewportWidth <= 768;
     // The toolbar is portalled to body and positioned in viewport coordinates.
     // Keep it within the usable viewport rather than constraining it to a
     // narrow editor column or scroll container.
@@ -205,7 +207,9 @@ function _renderRichSelectionToolbar(rich) {
     let safeTop = viewportTop + 8;
     const footer = document.getElementById('doc-actions-footer');
     const footerTop = footer?.getBoundingClientRect().top || viewportBottom;
-    const safeBottom = Math.min(viewportBottom, footerTop) - 8;
+    const safeBottom = isMobileViewport
+      ? Math.min(viewportBottom - 8, richRect.bottom - 4)
+      : Math.min(viewportBottom, footerTop) - 8;
 
     // Toolbars and find controls sit immediately above the editable surface.
     // Keep the contextual formatter below any visible control that overlaps it.
@@ -228,7 +232,6 @@ function _renderRichSelectionToolbar(rich) {
     const maxTop = Math.max(safeTop, safeBottom - toolbarRect.height);
     const above = selectionTop - toolbarRect.height - 8;
     const below = selectionBottom + 8;
-    const isMobileViewport = viewportWidth <= 768;
     // Mobile browsers own the Copy/Paste selection menu and do not expose
     // its geometry. Dock our formatter away from the selected range so the
     // two floating controls do not stack on top of each other.
@@ -245,7 +248,15 @@ function _renderRichSelectionToolbar(rich) {
   }
 
 export function _scheduleRichSelectionToolbar(rich) {
+    if (rich?.classList?.contains('markdown-visual-mode')) return;
     if (rich?._selectionPointerId != null) return;
     if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
-    _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
+    _richSelectionToolbarFrame = requestAnimationFrame(() => {
+      _renderRichSelectionToolbar(rich);
+      if (typeof window !== 'undefined' && window.innerWidth <= 768) {
+        setTimeout(() => {
+          if (_richSelectionToolbar?.isConnected) _renderRichSelectionToolbar(rich);
+        }, 280);
+      }
+    });
   }

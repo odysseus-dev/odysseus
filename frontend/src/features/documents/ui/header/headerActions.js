@@ -296,7 +296,7 @@ export function _syncHeaderActions() {
     }
     document.querySelectorAll('.md-toolbar-rich-only').forEach(el => {
       const action = el.dataset.md || el.dataset.dd;
-      const allowInMdVisual = visualMdActive && (action === 'quote' || action === 'table' || action === 'alert' || action === 'code');
+      const allowInMdVisual = visualMdActive && (action === 'quote' || action === 'table' || action === 'alert' || action === 'code' || action === 'removeformat');
       el.style.display = (_isRichTextLang(lang) || allowInMdVisual) ? '' : 'none';
     });
     const richMode = _isRichTextLang(lang);

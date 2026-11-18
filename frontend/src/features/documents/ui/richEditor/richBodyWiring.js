@@ -431,7 +431,7 @@ export function _wireEmailRichbody(rich) {
         return;
       }
       const liveSelection = window.getSelection?.();
-      if (e.key === 'Escape' && _richSelectionToolbar && liveSelection && !liveSelection.isCollapsed) {
+      if (e.key === 'Escape' && liveSelection && !liveSelection.isCollapsed) {
         e.preventDefault();
         e.stopPropagation();
         liveSelection.collapseToEnd();
@@ -568,7 +568,23 @@ export function _wireEmailRichbody(rich) {
       }
       if (!sel || !sel.rangeCount || !rich.contains(sel.anchorNode)) _hideRichSlashMenu();
     }, { signal: editorSignal });
-    const repositionSelectionToolbar = () => _scheduleRichSelectionToolbar(rich);
+    let resizeRepositionTimer = null;
+    let resizeRepositionTimer2 = null;
+    const repositionSelectionToolbar = () => {
+      if (!isMarkdownVisualModeActive()) {
+        _scheduleRichSelectionToolbar(rich);
+        clearTimeout(resizeRepositionTimer);
+        clearTimeout(resizeRepositionTimer2);
+        resizeRepositionTimer = setTimeout(() => _scheduleRichSelectionToolbar(rich), 120);
+        resizeRepositionTimer2 = setTimeout(() => _scheduleRichSelectionToolbar(rich), 280);
+      }
+    };
+    editorSignal?.addEventListener('abort', () => {
+      clearTimeout(resizeRepositionTimer);
+      clearTimeout(resizeRepositionTimer2);
+    }, { once: true });
+    document.addEventListener('animationend', repositionSelectionToolbar, { signal: editorSignal });
+    document.addEventListener('transitionend', repositionSelectionToolbar, { signal: editorSignal });
     window.addEventListener('resize', repositionSelectionToolbar, { passive: true, signal: editorSignal });
     // Capture scroll events from editor and ancestor scroll containers as well
     // as page scrolling. One RAF scheduler coalesces bursts into one measure.
@@ -578,7 +594,10 @@ export function _wireEmailRichbody(rich) {
     if (typeof ResizeObserver !== 'undefined') {
       const toolbarLayoutObserver = new ResizeObserver(repositionSelectionToolbar);
       toolbarLayoutObserver.observe(rich);
-      for (const control of [document.getElementById('doc-md-toolbar'), document.getElementById('doc-find-bar')]) {
+      if (rich.parentElement) toolbarLayoutObserver.observe(rich.parentElement);
+      const pane = rich.closest('#doc-editor-pane');
+      if (pane) toolbarLayoutObserver.observe(pane);
+      for (const control of [document.getElementById('doc-md-toolbar'), document.getElementById('doc-find-bar'), document.getElementById('doc-actions-footer')]) {
         if (control) toolbarLayoutObserver.observe(control);
       }
       editorSignal?.addEventListener('abort', () => toolbarLayoutObserver.disconnect(), { once: true });

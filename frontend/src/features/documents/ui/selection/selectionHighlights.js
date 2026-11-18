@@ -53,6 +53,7 @@ function _richRangeFromOffsets(rich, start, end) {
 
 export function updateRichSelectionState(rich) {
     if (!rich || !rich.isConnected || rich.style.display === 'none') return;
+    if (isMarkdownVisualModeActive()) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed) return;
     const range = selection.getRangeAt(0);
