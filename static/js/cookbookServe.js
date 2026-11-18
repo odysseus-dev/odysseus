@@ -3959,8 +3959,8 @@ async function _followManagedReadiness(sessionId, endpointId, name) {
   try {
     const res = await _fetchCookbookWithTimeout('/api/cookbook/serving/wait-ready', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, timeout_seconds: 120 }),
-    }, 135000);
+      body: JSON.stringify({ session_id: sessionId, timeout_seconds: 30 }),
+    }, 45000);
     const data = await res.json().catch(() => ({}));
     state = data.state || (res.ok ? 'unknown' : 'error');
     if (res.ok && data.ok) ready = data;

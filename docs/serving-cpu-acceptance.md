@@ -39,10 +39,8 @@ friendly display label. A loading/unavailable/ownership-lost row is not a ready
 selection. Refresh the catalog after readiness and after stop/restart; use the
 returned replacement session/endpoint rather than a stale previous selection.
 
-The retained failed Gemma task must show its backend error plus an accurate
-“Original task log unavailable” explanation when `log_availability` says
-unavailable. This is not runner output. Do not recreate the missing log or copy
-an archived diagnostic into runtime state.
+The retained failed Gemma task's missing-log explanation remains backlog and is
+explicitly **not a Gate C blocker**. Do not fabricate or restore missing logs.
 
 ## One bounded acceptance flow
 
