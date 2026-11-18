@@ -3950,6 +3950,30 @@ async function _ensureManagedRuntime(wantCpu) {
   return { exe, cpuOnly };
 }
 
+// Native-chat selector readiness for a managed serve. Starting only registers the endpoint; a loading server must not look
+// selectable. When the backend confirms readiness (typed wait, bounded) the picker is force-refreshed so it lists the RUNTIME's
+// own model ids for this endpoint_id; any other outcome is reported honestly and the picker is refreshed so it stays accurate.
+async function _followManagedReadiness(sessionId, endpointId, name) {
+  if (!sessionId) return;
+  let ready = null, state = 'unknown';
+  try {
+    const res = await _fetchCookbookWithTimeout('/api/cookbook/serving/wait-ready', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, timeout_seconds: 120 }),
+    }, 135000);
+    const data = await res.json().catch(() => ({}));
+    state = data.state || (res.ok ? 'unknown' : 'error');
+    if (res.ok && data.ok) ready = data;
+  } catch { state = 'unreachable'; }
+  try {
+    if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(true, { waitForRefresh: true });
+    window.sessionModule?.updateModelPicker?.();
+    window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { endpointId, sessionId, ready: !!ready, models: ready ? (ready.models || []) : [] } }));
+  } catch {}
+  if (ready) uiModule.showToast(`${name} is ready.`);
+  else uiModule.showToast(`${name} is not ready (${state}). It stays unavailable in the model picker until the server answers.`, 9000);
+}
+
 // ── Managed local llama.cpp serving (native Windows) ──
 // Uses the typed serving API (/api/cookbook/serving/*): app-managed CUDA runtime,
 // VRAM-safe layer/context planning and ownership-verified stop. Returns true when
@@ -3970,6 +3994,28 @@ async function _launchManagedLlama(name, repo, m, st) {
     port: parseInt(st.port, 10) || 8000, context_length: parseInt(st.ctx, 10) || 4096,
     gpu_layers: cpu ? 0 : 999, display_name: name,
   };
+  // Ask the backend what it can verify first. An unknown memory fit is never started silently: the user confirms
+  // once, and only that confirmation sets the acknowledgement flag. Cancel (or a failed plan) spawns nothing.
+  const planRes = await _fetchCookbookWithTimeout('/api/cookbook/serving/plan', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, 60000);
+  const plan = await planRes.json().catch(() => ({}));
+  if (!planRes.ok) {
+    const why = typeof plan.detail === 'string' ? plan.detail : JSON.stringify(plan.detail || plan);
+    uiModule.showToast('Could not plan ' + name + ': ' + why.slice(0, 240), 9000);
+    return true;
+  }
+  if (plan.memory_validation === 'unknown') {
+    const warnings = (plan.warnings || []).join('\n');
+    const where = cpu ? 'on the CPU (no GPU layers)' : `with ${plan.gpu_layers} GPU layers`;
+    const proceed = await window.styledConfirm(
+      `Odysseus cannot verify that ${name} fits in memory ${where} at context ${plan.context_length}.\n\n${warnings}\n\n` +
+      'Starting anyway may be slow or exhaust memory. Nothing starts unless you confirm.',
+      { title: 'Memory fit unknown', confirmText: 'Start anyway', cancelText: 'Cancel' });
+    if (!proceed) { uiModule.showToast('Launch cancelled - nothing was started.'); return true; }
+    body.allow_unestimated_context = true;
+  }
   const res = await _fetchCookbookWithTimeout('/api/cookbook/serving/start', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -3987,6 +4033,7 @@ async function _launchManagedLlama(name, repo, m, st) {
     await running._syncFromServer({ force: true });
     running._renderRunningTab();
   } catch {}
+  _followManagedReadiness(data.session_id, data.endpoint_id, name);   // not awaited: the picker updates when the server is really ready
   return true;
 }
 
