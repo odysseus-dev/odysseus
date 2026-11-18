@@ -140,6 +140,33 @@ try {
         profileResult.zoom = [];
         const first = rich.locator('p').first();
         await first.scrollIntoViewIfNeeded();
+        const acrossParagraphs = await rich.evaluate(root => {
+          const [first, second] = root.querySelectorAll('p');
+          const boxAt = (p, offset) => {
+            const range = document.createRange();
+            range.setStart(p.firstChild, offset);
+            range.setEnd(p.firstChild, offset + 1);
+            const rect = range.getBoundingClientRect();
+            return { x: rect.left + 1, y: rect.top + rect.height / 2 };
+          };
+          return { start: boxAt(first, 0), middle: boxAt(first, 18), end: boxAt(second, 26) };
+        });
+        const beforeMulti = await snapshot('before-multiline-drag');
+        await page.mouse.move(acrossParagraphs.start.x, acrossParagraphs.start.y);
+        await page.mouse.down();
+        await page.mouse.move(acrossParagraphs.middle.x, acrossParagraphs.middle.y, { steps: 6 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await page.locator('#doc-rich-selection-toolbar').count(), 0);
+        await page.mouse.move(acrossParagraphs.end.x, acrossParagraphs.end.y, { steps: 8 });
+        await page.mouse.up();
+        await page.waitForSelector('#doc-rich-selection-toolbar', { state: 'visible' });
+        const multiline = await snapshot('multiple-paragraphs');
+        assert.ok(multiline.selectedText.includes('Paragraph 1:') && multiline.selectedText.includes('Paragraph 2:'));
+        assert.deepEqual(multiline.editor, beforeMulti.editor);
+        assert.deepEqual(multiline.pageScroll, beforeMulti.pageScroll);
+        assert.equal(multiline.focus, 'doc-email-richbody');
+        profileResult.multiline = multiline;
+        await page.screenshot({ path: path.join(resultsDir, 'wysiwyg-geometry-multiple-paragraphs.png') });
         await first.dblclick({ position: { x: 30, y: 10 } });
         await page.waitForSelector('#doc-rich-selection-toolbar', { state: 'visible' });
         const doubleClick = await snapshot('double-click');

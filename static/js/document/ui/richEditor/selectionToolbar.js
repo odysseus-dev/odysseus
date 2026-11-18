@@ -245,6 +245,7 @@ function _renderRichSelectionToolbar(rich) {
   }
 
 export function _scheduleRichSelectionToolbar(rich) {
+    if (rich?._selectionPointerId != null) return;
     if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
     _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
   }

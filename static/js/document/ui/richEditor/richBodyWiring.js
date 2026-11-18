@@ -540,6 +540,22 @@ export function _wireEmailRichbody(rich) {
         }
       }
     });
+    // A floating toolbar can intercept a native drag that crosses its box.
+    // Wait for the pointer gesture to finish before showing the toolbar.
+    rich.addEventListener('pointerdown', event => {
+      if (!event.isPrimary || event.button !== 0) return;
+      rich._selectionPointerId = event.pointerId;
+      _hideRichSelectionToolbar();
+    });
+    const finishPointerSelection = event => {
+      if (rich._selectionPointerId == null
+          || (event.type !== 'blur' && rich._selectionPointerId !== event.pointerId)) return;
+      rich._selectionPointerId = null;
+      _scheduleRichSelectionToolbar(rich);
+    };
+    for (const eventName of ['pointerup', 'pointercancel', 'blur']) {
+      window.addEventListener(eventName, finishPointerSelection, { passive: true, signal: editorSignal });
+    }
     // selectionchange fires on the document; filter to selections inside rich.
     document.addEventListener('selectionchange', () => {
       const sel = window.getSelection();
