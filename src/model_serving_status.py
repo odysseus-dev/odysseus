@@ -283,6 +283,9 @@ async def wait_for_managed_runtime(state_path: Path, log_dir: Path, sid: str, ti
             'state': 'startup-timeout', 'endpoint_ownership_verified': False, 'forced': False}
 
 
+MANAGED_SERVING_CONTRACT = {"serving_api": 1, "managed_chat_catalog": 1, "typed_readiness": 1}
+
+
 async def local_serving_status(state_path: Path, log_dir: Path) -> dict:
     from src.model_serving_control import LocalServingController
     controller = LocalServingController(state_path, log_dir)
@@ -311,4 +314,6 @@ async def local_serving_status(state_path: Path, log_dir: Path) -> dict:
                     "controls": {"start": False,
                                  "stop": await asyncio.to_thread(controller.control_permission, service["id"]),
                                  "restart": await asyncio.to_thread(controller.restart_permission, service["id"])}}
-        return {"schema_version": 1, "services": await asyncio.gather(*(probe(s) for s in services))}
+        # Additive capability marker: a frontend must not enable managed launch against a backend that lacks it.
+        return {"schema_version": 1, "contract": MANAGED_SERVING_CONTRACT,
+                "services": await asyncio.gather(*(probe(s) for s in services))}

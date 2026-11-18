@@ -36,6 +36,7 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
+import { showGenerationBudgetNotice } from './generationBudget.js';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import { invalidateSettings } from './appConfig.js';
 
@@ -4340,6 +4341,7 @@ import { invalidateSettings } from './appConfig.js';
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
+                if (json.generation_budget && !_isBg) showGenerationBudgetNotice(holder, json.generation_budget);
                 _streamTerminalError = createTerminalStreamError(json);
                 console.error('Stream error:', _streamTerminalError.message);
                 if (spinner && spinner.element) spinner.destroy();
@@ -4972,6 +4974,9 @@ import { invalidateSettings } from './appConfig.js';
                 if (!_isBg) {
                   uiModule.showToast('Context compacted — older messages summarized');
                 }
+              } else if (json.type === 'generation_budget') {
+                // Metadata only: never a text delta. The backend's numbers are shown as reported.
+                if (!_isBg) showGenerationBudgetNotice(holder, json);
               } else if (json.type === 'context_trimmed') {
                 if (!_isBg) {
                   const d = json.data || {};

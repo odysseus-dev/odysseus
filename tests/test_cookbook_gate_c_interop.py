@@ -7,6 +7,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 SOURCE = ROOT / 'static/js/cookbookServe.js'
+GATE = ROOT / 'static/js/managedBackendGate.js'
 NODE = r"""
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -17,29 +18,33 @@ const pick = name => {
   return source.slice(start, source.indexOf('\n}\n', start) + 3);
 };
 const calls = [], events = [], confirmations = [], toasts = [];
+const gate = require(process.argv[2]);
 const context = {
+  checkManagedBackend: gate.checkManagedBackend, verifyManagedSelectable: gate.verifyManagedSelectable,
+  document: {getElementById: () => null, createElement: () => ({append(){}, setAttribute(){}, addEventListener(){}}), body: {appendChild(){}}},
   _envState: {hostPlatform:'windows'},
   _ensureManagedRuntime: async () => ({exe:'fixture-llama-server.exe', cpuOnly:true}),
   _fetchCookbookWithTimeout: async (url, options, timeout) => {
-    calls.push({url, body:JSON.parse(options.body), timeout});
+    calls.push({url, body:options.body ? JSON.parse(options.body) : null, timeout});
     let data = input.plan;
+    if (url.endsWith('/serving/status')) data = input.status || {schema_version:1, services:[], contract:gate.REQUIRED_MANAGED_CONTRACT};
     if (url.endsWith('/start')) data = {ok:true,session_id:'fixture-sid',endpoint_id:'fixture-endpoint'};
     if (url.endsWith('/wait-ready')) data = input.ready;
-    return {ok:!input.planFailed, json:async () => data};
+    return {ok:!(input.planFailed && url.endsWith('/plan')), json:async () => data};
   },
   uiModule: {showToast: text => toasts.push(text)},
   CustomEvent: class {constructor(type, init){this.type=type;this.detail=init.detail;}},
   window: {
     styledConfirm: async text => {confirmations.push(text);return input.confirm;},
-    modelsModule: {refreshModels:async (...args) => calls.push({refresh:args})},
+    modelsModule: {refreshModels:async (...args) => calls.push({refresh:args}), getCachedItems: () => input.catalog || []},
     sessionModule: {updateModelPicker:() => calls.push({picker:true})},
     dispatchEvent: event => events.push(event),
   },
 };
 vm.createContext(context);
-vm.runInContext(pick('_followManagedReadiness')+'\n'+pick('_launchManagedLlama'), context);
+vm.runInContext(pick('_requireManagedBackend')+'\n'+pick('_followManagedReadiness')+'\n'+pick('_launchManagedLlama'), context);
 (async () => {
- if (input.followOnly) await context._followManagedReadiness('fixture-sid','fixture-endpoint','Friendly label');
+ if (input.followOnly) await context._followManagedReadiness('fixture-sid', input.endpointId || 'local-managed-fixture-sid','Friendly label');
  else await context._launchManagedLlama('Friendly label','local', {path:'F:/fixture',is_local_dir:true},
    {backend:'llamacpp',llama_mode:'cpu',gguf_file:'fixture.gguf',ctx:512,port:18101});
  await new Promise(resolve => setImmediate(resolve));
@@ -49,7 +54,7 @@ vm.runInContext(pick('_followManagedReadiness')+'\n'+pick('_launchManagedLlama')
 
 
 def run_js(payload):
-    result = subprocess.run(['node', '-e', NODE, str(SOURCE)], input=json.dumps(payload),
+    result = subprocess.run(['node', '-e', NODE, str(SOURCE), str(GATE)], input=json.dumps(payload),
                             text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -77,11 +82,16 @@ async def test_real_typed_ready_payload_reaches_picker_with_30_second_bound(monk
                         {'pid':123, 'process_ownership':'owned'})
     monkeypatch.setattr(status, 'probe_local_runtime', metadata_peer)
     ready = await status.wait_for_managed_runtime(tmp_path/'state.json', tmp_path, 'fixture-sid', 30)
-    result = run_js({'followOnly':True, 'ready':ready})
+    row = {'id':'fixture-sid', 'management':'odysseus-managed', 'process_ownership':'owned',
+           'endpoint_ownership_verified':True, 'endpoint_id':'local-managed-fixture-sid',
+           'readiness':'ready', 'models':['fixture-runtime-id']}
+    catalog = [{'endpoint_id':'local-managed-fixture-sid', 'models':['fixture-runtime-id'], 'offline':False}]
+    result = run_js({'followOnly':True, 'ready':ready, 'catalog':catalog, 'sessionId':'fixture-sid',
+                     'status':{'schema_version':1, 'services':[row]}})
     event = result['events'][0]['detail']
-    assert event == {'endpointId':'fixture-endpoint','sessionId':'fixture-sid',
+    assert event == {'endpointId':'local-managed-fixture-sid','sessionId':'fixture-sid',
                      'ready':True,'models':['fixture-runtime-id']}
-    request = next(c for c in result['calls'] if c.get('url'))
+    request = next(c for c in result['calls'] if c.get('url', '').endswith('/wait-ready'))
     assert request['body']['timeout_seconds'] == 30
     assert request['timeout'] <= 45000
     assert any(c.get('refresh') == [True, {'waitForRefresh':True}] for c in result['calls'])
@@ -102,7 +112,7 @@ def test_real_unknown_fit_plan_confirmation_and_failure_contract(tmp_path, confi
     result = run_js({'plan':plan, 'confirm':confirm, 'planFailed':plan_failed,
                      'ready':{'ok':False, 'state':'startup-timeout'}})
     urls = [c['url'] for c in result['calls'] if c.get('url')]
-    assert urls[0].endswith('/plan')
+    assert urls[0].endswith('/serving/status') and urls[1].endswith('/plan')
     start = [c for c in result['calls'] if c.get('url', '').endswith('/start')]
     assert bool(start) is starts
     if starts:

@@ -46,6 +46,7 @@ def test_picker_follows_typed_readiness_with_endpoint_id_and_runtime_models():
     follow = source[start:source.index("\n}\n", start)]
     assert "/api/cookbook/serving/wait-ready" in follow
     assert "refreshModels(true" in follow                      # forced probe, so the runtime's own ids are listed
-    assert "endpointId" in follow and "ready.models" in follow   # endpoint_id and actual runtime model ids reach listeners
+    assert "endpointId" in follow and "verdict.modelIds" in follow   # endpoint_id and verified runtime model ids reach listeners
+    assert "verifyManagedSelectable" in follow                 # wait-ready alone never makes a model selectable
     assert "is not ready" in follow                             # a non-ready outcome is reported, not hidden
     assert "_followManagedReadiness(data.session_id, data.endpoint_id, name)" in _launch_source()

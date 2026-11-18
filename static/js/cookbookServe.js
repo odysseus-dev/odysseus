@@ -4,6 +4,7 @@
 // command building, preset slots, launch logic
 // ============================================
 
+import { checkManagedBackend, verifyManagedSelectable } from './managedBackendGate.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
@@ -3955,7 +3956,7 @@ async function _ensureManagedRuntime(wantCpu) {
 // own model ids for this endpoint_id; any other outcome is reported honestly and the picker is refreshed so it stays accurate.
 async function _followManagedReadiness(sessionId, endpointId, name) {
   if (!sessionId) return;
-  let ready = null, state = 'unknown';
+  let ready = null, state = 'unknown', verdict = { ok: false, reason: 'readiness not confirmed', modelIds: [] };
   try {
     const res = await _fetchCookbookWithTimeout('/api/cookbook/serving/wait-ready', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -3967,11 +3968,47 @@ async function _followManagedReadiness(sessionId, endpointId, name) {
   } catch { state = 'unreachable'; }
   try {
     if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(true, { waitForRefresh: true });
+    if (ready) {
+      // wait-ready is only a probe. Selection needs verified listener ownership, the exact endpoint_id and the
+      // runtime's own model id in both the serving status and the chat catalog.
+      let status = null;
+      try {
+        const sres = await _fetchCookbookWithTimeout('/api/cookbook/serving/status', { credentials: 'same-origin' }, 15000);
+        status = sres.ok ? await sres.json() : null;
+      } catch { status = null; }
+      verdict = verifyManagedSelectable({ sessionId, endpointId, ready, status, catalogItems: window.modelsModule?.getCachedItems?.() });
+    }
     window.sessionModule?.updateModelPicker?.();
-    window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { endpointId, sessionId, ready: !!ready, models: ready ? (ready.models || []) : [] } }));
+    window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { endpointId, sessionId, ready: verdict.ok, models: verdict.ok ? verdict.modelIds : [] } }));
   } catch {}
-  if (ready) uiModule.showToast(`${name} is ready.`);
+  if (verdict.ok) uiModule.showToast(`${name} is ready.`);
+  else if (ready) uiModule.showToast(`${name} answered but is not selectable: ${verdict.reason}.`, 9000);
   else uiModule.showToast(`${name} is not ready (${state}). It stays unavailable in the model picker until the server answers.`, 9000);
+}
+
+// Managed launch is only offered when the running Python backend advertises the managed-serving contract. When it does
+// not, nothing is started and no legacy launch/install endpoint is used; the check is repeated per launch, so loading a
+// compatible backend enables the workflow without a page refresh.
+async function _requireManagedBackend() {
+  const result = await checkManagedBackend(url => _fetchCookbookWithTimeout(url, { credentials: 'same-origin' }, 15000));
+  const old = document.getElementById('managed-backend-banner');
+  if (result.ok) { old?.remove(); return true; }
+  const banner = old || document.createElement('div');
+  banner.id = 'managed-backend-banner';
+  banner.className = 'managed-backend-banner';
+  banner.setAttribute('role', 'alert');
+  banner.textContent = '';
+  const title = document.createElement('strong');
+  title.textContent = 'Backend activation required';
+  const body = document.createElement('div');
+  body.textContent = 'Managed model launch is disabled because the running Odysseus backend is not on the matching serving version. ' +
+    `${result.detail} Restart/activate the updated backend, then try again - no page refresh is needed. Nothing was started.`;
+  const close = document.createElement('button');
+  close.type = 'button'; close.textContent = 'Dismiss'; close.addEventListener('click', () => banner.remove());
+  banner.append(title, body, close);
+  if (!old) document.body.appendChild(banner);
+  uiModule.showToast('Backend activation required - managed launch is disabled.', 9000);
+  return false;
 }
 
 // ── Managed local llama.cpp serving (native Windows) ──
@@ -3985,6 +4022,7 @@ async function _launchManagedLlama(name, repo, m, st) {
   const base = String(m.path).replace(/[\\/]+$/, '');
   const modelPath = (m.is_local_dir ? `${base}/${repo}/${rel}` : `${base}/models--${repo.replace(/\//g, '--')}/snapshots/${rel}`).replace(/\//g, '\\');
   let cpu = st.llama_mode === 'cpu';
+  if (!(await _requireManagedBackend())) return true;   // fail closed; never the legacy runner/installer
   const rt = await _ensureManagedRuntime(cpu);
   if (!rt.exe) return true;  // user declined or setup failed; the reason was shown
   const exe = rt.exe;

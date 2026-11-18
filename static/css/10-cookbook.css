@@ -4322,3 +4322,12 @@
     font-size: 11px;
   }
 }
+
+/* Generation-budget notice: metadata beside a reply, never part of the reply text */
+.generation-budget-notice { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--yellow, #d9a400); border-radius: 4px; font-size: 0.85em; opacity: 0.9; }
+.generation-budget-notice.generation-budget-blocked { border-left-color: var(--red, #d33); }
+.generation-budget-notice strong { display: block; }
+/* Managed backend compatibility banner */
+.managed-backend-banner { position: fixed; z-index: 10000; left: 50%; bottom: 16px; transform: translateX(-50%); max-width: min(640px, 92vw); padding: 10px 14px; border: 1px solid var(--red, #d33); border-radius: 8px; background: var(--bg, #1b1b1b); color: var(--text, #eee); box-shadow: 0 4px 18px rgba(0,0,0,.4); font-size: 0.9em; }
+.managed-backend-banner strong { display: block; margin-bottom: 4px; }
+.managed-backend-banner button { margin-top: 8px; }
