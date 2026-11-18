@@ -582,11 +582,28 @@ def _pending_writeback_uids(owner: str) -> tuple[list[str], list[str]]:
         db.close()
 
 
+def _extract_caldav_accounts(prefs: dict) -> list:
+    """Extract caldav accounts from a preference dictionary, migrating legacy caldav if present."""
+    if "caldav_accounts" in prefs:
+        return list(prefs.get("caldav_accounts") or [])
+    legacy = prefs.get("caldav", {}) or {}
+    if legacy.get("url"):
+        import uuid as _uuid
+        return [{
+            "id": str(_uuid.uuid4()),
+            "label": "CalDAV",
+            "url": legacy["url"],
+            "username": legacy.get("username", ""),
+            "password": legacy.get("password", ""),
+        }]
+    return []
+
+
 def _load_caldav_accounts(owner: str) -> list:
     """Return the list of CalDAV accounts for *owner*, auto-migrating the legacy
     single-account ``caldav`` key to the new ``caldav_accounts`` list on first call.
 
-    The save step is best-effort: if ``_update_for_user`` is unavailable (e.g. in a
+    The save step is best-effort: if ``_mutate_for_user`` is unavailable (e.g. in a
     test with a minimal prefs mock) the migrated accounts are still returned; the
     next real call will just re-run the cheap migration again.
     """
@@ -598,23 +615,40 @@ def _load_caldav_accounts(owner: str) -> list:
         return list(prefs["caldav_accounts"] or [])
     # Migrate legacy single-account config to the list format.
     legacy = prefs.get("caldav", {}) or {}
-    if legacy.get("url"):
-        accounts = [{
-            "id": str(_uuid.uuid4()),
-            "label": "CalDAV",
-            "url": legacy["url"],
-            "username": legacy.get("username", ""),
-            "password": legacy.get("password", ""),
-        }]
-        try:
-            # Write only the migrated keys under the store lock; saving the
-            # copy read above would revert a Settings save made since.
-            from routes.prefs_routes import _update_for_user
-            _update_for_user(owner, {"caldav_accounts": accounts, "caldav": None})
-        except (ImportError, AttributeError):
-            pass  # best-effort; next call re-migrates from the still-present legacy key
-        return accounts
-    return []
+    if not legacy.get("url"):
+        return []
+
+    def _migrate(user_prefs: dict) -> list:
+        # Re-check under the transaction lock: if caldav_accounts was already
+        # written (e.g. by a concurrent add or migration), preserve and return it.
+        if "caldav_accounts" in user_prefs:
+            return list(user_prefs["caldav_accounts"] or [])
+        cur_legacy = user_prefs.get("caldav", {}) or {}
+        if cur_legacy.get("url"):
+            accounts = [{
+                "id": str(_uuid.uuid4()),
+                "label": "CalDAV",
+                "url": cur_legacy["url"],
+                "username": cur_legacy.get("username", ""),
+                "password": cur_legacy.get("password", ""),
+            }]
+            user_prefs["caldav_accounts"] = accounts
+            user_prefs.pop("caldav", None)
+            return accounts
+        return []
+
+    try:
+        from routes.prefs_routes import _mutate_for_user
+        return _mutate_for_user(owner, _migrate)
+    except (ImportError, AttributeError):
+        pass  # best-effort; next call re-migrates from the still-present legacy key
+    return [{
+        "id": str(_uuid.uuid4()),
+        "label": "CalDAV",
+        "url": legacy["url"],
+        "username": legacy.get("username", ""),
+        "password": legacy.get("password", ""),
+    }]
 
 
 async def sync_caldav(owner: str) -> dict:

@@ -1,6 +1,6 @@
 """User preferences API — per-user key/value store backed by a JSON file."""
 import json
-from typing import Optional
+from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from core.atomic_io import atomic_write_json, store_transaction
@@ -128,6 +128,56 @@ async def _update_off_loop(user: Optional[str], updates: dict) -> dict:
     even though no response is delivered to the cancelled caller.
     """
     return await run_in_threadpool(_update_for_user, user, updates)
+
+
+@store_transaction(lambda: PREFS_FILE)
+def _mutate_for_user(user: Optional[str], mutator) -> Any:
+    """Transactionally mutate preferences for a user under the store lock.
+
+    ``mutator`` receives the user's mutable preference dictionary. Any
+    modifications made to the dictionary are persisted to the store.
+    If ``mutator`` raises an exception, the transaction is aborted and
+    nothing is written.
+    """
+    all_prefs = _load()
+    if user is None:
+        users = all_prefs.get("_users")
+        if isinstance(users, dict):
+            first_key = next(iter(users), None)
+            if first_key is not None:
+                existing_named = users.get(first_key)
+                target = (
+                    dict(existing_named)
+                    if isinstance(existing_named, dict)
+                    else {}
+                )
+                res = mutator(target)
+                for key in _FOREGROUND_POLICY_KEYS:
+                    if key in target:
+                        all_prefs[key] = target.pop(key)
+                users[first_key] = target
+                _save(all_prefs)
+                return res
+        all_prefs = dict(all_prefs)
+        res = mutator(all_prefs)
+        _save(all_prefs)
+        return res
+
+    if not isinstance(all_prefs.get("_users"), dict):
+        all_prefs = dict(all_prefs)
+        all_prefs["_users"] = {}
+    users = all_prefs["_users"]
+    user_prefs = users.get(user)
+    target = dict(user_prefs) if isinstance(user_prefs, dict) else {}
+    res = mutator(target)
+    users[user] = target
+    _save(all_prefs)
+    return res
+
+
+async def _mutate_off_loop(user: Optional[str], mutator) -> Any:
+    """Run a transactional mutation on a worker thread off the event loop."""
+    return await run_in_threadpool(_mutate_for_user, user, mutator)
 
 
 @store_transaction(lambda: PREFS_FILE)
