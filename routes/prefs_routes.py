@@ -2,6 +2,7 @@
 import json
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from core.atomic_io import atomic_write_json, store_transaction
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
@@ -113,6 +114,22 @@ def _update_for_user(user: Optional[str], updates: dict) -> dict:
     return dict(user_prefs)
 
 
+async def _update_off_loop(user: Optional[str], updates: dict) -> dict:
+    """Run the whole locked read-modify-write on a worker thread.
+
+    ``_update_for_user`` blocks on a cross-process file lock, which must not
+    happen on the event-loop thread. The entire transaction runs in one worker
+    call, so the lock still covers the read, merge, and atomic replace.
+
+    A worker thread cannot be interrupted. If the awaiting request is
+    cancelled, the request stops waiting but the queued transaction still
+    runs to completion exactly once and releases the lock, so the store is
+    never left locked or half written. The write may therefore be applied
+    even though no response is delivered to the cancelled caller.
+    """
+    return await run_in_threadpool(_update_for_user, user, updates)
+
+
 @store_transaction(lambda: PREFS_FILE)
 def _save_for_user(user: Optional[str], prefs: dict):
     """Save preferences for a specific user."""
@@ -179,7 +196,7 @@ def setup_prefs_routes():
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
         val = body.get("value") if isinstance(body, dict) else None
-        prefs = _update_for_user(user, {key: val})
+        prefs = await _update_off_loop(user, {key: val})
         return {"key": key, "value": prefs.get(key)}
 
     @router.patch("")
@@ -199,7 +216,7 @@ def setup_prefs_routes():
         if not all(isinstance(key, str) and key.strip() for key in values):
             raise HTTPException(400, "preference keys must be non-empty strings")
         user = get_current_user(request)
-        prefs = _update_for_user(user, values)
+        prefs = await _update_off_loop(user, values)
         return {"values": {key: prefs.get(key) for key in values}}
 
     return router

@@ -9,6 +9,7 @@ Validates:
 - Scenario E: Failure recovery & corruption prevention
 - Multi-worker / multi-process safety via store_transaction
 - Re-entrancy of store_transaction
+- Event-loop responsiveness, cancellation, and failure cleanup on the async path
 """
 
 import json
@@ -325,111 +326,361 @@ def test_cross_process_concurrent_updates(tmp_path):
     assert data["worker_b"] == {"init": 2, "result": "beta"}
 
 
-# ── 9. Lock Contention and Event-Loop Latency Analysis ──
+# ── 9. Lock contention and event-loop responsiveness ──
+#
+# The preference endpoints run the whole locked read-modify-write on a worker
+# thread, so waiting for the cross-process file lock must not stall the event
+# loop. These tests hold the real lock file from outside the app and gate on
+# events, not on elapsed time. Sleeps are only used to yield to the loop.
 
-def test_uncontended_write_latency_bounded(app_and_client):
-    """Verify that uncontended writes execute within sub-millisecond to low-millisecond time."""
-    import time
-    app, active_user, prefs_file = app_and_client
-    active_user["user"] = "alice"
-    client = TestClient(app)
+class _ExternalLock:
+    """Hold the prefs store's flock on a separate file description."""
 
-    t0 = time.perf_counter()
-    resp = client.put("/api/prefs/quick_key", json={"value": "quick_val"})
-    elapsed = time.perf_counter() - t0
+    def __init__(self, prefs_file, safety_timeout=3.0):
+        fcntl = pytest.importorskip("fcntl")
+        self._fcntl = fcntl
+        self.path = os.path.abspath(str(prefs_file)) + ".lock"
+        self.safety_timeout = safety_timeout
+        self.held = threading.Event()
+        self.release = threading.Event()
+        # Set immediately before the unlock, so a write that finishes while
+        # this is unset proves the lock was not honoured.
+        self.released = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
 
-    assert resp.status_code == 200
-    assert elapsed < 0.2
-    data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]["alice"]
-    assert data["quick_key"] == "quick_val"
+    def _run(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "a+b") as handle:
+            self._fcntl.flock(handle, self._fcntl.LOCK_EX)
+            self.held.set()
+            # The safety timeout only bounds a failing test; passing runs are
+            # released explicitly by the test.
+            self.release.wait(self.safety_timeout)
+            self.released.set()
+            self._fcntl.flock(handle, self._fcntl.LOCK_UN)
+
+    def __enter__(self):
+        self._thread.start()
+        assert self.held.wait(timeout=2.0), "external lock was never acquired"
+        return self
+
+    def __exit__(self, *exc):
+        self.release.set()
+        self._thread.join(timeout=5.0)
+        assert not self._thread.is_alive()
 
 
-def test_lock_contention_and_correct_persistence_after_release(app_and_client):
-    """Verify that an external lock holder blocks write until release, then write persists correctly."""
-    import time
-    import fcntl
-    app, active_user, prefs_file = app_and_client
-    active_user["user"] = "alice"
-    client = TestClient(app)
+def _assert_store_lock_is_free(prefs_file):
+    """The store lock can be taken immediately: nothing was left held."""
+    fcntl = pytest.importorskip("fcntl")
+    with open(os.path.abspath(str(prefs_file)) + ".lock", "a+b") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle, fcntl.LOCK_UN)
 
-    lock_path = os.path.abspath(str(prefs_file)) + ".lock"
-    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
 
-    hold_seconds = 0.2
-    lock_acquired = threading.Event()
+@pytest.fixture
+def async_prefs_app(tmp_path, monkeypatch):
+    """App whose caller identity comes from the ``x-user`` request header."""
+    prefs_file = tmp_path / "user_prefs.json"
+    prefs_file.write_text(json.dumps({
+        "_users": {
+            "alice": {"theme": "light", "keep_alice": "kept"},
+            "bob": {"theme": "paper", "keep_bob": "kept"},
+        }
+    }), encoding="utf-8")
+    monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
+    monkeypatch.setattr(
+        prefs_routes, "get_current_user", lambda req: req.headers.get("x-user")
+    )
+    app = FastAPI()
+    app.include_router(prefs_routes.setup_prefs_routes())
+    return app, prefs_file
 
-    def hold_lock():
-        with open(lock_path, "a+b") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            lock_acquired.set()
-            time.sleep(hold_seconds)
-            fcntl.flock(f, fcntl.LOCK_UN)
 
-    holder = threading.Thread(target=hold_lock, daemon=True)
-    holder.start()
-    assert lock_acquired.wait(timeout=2.0)
+def _client(app):
+    import httpx
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
 
-    t0 = time.perf_counter()
-    resp = client.put("/api/prefs/contended_key", json={"value": "persisted_value"})
-    elapsed = time.perf_counter() - t0
 
-    holder.join(timeout=2.0)
+async def _ticks_while_pending(task, wanted=10):
+    """Count loop turns that complete while ``task`` is still pending.
 
-    assert resp.status_code == 200
-    assert elapsed >= hold_seconds * 0.7
-    data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]["alice"]
-    assert data["contended_key"] == "persisted_value"
+    A responsive loop reaches ``wanted`` turns while the write waits for the
+    lock. A blocked loop cannot advance, so the count stays near zero.
+    """
+    import asyncio
+    ticks = 0
+    while ticks < wanted and not task.done():
+        await asyncio.sleep(0.005)
+        ticks += 1
+    return ticks
+
+
+def _users(prefs_file):
+    return json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]
 
 
 @pytest.mark.anyio
-async def test_event_loop_responsiveness_during_contention(tmp_path, monkeypatch):
-    """Empirically measure event loop responsiveness during lock contention.
+async def test_uncontended_write_runs_on_worker_thread(async_prefs_app, monkeypatch):
+    """Test A: an uncontended write succeeds, off the event-loop thread."""
+    app, prefs_file = async_prefs_app
+    loop_thread = threading.get_ident()
+    seen = []
+    real = prefs_routes._update_for_user
 
-    Demonstrates that synchronous file locking inside an async endpoint delays
-    the event loop thread, while verifying bounded resolution and data integrity.
-    """
+    def spy(user, updates):
+        seen.append(threading.get_ident())
+        return real(user, updates)
+
+    monkeypatch.setattr(prefs_routes, "_update_for_user", spy)
+
+    async with _client(app) as ac:
+        put = await ac.put("/api/prefs/quick", json={"value": 1}, headers={"x-user": "alice"})
+        patch = await ac.patch(
+            "/api/prefs", json={"values": {"a": 1, "b": 2}}, headers={"x-user": "alice"}
+        )
+
+    assert put.status_code == 200 and put.json() == {"key": "quick", "value": 1}
+    assert patch.status_code == 200 and patch.json() == {"values": {"a": 1, "b": 2}}
+    assert seen and all(ident != loop_thread for ident in seen)
+    assert _users(prefs_file)["alice"] == {
+        "theme": "light", "keep_alice": "kept", "quick": 1, "a": 1, "b": 2
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", ["put", "patch"])
+async def test_external_lock_contention_waits_then_persists(async_prefs_app, method):
+    """Test B: a write waits for an external lock holder, then persists."""
+    app, prefs_file = async_prefs_app
+    before = prefs_file.read_text(encoding="utf-8")
+    headers = {"x-user": "alice"}
+
+    async with _client(app) as ac:
+        with _ExternalLock(prefs_file) as lock:
+            import asyncio
+            if method == "put":
+                request = ac.put("/api/prefs/contended", json={"value": "v"}, headers=headers)
+            else:
+                request = ac.patch(
+                    "/api/prefs", json={"values": {"contended": "v"}}, headers=headers
+                )
+            write = asyncio.create_task(request)
+            await _ticks_while_pending(write)
+            # Still waiting, and nothing has been written under the held lock.
+            assert not write.done()
+            assert prefs_file.read_text(encoding="utf-8") == before
+            lock.release.set()
+            response = await write
+        # The write could only finish after the holder unlocked.
+        assert lock.released.is_set()
+
+    assert response.status_code == 200
+    assert _users(prefs_file)["alice"]["contended"] == "v"
+    assert _users(prefs_file)["alice"]["keep_alice"] == "kept"
+
+
+@pytest.mark.anyio
+async def test_event_loop_stays_responsive_during_lock_contention(async_prefs_app):
+    """Test C: unrelated async work progresses while a write awaits the lock."""
+    import asyncio
+    app, prefs_file = async_prefs_app
+
+    async with _client(app) as ac:
+        with _ExternalLock(prefs_file) as lock:
+            write = asyncio.create_task(
+                ac.put("/api/prefs/probe", json={"value": "v"}, headers={"x-user": "alice"})
+            )
+            ticks = await _ticks_while_pending(write)
+            still_waiting = not write.done()
+            lock.release.set()
+            await write
+
+    assert ticks >= 10 and still_waiting
+    assert _users(prefs_file)["alice"]["probe"] == "v"
+
+
+@pytest.mark.anyio
+async def test_responsiveness_probe_detects_a_blocking_implementation(
+    async_prefs_app, monkeypatch
+):
+    """Negative control for Test C: calling the transaction inline on the loop
+    (the pre-offload behaviour) makes the same probe fail, so Test C is
+    sensitive to the defect it guards against."""
+    import asyncio
+    app, prefs_file = async_prefs_app
+
+    async def blocking(user, updates):
+        return prefs_routes._update_for_user(user, updates)
+
+    monkeypatch.setattr(prefs_routes, "_update_off_loop", blocking)
+
+    async with _client(app) as ac:
+        # Short safety timeout: with a blocked loop nothing else can release
+        # the holder, so this bounds the control run.
+        with _ExternalLock(prefs_file, safety_timeout=0.5):
+            write = asyncio.create_task(
+                ac.put("/api/prefs/probe", json={"value": "v"}, headers={"x-user": "alice"})
+            )
+            ticks = await _ticks_while_pending(write)
+            await write
+
+    assert ticks < 10
+    assert _users(prefs_file)["alice"]["probe"] == "v"
+
+
+@pytest.mark.anyio
+async def test_queued_writes_from_two_users_all_persist(async_prefs_app):
+    """Tests D and E: queued writers for two users, mixing PATCH and PUT on the
+    same user, are serialized after the lock is released and none are lost."""
+    import asyncio
+    app, prefs_file = async_prefs_app
+
+    async with _client(app) as ac:
+        with _ExternalLock(prefs_file) as lock:
+            tasks = [
+                asyncio.create_task(ac.patch(
+                    "/api/prefs", json={"values": {"a1": 1, "a2": 2}},
+                    headers={"x-user": "alice"})),
+                asyncio.create_task(ac.put(
+                    "/api/prefs/a3", json={"value": 3}, headers={"x-user": "alice"})),
+                asyncio.create_task(ac.patch(
+                    "/api/prefs", json={"values": {"b1": 1, "b2": 2}},
+                    headers={"x-user": "bob"})),
+                asyncio.create_task(ac.put(
+                    "/api/prefs/b3", json={"value": 3}, headers={"x-user": "bob"})),
+            ]
+            await _ticks_while_pending(tasks[0])
+            assert not any(task.done() for task in tasks)
+            lock.release.set()
+            responses = await asyncio.gather(*tasks)
+
+    assert [r.status_code for r in responses] == [200, 200, 200, 200]
+    users = _users(prefs_file)
+    assert users["alice"] == {
+        "theme": "light", "keep_alice": "kept", "a1": 1, "a2": 2, "a3": 3
+    }
+    assert users["bob"] == {
+        "theme": "paper", "keep_bob": "kept", "b1": 1, "b2": 2, "b3": 3
+    }
+
+
+async def _wait_for_store_lock_free(prefs_file, timeout=5.0):
+    """Poll (bounded) until the worker's transaction has unlocked the store."""
     import asyncio
     import time
-    import fcntl
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            _assert_store_lock_is_free(prefs_file)
+            return
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                raise
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.anyio
+async def test_cancelled_request_still_completes_and_releases_the_lock(
+    async_prefs_app, monkeypatch
+):
+    """Cancelling a waiting request neither strands the lock nor duplicates or
+    half-applies the write.
+
+    The awaiting request stops waiting at once, but the worker thread cannot be
+    interrupted: it finishes the queued transaction exactly once and unlocks.
+    """
+    import asyncio
+    app, prefs_file = async_prefs_app
+    writes = []
+    real_write = prefs_routes.atomic_write_json
+
+    def counting_write(path, data, **kwargs):
+        writes.append(path)
+        return real_write(path, data, **kwargs)
+
+    monkeypatch.setattr(prefs_routes, "atomic_write_json", counting_write)
+
+    async with _client(app) as ac:
+        with _ExternalLock(prefs_file) as lock:
+            write = asyncio.create_task(
+                ac.patch("/api/prefs", json={"values": {"x": 1, "y": 2}},
+                         headers={"x-user": "alice"})
+            )
+            await _ticks_while_pending(write)
+            assert not write.done()
+            write.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await write
+            # The caller is gone, but the worker is still queued on the lock.
+            assert writes == []
+            lock.release.set()
+        # Once the external holder is gone, the orphaned worker takes the lock,
+        # writes once, and releases it.
+        await _wait_for_store_lock_free(prefs_file)
+        for _ in range(200):
+            if writes:
+                break
+            await asyncio.sleep(0.01)
+        await _wait_for_store_lock_free(prefs_file)
+
+    assert len(writes) == 1
+    assert _users(prefs_file)["alice"] == {
+        "theme": "light", "keep_alice": "kept", "x": 1, "y": 2
+    }
+
+
+@pytest.mark.anyio
+async def test_persistence_failure_releases_lock_and_preserves_store(
+    async_prefs_app, monkeypatch
+):
+    """Test F: a failure inside the transaction leaves the file untouched, no
+    temp debris, no held lock, and later writes still work."""
+    import core.atomic_io as atomic_io
+    app, prefs_file = async_prefs_app
+    before = prefs_file.read_text(encoding="utf-8")
+    real_dump = atomic_io.json.dump
+
+    def failing_dump(obj, fp, **kwargs):
+        raise OSError("Disk write error")
+
+    monkeypatch.setattr(atomic_io.json, "dump", failing_dump)
+
     import httpx
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        failed = await ac.patch(
+            "/api/prefs", json={"values": {"doomed": 1}}, headers={"x-user": "alice"}
+        )
+        assert failed.status_code == 500
+        assert prefs_file.read_text(encoding="utf-8") == before
+        assert sorted(p.name for p in prefs_file.parent.iterdir()) == [
+            prefs_file.name, prefs_file.name + ".lock"
+        ]
+        _assert_store_lock_is_free(prefs_file)
 
-    prefs_file = tmp_path / "user_prefs.json"
-    prefs_file.write_text(json.dumps({"_users": {"alice": {}}}), encoding="utf-8")
-    monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
-    monkeypatch.setattr(prefs_routes, "get_current_user", lambda req: "alice")
+        monkeypatch.setattr(atomic_io.json, "dump", real_dump)
+        ok = await ac.put("/api/prefs/after", json={"value": "fine"}, headers={"x-user": "alice"})
 
-    app = FastAPI()
-    app.include_router(prefs_routes.setup_prefs_routes())
+    assert ok.status_code == 200
+    assert _users(prefs_file)["alice"]["after"] == "fine"
+    assert "doomed" not in _users(prefs_file)["alice"]
 
-    lock_path = os.path.abspath(str(prefs_file)) + ".lock"
-    hold_seconds = 0.2
-    lock_held = threading.Event()
 
-    def hold_lock():
-        with open(lock_path, "a+b") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            lock_held.set()
-            time.sleep(hold_seconds)
-            fcntl.flock(f, fcntl.LOCK_UN)
+def test_blocking_lock_wait_is_visible_to_sync_client(app_and_client):
+    """Sync-client view of Test B: the request returns only after the holder
+    unlocks, then the value is persisted."""
+    app, active_user, prefs_file = app_and_client
+    active_user["user"] = "alice"
+    client = TestClient(app)
 
-    holder = threading.Thread(target=hold_lock, daemon=True)
-    holder.start()
-    assert lock_held.wait(timeout=2.0)
+    with _ExternalLock(prefs_file) as lock:
+        threading.Timer(0.1, lock.release.set).start()
+        resp = client.put("/api/prefs/contended_key", json={"value": "persisted_value"})
+        assert lock.released.is_set()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
-        write_task = asyncio.create_task(ac.put("/api/prefs/test_key", json={"value": "async_val"}))
-        t_sleep_start = time.perf_counter()
-        await asyncio.sleep(0.01)
-        sleep_elapsed = time.perf_counter() - t_sleep_start
-
-        write_resp = await write_task
-
-    holder.join(timeout=2.0)
-
-    assert write_resp.status_code == 200
-
+    assert resp.status_code == 200
     data = json.loads(prefs_file.read_text(encoding="utf-8"))["_users"]["alice"]
-    assert data["test_key"] == "async_val"
-    # Confirms finding P3-1: sleep(0.01) was delayed by the synchronous lock wait in the event loop
-    assert sleep_elapsed >= hold_seconds * 0.7
-
+    assert data["contended_key"] == "persisted_value"
