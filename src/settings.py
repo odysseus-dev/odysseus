@@ -91,7 +91,8 @@ DEFAULT_SETTINGS = {
     #     Google PSE    safe=active (omitted for "off"; PSE has no middle tier)
     #     Serper.dev    safe=active (omitted for "off"; proxies Google's `safe`)
     #     You.com       safesearch=off/moderate/strict
-    # Providers NOT touched: Tavily (no SafeSearch knob; filters at index time)
+    # Providers NOT touched: Tavily (no SafeSearch knob; filters at index time),
+    # Sofya (no SafeSearch knob)
     # and any custom backend reached via search_url — they keep whatever the
     # backend itself decides, so operators stay in control of self-hosted /
     # niche search instances.
@@ -103,6 +104,7 @@ DEFAULT_SETTINGS = {
     "tavily_api_key": "",
     "serper_api_key": "",
     "ydc_api_key": "",
+    "sofya_api_key": "",
     "research_endpoint_id": "",
     "research_model": "",
     "research_search_provider": "",
