@@ -3321,9 +3321,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .doc-email-richbody.markdown-visual-mode > :first-child {
   margin-top: 0;
 }
-.doc-email-richbody.markdown-visual-mode h1 { font-size: 1.75em; }
-.doc-email-richbody.markdown-visual-mode h2 { font-size: 1.4em; }
-.doc-email-richbody.markdown-visual-mode h3 { font-size: 1.18em; }
 .doc-email-richbody.markdown-visual-mode p {
   margin: 0.5em 0;
 }
@@ -3335,15 +3332,26 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-radius: 0 4px 4px 0;
   color: color-mix(in srgb, var(--fg) 88%, transparent);
 }
+/* Alert kinds map onto the theme's semantic colors, so every theme keeps its own
+   note / tip / important / warning / caution distinction. */
+.doc-email-richbody.markdown-visual-mode,
+.doc-md-preview {
+  --alert-note: var(--color-accent);
+  --alert-tip: var(--color-success);
+  --alert-important: var(--hl-keyword);
+  --alert-warning: var(--color-warning);
+  --alert-caution: var(--color-error);
+}
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert,
 .doc-md-preview blockquote.markdown-alert {
   padding: 8px 16px;
   border-left-width: 4px;
 }
-.doc-email-richbody.markdown-visual-mode .markdown-alert-label {
+.doc-email-richbody.markdown-visual-mode .markdown-alert-label,
+.doc-md-preview .markdown-alert-label {
   display: inline-block;
   margin: 0 0 5px;
-  font-size: 0.78em;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -3351,28 +3359,28 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 }
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-note,
 .doc-md-preview blockquote.markdown-alert-note {
-  border-left-color: #0969da;
-  background: color-mix(in srgb, #0969da 6%, transparent);
+  border-left-color: var(--alert-note);
+  background: color-mix(in srgb, var(--alert-note) 8%, transparent);
 }
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-tip,
 .doc-md-preview blockquote.markdown-alert-tip {
-  border-left-color: #1a7f37;
-  background: color-mix(in srgb, #1a7f37 6%, transparent);
+  border-left-color: var(--alert-tip);
+  background: color-mix(in srgb, var(--alert-tip) 8%, transparent);
 }
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-important,
 .doc-md-preview blockquote.markdown-alert-important {
-  border-left-color: #8250df;
-  background: color-mix(in srgb, #8250df 6%, transparent);
+  border-left-color: var(--alert-important);
+  background: color-mix(in srgb, var(--alert-important) 8%, transparent);
 }
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-warning,
 .doc-md-preview blockquote.markdown-alert-warning {
-  border-left-color: #9a6700;
-  background: color-mix(in srgb, #9a6700 6%, transparent);
+  border-left-color: var(--alert-warning);
+  background: color-mix(in srgb, var(--alert-warning) 8%, transparent);
 }
 .doc-email-richbody.markdown-visual-mode blockquote.markdown-alert-caution,
 .doc-md-preview blockquote.markdown-alert-caution {
-  border-left-color: #cf222e;
-  background: color-mix(in srgb, #cf222e 6%, transparent);
+  border-left-color: var(--alert-caution);
+  background: color-mix(in srgb, var(--alert-caution) 8%, transparent);
 }
 .doc-email-richbody.markdown-visual-mode ul,
 .doc-email-richbody.markdown-visual-mode ol {
@@ -3414,7 +3422,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   top: 0.48em;
   width: 0.28em;
   height: 0.5em;
-  border: solid #fff;
+  border: solid var(--bg);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
   pointer-events: none;
@@ -3449,7 +3457,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--sidebar-bg, var(--panel)) 82%, #000 18%) !important;
+  background: var(--panel) !important;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.9em;
   line-height: 1.5;
@@ -3483,10 +3491,10 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 @media (max-width: 768px) {
   .doc-email-richbody.markdown-visual-mode {
     padding: 14px 16px 28px;
-    font-size: 14.5px;
+    font-size: 14px;
   }
   .doc-visual-compat-banner {
     padding: 7px 12px;
-    font-size: 11.5px;
+    font-size: 11px;
   }
 }
