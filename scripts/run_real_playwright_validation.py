@@ -24,6 +24,7 @@ REGRESSION_SUITES = (
     "tests/browser/test_wysiwyg_loose_lists.mjs",
     "tests/browser/test_wysiwyg_feature_coverage.mjs",
     "tests/browser/test_wysiwyg_compat_real_app.mjs",
+    "tests/browser/test_markdown_draft_reload.mjs",
     "tests/browser/test_wysiwyg_controls.mjs",
     "tests/browser/test_wysiwyg_geometry.mjs",
     "tests/browser/test_markdown_selection_context.mjs",

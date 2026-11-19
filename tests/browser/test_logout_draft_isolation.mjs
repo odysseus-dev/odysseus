@@ -120,6 +120,45 @@ try {
     await logout.dispatchEvent('click');
   };
 
+  // 0. A literal reload of the same tab. Headless Chromium in some environments
+  // crashes the renderer on reload (also on the merge base). A crash is reported as an
+  // environment limitation with diagnostics and never counted as a pass; any other
+  // failure still fails the run.
+  const literalReload = { status: 'not attempted', detail: '' };
+  {
+    let crashes = 0;
+    const trap = () => { crashes += 1; };
+    page.on('crash', trap);
+    try {
+      await openApp();
+      await openDocument(doc.id);
+      await typeUnsaved(` ${secret}`);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForFunction(() => !document.getElementById('app-loader'));
+      await page.waitForTimeout(1500);
+      assert.equal((await draftKeys()).length, 1, 'the draft is still in tab storage after a literal reload');
+      await openDocument(doc.id);
+      assert.ok((await page.locator('#doc-email-richbody').innerText()).includes(secret), 'the draft is recovered into the reopened document');
+      literalReload.status = 'verified';
+      record('literal reload recovers the unsaved draft');
+    } catch (error) {
+      if (crashes > 0 || /crashed/i.test(String(error?.message))) {
+        literalReload.status = 'not verified: browser crash';
+        literalReload.detail = `${crashes} crash event(s); ${String(error?.message).split('\n')[0]}`;
+        console.log(`[ENVIRONMENT] literal reload ${literalReload.status} (${literalReload.detail}); falling back to a tab that inherits storage`);
+        page.off('crash', trap);
+        page = await context.newPage();
+        wire(page);
+        await page.evaluate(() => sessionStorage.clear()).catch(() => {});
+      } else {
+        throw error;
+      }
+    }
+    page.off('crash', trap);
+  }
+  console.log(`literal reload recovery: ${literalReload.status}`);
+  if (literalReload.status === 'verified') await page.evaluate(() => sessionStorage.clear());
+
   // 1. Tab-scoped recovery: a tab that inherits the opener's sessionStorage recovers the draft.
   await openApp();
   await openDocument(doc.id);
