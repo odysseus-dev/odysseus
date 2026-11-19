@@ -168,28 +168,63 @@ try {
   assert.equal((await draftKeys()).length, 1, 'the tab-scoped draft is still stored');
   record('a fresh renderer inheriting tab storage recovers the draft');
 
-  // 2. A rejected logout leaves the session, and recovery, intact.
+  // 2. Recovery stays active during a pending logout and after rejection.
   await openDocument(doc.id);
   assert.ok((await page.locator('#doc-email-richbody').innerText()).includes(secret), 'draft was recovered after refresh');
-  await page.route('**/api/auth/logout', (route) => route.fulfill({ status: 500, body: '{"detail":"nope"}', contentType: 'application/json' }));
-  await clickLogout();
-  await page.waitForTimeout(800);
+  await page.route(`**/api/document/${doc.id}`, route => route.request().method() === 'PUT'
+    ? route.fulfill({ status: 503 }) : route.fallback());
+  const logoutUrl = '**/api/auth/logout';
+  const logoutButton = page.locator('#settings-logout-btn');
+  let receiveLogout;
+  const logoutStarted = new Promise(resolve => { receiveLogout = resolve; });
+  let requests = 0;
+  await page.route(logoutUrl, (route) => {
+    requests += 1;
+    receiveLogout(route);
+  });
+  await Promise.all([page.waitForRequest(logoutUrl), clickLogout()]);
+  const pendingLogout = await logoutStarted;
+  assert.equal(await logoutButton.isDisabled(), true, 'logout disables the button while awaiting the server');
+  await logoutButton.dispatchEvent('click');
+  const pendingText = ' pending-logout-edit';
+  await typeUnsaved(pendingText);
+  assert.ok(await page.evaluate(({ prefix, text }) => Object.keys(sessionStorage).some(
+    key => key.startsWith(prefix) && sessionStorage.getItem(key)?.includes(text),
+  ), { prefix: DRAFT_PREFIX, text: pendingText }), 'the latest edit is recoverable before logout completes');
+  assert.equal(requests, 1, 'only one logout request can be in flight');
+  await pendingLogout.fulfill({ status: 500, body: '{"detail":"nope"}', contentType: 'application/json' });
+  await page.waitForFunction(() => !document.getElementById('settings-logout-btn').disabled);
   assert.ok(!page.url().includes('/login'), 'a rejected logout does not navigate away');
   assert.equal((await draftKeys()).length, 1, 'a rejected logout keeps the draft');
   await typeUnsaved(' still-editing');
-  await page.unroute('**/api/auth/logout');
+  await page.unroute(logoutUrl);
   const stillAuthed = await context.request.get(`${origin}/api/auth/status`);
   assert.equal((await stillAuthed.json()).authenticated, true, 'server session survived the rejected logout');
-  record('rejected logout keeps session and draft recovery');
+  record('pending and rejected logout requests keep session and draft recovery');
 
   // 3. An interrupted (aborted) logout request behaves the same.
-  await page.route('**/api/auth/logout', (route) => route.abort('connectionfailed'));
+  await page.route(logoutUrl, (route) => route.abort('connectionfailed'));
   await clickLogout();
-  await page.waitForTimeout(800);
+  await page.waitForFunction(() => !document.getElementById('settings-logout-btn').disabled);
   assert.ok(!page.url().includes('/login'));
   assert.equal((await draftKeys()).length, 1);
-  await page.unroute('**/api/auth/logout');
+  await page.unroute(logoutUrl);
   record('interrupted logout keeps session and draft recovery');
+
+  const openSibling = async (url) => {
+    const [sibling] = await Promise.all([
+      context.waitForEvent('page'),
+      page.evaluate(target => { window.open(target); }, url),
+    ]);
+    return sibling;
+  };
+  const liveSibling = await openSibling(origin);
+  await liveSibling.waitForLoadState('domcontentloaded');
+  const unopenedSibling = await openSibling('about:blank');
+  for (const sibling of [liveSibling, unopenedSibling]) {
+    assert.ok(await sibling.evaluate(needle => Object.values(sessionStorage).some(value => value.includes(needle)), secret),
+      'a tab opened from the editor inherits its recovery draft');
+  }
 
   // 4. Real logout: no beforeunload prompt, storage is empty, nothing is rewritten.
   dialogs.length = 0;
@@ -201,6 +236,9 @@ try {
   assert.deepEqual(await draftKeys(), [], 'no draft key after navigation to /login');
   assert.equal(await storageHoldsSecret(), false, 'outgoing user text is not in any browser storage');
   record('logout leaves no draft in the same tab');
+  await liveSibling.waitForURL(url => url.pathname.startsWith('/login'));
+  assert.deepEqual(await liveSibling.evaluate(prefix => Object.keys(sessionStorage).filter(key => key.startsWith(prefix)), DRAFT_PREFIX), []);
+  record('logout clears inherited recovery drafts from an open application tab');
 
   // 5. User B signs in through the real login form in the same tab.
   await page.fill('#username', 'userb');
@@ -214,6 +252,10 @@ try {
   assert.equal(await storageHoldsSecret(), false, 'user B cannot inspect user A text in storage');
   const bStatus = await (await context.request.get(`${origin}/api/auth/status`)).json();
   assert.equal(bStatus.username, 'userb');
+  await unopenedSibling.goto(origin, { waitUntil: 'domcontentloaded' });
+  await unopenedSibling.waitForFunction(() => !document.getElementById('app-loader'));
+  assert.equal(await unopenedSibling.evaluate(needle => Object.values(sessionStorage).some(value => value.includes(needle)), secret), false);
+  record('a tab that missed logout clears inherited recovery before opening as user B');
   const bOpensA = await context.request.get(`${origin}/api/document/${doc.id}`);
   assert.ok([403, 404].includes(bOpensA.status()), `user B must not read user A's document (got ${bOpensA.status()})`);
   await page.evaluate(async (id) => {

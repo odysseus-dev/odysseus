@@ -473,8 +473,9 @@ it('warns before leaving an unsaved draft even when tab-scoped recovery was stor
 });
 
 describe('Logout draft boundary', () => {
+  let sessionCase = 0;
   async function withSessionStorage(run) {
-    const session = await import('../frontend/src/features/documents/application/documentSession.js');
+    const session = await import(`../frontend/src/features/documents/application/documentSession.js?logout-case=${++sessionCase}`);
     const previousStorage = globalThis.sessionStorage;
     const recovery = new Map();
     clearDocuments();
@@ -488,7 +489,6 @@ describe('Logout draft boundary', () => {
     try {
       await run(session, recovery);
     } finally {
-      session.resumeMarkdownDraftPersistence();
       globalThis.sessionStorage = previousStorage;
       clearDocuments();
     }
@@ -506,13 +506,13 @@ describe('Logout draft boundary', () => {
   });
 
   it('does not recreate the outgoing draft from the unload guard, timers or status changes', async () => {
-    await withSessionStorage(({ guardMarkdownDraftUnload, persistMarkdownDraft, suspendMarkdownDraftPersistence }, recovery) => {
+    await withSessionStorage(({ guardMarkdownDraftUnload, persistMarkdownDraft, endMarkdownDraftPersistence }, recovery) => {
       const doc = dirtyDoc();
       registerDocument(doc);
       persistMarkdownDraft(doc);
       assert.equal(recovery.size, 1);
 
-      suspendMarkdownDraftPersistence();
+      endMarkdownDraftPersistence();
       recovery.clear(); // what logout does to tab storage
       let warned = false;
       guardMarkdownDraftUnload({ preventDefault() { warned = true; } });
@@ -524,42 +524,27 @@ describe('Logout draft boundary', () => {
   });
 
   it('does not recover a stored draft into a document adopted after the boundary', async () => {
-    await withSessionStorage(({ addDocToTabs: adopt, suspendMarkdownDraftPersistence }, recovery) => {
+    await withSessionStorage(({ addDocToTabs: adopt, endMarkdownDraftPersistence }, recovery) => {
       recovery.set('odysseus.document.markdownDraft.v1:s1:d1', JSON.stringify({
         id: 'd1', sessionId: 's1', content: 'Private', baseContent: 'Original', visualBase: 'Original', visualHtml: null,
       }));
-      suspendMarkdownDraftPersistence();
+      endMarkdownDraftPersistence();
       adopt({ id: 'd1', title: 't', language: 'markdown', current_content: 'Original', version_count: 1 }, 's1');
       assert.equal(docs.get('d1').content, 'Original');
     });
   });
 
-  it('does not store a blocked visual draft after the boundary, and stores it again on resume', async () => {
-    await withSessionStorage(({ persistMarkdownDraft, resumeMarkdownDraftPersistence, suspendMarkdownDraftPersistence }, recovery) => {
+  it('keeps blocked visual drafts recoverable until logout succeeds', async () => {
+    await withSessionStorage(({ persistMarkdownDraft, endMarkdownDraftPersistence }, recovery) => {
       const doc = { ...dirtyDoc(), _visualSyncBlocked: true, _visualDraftHtml: '<p>Private visual draft</p>', _visualBaselineMarkdown: 'Original', _saveState: 'blocked' };
       registerDocument(doc);
-      suspendMarkdownDraftPersistence();
-      assert.equal(persistMarkdownDraft(doc), false);
-      assert.equal(recovery.size, 0);
-      resumeMarkdownDraftPersistence();
+      assert.equal(persistMarkdownDraft(doc), true);
       assert.equal(recovery.size, 1);
       assert.match([...recovery.values()][0], /Private visual draft/);
-    });
-  });
-
-  it('resumes persistence and stores edits made during an interrupted logout', async () => {
-    await withSessionStorage(({ resumeMarkdownDraftPersistence, suspendMarkdownDraftPersistence, guardMarkdownDraftUnload }, recovery) => {
-      const doc = dirtyDoc();
-      registerDocument(doc);
-      suspendMarkdownDraftPersistence();
-      doc.content = 'Typed while logout was pending';
+      endMarkdownDraftPersistence();
+      recovery.clear();
+      assert.equal(persistMarkdownDraft(doc), false);
       assert.equal(recovery.size, 0);
-      resumeMarkdownDraftPersistence();
-      assert.equal(recovery.size, 1);
-      assert.match([...recovery.values()][0], /Typed while logout was pending/);
-      let warned = false;
-      guardMarkdownDraftUnload({ preventDefault() { warned = true; } });
-      assert.equal(warned, true, 'unsaved work is guarded again once the session continues');
     });
   });
 });

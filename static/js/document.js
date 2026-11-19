@@ -35,7 +35,8 @@ import { bindDocumentCommands } from './document/application/documentCommands.js
 
 import { saveDocument, bindPersistenceHooks } from './document/application/persistence.js';
 
-import { addDocToTabs, guardMarkdownDraftUnload, resumeMarkdownDraftPersistence, suspendMarkdownDraftPersistence } from './document/application/documentSession.js';
+import { addDocToTabs, endMarkdownDraftPersistence, guardMarkdownDraftUnload, initMarkdownDraftSession } from './document/application/documentSession.js';
+import { SESSION_ENDED_EVENT } from './authStatus.js';
 
 import './document/ui/editor/sourceEditor.js';
 
@@ -72,8 +73,27 @@ import { installEscapeLayering } from './document/ui/panel/panelLifecycle.js';
 window.addEventListener('beforeunload', guardMarkdownDraftUnload);
 // Settings announces the end of the account session; local drafts belong to
 // the outgoing user and must not be recreated after that point.
-window.addEventListener('odysseus:session-ending', suspendMarkdownDraftPersistence);
-window.addEventListener('odysseus:session-end-aborted', resumeMarkdownDraftPersistence);
+window.addEventListener(SESSION_ENDED_EVENT, endMarkdownDraftPersistence);
+
+function readLogoutMarker() {
+  try { return localStorage.getItem(SESSION_ENDED_EVENT); } catch (_) { return null; }
+}
+
+const logoutMarkerAtLoad = readLogoutMarker();
+initMarkdownDraftSession(logoutMarkerAtLoad);
+
+function endPeerSession() {
+  endMarkdownDraftPersistence();
+  try { sessionStorage.clear(); } catch (_) {}
+  window.location.replace('/login');
+}
+
+window.addEventListener('storage', (event) => {
+  if (event.key === SESSION_ENDED_EVENT && event.newValue !== null) endPeerSession();
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted && readLogoutMarker() !== logoutMarkerAtLoad) endPeerSession();
+});
 
 // Existing external integrations read these legacy singletons.
 globalThis.uiModule = uiModule;
