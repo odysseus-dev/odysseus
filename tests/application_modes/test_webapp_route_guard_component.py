@@ -84,6 +84,90 @@ class RouteGuardComponentTests(unittest.TestCase):
             self.assertEqual(patch_state(repo, patches), 'foreign')
             self.assertFalse([p for p in (repo / '.git').iterdir() if 'patch-check' in p.name], 'the check leaves nothing in the source')
 
+    def _refusal_fixture(self, d):
+        """Disposable pin tree plus reviewed-style patches: p0 and p2 apply at the pin; p1 also applies at the pin but
+        conflicts with the tree p0 produces; p3 only applies after p0 (its context carries p0's change)."""
+        repo = Path(d) / 'repo'
+        repo.mkdir()
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        subprocess.run(['git', '-C', str(repo), 'config', 'core.autocrlf', 'false'], check=True)
+        (repo / 'f.txt').write_text('1\n2\n3\n4\n5\n6\n7\n8\n9\n')
+        subprocess.run([*GIT, '-C', str(repo), 'add', '.'], check=True)
+        subprocess.run([*GIT, '-C', str(repo), 'commit', '-qm', 'c'], check=True)
+        revision = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+        pin = types.SimpleNamespace(revision=revision)
+
+        def diff_patch(name, content):
+            (repo / 'f.txt').write_text(content)
+            patch = Path(d) / name
+            patch.write_bytes(subprocess.run(['git', '-C', str(repo), 'diff', '--', 'f.txt'], capture_output=True, check=True).stdout)
+            subprocess.run(['git', '-C', str(repo), 'checkout', '-q', 'f.txt'], check=True)
+            return patch
+
+        p0 = diff_patch('p0.patch', 'one\n2\n3\n4\n5\n6\n7\n8\n9\n')
+        p1 = diff_patch('p1.patch', 'uno\n2\n3\n4\n5\n6\n7\n8\n9\n')
+        p2 = diff_patch('p2.patch', '1\n2\n3\n4\n5\n6\n7\n8\nnine\n')
+        (repo / 'f.txt').write_text('one\n2\n3\n4\n5\n6\n7\n8\n9\n')
+        subprocess.run([*GIT, '-C', str(repo), 'add', 'f.txt'], check=True)   # p3 is diffed against the p0-applied tree, not the pin
+        p3 = diff_patch('p3.patch', 'one\ntwo\n3\n4\n5\n6\n7\n8\n9\n')
+        subprocess.run([*GIT, '-C', str(repo), 'reset', '-q', '--hard'], check=True)
+        return repo, pin, (p0, p1, p2, p3)
+
+    def test_mid_sequence_refusal_reports_the_applied_count_and_the_foreign_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo, pin, (p0, p1, p2, p3) = self._refusal_fixture(d)
+            with self.assertRaises(ComponentError) as caught:
+                apply_patch(repo, pin, [p0, p1, p2])
+            message = str(caught.exception)
+            self.assertIn('1 of 3 patches were applied before the refusal at patch 2', message)
+            self.assertIn('patch state: foreign', message)
+            self.assertNotIn('nothing was changed', message)
+            # fail-closed and partially patched: exactly p0 landed, nothing else; HEAD untouched
+            self.assertEqual((repo / 'f.txt').read_text(), 'one\n2\n3\n4\n5\n6\n7\n8\n9\n')
+            self.assertEqual(patch_state(repo, [p0, p1, p2]), 'foreign')
+            with self.assertRaises(ComponentError):
+                verify_checkout(repo, pin, [p0, p1, p2])
+            self.assertEqual(subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip(), pin.revision)
+            self.assertEqual(subprocess.run(['git', '-C', str(repo), 'status', '--porcelain', '--untracked-files=no'], capture_output=True, text=True).stdout.strip(), 'M f.txt')
+            with self.assertRaises(ComponentError) as again:
+                apply_patch(repo, pin, [p0, p1, p2])                    # the leftover tree stays refused, never overwritten
+            self.assertIn('differs from the reviewed pin', str(again.exception))
+            self.assertEqual((repo / 'f.txt').read_text(), 'one\n2\n3\n4\n5\n6\n7\n8\n9\n')
+
+    def test_mid_sequence_refusal_counts_every_patch_applied_before_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo, pin, (p0, p1, p2, p3) = self._refusal_fixture(d)
+            with self.assertRaises(ComponentError) as caught:
+                apply_patch(repo, pin, [p0, p3, p1, p2])                # p0 and p3 land, then p1 conflicts
+            message = str(caught.exception)
+            self.assertIn('2 of 4 patches were applied before the refusal at patch 3', message)
+            self.assertIn('patch state: foreign', message)
+            self.assertEqual((repo / 'f.txt').read_text(), 'one\ntwo\n3\n4\n5\n6\n7\n8\n9\n')
+            self.assertEqual(patch_state(repo, [p0, p3, p1, p2]), 'foreign')
+
+    def test_first_patch_refusal_in_a_sequence_still_reports_nothing_was_changed(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo, pin, (p0, p1, p2, p3) = self._refusal_fixture(d)
+            with self.assertRaises(ComponentError) as caught:
+                apply_patch(repo, pin, [p3, p0])                        # p3 needs p0's tree: refused before anything lands
+            self.assertEqual(str(caught.exception), 'The reviewed Hermes patch does not apply to this source; nothing was changed.')
+            self.assertEqual(patch_state(repo, [p3, p0]), 'absent')
+            self.assertEqual((repo / 'f.txt').read_text(), '1\n2\n3\n4\n5\n6\n7\n8\n9\n')
+            with self.assertRaises(ComponentError) as single:
+                apply_patch(repo, pin, p3)                              # single-patch refusal keeps the exact original message
+            self.assertEqual(str(single.exception), 'The reviewed Hermes patch does not apply to this source; nothing was changed.')
+            self.assertEqual(patch_state(repo, p3), 'absent')
+
+    def test_clean_sequence_still_applies_and_is_idempotent_after_the_message_change(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo, pin, (p0, p1, p2, p3) = self._refusal_fixture(d)
+            self.assertEqual(patch_state(repo, [p0, p3]), 'absent')
+            self.assertEqual(apply_patch(repo, pin, [p0, p3]), 'applied')
+            self.assertEqual(patch_state(repo, [p0, p3]), 'applied')
+            self.assertEqual(apply_patch(repo, pin, [p0, p3]), 'applied')
+            verify_checkout(repo, pin, [p0, p3])
+            self.assertEqual((repo / 'f.txt').read_text(), 'one\ntwo\n3\n4\n5\n6\n7\n8\n9\n')
+
     def test_a_release_that_carries_only_the_route_guard_is_still_accepted_for_rollback(self):
         manager = WebappComponent.__new__(WebappComponent)
         manager.application_root = ROOT
