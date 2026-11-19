@@ -580,7 +580,7 @@ export async function refreshModels(force = false, opts = {}) {
     if (!_cachedItems || _cachedItems.length === 0) {
       const noModels = document.createElement('div');
       noModels.className = 'models-empty-state';
-      if (window._isAdmin) {
+      if (window._canManageSettings ?? window._isAdmin) {
         noModels.innerHTML = '<span class="muted">No models found</span><br>'
           + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">Open Admin to add endpoints</a>'
           + '<br><span class="muted-sm">Type /setup for Local models or API setup.</span>';

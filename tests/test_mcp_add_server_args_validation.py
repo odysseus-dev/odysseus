@@ -167,7 +167,7 @@ def test_admin_form_reports_the_reason_the_route_gave():
 
 
 def test_unified_integrations_form_reports_the_reason_the_route_gave():
-    source = (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
+    source = (_REPO / "static" / "js" / "settings" / "integrations" / "forms" / "mcp.js").read_text(encoding="utf-8")
     assert (
         "el('uf-mcp-msg').textContent = data.detail || `Failed (${r.status})`;"
         in source
