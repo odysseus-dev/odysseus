@@ -58,10 +58,21 @@ def processes():
     return {int(r['ProcessId']): (int(r['ParentProcessId'] or 0), str(r['Name'] or '').lower(), str(r['CommandLine'] or '')) for r in rows}
 
 
-def listening_pids(port, netstat_output=None):
-    """PIDs listening on this exact TCP port, and whether every listener is loopback-only."""
+def listening_pids(port, netstat_output=None, *, fail_closed=False):
+    """PIDs listening on this exact TCP port, and whether every listener is loopback-only.
+
+    ``fail_closed`` is opted into only by the Odysseus restart guard: a FAILED live netstat
+    probe then raises ``Unavailable`` (listener set UNKNOWN) instead of reading as "no
+    listeners", so an unprobeable machine cannot let a tree restart proceed. Default callers
+    keep the historical lenient semantics. Injected ``netstat_output`` is always trusted (no
+    live probe runs, so there is no probe failure to detect).
+    """
     if netstat_output is None:
-        netstat_output = _run(['netstat.exe', '-ano', '-p', 'TCP']).stdout
+        result = _run(['netstat.exe', '-ano', '-p', 'TCP'])
+        if fail_closed and (result.returncode or not result.stdout.strip()):
+            raise Unavailable('The netstat probe failed, so it is unknown whether the Hermes gateway runs inside the launcher tree; '
+                              'refusing the tree restart rather than guess. Use scripts/restart-odysseus-app.ps1, which protects the gateway branch.')
+        netstat_output = result.stdout
     pids, loopback_only = set(), True
     for line in netstat_output.splitlines():
         parts = line.split()
@@ -112,9 +123,11 @@ def gateway_in_launcher_tree(launcher_pid, gateway_port, table=None, netstat_out
     A ``taskkill /T`` of the launcher would then stop the gateway and any turn in
     progress. Every listener on the port is checked (a dual IPv4/IPv6 bind can list
     two PIDs); an absent gateway is not grounds to block because nothing would be
-    killed. Pure given injected ``table``/``netstat_output``.
+    killed. A FAILED live netstat probe is UNKNOWN, not "absent": the guard fails
+    closed (``Unavailable``) rather than let a tree restart proceed unverified.
+    Pure given injected ``table``/``netstat_output``.
     """
-    pids, _ = listening_pids(gateway_port, netstat_output)
+    pids, _ = listening_pids(gateway_port, netstat_output, fail_closed=True)
     if not pids:
         return False
     table = table if table is not None else processes()

@@ -125,7 +125,7 @@ class ScheduleRestartGuardTests(unittest.TestCase):
 
     def test_explicit_gateway_port_is_honored(self):
         # Gateway 400 is in-tree but listens on 9999; asking about 9130 (no listener) must proceed.
-        by_port = lambda port, netstat_output=None: ({400} if port == 9999 else set(), True)
+        by_port = lambda port, netstat_output=None, fail_closed=False: ({400} if port == 9999 else set(), True)
         with patch.object(controls, 'processes', return_value=table(300)), \
                 patch.object(controls, 'listening_pids', side_effect=by_port):
             result = controls.schedule_odysseus_restart(plan=self.PLAN, spawn=Mock(), gateway_port=9130)
@@ -145,7 +145,7 @@ class ScheduleRestartGuardTests(unittest.TestCase):
                     patch.object(controls, 'listening_pids', return_value=({400}, True)) as lp:
                 with self.assertRaises(controls.Unavailable):
                     controls.schedule_odysseus_restart(plan=self.PLAN, spawn=Mock())
-        lp.assert_called_once_with(9130, None)
+        lp.assert_called_once_with(9130, None, fail_closed=True)
 
     def test_non_numeric_lab_port_refuses_without_guessing(self):
         with patch.dict('os.environ', {'ODYSSEUS_RESTART_LAB_GATEWAY_PORT': 'not-a-port'}):
