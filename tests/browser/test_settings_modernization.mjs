@@ -1575,10 +1575,17 @@ async function testIntegrationForms(instance, cookies) {
   const createdCard = await admin.page.$eval('.intg-card[data-intg-type="api"]', card => card.textContent);
   check('saved API integration appears in integrations list', createdCard.includes('Phase4 Automated Service'));
 
+  await admin.page.click('#uf-api-cancel');
+
   // Test clicking the card to open edit view and verify populated values
   await admin.page.click('.intg-card[data-intg-type="api"]');
   await admin.page.waitForSelector('#uf-api-name');
-  await admin.page.waitForFunction(() => document.querySelector('#uf-api-name')?.value === 'Phase4 Automated Service', null, { timeout: 8000 });
+  await admin.page.waitForFunction(
+    () => document.querySelector('#uf-api-name')?.value === 'Phase4 Automated Service'
+      && document.querySelector('#uf-api-url')?.value === 'http://127.0.0.1:8080',
+    null,
+    { timeout: 8000 },
+  );
   const editVals = await admin.page.evaluate(() => ({
     name: document.querySelector('#uf-api-name').value,
     url: document.querySelector('#uf-api-url').value,
