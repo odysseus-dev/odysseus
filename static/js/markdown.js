@@ -400,7 +400,7 @@ function _isDangerousSrcset(value) {
   return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
 }
 
-function _cleanAllowedHtmlOnce(htmlString) {
+function _cleanAllowedHtmlOnce(htmlString, noteFetches) {
   const tpl = document.createElement('template');
   tpl.innerHTML = htmlString;
   for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
@@ -413,6 +413,10 @@ function _cleanAllowedHtmlOnce(htmlString) {
     }
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
+      if (noteFetches && _isNoteFetch(name, attr.value)) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
       // Drop every inline event handler (onerror, onclick, onmouseover, ...)
       // and srcdoc (a frame-less script vector).
       if (name.startsWith('on') || name === 'srcdoc') {
@@ -439,6 +443,12 @@ function _cleanAllowedHtmlOnce(htmlString) {
 }
 
 export function sanitizeAllowedHtml(html) {
+  return _sanitizeAllowedHtmlTo(html, false);
+}
+
+// `noteFetches` also strips what would fetch from another origin (see
+// _isNoteFetch); mdToHtml asks for it in notes mode.
+function _sanitizeAllowedHtmlTo(html, noteFetches) {
   const raw = String(html == null ? '' : html);
   // Non-browser context (e.g. a future SSR/Node import): fail closed by
   // escaping rather than trusting the markup.
@@ -448,7 +458,7 @@ export function sanitizeAllowedHtml(html) {
   // tree (the basis of mutation-XSS), so re-clean until it stops changing.
   let out = raw;
   for (let i = 0; i < 4; i++) {
-    const next = _cleanAllowedHtmlOnce(out);
+    const next = _cleanAllowedHtmlOnce(out, noteFetches);
     if (next === out) break;
     out = next;
   }
@@ -997,23 +1007,14 @@ function noteImageSrc(rawUrl) {
 
 // The markdown image pass is not the only way a note can name an image: raw
 // <img>, <video poster>, srcset or a CSS url() inside preserved HTML (e.g. a
-// <details> block) survive the allowed-HTML sanitizer, which only blocks
-// script. For notes, strip every fetching attribute that does not point at
-// this origin, on an inert <template> before the markup reaches the page.
-function scrubNoteFetches(html) {
-  if (typeof document === 'undefined') return html;
-  const tpl = document.createElement('template');
-  tpl.innerHTML = html;
-  for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
-    for (const attr of Array.from(el.attributes || [])) {
-      const name = attr.name.toLowerCase();
-      const fetches = name === 'srcset' || name === 'poster' || name === 'background' || name === 'xlink:href'
-        || (name === 'style' && /url\s*\(/i.test(attr.value))
-        || (name === 'src' && !noteImageSrc(attr.value));
-      if (fetches) el.removeAttribute(attr.name);
-    }
-  }
-  return tpl.innerHTML;
+// <details> block) would survive the script-only checks above. For notes,
+// `_sanitizeAllowedHtmlTo(html, true)` also strips every
+// fetching attribute that does not point at this origin, in the same inert
+// <template> walk, so the markup never reaches the page with them.
+function _isNoteFetch(name, value) {
+  return name === 'srcset' || name === 'poster' || name === 'background' || name === 'xlink:href'
+    || (name === 'style' && /url\s*\(/i.test(value))
+    || (name === 'src' && !noteImageSrc(value));
 }
 
 export function mdToHtml(src, opts) {
@@ -1189,7 +1190,7 @@ export function mdToHtml(src, opts) {
   // Extract <details>...</details> blocks and replace with placeholders.
   s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
+    allowedHtmlBlocks.push(_sanitizeAllowedHtmlTo(match, notesImages));
     return placeholder;
   });
 
@@ -1197,7 +1198,7 @@ export function mdToHtml(src, opts) {
   // markdown conversion)
   s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
+    allowedHtmlBlocks.push(_sanitizeAllowedHtmlTo(match, notesImages));
     return placeholder;
   });
 
@@ -1382,7 +1383,6 @@ export function mdToHtml(src, opts) {
     s = s.replace(/<ul><li class="md-task/g, '<ul class="md-tasklist"><li class="md-task');
   }
 
-  if (notesImages) s = scrubNoteFetches(s);
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 

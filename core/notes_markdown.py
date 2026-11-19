@@ -30,8 +30,117 @@ _TASK_RE = re.compile(r"^([ \t]*)([-*+])[ \t]+\[([ xX])\][ \t]?([^\n]*)$")
 # Task-looking lines inside a fence are code samples, not checklist items.
 _FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
-# Markdown image, first capture is the URL.
-_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+# Markdown images and links are found by a scan (`_scan_images`,
+# `_scan_links`), not a `finditer` over a pattern like
+# `!\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)`: a line of many `![` or
+# `![](!` with nothing closing them makes every start rescan the rest of the
+# line, which is quadratic on note content anyone can write. The scan gives
+# the same matches but resumes past the shared `]` or `)` it already found.
+_CLOSE_PAREN_OR_SPACE_RE = re.compile(r"[)\s]")
+_NON_SPACE_RE = re.compile(r"\S")
+
+
+class _NextOf:
+    """Index of the next match of a one-character pattern at or after `pos`
+    (len(text) when there is none), remembering the last answer so that
+    repeated, mostly increasing queries scan each character once."""
+
+    def __init__(self, text: str, pattern: "re.Pattern[str]"):
+        self._text = text
+        self._pattern = pattern
+        self._from = len(text) + 1
+        self._found = -1
+
+    def __call__(self, pos: int) -> int:
+        if not (self._from <= pos <= self._found):
+            m = self._pattern.search(self._text, pos)
+            self._from = pos
+            self._found = m.start() if m else len(self._text)
+        return self._found
+
+
+def _scan_images(line: str, titled: bool):
+    """Yield (start, end, url) for each markdown image on one line, left to right.
+
+    `titled=True` is `![alt](url "title")`: a non-empty URL with no space or
+    `)`, then an optional quoted title. `titled=False` is `![alt](anything)`,
+    the looser form a reminder drops: the destination runs to the first `)`.
+    """
+    n = len(line)
+    close_bracket = _NextOf(line, re.compile(r"\]"))
+    close_paren = _NextOf(line, re.compile(r"\)"))
+    url_end = _NextOf(line, _CLOSE_PAREN_OR_SPACE_RE)
+    non_space = _NextOf(line, _NON_SPACE_RE)
+    quote = _NextOf(line, re.compile(r'"'))
+    pos = 0
+    while True:
+        start = line.find("![", pos)
+        if start < 0:
+            return
+        # Every `![` before this `]` shares it, and everything after it, so
+        # when this start fails they all fail: resume past the `]`.
+        alt_end = close_bracket(start + 2)
+        if alt_end >= n:
+            return
+        pos = alt_end + 1
+        if line[alt_end + 1:alt_end + 2] != "(":
+            continue
+        dest = alt_end + 2
+        if not titled:
+            end = close_paren(dest)
+            if end < n:
+                yield start, end + 1, line[dest:end]
+                pos = end + 1
+            continue
+        end = url_end(dest)
+        if end == dest or end >= n:
+            continue
+        if line[end] == ")":
+            yield start, end + 1, line[dest:end]
+            pos = end + 1
+            continue
+        title = non_space(end)
+        if title < n and line[title] == '"':
+            title_end = quote(title + 1)
+            if title_end < n and line[title_end + 1:title_end + 2] == ")":
+                yield start, title_end + 2, line[dest:end]
+                pos = title_end + 2
+
+
+def _scan_links(line: str):
+    """Yield (start, end, text) for each `[text](anything)` not preceded by `!`."""
+    n = len(line)
+    close_bracket = _NextOf(line, re.compile(r"\]"))
+    close_paren = _NextOf(line, re.compile(r"\)"))
+    pos = 0
+    while True:
+        start = line.find("[", pos)
+        if start < 0:
+            return
+        if start and line[start - 1] == "!":
+            pos = start + 1
+            continue
+        text_end = close_bracket(start + 1)
+        if text_end >= n:
+            return
+        pos = text_end + 1
+        if line[text_end + 1:text_end + 2] != "(":
+            continue
+        end = close_paren(text_end + 2)
+        if end < n:
+            yield start, end + 1, line[start + 1:text_end]
+            pos = end + 1
+
+
+def _replace_spans(line: str, spans, repl) -> str:
+    out = []
+    last = 0
+    for start, end, value in spans:
+        out.append(line[last:start])
+        out.append(repl(value))
+        last = end
+    out.append(line[last:])
+    return "".join(out)
 
 # A line that is only an untitled image, the way `fold_image_url` writes the
 # legacy single image. Group 1 = the URL.
@@ -575,7 +684,7 @@ def image_urls(content: Optional[str]) -> List[str]:
         return []
     urls: List[str] = []
     for _, raw in _iter_lines_outside_fences(content):
-        urls.extend(m.group(1) for m in _IMAGE_RE.finditer(raw))
+        urls.extend(url for _, _, url in _scan_images(raw, titled=True))
     return urls
 
 
@@ -644,8 +753,6 @@ def fold_image_url(content: Optional[str], url: Optional[str], replace: Optional
 # Markup a reminder (email, ntfy, a desktop notification) cannot show:
 # images are dropped, links keep their text, heading and quote markers go.
 # Fenced code is content and stays as written.
-_REMINDER_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\([^)\n]*\)")
-_REMINDER_LINK_RE = re.compile(r"(?<!!)\[([^\]\n]*)\]\([^)\n]*\)")
 _REMINDER_LINE_MARK_RE = re.compile(r"^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?)")
 _REMINDER_FENCE_RE = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})")
 
@@ -658,8 +765,8 @@ def reminder_text(text: Optional[str]) -> str:
         if _REMINDER_FENCE_RE.match(line):
             in_fence = not in_fence
         elif not in_fence:
-            line = _REMINDER_IMAGE_RE.sub("", line)
-            line = _REMINDER_LINK_RE.sub(lambda m: m.group(1), line)
+            line = _replace_spans(line, _scan_images(line, titled=False), lambda _: "")
+            line = _replace_spans(line, _scan_links(line), lambda text: text)
             line = _REMINDER_LINE_MARK_RE.sub("", line)
         lines.append(line.rstrip())
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()

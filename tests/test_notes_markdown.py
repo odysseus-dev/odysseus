@@ -139,3 +139,48 @@ def test_fold_image_url_appends_once_and_replaces_drawings():
     # A fenced sample mentioning the URL is not a reference to it.
     assert fold_image_url("```\n![](/api/upload/a)\n```", "/api/upload/a").endswith("\n\n![](/api/upload/a)")
     assert image_urls('![a](/api/upload/1 "t") and ![](/api/upload/2)') == ["/api/upload/1", "/api/upload/2"]
+
+
+@pytest.mark.parametrize("content, urls", [
+    ('![a](/u "t")', ["/u"]),
+    ("![a](/u  \"t\" )", []),
+    ("![a](/u x)", []),
+    ("![](/a)![](/b)", ["/a", "/b"]),
+    ("![a [b] c](/u)", []),
+    ("![a[](/u)", ["/u"]),
+    ("![](![](/u)", ["![](/u"]),
+    ("![x]( /u)", []),
+    ("![x](/u", []),
+    ("![x\n](/u)", []),
+    ('![x](/u "t\n")', []),
+])
+def test_image_urls_edge_cases(content, urls):
+    assert image_urls(content) == urls
+
+
+@pytest.mark.parametrize("text, plain", [
+    ("see [docs](https://x) now", "see docs now"),
+    ("![pic](/u) and [a](b)", "and a"),
+    ("![a](b c) [d]( e f )", "d"),
+    ("![x[y](z)", ""),
+    ("[a]([b](c)", "a"),
+    ("[unclosed](x", "[unclosed](x"),
+    ("!\\[a](b)", "!\\a"),
+])
+def test_reminder_text_drops_images_and_keeps_link_text(text, plain):
+    from core.notes_markdown import reminder_text
+    assert reminder_text(text) == plain
+
+
+@pytest.mark.parametrize("unit", ["![", "![](!", "![](a ", '![](a "', "[", "[](", "![]("])
+def test_image_and_link_scans_are_linear_on_unclosed_markup(unit):
+    """A long line of markup that never closes used to cost one rescan of the
+    rest of the line per start (minutes on 100 KB); it must stay linear.
+    Locally these take 0.1 to 25 ms; the bound leaves room for a loaded runner."""
+    import time
+    from core.notes_markdown import reminder_text
+    content = unit * (100_000 // len(unit))
+    started = time.perf_counter()
+    image_urls(content)
+    reminder_text(content)
+    assert time.perf_counter() - started < 1.0
