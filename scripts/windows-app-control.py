@@ -6,7 +6,6 @@ import math
 import os
 from pathlib import Path
 import sys
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -25,7 +24,8 @@ def main():
     parser.add_argument('--chroma-port', type=int, default=8100)
     parser.add_argument('--state-dir', default=str(ROOT / 'data'))
     parser.add_argument('--gateway-db', default=str(Path(os.environ['LOCALAPPDATA']) / 'Odysseus/hermes/state/hermes-gateway/state.db'))
-    parser.add_argument('--workers-dir', default=str(Path(tempfile.gettempdir()) / 'odysseus-tmux'))
+    parser.add_argument('--workers-dir', default=None,
+                        help='worker receipt inventory (default: <state-dir>/worker_receipts, durable)')
     parser.add_argument('--launcher-pid', type=int)
     parser.add_argument('--python', default=sys.executable)
     parser.add_argument('--lab-application', default='')
@@ -39,6 +39,8 @@ def main():
         for key in ('action', 'timeout'):
             config.pop(key)
         config['root'] = str(ROOT)
+        if config.get('workers_dir') is None:
+            config['workers_dir'] = str(Path(config['state_dir']) / 'worker_receipts')
         for key in ('control_dir', 'state_dir', 'workers_dir', 'gateway_db', 'python'):
             config[key] = str(Path(config[key]).resolve())
         asyncio.run(serve(config))
