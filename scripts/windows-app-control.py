@@ -15,9 +15,9 @@ sys.path.insert(0, str(ROOT))
 def main():
     if os.name != 'nt':
         raise RuntimeError('This control infrastructure is Windows-only')
-    from src.windows_app_restart import serve, request_control, restart
+    from src.windows_app_restart import serve, request_control, restart, rebaseline
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['run', 'status', 'stop', 'restart'])
+    parser.add_argument('action', choices=['run', 'status', 'stop', 'restart', 'rebaseline'])
     parser.add_argument('--control-dir', required=True)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--port', type=int, default=7000)
@@ -44,8 +44,14 @@ def main():
         asyncio.run(serve(config))
         return 0
     try:
-        value = request_control(args.control_dir, 'status', args.timeout) if args.action == 'status' else restart(
-            args.control_dir, timeout=args.timeout, start=args.action == 'restart')
+        if args.action == 'status':
+            value = request_control(args.control_dir, 'status', args.timeout)
+        elif args.action == 'rebaseline':
+            # Explicit operator recovery after a health-verified shared-service
+            # restart; never invoked automatically by stop/restart.
+            value = rebaseline(args.control_dir, timeout=args.timeout)
+        else:
+            value = restart(args.control_dir, timeout=args.timeout, start=args.action == 'restart')
     except Exception as exc:
         value = {'ok': False, 'state': 'blocked', 'error': str(exc), 'forced': False}
     print(json.dumps(value, indent=2))

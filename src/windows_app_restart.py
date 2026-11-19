@@ -207,6 +207,68 @@ def verify_protected(records):
             raise RuntimeError('Protected service identity or health changed')
 
 
+def _log_rebaseline(directory, entry):
+    record = {'ts': time.time(), **entry}
+    with (Path(directory) / 'rebaseline.log').open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps(record, sort_keys=True) + '\n')
+
+
+def rebaseline_protected(config, receipt, server=None, gate=None, requester_pid=None):
+    """Sanctioned refresh of the protected baseline after a legitimate shared-service restart.
+
+    Fail-closed on every doubt: the app must still be the live listener, the
+    on-disk receipt must exactly match the in-memory control state, and every
+    shared service must pass its health JSON contract with a fresh listener
+    identity (the same probe used at launch). Only the 'protected' field is
+    rewritten, atomically. verify_protected/full_guard and the stop/restart
+    paths are unchanged: a changed baseline still refuses them until an
+    operator explicitly sanctions this refresh.
+    """
+    directory = Path(config['control_dir']).resolve()
+    previous = receipt['protected']
+
+    def refuse(error):
+        _log_rebaseline(directory, {'ok': False, 'error': error, 'requester_pid': requester_pid,
+                                    'protected': previous})
+        return {'ok': False, 'state': 'rebaseline-refused', 'error': error, 'forced': False}
+
+    try:
+        if server is not None and server.should_exit:
+            return refuse('Application is draining')
+        if gate is not None:
+            with gate.lock:
+                if gate.preparing:
+                    return refuse('Application is draining')
+        if (win.identity(receipt['identity']['pid']) != receipt['identity']
+                or win.listener_pid(config['port']) != receipt['identity']['pid']):
+            return refuse('App identity/listener mismatch')
+        # Serialize with the restart coordinator; never interleave a baseline
+        # rewrite with an in-flight stop/relaunch operation.
+        with operation(directory):
+            try:
+                current = json.loads((directory / 'app.json').read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                return refuse('App receipt is unreadable')
+            if current != receipt:
+                return refuse('App receipt does not match the live control state')
+            fresh = protected_state(config)
+            updated = {**receipt, 'protected': fresh}
+            atomic_write_json(str(directory / 'app.json'), updated, indent=2)
+            receipt['protected'] = fresh
+    except (OSError, ValueError, RuntimeError) as exc:
+        return refuse(str(exc))
+    result = {'ok': True, 'state': 'rebaselined', 'protected': fresh,
+              'previous_protected': previous, 'forced': False}
+    try:
+        _log_rebaseline(directory, {'ok': True, 'requester_pid': requester_pid,
+                                    'previous_protected': previous, 'protected': fresh})
+    except OSError as exc:
+        # The guarded atomic refresh already succeeded; surface the audit
+        # gap instead of hiding a verified recovery behind a closed pipe.
+        result['log_error'] = str(exc)
+    return result
+
+
 def descendants(root, parents):
     found = {root}
     while True:
@@ -408,7 +470,8 @@ def control_loop(server, gate, config, receipt, key, event_loop, stopped):
             pending.GetOverlappedResult(True)
             with PipeConnection(handle) as connection:
                 handle = None
-                if win.user_sid(win.peer_pid(connection.fileno())) != win.user_sid():
+                peer = win.peer_pid(connection.fileno())
+                if win.user_sid(peer) != win.user_sid():
                     raise PermissionError('Different local user')
                 challenge = secrets.token_hex(32)
                 _send(connection, {'challenge': challenge})
@@ -419,12 +482,15 @@ def control_loop(server, gate, config, receipt, key, event_loop, stopped):
                 if not hmac.compare_digest(_mac(key, challenge, request), str(envelope.get('mac', ''))):
                     _send(connection, {'ok': False, 'error': 'authentication denied'})
                     continue
-                if request.get('identity') != receipt['identity'] or request.get('action') not in {'status', 'stop'}:
+                if request.get('identity') != receipt['identity'] or request.get('action') not in {'status', 'stop', 'rebaseline'}:
                     _send(connection, {'ok': False, 'error': 'identity or action mismatch'})
                     continue
                 if request['action'] == 'status':
                     _send(connection, {'ok': True, 'identity': receipt['identity'],
                                        'guard': full_guard(config, receipt['identity'], receipt['protected'])})
+                    continue
+                if request['action'] == 'rebaseline':
+                    _send(connection, rebaseline_protected(config, receipt, server, gate, peer))
                     continue
                 deadline = request.get('deadline', time.monotonic() + 30)
                 if not isinstance(deadline, (int, float)) or not math.isfinite(deadline):
@@ -483,6 +549,17 @@ def request_control(directory, action, timeout=3, *, key_override=None, identity
         key = key_override if key_override is not None else (directory / 'secret.key').read_bytes()
         _send(connection, {'request': request, 'mac': _mac(key, challenge, request)})
         return _receive(connection, max(0, deadline - time.monotonic()))
+
+
+def rebaseline(directory, timeout: float = 30):
+    """Refresh the protected baseline after a health-verified shared-service restart.
+
+    Explicit operator recovery step, authenticated like every control action
+    (same local user + secret.key MAC + live app identity). Never invoked
+    automatically by restart(): a changed baseline still refuses stop/restart
+    until an operator sanctions the refresh.
+    """
+    return request_control(directory, 'rebaseline', timeout=timeout)
 
 
 async def serve(config):

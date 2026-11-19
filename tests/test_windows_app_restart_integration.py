@@ -269,3 +269,117 @@ def test_one_time_legacy_transition_only_terminates_pinned_lab_app_chain(lab):
     (root / 'legacy-transition-result.json').write_text(json.dumps({
         'lab_only': True, 'old_identity': old['identity'], 'new_identity': current['identity'],
         'protected_unchanged': True, 'targeted_app_chain': targets, 'tree_kill': False}, indent=2))
+
+
+def test_rebaseline_recovers_cooperative_restart_after_legitimate_gateway_restart(lab):
+    """Live-incident rehearsal: the gateway legitimately restarts, stop refuses
+    fail-closed, an authenticated operator rebaseline refreshes ONLY protected,
+    and cooperative restart works again -- no tree-stop, no manual relaunch."""
+    from src.windows_app_restart import health, request_control, restart, verify_protected
+    from src import windows_restart_os as win
+    config, old, _, root = lab
+    directory = Path(config['control_dir'])
+    gateway_port = config['gateway_port']
+    old_gateway = old['protected'][0]
+    assert old_gateway['kind'] == 'gateway'
+    old_identity = {'pid': old_gateway['pid'], 'start_token': old_gateway['start_token']}
+    # 1. Legitimate shared-service restart: retire the gateway sidecar, launch a
+    #    fresh incarnation on the same port (real pid/start_token change).
+    connection = http.client.HTTPConnection('127.0.0.1', gateway_port, timeout=3)
+    connection.request('POST', '/fixture-stop')
+    connection.getresponse().read()
+    connection.close()
+    wait_for(lambda: win.identity(old_gateway['pid']) != old_identity)
+    stream = (root / 'replacement-gateway.log').open('ab')
+    replacement = subprocess.Popen(
+        [sys.executable, str(ROOT / 'tests/helpers/windows_restart_fixture.py'), '--port', str(gateway_port)],
+        stdout=stream, stderr=stream, stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        wait_for(lambda: health(gateway_port, '/api/health', kind='gateway'))
+        # The venv python.exe may be a redirector: Popen.pid is not necessarily
+        # the interpreter that owns the listener. Pin the REAL listener identity.
+        new_pid = win.listener_pid(gateway_port)
+        assert new_pid != old_gateway['pid']
+        assert win.identity(new_pid) is not None
+        # 2. Existing fail-closed protection is intact: verify + stop refuse.
+        with pytest.raises(RuntimeError, match='Protected service identity or health changed'):
+            verify_protected(old['protected'])
+        blocked = request_control(directory, 'stop', timeout=10)
+        assert blocked['ok'] is False and blocked['state'] == 'blocked', blocked
+        assert 'Protected service identity or health changed' in blocked['guard']['errors']
+        # 3. A tampered on-disk receipt is refused even with healthy services.
+        original_bytes = (directory / 'app.json').read_bytes()
+        forged = json.loads(original_bytes)
+        forged['protected'][0] = {**forged['protected'][1], 'port': gateway_port,
+                                  'path': '/api/health', 'kind': 'gateway'}
+        (directory / 'app.json').write_text(json.dumps(forged, indent=2), encoding='utf-8')
+        tampered = subprocess.run([sys.executable, str(ROOT / 'scripts/windows-app-control.py'),
+                                   'rebaseline', '--control-dir', str(directory), '--timeout', '10'],
+                                  capture_output=True, text=True, timeout=30,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+        assert tampered.returncode == 1, tampered.stdout + tampered.stderr
+        assert 'does not match the live control state' in json.loads(tampered.stdout)['error']
+        (directory / 'app.json').write_bytes(original_bytes)
+        # 4. Sanctioned operator recovery via the real CLI + pipe + MAC.
+        recovered = subprocess.run([sys.executable, str(ROOT / 'scripts/windows-app-control.py'),
+                                    'rebaseline', '--control-dir', str(directory), '--timeout', '20'],
+                                   capture_output=True, text=True, timeout=40,
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
+        assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+        result = json.loads(recovered.stdout)
+        assert result['ok'] is True and result['state'] == 'rebaselined', result
+        assert result['forced'] is False
+        assert result['protected'][0]['pid'] == new_pid
+        assert result['protected'][1] == old['protected'][1]  # untouched service kept
+        assert result['previous_protected'] == old['protected']
+        disk = json.loads((directory / 'app.json').read_text(encoding='utf-8'))
+        assert disk['protected'] == result['protected']
+        assert {k: v for k, v in disk.items() if k != 'protected'} == {k: v for k, v in old.items() if k != 'protected'}
+        verify_protected(disk['protected'])
+        log = [json.loads(line) for line in (directory / 'rebaseline.log').read_text(encoding='utf-8').splitlines()]
+        assert [row['ok'] for row in log] == [False, True]
+        assert log[1]['previous_protected'] == old['protected']
+        assert log[1]['protected'][0]['pid'] == new_pid
+        # 5. Cooperative restart is unblocked: full stop + relaunch, no force.
+        outcome = restart(directory, timeout=30)
+        assert outcome['ok'] is True, outcome
+        assert outcome['state'] == 'healthy'
+        assert outcome['protected_unchanged'] is True
+        assert outcome['identity'] != old['identity']
+        (root / 'rebaseline-recovery-result.json').write_text(json.dumps(
+            {'old_gateway': old_gateway, 'new_gateway_pid': new_pid,
+             'rebaseline': result['state'], 'restart': outcome['state']}, indent=2), encoding='utf-8')
+    finally:
+        try:
+            connection = http.client.HTTPConnection('127.0.0.1', gateway_port, timeout=3)
+            connection.request('POST', '/fixture-stop')
+            connection.getresponse().read()
+            connection.close()
+        except OSError:
+            pass
+        try:
+            replacement.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            replacement.terminate()  # Direct handle of this lab's own replacement only.
+            replacement.wait(timeout=5)
+        # The redirector may exit before its interpreter child: verify the port
+        # is actually released; if not, pin and terminate ONLY that lab child.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with socket.socket() as probe:
+                if probe.connect_ex(('127.0.0.1', gateway_port)) != 0:
+                    break
+            time.sleep(.05)
+        else:
+            from ctypes import byref
+            from ctypes import wintypes as W
+            listener = win.listener_pid(gateway_port)
+            handle = win.checked(win._open(0x100001 | 0x1000, False, listener))
+            try:
+                terminate = win.api(win.K, 'TerminateProcess', W.BOOL, W.HANDLE, W.UINT)
+                wait = win.api(win.K, 'WaitForSingleObject', W.DWORD, W.HANDLE, W.DWORD)
+                assert terminate(handle, 0)
+                assert wait(handle, 5000) == 0
+            finally:
+                win.close(handle)
+        stream.close()
