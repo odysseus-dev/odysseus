@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_research_settings_use_custom_pickers_and_shared_provider_icons():
     panel = (ROOT / "static/js/research/panel.js").read_text(encoding="utf-8")
     style = app_css()
-    settings = (ROOT / "static/js/settings.js").read_text(encoding="utf-8")
+    settings = (ROOT / "static/js/settings/searchProviders.js").read_text(encoding="utf-8")
     icons = (ROOT / "static/js/searchProviderIcons.js").read_text(encoding="utf-8")
 
     for select_id in (

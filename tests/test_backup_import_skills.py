@@ -58,7 +58,7 @@ def test_import_with_empty_skills_list_does_not_call_save(monkeypatch):
     assert not hasattr(skills, "save") or not getattr(skills, "save", MagicMock()).called
 
 
-def test_import_adds_new_skill_via_add_skill(monkeypatch):
+def test_import_adds_new_skill_via_add_skill(monkeypatch, tmp_path):
     skills = MagicMock(spec=["load_all", "add_skill"])
     skills.load_all.return_value = []
     skills.add_skill.return_value = {
@@ -77,14 +77,9 @@ def test_import_adds_new_skill_via_add_skill(monkeypatch):
         m.setattr(br, "save_settings", lambda s: None)
         m.setattr(br, "load_features", lambda: {})
         m.setattr(br, "save_features", lambda f: None)
-        m.setattr(
-            "routes.prefs_routes._load_for_user",
-            lambda user: {},
-        )
-        m.setattr(
-            "routes.prefs_routes._save_for_user",
-            lambda user, prefs: None,
-        )
+        # The preferences section writes through the real store; keep it in a
+        # temporary file rather than the application's data directory.
+        m.setattr("routes.prefs_routes.PREFS_FILE", str(tmp_path / "user_prefs.json"))
         result = asyncio.run(endpoint(_Req(body)))
 
     assert result["ok"] is True
