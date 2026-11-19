@@ -145,6 +145,12 @@ def test_default_export_surface_is_complete_and_callable():
         f"default export keys that are not functions: {sorted(not_callable)}"
     )
 
+    allowed_default = DEFAULT_EXPORT_KEYS | {"generateEmailReply"}
+    unexpected_default = set(surface["defaultKeys"]) - allowed_default
+    assert not unexpected_default, (
+        f"default export leaked unexpected internal keys: {sorted(unexpected_default)}"
+    )
+
 
 def test_named_exports_survive_and_stay_callable():
     surface = _module_surface()
@@ -154,6 +160,12 @@ def test_named_exports_survive_and_stay_callable():
 
     not_callable = NAMED_EXPORTS - set(surface["namedFunctions"])
     assert not not_callable, f"named exports that are not functions: {sorted(not_callable)}"
+
+    allowed_named = NAMED_EXPORTS | {"generateEmailReply"}
+    unexpected_named = set(surface["named"]) - allowed_named
+    assert not unexpected_named, (
+        f"named exports leaked unexpected internal symbols: {sorted(unexpected_named)}"
+    )
 
 
 def test_window_bridge_is_the_default_export():

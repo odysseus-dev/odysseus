@@ -19,10 +19,13 @@ SELF = Path(__file__).name
 # The helper itself names the file, because being the one place that does is
 # the point.
 ALLOWED = {SELF, "document_source.py", "document_source.mjs"}
+# This security harness still extracts several unrelated legacy helpers, but
+# its PDF print behavior now imports the deployed exporter directly.
+KNOWN_CJS_LEGACY_READS = {"pr6503_security_browser.cjs"}
 
 # Every test language the assertions can hide in. A Python-only glob is what
 # let the JS references to ``static/style.css`` outlive the file they named.
-_SUFFIXES = ("*.py", "*.mjs", "*.js", "*.html")
+_SUFFIXES = ("*.py", "*.mjs", "*.js", "*.cjs", "*.html")
 
 # Reading the entry file off disk. Not matched: `/static/js/document.js` as a
 # request URL or a dynamic `import()`, which stay correct through the wrapper,
@@ -80,26 +83,11 @@ KNOWN_ADJACENCY_SLICES = {
      'function _showMdDropdown',
      'function initMdToolbar'),
     ('test_document_rich_text_tools.py',
-     '// ---- Selection-based AI editing ----',
-     '// ── Inline Suggestion Comments'),
-    ('test_document_rich_text_tools.py',
-     '// Undo button in header',
-     '// Diff toggle button'),
-    ('test_document_rich_text_tools.py',
-     '// ── In-document find (Ctrl+F) ──',
-     '// Delete (or Backspace)'),
-    ('test_document_rich_text_tools.py',
      'const _richSpacingBlockSelector',
      'function _focusRichTextOffset'),
     ('test_document_rich_text_tools.py',
      'function _insertRichTextImages',
      'async function _uploadMarkdownImages'),
-    ('test_document_rich_text_tools.py',
-     'function _normalizeRichLinkUrl',
-     'function _promptImageAlt'),
-    ('test_document_rich_text_tools.py',
-     'function _normalizeRichLinkUrl',
-     'function _promptLink'),
     ('test_document_rich_text_tools.py',
      'function _replaceAllLiteral',
      'function _doFind'),
@@ -121,12 +109,6 @@ KNOWN_ADJACENCY_SLICES = {
     ('test_document_rich_text_tools.py',
      'function _wireEmailRichbody',
      'function _richSelectionElement'),
-    ('test_document_rich_toolbar_menus.py',
-     'function _showMdDropdown',
-     'function initMdToolbar'),
-    ('test_document_rich_toolbar_menus.py',
-     'function initMdToolbar',
-     'function _applyDocFont'),
     ('test_document_toolbar_order.py',
      'const _DOCUMENT_TOOLBAR_GROUPS',
      'function _orderDocumentToolbar'),
@@ -148,7 +130,7 @@ def test_sources_are_discoverable() -> None:
     sources = _test_sources()
     assert len(sources) > 100
     suffixes = {p.suffix for p in sources}
-    assert {".py", ".mjs", ".js"} <= suffixes, suffixes
+    assert {".py", ".mjs", ".js", ".cjs"} <= suffixes, suffixes
     assert any(p.parent != ROOT / "tests" for p in sources), "walk is not recursive"
 
 
@@ -157,6 +139,7 @@ def test_no_test_reads_the_document_entry_file_off_disk() -> None:
         str(p.relative_to(ROOT))
         for p in _test_sources()
         if _DIRECT_READ.search(p.read_text(encoding="utf-8"))
+        and p.name not in KNOWN_CJS_LEGACY_READS
     ]
 
     assert not offenders, (

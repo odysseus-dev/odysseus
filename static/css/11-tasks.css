@@ -1032,6 +1032,16 @@ input.settings-select::-webkit-inner-spin-button {
   margin: 0;
 }
 input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, transparent); }
+/* appearance:none above (for the number-input spinners) also strips the
+   native arrow from <select>, leaving it indistinguishable from a text input.
+   Draw the same caret as .memory-sort-select, spaced like .adm-provider-btn. */
+select.settings-select {
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 10px;
+}
 .settings-select:focus {
   outline: none;
   border-color: var(--red);
@@ -1127,6 +1137,87 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   flex: 0 1 130px;
   width: 130px;
   max-width: 32%;
+}
+.settings-foreground-fallback-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+.settings-foreground-fallback-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.settings-foreground-fallback-help,
+.settings-foreground-fallback-state,
+.settings-foreground-fallback-message {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  line-height: 1.45;
+}
+.settings-foreground-fallback-state {
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.settings-foreground-fallback-editor[hidden] {
+  display: none;
+}
+.settings-foreground-fallback-order {
+  align-items: flex-start;
+}
+.settings-foreground-fallback-order > .settings-label {
+  margin-top: 6px;
+}
+.settings-foreground-fallback-list {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-fallback-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.settings-fallback-remove:disabled,
+.settings-fallback-add:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  background: transparent;
+}
+@media (max-width: 768px) {
+  .settings-foreground-fallback-toggle {
+    align-items: flex-start;
+  }
+  .settings-foreground-fallback-order {
+    display: block;
+  }
+  .settings-foreground-fallback-order > .settings-label {
+    display: block;
+    margin: 0 0 6px;
+  }
+  .settings-foreground-fallback-block .settings-fallback-row {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1fr);
+    padding-left: 6px;
+  }
+  .settings-foreground-fallback-block .settings-fallback-row .settings-select {
+    width: 100%;
+    max-width: none;
+  }
+  .settings-foreground-fallback-block .settings-fallback-actions {
+    grid-column: 2 / 4;
+    justify-self: end;
+  }
 }
 details.hwfit-serve-advanced > .hwfit-serve-row,
 details.hwfit-serve-advanced > .hwfit-serve-checks,
@@ -1224,7 +1315,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
-.settings-fallback-remove:hover {
+.settings-fallback-remove:not(:disabled):hover {
   border-color: var(--red);
   color: var(--red);
   background: color-mix(in srgb, var(--red) 10%, transparent);
@@ -1241,7 +1332,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s;
 }
-.settings-fallback-add:hover {
+.settings-fallback-add:not(:disabled):hover {
   border-color: var(--red);
   color: var(--red);
 }
@@ -1981,3 +2072,8 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .research-synapse.rs-complete .rs-meta .rs-status { color: var(--color-success, #4caf50); }
 .research-synapse.rs-error .rs-meta .rs-status { color: var(--red); }
+
+/* Per-Model Settings: labels left, one right-aligned field column */
+.adm-mc-card .settings-row { gap: 16px; min-height: 30px; }
+.adm-mc-card .settings-label { flex: 0 0 140px; }
+.adm-mc-card .settings-row .settings-select { flex: 1 1 0; width: auto; min-width: 200px; }
