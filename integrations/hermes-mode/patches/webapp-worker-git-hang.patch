@@ -1,0 +1,78 @@
+diff --git a/hermes_cli/version_info.py b/hermes_cli/version_info.py
+index 13aaee3631..caff3fc5d5 100644
+--- a/hermes_cli/version_info.py
++++ b/hermes_cli/version_info.py
+@@ -12,6 +12,7 @@ Resolution order:
+ from __future__ import annotations
+ 
+ import json
++import os
+ import subprocess
+ import tomllib
+ from dataclasses import dataclass
+@@ -59,15 +60,36 @@ def _derived_version(
+ 
+ 
+ def _run_git(repo_dir: Path, *args: str) -> str | None:
++    # Unattended workers must never reach an interactive credential prompt: the GUI askpass
++    # blocks forever, and on Windows its orphaned child keeps the pipes open past the timeout.
++    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never",
++           "GIT_ASKPASS": "echo", "GCM_PROVIDER": "", "GIT_NO_LAZY_FETCH": "1"}
+     try:
+-        result = subprocess.run(
+-            ["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3, cwd=str(repo_dir),
+-            check=False,
++        proc = subprocess.Popen(
++            ["git", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
++            encoding="utf-8", errors="replace", cwd=str(repo_dir), env=env,
+         )
++    except OSError:
++        return None
++    try:
++        stdout, _ = proc.communicate(timeout=3)
++    except subprocess.TimeoutExpired:
++        # Kill the whole tree: a surviving grandchild (credential GUI) holds the pipes open,
++        # and communicate() would otherwise block forever joining its reader threads.
++        if os.name == "nt":
++            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
++        else:
++            proc.kill()
++        try:
++            proc.communicate(timeout=3)
++        except (OSError, subprocess.SubprocessError):
++            pass
++        return None
+     except (OSError, subprocess.SubprocessError):
++        proc.kill()
+         return None
+-    value = (result.stdout or "").strip()
+-    return value if result.returncode == 0 and value else None
++    value = (stdout or "").strip()
++    return value if proc.returncode == 0 and value else None
+ 
+ 
+ def _resolve_repo_dir() -> Path | None:
+@@ -222,18 +244,12 @@ def _git_version_info(repo_dir: Path, *, include_untracked: bool = False) -> Ver
+         # scanned disk), and a status killed while refreshing the index strands .git/index.lock:
+         # the update's own merge then dies on "File exists" (#132089). A read-only probe takes
+         # no optional lock.
+-        status_command = ["git", "--no-optional-locks", "status", "--porcelain"]
++        status_args = ["--no-optional-locks", "status", "--porcelain"]
+         if not include_untracked:
+-            status_command.append("-uno")
+-        dirty_result = subprocess.run(
+-            status_command,
+-            capture_output=True,
+-            text=True, encoding="utf-8", errors="replace",
+-            timeout=3,
+-            cwd=str(repo_dir),
+-            check=False,
+-        )
+-        dirty = dirty_result.returncode == 0 and bool((dirty_result.stdout or "").strip())
++            status_args.append("-uno")
++        # Same hardened path as every other probe: non-interactive env and a tree-kill on
++        # timeout, so a credential GUI grandchild cannot strand the pipes (worker hang).
++        dirty = _run_git(repo_dir, *status_args) is not None
+     except (OSError, subprocess.SubprocessError):
+         dirty = False
+ 

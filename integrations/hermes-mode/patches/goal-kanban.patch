@@ -1,0 +1,409 @@
+diff --git a/gateway/kanban_watchers_notifier.py b/gateway/kanban_watchers_notifier.py
+index c8b852b675..6109ab2c3a 100644
+--- a/gateway/kanban_watchers_notifier.py
++++ b/gateway/kanban_watchers_notifier.py
+@@ -311,13 +311,22 @@ class _Collector:
+         if _adapter_for_subscription(self.runner, Platform(platform), sub, owner_profile or self.notifier_profile) is None:
+             _warn_anchorless_thread_sub_once(sub, platform)
+             return None
+-        old_cursor, cursor, events = _kbn().claim_unseen_events_for_sub(
+-            conn, task_id=sub["task_id"], platform=sub["platform"], chat_id=sub["chat_id"],
+-            thread_id=sub.get("thread_id") or "", kinds=TERMINAL_KINDS,
+-        )
++        task = self.kb.get_task(conn, sub["task_id"])
++        args = dict(task_id=sub["task_id"], platform=sub["platform"], chat_id=sub["chat_id"],
++                    thread_id=sub.get("thread_id") or "")
++        goal_id = (sub.get("delivery_metadata") or {}).get("goal_kanban_id")
++        if (platform == "local" and goal_id and task and sub.get("delivery_mode") == "wake"
++                and (task.idempotency_key or "").startswith(f"goal:v1:{goal_id}:")):
++            cursor, events = _kbn().unseen_events_for_sub(
++                conn, **args, kinds=(*_WAKE_KINDS, "archived"))
++            if not events:
++                return None
++            # A process death before authority admission must leave the event discoverable.
++            return {"sub": sub, "cursor": cursor, "events": events, "task": task,
++                    "board": slug, "goal_id": goal_id}
++        old_cursor, cursor, events = _kbn().claim_unseen_events_for_sub(conn, **args, kinds=TERMINAL_KINDS)
+         if not events:
+             return None
+-        task = self.kb.get_task(conn, sub["task_id"])
+         logger.debug("kanban notifier: claimed %d event(s) for %s on board %s cursor %s→%s",
+                      len(events), sub["task_id"], slug, old_cursor, cursor)
+         return {"sub": sub, "old_cursor": old_cursor, "cursor": cursor, "events": events, "task": task, "board": slug}
+@@ -745,6 +754,29 @@ class _KanbanNotification:
+                 return False
+         return True
+ 
++    async def _deliver_goal_events(self) -> None:
++        from gateway.session import SessionSource
++        from gateway.session_automation import admit_route_wake
++
++        source = SessionSource(platform=self.plat, chat_id=self.sub["chat_id"],
++                               profile=self.sub_profile or None)
++        async with self._owner_scope():
++            for event in self.d["events"]:
++                goal_id = self.d["goal_id"]
++                text = (f"[Kanban update for the standing goal: {self.board_slug}/{self.task_id} "
++                        f"({event.kind}).] Read the current card and run evidence; verify or replan. "
++                        "Do not repeat completed work or treat card closure as goal acceptance.")
++                accepted = await admit_route_wake(
++                    self.runner, self.adapter, source, text, "kanban-wake",
++                    event_key=f"goal:{goal_id}:{self.board_slug}:{self.task_id}:{event.id}",
++                    expected_goal_id=goal_id,
++                )
++                if not accepted:
++                    return
++        await self.advance()
++        if self.task and self.task.status == "archived":
++            await self.unsub()
++
+     async def deliver(self) -> None:
+         try:
+             self.plat = self.platform_cls(self.platform_str)
+@@ -756,6 +788,14 @@ class _KanbanNotification:
+         # off the event loop (the claim path already collects in a worker thread).
+         adapter = await asyncio.to_thread(
+             _adapter_for_subscription, self.runner, self.plat, self.sub, self.sub_profile or None)
++        if self.d.get("goal_id"):
++            if adapter is not None:
++                self.adapter = adapter
++                try:
++                    await self._deliver_goal_events()
++                except Exception:
++                    logger.debug("Kanban goal wake deferred for %s", self.task_id, exc_info=True)
++            return
+         if adapter is None:
+             logger.debug("kanban notifier: adapter %s disconnected before delivery for %s; rewinding claim",
+                          self.platform_str, self.task_id)
+diff --git a/gateway/session_automation.py b/gateway/session_automation.py
+index 331e62b2db..360e0c293b 100644
+--- a/gateway/session_automation.py
++++ b/gateway/session_automation.py
+@@ -818,7 +818,8 @@ async def reset_and_rehome_messages(runner, session_key, old_session_id):
+     return entry, release
+ 
+ 
+-async def admit_route_wake(runner, adapter, source, text, producer, metadata=None):
++async def admit_route_wake(runner, adapter, source, text, producer, metadata=None, *,
++                           event_key=None, expected_goal_id=None):
+     """Commit a producer wake (Kanban push wake, /loop tick) for ``source``'s route into the
+     authority FIFO, like heartbeats and process completions, instead of a classic turn that
+     interrupts or races the admitted one. ``False`` when no authority serves the scope or the
+@@ -833,8 +834,19 @@ async def admit_route_wake(runner, adapter, source, text, producer, metadata=Non
+     entry = route_entry(authority, key) if authority is not None else None
+     if authority is None or entry is None:
+         return False
++    if expected_goal_id is not None:
++        import asyncio
++        from hermes_cli.goals import load_goal
++
++        goal = await asyncio.to_thread(load_goal, entry.session_id)
++        if goal is None:
++            return False  # a read failure must not discard an event
++        if goal.kanban_goal_id != expected_goal_id or goal.status in {"cleared", "done"}:
++            return True  # obsolete: consume without waking a different goal
++        if goal.status != "active":
++            return False  # leave the event pending while the user has paused the goal
+     import uuid
+-    identity = json.dumps([producer, key, uuid.uuid4().hex], separators=(',', ':'))
++    identity = json.dumps([producer, key, event_key or uuid.uuid4().hex], separators=(',', ':'))
+     if source.platform == Platform.LOCAL or detached_route_of(source):
+         # A local route (or a conversation its chat moved past, answered by its app viewers) has no
+         # messaging provenance to borrow: its wake rides local_automation_v1 on the live session's own
+diff --git a/hermes_cli/goals.py b/hermes_cli/goals.py
+index 96ee695e28..3fc152b4e9 100644
+--- a/hermes_cli/goals.py
++++ b/hermes_cli/goals.py
+@@ -451,6 +451,8 @@ class GoalState:
+     contract: GoalContract = field(default_factory=GoalContract)
+     # /goal gate add <cmd>: ALL must pass before the judge may declare done.
+     gates: list[GoalGate] = field(default_factory=list)
++    kanban_board: Optional[str] = None
++    kanban_goal_id: Optional[str] = None
+ 
+     def to_json(self) -> str:
+         return json.dumps(asdict(self), ensure_ascii=False)
+@@ -472,6 +474,8 @@ class GoalState:
+             waiting_on_pid=(int(data["waiting_on_pid"]) if data.get("waiting_on_pid") else None),
+             waiting_on_session=(str(data["waiting_on_session"]) if data.get("waiting_on_session") else None),
+             waiting_reason=data.get("waiting_reason"),
++            kanban_board=data.get("kanban_board"),
++            kanban_goal_id=data.get("kanban_goal_id"),
+             contract=GoalContract.from_dict(data.get("contract")),
+             gates=[
+                 GoalGate.from_dict(g) for g in (data.get("gates") or [])
+@@ -504,6 +508,7 @@ def _meta_key(session_id: str) -> str:
+ 
+ _DB_CACHE: dict[str, Any] = {}
+ _DB_BOOTSTRAP_LOCK = threading.Lock()
++_KANBAN_BIND_LOCK = threading.Lock()
+ _DB_BOOTSTRAP_INFLIGHT: dict[str, threading.Event] = {}
+ 
+ # How long a loop-thread caller waits for an ALREADY-RUNNING bootstrap before degrading to None.
+@@ -1187,6 +1192,44 @@ class GoalManager:
+         self._state.contract = contract or GoalContract()
+         return self._save()
+ 
++    def bind_kanban_task(self, board: str, key: str) -> str:
++        """Reserve a stable per-goal task key before the board transaction."""
++        import uuid
++
++        if not isinstance(key, str) or not key or len(key) > 120 or key != key.strip():
++            raise ValueError("goal_task_key must be a nonempty trimmed string of at most 120 characters")
++        with _KANBAN_BIND_LOCK:
++            state = self._require_active()
++            persisted = load_goal(self.session_id)
++            if not persisted or persisted.status != "active" or persisted.created_at != state.created_at:
++                raise RuntimeError("active goal changed before Kanban binding")
++            self._state = persisted
++            if persisted.kanban_board and persisted.kanban_board != board:
++                raise ValueError("goal-owned tasks must use the same Kanban board")
++            if not persisted.kanban_goal_id:
++                persisted.kanban_board = board
++                persisted.kanban_goal_id = uuid.uuid4().hex
++                self._save()
++                readback = load_goal(self.session_id)
++                if not readback or readback.kanban_goal_id != persisted.kanban_goal_id:
++                    raise RuntimeError("could not persist the Kanban binding for this goal")
++            return f"goal:v1:{persisted.kanban_goal_id}:{key}"
++
++    def _kanban_snapshot(self, state: GoalState) -> list[tuple[str, str]]:
++        import sqlite3
++        from contextlib import closing
++        from hermes_cli.kanban_db import kanban_db_path
++
++        if not state.kanban_goal_id or not state.kanban_board:
++            return []
++        prefix = f"goal:v1:{state.kanban_goal_id}:"
++        uri = kanban_db_path(state.kanban_board).resolve().as_uri() + "?mode=ro"
++        with closing(sqlite3.connect(uri, uri=True, timeout=2)) as conn:
++            return conn.execute(
++                "SELECT id, status FROM tasks WHERE idempotency_key >= ? AND idempotency_key < ? ORDER BY id",
++                (prefix, prefix[:-1] + ";"),
++            ).fetchall()
++
+     def pause(self, reason: str = "user-paused") -> Optional[GoalState]:
+         if not self._state:
+             return None
+@@ -1493,6 +1536,22 @@ class GoalManager:
+         if state is None or state.status != "active":
+             return _decision(state.status if state else None, False, None, "inactive", "no active goal", "")
+ 
++        try:
++            cards = self._kanban_snapshot(state)
++        except Exception:
++            logger.exception("goal %s: could not read its Kanban board", self.session_id)
++            return self._pause_decision("Kanban board unavailable", "blocked", "Kanban board unavailable",
++                                        "Goal paused — cannot verify its Kanban tasks.")
++        pending = any(status not in {"done", "archived", "blocked"} for _, status in cards)
++        blocked = [tid for tid, status in cards if status == "blocked"]
++        if pending and not blocked:
++            state.turns_used += 1
++            state.last_turn_at = time.time()
++            if state.turns_used >= state.max_turns:
++                return self._budget_pause(state, "waiting", "Kanban work or review pending")
++            self._save()
++            return _decision("active", False, None, "waiting", "Kanban work or review pending", "")
++
+         # Parked on a live process or an unexpired deadline: quiesce without burning a turn.
+         if self.is_waiting():
+             return self._waiting_decision(state)
+@@ -1536,6 +1595,12 @@ class GoalManager:
+             )
+ 
+         if verdict == "done":
++            if pending or blocked:
++                reason = "Goal-owned Kanban work is unresolved; inspect the board before reporting completion."
++                if state.turns_used >= state.max_turns:
++                    return self._budget_pause(state, "continue", reason)
++                self._save()
++                return _decision("active", True, self.next_continuation_prompt(), "continue", reason, "")
+             state.status = "done"
+             self._save()
+             return _decision("done", False, None, "done", reason, f"✓ Goal achieved: {reason}")
+diff --git a/hermes_cli/kanban_db_notify.py b/hermes_cli/kanban_db_notify.py
+index ae12ed8c3a..82cde0f26a 100644
+--- a/hermes_cli/kanban_db_notify.py
++++ b/hermes_cli/kanban_db_notify.py
+@@ -77,6 +77,7 @@ def add_notify_sub(
+     notifier_profile: Optional[str] = None,
+     delivery_mode: Optional[str] = None,
+     delivery_metadata: Optional[Mapping[str, Any]] = None,
++    _allow_nested: bool = False,
+ ) -> None:
+     """Register a gateway source wanting terminal-state notifications for
+     ``task_id``; idempotent on (task, platform, chat, thread).
+@@ -97,7 +98,7 @@ def add_notify_sub(
+     # delivery mechanism at all. Explicit modes still win.
+     insert_mode = valid_mode or ("notify+wake" if platform == "api_server" else "notify")
+     key = _sub_key(task_id, platform, chat_id, thread_id)
+-    with _kb.write_txn(conn):
++    with _kb.write_txn(conn, allow_nested=_allow_nested):
+         existing = conn.execute(
+             "SELECT delivery_metadata FROM kanban_notify_subs " + _SUB_KEY_WHERE,
+             key,
+@@ -420,7 +421,7 @@ def advance_notify_cursor(
+ ) -> None:
+     with _kb.write_txn(conn):
+         conn.execute(
+-            "UPDATE kanban_notify_subs SET last_event_id = ? " + _SUB_KEY_WHERE,
++            "UPDATE kanban_notify_subs SET last_event_id = MAX(last_event_id, ?) " + _SUB_KEY_WHERE,
+             (int(new_cursor), *_sub_key(task_id, platform, chat_id, thread_id)),
+         )
+ 
+diff --git a/tools/kanban_tools.py b/tools/kanban_tools.py
+index c8b64c095c..387e37220d 100644
+--- a/tools/kanban_tools.py
++++ b/tools/kanban_tools.py
+@@ -697,6 +697,16 @@ def _handle_list(args: dict, **kw) -> str:
+     """Task summaries with the same core filters as the CLI."""
+     _require_orchestrator_tool("kanban_list")
+     include_archived = _parse_bool_arg(args, "include_archived")
++    worker_info = {}
++    if _parse_bool_arg(args, "include_workers"):
++        from hermes_cli.kanban_db_dispatch import _profile_exists_fn
++        from hermes_cli.profiles import list_profiles
++
++        eligible = _profile_exists_fn()
++        worker_info["eligible_workers"] = [
++            {"profile": p.name, "model": p.model, "provider": p.provider, "role": p.description}
++            for p in list_profiles(lazy_skill_count=True) if eligible is not None and eligible(p.name)
++        ]
+     limit = args.get("limit")
+     try:
+         limit = KANBAN_LIST_DEFAULT_LIMIT if limit is None else int(limit)
+@@ -715,6 +725,7 @@ def _handle_list(args: dict, **kw) -> str:
+         truncated = len(rows) > limit
+         tasks = rows[:limit]
+         return json.dumps({
++            **worker_info,
+             "tasks": [_task_summary_dict(kb, conn, t) for t in tasks],
+             "count": len(tasks), "limit": limit, "truncated": truncated,
+             "next_limit": (min(limit * 2, KANBAN_LIST_MAX_LIMIT)
+@@ -1113,7 +1124,27 @@ def _handle_create(args: dict, **kw) -> str:
+     model_override, provider_override = args.get("model"), args.get("provider")
+     _check(model_override or not provider_override, "'provider' requires 'model' to be set as well")
+     parents = _coerce_str_list(args.get("parents") or [], "parents", "task ids")
+-    with _board(args.get("board")) as (kb, conn):
++    goal_key = args.get("goal_task_key")
++    idem_key = args.get("idempotency_key")
++    board = args.get("board")
++    target = None
++    if goal_key is not None:
++        _require_orchestrator_tool("goal-owned kanban_create")
++        _check(not args.get("session_id") and not idem_key,
++               "goal_task_key cannot be combined with session_id or idempotency_key")
++        from hermes_cli import kanban_db as kb
++        from hermes_cli.kanban_db_dispatch import _profile_exists_fn
++
++        eligible = _profile_exists_fn()
++        _check(eligible is not None and eligible(str(assignee)), "assignee is not eligible for dispatch")
++        target = _resolve_notify_target()
++        _check(target and target.get("platform") == "local" and target.get("delivery_mode") == "notify+wake",
++               "goal-owned tasks require a persistent Desktop gateway wake route")
++        board = kb._normalize_board_slug(board) or kb.get_current_board()
++        _check(not kb.read_board_metadata(board).get("archived"), "goal board is archived")
++    elif isinstance(idem_key, str):
++        _check(not idem_key.startswith("goal:v1:"), "reserved goal task key namespace")
++    with _board(board) as (kb, conn):
+         from gateway.session_context import get_session_env
+         from tools.async_delegation import _current_origin_session_id
+         self_tid = (os.environ.get("HERMES_KANBAN_TASK")
+@@ -1130,28 +1161,50 @@ def _handle_create(args: dict, **kw) -> str:
+         if project_id is None and workspace_kind is None and workspace_path is None:
+             if self_task is not None and self_task.project_id:
+                 project_id, project_source_task_id = self_task.project_id, self_task.id
+-        new_tid = kb.create_task(
+-            conn, title=str(title).strip(), body=args.get("body"), assignee=str(assignee),
+-            parents=tuple(parents), tenant=args.get("tenant") or os.environ.get("HERMES_TENANT"),
+-            priority=_opt_int(args.get("priority"), 0),
+-            workspace_kind=workspace_kind, workspace_path=workspace_path, project_id=project_id,
+-            # Board-project inheritance must read the board this call opened, not the
+-            # session's current board.
+-            board=args.get("board"),
+-            project_source_task_id=project_source_task_id, triage=triage,
+-            creator_task_id=self_tid,
+-            idempotency_key=args.get("idempotency_key"),
+-            max_runtime_seconds=_opt_int(args.get("max_runtime_seconds")), skills=skills,
+-            model_override=model_override, provider_override=provider_override,
+-            goal_mode=goal_mode, goal_max_turns=_opt_int(args.get("goal_max_turns")),
+-            completion_contract=args.get("completion_contract"),
+-            initial_status=str(args.get("initial_status") or "running"),
+-            created_by=_persisted_identity(), session_id=session_id)
++        if target is not None and goal_key is not None:
++            from hermes_cli.goals import GoalManager
++
++            if not session_id or not board:
++                raise _Reject("goal-owned tasks require a persisted calling session and board")
++            mgr = GoalManager(session_id)
++            _check(mgr.is_active(), "goal-owned tasks require an active /goal")
++            idem_key = mgr.bind_kanban_task(board, goal_key)
++            target = {**target, "delivery_mode": "wake", "delivery_metadata": {
++                **(target.get("delivery_metadata") or {}), "goal_kanban_id": idem_key.split(":")[2],
++            }}
++
++        def create():
++            return kb.create_task(
++                conn, title=str(title).strip(), body=args.get("body"), assignee=str(assignee),
++                parents=tuple(parents or ()), tenant=args.get("tenant") or os.environ.get("HERMES_TENANT"),
++                priority=_opt_int(args.get("priority"), 0),
++                workspace_kind=workspace_kind, workspace_path=workspace_path, project_id=project_id,
++                board=board, project_source_task_id=project_source_task_id, triage=triage,
++                creator_task_id=self_tid, idempotency_key=idem_key,
++                max_runtime_seconds=_opt_int(args.get("max_runtime_seconds")), skills=skills,
++                model_override=model_override, provider_override=provider_override,
++                goal_mode=goal_mode, goal_max_turns=_opt_int(args.get("goal_max_turns")),
++                completion_contract=args.get("completion_contract"),
++                initial_status=str(args.get("initial_status") or "running"),
++                created_by=_persisted_identity(), session_id=session_id)
++
++        if target is not None:
++            from hermes_cli import kanban_db_notify as notify
++
++            with kb.write_txn(conn):
++                prior = conn.execute("SELECT id FROM tasks WHERE idempotency_key = ? LIMIT 1",
++                                     (idem_key,)).fetchone()
++                new_tid = prior["id"] if prior else create()
++                notify.add_notify_sub(conn, task_id=new_tid, **target, _allow_nested=True)
++            subscribed = True
++        else:
++            new_tid = create()
++            subscribed = _maybe_auto_subscribe(conn, new_tid)
+         landed = _fields(kb.get_task(conn, new_tid), _CREATED_FIELDS)
+         wait = [e for e in kb.list_events(conn, new_tid) if e.kind == "dependency_wait"]
+         gate = {"gated": True, "gated_by": wait[-1].payload["parent"]} if wait else {"gated": False}
+         return _ok(task_id=new_tid, **landed, **gate,
+-                   subscribed=_maybe_auto_subscribe(conn, new_tid))
++                   subscribed=subscribed)
+ 
+ 
+ def _live_tui_session_key(session_key: str, profile: Optional[str]) -> str:
+diff --git a/tools/kanban_tools_schemas.py b/tools/kanban_tools_schemas.py
+index 0e996e3957..5b8ca0fc2a 100644
+--- a/tools/kanban_tools_schemas.py
++++ b/tools/kanban_tools_schemas.py
+@@ -81,6 +81,10 @@ KANBAN_LIST_SCHEMA = _schema(
+         },
+         "tenant": _prop("string", "Optional tenant/project namespace filter."),
+         "include_archived": _prop("boolean", "Include archived tasks. Defaults to false."),
++        "include_workers": _prop("boolean", (
++            "Include profiles eligible under the current dispatcher's allowlist, with configured model, "
++            "provider and role. This does not probe provider credentials."
++        )),
+         "limit": _prop("integer", "Optional maximum rows to return (default 50, max 200)."),
+     },
+     [],
+@@ -453,6 +457,13 @@ KANBAN_CREATE_SCHEMA = _schema(
+                 "exists, return that task's id instead of creating "
+                 "a duplicate. Useful for retry-safe automation."
+         )),
++        "goal_task_key": _prop("string", (
++                "Stable work-item key under this conversation's active /goal. Reuse on retry. "
++                "Reconcile existing cards with Git and project handoffs first; use one board per goal. "
++                "Requires a Desktop gateway route. Choose a profile from kanban_list(include_workers=true), "
++                "use isolated worktrees for code tasks, and specify independent review and test evidence. "
++                "The goal waits while owned work or review is pending."
++        )),
+         "max_runtime_seconds": _prop("integer", (
+                 "Per-task runtime cap. When exceeded, the "
+                 "dispatcher SIGTERMs the worker and re-queues the "
