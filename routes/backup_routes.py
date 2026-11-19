@@ -13,6 +13,33 @@ from src.settings import load_settings, save_settings, load_features, save_featu
 logger = logging.getLogger(__name__)
 
 
+def _merge_by_id(current, incoming: list) -> list:
+    """Merge a backed-up list (user templates, group presets) into the
+    current one. The last saved entry wins for duplicate IDs, keeping the
+    first entry's position. Incoming entries then override saved values.
+    Invalid incoming IDs are rejected before the import writes any data;
+    unrelated saved entries, including legacy malformed records, are kept."""
+    merged, by_id = [], {}
+    for item in current if isinstance(current, list) else []:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(item_id, str) and item_id:
+            if item_id in by_id:
+                merged[by_id[item_id]] = item
+                continue
+            by_id[item_id] = len(merged)
+        merged.append(item)
+    for item in incoming:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError("Preset entries must have a non-empty string id")
+        if item_id in by_id:
+            merged[by_id[item_id]] = item
+        else:
+            by_id[item_id] = len(merged)
+            merged.append(item)
+    return merged
+
+
 def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
     router = APIRouter(tags=["backup"])
 
@@ -72,6 +99,22 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
 
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected a JSON object")
+
+        # Validate and prepare preset lists before importing any other section,
+        # so a malformed ID cannot fail after memories or skills were written.
+        restored_presets = None
+        if isinstance(body.get("presets"), dict):
+            restored_presets = dict(preset_manager.get_all())
+            for key, value in body["presets"].items():
+                if key in ("user_templates", "group_presets"):
+                    if not isinstance(value, list):
+                        raise HTTPException(400, f"Invalid {key}: expected a list")
+                    try:
+                        restored_presets[key] = _merge_by_id(restored_presets.get(key), value)
+                    except ValueError as exc:
+                        raise HTTPException(400, f"Invalid {key}: {exc}") from exc
+                elif isinstance(value, (dict, list)):
+                    restored_presets[key] = value
 
         imported = []
 
@@ -181,14 +224,8 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
             imported.append(f"{added} skills")
 
         # ── Presets ──
-        if "presets" in body and isinstance(body["presets"], dict):
-            current = preset_manager.get_all()
-            for key, value in body["presets"].items():
-                if isinstance(value, dict):
-                    current[key] = value
-                elif isinstance(value, list):
-                    current[key] = value
-            preset_manager.save(current)
+        if restored_presets is not None:
+            preset_manager.save(restored_presets)
             imported.append("presets")
 
         # ── Settings ──
@@ -207,10 +244,12 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
 
         # ── Preferences ──
         if "preferences" in body and isinstance(body["preferences"], dict):
-            from routes.prefs_routes import _load_for_user, _save_for_user
-            current = _load_for_user(user)
-            current.update(body["preferences"])
-            _save_for_user(user, current)
+            from routes.prefs_routes import _update_off_loop
+            # Replace only the keys the backup contains, as one locked update
+            # on a worker thread. Copying the whole record out first and
+            # writing it back would revert a Settings save made in between.
+            # As everywhere in this store, a null value removes the key.
+            await _update_off_loop(user, body["preferences"])
             imported.append("preferences")
 
         if not imported:

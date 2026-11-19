@@ -85,7 +85,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`providerDeviceFlow.js`** | OAuth device-flow support for providers. |
 | **`presets.js`** | Character/preset selection, custom preset saving, inject prefix/suffix handling. |
 | **`search.js`** | Web-search settings, provider selection, API key management. |
-| **`settings.js`** | Settings panel (models, search, appearance, users, MCP, RAG, embedding, tokens). |
+| **`settings.js`** | Settings entry point and coordinator: builds the shared services, creates the shell and initializes the panels in `settings/` (models, search, appearance, account, reminders, email, integrations). |
 | **`admin.js`** | Admin panel and privileged user/endpoint configuration. |
 | **`theme.js`** | Theme presets, custom colors, fonts, backgrounds, live theme switching. |
 | **`bgEffectClock.js`** | Shared clock for `theme.js`'s canvas background effects: at most 30 draws a second, motion scaled to elapsed time so speed is the same on 60 and 120 Hz displays, and a still frame under reduced motion. |
