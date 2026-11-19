@@ -124,3 +124,29 @@ def test_markdown_visual_mode_defers_composition_and_blocks_native_underline():
     assert [prevented for key, prevented in data["underline"]["prevented"] if key == "u"] == [True, True]
     assert "<u" not in data["underline"]["html"] and "underline" not in data["underline"]["html"]
     assert data["underline"]["content"] == "Hello world composing"
+
+
+def test_table_actions_keep_a_following_block_quote_separate():
+    """Replacing a table must not merge it into the quote that directly follows it."""
+    data = _run_browser(r"""
+      await boot('table-before-quote');
+      const out = {};
+      for (const [id, language, body] of [
+        ['tq-md', 'markdown', '| A | B |\n| --- | --- |\n| x | y |\n\n> [!NOTE]\n> After.\n\ntail'],
+        ['tq-rt', 'richtext', '<table><tbody><tr><td>x</td><td>y</td></tr></tbody></table><blockquote><p>After.</p></blockquote><p>tail</p>'],
+      ]) {
+        await open({ id, title: id, language, current_content: body });
+        await page.waitForFunction((docId) => window.__state.activeDocId === docId, id);
+        await page.locator('#doc-email-richbody td').first().click();
+        await page.locator('[data-dd="table"]').click();
+        await page.locator('#doc-md-dd-menu .doc-overflow-item', { hasText: language === 'markdown' ? 'Column: align center' : 'Add row below' }).click();
+        out[id] = await page.evaluate(() => ({
+          insideQuote: document.querySelectorAll('#doc-email-richbody blockquote table').length,
+          tables: document.querySelectorAll('#doc-email-richbody table').length,
+          quotes: document.querySelectorAll('#doc-email-richbody blockquote').length,
+        }));
+      }
+      await finish(out);
+    """)
+    for doc_id in ("tq-md", "tq-rt"):
+        assert data[doc_id] == {"insideQuote": 0, "tables": 1, "quotes": 1}, data[doc_id]

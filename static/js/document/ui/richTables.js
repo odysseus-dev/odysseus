@@ -93,7 +93,11 @@ export function _replaceRichTable(rich, original, replacement, targetRow = 0, ta
   const token = `doc-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   if (replacement) replacement.dataset.editorTableToken = token;
   const range = document.createRange();
-  range.selectNode(original);
+  // Selecting the table node itself lets the browser merge the inserted table into a
+  // block quote that directly follows it (the table ends up inside the quote). Selecting
+  // its contents replaces the table in place; removing a table still selects the node.
+  if (replacement) range.selectNodeContents(original);
+  else range.selectNode(original);
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
