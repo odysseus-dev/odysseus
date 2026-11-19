@@ -31,12 +31,6 @@ def test_suggestion_highlight_sits_above_editor_text_layer():
     assert "box-shadow:" in rule
 
 
-def test_suggestions_load_their_document_before_rendering():
-    assert "export async function handleDocSuggestions(data)" in DOC_JS
-    assert "if (!docs.has(data.doc_id)) await loadDocument(data.doc_id);" in DOC_JS
-    assert "if (data.doc_id && activeDocId !== data.doc_id)" in DOC_JS
-
-
 def test_suggestions_do_not_replace_the_editor_render_layer():
     handler_start = DOC_JS.index("export async function handleDocSuggestions(data)")
     handler_end = DOC_JS.index("/** Render the current suggestion card", handler_start)

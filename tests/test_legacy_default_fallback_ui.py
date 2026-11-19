@@ -20,10 +20,9 @@ def test_legacy_default_fallback_editor_is_absent():
 
 
 def test_default_model_save_does_not_rewrite_legacy_fallbacks():
-    source = (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
-    start = source.index("async function initDefaultChat()")
-    end = source.index("/* ── Utility Model ── */", start)
-    default_chat_source = source[start:end]
+    default_chat_source = (
+        _REPO / "static" / "js" / "settings" / "defaultChat.js"
+    ).read_text(encoding="utf-8")
 
     assert "settings.default_model_fallbacks" not in default_chat_source
     assert "default_model_fallbacks:" not in default_chat_source

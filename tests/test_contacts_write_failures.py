@@ -13,12 +13,12 @@ pytestmark = pytest.mark.skipif(not shutil.which('node'), reason='requires Node'
 def run_case(config):
     script = r'''
 import fs from 'node:fs';import vm from 'node:vm';import {parse} from 'acorn';
-const config=JSON.parse(process.argv[1]),source=fs.readFileSync(process.argv[2]+'/static/js/settings.js','utf8');
+const config=JSON.parse(process.argv[1]),source=fs.readFileSync(process.argv[2]+'/static/js/settings/integrations/'+(['clear','remove'].includes(config.mode)?'unified.js':'forms/carddav.js'),'utf8');
 const ast=parse(source,{ecmaVersion:'latest',sourceType:'module'}),nodes=[];
 function walk(node){if(!node||typeof node!=='object')return;nodes.push(node);for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value)}}
 walk(ast);
 function callback(callee,within=nodes){const call=within.find(n=>n.type==='CallExpression'&&source.slice(n.callee.start,n.callee.end)===callee);if(!call)throw Error('Missing callback '+callee);return source.slice(call.arguments[1].start,call.arguments[1].end)}
-const helper=nodes.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='_writeContacts');
+const helper=fs.readFileSync(process.argv[2]+'/static/js/settings/integrations/contactsWrite.js','utf8').replace(/^export /m,'');
 const fields={};
 function field(value=''){return {value,style:{display:'flex'},textContent:'',disabled:false,focus(){this.focused=true}}}
 for(const name of ['cm-add-name','cm-add-email','cm-add-phone','cm-add-address','cm-add-row','uf-carddav-url','uf-carddav-user','uf-carddav-pass','uf-carddav-msg','cm-import-btn'])fields[name]=field('draft '+name);
@@ -30,9 +30,9 @@ let renders=0,lists=0,notifications=0;
 const context={el:id=>fields[id],row,uid:'owned/contact',formEl,btn:{dataset:{intgType:config.mode==='clear'?'contacts':'carddav',intgId:'owned'}},
  uiModule:{showError:e=>errors.push(e),showToast:e=>toasts.push(e),styledConfirm:async()=>config.confirm!==false},
  window:{styledConfirm:async()=>config.confirm!==false,confirm:()=>config.confirm!==false},alert:e=>errors.push(e),
- _renderContactsManager:async()=>renders++,renderList:async()=>lists++,notifyIntegrationsChanged:()=>notifications++,
+ _renderContactsManager:async()=>renders++,renderList:async()=>lists++,notifyIntegrationsChanged:()=>notifications++,closeForm:()=>{formEl.style.display='none'},
  fetch:async(url,options)=>{calls.push({url,options});if(config.network)throw Error('owned network failure');return {ok:config.status===undefined||config.status<400,status:config.status??200,json:async()=>{if(config.badJson)throw Error('owned invalid JSON');return config.body??{success:true}}}}};
-vm.createContext(context);if(helper)vm.runInContext(source.slice(helper.start,helper.end),context);
+vm.createContext(context);vm.runInContext(helper,context);
 let handler;
 if(config.mode==='clear'||config.mode==='remove'){
  const outer=nodes.find(n=>n.type==='CallExpression'&&source.slice(n.callee.start,n.callee.end)==="listEl.querySelectorAll('.intg-del-btn').forEach"&&source.slice(n.start,n.end).includes("/api/contacts/clear"));

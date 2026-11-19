@@ -13,7 +13,7 @@ import spinnerModule from '../spinner.js';
 import { SELECT_MENU_ICON, actionMenuRank, orderActionMenuItems } from '../actionMenuOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '../escMenuStack.js';
 import { topPortalZ } from '../toolWindowZOrder.js';
-import { showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
+import { showError as showEmailMoveError, showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';
 import {
   _handleAiReplyButton,
@@ -239,9 +239,13 @@ export function _showReaderMoreMenu(em, card, reader, anchor, data) {
       icon: _spamIcon,
       action: async () => {
         try {
-          await fetch(`${API_BASE}/api/email/move/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&dest=Junk`, { method: 'POST' });
-        } catch (e) { console.error(e); }
-        await closeAndRemove();
+          const response = await fetch(`${API_BASE}/api/email/move/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&dest=Junk`, { method: 'POST' });
+          await _requireSuccessfulEmailMutation(response, 'Failed to move email to Spam');
+          await closeAndRemove();
+        } catch (e) {
+          console.error(e);
+          showEmailMoveError('Failed to move email to Spam');
+        }
       },
     },
     {
