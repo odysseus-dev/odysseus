@@ -120,14 +120,14 @@ try {
     await logout.dispatchEvent('click');
   };
 
-  // 1. Ordinary refresh keeps recovery for the same session.
+  // 1. Tab-scoped recovery: a tab that inherits the opener's sessionStorage recovers the draft.
   await openApp();
   await openDocument(doc.id);
   await typeUnsaved(` ${secret}`);
   assert.equal((await draftKeys()).length, 1, 'an unsaved Markdown draft is stored for refresh recovery');
   page = await refreshTab();
-  assert.equal((await draftKeys()).length, 1, 'refresh keeps the tab-scoped draft');
-  record('ordinary refresh keeps the draft');
+  assert.equal((await draftKeys()).length, 1, 'the tab-scoped draft is still stored');
+  record('a fresh renderer inheriting tab storage recovers the draft');
 
   // 2. A rejected logout leaves the session, and recovery, intact.
   await openDocument(doc.id);
