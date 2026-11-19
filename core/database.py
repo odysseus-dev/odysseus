@@ -82,13 +82,19 @@ engine = create_engine(
 def _is_sqlite() -> bool:
     """True when the configured database is SQLite.
 
-    A number of migration helpers below use SQLite-only introspection
-    (PRAGMA table_info, sqlite3.connect against the file path) to add
-    columns that may be missing on an old on-disk database. On non-SQLite
-    backends those columns are already present because the ORM's
-    Base.metadata.create_all() creates the full current schema up front,
-    so these migrations are meaningless there and must no-op instead of
-    running SQLite-only SQL against the configured engine.
+    Many migration helpers below use SQLite-only operations (PRAGMA
+    table_info, sqlite_master, sqlite3.connect against the file path) to add
+    columns that may be missing from an older on-disk database. Those
+    operations are invalid on other dialects: PRAGMA raises a syntax error on
+    PostgreSQL, and sqlite3.connect treats a non-SQLite URL as a missing file
+    path. Guarding with this helper makes those migrations return before any
+    SQLite-specific database operation on a non-SQLite engine.
+
+    Scope note: this only avoids running SQLite-only operations elsewhere.
+    Base.metadata.create_all() creates *missing tables*; it does not add
+    missing columns to tables that already exist. Upgrading an existing
+    PostgreSQL schema that predates a column is therefore NOT handled by
+    these guarded helpers and remains outside their contract.
     """
     return engine.dialect.name == "sqlite"
 
@@ -990,6 +996,8 @@ def _migrate_add_last_message_at_column():
 def _migrate_add_memory_extraction_enabled_column():
     """Add per-session auto memory extraction toggle."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1012,6 +1020,8 @@ def _migrate_add_memory_extraction_enabled_column():
 def _migrate_add_skill_injection_enabled_column():
     """Add per-session skill injection toggle."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1034,6 +1044,8 @@ def _migrate_add_skill_injection_enabled_column():
 def _migrate_add_memory_injection_enabled_column():
     """Add per-session memory context injection toggle."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1055,6 +1067,8 @@ def _migrate_add_memory_injection_enabled_column():
 
 def _migrate_add_session_generation_settings_columns():
     """Add per-chat model generation controls."""
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1349,6 +1363,8 @@ def _migrate_add_supports_tools_column():
 def _migrate_add_model_tool_modes_column():
     """Add per-model tool-surface preferences to model_endpoints if missing."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1526,6 +1542,8 @@ def _migrate_add_folder_column():
 def _migrate_add_session_cwd_column():
     """Add cwd column to sessions table if it doesn't exist."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1588,6 +1606,8 @@ def _migrate_add_token_columns():
 def _migrate_add_total_cost_usd():
     """Add cumulative USD cost column to sessions table."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -1900,6 +1920,8 @@ def _migrate_add_doc_source_email_cols():
 
 def _migrate_add_calendar_source_email_cols():
     """Add provenance fields so email-created events can link back to the email."""
+    if not _is_sqlite():
+        return
     cols_to_add = {
         "source_email_uid": "VARCHAR",
         "source_email_folder": "VARCHAR",
@@ -3002,6 +3024,8 @@ def _migrate_add_calendar_recurrence_exdates():
 def _migrate_add_calendar_tzid():
     """Store the source TZID so imported recurring events expand in their own zone."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
@@ -3023,6 +3047,8 @@ def _migrate_add_calendar_tzid():
 def _migrate_add_note_gallery_id():
     """Keep a drawn note linked to one Gallery image across edits."""
     import sqlite3
+    if not _is_sqlite():
+        return
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         return
