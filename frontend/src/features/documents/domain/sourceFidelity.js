@@ -185,9 +185,11 @@ export function alignText(a, b, limit = MAX_EDIT_DISTANCE) {
  * @param {string} baseline
  * @param {string} edited
  * @param {number} [limit]
+ * @param {'\n'|'\r\n'} [lineBreak] Line ending for line breaks the edit introduces. Untouched
+ *   source characters, including their own line endings, are never rewritten.
  * @returns {string|null} Merged Markdown string, or null if alignment failed.
  */
-export function patchSource(source, baseline, edited, limit = MAX_EDIT_DISTANCE) {
+export function patchSource(source, baseline, edited, limit = MAX_EDIT_DISTANCE, lineBreak = '\n') {
   if (edited === baseline) return source;
 
   const toSource = alignText(baseline, source, limit);
@@ -214,7 +216,7 @@ export function patchSource(source, baseline, edited, limit = MAX_EDIT_DISTANCE)
   let keptBefore = false;
 
   const emitTyped = upTo => {
-    out += edited.slice(typed, upTo);
+    out += edited.slice(typed, upTo).replace(/\r?\n/g, lineBreak);
     typed = upTo;
   };
 
@@ -461,6 +463,17 @@ export function compareSemanticHtml(htmlA, htmlB) {
 }
 
 /**
+ * Line ending a block uses for its own line breaks. A single-line block has none,
+ * so the caller's document convention decides.
+ * @param {string} raw
+ * @param {'\n'|'\r\n'} [fallback]
+ * @returns {'\n'|'\r\n'}
+ */
+function blockLineBreak(raw, fallback = '\n') {
+  return /\n/.test(raw) ? detectLineEnding(raw) : fallback;
+}
+
+/**
  * Preserve the source of an individual Markdown block.
  * Explicitly distinguishes source preservation, verified canonical fallback,
  * and unsupported conversions. Fail-closed contract: missing validation or
@@ -475,6 +488,7 @@ export function compareSemanticHtml(htmlA, htmlB) {
  * @param {function} [options.inspectCompatibility] Function verifying Markdown visual compatibility.
  * @param {number} [options.maxEditDistance] Difference threshold before falling back.
  * @param {boolean} [options.allowCanonicalFallback] Whether to allow canonical fallback if patching fails. Defaults to true.
+ * @param {'\n'|'\r\n'} [options.lineBreak] Line ending for new or rewritten lines; defaults to the block's own convention.
  * @returns {{ status: 'preserved'|'canonical-fallback'|'unsupported', markdown: string, draft: string, reason: string|null }}
  */
 export function preserveBlockSource({
@@ -486,7 +500,9 @@ export function preserveBlockSource({
   inspectCompatibility = null,
   maxEditDistance = MAX_EDIT_DISTANCE,
   allowCanonicalFallback = true,
+  lineBreak = blockLineBreak(source),
 }) {
+  const withLineBreaks = text => text.replace(/\r?\n/g, lineBreak);
   // 1. Identity check: if edited equals baseline, no visual edit occurred
   if (edited === baseline) {
     return {
@@ -531,7 +547,7 @@ export function preserveBlockSource({
   }
 
   // 4. Attempt 3-way source patching
-  const patched = patchSource(source, baseline, edited, maxEditDistance);
+  const patched = patchSource(source, baseline, edited, maxEditDistance, lineBreak);
 
   // If alignment failed (diff distance exceeded or structural mismatch)
   if (patched === null) {
@@ -556,7 +572,7 @@ export function preserveBlockSource({
     }
     return {
       status: 'canonical-fallback',
-      markdown: edited,
+      markdown: withLineBreaks(edited),
       draft: edited,
       reason: 'diff-limit-exceeded',
     };
@@ -595,7 +611,7 @@ export function preserveBlockSource({
     }
     return {
       status: 'canonical-fallback',
-      markdown: edited,
+      markdown: withLineBreaks(edited),
       draft: edited,
       reason: 'semantic-divergence',
     };
@@ -605,7 +621,7 @@ export function preserveBlockSource({
   if (source !== baseline && patched === edited) {
     return {
       status: allowCanonicalFallback ? 'canonical-fallback' : 'unsupported',
-      markdown: allowCanonicalFallback ? edited : source,
+      markdown: allowCanonicalFallback ? withLineBreaks(edited) : source,
       draft: edited,
       reason: 'source-formatting-lost',
     };
@@ -801,6 +817,8 @@ export function applyLocalizedEdits(source, edits, options = {}) {
     };
   }
 
+  // New or rewritten lines follow the document's convention; untouched lines keep theirs.
+  const documentLineBreak = detectLineEnding(source);
   const blockResults = [];
   let overallStatus = 'preserved';
   let overallReason = null;
@@ -814,6 +832,7 @@ export function applyLocalizedEdits(source, edits, options = {}) {
         source: targetSeg.raw,
         baseline,
         edited: op.edited,
+        lineBreak: blockLineBreak(targetSeg.raw, documentLineBreak),
         render: options.render,
         compareSemantics: options.compareSemantics,
         inspectCompatibility: options.inspectCompatibility,
@@ -857,10 +876,10 @@ export function applyLocalizedEdits(source, edits, options = {}) {
     if (!insertGroups.has(op.afterIndex)) insertGroups.set(op.afterIndex, []);
     insertGroups.get(op.afterIndex).push(op.text);
   }
-  const eol = insertGroups.size ? detectLineEnding(source) : '';
+  const eol = insertGroups.size ? documentLineBreak : '';
   const standardSep = `${eol}${eol}`;
   for (const [afterIndex, texts] of insertGroups) {
-    const newBlock = { type: 'block', raw: texts.join(standardSep) };
+    const newBlock = { type: 'block', raw: texts.map(text => text.replace(/\r?\n/g, eol)).join(standardSep) };
     if (afterIndex === -1) {
       const first = segments.findIndex(seg => seg.type === 'block');
       segments.splice(first < 0 ? segments.length : first, 0, newBlock, ...(first < 0 ? [] : [{ type: 'separator', raw: standardSep }]));

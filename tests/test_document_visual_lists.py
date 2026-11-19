@@ -93,3 +93,31 @@ def test_lists_the_visual_model_cannot_keep_exact_stay_in_source_mode():
         assert by_id[case_id]["visual"] is False, by_id[case_id]
         assert by_id[case_id]["reasons"], by_id[case_id]
         assert by_id[case_id]["content"] == source
+
+
+def test_adding_list_items_and_table_rows_keeps_crlf_documents_consistent():
+    data = _run_browser(r"""
+      await boot('visual-crlf');
+      const append = async (needle, text) => {
+        await page.evaluate((target) => {
+          const rich = document.getElementById('doc-email-richbody');
+          const walker = document.createTreeWalker(rich, NodeFilter.SHOW_TEXT);
+          let node; let match = null;
+          while ((node = walker.nextNode())) if (node.data === target) match = node;
+          rich.focus();
+          const range = document.createRange(); range.setStart(match, match.data.length); range.collapse(true);
+          const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        }, needle);
+        await page.keyboard.press('Enter');
+        await page.keyboard.type(text);
+      };
+      const results = {};
+      const list = 'para\r\n\r\n- a\r\n- b\r\n\r\nend';
+      await open({ id: 'crlf-list', title: 'crlf', language: 'markdown', current_content: list });
+      await page.waitForSelector('#doc-email-richbody.markdown-visual-mode li');
+      await append('b', 'c');
+      await page.evaluate(() => window.__doc.saveDocument({ silent: true }));
+      results.list = api.store.get('crlf-list')?.current_content;
+      await finish(results);
+    """)
+    assert data["list"] == "para\r\n\r\n- a\r\n- b\r\n- c\r\n\r\nend", repr(data["list"])

@@ -915,3 +915,56 @@ describe('Segmenter and visual codec agree on list blocks', () => {
     assert.equal(result.markdown, 'para\n\n- a\n\n- bX\n\n- c');
   });
 });
+
+describe('Line endings of edited blocks', () => {
+  const apply = (source, index, baseline, edited) => {
+    const blocks = extractBlockSegments(segmentMarkdown(source));
+    return applyLocalizedEdits(source, [{
+      op: 'replace', index, edited, baseline, range: [blocks[index].startOffset, blocks[index].endOffset], blockId: blocks[index].blockId,
+    }], { render: markdownToVisualHtml, allowCanonicalFallback: false });
+  };
+  const noBareLf = (text) => !/(?<!\r)\n/.test(text);
+  const noCrlf = (text) => !text.includes('\r');
+
+  it('writes added list items with the document convention', () => {
+    const result = apply('para\r\n\r\n- a\r\n- b\r\n\r\nend', 1, '- a\n- b', '- a\n- b\n- c');
+    assert.equal(result.status, 'preserved');
+    assert.equal(result.markdown, 'para\r\n\r\n- a\r\n- b\r\n- c\r\n\r\nend');
+    assert.ok(noBareLf(result.markdown));
+  });
+
+  it('writes added table rows with the document convention', () => {
+    const table = '| A | B |\n| --- | --- |\n| 1 | 2 |';
+    const result = apply(`para\r\n\r\n${table.replace(/\n/g, '\r\n')}\r\n\r\nend`, 1, table, `${table}\n| 3 | 4 |`);
+    assert.equal(result.status, 'preserved');
+    assert.ok(noBareLf(result.markdown), JSON.stringify(result.markdown));
+    assert.ok(result.markdown.includes('| 3 | 4 |\r\n\r\nend'));
+  });
+
+  it('splits a one-line block using the document convention', () => {
+    const result = apply('one\r\n\r\ntwo', 0, 'one', 'one\nmore');
+    assert.equal(result.markdown, 'one\r\nmore\r\n\r\ntwo');
+  });
+
+  it('writes inserted multi-line blocks with the document convention', () => {
+    const result = applyLocalizedEdits('a\r\n\r\nb', [{ op: 'insert', afterIndex: 0, text: '- x\n- y' }], { render: markdownToVisualHtml, allowCanonicalFallback: false });
+    assert.equal(result.markdown, 'a\r\n\r\n- x\r\n- y\r\n\r\nb');
+  });
+
+  it('keeps LF documents LF and untouched bytes exact in mixed documents', () => {
+    const lf = apply('para\n\n- a\n- b\n\nend', 1, '- a\n- b', '- a\n- b\n- c');
+    assert.equal(lf.markdown, 'para\n\n- a\n- b\n- c\n\nend');
+    assert.ok(noCrlf(lf.markdown));
+    // The edited block follows its own lines; the paragraph and separators keep theirs.
+    const mixed = apply('para\n\n- a\r\n- b\r\n\nend', 1, '- a\n- b', '- a\n- b\n- c');
+    assert.equal(mixed.markdown, 'para\n\n- a\r\n- b\r\n- c\r\n\nend');
+  });
+
+  it('does not touch a CRLF document when nothing changed', () => {
+    const source = 'para\r\n\r\n- a\r\n- b\r\n\r\n| A |\r\n| --- |\r\n| 1 |';
+    const blocks = extractBlockSegments(segmentMarkdown(source));
+    const result = applyLocalizedEdits(source, [], { render: markdownToVisualHtml, allowCanonicalFallback: false });
+    assert.equal(result.markdown, source);
+    assert.equal(blocks.length, 3);
+  });
+});
