@@ -41,6 +41,22 @@ import { _isFormBackedDoc } from '../pdf/annotations.js';
 export const MD_EDITOR_MODE_KEY = 'odysseus-doc-md-editor-mode';
 
 const REWRITE_REASON = 'formatting the visual editor would rewrite';
+
+/**
+ * Name the first line that Visual editing would rewrite, so the banner can point at it
+ * instead of giving a generic reason.
+ * @param {string} original
+ * @param {string} canonical
+ * @returns {string}
+ */
+function _rewriteReasonFor(original, canonical) {
+  const before = String(original ?? '').replace(/\r\n?/g, '\n').replace(/^\n+/, '').trimEnd().split('\n');
+  const after = String(canonical ?? '').replace(/^\n+/, '').trimEnd().split('\n');
+  for (let index = 0; index < Math.max(before.length, after.length); index++) {
+    if (before[index] !== after[index]) return `formatting on line ${index + 1} that Visual editing would rewrite`;
+  }
+  return REWRITE_REASON;
+}
 // The visual surface and the source segmenter must agree on how many top-level blocks
 // a document has; otherwise no edit could be mapped back to exact source ranges.
 const LAYOUT_REASON = 'a block layout the visual editor cannot map back to the source';
@@ -391,20 +407,20 @@ function _rewriteReason(rawOriginal, canonical) {
   // Line-ending style carries no meaning (the source textarea also stores LF).
   const original = String(rawOriginal ?? '').replace(/\r\n?/g, '\n');
   if (canonical === original) return '';
-  if (markdownToVisualHtml(canonical) !== markdownToVisualHtml(original)) return REWRITE_REASON;
+  if (markdownToVisualHtml(canonical) !== markdownToVisualHtml(original)) return _rewriteReasonFor(original, canonical);
   const renderer = globalThis.markdownModule?.mdToHtml;
   if (typeof renderer === 'function') {
     try {
       const before = _comparableAppRendering(renderer(original, MARKDOWN_DOCUMENT_RENDER_OPTIONS));
       const after = _comparableAppRendering(renderer(canonical, MARKDOWN_DOCUMENT_RENDER_OPTIONS));
-      return before === after ? '' : REWRITE_REASON;
+      return before === after ? '' : _rewriteReasonFor(original, canonical);
     } catch (_) {
-      return REWRITE_REASON;
+      return _rewriteReasonFor(original, canonical);
     }
   }
   // Without the application renderer, accept only canonicalization that keeps the
   // same backslash escapes, so unparsed syntax can never turn into escaped text.
-  return _escapeSignature(canonical) === _escapeSignature(original) ? '' : REWRITE_REASON;
+  return _escapeSignature(canonical) === _escapeSignature(original) ? '' : _rewriteReasonFor(original, canonical);
 }
 
 /**
@@ -661,7 +677,7 @@ export function renderMarkdownCompatBanner(reasons = []) {
 
   const msg = document.createElement('span');
   msg.className = 'doc-visual-compat-text';
-  msg.textContent = `Opened in Markdown source mode to preserve ${summary}. Visual editing stays disabled for this document so source formatting is not altered.`;
+  msg.textContent = `Opened in Source mode because this document contains Markdown the Visual editor cannot edit without changing it: ${summary}. Your document has not been changed. Edit it in Source and read it in Preview.`;
 
   banner.appendChild(iconWrap);
   banner.appendChild(msg);

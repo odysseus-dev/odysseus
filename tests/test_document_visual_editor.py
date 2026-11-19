@@ -398,7 +398,7 @@ def test_unsupported_markdown_protection_mode_persistence_switching_ai_update_an
     assert data["unsupportedState"]["visual"] is False
     assert data["unsupportedState"]["wrapVisible"] is True
     assert data["unsupportedState"]["bannerVisible"] is True
-    assert "Markdown source mode" in data["unsupportedState"]["bannerText"]
+    assert "Source mode" in data["unsupportedState"]["bannerText"]
     assert "front matter" in data["unsupportedState"]["bannerText"]
     assert data["unsupportedState"]["pref"] is None
     assert data["unsupportedState"]["visualCompatBlocked"] is True
