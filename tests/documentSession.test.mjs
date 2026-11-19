@@ -534,6 +534,19 @@ describe('Logout draft boundary', () => {
     });
   });
 
+  it('does not store a blocked visual draft after the boundary, and stores it again on resume', async () => {
+    await withSessionStorage(({ persistMarkdownDraft, resumeMarkdownDraftPersistence, suspendMarkdownDraftPersistence }, recovery) => {
+      const doc = { ...dirtyDoc(), _visualSyncBlocked: true, _visualDraftHtml: '<p>Private visual draft</p>', _visualBaselineMarkdown: 'Original', _saveState: 'blocked' };
+      registerDocument(doc);
+      suspendMarkdownDraftPersistence();
+      assert.equal(persistMarkdownDraft(doc), false);
+      assert.equal(recovery.size, 0);
+      resumeMarkdownDraftPersistence();
+      assert.equal(recovery.size, 1);
+      assert.match([...recovery.values()][0], /Private visual draft/);
+    });
+  });
+
   it('resumes persistence and stores edits made during an interrupted logout', async () => {
     await withSessionStorage(({ resumeMarkdownDraftPersistence, suspendMarkdownDraftPersistence, guardMarkdownDraftUnload }, recovery) => {
       const doc = dirtyDoc();
