@@ -1,14 +1,20 @@
 # Goal–Kanban autonomous orchestration + Windows worker git-hang fix
 
-This directory's reviewed-patch sequence now carries two additional patches (positions 9 and 10
-in `webapp_patches()`):
+This directory's reviewed-patch sequence now carries three additional patches (positions 9, 10
+and 11 in `webapp_patches()`):
 
 - `goal-kanban.patch` — binds Desktop `/goal` sessions to durable Kanban worker tasks and wake
   events (Hermes-side change, 6 files).
 - `webapp-worker-git-hang.patch` — hardens every git probe in `hermes_cli/version_info.py`
   against Windows credential-pipe hangs in unattended worker processes (1 file).
+- `webapp-goal-drain-yield.patch` — makes the goal continuation loop yield to gateway drain:
+  goal-bound wakes defer (paused-goal, cursor held, event identity preserved) while the runner
+  drains, so `restart --drain` converges without `--force` on active-goal hosts (2 files:
+  `gateway/session_automation.py` + the bridge test as a new file). Registration-adapted form of
+  reviewed commit `59ec7cd715`; the literal format-patch cannot apply because `goal-kanban.patch`
+  omits the bridge test file this patch modifies — never register the literal alone.
 
-Both are applied automatically by the normal managed-install path (`ensure`/`repair`) on top of
+All three are applied automatically by the normal managed-install path (`ensure`/`repair`) on top of
 the pinned Hermes revision in `config/hermes-component.lock.json`. No manual edits to the
 managed release are required.
 

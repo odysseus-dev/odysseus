@@ -1252,7 +1252,14 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
-        return (*self.usage_patches(), self.transcript_clarity_patch(), self.goal_kanban_patch(), self.worker_git_hang_patch())
+        return (*self.usage_patches(), self.transcript_clarity_patch(), self.goal_kanban_patch(), self.worker_git_hang_patch(),
+                self.goal_drain_yield_patch())
+
+    def goal_drain_yield_patch(self):
+        path = (self.application_root / 'integrations/hermes-mode/patches/webapp-goal-drain-yield.patch').resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed goal drain-yield patch is missing from this Odysseus installation.')
+        return path
 
     def goal_kanban_patch(self):
         path = (self.application_root / 'integrations/hermes-mode/patches/goal-kanban.patch').resolve()

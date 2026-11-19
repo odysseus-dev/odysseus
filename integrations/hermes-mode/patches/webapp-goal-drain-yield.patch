@@ -1,0 +1,370 @@
+From afa4114385776a9868a253384a0d62e65c2c3c02 Mon Sep 17 00:00:00 2001
+From: rcprep-disposable <rcprep@local>
+Date: Thu, 19 Nov 2026 16:33:17 +0100
+Subject: [PATCH] fix(gateway): goal wakes yield to drain instead of admitting
+ the next turn
+
+DRAIN-1 59ec7cd715 (reviewed APPROVE). Registration adaptation: the registered
+goal-kanban.patch omits tests/hermes_cli/test_goal_kanban_bridge.py, so the bridge
+test file is carried here as a new file at its exact reviewed 59ec7cd715 content;
+gateway/session_automation.py hunks are byte-identical to the reviewed patch.
+---
+ gateway/session_automation.py               |  14 +-
+ tests/hermes_cli/test_goal_kanban_bridge.py | 320 ++++++++++++++++++++
+ 2 files changed, 333 insertions(+), 1 deletion(-)
+ create mode 100644 tests/hermes_cli/test_goal_kanban_bridge.py
+
+diff --git a/gateway/session_automation.py b/gateway/session_automation.py
+index 360e0c293b..f09b877faa 100644
+--- a/gateway/session_automation.py
++++ b/gateway/session_automation.py
+@@ -824,7 +824,19 @@ async def admit_route_wake(runner, adapter, source, text, producer, metadata=Non
+     authority FIFO, like heartbeats and process completions, instead of a classic turn that
+     interrupts or races the admitted one. ``False`` when no authority serves the scope or the
+     route holds no committed human turn to borrow provenance from: the caller keeps the adapter
+-    path (nothing is queued there either). Raises ``RuntimeStoreError`` on a refusal."""
++    path (nothing is queued there either). Raises ``RuntimeStoreError`` on a refusal.
++
++    A goal wake (a Kanban wake bound to ``expected_goal_id``, or a ``goal-continuation``) also
++    yields ``False`` while the runner drains (``_draining`` restart/shutdown, or the reversible
++    ``_external_drain_active`` marker drain): the authority's admission gate only checks
++    ``_draining``, so without this yield an active goal's wake->turn->wake loop keeps admissions
++    started and a drain never reaches idle. ``False`` is the paused-goal deferral, not a discard:
++    the Kanban notifier leaves the event unseen for a later tick or the next owner, and the
++    continuation hook admits no next turn, so the in-flight work drains to zero."""
++    if expected_goal_id is not None or producer == 'goal-continuation':
++        from gateway.platforms.api_server_fire_startup import runner_is_draining
++        if runner_is_draining(runner):
++            return False
+     from gateway.session_authorities import active_authority
+     from gateway.session_local_recovery import restore_completion_route
+     from gateway.session_detached import detached_live, detached_route_of, route_entry
+diff --git a/tests/hermes_cli/test_goal_kanban_bridge.py b/tests/hermes_cli/test_goal_kanban_bridge.py
+new file mode 100644
+index 0000000000..5ec339d6a3
+--- /dev/null
++++ b/tests/hermes_cli/test_goal_kanban_bridge.py
+@@ -0,0 +1,320 @@
++import asyncio
++import json
++import os
++import tempfile
++import unittest
++from pathlib import Path
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
++
++from hermes_cli import goals, kanban_db as kb, kanban_db_connect as kbc
++
++
++class GoalKanbanBridgeTest(unittest.TestCase):
++    def setUp(self):
++        tmp = self.enterContext(tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]))
++        self.db = Path(tmp) / 'kanban.db'
++        self.enterContext(patch.dict(os.environ, {'HERMES_HOME': tmp, 'HERMES_KANBAN_DB': str(self.db)}))
++        self.addCleanup(lambda: goals._release_session_db(goals._DB_CACHE.pop(tmp, None)))
++        self.enterContext(patch.object(kb, 'kanban_db_path', return_value=self.db))
++        self.conn = kbc.connect(self.db)
++        self.addCleanup(self.conn.close)
++        self.manager = goals.GoalManager('lead')
++        self.manager.set('Deliver and verify two waves')
++
++    def test_restart_rejoins_owned_work_and_review_before_evaluating_completion(self):
++        key = self.manager.bind_kanban_task('default', 'wave-one')
++        card = kb.create_task(self.conn, title='Implement wave one', assignee='worker', idempotency_key=key)
++        kb.create_task(self.conn, title='Unrelated', assignee='worker')
++        from hermes_constants import get_hermes_home
++        goals._release_session_db(goals._DB_CACHE.pop(str(get_hermes_home())))
++        resumed = goals.GoalManager('lead')
++        with patch.object(goals, 'judge_goal', return_value=('done', 'acceptance verified', False, None, False)) as judge:
++            for status in ('ready', 'review'):
++                self.conn.execute('UPDATE tasks SET status = ? WHERE id = ?', (status, card))
++                self.assertEqual(resumed.evaluate_after_turn('Report')['verdict'], 'waiting')
++            judge.assert_not_called()
++            self.conn.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (card,))
++            self.assertEqual(resumed.evaluate_after_turn('Acceptance evidence')['status'], 'done')
++            judge.assert_called_once()
++
++    def test_scope_survives_session_migration_and_does_not_cross_goals(self):
++        key = self.manager.bind_kanban_task('default', 'wave-one')
++        self.assertTrue(goals.migrate_goal_to_session('lead', 'continued'))
++        continued = goals.GoalManager('continued')
++        self.assertEqual(continued.bind_kanban_task('default', 'wave-one'), key)
++        with self.assertRaises(ValueError):
++            continued.bind_kanban_task('different', 'wave-two')
++        continued.set('A genuinely different goal')
++        self.assertNotEqual(continued.bind_kanban_task('default', 'wave-one'), key)
++
++    def test_tool_creates_one_owned_card_with_a_durable_wake_subscription(self):
++        from hermes_cli import kanban_db_notify as notify
++        from tools import kanban_tools as tools
++
++        target = dict(platform='local', chat_id='lead', delivery_mode='notify+wake')
++        args = dict(title='Wave one', assignee='worker', goal_task_key='wave-one')
++        with (patch.object(tools, '_resolve_notify_target', return_value=target),
++              patch.object(tools, '_persisted_session_id', side_effect=lambda sid: sid or None),
++              patch('tools.async_delegation._current_origin_session_id', return_value='lead'),
++              patch('hermes_cli.kanban_db_dispatch._profile_exists_fn', return_value=lambda name: name == 'worker')):
++            created = json.loads(tools._handle_create(args))
++            replayed = json.loads(tools._handle_create(args))
++            self.assertEqual(created['task_id'], replayed['task_id'])
++            self.assertTrue(created['subscribed'])
++        card = created['task_id']
++        resumed = goals.GoalManager('lead')
++        assert resumed.state is not None
++        self.assertEqual(resumed._kanban_snapshot(resumed.state), [(card, 'ready')])
++        sub = notify.list_notify_subs(self.conn, card)[0]
++        self.assertEqual(sub['chat_id'], 'lead')
++        self.assertEqual(sub['delivery_metadata']['goal_kanban_id'], resumed.state.kanban_goal_id)
++
++    def test_blocked_owned_card_cannot_be_judged_done(self):
++        key = self.manager.bind_kanban_task('default', 'wave-one')
++        kb.create_task(self.conn, title='Blocked', assignee='worker', idempotency_key=key,
++                       initial_status='blocked')
++        with patch.object(goals, 'judge_goal', return_value=('done', 'premature', False, None, False)):
++            decision = self.manager.evaluate_after_turn('Claims success')
++        self.assertTrue(decision['should_continue'])
++        self.assertNotEqual(decision['status'], 'done')
++
++    def test_ineligible_worker_leaves_no_task(self):
++        from tools import kanban_tools as tools
++
++        with patch('hermes_cli.kanban_db_dispatch._profile_exists_fn', return_value=lambda name: False):
++            result = json.loads(tools._handle_create(dict(title='Wave one', assignee='missing', goal_task_key='one')))
++        self.assertIn('not eligible', result['error'])
++        self.assertEqual(self.conn.execute('SELECT count(*) FROM tasks').fetchone()[0], 0)
++
++    def test_roster_excludes_ineligible_profiles(self):
++        from tools import kanban_tools as tools
++
++        profiles = [SimpleNamespace(name=name, model='fixture', provider='fixture', description='code')
++                    for name in ('allowed', 'excluded')]
++        with (patch('hermes_cli.kanban_db_dispatch._profile_exists_fn', return_value=lambda name: name == 'allowed'),
++              patch('hermes_cli.profiles.list_profiles', return_value=profiles)):
++            result = json.loads(tools._handle_list({'include_workers': True}))
++        self.assertEqual([item['profile'] for item in result['eligible_workers']], ['allowed'])
++
++    def test_route_admission_has_stable_request_id_and_respects_goal_pause(self):
++        from gateway.config import Platform
++        from gateway.session import SessionSource
++        from gateway.session_automation import admit_route_wake
++        from hermes_state import SessionDB
++        from hermes_state_runtime import admit_session_input, begin_runtime_epoch, list_session_admissions
++
++        goal_id = self.manager.bind_kanban_task('default', 'wave-one').split(':')[2]
++        source = SessionSource(platform=Platform.LOCAL, chat_id='lead')
++        route = 'local-lead-route'
++        live = SimpleNamespace(route=route, source=source)
++        db = SessionDB(self.db.with_name('runtime-test.db'))
++        self.addCleanup(db.close)
++        db.create_session('lead', source='local')
++        epoch = begin_runtime_epoch(db, instance_id='fixture')
++
++        async def commit(_, event, identity):
++            admit_session_input(db, epoch=epoch, principal_id='automation:' + route,
++                                session_id='lead', request_id=identity, payload={'text': event.text})
++
++        authority = SimpleNamespace(sessions={'lead': live}, admit_automation=AsyncMock(side_effect=commit))
++        runner = SimpleNamespace(_session_key_for_source=lambda _: route)
++        entry = SimpleNamespace(session_id='lead')
++
++        async def wake(expected):
++            return await admit_route_wake(runner, None, source, 'review ready', 'kanban-wake',
++                                          event_key='review-event', expected_goal_id=expected)
++
++        with (patch('gateway.session_authorities.active_authority', return_value=authority),
++              patch('gateway.session_local_recovery.restore_completion_route'),
++              patch('gateway.session_detached.route_entry', return_value=entry),
++              patch('gateway.session_detached.detached_live', return_value=None)):
++            self.assertTrue(asyncio.run(wake(goal_id)))
++            self.assertTrue(asyncio.run(wake(goal_id)))
++            self.manager.pause()
++            self.assertFalse(asyncio.run(wake(goal_id)))
++            self.manager.set('Different goal')
++            self.assertTrue(asyncio.run(wake(goal_id)))
++        calls = authority.admit_automation.await_args_list
++        self.assertEqual(len(calls), 2)
++        self.assertEqual(calls[0].args[2], calls[1].args[2])
++        self.assertEqual(len(list_session_admissions(db, session_id='lead')), 1)
++
++    def test_unacknowledged_wake_is_recovered_with_the_same_event_identity(self):
++        from gateway import kanban_watchers_notifier as watcher
++        from gateway.config import Platform
++        from hermes_cli import kanban_db_notify as notify
++        from contextlib import asynccontextmanager
++
++        key = self.manager.bind_kanban_task('default', 'wave-one')
++        goal_id = key.split(':')[2]
++        card = kb.create_task(self.conn, title='First implementation', assignee='worker', idempotency_key=key)
++        sub_key = dict(task_id=card, platform='local', chat_id='lead')
++        notify.add_notify_sub(self.conn, **sub_key, delivery_mode='wake', delivery_metadata={'goal_kanban_id': goal_id})
++        self.assertTrue(kb.request_review(self.conn, card, reviewer='reviewer', summary='First handoff'))
++        sub = notify.list_notify_subs(self.conn, card)[0]
++
++        @asynccontextmanager
++        async def owner_scope():
++            yield
++
++        def collect():
++            collector = SimpleNamespace(kb=kb, runner=None, notifier_profile='default', active_platforms={'local'})
++            return watcher._Collector._claim_for_sub(collector, self.conn, 'default', sub)
++
++        async def deliver(batch):
++            async def advance():
++                notify.advance_notify_cursor(self.conn, **sub_key, new_cursor=batch['cursor'])
++            context = SimpleNamespace(d=batch, plat=Platform.LOCAL, sub=sub, sub_profile='default',
++                                      board_slug='default', task_id=card, task=batch['task'],
++                                      runner=None, adapter=None, _owner_scope=owner_scope, advance=advance)
++            await watcher._KanbanNotification._deliver_goal_events(context)
++
++        admit = AsyncMock(side_effect=[False, True])
++        with (patch.object(watcher, '_adapter_for_subscription', return_value=object()),
++              patch('gateway.session_automation.admit_route_wake', admit)):
++            asyncio.run(deliver(collect()))
++            asyncio.run(deliver(collect()))
++            self.assertIsNone(collect())
++        self.assertEqual(admit.await_args_list[0].kwargs['event_key'], admit.await_args_list[1].kwargs['event_key'])
++
++        self.assertTrue(kb.complete_task(self.conn, card, summary='Reviewed focused test evidence'))
++        resumed = goals.GoalManager('lead')
++        with patch.object(goals, 'judge_goal', return_value=('continue', 'Second wave needed', False, None, False)):
++            self.assertTrue(resumed.evaluate_after_turn('Reviewed, one requirement still missing')['should_continue'])
++        second_key = resumed.bind_kanban_task('default', 'wave-two')
++        second = kb.create_task(self.conn, title='Second implementation', assignee='worker',
++                                parents=(card,), idempotency_key=second_key)
++        self.assertEqual(kb.get_task(self.conn, second).status, 'ready')
++
++    # ── DRAIN-1: the goal wake loop yields to a drain instead of admitting the next turn ──
++
++    def _route_wake_fixture(self, **runner_flags):
++        """Authority/runner doubles over a real runtime admission store (the shape of
++        test_route_admission_has_stable_request_id_and_respects_goal_pause), with the drain
++        flags the caller names on the runner. Patches stay active for the whole test."""
++        from contextlib import ExitStack
++        from gateway.config import Platform
++        from gateway.session import SessionSource
++        from hermes_state import SessionDB
++        from hermes_state_runtime import admit_session_input, begin_runtime_epoch
++
++        key = self.manager.bind_kanban_task('default', 'wave-one')
++        goal_id = key.split(':')[2]
++        source = SessionSource(platform=Platform.LOCAL, chat_id='lead')
++        route = 'local-lead-route'
++        live = SimpleNamespace(route=route, source=source)
++        db = SessionDB(self.db.with_name('runtime-drain-test.db'))
++        self.addCleanup(db.close)
++        db.create_session('lead', source='local')
++        epoch = begin_runtime_epoch(db, instance_id='fixture')
++
++        async def commit(_, event, identity):
++            admit_session_input(db, epoch=epoch, principal_id='automation:' + route,
++                                session_id='lead', request_id=identity, payload={'text': event.text})
++
++        authority = SimpleNamespace(sessions={'lead': live}, admit_automation=AsyncMock(side_effect=commit))
++        runner = SimpleNamespace(_session_key_for_source=lambda _: route, **runner_flags)
++        stack = ExitStack()
++        self.addCleanup(stack.close)
++        stack.enter_context(patch('gateway.session_authorities.active_authority', return_value=authority))
++        stack.enter_context(patch('gateway.session_local_recovery.restore_completion_route'))
++        stack.enter_context(patch('gateway.session_detached.route_entry',
++                                  return_value=SimpleNamespace(session_id='lead')))
++        stack.enter_context(patch('gateway.session_detached.detached_live', return_value=None))
++        return runner, authority, db, source, goal_id, key
++
++    def test_goal_wake_yields_to_drain_and_recovers_after_release(self):
++        from gateway.session_automation import admit_route_wake
++        from hermes_state_runtime import list_session_admissions
++
++        runner, authority, db, source, goal_id, _ = self._route_wake_fixture(
++            _draining=False, _external_drain_active=False)
++
++        async def wake(event_key):
++            return await admit_route_wake(runner, None, source, 'review ready', 'kanban-wake',
++                                          event_key=event_key, expected_goal_id=goal_id)
++
++        # Normal operation: the wake admits (no behavior change without a drain).
++        self.assertTrue(asyncio.run(wake('event-normal')))
++        self.assertEqual(len(list_session_admissions(db, session_id='lead')), 1)
++        # External (marker) drain: yield False, admit nothing further.
++        runner._external_drain_active = True
++        self.assertFalse(asyncio.run(wake('event-external-drain')))
++        # Restart/shutdown drain: same yield.
++        runner._external_drain_active = False
++        runner._draining = True
++        self.assertFalse(asyncio.run(wake('event-restart-drain')))
++        self.assertEqual(authority.admit_automation.await_count, 1)
++        self.assertEqual(len(list_session_admissions(db, session_id='lead')), 1)
++        # Release: a later event admits again — the yield deferred, it did not break the loop.
++        runner._draining = False
++        self.assertTrue(asyncio.run(wake('event-released')))
++        self.assertEqual(len(list_session_admissions(db, session_id='lead')), 2)
++
++    def test_goal_continuation_wake_yields_to_drain(self):
++        from gateway.session_automation import admit_route_wake
++        from hermes_state_runtime import list_session_admissions
++
++        runner, authority, db, source, _, _ = self._route_wake_fixture(
++            _draining=False, _external_drain_active=True)
++
++        async def wake(producer, text):
++            return await admit_route_wake(runner, None, source, text, producer)
++
++        # The post-turn continuation admits no next turn while draining.
++        self.assertFalse(asyncio.run(wake('goal-continuation', 'continue toward the goal')))
++        authority.admit_automation.assert_not_awaited()
++        self.assertEqual(list_session_admissions(db, session_id='lead'), [])
++        # The yield is goal-scoped: a non-goal route wake keeps its own contract.
++        self.assertTrue(asyncio.run(wake('loop-tick', 'tick')))
++        # Release: the continuation path admits again.
++        runner._external_drain_active = False
++        self.assertTrue(asyncio.run(wake('goal-continuation', 'continue toward the goal')))
++        self.assertEqual(len(list_session_admissions(db, session_id='lead')), 2)
++
++    def test_notifier_defers_goal_events_while_draining(self):
++        from contextlib import asynccontextmanager
++        from gateway import kanban_watchers_notifier as watcher
++        from gateway.config import Platform
++        from hermes_cli import kanban_db_notify as notify
++        from hermes_state_runtime import list_session_admissions
++
++        runner, authority, db, _, goal_id, key = self._route_wake_fixture(
++            _draining=False, _external_drain_active=True)
++        card = kb.create_task(self.conn, title='Implementation', assignee='worker', idempotency_key=key)
++        sub_key = dict(task_id=card, platform='local', chat_id='lead')
++        notify.add_notify_sub(self.conn, **sub_key, delivery_mode='wake',
++                              delivery_metadata={'goal_kanban_id': goal_id})
++        self.assertTrue(kb.request_review(self.conn, card, reviewer='reviewer', summary='handoff'))
++        sub = notify.list_notify_subs(self.conn, card)[0]
++
++        @asynccontextmanager
++        async def owner_scope():
++            yield
++
++        def collect():
++            collector = SimpleNamespace(kb=kb, runner=runner, notifier_profile='default',
++                                        active_platforms={'local'})
++            return watcher._Collector._claim_for_sub(collector, self.conn, 'default', sub)
++
++        async def deliver(batch):
++            async def advance():
++                notify.advance_notify_cursor(self.conn, **sub_key, new_cursor=batch['cursor'])
++            context = SimpleNamespace(d=batch, plat=Platform.LOCAL, sub=sub, sub_profile='default',
++                                      board_slug='default', task_id=card, task=batch['task'],
++                                      runner=runner, adapter=object(), _owner_scope=owner_scope,
++                                      advance=advance)
++            await watcher._KanbanNotification._deliver_goal_events(context)
++
++        with patch.object(watcher, '_adapter_for_subscription', return_value=object()):
++            batch = collect()
++            self.assertIsNotNone(batch)
++            asyncio.run(deliver(batch))  # drain active: the wake yields
++            authority.admit_automation.assert_not_awaited()
++            self.assertEqual(list_session_admissions(db, session_id='lead'), [])
++            self.assertIsNotNone(collect())  # cursor not advanced: the event stays discoverable
++            runner._external_drain_active = False
++            asyncio.run(deliver(collect()))  # released: the same event admits
++            self.assertEqual(len(list_session_admissions(db, session_id='lead')), 1)
++            self.assertIsNone(collect())  # cursor advanced past the delivered event
+-- 
+2.56.0.windows.3
+
