@@ -484,19 +484,21 @@ def merge_items_into_content(content: Optional[str], items: Optional[List[Dict]]
     """Fold legacy `items` into `content` for the one-time migration.
 
     An item is already present when an unused task line in `content` has the
-    same text and the same done state; every other item is added as a task
-    line, so two identical items and an item whose tick differs from the
-    content's copy all survive. Content is never rewritten: its bytes and
-    line breaks stay as they were and a legacy row can only gain lines. Task
-    lines inside fenced code do not count as present (they are code), so a
-    note whose only `- [ ]` lines are a fenced sample still gets its real
-    items, and a fence left open at the end is closed before them.
+    same text, done state, and indentation level; every other item is added
+    as a task line, so two identical items, an item whose tick differs from
+    the content's copy, and an item at a different nesting level all survive.
+    Content is never rewritten: its bytes and line breaks stay as they were
+    and a legacy row can only gain lines. Task lines inside fenced code do
+    not count as present (they are code), so a note whose only `- [ ]` lines
+    are a fenced sample still gets its real items, and a fence left open at
+    the end is closed before them.
     """
     base = content or ""
-    present = Counter((t["text"], t["done"]) for t in parse_task_lines(base))
+    present = Counter((t["text"], t["done"], t["indent"]) for t in parse_task_lines(base))
     missing = []
     for it in _clean_items(items):
-        key = (_migration_item_text(it), _item_done(it))
+        indent = _coerce_indent(it.get("indent"))
+        key = (_migration_item_text(it), _item_done(it), indent)
         if present[key]:
             present[key] -= 1
             continue

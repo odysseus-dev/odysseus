@@ -325,3 +325,140 @@ def test_rolled_back_database_deletes_notes_without_the_trigger(notes_db):
     notes_db.sql(_rollback_sql())
     notes_db.sql("DROP TABLE note_legacy_fields")
     notes_db.sql("DELETE FROM notes WHERE id = 'n1'")  # must not need the backup table
+
+
+def test_unify_migration_concurrency_newer_edit_survives(notes_db, monkeypatch):
+    notes_db.add("n1", content="Note 1", items=json.dumps([{"text": "Item 1"}]))
+    notes_db.add("n2", content="Note 2 initial", items=json.dumps([{"text": "Item 2"}]))
+
+    real_connect = sqlite3.connect
+    interleaved = {"done": False}
+
+    class ConnectionProxy:
+        def __init__(self, target):
+            self._target = target
+
+        def __getattr__(self, name):
+            return getattr(self._target, name)
+
+        def __setattr__(self, name, value):
+            if name == "_target":
+                super().__setattr__(name, value)
+            else:
+                setattr(self._target, name, value)
+
+        def __enter__(self):
+            self._target.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return self._target.__exit__(exc_type, exc_val, exc_tb)
+
+        def execute(self, sql, *params):
+            if not interleaved["done"] and "BEGIN IMMEDIATE" in sql:
+                db_file = db._note_migration_db_path()
+                with real_connect(db_file) as c_check:
+                    row1 = c_check.execute("SELECT content, items FROM notes WHERE id = 'n1'").fetchone()
+                if row1 and row1[1] is None:
+                    # n1 has been converted and committed; concurrent writer updates n2 before its transaction begins
+                    with real_connect(db_file) as c2:
+                        c2.execute("UPDATE notes SET content = 'Note 2 edited concurrently' WHERE id = 'n2'")
+                    interleaved["done"] = True
+            return self._target.execute(sql, *params)
+
+    def wrapped_connect(*args, **kwargs):
+        return ConnectionProxy(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(sqlite3, "connect", wrapped_connect)
+    db._migrate_unify_notes()
+
+    row2 = notes_db.row("n2")
+    assert "Note 2 edited concurrently" in row2["content"]
+    assert "- [ ] Item 2" in row2["content"]
+    assert row2["items"] is None
+
+    backup2 = notes_db.backup("n2")
+    assert backup2 is not None
+    assert backup2["content"] == "Note 2 edited concurrently"
+
+
+def test_fold_image_url_concurrency_newer_edit_survives(notes_db, monkeypatch):
+    notes_db.add("n1", content="Note 1", image_url="/api/upload/img1.png")
+    notes_db.add("n2", content="Note 2 initial", image_url="/api/upload/img2.png")
+
+    real_connect = sqlite3.connect
+    interleaved = {"done": False}
+
+    class ConnectionProxy:
+        def __init__(self, target):
+            self._target = target
+
+        def __getattr__(self, name):
+            return getattr(self._target, name)
+
+        def __setattr__(self, name, value):
+            if name == "_target":
+                super().__setattr__(name, value)
+            else:
+                setattr(self._target, name, value)
+
+        def __enter__(self):
+            self._target.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return self._target.__exit__(exc_type, exc_val, exc_tb)
+
+        def execute(self, sql, *params):
+            if not interleaved["done"] and "BEGIN IMMEDIATE" in sql:
+                db_file = db._note_migration_db_path()
+                with real_connect(db_file) as c_check:
+                    row1 = c_check.execute("SELECT content, image_url FROM notes WHERE id = 'n1'").fetchone()
+                if row1 and row1[1] is None:
+                    # n1 has been converted and committed; concurrent writer updates n2 before its transaction begins
+                    with real_connect(db_file) as c2:
+                        c2.execute("UPDATE notes SET content = 'Note 2 image edited concurrently' WHERE id = 'n2'")
+                    interleaved["done"] = True
+            return self._target.execute(sql, *params)
+
+    def wrapped_connect(*args, **kwargs):
+        return ConnectionProxy(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(sqlite3, "connect", wrapped_connect)
+    db._migrate_fold_image_url()
+
+    row2 = notes_db.row("n2")
+    assert "Note 2 image edited concurrently" in row2["content"]
+    assert "![](/api/upload/img2.png)" in row2["content"]
+    assert row2["image_url"] is None
+
+    backup2 = notes_db.backup("n2")
+    assert backup2 is not None
+    assert backup2["content"] == "Note 2 image edited concurrently"
+
+
+def test_mixed_format_nesting_preserved_and_deduplicated(notes_db):
+    initial_content = "- [ ] Task A\n  - [ ] Task B\n"
+    legacy_items = [
+        {"text": "Task A", "done": False, "indent": 0},
+        {"text": "Task A", "done": False, "indent": 1},
+        {"text": "Task B", "done": False, "indent": 0},
+    ]
+    notes_db.add("n_nested", content=initial_content, items=json.dumps(legacy_items))
+    notes_db.migrate()
+
+    row = notes_db.row("n_nested")
+    tasks = parse_task_lines(row["content"])
+    assert len(tasks) == 4
+    assert [(t["text"], t["done"], t["indent"]) for t in tasks] == [
+        ("Task A", False, 0),
+        ("Task B", False, 1),
+        ("Task A", False, 1),
+        ("Task B", False, 0),
+    ]
+
+    notes_db.migrate()
+    row_restarted = notes_db.row("n_nested")
+    assert row_restarted["content"] == row["content"]
+    tasks_restarted = parse_task_lines(row_restarted["content"])
+    assert len(tasks_restarted) == 4

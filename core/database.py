@@ -1510,30 +1510,47 @@ def _migrate_unify_notes():
     log = logging.getLogger(__name__)
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.isolation_level = None
         columns = [row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()]
         if not columns or "items" not in columns:
             return
         conn.execute(NOTE_LEGACY_FIELDS_DDL)
-        conn.commit()
-        rows = conn.execute(
-            "SELECT id, content, items, image_url, note_type FROM notes "
-            "WHERE items IS NOT NULL AND items != '' AND items != '[]'"
-        ).fetchall()
+        candidate_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM notes "
+                "WHERE items IS NOT NULL AND items != '' AND items != '[]'"
+            ).fetchall()
+        ]
         converted = skipped = 0
-        for note_id, content, items_raw, image_url, note_type in rows:
+        for note_id in candidate_ids:
             try:
-                items = load_legacy_items(items_raw)
-                if items is None:
-                    raise ValueError("items is not a JSON array")
-                new_content = merge_items_into_content(content, items)
-                with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = conn.execute(
+                        "SELECT id, content, items, image_url, note_type FROM notes "
+                        "WHERE id = ? AND items IS NOT NULL AND items != '' AND items != '[]'",
+                        (note_id,),
+                    ).fetchone()
+                    if not row:
+                        conn.execute("COMMIT")
+                        continue
+                    _, content, items_raw, image_url, note_type = row
+                    items = load_legacy_items(items_raw)
+                    if items is None:
+                        raise ValueError("items is not a JSON array")
+                    new_content = merge_items_into_content(content, items)
                     _backup_note_legacy_fields(conn, note_id, content, items_raw, image_url, note_type)
                     conn.execute(
                         "UPDATE notes SET content = ?, items = NULL WHERE id = ?",
                         (new_content, note_id),
                     )
-                converted += 1
+                    conn.execute("COMMIT")
+                    converted += 1
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
             except Exception as row_err:
                 skipped += 1
                 log.warning(f"notes unify migration: skipped note {note_id}: {row_err}")
@@ -1564,27 +1581,44 @@ def _migrate_fold_image_url():
     log = logging.getLogger(__name__)
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.isolation_level = None
         columns = [row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()]
         if not columns or "image_url" not in columns:
             return
         conn.execute(NOTE_LEGACY_FIELDS_DDL)
-        conn.commit()
-        rows = conn.execute(
-            "SELECT id, content, items, image_url, note_type FROM notes "
-            "WHERE image_url IS NOT NULL AND TRIM(image_url) != ''"
-        ).fetchall()
+        candidate_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM notes "
+                "WHERE image_url IS NOT NULL AND TRIM(image_url) != ''"
+            ).fetchall()
+        ]
         converted = skipped = 0
-        for note_id, content, items_raw, image_url, note_type in rows:
+        for note_id in candidate_ids:
             try:
-                new_content = fold_image_url(content, image_url)
-                with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = conn.execute(
+                        "SELECT id, content, items, image_url, note_type FROM notes "
+                        "WHERE id = ? AND image_url IS NOT NULL AND TRIM(image_url) != ''",
+                        (note_id,),
+                    ).fetchone()
+                    if not row:
+                        conn.execute("COMMIT")
+                        continue
+                    _, content, items_raw, image_url, note_type = row
+                    new_content = fold_image_url(content, image_url)
                     _backup_note_legacy_fields(conn, note_id, content, items_raw, image_url, note_type)
                     conn.execute(
                         "UPDATE notes SET content = ?, image_url = NULL WHERE id = ?",
                         (new_content, note_id),
                     )
-                converted += 1
+                    conn.execute("COMMIT")
+                    converted += 1
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
             except Exception as row_err:
                 skipped += 1
                 log.warning(f"notes image migration: skipped note {note_id}: {row_err}")

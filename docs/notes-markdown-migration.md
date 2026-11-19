@@ -130,7 +130,7 @@ DROP TRIGGER IF EXISTS note_legacy_fields_follow_note_delete;
 | --- | --- |
 | REST `items` / `image_url` | `GET` still returns `items`, `note_type` and a drawing's `image_url`, derived from content; other notes read `image_url: null`. `POST`/`PUT` with `items` rewrite the task lines in place. Items lose their `id` and any other key, a blank item removes its line, and `items: []` reads back as `null`. `image_url` replaces the note's legacy image line, or adds it, and `""` removes it. On `PUT` (and the `/api/codex/todos` `update` action), an explicit `null` on `content`, `items` or `image_url` is a 422 that saves nothing; leave the key out instead. |
 | REST `content` | A `PUT` with `content` and no `items` keeps the existing task lines when the new text has none; `items: []` with it clears them. |
-| Checklist routes | `POST /api/notes/{id}/items/{index}/toggle` flips the line in content, by index or by the `text` the client sends; `POST /api/notes/{id}/items` appends one. |
+| Checklist routes | `POST /api/notes/{id}/items/{index}/toggle` flips the task line in content by 0-based index; `POST /api/notes/{id}/items` appends one. |
 | `scripts/odysseus-notes` | `list`/`show`/`search` print derived `items` and `note_type`; `create --item TEXT` (repeatable) writes task lines. |
 | Calendar writers | Event reminders from `routes/calendar_routes.py` and the `manage_calendar` tool write a task line through `items_to_markdown()` instead of `items` JSON. |
 | Reminders | `/api/notes/fire-reminder` and the scheduler's note ping share `reminder_body()`: prose, then `Pending (N):` and the open tasks. |
