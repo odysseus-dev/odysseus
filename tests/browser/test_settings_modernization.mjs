@@ -783,16 +783,45 @@ async function testMemberUtilityFallbackRecovery(instance, cookies) {
   const lockedAfterReloadFailure = await utilityControls(member.page);
   // An endpoint refresh re-renders the fallback rows; they must stay read-only.
   await member.page.click('[data-settings-tab="search"]');
+  await member.page.waitForSelector('[data-settings-panel="search"]:not(.hidden)');
+
+  let utilityRefreshSeen = false;
+  const utilityRefreshPromise = member.page.waitForResponse(response => {
+    const url = new URL(response.url());
+    if (response.request().method() === 'GET' && url.pathname === '/api/models') {
+      utilityRefreshSeen = true;
+      return response.ok();
+    }
+    return false;
+  }, { timeout: 8000 });
+
   await member.page.click('[data-settings-tab="ai"]');
+  await utilityRefreshPromise;
   await member.page.waitForSelector('[data-settings-panel="ai"]:not(.hidden)');
-  await member.page.waitForSelector('[data-settings-section="utility-model"] .settings-model-default-retry');
+  await member.page.waitForFunction(() => {
+    const epSelect = document.querySelector('#set-utilityEpSelect');
+    const retryBtn = document.querySelector('[data-settings-section="utility-model"] .settings-model-default-retry');
+    const rows = document.querySelectorAll('#set-utilityFallbacks .settings-fallback-row');
+    const rowControls = Array.from(document.querySelectorAll('#set-utilityFallbacks select, #set-utilityFallbacks button'));
+    return epSelect && epSelect.disabled
+      && retryBtn !== null
+      && rows.length === 1
+      && rowControls.length > 0
+      && rowControls.every(c => c.disabled);
+  }, null, { timeout: 8000 });
+
   const lockedAfterRefresh = await utilityControls(member.page);
   const fullyLocked = state => state.endpointDisabled && state.addDisabled && state.rowControls > 0 && state.enabledRowControls.length === 0;
   check('failed utility reload disables the fallback rows as well as the selects', fullyLocked(lockedAfterReloadFailure), JSON.stringify(lockedAfterReloadFailure));
-  check('utility fallback rows stay read-only through an endpoint refresh', fullyLocked(lockedAfterRefresh), JSON.stringify(lockedAfterRefresh));
+  check('utility fallback rows stay read-only through an endpoint refresh', utilityRefreshSeen && fullyLocked(lockedAfterRefresh), JSON.stringify({ utilityRefreshSeen, ...lockedAfterRefresh }));
   await member.page.unroute('**/api/prefs');
 
+  const retryResponsePromise = member.page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return response.request().method() === 'GET' && url.pathname === '/api/prefs' && response.ok();
+  }, { timeout: 8000 });
   await member.page.click('[data-settings-section="utility-model"] .settings-model-default-retry');
+  await retryResponsePromise;
   await member.page.waitForFunction(() => !document.querySelector('#set-utilityEpSelect').disabled, null, { timeout: 8000 });
   const recovered = await utilityControls(member.page);
   check('utility Retry restores the stored values with the fallback rows editable', recovered.endpoint === 'ep-alpha' && recovered.rows === 1 && recovered.rowModels[0] === 'beta-chat' && recovered.enabledRowControls.length > 0 && !recovered.addDisabled, JSON.stringify(recovered));
@@ -976,17 +1005,44 @@ async function testAdminLoadFailure(instance, cookies) {
   await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
   // Leave and return: the AI panel refreshes its endpoint lists on entry.
   await admin.page.click('[data-settings-tab="search"]');
+  await admin.page.waitForSelector('[data-settings-panel="search"]:not(.hidden)');
+
+  let adminRefreshSeen = false;
+  const adminRefreshPromise = admin.page.waitForResponse(response => {
+    const url = new URL(response.url());
+    if (response.request().method() === 'GET' && url.pathname === '/api/model-endpoints') {
+      adminRefreshSeen = true;
+      return response.ok();
+    }
+    return false;
+  }, { timeout: 8000 });
+
   await admin.page.click('[data-settings-tab="ai"]');
+  await adminRefreshPromise;
   await admin.page.waitForSelector('[data-settings-panel="ai"]:not(.hidden)');
-  await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry');
+  await admin.page.waitForFunction(() => {
+    const epSelect = document.querySelector('#set-defaultEpSelect');
+    const modelSelect = document.querySelector('#set-defaultModelSelect');
+    const retryBtn = document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry');
+    return epSelect && epSelect.disabled
+      && modelSelect && modelSelect.disabled
+      && retryBtn !== null;
+  }, null, { timeout: 8000 });
+
   const state = await admin.page.evaluate(() => ({
     endpointDisabled: document.querySelector('#set-defaultEpSelect').disabled,
     modelDisabled: document.querySelector('#set-defaultModelSelect').disabled,
     retryShown: Boolean(document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry')),
   }));
-  check('admin card stays read-only through an endpoint refresh while its values are unknown', state.endpointDisabled && state.modelDisabled && state.retryShown, JSON.stringify(state));
+  check('admin card stays read-only through an endpoint refresh while its values are unknown', adminRefreshSeen && state.endpointDisabled && state.modelDisabled && state.retryShown, JSON.stringify({ adminRefreshSeen, ...state }));
   await admin.page.unroute('**/api/auth/settings');
+
+  const retryResponsePromise = admin.page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return response.request().method() === 'GET' && url.pathname === '/api/auth/settings' && response.ok();
+  }, { timeout: 8000 });
   await admin.page.click('[data-settings-section="default-chat"] .settings-model-default-retry');
+  await retryResponsePromise;
   await admin.page.waitForFunction(() => !document.querySelector('#set-defaultEpSelect').disabled
     && !document.querySelector('#set-defaultModelSelect').disabled, null, { timeout: 8000 }).catch(() => {});
   const recovered = await admin.page.evaluate(() => ({

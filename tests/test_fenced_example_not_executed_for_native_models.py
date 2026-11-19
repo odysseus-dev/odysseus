@@ -67,11 +67,12 @@ def _patch_common(monkeypatch, exec_calls):
     monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
     # Prevent model-context discovery from attempting live network HTTP requests
     # to mock or local endpoints (which would block on connection timeouts).
+    # Strict raising ensures any symbol rename or removal fails test setup immediately.
     monkeypatch.setattr(
         mc,
         "_query_context_length",
         lambda endpoint_url, model: (mc.DEFAULT_CONTEXT, False),
-        raising=False,
+        raising=True,
     )
 
 
@@ -171,8 +172,8 @@ def test_non_native_model_fenced_tool_call_still_executed(monkeypatch):
     assert "echo hi" in exec_calls[0].content
 
 
-def test_non_native_model_context_resolution_is_deterministic_offline(monkeypatch):
-    """Verify that unrouted endpoint discovery runs deterministically offline without network I/O."""
+def test_harness_context_stub_prevents_network_probes_during_agent_loop(monkeypatch):
+    """Verify that the test harness context stub isolates agent loop execution from network I/O."""
     exec_calls = []
     _patch_common(monkeypatch, exec_calls)
 
@@ -181,7 +182,7 @@ def test_non_native_model_context_resolution_is_deterministic_offline(monkeypatc
         network_probes.append((args, kwargs))
         raise RuntimeError("Unexpected live network attempt in offline unit test")
 
-    monkeypatch.setattr(mc.httpx, "get", _trap_httpx_get)
+    monkeypatch.setattr(mc.httpx, "get", _trap_httpx_get, raising=True)
 
     events = _run_loop(
         monkeypatch, "llama-2-7b-chat",
