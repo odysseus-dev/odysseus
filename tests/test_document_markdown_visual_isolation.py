@@ -150,3 +150,33 @@ def test_table_actions_keep_a_following_block_quote_separate():
     """)
     for doc_id in ("tq-md", "tq-rt"):
         assert data[doc_id] == {"insideQuote": 0, "tables": 1, "quotes": 1}, data[doc_id]
+
+
+def test_leaving_typed_inline_code_keeps_the_code_and_continues_in_plain_text():
+    """Ctrl+` inside inline code used to select the code, so the next keystroke replaced it."""
+    data = _run_browser(r"""
+      await boot('inline-code-exit');
+      const out = {};
+      for (const [id, language, body] of [['ic-md', 'markdown', 'Start'], ['ic-rt', 'richtext', '<p>Start</p>']]) {
+        await open({ id, title: id, language, current_content: body });
+        await page.waitForFunction((docId) => window.__state.activeDocId === docId, id);
+        await caretAtEnd();
+        await page.keyboard.type(' run ');
+        await page.keyboard.press('Control+`');
+        await page.keyboard.type('npm test');
+        await page.waitForTimeout(250);
+        await page.keyboard.press('Control+`');
+        await page.keyboard.type(' after');
+        out[id] = await page.evaluate((docId) => ({
+          text: document.getElementById('doc-email-richbody').textContent.replace(/​/g, ''),
+          code: [...document.querySelectorAll('#doc-email-richbody code, #doc-email-richbody span[style*="OdysseusInlineCode"]')].map(el => el.textContent),
+          content: window.__state.docs.get(docId)?.content,
+        }), id);
+      }
+      await finish(out);
+    """)
+    assert data["ic-md"]["text"] == "Start run npm test after", data["ic-md"]
+    assert data["ic-md"]["code"] == ["npm test"]
+    assert data["ic-md"]["content"] == "Start run `npm test` after"
+    assert data["ic-rt"]["text"] == "Start run npm test after", data["ic-rt"]
+    assert data["ic-rt"]["code"] == ["npm test"]

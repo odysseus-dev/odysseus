@@ -440,6 +440,20 @@ export function _toggleRichInlineCode(rich) {
       return true;
     }
     const existing = _richSelectionInlineCode(rich);
+    const liveSelection = window.getSelection();
+    if (existing && liveSelection?.isCollapsed) {
+      // A caret inside inline code leaves the code: typing continues in plain text right
+      // after it. (Selecting the code's contents here made the next keystroke replace the
+      // code the user had just typed.)
+      const exit = document.createTextNode('\u200b');
+      existing.after(exit);
+      const caret = document.createRange();
+      caret.setStart(exit, 1);
+      caret.collapse(true);
+      liveSelection.removeAllRanges();
+      liveSelection.addRange(caret);
+      return true;
+    }
     if (existing) {
       const range = document.createRange();
       range.selectNodeContents(existing);
