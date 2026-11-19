@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import {
-  createMarkdownDocument, openApp, openDocument, readDocument, reopenApp, saveAndWait, origin,
+  createMarkdownDocument, openApp, openDocument, readDocument, reopenApp, saveAndWait, origin, tolerateNoAuthNotificationLogs,
 } from './realAppHelpers.mjs';
 
 const browser = await chromium.launch({ headless: true });
@@ -28,6 +28,7 @@ const extendText = (page, needle, suffix) => page.evaluate(({ needle, suffix }) 
 
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await tolerateNoAuthNotificationLogs(context);
   const configure = (target) => {
     target.setDefaultTimeout(30000);
     target.on('dialog', (dialog) => dialog.accept().catch(() => {}));

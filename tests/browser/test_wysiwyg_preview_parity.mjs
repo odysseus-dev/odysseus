@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import {
-  createMarkdownDocument, openApp, openDocument, placeCaretAtEnd, readDocument, reopenApp, saveAndWait, semanticSummary,
+  createMarkdownDocument, openApp, openDocument, placeCaretAtEnd, readDocument, reopenApp, saveAndWait, semanticSummary, tolerateNoAuthNotificationLogs,
 } from './realAppHelpers.mjs';
 
 const browser = await chromium.launch({ headless: true });
@@ -12,6 +12,7 @@ const record = (name) => { results.push(name); console.log(`[PASS] ${name}`); };
 
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await tolerateNoAuthNotificationLogs(context);
   const configure = (target) => {
     target.setDefaultTimeout(30000);
     target.on('dialog', (dialog) => dialog.accept().catch(() => {}));

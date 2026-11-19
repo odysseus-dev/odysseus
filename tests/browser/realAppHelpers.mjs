@@ -6,6 +6,20 @@ import assert from 'node:assert/strict';
 export const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN;
 assert.ok(origin, 'ODYSSEUS_VALIDATION_ORIGIN is required');
 
+/**
+ * With authentication disabled the notification-log route answers 401, and the
+ * application turns every 401 into a redirect to /login, which aborts unrelated
+ * browser steps (a toast fires on save). That defect is independent of Markdown
+ * editing and is fixed separately (notification-log-auth-fix.patch); validation
+ * against the no-auth server must not depend on it, so the route is answered here.
+ * Authenticated runs (the logout suite) never use this.
+ */
+export async function tolerateNoAuthNotificationLogs(context) {
+  await context.route('**/api/tasks/notification-logs', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: '{"success":false,"skipped":true}',
+  }));
+}
+
 export async function openApp(page) {
   await page.goto(origin, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !document.getElementById('app-loader'));

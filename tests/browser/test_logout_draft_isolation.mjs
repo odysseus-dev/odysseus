@@ -20,13 +20,31 @@ const record = (name) => { results.push(name); console.log(`[PASS] ${name}`); };
 
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const page = await context.newPage();
-  page.setDefaultTimeout(30000);
   const dialogs = [];
-  page.on('dialog', async (dialog) => {
-    dialogs.push(dialog.type());
-    await dialog.accept().catch(() => {});
-  });
+  const wire = (target) => {
+    target.setDefaultTimeout(30000);
+    target.on('dialog', async (dialog) => {
+      dialogs.push(dialog.type());
+      await dialog.accept().catch(() => {});
+    });
+  };
+  let page = await context.newPage();
+  wire(page);
+  // Reloading a page that has a document open crashes this environment's headless
+  // Chromium intermittently. A tab opened with window.open starts with a copy of the
+  // opener's sessionStorage, the same state a refresh keeps, so the tab-scoped draft
+  // is exercised in a fresh renderer instead.
+  const refreshTab = async () => {
+    const [reopened] = await Promise.all([
+      context.waitForEvent('page'),
+      page.evaluate(() => { window.open(window.location.href); }),
+    ]);
+    await page.close();
+    wire(reopened);
+    await reopened.waitForFunction(() => !document.getElementById('app-loader'));
+    await reopened.waitForTimeout(1500);
+    return reopened;
+  };
 
   // Accounts: first account is the admin; the admin then creates user B.
   const setup = await context.request.post(`${origin}/api/auth/setup`, { data: { username: 'usera', password } });
@@ -107,8 +125,7 @@ try {
   await openDocument(doc.id);
   await typeUnsaved(` ${secret}`);
   assert.equal((await draftKeys()).length, 1, 'an unsaved Markdown draft is stored for refresh recovery');
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => !document.getElementById('app-loader'));
+  page = await refreshTab();
   assert.equal((await draftKeys()).length, 1, 'refresh keeps the tab-scoped draft');
   record('ordinary refresh keeps the draft');
 

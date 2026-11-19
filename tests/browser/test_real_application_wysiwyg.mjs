@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium, firefox, webkit } from 'playwright';
+import { tolerateNoAuthNotificationLogs } from './realAppHelpers.mjs';
 
-const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN || 'http://127.0.0.1:8000';
+// No default: a missing origin must never fall back to a service already running on this machine.
+const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN;
+assert.ok(origin, 'ODYSSEUS_VALIDATION_ORIGIN is required (scripts/run_real_playwright_validation.py starts an isolated server)');
 const resultsDir = process.env.ODYSSEUS_VALIDATION_DIR || path.join(process.cwd(), 'artifacts', 'validation');
 fs.mkdirSync(resultsDir, { recursive: true });
 
@@ -102,6 +105,7 @@ try {
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
   });
+  await tolerateNoAuthNotificationLogs(context);
   let page = await context.newPage();
   wirePage(page);
 
@@ -1002,6 +1006,7 @@ try {
   log('Firefox', 'Launching visual-admission smoke test');
   const ffBrowser = await firefox.launch({ headless: true });
   const ffContext = await ffBrowser.newContext({ viewport: { width: 1440, height: 900 } });
+  await tolerateNoAuthNotificationLogs(ffContext);
   const ffPage = await ffContext.newPage();
   await ffPage.goto(origin, { waitUntil: 'domcontentloaded' });
 
@@ -1037,6 +1042,7 @@ try {
   log('WebKit', 'Launching visual-admission smoke test');
   const wkBrowser = await webkit.launch({ headless: true });
   const wkContext = await wkBrowser.newContext({ viewport: { width: 1440, height: 900 } });
+  await tolerateNoAuthNotificationLogs(wkContext);
   const wkPage = await wkContext.newPage();
   await wkPage.goto(origin, { waitUntil: 'domcontentloaded' });
 

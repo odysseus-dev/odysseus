@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { tolerateNoAuthNotificationLogs } from './realAppHelpers.mjs';
 import { chromium } from 'playwright';
 
-const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN || 'http://127.0.0.1:8000';
+// No default: a missing origin must never fall back to a service already running on this machine.
+const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN;
+assert.ok(origin, 'ODYSSEUS_VALIDATION_ORIGIN is required (scripts/run_real_playwright_validation.py starts an isolated server)');
 const resultsDir = process.env.ODYSSEUS_VALIDATION_DIR || path.join(process.cwd(), 'artifacts', 'validation');
 fs.mkdirSync(resultsDir, { recursive: true });
 const report = { origin, profiles: [], failures: [] };
@@ -22,6 +25,7 @@ try {
   ]) {
     const { name: profileName, ...contextOptions } = profile;
     const context = await browser.newContext(contextOptions);
+    await tolerateNoAuthNotificationLogs(context);
     const page = await context.newPage();
     const pageErrors = [];
     page.on('pageerror', error => pageErrors.push(String(error?.message || error)));

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import { tolerateNoAuthNotificationLogs } from './realAppHelpers.mjs';
 import { chromium } from 'playwright';
 
-const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN || 'http://127.0.0.1:8000';
+// No default: a missing origin must never fall back to a service already running on this machine.
+const origin = process.env.ODYSSEUS_VALIDATION_ORIGIN;
+assert.ok(origin, 'ODYSSEUS_VALIDATION_ORIGIN is required (scripts/run_real_playwright_validation.py starts an isolated server)');
 const browser = await chromium.launch({ headless: true });
 
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await tolerateNoAuthNotificationLogs(context);
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   await page.goto(origin, { waitUntil: 'domcontentloaded' });
