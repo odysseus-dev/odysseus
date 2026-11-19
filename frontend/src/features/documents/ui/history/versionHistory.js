@@ -5,6 +5,7 @@
 
 import { API_BASE, activeDocId, docs, isOpen } from '../../application/documentState.js';
 import { saveCurrentToMap, switchToDoc } from '../../application/documentCommands.js';
+import { persistMarkdownDraft } from '../../application/documentSession.js';
 import { _cancelAutoSave, _scheduleAutoSave, _setDocumentSaveState } from '../../application/persistence.js';
 import { _buildDiffSummary, _escHtml } from '../../domain/documentKinds.js';
 import { syncHighlighting } from '../editor/sourceEditor.js';
@@ -213,13 +214,15 @@ async function restoreVersion(num) {
       const restored = await res.json();
       const unchanged = (doc._editRevision || 0) === revision && doc.content === content;
       doc.version = Math.max(doc.version || 1, restored.version_count || 1);
+      doc._persistedContent = restored.current_content ?? restored.content ?? '';
       if (unchanged) {
-        doc.content = restored.current_content ?? restored.content ?? '';
+        doc.content = doc._persistedContent;
         _setDocumentSaveState('saved', state.docId);
       } else {
         _setDocumentSaveState('dirty', state.docId);
         _scheduleAutoSave(state.docId, 0);
       }
+      persistMarkdownDraft(doc);
       if (_historyOwnsView(state) && state.operation === operation) {
         state.previewing = false;
         const textarea = document.getElementById('doc-editor-textarea');

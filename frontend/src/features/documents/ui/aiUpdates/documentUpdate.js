@@ -314,6 +314,7 @@ export function handleDocUpdate(data) {
         title: data.title || '',
         language: data.language || '',
         content: newContent,
+        _persistedContent: newContent,
         version: data.version || 1,
         sessionId: sessionModule?.getCurrentSessionId() || '',
       });

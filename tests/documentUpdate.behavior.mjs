@@ -488,6 +488,7 @@ describe('documentUpdate', () => {
     });
     const doc = env.state.docs.get('doc-1');
     assert.equal(doc.content, 'Hello\nworld');
+    assert.equal(doc._persistedContent, doc.content, 'a newly received document uses the server text as its recovery baseline');
     assert.equal(doc.title, 'Notes');
     assert.equal(doc.language, 'markdown');
     assert.equal(doc.version, 2);
