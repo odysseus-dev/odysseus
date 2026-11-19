@@ -46,6 +46,7 @@ from src.endpoint_resolver import (
     build_chat_url,
     build_models_url,
     build_headers,
+    resolve_endpoint_runtime,
 )
 from src.auth_helpers import _auth_disabled, effective_user, owner_filter
 from src.url_safety import check_outbound_url
@@ -471,6 +472,37 @@ def _curate_models(model_ids, provider):
 
 def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("true", "1", "yes", "on")
+
+
+def _coerce_supports_tools(value: Any) -> Optional[bool]:
+    """Map a PATCH or POST `supports_tools` value to True, False, or None.
+
+    Accepts booleans, integers (1/0), and normalized strings:
+      - True: True, 1, 'true', 'on', 'yes', '1'
+      - False: False, 0, 'false', 'off', 'no', '0'
+      - None (Auto): None, 'null', 'auto', 'none', ''
+    Raises ValueError for unrecognized or malformed inputs.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        raise ValueError("Invalid integer for supports_tools; expected 0 or 1")
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off"):
+            return False
+        if s in ("null", "auto", "none", ""):
+            return None
+        raise ValueError(f"Unrecognized supports_tools value: {value!r}")
+    raise ValueError(f"Unsupported type for supports_tools: {type(value).__name__}")
 
 
 _ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
@@ -1700,6 +1732,16 @@ def setup_model_routes(model_discovery):
             base = _normalize_base(ep.base_url)
             provider = _safe_detect_provider(base)
             ep_model_type = getattr(ep, "model_type", None) or "llm"
+            configured_model_ids = _merge_model_ids(
+                _cached_model_ids(ep),
+                _normalize_model_ids(getattr(ep, "pinned_models", None)),
+                _normalize_model_ids(getattr(ep, "hidden_models", None)),
+            )
+            model_ids = _visible_models(
+                _cached_model_ids(ep),
+                ep.hidden_models,
+                getattr(ep, "pinned_models", None),
+            )
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
             kind = _effective_endpoint_kind(ep, base)
@@ -1734,6 +1776,7 @@ def setup_model_routes(model_discovery):
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
                     "models_metadata": models_metadata,
+                    "_foreground_model_catalog_unknown": False,
                 })
             else:
                 # Endpoint unreachable but still show it greyed out
@@ -1751,13 +1794,148 @@ def setup_model_routes(model_discovery):
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
                     "offline": True,
+                    "_foreground_model_catalog_unknown": not bool(configured_model_ids),
                 })
 
         return {"hosts": [], "items": items}
 
+    def _foreground_catalog_allowed_models(request: Request, owner: str):
+        """Return the caller's foreground model allowlist, if restricted."""
+
+        if not owner:
+            return None
+        auth_mgr = getattr(getattr(request, "app", None), "state", None)
+        auth_mgr = getattr(auth_mgr, "auth_manager", None)
+        if auth_mgr is None:
+            return None
+        try:
+            privileges = auth_mgr.get_privileges(owner) or {}
+        except Exception:
+            # The runtime policy fails closed if it cannot resolve privileges.
+            # Keep the editor equally conservative instead of offering models
+            # whose credentials it may not be allowed to resolve.
+            return frozenset()
+        if privileges.get("block_all_models"):
+            return frozenset()
+        raw = privileges.get("allowed_models")
+        allowed = raw if isinstance(raw, list) else []
+        restricted = bool(privileges.get("allowed_models_restricted")) or bool(allowed)
+        if not restricted:
+            return None
+        return frozenset(model for model in allowed if isinstance(model, str))
+
+    def _foreground_runtime_endpoint_ids(
+        owner: str,
+        candidate_endpoint_ids: set[str],
+    ) -> set[str]:
+        """Return owner-visible LLM endpoints whose runtime route resolves now."""
+
+        if not candidate_endpoint_ids:
+            return set()
+        db = SessionLocal()
+        try:
+            query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                query = owner_filter(query, ModelEndpoint, owner)
+            endpoint_ids = set()
+            for endpoint in query.all():
+                if endpoint.id not in candidate_endpoint_ids:
+                    continue
+                if (getattr(endpoint, "model_type", None) or "llm") != "llm":
+                    continue
+                try:
+                    base_url, _api_key = resolve_endpoint_runtime(
+                        endpoint,
+                        owner=owner or None,
+                    )
+                except Exception:
+                    # Match exact fallback resolution: a provider-auth route
+                    # whose current credentials cannot resolve is not offered
+                    # as an eligible concrete candidate. Never expose the
+                    # credential failure or secret material in this feed.
+                    continue
+                if base_url:
+                    endpoint_ids.add(endpoint.id)
+            return endpoint_ids
+        finally:
+            db.close()
+
+    def _foreground_catalog_result(
+        result: dict,
+        allowed_models,
+        owner: str,
+    ) -> dict:
+        """Copy the safe model feed and apply foreground-only constraints."""
+
+        if allowed_models is not None and not allowed_models:
+            return {"hosts": [], "items": []}
+        prepared_items = []
+        runtime_candidates = set()
+        for source in result.get("items", []):
+            if not isinstance(source, dict):
+                continue
+            if (source.get("model_type") or "llm") != "llm":
+                continue
+            item = dict(source)
+            catalog_unknown = item.pop(
+                "_foreground_model_catalog_unknown",
+                False,
+            ) is True
+            for key, display_key in (
+                ("models", "models_display"),
+                ("models_extra", "models_extra_display"),
+            ):
+                models = item.get(key) if isinstance(item.get(key), list) else []
+                if allowed_models is not None:
+                    models = [model for model in models if model in allowed_models]
+                item[key] = models
+                item[display_key] = [_model_display_name(model) for model in models]
+            item["model_catalog_unknown"] = catalog_unknown
+            item["allowed_unknown_models"] = (
+                sorted(allowed_models)
+                if catalog_unknown and allowed_models is not None
+                else None
+            )
+            potentially_eligible = bool(
+                item.get("models")
+                or item.get("models_extra")
+                or catalog_unknown
+            )
+            if potentially_eligible:
+                runtime_candidates.add(item.get("endpoint_id"))
+            prepared_items.append((item, potentially_eligible))
+        runtime_endpoint_ids = _foreground_runtime_endpoint_ids(
+            owner,
+            runtime_candidates,
+        )
+        items = [
+            item
+            for item, potentially_eligible in prepared_items
+            if not potentially_eligible
+            or item.get("endpoint_id") in runtime_endpoint_ids
+        ]
+        return {"hosts": [], "items": items}
+
+    def _public_model_result(result: dict) -> dict:
+        """Strip foreground-only cache metadata from the ordinary picker feed."""
+
+        items = []
+        for source in result.get("items", []):
+            if not isinstance(source, dict):
+                continue
+            item = dict(source)
+            item.pop("_foreground_model_catalog_unknown", None)
+            items.append(item)
+        return {"hosts": result.get("hosts", []), "items": items}
+
     @router.get("/models")
-    def api_models(request: Request, refresh: bool = False, background: bool = False,
-                   wait_refresh: bool = False):
+    def api_models(
+        request: Request,
+        refresh: bool = False,
+        background: bool = False,
+        wait_refresh: bool = False,
+        foreground_fallback: bool = False,
+    ):
         """Get available models — per-user (caller sees only their endpoints +
         legacy/shared null-owner rows). Cached per-user for 30s."""
         # Require auth; "" is the unconfigured single-user mode, treated as
@@ -1793,12 +1971,17 @@ def setup_model_routes(model_discovery):
         now = _time.time()
         # Cache key includes the admin flag so a demotion / promotion doesn't
         # serve the wrong scoped view from cache.
-        _cache_key = (owner, _is_admin)
+        # The foreground Settings editor must mirror the runtime resolver's
+        # exact owner boundary, including for admins. The ordinary picker keeps
+        # its historical admin-wide inventory behavior.
+        catalog_is_admin = _is_admin and not foreground_fallback
+        _cache_key = (owner, catalog_is_admin)
         cache_entry = _models_cache.get(_cache_key)
         if not refresh and cache_entry is not None and (now - cache_entry["time"]) < _MODELS_CACHE_TTL:
-            return cache_entry["data"]
-        result = _fetch_models(owner=owner, is_admin=_is_admin)
-        _models_cache[_cache_key] = {"data": result, "time": now}
+            result = cache_entry["data"]
+        else:
+            result = _fetch_models(owner=owner, is_admin=catalog_is_admin)
+            _models_cache[_cache_key] = {"data": result, "time": now}
         # Kick off background refresh to update caches from live endpoints.
         # Page boot can opt out with background=false so opening Odysseus does
         # not start endpoint probes against slow/offline model servers.
@@ -1810,9 +1993,18 @@ def setup_model_routes(model_discovery):
                 if refreshed is not None:
                     result = refreshed["data"]
                 else:
-                    result = _fetch_models(owner=owner, is_admin=_is_admin)
+                    result = _fetch_models(owner=owner, is_admin=catalog_is_admin)
                     _models_cache[_cache_key] = {"data": result, "time": _time.time()}
-        return result
+        if foreground_fallback:
+            allowed_models = _foreground_catalog_allowed_models(request, owner)
+            if allowed_models is not None and not allowed_models:
+                return {"hosts": [], "items": []}
+            return _foreground_catalog_result(
+                result,
+                allowed_models,
+                owner,
+            )
+        return _public_model_result(result)
 
     # Brief cache for local-probe results so picker-open doesn't hammer
     # endpoint health checks every time. 8s TTL — long enough to amortize cost,
@@ -2327,8 +2519,10 @@ def setup_model_routes(model_discovery):
         ep_id = str(uuid.uuid4())[:8]
         db = SessionLocal()
         try:
-            _st_raw = (supports_tools or "").strip().lower()
-            _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            try:
+                _st = _coerce_supports_tools(supports_tools)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
             from src.chatgpt_subscription import is_chatgpt_subscription_base
             if is_chatgpt_subscription_base(base_url):
                 _st = False
@@ -2862,15 +3056,17 @@ def setup_model_routes(model_discovery):
     @router.patch("/model-endpoints/{ep_id}")
     async def toggle_model_endpoint(ep_id: str, request: Request):
         require_admin(request)
-        # Optional JSON body for field-targeted updates. No body → toggle is_enabled (legacy behaviour).
+        # Optional JSON body for field-targeted updates. No body -> toggle is_enabled (legacy behavior).
+        raw_body = await request.body()
         body: Dict[str, Any] = {}
-        try:
-            if int(request.headers.get("content-length") or 0) > 0:
-                body = await request.json()
-                if not isinstance(body, dict):
-                    body = {}
-        except Exception:
-            body = {}
+        if raw_body and raw_body.strip():
+            try:
+                parsed = json.loads(raw_body)
+                if not isinstance(parsed, dict):
+                    raise HTTPException(400, "JSON body must be an object")
+                body = parsed
+            except json.JSONDecodeError as exc:
+                raise HTTPException(400, f"Invalid JSON body: {exc}")
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
@@ -2878,8 +3074,10 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(404, "Endpoint not found")
             if body:
                 if "supports_tools" in body:
-                    v = body["supports_tools"]
-                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
+                    try:
+                        ep.supports_tools = _coerce_supports_tools(body["supports_tools"])
+                    except ValueError as exc:
+                        raise HTTPException(400, str(exc))
                 if "is_enabled" in body:
                     v_ie = body['is_enabled']
                     ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)

@@ -15,7 +15,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from tests.helpers.document_source import document_source
+from tests.helpers.document_source import document_source, function_body
 
 _REPO = Path(__file__).resolve().parent.parent
 _HAS_NODE = shutil.which("node") is not None
@@ -402,14 +402,13 @@ def test_detached_container_math_typesets_with_the_real_renderer(node_available)
 
 def test_pdf_export_typesets_its_container_before_print():
     """Ordering in a call site, so pin the call site. No node needed."""
-    source = document_source()
-    match = re.search(r"\n  async function exportAsPdf\(\) \{(.*?)\n  \}\n", source, re.S)
-    assert match, "exportAsPdf not found"
-    body = match.group(1)
+    body = function_body("exportAsPdf")
 
-    render = "await markdownModule.renderMath(container);"
+    render = "await markdownMod.renderMath(container);"
     assert render in body, "the export never typesets its detached container"
-    assert body.index("container.innerHTML = html;") < body.index(render)
+    populate = "container.appendChild(printDoc.importNode(node, true));"
+    assert populate in body, "the export never populates its detached container"
+    assert body.index(populate) < body.index(render)
     assert body.index(render) < body.index("frame.contentWindow.print()")
 
 

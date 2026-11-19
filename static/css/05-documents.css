@@ -341,6 +341,37 @@
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border-radius: 7px 7px 0 0;
 }
+/* Tab actions are siblings so selection, history and closing remain separate controls. */
+.doc-tab-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.doc-tab-select[hidden] { display: none; }
+.doc-tab-select:focus-visible,
+.doc-tab-version:focus-visible,
+.doc-tab-close:focus-visible,
+.doc-version-preview:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+.doc-editor-surface { display: contents; }
+.doc-version-preview {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
 .doc-tab-title {
   max-width: 140px;
   overflow: hidden;

@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from src.model_customization import apply_sampling
+
 logger = logging.getLogger(__name__)
 
 # Local endpoints are opt-in through settings or ODYSSEUS_EDITOR_AGENT_BASES.
@@ -199,6 +201,8 @@ async def _post_chat(
     # ignore the field; the server-side schema validation is the real enforcer.
     if isinstance(response_format, dict):
         payload["response_format"] = response_format
+    # Admin per-model sampling (Settings → Added Models); keeps the 0.2 temperature.
+    apply_sampling(payload, _chat_url(base), model)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(_chat_url(base), json=payload, headers=headers or {})
