@@ -97,6 +97,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check frontend architecture
         run: node scripts/check_frontend.mjs
+      - name: Check document references and exports
+        run: node scripts/check_document_references.mjs
       # Syntax-check our own JS (skip vendored libs in static/lib).
       - name: node --check
         run: |
@@ -105,8 +107,25 @@ jobs:
             node --check "$f"
           done
           node --check scripts/check_frontend.mjs
-      - name: Test frontend architecture gates and stateless proof
-        run: node --test tests/frontendArchitecture.test.mjs
+          node --check scripts/check_document_references.mjs
+      - name: Test frontend architecture gates and reference checks
+        run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs
+      - name: Test document behavior suites
+        run: |
+          node --test tests/domainModules.test.mjs \
+            tests/documentBehaviorRunner.test.mjs \
+            tests/documentPersistence.test.mjs \
+            tests/documentActions.test.mjs \
+            tests/documentUpdate.test.mjs \
+            tests/documentStatus.test.mjs \
+            tests/documentVersionHistory.test.mjs \
+            tests/markdownImages.test.mjs \
+            tests/documentTabBar.test.mjs \
+            tests/selectionHighlights.test.mjs \
+            tests/documentLiveStream.test.mjs \
+            tests/documentToolbar.test.mjs \
+            tests/documentOverflow.test.mjs \
+            tests/documentFlows.test.mjs
 
   python-tests:
     name: Python tests (pytest ${{ matrix.shard }})
@@ -264,3 +283,20 @@ jobs:
           ODYSSEUS_TEST_PYTHON=python ODYSSEUS_LAYOUT_BROWSER=chromium npx --no-install playwright test \
             --config tests/e2e/ios-layout.config.cjs \
             --reporter=line
+
+  benchmark-gfm-security:
+    name: Benchmark GFM rendering security
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+      # Test-only renderer, pinned independently of application requirements.
+      - name: Install GitHub Flavored Markdown renderer
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: "cmarkgfm==2025.10.22"
+      - name: Verify rendered benchmark report security
+        run: python tests/test_audit_c5_benchmark_evidence.py --gfm

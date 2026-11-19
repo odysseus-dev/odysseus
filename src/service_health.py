@@ -171,6 +171,7 @@ _NEXT_STEP = {
     "auth_or_protocol_error": "Authentication or protocol failed — check the account credentials and protocol in Settings.",
     "no_models": "The endpoint is reachable but returned no models — check its base URL / model path.",
     "no_host": "No host is configured — set it in Settings.",
+    "config_source_error": "The configuration source could not be read — check database connectivity and configuration file access.",
     "error": "See /api/diagnostics/logs for the app log, then check the service's own logs.",
 }
 _DEFAULT_NEXT_STEP = (
@@ -178,7 +179,7 @@ _DEFAULT_NEXT_STEP = (
 )
 
 
-def _next_step_for(service: str = "", category: Optional[str] = None) -> str:
+def _next_step_for(category: Optional[str] = None) -> str:
     """Return an actionable hint for a failure category (secret-free)."""
     return _NEXT_STEP.get(category or "error", _DEFAULT_NEXT_STEP)
 
@@ -191,7 +192,6 @@ def _enrich_next_step(service: Dict[str, Any]) -> Dict[str, Any]:
     if "next_step" in meta:
         return service
     meta["next_step"] = _next_step_for(
-        service.get("name", ""),
         meta.get("error") if isinstance(meta.get("error"), str) else None,
     )
     return service
@@ -376,7 +376,7 @@ def email_health(accounts: List[Dict[str, Any]],
         name = _label(acc)
         if not (acc.get("imap_host") or ""):
             return {"name": name, "ok": False, "error": "no_host",
-                    "next_step": _next_step_for("email", "no_host")}
+                    "next_step": _next_step_for("no_host")}
         try:
             conn = connect(acc.get("account_id"))
             try:
@@ -387,13 +387,13 @@ def email_health(accounts: List[Dict[str, Any]],
         except Exception as e:
             category = _classify_error(e)
             return {"name": name, "ok": False, "error": category,
-                    "next_step": _next_step_for("email", category)}
+                    "next_step": _next_step_for(category)}
 
     raw = _bounded_map(accounts, _check, budget=_FANOUT_BUDGET,
                        concurrency=_PROBE_CONCURRENCY)
     per_account = [r if r is not None
                    else {"name": _label(accounts[i]), "ok": False, "error": "timeout",
-                         "next_step": _next_step_for("email", "timeout")}
+                         "next_step": _next_step_for("timeout")}
                    for i, r in enumerate(raw)]
     return _rollup_items("email", "mailbox(es)", per_account)
 
@@ -426,19 +426,24 @@ def providers_health(endpoints: List[Dict[str, Any]],
         except Exception as e:
             category = _classify_error(e)
             return {"name": name, "ok": False, "model_count": 0,
-                    "error": category, "next_step": _next_step_for("providers", category)}
+                    "error": category, "next_step": _next_step_for(category)}
         count = len(models)
-        error = None if count else "no_models"
-        return {"name": name, "ok": bool(count), "model_count": count,
-                "error": error,
-                "next_step": None if count else _next_step_for("providers", error)}
+        item: Dict[str, Any] = {
+            "name": name,
+            "ok": bool(count),
+            "model_count": count,
+            "error": None if count else "no_models",
+        }
+        if not count:
+            item["next_step"] = _next_step_for("no_models")
+        return item
 
     raw = _bounded_map(endpoints, _check, budget=_FANOUT_BUDGET,
                        concurrency=_PROBE_CONCURRENCY)
     per_endpoint = [r if r is not None
                     else {"name": _label(endpoints[i]), "ok": False,
                           "model_count": 0, "error": "timeout",
-                          "next_step": _next_step_for("providers", "timeout")}
+                          "next_step": _next_step_for("timeout")}
                     for i, r in enumerate(raw)]
     return _rollup_items("providers", "endpoint(s)", per_endpoint, key="endpoints")
 

@@ -625,7 +625,8 @@ class DeepResearcher:
     # LLM helper
     # ------------------------------------------------------------------
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
-                   max_tokens: int = 4096, timeout: int = 60) -> str:
+                   max_tokens: int = 4096, timeout: int = 60,
+                   thinking_mode: Optional[str] = None) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
         from src.llm_core import llm_call_async
         response = await llm_call_async(
@@ -636,6 +637,7 @@ class DeepResearcher:
             max_tokens=max_tokens,
             headers=self.llm_headers,
             timeout=timeout,
+            thinking_mode=thinking_mode,
         )
         return strip_thinking(response)
 
@@ -696,7 +698,7 @@ class DeepResearcher:
         try:
             result = await self._llm(
                 [{"role": "user", "content": prompt}],
-                temperature=0, max_tokens=20, timeout=15,
+                temperature=0, max_tokens=20, timeout=15, thinking_mode="off",
             )
             cat = (result or "").strip().lower()
             # Clean one-word answer first.

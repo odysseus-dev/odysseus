@@ -275,7 +275,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
     # the integrations form still works, sync just no-ops with an error.
     from caldav.lib.error import AuthorizationError, NotFoundError
     from core.database import CalendarCal, CalendarEvent, SessionLocal
-    from routes.calendar_routes import _ensure_positive_duration
+    from routes.calendar_routes import _ensure_positive_duration, _source_tzid
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
@@ -405,6 +405,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                 and isinstance(dtstart_p.dt, datetime)
                                 and dtstart_p.dt.tzinfo is not None
                             )
+                            tzid = None if all_day else _source_tzid(dtstart_p.dt)
 
                             summary = str(comp.get("summary", ""))
                             description = str(comp.get("description", ""))
@@ -428,6 +429,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                 existing.dtend = end_dt
                                 existing.all_day = all_day
                                 existing.is_utc = row_is_utc
+                                existing.tzid = tzid
                                 existing.rrule = rrule
                                 existing.origin = "caldav"
                                 existing.remote_href = str(getattr(obj, "url", "") or "") or None
@@ -445,6 +447,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                     all_day=all_day,
                                     is_utc=row_is_utc,
                                     rrule=rrule,
+                                    tzid=tzid,
                                     origin="caldav",
                                     remote_href=str(getattr(obj, "url", "") or "") or None,
                                     remote_etag=_event_etag(obj) or None,
@@ -579,11 +582,28 @@ def _pending_writeback_uids(owner: str) -> tuple[list[str], list[str]]:
         db.close()
 
 
+def _extract_caldav_accounts(prefs: dict) -> list:
+    """Extract caldav accounts from a preference dictionary, migrating legacy caldav if present."""
+    if "caldav_accounts" in prefs:
+        return list(prefs.get("caldav_accounts") or [])
+    legacy = prefs.get("caldav", {}) or {}
+    if legacy.get("url"):
+        import uuid as _uuid
+        return [{
+            "id": str(_uuid.uuid4()),
+            "label": "CalDAV",
+            "url": legacy["url"],
+            "username": legacy.get("username", ""),
+            "password": legacy.get("password", ""),
+        }]
+    return []
+
+
 def _load_caldav_accounts(owner: str) -> list:
     """Return the list of CalDAV accounts for *owner*, auto-migrating the legacy
     single-account ``caldav`` key to the new ``caldav_accounts`` list on first call.
 
-    The save step is best-effort: if ``_save_for_user`` is unavailable (e.g. in a
+    The save step is best-effort: if ``_mutate_for_user`` is unavailable (e.g. in a
     test with a minimal prefs mock) the migrated accounts are still returned; the
     next real call will just re-run the cheap migration again.
     """
@@ -595,23 +615,40 @@ def _load_caldav_accounts(owner: str) -> list:
         return list(prefs["caldav_accounts"] or [])
     # Migrate legacy single-account config to the list format.
     legacy = prefs.get("caldav", {}) or {}
-    if legacy.get("url"):
-        accounts = [{
-            "id": str(_uuid.uuid4()),
-            "label": "CalDAV",
-            "url": legacy["url"],
-            "username": legacy.get("username", ""),
-            "password": legacy.get("password", ""),
-        }]
-        prefs["caldav_accounts"] = accounts
-        prefs.pop("caldav", None)
-        try:
-            from routes.prefs_routes import _save_for_user
-            _save_for_user(owner, prefs)
-        except (ImportError, AttributeError):
-            pass  # best-effort; next call re-migrates from the still-present legacy key
-        return accounts
-    return []
+    if not legacy.get("url"):
+        return []
+
+    def _migrate(user_prefs: dict) -> list:
+        # Re-check under the transaction lock: if caldav_accounts was already
+        # written (e.g. by a concurrent add or migration), preserve and return it.
+        if "caldav_accounts" in user_prefs:
+            return list(user_prefs["caldav_accounts"] or [])
+        cur_legacy = user_prefs.get("caldav", {}) or {}
+        if cur_legacy.get("url"):
+            accounts = [{
+                "id": str(_uuid.uuid4()),
+                "label": "CalDAV",
+                "url": cur_legacy["url"],
+                "username": cur_legacy.get("username", ""),
+                "password": cur_legacy.get("password", ""),
+            }]
+            user_prefs["caldav_accounts"] = accounts
+            user_prefs.pop("caldav", None)
+            return accounts
+        return []
+
+    try:
+        from routes.prefs_routes import _mutate_for_user
+        return _mutate_for_user(owner, _migrate)
+    except (ImportError, AttributeError):
+        pass  # best-effort; next call re-migrates from the still-present legacy key
+    return [{
+        "id": str(_uuid.uuid4()),
+        "label": "CalDAV",
+        "url": legacy["url"],
+        "username": legacy.get("username", ""),
+        "password": legacy.get("password", ""),
+    }]
 
 
 async def sync_caldav(owner: str) -> dict:

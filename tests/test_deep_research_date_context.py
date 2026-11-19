@@ -93,3 +93,22 @@ def test_small_model_detection_uses_parameter_size_in_model_title():
     assert DeepResearcher._looks_like_small_local_model("model-9B")
     assert DeepResearcher._looks_like_small_local_model("model-10B")
     assert not DeepResearcher._looks_like_small_local_model("model-11B")
+
+
+def test_category_classification_turns_thinking_off(monkeypatch):
+    """Reasoning lists every category name, which would defeat the label scan."""
+    sent = {}
+
+    async def fake_call(**kwargs):
+        sent.update(kwargs)
+        return "product"
+
+    monkeypatch.setattr("src.llm_core.llm_call_async", fake_call)
+    r = DeepResearcher.__new__(DeepResearcher)
+    r.llm_endpoint = "http://x"
+    r.llm_model = "m"
+    r.llm_headers = {}
+
+    assert asyncio.run(r._classify_category("Best ThinkPad to buy?")) == "product"
+    assert sent["thinking_mode"] == "off"
+    assert sent["max_tokens"] == 20

@@ -16,7 +16,7 @@ def test_signature_picker_allows_only_raster_data_urls():
 
 
 def test_settings_2fa_setup_escapes_secret_and_qr_src():
-    src = (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
+    src = (_REPO / "static" / "js" / "settings" / "account.js").read_text(encoding="utf-8")
 
     assert "function safeRasterDataUrl(raw)" in src
     assert "const qrCode = safeRasterDataUrl(setup.qr_code);" in src

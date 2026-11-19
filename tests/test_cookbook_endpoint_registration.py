@@ -50,17 +50,10 @@ def _launch_llm(
     port: int,
     serve_session_id: str | None = None,
 ) -> str:
-    import routes.cookbook_routes as cookbook_routes
+    from routes.cookbook.endpoint_registration import _auto_register_llm_endpoint
     from routes.cookbook_helpers import ServeRequest
 
-    router = cookbook_routes.setup_cookbook_routes()
-    serve = next(
-        route.endpoint for route in router.routes
-        if route.path == "/api/model/serve" and "POST" in route.methods
-    )
-    cells = dict(zip(serve.__code__.co_freevars, serve.__closure__ or ()))
-    register = cells["_auto_register_llm_endpoint"].cell_contents
-    endpoint_id = register(
+    endpoint_id = _auto_register_llm_endpoint(
         ServeRequest(repo_id=repo_id, cmd=f"vllm serve {repo_id} --port {port}"),
         None,
         serve_session_id=serve_session_id,
@@ -74,6 +67,83 @@ def _endpoint(factory, endpoint_id: str):
 
     with factory() as db:
         return db.get(database.ModelEndpoint, endpoint_id)
+
+
+@pytest.mark.parametrize(
+    ("cmd", "registers", "skips"),
+    [
+        (
+            "python scripts/diffusion_server.py --port 8100",
+            "_auto_register_image_endpoint",
+            "_auto_register_llm_endpoint",
+        ),
+        (
+            "llama-server -m /models/model.gguf --port 8085",
+            "_auto_register_llm_endpoint",
+            "_auto_register_image_endpoint",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_serve_registers_endpoint_for_its_model_type(monkeypatch, tmp_path, cmd, registers, skips):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from starlette.requests import Request
+
+    from routes import cookbook_routes
+    from routes.cookbook_helpers import ServeRequest
+
+    launch =MagicMock(returncode=0, wait=AsyncMock(return_value=0))
+    monkeypatch.setattr(cookbook_routes, "TMUX_LOG_DIR", tmp_path)
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(cookbook_routes, "_binary_available", AsyncMock(return_value=True))
+    monkeypatch.setattr(cookbook_routes, "load_stored_hf_token", lambda **kwargs: "")
+    monkeypatch.setattr(cookbook_routes.asyncio, "create_subprocess_shell", AsyncMock(return_value=launch))
+    # Returning no endpoint id keeps the crash watchdog from being scheduled.
+    register = MagicMock(return_value=None)
+    skip = MagicMock(return_value=None)
+    monkeypatch.setattr(cookbook_routes, registers, register)
+    monkeypatch.setattr(cookbook_routes, skips, skip)
+
+    router = cookbook_routes.setup_cookbook_routes()
+    serve = next(
+        route.endpoint for route in router.routes
+        if route.path == "/api/model/serve" and "POST" in route.methods
+    )
+    req = ServeRequest(repo_id="organization-a/Model-A", cmd=cmd, remote_host="gpu-box")
+
+    response = await serve(Request({"type": "http", "headers": []}), req)
+
+    register.assert_called_once_with(req, "gpu-box", serve_session_id=response["session_id"])
+    skip.assert_not_called()
+
+
+def _register_ollama(cmd: str) -> str:
+    from routes.cookbook.endpoint_registration import _auto_register_llm_endpoint
+    from routes.cookbook_helpers import ServeRequest
+
+    endpoint_id = _auto_register_llm_endpoint(ServeRequest(repo_id="library/model", cmd=cmd), None)
+    assert endpoint_id
+    return endpoint_id
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "h" * 253])
+def test_registers_port_from_ollama_host(endpoint_db, host):
+    endpoint_id = _register_ollama(f"OLLAMA_HOST={host}:11435 ollama serve")
+
+    assert _endpoint(endpoint_db, endpoint_id).base_url == "http://localhost:11435/v1"
+
+
+def test_repeated_ollama_host_assignments_register_quickly(endpoint_db):
+    import time
+
+    start = time.perf_counter()
+    endpoint_id = _register_ollama("OLLAMA_HOST=" * 32000 + " ollama serve")
+    elapsed = time.perf_counter() - start
+
+    # The unbounded pattern took about 30s on this input and blocked the event loop.
+    assert elapsed < 4.0, f"registration took {elapsed:.2f}s"
+    assert _endpoint(endpoint_db, endpoint_id).base_url == "http://localhost:11434/v1"
 
 
 @pytest.mark.parametrize("reuse", [False, True])
@@ -448,20 +518,13 @@ async def test_ordinary_admin_delete_does_not_require_serve_owner(
 
 
 def _launch_image(repo_id: str, port: int, monkeypatch) -> str:
-    import routes.cookbook_routes as cookbook_routes
     import src.settings as settings
+    from routes.cookbook.endpoint_registration import _auto_register_image_endpoint
     from routes.cookbook_helpers import ServeRequest
 
     monkeypatch.setattr(settings, "load_settings", lambda: {"image_gen_enabled": True, "image_model": repo_id})
     monkeypatch.setattr(settings, "save_settings", lambda _settings: None)
-    router = cookbook_routes.setup_cookbook_routes()
-    serve = next(
-        route.endpoint for route in router.routes
-        if route.path == "/api/model/serve" and "POST" in route.methods
-    )
-    cells = dict(zip(serve.__code__.co_freevars, serve.__closure__ or ()))
-    register = cells["_auto_register_image_endpoint"].cell_contents
-    endpoint_id = register(
+    endpoint_id = _auto_register_image_endpoint(
         ServeRequest(repo_id=repo_id, cmd=f"python diffusion_server.py --model {repo_id} --port {port}"), None
     )
     assert endpoint_id

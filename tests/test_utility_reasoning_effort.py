@@ -393,6 +393,36 @@ def test_auto_title_on_a_different_utility_model_gets_no_chat_effort(util, monke
     assert sent == [(UTIL[0], UTIL[1], None)]
 
 
+def _capture_title_thinking(monkeypatch):
+    sent = []
+
+    async def fake_call(url, model, messages, **kw):
+        sent.append((kw.get("reasoning_effort"), kw.get("thinking_mode")))
+        return "A title"
+
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+    return sent
+
+
+def test_auto_title_turns_thinking_off_without_a_configured_effort(util, monkeypatch):
+    from routes import chat_helpers
+
+    sent = _capture_title_thinking(monkeypatch)
+    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", lambda *a, **k: (UTIL[0], UTIL[1], {}))
+    asyncio.run(chat_helpers.auto_name_session(_Manager(), _title_session()))
+    assert sent == [(None, "off")]
+
+
+def test_auto_title_keeps_thinking_default_with_a_configured_effort(util, monkeypatch):
+    from routes import chat_helpers
+
+    util.settings["alice"] = "medium"
+    sent = _capture_title_thinking(monkeypatch)
+    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", lambda *a, **k: (UTIL[0], UTIL[1], {}))
+    asyncio.run(chat_helpers.auto_name_session(_Manager(), _title_session()))
+    assert sent == [("medium", None)]
+
+
 def test_memory_extraction_passes_chat_effort(util, monkeypatch):
     from services.memory import memory_extractor
 

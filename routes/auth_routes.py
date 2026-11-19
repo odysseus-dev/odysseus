@@ -241,6 +241,19 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 result["privileges"] = auth_manager.get_privileges(u)
         except Exception:
             pass
+        # Presentation hints for Settings, mirroring require_admin(): with
+        # auth explicitly disabled the local operator may change server-wide
+        # settings even though there is no admin identity (`is_admin` stays
+        # false). The server still authorizes every write on its own.
+        auth_disabled = _auth_disabled()
+        result["auth_enabled"] = not auth_disabled
+        try:
+            result["can_manage_settings"] = bool(
+                auth_disabled
+                or (result.get("username") and auth_manager.is_admin(result["username"]))
+            )
+        except Exception:
+            result["can_manage_settings"] = bool(auth_disabled)
         return result
 
     @router.get("/policy")

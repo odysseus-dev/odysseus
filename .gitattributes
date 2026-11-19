@@ -40,3 +40,6 @@ static/lib/** -whitespace linguist-vendored
 # Notes reference deployment modules.
 static/js/features/notes/** text eol=lf
 static/js/shared/ui/confetti.js text eol=lf
+
+# Document editor deployment modules.
+static/js/document/** text eol=lf

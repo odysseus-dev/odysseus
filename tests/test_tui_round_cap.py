@@ -196,6 +196,13 @@ def test_network_prompts_are_classified_as_local_computer_work():
         assert _looks_like_local_computer_request(prompt), prompt
 
 
+def test_named_targets_need_computer_task_wording_to_be_local_computer_work():
+    assert _looks_like_local_computer_request("check disk usage on gpu-box")
+    assert _looks_like_local_computer_request("copy the logs from gpu-box")
+    assert not _looks_like_local_computer_request("Who is Jensen Huang from NVIDIA?")
+    assert not _looks_like_local_computer_request("What is the best book on Rome?")
+
+
 def test_network_lookup_replaces_ping_with_address_evidence():
     normalized = _tui_normalize_network_host_command(
         "ping -c 4 ajax.local",

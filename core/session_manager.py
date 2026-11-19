@@ -62,6 +62,19 @@ def _parse_msg_content(raw):
     return raw
 
 
+def _seeded_thinking_mode(endpoint_url: str, model: str) -> str:
+    """Starting thinking mode for a new chat: the model's saved setting, else "off"."""
+    try:
+        from src.model_profiles import supports_user_thinking_toggle
+        if not supports_user_thinking_toggle(model):
+            return "off"
+        from src.model_customization import seed_thinking_mode
+        return seed_thinking_mode(endpoint_url, model) or "off"
+    except Exception:
+        logger.warning("Could not read model customizations for a new chat", exc_info=True)
+        return "off"
+
+
 class SessionManager:
     """
     Manages chat sessions with database persistence.
@@ -503,6 +516,9 @@ class SessionManager:
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
             session.cwd = getattr(db_session, "cwd", None) or None
+            session.thinking_mode = getattr(db_session, "thinking_mode", "") or "off"
+            session.temperature_override = getattr(db_session, "temperature_override", None)
+            session.max_tokens_override = getattr(db_session, "max_tokens_override", None)
             session.message_count = (
                 db.query(DbChatMessage)
                 .filter(DbChatMessage.session_id == session_id)
@@ -572,6 +588,7 @@ class SessionManager:
         from src.chatgpt_subscription import is_chatgpt_subscription_base
         session_headers = {} if is_chatgpt_subscription_base(endpoint_url) else dict(headers or {})
         endpoint_id = (endpoint_id or "").strip() or None
+        thinking_mode = _seeded_thinking_mode(endpoint_url, model)
         db = SessionLocal()
         try:
             db_session = DbSession(
@@ -584,6 +601,7 @@ class SessionManager:
                 owner=owner,
                 cwd=cwd or None,
                 endpoint_id=endpoint_id,
+                thinking_mode=thinking_mode,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -600,6 +618,7 @@ class SessionManager:
                 owner=owner,
                 cwd=cwd or None,
                 endpoint_id=endpoint_id,
+                thinking_mode=thinking_mode,
             )
 
             self.sessions[session_id] = session

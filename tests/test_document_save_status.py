@@ -18,12 +18,15 @@ def test_save_status_is_dirty_race_safe_and_reports_failures():
       let active = 0;
       let maxActive = 0;
       let requests = 0;
+      let releaseFirst;
+      let signalFirst;
+      const firstStarted = new Promise(resolve => { signalFirst = resolve; });
       await page.route('**/api/document/status-doc', async route => {
         requests += 1;
         active += 1;
         maxActive = Math.max(maxActive, active);
         bodies.push(route.request().postDataJSON().content);
-        if (requests === 1) await new Promise(resolve => setTimeout(resolve, 120));
+        if (requests === 1) await new Promise(resolve => { releaseFirst = resolve; signalFirst(); });
         const fail = requests === 3;
         await route.fulfill({
           status: fail ? 500 : 200,
@@ -52,12 +55,17 @@ def test_save_status_is_dirty_race_safe_and_reports_failures():
       await page.evaluate(() => {
         const textarea = document.querySelector('#doc-editor-textarea');
         window.__saveOne = window.__documentModuleForTest.saveDocument({ silent: true });
+      });
+      await firstStarted;
+      await page.evaluate(() => {
+        const textarea = document.querySelector('#doc-editor-textarea');
         textarea.value = 'newer edit';
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
         window.__saveTwo = window.__documentModuleForTest.saveDocument({ silent: true });
       });
       await page.waitForTimeout(35);
       const duringSave = await page.locator('#doc-footer-copy-btn').getAttribute('data-save-state');
+      releaseFirst();
       await page.evaluate(() => Promise.all([window.__saveOne, window.__saveTwo]));
       const afterSave = await page.locator('#doc-footer-copy-btn').getAttribute('data-save-state');
 

@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 _STORE_LOCKS: dict[str, threading.RLock] = {}
 _STORE_LOCKS_GUARD = threading.Lock()
+_STORE_ACTIVE_PATHS = threading.local()
 
 
 def store_transaction(path_factory):
@@ -34,26 +35,36 @@ def store_transaction(path_factory):
             with _STORE_LOCKS_GUARD:
                 lock = _STORE_LOCKS.setdefault(path, threading.RLock())
             with lock:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "a+b") as handle:
-                    if os.name == "nt":
-                        import msvcrt
-                        if os.fstat(handle.fileno()).st_size == 0:
-                            handle.write(b"0")
-                            handle.flush()
-                        handle.seek(0)
-                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                    else:
-                        import fcntl
-                        fcntl.flock(handle, fcntl.LOCK_EX)
-                    try:
-                        return function(*args, **kwargs)
-                    finally:
+                active = getattr(_STORE_ACTIVE_PATHS, "paths", None)
+                if active is None:
+                    active = set()
+                    _STORE_ACTIVE_PATHS.paths = active
+                if path in active:
+                    return function(*args, **kwargs)
+                active.add(path)
+                try:
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "a+b") as handle:
                         if os.name == "nt":
+                            import msvcrt
+                            if os.fstat(handle.fileno()).st_size == 0:
+                                handle.write(b"0")
+                                handle.flush()
                             handle.seek(0)
-                            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
                         else:
-                            fcntl.flock(handle, fcntl.LOCK_UN)
+                            import fcntl
+                            fcntl.flock(handle, fcntl.LOCK_EX)
+                        try:
+                            return function(*args, **kwargs)
+                        finally:
+                            if os.name == "nt":
+                                handle.seek(0)
+                                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                            else:
+                                fcntl.flock(handle, fcntl.LOCK_UN)
+                finally:
+                    active.discard(path)
         return locked
     return decorate
 

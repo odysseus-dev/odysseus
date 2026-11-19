@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from tests.helpers.stylesheets import app_css
 from tests.helpers.stylesheets import stylesheet_link_tags
-from tests.helpers.document_source import document_source
+from tests.helpers.document_source import document_source, function_body
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
@@ -13,12 +13,8 @@ STYLE = app_css()
 
 
 def test_rich_toolbar_menus_expose_keyboard_and_context_state():
-    dropdown = DOC_JS.split("function _showMdDropdown", 1)[1].split(
-        "function initMdToolbar", 1
-    )[0]
-    toolbar = DOC_JS.split("function initMdToolbar", 1)[1].split(
-        "function _applyDocFont", 1
-    )[0]
+    dropdown = function_body("_showMdDropdown")
+    toolbar = function_body("initMdToolbar")
 
     assert "menu.setAttribute('role', 'menu')" in dropdown
     assert ": 'menuitem')" in dropdown
@@ -33,7 +29,7 @@ def test_rich_toolbar_menus_expose_keyboard_and_context_state():
     assert "window.visualViewport?.width" in dropdown
     assert "window.visualViewport?.height" in dropdown
     assert "menu.style.zIndex = String(topPortalZ())" in dropdown
-    assert "_showMdDropdown(dd, e.key === 'ArrowUp' ? -1 : 0, ++_mdDdActivationSerial)" in toolbar
+    assert "_showMdDropdown(dd, e.key === 'ArrowUp' ? -1 : 0, ownerDropdownActivationToken())" in toolbar
     assert ".doc-overflow-item:focus-visible" in STYLE
     assert ".doc-md-toolbar button:focus-visible" in STYLE
     assert "function _richDropdownCurrentActions" in DOC_JS
@@ -46,11 +42,11 @@ def test_rich_toolbar_menus_expose_keyboard_and_context_state():
 
 
 def test_mobile_toolbar_uses_native_momentum_and_distinct_activation_tokens():
-    toolbar = DOC_JS.split("function initMdToolbar", 1)[1].split(
-        "function _applyDocFont", 1
-    )[0]
+    toolbar = function_body("initMdToolbar")
     assert "toolbar.addEventListener('pointerdown'" in toolbar
-    assert "_mdDdActivationSerial" in toolbar
+    assert "ownerDropdownActivationToken()" in toolbar
+    assert "nextMdDropdownActivationToken" in DOC_JS
+    assert "_mdDdActivationSerial" in DOC_JS
     assert "itemsWrap.addEventListener('touchend'" not in toolbar
     assert "-webkit-overflow-scrolling: touch" in STYLE
     assert "touch-action: pan-x pan-y" in STYLE

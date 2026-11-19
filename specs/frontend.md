@@ -95,7 +95,7 @@ Current major frontend areas include:
 
 - chat, stream handling, rendering, sessions, markdown, uploads, voice recorder, TTS, and keyboard shortcuts;
 - models, provider setup, pure model-key matching helpers, model picker, presets, search, RAG, settings, and admin;
-- settings shell modules under `static/js/settings/`: registry metadata, navigation, finder search, lifecycle/docking, DOM helpers, and persisted sidebar collapse/resize behavior;
+- settings modules under `static/js/settings/`: the shell (registry metadata, navigation, finder search, lifecycle/docking, DOM helpers, persisted sidebar collapse/resize), the shared services (access, endpoint catalog, model-default plumbing) and one module per panel, with `static/js/settings.js` as the entry point and coordinator;
 - compare modules under `static/js/compare/`, including sanitized popup/search/image handling;
 - document editor/library in `static/js/document.js` and `static/js/documentLibrary.js`;
 - image editor integration in `static/js/galleryEditor.js` plus leaves under `static/js/editor/`;
@@ -133,7 +133,7 @@ State mutations belong to `application/state.js`; UI gets live read-only views, 
 - Custom font handling includes bundled OpenDyslexic assets plus user-supplied fonts exposed through `/api/fonts/custom`; font and text-size settings must stay coordinated between settings UI, theme helpers, and CSS variables.
 - Avoid relying on stale module summaries.
 - API shape changes must update the owning JS module and tests.
-- Add behavior to large coordinators such as `static/app.js`, `static/js/chat.js`, `static/js/document.js`, or `static/js/settings.js` only when it matches their existing wiring ownership.
+- Add behavior to large coordinators such as `static/app.js`, `static/js/chat.js`, or `static/js/document.js` only when it matches their existing wiring ownership.
 
 ## Degraded And Platform Behavior
 
@@ -176,7 +176,7 @@ The website has seven hover/focus/tap preview clips, ambient video, failure plac
 
 ## Current Gaps
 
-- The ordered stylesheet cascade and large coordinators remain high-risk owners: `static/js/document.js`, `static/js/settings.js`, `static/js/chat.js`, and `static/app.js`.
+- The ordered stylesheet cascade and large coordinators remain high-risk owners: `static/js/document.js`, `static/js/chat.js`, and `static/app.js`.
 - There is no general build-time type checking or complete legacy script-order validation. `scripts/check_frontend.mjs` checks maintained-source imports, layer boundaries, explicit legacy exceptions, deployment URL/precache identity, and dependency cycles; its inventory mode reports legacy static imports/cycles. These gates cover the manifest-selected maintained graph, not every legacy module. Service-worker checks also cover stylesheet URLs and the email-library package.
 - Frontend state is mostly module/global/localStorage driven, so cross-session and cross-user behavior needs explicit care.
 - `window.*` compatibility bridges remain widespread.
