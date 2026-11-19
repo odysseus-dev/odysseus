@@ -3,7 +3,10 @@
 Windows only. Every action is reached from a same-origin browser administrator (see application_modes).
 Nothing here kills by name: the Hermes listener is found by its exact loopback port, must answer the Hermes
 health identity, and must be a Python process; Odysseus is restarted by killing its own launcher tree from a
-helper that is NOT part of that tree and then re-running the scheduled task that normally starts it.
+helper that is NOT part of that tree and then re-running the scheduled task that normally starts it. That
+tree restart is refused when the Hermes listener runs INSIDE the launcher tree (the legacy launcher starts
+the gateway on demand as a descendant): killing the tree would stop the gateway and any turn in progress.
+scripts/restart-odysseus-app.ps1 is the reviewed path that protects the gateway branch in that layout.
 """
 import functools
 import json
@@ -15,6 +18,7 @@ import tempfile
 
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 DEFAULT_TASK = 'Odysseus AutoStart'
+DEFAULT_GATEWAY_PORT = 9130
 _TASK_NAME = re.compile(r'^[A-Za-z0-9 _.\-]{1,100}$')
 _LAUNCHER_MARK = 'launch-windows.ps1'
 _PYTHON_IMAGES = ('python.exe', 'pythonw.exe')
@@ -102,6 +106,29 @@ def find_launcher(table, pid):
     return None
 
 
+def gateway_in_launcher_tree(launcher_pid, gateway_port, table=None, netstat_output=None):
+    """True when a Hermes gateway listener on this port descends from the launcher.
+
+    A ``taskkill /T`` of the launcher would then stop the gateway and any turn in
+    progress. Every listener on the port is checked (a dual IPv4/IPv6 bind can list
+    two PIDs); an absent gateway is not grounds to block because nothing would be
+    killed. Pure given injected ``table``/``netstat_output``.
+    """
+    pids, _ = listening_pids(gateway_port, netstat_output)
+    if not pids:
+        return False
+    table = table if table is not None else processes()
+    for gateway_pid in pids:
+        seen = set()
+        pid = gateway_pid
+        while pid in table and pid not in seen:
+            if pid == launcher_pid:
+                return True
+            seen.add(pid)
+            pid = table[pid][0]
+    return False
+
+
 def _task_exists(task):
     return _run(['schtasks.exe', '/Query', '/TN', task]).returncode == 0
 
@@ -140,12 +167,25 @@ def restart_script(launcher_pid, task):
     )
 
 
-def schedule_odysseus_restart(plan=None, spawn=None):
-    """Start the detached helper that restarts Odysseus; returns once the helper exists, before Odysseus dies."""
+def schedule_odysseus_restart(plan=None, spawn=None, gateway_port=None):
+    """Start the detached helper that restarts Odysseus; returns once the helper exists, before Odysseus dies.
+
+    Refused when the Hermes listener on ``gateway_port`` runs inside the launcher tree: the helper's
+    ``taskkill /T`` would stop it and any turn in progress. ``gateway_port`` defaults to the lab gateway
+    port recorded in this app's environment, else the production default.
+    """
     plan = plan if plan is not None else odysseus_restart_plan()
     if plan is None:
         raise Unavailable('Odysseus was not started by its Windows launcher and scheduled task, so it cannot restart itself.')
     launcher, task = plan
+    if gateway_port is None:
+        try:
+            gateway_port = int(os.environ.get('ODYSSEUS_RESTART_LAB_GATEWAY_PORT') or DEFAULT_GATEWAY_PORT)
+        except ValueError:
+            raise Unavailable('The recorded lab gateway port is not a number; refusing to guess what a tree restart would stop.') from None
+    if gateway_in_launcher_tree(launcher, gateway_port):
+        raise Unavailable('The Hermes gateway is running inside the Odysseus launcher tree, so this restart would stop it and any turn in progress. '
+                          'Use scripts/restart-odysseus-app.ps1, which protects the gateway branch.')
     descriptor, name = tempfile.mkstemp(prefix='odysseus-restart-', suffix='.ps1')
     with os.fdopen(descriptor, 'w', encoding='utf-8', newline='') as handle:
         handle.write(restart_script(launcher, task))
