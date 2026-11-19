@@ -585,6 +585,11 @@ kbd,
 .settings-nav-item.active svg { color: var(--red); }
 /* Quiet aside inside a heading, e.g. "Add Local Models (Endpoint)". */
 .heading-hint { color: var(--text-3); font-weight: 400; font-size: .82em; }
+/* Phones: the card's own description line already says what it adds, and
+   the hint would squeeze the title onto two lines beside Test and More. */
+@media (max-width: 768px) {
+  .admin-card > h2 > .heading-hint { display: none; }
+}
 /* Group labels as small structural eyebrows. */
 .section-header-flex .section-title {
   font-size: 10.5px;
