@@ -247,32 +247,32 @@
        real request is discarded and the font fetched a second time. -->
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/14-email.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/17-research.css?v=20261108editdescription1">
+  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/14-email.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/17-research.css?v=20261119editdescription1">
   <!-- Panel stylesheets split out of style.css for maintainability. They are
        eager and their order is load-bearing: the cascade is the concatenation of
        these files in this order, so they must stay in this order here and in the
        PRECACHE list in sw.js. None of them is lazy-loaded. -->
-  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261108editdescription1">
-  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261108editdescription1">
-  <link rel="modulepreload" href="/static/app.js?v=20261108editdescription1">
+  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261119editdescription1">
+  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261119editdescription1">
+  <link rel="modulepreload" href="/static/app.js?v=20261119editdescription1">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -1481,7 +1481,6 @@
             tabindex="0"
           ></div>
 
-          <div class="settings-sidebar-content">
           <div class="settings-nav-search-wrap">
             <svg class="settings-nav-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
               <circle cx="11" cy="11" r="7"></circle>
@@ -1503,12 +1502,13 @@
               aria-label="Settings search results"
             ></div>
           </div>
+          <div class="settings-sidebar-content">
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
-          <button class="settings-nav-item active" data-settings-tab="services">
+          <button class="settings-nav-item admin-only active" data-settings-tab="services">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
             <span>Add Models</span>
           </button>
-          <button class="settings-nav-item" data-settings-tab="added-models">
+          <button class="settings-nav-item admin-only" data-settings-tab="added-models">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             <span>Added Models</span>
           </button>
@@ -1582,7 +1582,7 @@
         <!-- ═══ AI TAB ═══ -->
 
         <div data-settings-panel="ai" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="default-chat" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Default Chat Model</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">The model used when creating a new chat session.</div>
             <div class="settings-col">
@@ -1621,7 +1621,7 @@
               <div id="set-defaultChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="utility-model" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Utility Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Recommended: Local Endpoint)</span></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Runs background tasks (compaction, cleanup, auto-naming, retrieving memories from files) on a small/local model instead of your chat model. Leave blank to use the chat model.</div>
             <div class="settings-col">
@@ -1651,7 +1651,7 @@
               <div id="set-utilityChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="vision" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Vision<span style="flex:1"></span><label class="admin-switch" title="Analyze images with a vision-capable model"><input type="checkbox" id="set-visionEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Analyze images with a vision-capable model.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
@@ -1670,7 +1670,7 @@
               <div id="set-visionSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="research-model" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Research Model</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Model used for Deep Research, more settings under <a href="#" data-go-settings-tab="search" style="color:var(--accent, var(--red));text-decoration:underline;font-weight:600;">Search →</a></div>
             <div class="settings-col">
@@ -1691,7 +1691,7 @@
             </div>
           </div>
           <!-- Agent card moved to the Agent Tools tab. -->
-          <div class="admin-card">
+          <div data-settings-section="image-generation" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-imgEnabledToggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure which model to use for image generation.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
@@ -1717,7 +1717,7 @@
           <!-- TTS panel hidden — user opted out of read-aloud entirely. Kept
                in DOM so the JS that wires set-ttsProviderSelect etc. doesn't
                throw on missing nodes; not visible to anyone. -->
-          <div class="admin-card" hidden style="display:none">
+          <div data-settings-section="text-to-speech" class="admin-card" hidden style="display:none">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>Text to Speech<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-ttsEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure TTS provider for assistant message read-aloud.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
@@ -1774,7 +1774,7 @@
                working for anyone who wired it via `manage_settings` /
                settings backup. Re-add this card to surface the toggle
                again once the core experience is faster. -->
-          <div class="admin-card">
+          <div data-settings-section="writing-style" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Writing Style</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">General voice for normal documents. Email greetings and sign-offs remain under Email → Writing Style.</div>
             <div class="settings-col">
@@ -1793,7 +1793,7 @@
 
         <!-- ═══ SEARCH TAB ═══ -->
         <div data-settings-panel="search" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="web-search" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Web Search</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Search API used for web search and deep research.</div>
             <div class="settings-col">
@@ -1863,7 +1863,7 @@
             </div>
           </div>
 
-          <div class="admin-card">
+          <div data-settings-section="deep-research" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Deep Research</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Deep Research runtime settings. Default Model is picked in <a href="#" data-go-settings-tab="ai" style="color:var(--accent, var(--red));text-decoration:underline;font-weight:600;">AI Defaults →</a></div>
             <div class="settings-col">
@@ -1909,7 +1909,7 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
-          <div class="admin-card" style="padding-bottom:6px;">
+          <div data-settings-section="sidebar" class="admin-card" style="padding-bottom:6px;">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Sidebar to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
               <label class="vis-row">
@@ -2009,7 +2009,7 @@
               </label>
             </div>
           </div>
-          <div class="admin-card" style="padding-bottom:6px;">
+          <div data-settings-section="chat-area" class="admin-card" style="padding-bottom:6px;">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Chat Area<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Chat Area to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
               <label class="vis-row">
@@ -2049,7 +2049,7 @@
               </label>
             </div>
           </div>
-          <div class="admin-card" style="padding-bottom:6px;">
+          <div data-settings-section="chat-bar" class="admin-card" style="padding-bottom:6px;">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>Chat Bar<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Chat Bar to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
               <label class="vis-row">
@@ -2101,7 +2101,7 @@
         <!-- ═══ MEMORY TAB ═══ -->
         <!-- ═══ SHORTCUTS TAB ═══ -->
         <div data-settings-panel="shortcuts" class="hidden">
-          <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;">
+          <div data-settings-section="keyboard-shortcuts" class="admin-card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;">
             <div>
               <h2 style="margin:0;font-size:13px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>Keyboard Shortcuts</h2>
               <p style="font-size:10px;opacity:0.4;margin:2px 0 0;">Click a shortcut to rebind. Press Escape to cancel.</p>
@@ -2116,7 +2116,7 @@
 
         <!-- ═══ ACCOUNT TAB ═══ -->
         <div data-settings-panel="account" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="account" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Account</h2>
             <div style="display:flex;align-items:center;gap:10px;margin:12px 0 12px;">
               <div class="user-bar-avatar" id="settings-account-avatar" style="width:32px;height:32px;font-size:14px;"></div>
@@ -2130,7 +2130,7 @@
               </button>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="password" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Change Password</h2>
             <div class="settings-col">
               <input id="settings-pw-current" type="password" placeholder="Current password" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
@@ -2142,13 +2142,13 @@
               </div>
             </div>
           </div>
-          <div class="admin-card" id="settings-2fa-card">
+          <div data-settings-section="two-factor" class="admin-card" id="settings-2fa-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>Two-Factor Authentication</h2>
             <div id="settings-2fa-content">
               <!-- Populated by JS -->
             </div>
           </div>
-          <div class="admin-card" id="settings-api-tokens-card" style="display:none">
+          <div data-settings-section="api-tokens" class="admin-card" id="settings-api-tokens-card" style="display:none">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 1a3 3 0 0 0-3 3v2H7a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V9a3 3 0 0 0-3-3h-2V4a3 3 0 0 0-3-3z"/></svg>Personal API Tokens</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Create tokens to access your Odysseus data from scripts, apps, or external tools. Tokens are scoped — only grant the permissions your use case needs.</div>
             <div id="settings-api-tokens-list" style="margin-bottom:10px;">
@@ -2188,13 +2188,13 @@
             </div>
           </div>
 
-          <div class="admin-card settings-email-default-card" id="settings-email-default-card" hidden>
+          <div data-settings-section="email-default" class="admin-card settings-email-default-card" id="settings-email-default-card" hidden>
             <h2 class="settings-email-default-title"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="9"/><polyline points="8 12 11 15 16 9"/></svg>Email Settings</span><div id="settings-email-default-host"></div></h2>
             <div class="admin-toggle-sub email-settings-support-copy" style="margin:0 0 8px;">Set the default email and choose which settings apply here.</div>
             <div class="settings-email-default-spacer" aria-hidden="true"></div>
           </div>
 
-          <div class="admin-card">
+          <div data-settings-section="email-accounts" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Add Email Accounts</h2>
             <div class="settings-row" style="align-items:center;">
               <div class="admin-toggle-sub" style="margin:0;flex:1;">Add, edit, delete, and test accounts in Integrations.</div>
@@ -2202,7 +2202,7 @@
             </div>
           </div>
 
-          <div class="admin-card">
+          <div data-settings-section="email-tasks" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>Email Tasks</h2>
             <div class="settings-row" style="align-items:center;">
               <div class="admin-toggle-sub email-settings-support-copy" style="margin:0;flex:1;">Manage email background tasks in Tasks.</div>
@@ -2210,7 +2210,7 @@
             </div>
           </div>
 
-          <div class="admin-card settings-email-preferences-card">
+          <div data-settings-section="email-preferences" class="admin-card settings-email-preferences-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83 2.83l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0 .33 1.82 1.65 1.65 0 0 0 1.51 1Z"/></svg>Email Preferences</h2>
             <div id="settings-email-preferences" class="email-settings-page email-settings-page-host">
               <div class="email-settings-page-head"></div>
@@ -2222,7 +2222,7 @@
 
         <!-- ═══ REMINDERS TAB ═══ -->
         <div data-settings-panel="reminders" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="delivery" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>How you're reminded<span style="flex:1"></span><span id="set-reminder-test-msg" style="font-size:11px;font-weight:normal;"></span><button class="admin-btn-sm" id="set-reminder-test-btn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test</button></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Controls how fired note reminders are delivered.</div>
             <div class="settings-col">
@@ -2259,7 +2259,7 @@
               <div style="font-size:11px;opacity:0.6;margin-top:4px;">Configure email account, ntfy server, etc. in <a href="#" id="set-reminders-open-integrations" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Integrations</a>.</div>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="ai-synthesis" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>AI Synthesis<span style="flex:1"></span><label class="admin-switch" title="Use the utility model to write reminder messages"><input type="checkbox" id="set-reminder-llm-toggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">When on, the utility model writes a short, warm one-line reminder for browser, email, ntfy, and webhook reminders instead of just the raw note content.</div>
             <div class="settings-col">
@@ -2275,7 +2275,7 @@
               <div id="set-reminder-llm-persona-msg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="public-url" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Public App URL</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Used to build clickable links back to Odysseus inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links.</div>
             <div class="settings-col">
@@ -2290,7 +2290,7 @@
 
         <!-- ═══ ADMIN: USERS TAB ═══ -->
         <div data-settings-panel="users" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="registration" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>Registration</h2>
             <div class="admin-toggle-row">
               <div>
@@ -2300,7 +2300,7 @@
               <label class="admin-switch"><input type="checkbox" id="adm-signupToggle"><span class="admin-slider"></span></label>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="model-defaults" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 15v3m-3-3h6M12 3v2m0 16v-2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M3 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><circle cx="12" cy="12" r="3"/></svg>Model Defaults</h2>
             <div class="admin-toggle-row">
               <div>
@@ -2310,11 +2310,11 @@
               <label class="admin-switch"><input type="checkbox" id="adm-shareDefaultsToggle"><span class="admin-slider"></span></label>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="user-list" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users</h2>
             <div id="adm-userList"><div class="admin-empty">Loading...</div></div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="add-user" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>Add User</h2>
             <div class="admin-add-form">
               <input id="adm-newUsername" type="text" placeholder="Username">
@@ -2332,7 +2332,7 @@
         <div data-settings-panel="services">
 
           <!-- ── Local card ─────────────────────────────────────────── -->
-          <div class="admin-card">
+          <div data-settings-section="local-models" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add Local Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
@@ -2377,7 +2377,7 @@
           </div>
 
           <!-- ── API card ───────────────────────────────────────────── -->
-          <div class="admin-card">
+          <div data-settings-section="api-models" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="12" r="8"/><path d="M19 5v6"/><path d="M16 8h6"/><path d="M7 12h8"/></svg>Add API Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epApiTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
@@ -2461,7 +2461,7 @@
 
         <!-- ═══ ADDED MODELS TAB ═══ -->
         <div data-settings-panel="added-models" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="endpoints" class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="20 6 9 17 4 12"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epProbeAllBtn" title="Re-test every endpoint and refresh online status" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
@@ -2485,7 +2485,7 @@
               <div id="adm-epList-api"><div class="admin-empty">No API endpoints yet.</div></div>
             </div>
           </div>
-          <div class="admin-card adm-mc-card" id="adm-modelCustomCard" style="margin-top:12px;">
+          <div data-settings-section="per-model-settings" class="admin-card adm-mc-card admin-only" id="adm-modelCustomCard" style="margin-top:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Per-Model Settings</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Generation defaults for one model on one endpoint. Leave a field blank to keep the provider default. The context window is the budget Odysseus plans with; on non-Ollama servers it does not change the loaded window.</div>
             <div class="settings-col">
@@ -2546,7 +2546,7 @@
         <!-- ═══ TOOLS TAB ═══ -->
         <!-- ═══ INTEGRATIONS TAB ═══ -->
         <div data-settings-panel="integrations" class="hidden">
-          <div class="admin-card">
+          <div data-settings-section="integrations" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Integrations</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">All external service connections in one place.</div>
             <div id="unified-integrations-list"></div>
@@ -2559,7 +2559,7 @@
 
         <!-- ═══ TOOLS TAB ═══ -->
         <div data-settings-panel="tools" class="hidden">
-          <div class="admin-card" style="margin-bottom:12px;">
+          <div data-settings-section="agent-limits" class="admin-card" style="margin-bottom:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Agent</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Controls for the agent tool loop.</div>
             <div class="settings-col">
@@ -2590,7 +2590,7 @@
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <div class="admin-card" style="margin-bottom:12px;">
+          <div data-settings-section="builtin-tools" class="admin-card" style="margin-bottom:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Built-in Tools</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Enable or disable tools available to the AI agent.</div>
             <div id="adm-builtin-tools-list" class="admin-user-list"></div>
@@ -2600,7 +2600,7 @@
         <!-- ═══ SYSTEM TAB ═══ -->
         <div data-settings-panel="system" class="hidden">
 
-          <div class="admin-card" id="settings-system-logs-card">
+          <div data-settings-section="logs" class="admin-card" id="settings-system-logs-card">
             <h2>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="settings-system-logs-svg">
                 <polyline points="4 17 10 11 4 5"></polyline>
@@ -2678,7 +2678,7 @@
               </div>
             </div>
           </div>
-          <div class="admin-card">
+          <div data-settings-section="backup" class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Data Backup</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -2688,7 +2688,7 @@
             </div>
             <div id="adm-backupMsg" style="margin-top:6px;"></div>
           </div>
-          <div class="admin-card admin-danger-card">
+          <div data-settings-section="danger-zone" class="admin-card admin-danger-card">
             <h2 style="color:#e55;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.75"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Danger Zone</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Irreversible. Each wipe targets one category — pick exactly what you want gone.</div>
 
@@ -2817,7 +2817,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20261108editdescription1"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20261119editdescription1"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>
