@@ -543,7 +543,13 @@ def make_router(service):
     @router.post('/odysseus/restart')
     def restart_odysseus(request: Request):
         require_browser_admin(request)
-        return guarded(lambda: {key: value for key, value in controls.schedule_odysseus_restart().items() if key != 'helper'})
+        # Protect the Hermes listener when it runs inside the launcher tree (legacy layout). Derive its
+        # port from the configured Hermes URL; fall back to the production default when not derivable.
+        try:
+            gateway_port = urlsplit(service.config.url).port
+        except (AttributeError, TypeError, ValueError):
+            gateway_port = None
+        return guarded(lambda: {key: value for key, value in controls.schedule_odysseus_restart(gateway_port=gateway_port).items() if key != 'helper'})
 
     @router.post('/hermes/start')
     def start(request: Request):

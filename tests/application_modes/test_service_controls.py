@@ -270,9 +270,14 @@ class RouteTests(unittest.TestCase):
 
 
 class OdysseusRestartTests(unittest.TestCase):
+    # The gateway guard reads the process table and the gateway port; inject both so these stay hermetic.
+    NO_GATEWAY = {'processes': {60: (1, 'powershell.exe', 'launch-windows.ps1')}, 'listening_pids': (set(), True)}
+
     def test_helper_script_is_written_spawned_and_validated(self):
         spawned = []
-        result = controls.schedule_odysseus_restart(plan=(60, 'Odysseus AutoStart'), spawn=spawned.append)
+        with patch.object(controls, 'processes', return_value=self.NO_GATEWAY['processes']), \
+                patch.object(controls, 'listening_pids', return_value=self.NO_GATEWAY['listening_pids']):
+            result = controls.schedule_odysseus_restart(plan=(60, 'Odysseus AutoStart'), spawn=spawned.append)
         try:
             self.assertEqual(result['state'], 'restarting')
             text = Path(result['helper']).read_text(encoding='utf-8')
@@ -289,8 +294,10 @@ class OdysseusRestartTests(unittest.TestCase):
             seen['path'] = command.split('-File "')[1].rstrip('"')
             raise controls.Unavailable('no')
 
-        with self.assertRaises(controls.Unavailable):
-            controls.schedule_odysseus_restart(plan=(60, 'Odysseus AutoStart'), spawn=boom)
+        with patch.object(controls, 'processes', return_value=self.NO_GATEWAY['processes']), \
+                patch.object(controls, 'listening_pids', return_value=self.NO_GATEWAY['listening_pids']):
+            with self.assertRaises(controls.Unavailable):
+                controls.schedule_odysseus_restart(plan=(60, 'Odysseus AutoStart'), spawn=boom)
         self.assertFalse(Path(seen['path']).exists())
 
     def test_restart_is_refused_without_a_launcher_plan(self):
