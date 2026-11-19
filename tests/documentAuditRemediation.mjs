@@ -283,7 +283,7 @@ test('compare: actual header action displays both versions in diff mode', async 
   });
   await inject(page, 'a', 'new content');
   await page.locator('#doc-diff-toggle-btn').click();
-  await page.waitForFunction(async () => (await import('/static/js/document/ui/diffViewer.js'))._diffModeActive);
+  await page.locator('#doc-diff-toolbar').waitFor({ state: 'visible' });
   const content = await page.locator('#doc-editor-code').textContent();
   assert.match(content, /old content/);
   assert.match(content, /new content/);

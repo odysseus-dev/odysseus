@@ -6,7 +6,7 @@
 import { byId as el } from './dom.js';
 import { postSettings as _postSettings } from './api.js';
 
-export async function initTtsSettings() {
+export async function initTtsSettings({ restricted = () => false } = {}) {
   var provSel = el('set-ttsProviderSelect');
   var modelSelect = el('set-ttsModelSelect');
   var modelInput = el('set-ttsModelInput');
@@ -40,8 +40,17 @@ export async function initTtsSettings() {
 
   var ttsKeywords = ['tts', 'audio'];
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
+    // The endpoint pool is admin-only; a restricted caller's card is locked.
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    var endpoints = [];
+    if (!isRestricted) {
+      const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+      if (epRes.ok) {
+        endpoints = await epRes.json();
+      } else if (epRes.status !== 401 && epRes.status !== 403) {
+        console.warn('[settings] unexpected response from /api/model-endpoints: HTTP ' + epRes.status);
+      }
+    }
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
       var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
@@ -163,7 +172,7 @@ export async function initTtsSettings() {
   }
 }
 
-export async function initSttSettings() {
+export async function initSttSettings({ restricted = () => false } = {}) {
   var provSel = el('set-sttProviderSelect');
   var modelSelect = el('set-sttModelSelect');
   var modelInput = el('set-sttModelInput');
@@ -207,8 +216,17 @@ export async function initSttSettings() {
 
   // Add API endpoints that might support STT
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
+    // The endpoint pool is admin-only; a restricted caller's card is locked.
+    const isRestricted = typeof restricted === 'function' ? await restricted() : false;
+    var endpoints = [];
+    if (!isRestricted) {
+      const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+      if (epRes.ok) {
+        endpoints = await epRes.json();
+      } else if (epRes.status !== 401 && epRes.status !== 403) {
+        console.warn('[settings] unexpected response from /api/model-endpoints: HTTP ' + epRes.status);
+      }
+    }
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
       var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
