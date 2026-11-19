@@ -123,10 +123,17 @@ def apply_patch(path, pin, patch):
     verify_checkout(path, pin, patches)
     if patch_state(path, patches) == 'applied':
         return 'applied'
+    applied = 0
     for item in patches:                       # in order: a later patch is checked against the tree the earlier ones produced
         if _git(path, *_PATCH_FLAGS, '--check', str(item), check=False).returncode:
+            if applied:
+                raise ComponentError(
+                    'The reviewed Hermes patch does not apply to this source; '
+                    f'{applied} of {len(patches)} patches were applied before the refusal at patch {applied + 1}. '
+                    f'The checkout is left partially patched (patch state: {patch_state(path, patches)}) and fails verification; it will not be used.')
             raise ComponentError('The reviewed Hermes patch does not apply to this source; nothing was changed.')
         _git(path, *_PATCH_FLAGS, str(item))
+        applied += 1
     verify_checkout(path, pin, patches)
     return 'applied'
 
