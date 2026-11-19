@@ -4267,6 +4267,10 @@ def setup_chat_routes(
                 _actual_route = _requested_route
                 _actual_candidate_index = 0
                 _chat_terminal_saved = False
+                # Latest generation_budget report seen on the live stream; the
+                # same metadata is persisted with the saved reply so history
+                # shows the identical requested/effective notice.
+                _chat_generation_budget = {}
                 def _commit_chat_compaction(candidate_index: int) -> bool:
                     return apply_compaction_state(
                         sess,
@@ -4316,6 +4320,15 @@ def setup_chat_routes(
                                         _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "generation_budget":
+                                    # Keep the report for persistence; strip the SSE
+                                    # envelope so saved metadata matches the
+                                    # non-streaming /api/chat budget shape. The
+                                    # latest candidate's report wins, mirroring the
+                                    # live renderer's latest-notice-wins behavior.
+                                    _chat_generation_budget = {
+                                        k: v for k, v in data.items()
+                                        if k not in ("type", "candidate_index", "model")
+                                    }
                                     yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
@@ -4432,6 +4445,8 @@ def setup_chat_routes(
                                 )
                                 _had_terminal_usage = bool(last_metrics)
                                 _terminal_metrics = dict(last_metrics or {})
+                                if _chat_generation_budget:
+                                    _terminal_metrics["generation_budget"] = dict(_chat_generation_budget)
                                 if not _had_terminal_usage:
                                     _actual_request_messages = _chat_request_state["requests"].get(
                                         _actual_candidate_index,
@@ -4562,6 +4577,8 @@ def setup_chat_routes(
                             if full_response:
                                 _commit_chat_compaction(_actual_candidate_index)
                                 _metrics_to_save = dict(last_metrics or {})
+                                if _chat_generation_budget:
+                                    _metrics_to_save["generation_budget"] = dict(_chat_generation_budget)
                                 _round_texts = _metrics_to_save.get("round_texts") or []
                                 _final_round_text = next(
                                     (
@@ -4621,6 +4638,7 @@ def setup_chat_routes(
                                 "endpoint_label": _actual_route.get("endpoint_label"),
                                 "requested_endpoint_id": _requested_route.get("endpoint_id"),
                                 "requested_endpoint_label": _requested_route.get("endpoint_label"),
+                                **({"generation_budget": dict(_chat_generation_budget)} if _chat_generation_budget else {}),
                             },
                         )
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
