@@ -1513,12 +1513,74 @@ class WebappComponent:
         except Exception:                                    # noqa: BLE001
             return None
 
+    # The gateway's reversible external-drain marker (gateway/drain_control.py): an ACTIVE marker makes the
+    # gateway's _drain_control_watcher refuse NEW turns (_external_drain_active) until the marker is removed.
+    # The marker IS the control channel — the same contract POST /api/gateway/drain writes. Odysseus writes it
+    # directly into the gateway home it provisioned, exactly as it reads that home's gateway.pid and state.db.
+    DRAIN_REQUEST_FILENAME = '.drain_request.json'
+    DRAIN_REQUEST_PRINCIPAL = 'odysseus-webapp'
+
+    @staticmethod
+    def _instantiation_epoch():
+        """Mirror of the gateway's drain_control.current_instantiation_epoch: '<boot_id>:<pid1_start>' on Linux,
+        '' where /proc is unreadable (Windows). An empty epoch disables the gateway's staleness check, so the
+        marker is honoured on every platform; a same-host restart never changes it."""
+        boot_id = pid1_start = ''
+        try:
+            boot_id = Path('/proc/sys/kernel/random/boot_id').read_text(encoding='utf-8').strip()
+        except OSError:
+            pass
+        try:
+            pid1_start = Path('/proc/1/stat').read_text(encoding='utf-8').rsplit(')', 1)[1].split()[19]
+        except (OSError, IndexError):
+            pass
+        return f'{boot_id}:{pid1_start}' if (boot_id or pid1_start) else ''
+
+    def _engage_external_drain(self, config):
+        """Write the begin-drain marker BEFORE the idle wait so the gateway itself quiesces (new turns refused,
+        goal wakes yield) while we wait; without it an active goal keeps admissions started and the wait cannot
+        converge. Returns the prior marker's raw text (None when absent) so release can restore it. The payload
+        matches gateway.drain_control.write_drain_request; the write is atomic, so a failure leaves no marker."""
+        from datetime import datetime, timezone
+        path = Path(config['home']) / self.DRAIN_REQUEST_FILENAME
+        try:
+            prior = path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            prior = None
+        except OSError as exc:
+            raise ComponentError(f'The gateway drain marker at {path} is unreadable; nothing was stopped.') from exc
+        payload = {'action': 'drain', 'requested_at': datetime.now(timezone.utc).isoformat(),
+                   'principal': self.DRAIN_REQUEST_PRINCIPAL, 'epoch': self._instantiation_epoch(),
+                   'suppress_notification': False}
+        try:
+            atomic_bytes(path, json.dumps(payload).encode('utf-8'))
+        except OSError as exc:
+            raise ComponentError(f'Could not engage the gateway drain by writing {path}; nothing was stopped.') from exc
+        return prior
+
+    def _release_external_drain(self, config, prior):
+        """Undo the engagement: remove our marker, or restore a pre-existing one (e.g. an operator's dashboard
+        drain) byte-for-byte. Called on success BEFORE the kill and on every error path, so a failed or timed-out
+        drain never leaves the gateway refusing turns. Raises ComponentError when the marker cannot be released."""
+        path = Path(config['home']) / self.DRAIN_REQUEST_FILENAME
+        try:
+            if prior is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_bytes(path, prior.encode('utf-8'))
+        except OSError as exc:
+            raise ComponentError(f'The gateway drain marker at {path} could not be released; remove it manually, '
+                                 'otherwise the gateway keeps refusing new turns.') from exc
+
     def stop(self, force=False, drain=0):
         """Stop the gateway Odysseus provisioned, never one that is serving the caller.
 
         Refused (even with force) when this process descends from the gateway: a turn that restarts its own gateway leaves the turn
         with an unknown outcome. Otherwise refused while turns are running; `drain` waits up to that many seconds for them to finish.
-        The check does not read command lines, so renaming or wrapping the command changes nothing."""
+        With `drain` (and without force) the gateway's reversible external drain is engaged FIRST, so the gateway itself refuses new
+        turns while we wait; the marker is released before the kill on success and on timeout/failure, and a pre-existing marker is
+        restored. `force` skips both the wait and the engagement. The check does not read command lines, so renaming or wrapping the
+        command changes nothing."""
         from src import service_controls as controls
         config = self._require_managed()
         with component_lock(self.directory / 'service'):
@@ -1529,15 +1591,31 @@ class WebappComponent:
                 raise ComponentError('This command is running inside the gateway it would stop, so the turn that issued it would be lost with an unknown outcome. '
                                      'Stop or restart the gateway from a separate PowerShell/terminal window instead.')
             deadline = time.monotonic() + max(0, drain)
-            while True:
-                running = self._running_admissions(config)
-                count = 0 if (drain and running == 0) else (running or self.active_sessions())
-                if count == 0 or force or time.monotonic() >= deadline:
-                    break
-                time.sleep(1)
-            if count is None or count > 0:
-                if not force:
-                    raise controls.ActiveRuns(count if count else 1, recent=not running)
+            engage_drain = drain > 0 and not force
+            # prior_marker is the marker content that pre-existed (None when absent) — NOT an engagement flag:
+            # a fresh drain legitimately returns None, and release must still run for it.
+            prior_marker = self._engage_external_drain(config) if engage_drain else None
+            try:
+                while True:
+                    running = self._running_admissions(config)
+                    count = 0 if (drain and running == 0) else (running or self.active_sessions())
+                    if count == 0 or force or time.monotonic() >= deadline:
+                        break
+                    time.sleep(1)
+                if count is None or count > 0:
+                    if not force:
+                        raise controls.ActiveRuns(count if count else 1, recent=not running)
+            except BaseException as exc:
+                if engage_drain:
+                    try:
+                        self._release_external_drain(config, prior_marker)
+                    except ComponentError as release_error:
+                        raise release_error from exc
+                raise
+            if engage_drain:
+                # Release BEFORE the kill: a marker left behind would park the gateway restart() starts next in draining.
+                # A failed release aborts here with the gateway still running, never a stuck drain after the kill.
+                self._release_external_drain(config, prior_marker)
             controls.kill_tree(pid)
             port = loopback_port(config['url'])
             deadline = time.monotonic() + 30
