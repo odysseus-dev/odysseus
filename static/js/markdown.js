@@ -1327,6 +1327,15 @@ export function mdToHtml(src, opts) {
     return `<p>${withLineBreaks}</p>`;
   });
 
+  // Documents: a quote whose first line is `[!NOTE]` (or TIP, IMPORTANT, WARNING,
+  // CAUTION) is a GitHub-style alert, shown with its label as in the Visual editor.
+  if (commonmark) {
+    s = s.replace(/<blockquote><p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]<\/p>/gi, (_, kind) => {
+      const name = kind.toLowerCase();
+      return `<blockquote class="markdown-alert markdown-alert-${name}"><p><span class="markdown-alert-label">${name[0].toUpperCase()}${name.slice(1)}</span></p>`;
+    });
+  }
+
   // Remove empty paragraphs
   s = s.replace(/<p><\/p>/g, '');
 

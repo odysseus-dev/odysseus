@@ -62,6 +62,7 @@ const VISUAL_DOCUMENTS = {
   'heading with punctuation': '<h2>a*b_c [d]</h2>',
   'list item with punctuation': '<ul><li>a*b</li><li>C:\\dir</li></ul>',
   'link with punctuation': '<p><a href="https://example.com/a_b?x=1">label [x] *y*</a></p>',
+  'alerts': ['note', 'tip', 'important', 'warning', 'caution'].map(kind => `<blockquote class="markdown-alert markdown-alert-${kind}" data-alert="${kind.toUpperCase()}"><p><span class="markdown-alert-label" contenteditable="false" data-alert-label="${kind.toUpperCase()}">${kind[0].toUpperCase()}${kind.slice(1)}</span></p><p>About ${kind}.</p></blockquote>`).join(''),
   'table with pipe in cell': table(['A', 'B'], ['x|y', '2']),
   'table with code and pipe': table(['A', 'B'], ['<code>x</code>|y', '2']),
   'table with escapes': table(['a*b', 'C:\\x'], ['_u_', '[v]']),
