@@ -617,7 +617,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         """Persist an in-app toast so Settings can show notification history."""
         user = _owner(request)
         if not user:
-            return {"success": False, "skipped": True}
+            raise HTTPException(401, "Authentication required")
         body = await request.json()
         message = str(body.get("body") or "").strip()[:2000]
         if not message:
