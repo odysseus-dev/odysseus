@@ -1,6 +1,6 @@
 import { _selections, clearSelection, updateRichSelectionState } from '../selection/selectionHighlights.js';
 import { scheduleAutoTitle } from '../editor/sourceEditor.js';
-import { _scheduleDocumentStats, _scheduleDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
+import { _scheduleDocumentStats, _refreshDocumentOutline, _scheduleDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
 import { _richSelectionCell, _appendRichTableRow } from '../richTables.js';
 import { _uploadMarkdownImages } from '../editor/markdownImages.js';
 // frontend/src/features/documents/ui/richEditor/richBodyWiring.js
@@ -17,7 +17,7 @@ import { _clearRichImageSelection, _normalizeRichTextImages, _selectRichImage, s
 import { _applyRichImageAction, _richLinkAtRange } from './links.js';
 import { _richTextContentToHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from './richBodySync.js';
 import { _activeRichImage, _cleanRichTextPasteHtml, _handleRichChecklistEnter, _handleRichHeadingEnter, _insertSmartRichPasteLink, _normalizeRichChecklists, _normalizeRichInlineCode, _richInlineCodeTypingArmed, _richSelectedSpacingBlockIndexes, _richSelectionChecklistItem, _richSelectionInlineCode, _richSpacingBlocks, _selectedRichImage, _setRichChecklistItemChecked, setRichInlineCodeTypingArmed } from './richOperations.js';
-import { _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from './selectionToolbar.js';
+import { _followRichSelectionToolbarLayout, _hideRichSelectionToolbar, _richSelectionToolbar, _scheduleRichSelectionToolbar } from './selectionToolbar.js';
 import { _applyRichBlockInputRule, _chooseRichSlashCommand, _hideRichSlashMenu, _renderRichSlashMenu, _richSlashActiveIndex, _richSlashContext, _richSlashMenu, _syncRichSlashMenu, setRichSlashActiveIndex } from './slashMenu.js';
 import { captureVisualBaseline, cleanMarkdownPasteHtml, hideMarkdownCompatBanner, isMarkdownVisualModeActive, isVisualMarkdownDoc, renderMarkdownCompatBanner, renderMarkdownIntoVisualRich, restoreVisualCaret, unbindVisualSurface } from './markdownVisualSync.js';
 
@@ -184,27 +184,37 @@ export function _wireEmailRichbody(rich) {
       clearTimeout(visualStatusTimer);
       unbindVisualSurface(rich);
     }, { once: true });
-    rich.addEventListener('compositionstart', () => { rich._isComposing = true; });
+    // Markdown Visual mode defers synchronization until an IME composition ends. HTML
+    // and email editors keep their historical per-input behavior.
+    rich.addEventListener('compositionstart', () => { rich._isComposing = isMarkdownVisualModeActive(); });
     rich.addEventListener('compositionend', () => {
+      if (!rich._isComposing) return;
       rich._isComposing = false;
       rich.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText' }));
     });
     rich.addEventListener('input', (event) => {
-      if (event.isComposing || rich._isComposing) return;
+      const mdVisual = isMarkdownVisualModeActive();
+      if (rich._isComposing || (mdVisual && event.isComposing)) return;
       if (_richInlineCodeTypingArmed) {
         document.execCommand('styleWithCSS', false, false);
         setRichInlineCodeTypingArmed(false);
       }
       if (_activeRichImage && !_activeRichImage.isConnected) _clearRichImageSelection();
-      const sel = window.getSelection();
-      const anchor = sel?.anchorNode;
-      const anchorEl = anchor?.nodeType === 1 ? anchor : anchor?.parentElement;
-      const activeBlock = anchorEl?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre,table,figure');
-      const normTarget = (activeBlock && rich.contains(activeBlock)) ? activeBlock : rich;
-
-      if (rich.querySelector('figure.richtext-image')) _normalizeRichTextImages(normTarget);
-      if (rich.querySelector('ul.rich-checklist')) _normalizeRichChecklists(normTarget);
-      if (normTarget.querySelector('code, [data-editor-inline-code-token]')) _normalizeRichInlineCode(normTarget);
+      if (mdVisual) {
+        // Only the block under the caret can have changed; keep large documents responsive.
+        const sel = window.getSelection();
+        const anchor = sel?.anchorNode;
+        const anchorEl = anchor?.nodeType === 1 ? anchor : anchor?.parentElement;
+        const activeBlock = anchorEl?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre,table,figure');
+        const normTarget = (activeBlock && rich.contains(activeBlock)) ? activeBlock : rich;
+        if (rich.querySelector('figure.richtext-image')) _normalizeRichTextImages(normTarget);
+        if (rich.querySelector('ul.rich-checklist')) _normalizeRichChecklists(normTarget);
+        if (normTarget.querySelector('code, [data-editor-inline-code-token]')) _normalizeRichInlineCode(normTarget);
+      } else {
+        _normalizeRichTextImages(rich);
+        _normalizeRichChecklists(rich);
+        _normalizeRichInlineCode(rich);
+      }
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
       if (_selections.length) clearSelection({ preserveCaret: true });
@@ -218,7 +228,7 @@ export function _wireEmailRichbody(rich) {
       const pane = rich.closest('#doc-editor-pane');
       if (doc && (_isRichTextLang(doc.language) || isVisualMarkdownDoc(doc)) && !(doc.title || '').trim()
           && rich.isConnected && (!pane || (pane.isConnected && pane.dataset.activeDocumentId === docId))) {
-        scheduleAutoTitle(rich.textContent || '', docId, 500);
+        scheduleAutoTitle((mdVisual ? rich.textContent : rich.innerText) || '', docId, 500);
       }
       clearTimeout(visualStatusTimer);
       if (isMarkdownVisualModeActive()) {
@@ -231,7 +241,7 @@ export function _wireEmailRichbody(rich) {
         }, 150);
       } else {
         _scheduleDocumentStats();
-        _scheduleDocumentOutline();
+        _refreshDocumentOutline();
       }
       _scheduleRichSelectionToolbar(rich);
       _syncRichSlashMenu(rich);
@@ -424,7 +434,7 @@ export function _wireEmailRichbody(rich) {
       _setRichChecklistItemChecked(rich, item, item.dataset.checked !== 'true');
     });
     rich.addEventListener('keydown', (e) => {
-      if (e.isComposing || e.keyCode === 229) return;
+      if ((e.isComposing || e.keyCode === 229) && isMarkdownVisualModeActive()) return;
       if (_richSlashMenu) {
         const commandCount = _richSlashMenu._commands?.length || 0;
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
@@ -460,29 +470,26 @@ export function _wireEmailRichbody(rich) {
         return;
       }
       const liveSelection = window.getSelection?.();
-      const hasLiveSelection = Boolean(
-        liveSelection
-        && !liveSelection.isCollapsed
-        && liveSelection.rangeCount
-        && rich.contains(liveSelection.anchorNode)
-      );
-      if (e.key === 'Escape' && hasLiveSelection) {
-        const mdVisual = isMarkdownVisualModeActive();
-        if (mdVisual) {
-          if (!_hasLayeredDocUi()) {
-            e.preventDefault();
-            e.stopPropagation();
-            liveSelection.collapseToEnd();
-            clearSelection({ preserveCaret: true });
-            return;
-          }
-        } else if (_richSelectionToolbar) {
+      if (e.key === 'Escape' && isMarkdownVisualModeActive()) {
+        const hasLiveSelection = Boolean(
+          liveSelection
+          && !liveSelection.isCollapsed
+          && liveSelection.rangeCount
+          && rich.contains(liveSelection.anchorNode)
+        );
+        if (hasLiveSelection && !_hasLayeredDocUi()) {
           e.preventDefault();
           e.stopPropagation();
           liveSelection.collapseToEnd();
-          _hideRichSelectionToolbar();
+          clearSelection({ preserveCaret: true });
           return;
         }
+      } else if (e.key === 'Escape' && _richSelectionToolbar && liveSelection && !liveSelection.isCollapsed) {
+        e.preventDefault();
+        e.stopPropagation();
+        liveSelection.collapseToEnd();
+        _hideRichSelectionToolbar();
+        return;
       }
       if (_activeRichImage && (e.key === 'Delete' || e.key === 'Backspace')) {
         e.preventDefault();
@@ -524,7 +531,12 @@ export function _wireEmailRichbody(rich) {
       if (mod && e.altKey && !e.shiftKey && /^[0-6]$/.test(key)) action = key === '0' ? 'paragraph' : `h${key}`;
       else if (mod && !e.altKey && key === 'b') action = 'bold';
       else if (mod && !e.altKey && key === 'i') action = 'italic';
-      else if (!mdVisual && mod && !e.altKey && key === 'u') action = 'underline';
+      else if (mod && !e.altKey && key === 'u') {
+        // Markdown has no underline. Consume the key so the browser's native
+        // contenteditable underline cannot add formatting the source cannot hold.
+        if (mdVisual) { e.preventDefault(); return; }
+        action = 'underline';
+      }
       else if (mod && !e.altKey && key === 'k') action = 'link';
       else if (mod && e.shiftKey && key === 'x') action = 'strike';
       else if (mod && e.shiftKey && key === '5') action = 'strike';
@@ -543,7 +555,9 @@ export function _wireEmailRichbody(rich) {
       if (action) {
         e.preventDefault();
         // A deliberate keypress is never a duplicate click; held-key auto-repeat
-        // keeps the toolbar's duplicate guard.
+        // keeps the toolbar's duplicate guard. Shared fix: two quick Ctrl+B presses
+        // are an intended on/off toggle in rich text as well (pinned by
+        // test_rapid_keyboard_toggles_are_not_swallowed_by_toolbar_duplicate_guard).
         applyMdFormat(action, { bypassDuplicateGuard: !e.repeat });
         return;
       }
@@ -577,7 +591,7 @@ export function _wireEmailRichbody(rich) {
         }
         let inList = false;
         try { inList = document.queryCommandState('insertOrderedList') || document.queryCommandState('insertUnorderedList'); } catch (_) {}
-        if (!inList && anchorEl) {
+        if (!inList && mdVisual && anchorEl) {
           inList = Boolean(anchorEl.closest('li, ul, ol'));
         }
         if (inList) {
@@ -586,22 +600,6 @@ export function _wireEmailRichbody(rich) {
         }
       }
     });
-    // A floating toolbar can intercept a native drag that crosses its box.
-    // Wait for the pointer gesture to finish before showing the toolbar.
-    rich.addEventListener('pointerdown', event => {
-      if (!event.isPrimary || event.button !== 0) return;
-      rich._selectionPointerId = event.pointerId;
-      _hideRichSelectionToolbar();
-    });
-    const finishPointerSelection = event => {
-      if (rich._selectionPointerId == null
-          || (event.type !== 'blur' && rich._selectionPointerId !== event.pointerId)) return;
-      rich._selectionPointerId = null;
-      _scheduleRichSelectionToolbar(rich);
-    };
-    for (const eventName of ['pointerup', 'pointercancel', 'blur']) {
-      window.addEventListener(eventName, finishPointerSelection, { passive: true, signal: editorSignal });
-    }
     // selectionchange fires on the document; filter to selections inside rich.
     document.addEventListener('selectionchange', () => {
       const sel = window.getSelection();
@@ -614,40 +612,14 @@ export function _wireEmailRichbody(rich) {
       }
       if (!sel || !sel.rangeCount || !rich.contains(sel.anchorNode)) _hideRichSlashMenu();
     }, { signal: editorSignal });
-    let resizeRepositionTimer = null;
-    let resizeRepositionTimer2 = null;
-    const repositionSelectionToolbar = () => {
-      if (!isMarkdownVisualModeActive()) {
-        _scheduleRichSelectionToolbar(rich);
-        clearTimeout(resizeRepositionTimer);
-        clearTimeout(resizeRepositionTimer2);
-        resizeRepositionTimer = setTimeout(() => _scheduleRichSelectionToolbar(rich), 120);
-        resizeRepositionTimer2 = setTimeout(() => _scheduleRichSelectionToolbar(rich), 280);
-      }
-    };
-    editorSignal?.addEventListener('abort', () => {
-      clearTimeout(resizeRepositionTimer);
-      clearTimeout(resizeRepositionTimer2);
-    }, { once: true });
-    document.addEventListener('animationend', repositionSelectionToolbar, { signal: editorSignal });
-    document.addEventListener('transitionend', repositionSelectionToolbar, { signal: editorSignal });
-    window.addEventListener('resize', repositionSelectionToolbar, { passive: true, signal: editorSignal });
-    // Capture scroll events from editor and ancestor scroll containers as well
-    // as page scrolling. One RAF scheduler coalesces bursts into one measure.
-    window.addEventListener('scroll', repositionSelectionToolbar, { passive: true, capture: true, signal: editorSignal });
-    window.visualViewport?.addEventListener('resize', repositionSelectionToolbar, { passive: true, signal: editorSignal });
-    window.visualViewport?.addEventListener('scroll', repositionSelectionToolbar, { passive: true, signal: editorSignal });
-    if (typeof ResizeObserver !== 'undefined') {
-      const toolbarLayoutObserver = new ResizeObserver(repositionSelectionToolbar);
-      toolbarLayoutObserver.observe(rich);
-      if (rich.parentElement) toolbarLayoutObserver.observe(rich.parentElement);
-      const pane = rich.closest('#doc-editor-pane');
-      if (pane) toolbarLayoutObserver.observe(pane);
-      for (const control of [document.getElementById('doc-md-toolbar'), document.getElementById('doc-find-bar'), document.getElementById('doc-actions-footer')]) {
-        if (control) toolbarLayoutObserver.observe(control);
-      }
-      editorSignal?.addEventListener('abort', () => toolbarLayoutObserver.disconnect(), { once: true });
-    }
+    window.addEventListener('resize', () => {
+      _scheduleRichSelectionToolbar(rich);
+      _followRichSelectionToolbarLayout(rich);
+    }, { passive: true, signal: editorSignal });
+    window.visualViewport?.addEventListener('resize', () => {
+      _scheduleRichSelectionToolbar(rich);
+      _followRichSelectionToolbarLayout(rich);
+    }, { passive: true, signal: editorSignal });
     rich._syncActive = syncActive;
   }
 

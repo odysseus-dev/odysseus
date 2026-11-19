@@ -320,6 +320,10 @@ export function _toggleRichChecklist(rich) {
     const insertedItem = _richSelectionListItem(rich);
     const insertedList = insertedItem?.parentElement;
     if (!insertedList) return false;
+    // Shared fix, kept for every rich editor: when the browser merges the new item into
+    // an adjacent list, only the new item becomes a checklist. Converting the whole
+    // neighbouring bullet list was wrong in rich text too (pinned by
+    // test_block_shortcuts_exit_quotes_and_keep_adjacent_list_types).
     const siblings = _richChecklistItems(insertedList).filter(item => item !== insertedItem);
     if (!siblings.length) {
       insertedList.classList.add('rich-checklist');

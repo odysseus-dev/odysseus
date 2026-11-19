@@ -65,6 +65,9 @@ export function _applyRichBlockInputRule(rich) {
     if (element.closest('pre, blockquote, td, th')) return false;
     const block = element.closest('p, div');
     if (!block || (block !== rich && !rich.contains(block))) return false;
+    // Text typed straight into an empty editor has no wrapping block. Only Markdown
+    // Visual applies input rules there; other editors never did.
+    if (block === rich && !rich.classList.contains('markdown-visual-mode')) return false;
     const markerRange = document.createRange();
     try {
       if (block === rich) {

@@ -13,6 +13,8 @@ export let _richSelectionToolbar = null;
 
 let _richSelectionToolbarFrame = 0;
 
+let _richSelectionToolbarFollowFrame = 0;
+
 let _richSelectionToolbarRange = null;
 
 export function _hideRichSelectionToolbar() {
@@ -50,44 +52,22 @@ function _richSelectionToolbarButton(action, label, html, title) {
   }
 
 function _ensureRichSelectionToolbar(rich) {
-    const isMdVisual = rich?.classList?.contains('markdown-visual-mode');
-    if (_richSelectionToolbar?.isConnected) {
-      if (_richSelectionToolbar._isMdVisual !== isMdVisual) {
-        _richSelectionToolbar.remove();
-        _richSelectionToolbar = null;
-      } else {
-        return _richSelectionToolbar;
-      }
-    }
+    if (_richSelectionToolbar?.isConnected) return _richSelectionToolbar;
     const toolbar = document.createElement('div');
     toolbar.id = 'doc-rich-selection-toolbar';
     toolbar.className = 'doc-rich-selection-toolbar';
-    toolbar._isMdVisual = isMdVisual;
     toolbar.setAttribute('role', 'toolbar');
     toolbar.setAttribute('aria-label', 'Format selected text');
-
-    const buttons = [
+    toolbar.append(
       _richSelectionToolbarButton('bold', 'Bold', '<b>B</b>', 'Bold (Ctrl+B)'),
       _richSelectionToolbarButton('italic', 'Italic', '<i>I</i>', 'Italic (Ctrl+I)'),
-    ];
-
-    if (!isMdVisual) {
-      buttons.push(_richSelectionToolbarButton('underline', 'Underline', '<u>U</u>', 'Underline (Ctrl+U)'));
-    }
-
-    buttons.push(_richSelectionToolbarButton('strike', 'Strikethrough', '<s>S</s>', 'Strikethrough (Ctrl+Shift+X)'));
-    buttons.push(_richSelectionToolbarButton('code', 'Inline code', '<code>&lt;/&gt;</code>', 'Inline code (Ctrl+`)'));
-    buttons.push(_richSelectionToolbarButton('link', 'Link', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>'));
-
-    if (!isMdVisual) {
-      buttons.push(_richSelectionToolbarButton('highlight:#fef08a', 'Highlight', '<svg class="rich-highlight-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-7-7-8.5 8.5 7 7Z"/></svg>'));
-    }
-
-    buttons.push(
+      _richSelectionToolbarButton('underline', 'Underline', '<u>U</u>', 'Underline (Ctrl+U)'),
+      _richSelectionToolbarButton('strike', 'Strikethrough', '<s>S</s>', 'Strikethrough'),
+      _richSelectionToolbarButton('link', 'Link', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>'),
+      _richSelectionToolbarButton('highlight:#fef08a', 'Highlight', '<svg class="rich-highlight-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-7-7-8.5 8.5 7 7Z"/></svg>'),
       _richSelectionToolbarButton('insert-image', 'Add image', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/><path d="M19 5v6M16 8h6"/></svg>'),
       _richSelectionToolbarButton('removeformat', 'Clear formatting', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M12 5v14M8 19h8"/><path d="m4 4 16 16"/></svg>')
     );
-    toolbar.append(...buttons);
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'doc-rich-selection-close';
@@ -130,6 +110,7 @@ function _ensureRichSelectionToolbar(rich) {
 
 function _renderRichSelectionToolbar(rich) {
     _richSelectionToolbarFrame = 0;
+    // Markdown Visual mode uses the fixed Markdown toolbar, never this floating one.
     if (!rich?.isConnected || rich.style.display === 'none' || rich.classList.contains('markdown-visual-mode')) {
       _hideRichSelectionToolbar();
       return;
@@ -169,6 +150,7 @@ function _renderRichSelectionToolbar(rich) {
 
     _richSelectionToolbarRange = range.cloneRange();
     const toolbar = _ensureRichSelectionToolbar(rich);
+    toolbar.querySelectorAll('[data-rich-selection-action]').forEach(button => button.classList.remove('is-active'));
     const activeCommands = {
       bold: 'bold',
       italic: 'italic',
@@ -183,33 +165,17 @@ function _renderRichSelectionToolbar(rich) {
     }
     toolbar.querySelector('[data-rich-selection-action="link"]')
       ?.classList.toggle('is-active', !!_richLinkAtRange(rich, range));
-    const isCode = Boolean(
-      range.startContainer?.parentElement?.closest?.('code, [data-editor-inline-code-token]')
-      || range.endContainer?.parentElement?.closest?.('code, [data-editor-inline-code-token]')
-    );
-    toolbar.querySelector('[data-rich-selection-action="code"]')?.classList.toggle('is-active', isCode);
     const clearButton = toolbar.querySelector('[data-rich-selection-action="removeformat"]');
     if (clearButton) clearButton.style.display = _richSelectionHasFormatting(rich, range) ? '' : 'none';
 
-    const isCurrentlyVisible = toolbar.style.visibility !== 'hidden' && toolbar.style.display !== 'none' && Boolean(toolbar.style.left);
-    if (!isCurrentlyVisible) {
-      toolbar.style.visibility = 'hidden';
-    }
+    toolbar.style.visibility = 'hidden';
     toolbar.style.zIndex = String(topPortalZ());
     const toolbarRect = toolbar.getBoundingClientRect();
     const richRect = rich.getBoundingClientRect();
-    const isMobileViewport = viewportWidth <= 768;
-    // The toolbar is portalled to body and positioned in viewport coordinates.
-    // Keep it within the usable viewport rather than constraining it to a
-    // narrow editor column or scroll container.
-    const safeLeft = viewportLeft + 8;
-    const safeRight = viewportRight - 8;
-    let safeTop = viewportTop + 8;
-    const footer = document.getElementById('doc-actions-footer');
-    const footerTop = footer?.getBoundingClientRect().top || viewportBottom;
-    const safeBottom = isMobileViewport
-      ? Math.min(viewportBottom - 8, richRect.bottom - 4)
-      : Math.min(viewportBottom, footerTop) - 8;
+    let safeLeft = Math.max(viewportLeft + 8, richRect.left + 4);
+    let safeRight = Math.min(viewportRight - 8, richRect.right - 4);
+    let safeTop = Math.max(viewportTop + 8, richRect.top + 4);
+    const safeBottom = Math.min(viewportBottom - 8, richRect.bottom - 4);
 
     // Toolbars and find controls sit immediately above the editable surface.
     // Keep the contextual formatter below any visible control that overlaps it.
@@ -224,6 +190,10 @@ function _renderRichSelectionToolbar(rich) {
         safeTop = blockerRect.bottom + 6;
       }
     }
+    if (safeRight - safeLeft < toolbarRect.width) {
+      safeLeft = viewportLeft + 8;
+      safeRight = viewportRight - 8;
+    }
     const maxLeft = Math.max(safeLeft, safeRight - toolbarRect.width);
     const left = Math.max(safeLeft, Math.min(
       anchorRect.left + anchorRect.width / 2 - toolbarRect.width / 2,
@@ -232,6 +202,7 @@ function _renderRichSelectionToolbar(rich) {
     const maxTop = Math.max(safeTop, safeBottom - toolbarRect.height);
     const above = selectionTop - toolbarRect.height - 8;
     const below = selectionBottom + 8;
+    const isMobileViewport = viewportWidth <= 768;
     // Mobile browsers own the Copy/Paste selection menu and do not expose
     // its geometry. Dock our formatter away from the selected range so the
     // two floating controls do not stack on top of each other.
@@ -242,21 +213,26 @@ function _renderRichSelectionToolbar(rich) {
         : (below + toolbarRect.height <= safeBottom ? below : Math.min(maxTop, below)));
     toolbar.style.left = `${left}px`;
     toolbar.style.top = `${Math.max(safeTop, top)}px`;
-    if (!isCurrentlyVisible) {
-      toolbar.style.visibility = '';
-    }
+    toolbar.style.visibility = '';
   }
 
 export function _scheduleRichSelectionToolbar(rich) {
     if (rich?.classList?.contains('markdown-visual-mode')) return;
-    if (rich?._selectionPointerId != null) return;
     if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
-    _richSelectionToolbarFrame = requestAnimationFrame(() => {
+    _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
+  }
+
+export function _followRichSelectionToolbarLayout(rich, duration = 360) {
+    if (rich?.classList?.contains('markdown-visual-mode')) return;
+    if (_richSelectionToolbarFollowFrame) cancelAnimationFrame(_richSelectionToolbarFollowFrame);
+    const deadline = performance.now() + duration;
+    const follow = () => {
       _renderRichSelectionToolbar(rich);
-      if (typeof window !== 'undefined' && window.innerWidth <= 768) {
-        setTimeout(() => {
-          if (_richSelectionToolbar?.isConnected) _renderRichSelectionToolbar(rich);
-        }, 280);
+      if (performance.now() < deadline) {
+        _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
+      } else {
+        _richSelectionToolbarFollowFrame = 0;
       }
-    });
+    };
+    _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
   }

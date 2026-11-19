@@ -180,7 +180,7 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
       ],
       alert: [
         ['alert:NOTE', 'Note', 'N'], ['alert:TIP', 'Tip', 'T'], ['alert:IMPORTANT', 'Important', '!'],
-        ['alert:WARNING', 'Warning', '⚠'], ['alert:CAUTION', 'Caution', '×'],
+        ['alert:WARNING', 'Warning', 'W'], ['alert:CAUTION', 'Caution', '×'],
       ],
       list: [
         ['ul', 'Bullet list', '•'],
@@ -296,7 +296,7 @@ export function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = 
     menu.style.left = rect.left + 'px';
     menu.style.zIndex = String(topPortalZ());
     const rich = _emailRichbodyActive();
-    if (kind === 'code' && !rich) items = items?.filter(([action]) => !action.startsWith('code-lang:'));
+    if (kind === 'code' && (!rich || String(activeDoc?.language || '').toLowerCase() !== 'markdown')) items = items?.filter(([action]) => !action.startsWith('code-lang:'));
     const selectedCell = rich ? _richSelectionCell(rich) : null;
     const selectedImage = rich ? _selectedRichImage(rich) : null;
     const currentActions = _richDropdownCurrentActions(kind, rich, selectedImage, selectedCell);

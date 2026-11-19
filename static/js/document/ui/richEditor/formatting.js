@@ -185,7 +185,8 @@ export function applyMdFormat(action, { bypassDuplicateGuard = false } = {}) {
         _richFormatRange = _range.cloneRange();
       }
       _savedFormatRichRange = null;
-      if (document.activeElement !== _rich) {
+      // Markdown Visual keeps the caret where it is; other editors refocus as before.
+      if (!mdVisual || document.activeElement !== _rich) {
         _rich.focus();
       }
       if (_richFormatRange && _selection) {
@@ -276,7 +277,7 @@ export function applyMdFormat(action, { bypassDuplicateGuard = false } = {}) {
           if (!_applyRichTableAction(_rich, action)) return;
         } else if (action.startsWith('linespacing:')) {
           if (!_applyRichLineSpacing(_rich, action.slice('linespacing:'.length))) return;
-        } else if (action === 'hr' || action.startsWith('separator:')) {
+        } else if ((mdVisual && action === 'hr') || action.startsWith('separator:')) {
           const style = action.startsWith('separator:') ? action.slice('separator:'.length) : 'solid';
           const border = style === 'double' ? '3px double currentColor' : `1px ${style} currentColor`;
           // Always create a real paragraph after the divider and put the caret

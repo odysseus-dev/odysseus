@@ -156,9 +156,12 @@ function showSelectionBadge() {
       badge.id = 'doc-selection-badge';
       badge.className = 'doc-selection-badge';
       badge.title = 'Selected regions — type in chat to edit';
-      const pane = document.getElementById('doc-editor-pane') || document.querySelector('.doc-editor-pane');
-      if (pane) {
-        pane.appendChild(badge);
+      // Sits directly under the formatting toolbar so it reads as part
+      // of the toolbar row, not buried in the page header. Falls back
+      // to the editor header if the toolbar isn't on screen.
+      const toolbar = document.getElementById('doc-md-toolbar');
+      if (toolbar && toolbar.parentNode) {
+        toolbar.insertAdjacentElement('afterend', badge);
       } else {
         const header = document.querySelector('.doc-editor-header');
         if (header) header.insertBefore(badge, header.firstChild);
@@ -494,23 +497,19 @@ function clearSelectionAt(index) {
   }
 
 export function getSelectionContext() {
-    if (_selections.length === 0) {
+    // Markdown Visual mode reads the live selection on demand. Other editors keep
+    // sending only selections they recorded, so a selection the user cleared is
+    // never resurrected from the surviving browser highlight.
+    if (_selections.length === 0 && isMarkdownVisualModeActive()) {
       const rich = _emailRichbodyActive();
-      if (rich) {
-        updateRichSelectionState(rich);
-      } else {
-        const ta = document.getElementById('doc-editor-textarea');
-        if (ta && ta.selectionStart !== ta.selectionEnd) {
-          updateSelectionState();
-        }
-      }
+      if (rich) updateRichSelectionState(rich);
     }
     if (_selections.length === 0) return null;
     // Re-anchor / drop stale selections before handing them to chat —
     // shipping text from a stale offset would mean the AI sees content
     // from a different region than what the user thinks they highlighted.
     const _ta = document.getElementById('doc-editor-textarea');
-    _validateSelections(_ta ? _ta.value : '');
+    if (_ta) _validateSelections(_ta.value);
     if (_selections.length === 0) return null;
     if (_selections.length === 1) {
       const ctx = _selections[0];
