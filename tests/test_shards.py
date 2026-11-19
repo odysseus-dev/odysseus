@@ -7,17 +7,26 @@ running a subset. They import only the module under test (a test-support
 module, not production code) and touch no filesystem.
 """
 from pathlib import Path
+import tempfile
+import json
 
 import pytest
 
 from tests._shards import (
+    DEFAULT_ITEM_DURATION_SECONDS,
     DEFAULT_ITEM_WEIGHT,
     DEFAULT_SHARD_COUNT,
+    MIN_FILE_DURATION_SECONDS,
+    MOBILE_LAYOUT_DURATION_SECONDS,
+    SLOW_ITEM_DURATION_SECONDS,
     SLOW_ITEM_WEIGHT,
     ShardSpec,
     ShardSpecError,
     accumulate_file_weights,
+    default_durations_path,
+    default_fixed_shard_loads,
     item_weight,
+    load_duration_manifest,
     parse_shard_spec,
     plan_shards,
     relative_file_key,
@@ -187,6 +196,87 @@ def test_shard_loads_account_for_every_file():
     assert sum(shard_loads(weights, plan_shards(weights, 2))) == 10.0
 
 
+def test_plan_shards_with_fixed_loads_offsets_asymmetric_workloads():
+    # 4 shards, shard 0 carries 48.0s fixed load (mobile layout)
+    # 400 test files with 1.0s weight each (total 400s)
+    # Total work = 400 + 48 = 448s, target load = 112s per shard.
+    # Shard 0 should receive 112 - 48 = 64 files.
+    # Shards 1, 2, 3 should each receive 112 files.
+    weights = even_weights(400, weight=1.0)
+    fixed_loads = {0: 48.0}
+    plan = plan_shards(weights, 4, fixed_loads=fixed_loads)
+
+    # Exhaustive and disjoint
+    all_files = [f for b in plan for f in b]
+    assert sorted(all_files) == sorted(weights.keys())
+    assert len(all_files) == len(weights)
+
+    # Shard 0 receives fewer files
+    assert len(plan[0]) == 64
+    assert len(plan[1]) == 112
+    assert len(plan[2]) == 112
+    assert len(plan[3]) == 112
+
+    # Total combined loads are balanced
+    total_loads = shard_loads(weights, plan, fixed_loads=fixed_loads)
+    assert total_loads == (112.0, 112.0, 112.0, 112.0)
+
+
+def test_plan_shards_preserves_exhaustive_disjoint_with_asymmetric_sequence():
+    weights = even_weights(55, weight=2.0)
+    fixed_loads = [10.0, 0.0, 5.0, 20.0]
+    plan = plan_shards(weights, 4, fixed_loads=fixed_loads)
+
+    assert len(plan) == 4
+    all_files = [f for b in plan for f in b]
+    assert sorted(all_files) == sorted(weights.keys())
+    assert len(all_files) == len(set(all_files))
+
+
+def test_default_fixed_shard_loads_matches_mobile_layout():
+    # When 4 shards and durations are active, shard 0 gets MOBILE_LAYOUT_DURATION_SECONDS
+    loads_durations = default_fixed_shard_loads(4, durations_active=True)
+    assert loads_durations == {0: MOBILE_LAYOUT_DURATION_SECONDS}
+
+    # When non-4 shards, returns None
+    assert default_fixed_shard_loads(6, durations_active=True) is None
+    assert default_fixed_shard_loads(1, durations_active=True) is None
+
+    # When duration manifest is not active, returns None to preserve legacy scheduling exactly
+    assert default_fixed_shard_loads(4, durations_active=False) is None
+
+
+def test_fallback_scheduling_matches_original_scheduler_exactly():
+    def original_plan(entries, count=4):
+        weights = {}
+        for file_key, is_slow in entries:
+            weights[file_key] = weights.get(file_key, 0.0) + (SLOW_ITEM_WEIGHT if is_slow else DEFAULT_ITEM_WEIGHT)
+        buckets = [set() for _ in range(count)]
+        loads = [0.0] * count
+        ordered = sorted(weights.items(), key=lambda item: (-item[1], item[0]))
+        for file_key, weight in ordered:
+            target = min(range(count), key=lambda index: (loads[index], index))
+            buckets[target].add(file_key)
+            loads[target] += weight
+        return tuple(frozenset(b) for b in buckets)
+
+    entries = []
+    for i in range(120):
+        is_slow = (i % 25 == 0)
+        items_count = 1 if is_slow else (5 + (i % 7))
+        for _ in range(items_count):
+            entries.append((f"tests/test_{i:03d}.py", is_slow))
+
+    weights = accumulate_file_weights(entries, durations=None)
+    fixed_loads = default_fixed_shard_loads(4, durations_active=False)
+    assert fixed_loads is None
+
+    current_plan = plan_shards(weights, 4, fixed_loads=fixed_loads)
+    baseline_plan = original_plan(entries, 4)
+
+    assert current_plan == baseline_plan
+
+
 # --- relative_file_key -------------------------------------------------------
 
 def test_key_is_relative_to_the_repository_root():
@@ -212,3 +302,906 @@ def test_default_shard_count_matches_the_ci_matrix():
             f"ci.yml does not run shard {index}/{DEFAULT_SHARD_COUNT}"
         )
     assert f'"{DEFAULT_SHARD_COUNT + 1}/' not in text
+
+
+# --- duration manifest loading and fallback ----------------------------------
+
+def test_load_duration_manifest_returns_none_when_file_missing(tmp_path):
+    missing_file = tmp_path / "nonexistent.json"
+    assert load_duration_manifest(path=missing_file) is None
+
+
+def test_load_duration_manifest_handles_malformed_json(tmp_path):
+    corrupt_file = tmp_path / "corrupt.json"
+    corrupt_file.write_text("{not valid json", encoding="utf-8")
+    assert load_duration_manifest(path=corrupt_file) is None
+
+
+def test_load_duration_manifest_handles_non_dict_json(tmp_path):
+    list_file = tmp_path / "list.json"
+    list_file.write_text("[1, 2, 3]", encoding="utf-8")
+    assert load_duration_manifest(path=list_file) is None
+
+
+def test_load_duration_manifest_rejects_unsupported_or_missing_version(tmp_path):
+    # Missing version
+    p1 = tmp_path / "no_version.json"
+    p1.write_text(json.dumps({"durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=p1) is None
+
+    # Unsupported version
+    p2 = tmp_path / "version_2.json"
+    p2.write_text(json.dumps({"version": 2, "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=p2) is None
+
+    # Non-integer version
+    p3 = tmp_path / "str_version.json"
+    p3.write_text(json.dumps({"version": "1", "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=p3) is None
+
+
+def test_load_duration_manifest_rejects_malformed_durations(tmp_path):
+    # Negative duration
+    p1 = tmp_path / "neg.json"
+    p1.write_text(json.dumps({"version": 1, "durations": {"tests/test_a.py": -1.5}}), encoding="utf-8")
+    assert load_duration_manifest(path=p1) is None
+
+    # String duration
+    p2 = tmp_path / "str.json"
+    p2.write_text(json.dumps({"version": 1, "durations": {"tests/test_a.py": "1.5"}}), encoding="utf-8")
+    assert load_duration_manifest(path=p2) is None
+
+    # Boolean duration
+    p3 = tmp_path / "bool.json"
+    p3.write_text(json.dumps({"version": 1, "durations": {"tests/test_a.py": True}}), encoding="utf-8")
+    assert load_duration_manifest(path=p3) is None
+
+    # Invalid file key (not under tests/)
+    p4 = tmp_path / "invalid_path.json"
+    p4.write_text(json.dumps({"version": 1, "durations": {"core/test_a.py": 1.5}}), encoding="utf-8")
+    assert load_duration_manifest(path=p4) is None
+
+    # Empty durations
+    p5 = tmp_path / "empty.json"
+    p5.write_text(json.dumps({"version": 1, "durations": {}}), encoding="utf-8")
+    assert load_duration_manifest(path=p5) is None
+
+
+def test_load_duration_manifest_parses_valid_version_1_manifest(tmp_path):
+    manifest_file = tmp_path / "valid.json"
+    content = {
+        "version": 1,
+        "revision": "abc1234",
+        "durations": {
+            "tests/test_fast.py": 0.05,
+            "tests/test_slow.py": 12.34,
+        },
+    }
+    manifest_file.write_text(json.dumps(content), encoding="utf-8")
+    result = load_duration_manifest(path=manifest_file)
+    assert result == {
+        "tests/test_fast.py": 0.05,
+        "tests/test_slow.py": 12.34,
+    }
+
+
+# --- accumulate_file_weights with duration manifest --------------------------
+
+def test_accumulate_file_weights_uses_measured_durations_when_profiled():
+    durations = {
+        "tests/test_a.py": 5.5,
+        "tests/test_b.py": 0.25,
+    }
+    entries = [
+        ("tests/test_a.py", False),
+        ("tests/test_a.py", False),
+        ("tests/test_b.py", True),  # Measured duration overrides slow marker
+    ]
+    weights = accumulate_file_weights(entries, durations=durations)
+    assert weights == {
+        "tests/test_a.py": 5.5,
+        "tests/test_b.py": 0.25,
+    }
+
+
+def test_accumulate_file_weights_falls_back_for_unprofiled_files_with_duration_manifest():
+    durations = {
+        "tests/test_known.py": 2.0,
+    }
+    entries = [
+        ("tests/test_known.py", False),
+        ("tests/test_new_fast.py", False),
+        ("tests/test_new_fast.py", False),
+        ("tests/test_new_slow.py", True),
+    ]
+    weights = accumulate_file_weights(entries, durations=durations)
+    assert weights == {
+        "tests/test_known.py": 2.0,
+        "tests/test_new_fast.py": pytest.approx(2 * DEFAULT_ITEM_DURATION_SECONDS),
+        "tests/test_new_slow.py": pytest.approx(SLOW_ITEM_DURATION_SECONDS),
+    }
+
+
+def test_accumulate_file_weights_preserves_legacy_heuristics_when_durations_none():
+    entries = [
+        ("tests/test_known.py", False),
+        ("tests/test_new_fast.py", False),
+        ("tests/test_new_fast.py", False),
+        ("tests/test_new_slow.py", True),
+    ]
+    weights = accumulate_file_weights(entries, durations=None)
+    assert weights == {
+        "tests/test_known.py": DEFAULT_ITEM_WEIGHT,
+        "tests/test_new_fast.py": 2 * DEFAULT_ITEM_WEIGHT,
+        "tests/test_new_slow.py": SLOW_ITEM_WEIGHT,
+    }
+
+
+def test_unprofiled_fast_tests_do_not_dominate_profiled_files():
+    durations = {
+        "tests/test_heavy.py": 5.0,
+    }
+    entries = [("tests/test_heavy.py", False)] + [("tests/test_unprofiled_fast.py", False) for _ in range(50)]
+    weights = accumulate_file_weights(entries, durations=durations)
+    assert weights["tests/test_heavy.py"] == 5.0
+    assert weights["tests/test_unprofiled_fast.py"] == pytest.approx(50 * DEFAULT_ITEM_DURATION_SECONDS)
+    assert weights["tests/test_unprofiled_fast.py"] < weights["tests/test_heavy.py"]
+
+
+def test_partially_populated_duration_manifest_partition_stability():
+    durations = {
+        "tests/test_a.py": 10.0,
+        "tests/test_b.py": 6.0,
+    }
+    entries = [
+        ("tests/test_a.py", False),
+        ("tests/test_b.py", False),
+        ("tests/test_c_unprofiled.py", False),
+        ("tests/test_d_unprofiled_slow.py", True),
+    ]
+    weights = accumulate_file_weights(entries, durations=durations)
+    plan = plan_shards(weights, count=2)
+    all_files = {f for shard in plan for f in shard}
+    assert all_files == {"tests/test_a.py", "tests/test_b.py", "tests/test_c_unprofiled.py", "tests/test_d_unprofiled_slow.py"}
+    assert len(plan[0] & plan[1]) == 0
+
+
+def test_load_duration_manifest_rejects_nan_and_inf(tmp_path):
+    manifest_file = tmp_path / "nan_inf.json"
+    manifest_file.write_text(json.dumps({
+        "version": 1,
+        "durations": {
+            "tests/test_valid.py": 1.5,
+            "tests/test_nan.py": float("nan"),
+        }
+    }), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_file) is None
+
+
+def test_accumulate_file_weights_enforces_minimum_positive_floor():
+    durations = {
+        "tests/test_instant.py": 0.0,
+    }
+    weights = accumulate_file_weights([("tests/test_instant.py", False)], durations=durations)
+    assert weights["tests/test_instant.py"] >= MIN_FILE_DURATION_SECONDS
+
+
+# --- duration telemetry generation utility tests -----------------------------
+
+def test_junit_xml_parsing_aggregates_file_durations(tmp_path):
+    from scripts.generate_shard_durations import parse_junit_xml
+
+    xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="pytest" tests="3" time="4.5">
+    <testcase classname="tests.test_one" file="tests/test_one.py" name="test_alpha" time="1.200"/>
+    <testcase classname="tests.test_one" file="tests/test_one.py" name="test_beta" time="0.800"/>
+    <testcase classname="tests.test_two" file="tests/test_two.py" name="test_gamma[1]" time="2.500"/>
+  </testsuite>
+</testsuites>
+"""
+    report_file = tmp_path / "junit.xml"
+    report_file.write_text(xml_content, encoding="utf-8")
+
+    durations = parse_junit_xml(report_file, repo_root=tmp_path)
+    assert durations["tests/test_one.py"] == pytest.approx(2.0, abs=1e-3)
+    assert durations["tests/test_two.py"] == pytest.approx(2.5, abs=1e-3)
+
+
+def test_telemetry_merge_with_existing():
+    from scripts.generate_shard_durations import merge_with_existing
+
+    existing = {
+        "tests/test_old.py": 1.0,
+        "tests/test_updated.py": 2.0,
+    }
+    updates = {
+        "tests/test_updated.py": 3.5,
+        "tests/test_new.py": 0.5,
+    }
+    merged = merge_with_existing(existing, updates)
+    assert merged == {
+        "tests/test_old.py": 1.0,
+        "tests/test_updated.py": 3.5,
+        "tests/test_new.py": 0.5,
+    }
+
+
+def test_manifest_roundtrip_writing_and_loading(tmp_path):
+    from scripts.generate_shard_durations import write_manifest
+
+    manifest_path = tmp_path / ".shard_durations.json"
+    data = {
+        "tests/test_z.py": 5.1234,
+        "tests/test_a.py": 1.9876,
+    }
+    write_manifest(data, manifest_path)
+
+    # Manifest file must exist and be valid JSON
+    assert manifest_path.is_file()
+
+    # Load with tests._shards loader
+    loaded = load_duration_manifest(path=manifest_path)
+    assert loaded is not None
+    assert loaded["tests/test_a.py"] == 1.988
+    assert loaded["tests/test_z.py"] == 5.123
+
+    # Check deterministic key ordering in serialized text
+    text = manifest_path.read_text(encoding="utf-8")
+    assert text.index("tests/test_a.py") < text.index("tests/test_z.py")
+
+
+def test_normalize_file_key_resolves_nested_classname(tmp_path):
+    from scripts.generate_shard_durations import normalize_file_key
+
+    # Create dummy test directory structure in tmp_path
+    tests_dir = tmp_path / "tests" / "sub"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_nested.py"
+    test_file.touch()
+
+    # Simulate classname tests.sub.test_nested.TestSuite.test_method
+    raw_from_classname = "tests/sub/test_nested/TestSuite.py"
+    resolved = normalize_file_key(raw_from_classname, repo_root=tmp_path)
+    assert resolved == "tests/sub/test_nested.py"
+
+    # Non-existent file under tests/ is rejected when repo_root has a tests/ dir
+    nonexistent = normalize_file_key("tests/sub/test_ghost.py", repo_root=tmp_path)
+    assert nonexistent is None
+
+
+def test_manifest_overwrite_safeguard(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+
+    # Initial manifest with 10 files
+    initial_data = {f"tests/test_{i:02d}.py": 1.0 for i in range(10)}
+    for f in initial_data:
+        (tmp_path / f).touch()
+    manifest_path.write_text(json.dumps({"version": 1, "durations": initial_data}), encoding="utf-8")
+
+    # Partial report with only 2 files (<50% of existing)
+    xml_content = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="pytest">
+    <testcase classname="tests.test_00" file="tests/test_00.py" time="1.5"/>
+    <testcase classname="tests.test_01" file="tests/test_01.py" time="2.0"/>
+  </testsuite>
+</testsuites>
+"""
+    report_file = tmp_path / "partial.xml"
+    report_file.write_text(xml_content, encoding="utf-8")
+
+    # Running without --merge or --force should exit with code 4 to prevent partial wipeout
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(report_file),
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    exit_code = main()
+    assert exit_code == 4
+
+    # Running with --merge should succeed and preserve other files
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(report_file),
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+        "--merge",
+    ])
+    exit_code_merge = main()
+    assert exit_code_merge == 0
+    loaded = json.loads(manifest_path.read_text(encoding="utf-8"))["durations"]
+    assert len(loaded) == 10
+    assert loaded["tests/test_00.py"] == 1.5
+
+
+def _create_shard_report(
+    shard_dir: Path,
+    shard_str: str,
+    testcases: list[tuple[str, float]],
+    commit_sha: str = "abc1234",
+    run_id: str = "run_100",
+    run_attempt: str = "1",
+    pytest_outcome: str = "success",
+    collected_files: list[str] | None = None,
+    include_collected_files: bool = True,
+) -> Path:
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    xml_lines = ['<?xml version="1.0" encoding="utf-8"?>', '<testsuites>', '  <testsuite name="pytest">']
+    for file_key, duration in testcases:
+        tc_name = Path(file_key).stem
+        xml_lines.append(f'    <testcase classname="{file_key.replace("/", ".").removesuffix(".py")}" file="{file_key}" name="{tc_name}" time="{duration:.3f}"/>')
+    xml_lines.extend(['  </testsuite>', '</testsuites>', ''])
+    xml_file = shard_dir / "pytest-report.xml"
+    xml_file.write_text("\n".join(xml_lines), encoding="utf-8")
+
+    meta: dict[str, object] = {
+        "schema_version": 1,
+        "shard": shard_str,
+        "commit_sha": commit_sha,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "pytest_outcome": pytest_outcome,
+    }
+    if include_collected_files:
+        if collected_files is not None:
+            meta["collected_files"] = collected_files
+        else:
+            if shard_str == "1/1":
+                meta["collected_files"] = [tc[0] for tc in testcases]
+            else:
+                meta["collected_files"] = ["tests/test_a.py", "tests/test_b.py"]
+    meta_file = shard_dir / "pytest-meta.json"
+    meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return xml_file
+
+
+def test_authoritative_regeneration_requires_sidecars(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    report_file = tmp_path / "report1.xml"
+    report_file.write_text("<testsuites/>", encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(report_file),
+        "--authoritative",
+        "--expected-shards", "1",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_duplicate_shards(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    # Two reports for shard 1/2
+    r1 = _create_shard_report(tmp_path / "s1_a", "1/2", [("tests/test_a.py", 1.0)])
+    r2 = _create_shard_report(tmp_path / "s1_b", "1/2", [("tests/test_b.py", 2.0)])
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_missing_shards(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    # Shard 1/3 and 2/3 provided, but 3/3 missing
+    r1 = _create_shard_report(tmp_path / "s1", "1/3", [("tests/test_a.py", 1.0)])
+    r2 = _create_shard_report(tmp_path / "s2", "2/3", [("tests/test_b.py", 2.0)])
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "3",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_failed_shard_executions(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    # Shard 2 failed
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)])
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], pytest_outcome="failure")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_mixed_revisions(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], commit_sha="rev_111")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], commit_sha="rev_222")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 5
+
+
+def test_authoritative_regeneration_rejects_mixed_run_ids(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], run_id="run_aaa")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], run_id="run_bbb")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_missing_pytest_collected_files(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+
+    # Repo has 3 python test files
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+    (tests_dir / "test_c.py").touch()
+
+    # Reports cover only test_a and test_b
+    expected_inventory = ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], collected_files=expected_inventory)
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], collected_files=expected_inventory)
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_malformed_xml_timing(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+
+    # XML testcase without time attribute
+    s1_dir = tmp_path / "s1"
+    s1_dir.mkdir()
+    xml_file = s1_dir / "pytest-report.xml"
+    xml_file.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="pytest">
+    <testcase classname="tests.test_a" file="tests/test_a.py" name="test_a"/>
+  </testsuite>
+</testsuites>
+""", encoding="utf-8")
+    meta = {
+        "schema_version": 1,
+        "shard": "1/1",
+        "commit_sha": "abc1234",
+        "run_id": "run_1",
+        "run_attempt": "1",
+        "pytest_outcome": "success",
+        "collected_files": ["tests/test_a.py"],
+    }
+    (s1_dir / "pytest-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(xml_file),
+        "--authoritative",
+        "--expected-shards", "1",
+        "--repo-root", str(tmp_path),
+    ])
+    # Must fail rather than silently converting to 0.0
+    assert main() == 1
+
+
+def test_authoritative_regeneration_preserves_existing_manifest_on_failure(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+    initial_content = json.dumps({"version": 1, "durations": {"tests/test_preserved.py": 9.99}})
+    manifest_path.write_text(initial_content, encoding="utf-8")
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], commit_sha="rev_111")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], commit_sha="rev_222")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    exit_code = main()
+    assert exit_code == 5
+    # Manifest content unchanged
+    assert manifest_path.read_text(encoding="utf-8") == initial_content
+
+
+def test_authoritative_regeneration_success(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.250)], commit_sha="rev_valid", run_id="run_valid")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 3.750)], commit_sha="rev_valid", run_id="run_valid")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--revision", "rev_valid",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 0
+
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert data["version"] == 1
+    assert data["revision"] == "rev_valid"
+    assert data["run_id"] == "run_valid"
+    assert data["shard_count"] == 2
+    assert data["test_files_count"] == 2
+    assert data["durations"] == {
+        "tests/test_a.py": 1.250,
+        "tests/test_b.py": 3.750,
+    }
+
+    # Verify loader parses it cleanly
+    loaded = load_duration_manifest(path=manifest_path)
+    assert loaded == {
+        "tests/test_a.py": 1.250,
+        "tests/test_b.py": 3.750,
+    }
+
+
+def test_authoritative_regeneration_rejects_missing_run_attempt(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], run_attempt="")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], run_attempt="1")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_mixed_run_attempts(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], run_attempt="1")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], run_attempt="2")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_overlapping_test_files(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import aggregate_reports, main
+
+    # Two distinct shard reports both containing tests/test_a.py
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 5.0)])
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_a.py", 5.0)])
+
+    # Direct aggregate_reports call with strict=True must raise ValueError
+    with pytest.raises(ValueError, match="Overlapping test file detected across shards"):
+        aggregate_reports([r1, r2], repo_root=tmp_path, strict=True)
+
+    # CLI in authoritative mode must exit with error
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 1
+
+
+def test_aggregate_reports_sums_multiple_testcases_in_same_file_and_shard(tmp_path):
+    from scripts.generate_shard_durations import aggregate_reports
+
+    s1_dir = tmp_path / "s1"
+    s1_dir.mkdir(parents=True)
+    xml_file = s1_dir / "pytest-report.xml"
+    xml_file.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="pytest">
+    <testcase classname="tests.test_a" file="tests/test_a.py" name="test_one" time="2.500"/>
+    <testcase classname="tests.test_a" file="tests/test_a.py" name="test_two" time="1.500"/>
+  </testsuite>
+</testsuites>
+""", encoding="utf-8")
+
+    result = aggregate_reports([xml_file], repo_root=tmp_path, strict=True)
+    assert result == {"tests/test_a.py": 4.0}
+
+
+def test_authoritative_regeneration_uses_actual_pytest_collection_inventory(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+
+    # Repo has active test files, plus an uncollected empty file and a node test file
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+    (tests_dir / "test_empty_no_tests.py").touch()
+    (tests_dir / "component.test.mjs").touch()
+
+    # Both shard sidecars specify exact pytest collected file inventory
+    actual_inventory = ["tests/test_a.py", "tests/test_b.py"]
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2", [("tests/test_a.py", 1.250)],
+        commit_sha="rev_valid", run_id="run_valid", run_attempt="1",
+        collected_files=actual_inventory,
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2", [("tests/test_b.py", 3.750)],
+        commit_sha="rev_valid", run_id="run_valid", run_attempt="1",
+        collected_files=actual_inventory,
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--revision", "rev_valid",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    # Must succeed because collection inventory matches reports exactly
+    assert main() == 0
+
+    # If sidecar expects a collected file that was not executed, must reject with code 2
+    r2_incomplete = _create_shard_report(
+        tmp_path / "s2_incomplete", "2/2", [("tests/test_b.py", 3.750)],
+        commit_sha="rev_valid", run_id="run_valid", run_attempt="1",
+        collected_files=["tests/test_a.py", "tests/test_b.py", "tests/test_unexecuted.py"],
+    )
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2_incomplete),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--revision", "rev_valid",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_empty_inventories_on_all_shards(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+    initial_content = json.dumps({"version": 1, "durations": {"tests/test_p.py": 1.0}})
+    manifest_path.write_text(initial_content, encoding="utf-8")
+
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Both shards provide an empty list for collected_files
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], collected_files=[])
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], collected_files=[])
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    # Must reject rather than accepting empty inventory
+    assert main() == 2
+    assert manifest_path.read_text(encoding="utf-8") == initial_content
+
+
+def test_authoritative_regeneration_rejects_absent_inventories_on_all_shards(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+    initial_content = json.dumps({"version": 1, "durations": {"tests/test_p.py": 1.0}})
+    manifest_path.write_text(initial_content, encoding="utf-8")
+
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Both shards completely omit collected_files from their sidecars
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], include_collected_files=False)
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], include_collected_files=False)
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    # Must reject and must not fall back to filename discovery
+    assert main() == 2
+    assert manifest_path.read_text(encoding="utf-8") == initial_content
+
+
+def test_authoritative_regeneration_rejects_inconsistent_inventories_across_shards(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+    (tests_dir / "test_c.py").touch()
+
+    # Shard 1 collected test_a and test_b; Shard 2 collected test_a and test_c
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)],
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)],
+        collected_files=["tests/test_a.py", "tests/test_c.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_malformed_inventory_types(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Case 1: string instead of list
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], collected_files="not-a-list")
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], collected_files=["tests/test_a.py", "tests/test_b.py"])
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+    # Case 2: non-string items inside list
+    r1_nonstr = _create_shard_report(tmp_path / "s1_nonstr", "1/2", [("tests/test_a.py", 1.0)], collected_files=[123, 456])
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1_nonstr), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_validates_collected_inventory_cli_consistency(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    sidecar_inventory = ["tests/test_a.py", "tests/test_b.py"]
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)], collected_files=sidecar_inventory)
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)], collected_files=sidecar_inventory)
+
+    # Inconsistent CLI inventory
+    cli_inv_file = tmp_path / "cli-inventory.json"
+    cli_inv_file.write_text(json.dumps(["tests/test_a.py", "tests/test_c.py"]), encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--collected-inventory", str(cli_inv_file),
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+    # Matching CLI inventory succeeds
+    cli_inv_file.write_text(json.dumps(sidecar_inventory), encoding="utf-8")
+    assert main() == 0
+
+
+def test_authoritative_regeneration_fails_when_any_shard_has_missing_inventory(tmp_path, monkeypatch):
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Shard 1 has valid inventory, Shard 2 omits it
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)],
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)],
+        include_collected_files=False,
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2

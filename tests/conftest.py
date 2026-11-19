@@ -152,18 +152,42 @@ def pytest_collection_modifyitems(config, items):
     if spec is None or spec.selects_everything:
         return
 
-    from tests._shards import accumulate_file_weights, plan_shards, relative_file_key
+    from tests._shards import (
+        accumulate_file_weights,
+        default_fixed_shard_loads,
+        load_duration_manifest,
+        plan_shards,
+        relative_file_key,
+    )
 
     root = getattr(config, "rootpath", None)
     keys = [
         relative_file_key(getattr(item, "path", None) or item.fspath, root)
         for item in items
     ]
+
+    # Record the actual pytest-collected suite file inventory before shard deselection
+    # when requested, so authoritative duration generation verifies exact collection coverage.
+    export_path = os.environ.get("PYTEST_COLLECTION_EXPORT")
+    if export_path:
+        import json
+        from pathlib import Path
+        ep = Path(export_path)
+        ep.parent.mkdir(parents=True, exist_ok=True)
+        ep.write_text(json.dumps(sorted(set(keys))) + "\n", encoding="utf-8")
+    elif os.environ.get("RUNNER_TEMP"):
+        import json
+        from pathlib import Path
+        ep = Path(os.environ["RUNNER_TEMP"]) / "pytest-collection.json"
+        ep.write_text(json.dumps(sorted(set(keys))) + "\n", encoding="utf-8")
+
+    durations = load_duration_manifest(root=root)
     weights = accumulate_file_weights(
-        (key, item.get_closest_marker("slow") is not None)
-        for key, item in zip(keys, items)
+        ((key, item.get_closest_marker("slow") is not None) for key, item in zip(keys, items)),
+        durations=durations,
     )
-    selected_files = plan_shards(weights, spec.count)[spec.index - 1]
+    fixed_loads = default_fixed_shard_loads(spec.count, durations_active=durations is not None)
+    selected_files = plan_shards(weights, spec.count, fixed_loads=fixed_loads)[spec.index - 1]
 
     selected, deselected = [], []
     for key, item in zip(keys, items):
