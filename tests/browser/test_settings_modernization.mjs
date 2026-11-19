@@ -26,6 +26,21 @@ const forbiddenReport = {};
 let browser = null;
 const results = [];
 
+const PROFILE = process.env.ODYSSEUS_PROFILE_SETTINGS === '1' || process.env.ODYSSEUS_PROFILE_BROWSER === '1';
+const scenarioTimings = [];
+
+async function timeScenario(name, fn) {
+  if (!PROFILE) return fn();
+  const t0 = performance.now();
+  try {
+    return await fn();
+  } finally {
+    const elapsed = Math.round(performance.now() - t0);
+    scenarioTimings.push({ name, durationMs: elapsed });
+    console.log(`[scenario-timing] ${name}: ${elapsed}ms`);
+  }
+}
+
 function check(name, pass, detail = '') {
   results.push({ name, pass: Boolean(pass), detail });
   console.log(`${pass ? 'PASS' : 'FAIL'} ${name}${!pass && detail ? ` :: ${detail}` : ''}`);
@@ -62,7 +77,7 @@ function freePort() {
   });
 }
 
-async function waitFor(url, timeoutMs = 40000) {
+async function waitFor(url, timeoutMs = 40000, instance = null) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -71,7 +86,8 @@ async function waitFor(url, timeoutMs = 40000) {
     } catch (_) {}
     await new Promise(r => setTimeout(r, 300));
   }
-  throw new Error(`Server did not start at ${url}`);
+  const extra = instance ? `\nServer output:\n${instance.log()}` : '';
+  throw new Error(`Server did not start at ${url}${extra}`);
 }
 
 async function launchInstance(name, { authEnabled }) {
@@ -118,7 +134,7 @@ async function launchInstance(name, { authEnabled }) {
   proc.stderr.on('data', d => { log += d; });
   const instance = { name, root, dbPath, proc, baseUrl: `http://127.0.0.1:${port}`, log: () => log };
   instances.push(instance);
-  await waitFor(`${instance.baseUrl}/api/health`);
+  await waitFor(`${instance.baseUrl}/api/health`, 40000, instance);
   return instance;
 }
 
@@ -210,16 +226,17 @@ async function pageAs(instance, cookie, viewport = { width: 1280, height: 860 },
   if (typeof options.beforeGoto === 'function') await options.beforeGoto(page);
   await page.goto(`${instance.baseUrl}/`, { waitUntil: 'domcontentloaded' });
   if (options.waitForStatus !== false) {
-    await page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
+    await page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 30000 });
   } else {
-    await page.waitForSelector('#user-bar-settings', { state: 'attached', timeout: 15000 });
+    await page.waitForFunction(() => window.__odysseusAppStarted === true, null, { timeout: 30000 });
   }
-  await page.waitForTimeout(400);
   return { page, context, errors, forbidden, settingsWrites };
 }
 
 async function openSettings(page, tab) {
-  if (await page.isVisible('#user-bar-settings')) {
+  const vp = page.viewportSize();
+  const isNarrow = vp && vp.width < 768;
+  if (!isNarrow && await page.isVisible('#user-bar-settings')) {
     await page.click('#user-bar-settings');
   } else {
     // Narrow layouts hide the sidebar button, but its click handler remains
@@ -227,7 +244,10 @@ async function openSettings(page, tab) {
     await page.locator('#user-bar-settings').evaluate(button => button.click());
   }
   await page.waitForSelector('#settings-modal:not(.hidden)');
-  if (tab) await page.click(`[data-settings-tab="${tab}"]`);
+  if (tab) {
+    await page.click(`[data-settings-tab="${tab}"]`);
+    await page.waitForSelector(`[data-settings-panel="${tab}"]:not(.hidden)`);
+  }
 }
 
 async function searchResults(page, query) {
@@ -270,7 +290,11 @@ async function testFinder(instance, cookies) {
   const activeDescendant = await member.page.getAttribute('#settings-nav-search', 'aria-activedescendant');
   check('finder exposes the active option through aria-activedescendant', activeDescendant === 'settings-search-option-0', String(activeDescendant));
   await member.page.keyboard.press('Enter');
-  await member.page.waitForTimeout(600);
+  await member.page.waitForFunction(() => {
+    const card = document.querySelector('[data-settings-section="two-factor"]');
+    const panel = document.querySelector('[data-settings-panel="account"]');
+    return panel && !panel.classList.contains('hidden') && document.activeElement === card;
+  }, null, { timeout: 8000 });
   const revealed = await member.page.evaluate(() => {
     const card = document.querySelector('[data-settings-section="two-factor"]');
     const panel = document.querySelector('[data-settings-panel="account"]');
@@ -292,7 +316,12 @@ async function testFinder(instance, cookies) {
   // Deep section in a long panel: click result for the research model card.
   await member.page.fill('#settings-nav-search', 'research model');
   await member.page.click('[data-settings-search-section="research-model"]');
-  await member.page.waitForTimeout(800);
+  await member.page.waitForFunction(() => {
+    const card = document.querySelector('[data-settings-section="research-model"]');
+    if (!card) return false;
+    const rect = card.getBoundingClientRect();
+    return document.activeElement === card && rect.top >= 0 && rect.top < window.innerHeight;
+  }, null, { timeout: 8000 });
   const research = await member.page.evaluate(() => {
     const card = document.querySelector('[data-settings-section="research-model"]');
     const rect = card.getBoundingClientRect();
@@ -307,7 +336,11 @@ async function testFinder(instance, cookies) {
     const settings = await import(src);
     settings.close();
     settings.open('search', { section: 'deep-research' });
-    await new Promise(r => setTimeout(r, 700));
+    const start = Date.now();
+    while (Date.now() - start < 3000) {
+      if (document.querySelector('[data-settings-tab="search"].active') && document.activeElement?.dataset?.settingsSection === 'deep-research') break;
+      await new Promise(r => setTimeout(r, 20));
+    }
     return {
       activeTab: document.querySelector('[data-settings-tab].active')?.dataset.settingsTab,
       focused: document.activeElement?.dataset?.settingsSection,
@@ -325,7 +358,10 @@ async function testFinder(instance, cookies) {
   const adminBackup = await searchResults(admin.page, 'backup');
   check('finder offers admin sections to an admin', adminBackup.includes('system/backup'), adminBackup.join(','));
   await admin.page.click('[data-settings-search-section="backup"]');
-  await admin.page.waitForTimeout(600);
+  await admin.page.waitForFunction(() => {
+    const card = document.querySelector('[data-settings-section="backup"]');
+    return document.querySelector('[data-settings-tab="system"].active') && document.activeElement === card;
+  }, null, { timeout: 8000 });
   const adminReveal = await admin.page.evaluate(() => ({
     activeTab: document.querySelector('[data-settings-tab].active')?.dataset.settingsTab,
     focused: document.activeElement?.dataset?.settingsSection,
@@ -347,10 +383,10 @@ async function testFinder(instance, cookies) {
   await admin.page.unroute('**/api/auth/settings');
 
   await admin.page.click('#settings-sidebar-toggle');
-  await admin.page.waitForTimeout(300);
+  await admin.page.waitForSelector('#settings-nav-search', { state: 'hidden' });
   const collapsedFinder = await admin.page.isVisible('#settings-nav-search');
   await admin.page.click('#settings-sidebar-toggle');
-  await admin.page.waitForTimeout(300);
+  await admin.page.waitForSelector('#settings-nav-search', { state: 'visible' });
   const expandedFinder = await admin.page.isVisible('#settings-nav-search');
   check('collapsing the desktop sidebar hides the finder with the navigation', !collapsedFinder && expandedFinder, JSON.stringify({ collapsedFinder, expandedFinder }));
   check('admin page has no script errors or registry drift', admin.errors.length === 0, admin.errors.join(' | '));
@@ -457,12 +493,23 @@ async function testMemberLoadFailureAndFallbackCompatibility(instance, cookies) 
   await member.page.waitForSelector('#set-foregroundFallbacks .settings-fallback-row');
   await member.page.click('#set-foregroundAddFallback');
   await member.page.waitForFunction(() => document.querySelectorAll('#set-foregroundFallbacks .settings-fallback-row').length === 2, null, { timeout: 8000 });
-  await member.page.waitForTimeout(400);
-  const beforeMove = (await api(instance, cookies.memberCookie, '/api/prefs')).body.foreground_model_fallbacks || [];
+  let beforeMove = [];
+  const startAdd = Date.now();
+  while (Date.now() - startAdd < 5000) {
+    beforeMove = (await api(instance, cookies.memberCookie, '/api/prefs')).body.foreground_model_fallbacks || [];
+    if (beforeMove.length === 2) break;
+    await new Promise(r => setTimeout(r, 40));
+  }
   await member.page.click('#set-foregroundFallbacks .settings-fallback-row:nth-child(2) [data-move-offset="-1"]');
-  await member.page.waitForTimeout(600);
-  const prefsAfterMove = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
-  const afterMove = prefsAfterMove.foreground_model_fallbacks || [];
+  let prefsAfterMove = {};
+  let afterMove = [];
+  const startMove = Date.now();
+  while (Date.now() - startMove < 5000) {
+    prefsAfterMove = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
+    afterMove = prefsAfterMove.foreground_model_fallbacks || [];
+    if (afterMove.length === 2 && afterMove[0].model === beforeMove[1]?.model) break;
+    await new Promise(r => setTimeout(r, 40));
+  }
   check('PR #5812 fallback consent and candidates persist per account', prefsAfterMove.foreground_fallback_enabled === true && beforeMove.length === 2, JSON.stringify(prefsAfterMove));
   check('PR #5812 fallback reorder persists', afterMove.length === 2 && afterMove[0].model === beforeMove[1].model && afterMove[1].model === beforeMove[0].model, JSON.stringify({ beforeMove, afterMove }));
 
@@ -504,12 +551,16 @@ async function testMemberScope(instance, cookies) {
   }
   const visionToggleInert = await member.page.$eval('#set-visionEnabledToggle', node => Boolean(node.closest('[inert]')));
   check('locked card heading switch is not operable', visionToggleInert);
-  await member.page.waitForTimeout(800);
+  await member.page.waitForFunction(() => document.querySelectorAll('.settings-scope-locked').length >= 2, null, { timeout: 8000 });
   const aiLocks = await lockedControlsOutsideInert(member.page);
   check('every control in locked AI cards is inert after load', aiLocks.lockedCards >= 2 && aiLocks.leaks.length === 0, JSON.stringify(aiLocks));
   for (const tab of ['search', 'reminders']) {
     await member.page.click(`[data-settings-tab="${tab}"]`);
-    await member.page.waitForTimeout(800);
+    await member.page.waitForSelector(`[data-settings-panel="${tab}"]:not(.hidden)`);
+    await member.page.waitForFunction(t => {
+      const p = document.querySelector(`[data-settings-panel="${t}"]`);
+      return p && p.querySelectorAll('.settings-scope-locked').length >= 1;
+    }, tab, { timeout: 8000 });
     const locks = await lockedControlsOutsideInert(member.page);
     check(`every control in locked ${tab} cards is inert after load`, locks.lockedCards >= 1 && locks.leaks.length === 0, JSON.stringify(locks));
   }
@@ -615,7 +666,12 @@ async function testMemberScope(instance, cookies) {
   check('mobile finder results are on screen and tappable', topResult.found && topResult.height > 20 && topResult.hittable, JSON.stringify(topResult));
   await screenshot(mobile.page, 'finder-member-mobile');
   await mobile.page.tap('[data-settings-search-section="research-model"]');
-  await mobile.page.waitForTimeout(800);
+  await mobile.page.waitForFunction(() => {
+    const card = document.querySelector('[data-settings-section="research-model"]');
+    if (!card) return false;
+    const rect = card.getBoundingClientRect();
+    return document.activeElement === card && rect.top >= 0 && rect.top < window.innerHeight;
+  }, null, { timeout: 8000 });
   const mobileReveal = await mobile.page.evaluate(() => {
     const card = document.querySelector('[data-settings-section="research-model"]');
     const rect = card.getBoundingClientRect();
@@ -714,7 +770,7 @@ async function testMemberUtilityFallbackRecovery(instance, cookies) {
   ));
   await member.page.click('#set-utilityAddFallback');
   await member.page.waitForFunction(() => document.querySelector('#set-utilityChatMsg').textContent.startsWith('Failed to save'), null, { timeout: 8000 });
-  await member.page.waitForTimeout(300);
+  await member.page.waitForFunction(() => document.querySelectorAll('#set-utilityFallbacks .settings-fallback-row').length === 1, null, { timeout: 8000 });
   const afterFailedAdd = await utilityControls(member.page);
   const storedAfterAdd = (await api(instance, cookies.memberCookie, '/api/prefs')).body.utility_model_fallbacks || [];
   check('failed utility fallback save shows the stored list, not the unsaved row', afterFailedAdd.rows === 1 && afterFailedAdd.rowModels[0] === 'beta-chat' && storedAfterAdd.length === 1, JSON.stringify({ afterFailedAdd, storedAfterAdd }));
@@ -728,7 +784,8 @@ async function testMemberUtilityFallbackRecovery(instance, cookies) {
   // An endpoint refresh re-renders the fallback rows; they must stay read-only.
   await member.page.click('[data-settings-tab="search"]');
   await member.page.click('[data-settings-tab="ai"]');
-  await member.page.waitForTimeout(800);
+  await member.page.waitForSelector('[data-settings-panel="ai"]:not(.hidden)');
+  await member.page.waitForSelector('[data-settings-section="utility-model"] .settings-model-default-retry');
   const lockedAfterRefresh = await utilityControls(member.page);
   const fullyLocked = state => state.endpointDisabled && state.addDisabled && state.rowControls > 0 && state.enabledRowControls.length === 0;
   check('failed utility reload disables the fallback rows as well as the selects', fullyLocked(lockedAfterReloadFailure), JSON.stringify(lockedAfterReloadFailure));
@@ -920,7 +977,8 @@ async function testAdminLoadFailure(instance, cookies) {
   // Leave and return: the AI panel refreshes its endpoint lists on entry.
   await admin.page.click('[data-settings-tab="search"]');
   await admin.page.click('[data-settings-tab="ai"]');
-  await admin.page.waitForTimeout(1200);
+  await admin.page.waitForSelector('[data-settings-panel="ai"]:not(.hidden)');
+  await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry');
   const state = await admin.page.evaluate(() => ({
     endpointDisabled: document.querySelector('#set-defaultEpSelect').disabled,
     modelDisabled: document.querySelector('#set-defaultModelSelect').disabled,
@@ -999,7 +1057,6 @@ async function testAuthDisabledOperator(instance) {
   await operator.page.fill('#settings-nav-search', '');
   await operator.page.click('[data-settings-tab="ai"]');
   await operator.page.waitForFunction(() => Array.from(document.querySelector('#set-defaultEpSelect').options).some(o => o.value === 'ep-alpha'), null, { timeout: 15000 });
-  await operator.page.waitForTimeout(300);
   const badges = await operator.page.$$eval('.settings-scope-badge', nodes => nodes.length);
   check('single-user install shows no per-user scope labels', badges === 0, String(badges));
   await operator.page.selectOption('#set-defaultEpSelect', 'ep-beta');
@@ -1007,7 +1064,7 @@ async function testAuthDisabledOperator(instance) {
   const settings = (await api(instance, null, '/api/auth/settings')).body;
   check('auth-disabled operator saves the server-wide default', settings.default_endpoint_id === 'ep-beta', JSON.stringify({ ep: settings.default_endpoint_id }));
   await operator.page.click('[data-settings-tab="added-models"]');
-  await operator.page.waitForTimeout(500);
+  await operator.page.waitForSelector('[data-settings-panel="added-models"]:not(.hidden)');
   const perModel = await operator.page.$eval('#adm-modelCustomCard', node => getComputedStyle(node).display !== 'none');
   check('auth-disabled operator can reach per-model settings', perModel);
   await screenshot(operator.page, 'operator-added-models');
@@ -1027,7 +1084,7 @@ async function testAuthDisabledOperator(instance) {
   const exportStatus = await operator.page.evaluate(async () => (await fetch('/api/export', { credentials: 'same-origin' })).status);
   check('auth-disabled operator can use System backup export', exportStatus === 200, String(exportStatus));
   await operator.page.click('[data-settings-tab="system"]');
-  await operator.page.waitForTimeout(800);
+  await operator.page.waitForSelector('[data-settings-panel="system"]:not(.hidden)');
   const system = await operator.page.evaluate(() => ({
     backupShown: getComputedStyle(document.querySelector('[data-settings-section="backup"]')).display !== 'none',
     dangerShown: getComputedStyle(document.querySelector('[data-settings-section="danger-zone"]')).display !== 'none',
@@ -1078,9 +1135,20 @@ async function testDelayedAuthorizationResolution(instance, cookies) {
     memberPrivilegedRequests.join(',')
   );
 
+  const memberStatusPromise = member.page.waitForResponse(
+    r => r.url().includes('/api/auth/status') && r.status() === 200,
+    { timeout: 15000 }
+  );
   memberStatusReleased = true;
-  await member.page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
-  await member.page.waitForTimeout(600);
+  await memberStatusPromise;
+  await member.page.waitForFunction(() => {
+    const tab = document.querySelector('[data-settings-tab].active');
+    const services = document.querySelector('[data-settings-tab="services"]');
+    return window._isAdmin === false &&
+      window._canManageSettings === false &&
+      tab && tab.dataset.settingsTab === 'ai' &&
+      services && getComputedStyle(services).display === 'none';
+  }, null, { timeout: 15000 });
 
   const memberLanding = await member.page.evaluate(() => ({
     active: document.querySelector('[data-settings-tab].active')?.dataset.settingsTab,
@@ -1138,9 +1206,18 @@ async function testDelayedAuthorizationResolution(instance, cookies) {
     adminPrivilegedRequests.join(',')
   );
 
+  const adminStatusPromise = admin.page.waitForResponse(
+    r => r.url().includes('/api/auth/status') && r.status() === 200,
+    { timeout: 15000 }
+  );
   adminStatusReleased = true;
-  await admin.page.waitForFunction(() => window._isAdmin !== undefined, null, { timeout: 15000 });
-  await admin.page.waitForTimeout(600);
+  await adminStatusPromise;
+  await admin.page.waitForFunction(() => {
+    const services = document.querySelector('[data-settings-tab="services"]');
+    return window._isAdmin === true &&
+      window._canManageSettings === true &&
+      services && getComputedStyle(services).display !== 'none';
+  }, null, { timeout: 15000 });
 
   const adminVisibility = await admin.page.evaluate(() => ({
     servicesShown: getComputedStyle(document.querySelector('[data-settings-tab="services"]')).display !== 'none',
@@ -1152,7 +1229,7 @@ async function testDelayedAuthorizationResolution(instance, cookies) {
   );
 
   await admin.page.click('[data-settings-tab="services"]');
-  await admin.page.waitForTimeout(600);
+  await admin.page.waitForSelector('[data-settings-tab="services"].active');
 
   const adminActive = await admin.page.evaluate(() => document.querySelector('[data-settings-tab].active')?.dataset.settingsTab);
   check(
@@ -1397,7 +1474,7 @@ async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
     const settings = await import(src);
     settings.close();
   });
-  await session.page.waitForTimeout(300);
+  await session.page.waitForSelector('#settings-modal.hidden', { state: 'attached' });
 
   const closedHidden = await session.page.evaluate(() => document.querySelector('#settings-modal').classList.contains('hidden'));
   check('Settings modal closes cleanly', closedHidden);
@@ -1416,13 +1493,17 @@ async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
 
   // Change selection and verify save succeeds with single dispatch.
   saveWrites = 0;
+  const firstWrite = session.page.waitForResponse(r => r.url().includes('/api/auth/settings') && r.request().method() === 'POST');
   await session.page.selectOption('#set-defaultEpSelect', 'ep-beta');
+  await firstWrite;
   await session.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
   check('single change event triggers exactly one settings write (no listener duplication)', saveWrites === 1, `saveWrites=${saveWrites}`);
 
   // Re-select alpha to leave state clean.
   saveWrites = 0;
+  const secondWrite = session.page.waitForResponse(r => r.url().includes('/api/auth/settings') && r.request().method() === 'POST');
   await session.page.selectOption('#set-defaultEpSelect', 'ep-alpha');
+  await secondWrite;
   await session.page.waitForFunction(() => document.querySelector('#set-defaultChatMsg').textContent === 'Saved', null, { timeout: 8000 });
   check('subsequent change event also triggers exactly one write', saveWrites === 1, `saveWrites=${saveWrites}`);
 
@@ -1460,7 +1541,10 @@ async function testIntegrationForms(instance, cookies) {
   for (const type of types) {
     await admin.page.click('#unified-intg-add-btn');
     await admin.page.click(`.uf-type-option[data-value="${type}"]`);
-    await admin.page.waitForTimeout(300);
+    await admin.page.waitForFunction(() => {
+      const form = document.querySelector('#unified-intg-form');
+      return form && getComputedStyle(form).display !== 'none' && form.querySelectorAll('input:not([type="hidden"]), select, button').length > 0 && form.contains(document.activeElement);
+    }, null, { timeout: 8000 });
 
     const formState = await admin.page.evaluate(() => {
       const form = document.querySelector('#unified-intg-form');
@@ -1549,7 +1633,10 @@ async function testIntegrationForms(instance, cookies) {
         : '#uf-api-cancel');
 
     await admin.page.click(cancelSelector);
-    await admin.page.waitForTimeout(200);
+    await admin.page.waitForFunction(() => {
+      const form = document.querySelector('#unified-intg-form');
+      return form && getComputedStyle(form).display === 'none' && form.innerHTML === '';
+    }, null, { timeout: 8000 });
 
     const closedState = await admin.page.evaluate(() => {
       const form = document.querySelector('#unified-intg-form');
@@ -1617,7 +1704,7 @@ async function testIntegrationForms(instance, cookies) {
     window.styledConfirm = async () => true;
   });
   await admin.page.click('.intg-card[data-intg-type="api"] .intg-del-btn');
-  await admin.page.waitForTimeout(600);
+  await admin.page.waitForSelector('.intg-card[data-intg-type="api"]', { state: 'detached', timeout: 8000 });
   const deletedCard = await admin.page.evaluate(() => Boolean(document.querySelector('.intg-card[data-intg-type="api"]')));
   check('deleting API integration removes it from the list', !deletedCard);
 
@@ -1629,7 +1716,7 @@ async function testIntegrationForms(instance, cookies) {
   await openSettings(mobile.page, 'integrations');
   await mobile.page.click('#unified-intg-add-btn');
   await mobile.page.click('.uf-type-option[data-value="api"]');
-  await mobile.page.waitForTimeout(300);
+  await mobile.page.waitForSelector('#unified-intg-form:not([style*="display: none"])', { timeout: 8000 });
   const mobileFormLayout = await mobile.page.evaluate(() => {
     const form = document.querySelector('#unified-intg-form');
     return {
@@ -1701,7 +1788,6 @@ async function testAccessibilityAndThemes(instance, cookies) {
     for (const scheme of ['dark', 'light']) {
       const s = await pageAs(instance, cookies.adminCookie, { width: vp.width, height: vp.height }, scheme);
       await openSettings(s.page, 'ai');
-      await s.page.waitForTimeout(300);
       await screenshot(s.page, `settings-${vp.name}-${scheme}`);
       check(`responsive settings renders without overflow on ${vp.name} (${scheme})`, s.errors.length === 0, s.errors.join(' | '));
       await s.context.close();
@@ -1742,7 +1828,7 @@ async function testAccessibilityAndThemes(instance, cookies) {
   check('locked card interactive controls are disabled and inert', lockedA11y && lockedA11y.selectDisabled === true && lockedA11y.selectInert === true && lockedA11y.toggleInert === true, JSON.stringify(lockedA11y));
 
   await member.page.fill('#settings-nav-search', 'chat');
-  await member.page.waitForTimeout(300);
+  await member.page.waitForSelector('[data-settings-search-result]');
   const searchA11y = await member.page.evaluate(() => {
     const live = document.querySelector('#settings-nav-search-results .a11y-visually-hidden');
     const results = document.querySelectorAll('[data-settings-search-result]');
@@ -1761,34 +1847,56 @@ async function testAccessibilityAndThemes(instance, cookies) {
 }
 
 async function main() {
-  browser = await chromium.launch({ headless: true });
-  const authInstance = await launchInstance('auth', { authEnabled: true });
-  seedEndpoints(authInstance);
-  const cookies = await setupUsers(authInstance);
+  await timeScenario('setup: browser launch', async () => {
+    browser = await chromium.launch({ headless: true });
+  });
+  let authInstance = null;
+  let cookies = null;
+  await timeScenario('setup: auth instance & users', async () => {
+    authInstance = await launchInstance('auth', { authEnabled: true });
+    seedEndpoints(authInstance);
+    cookies = await setupUsers(authInstance);
+  });
 
-  await testFinder(authInstance, cookies);
-  await testMemberLoadFailureAndFallbackCompatibility(authInstance, cookies);
-  await testMemberScope(authInstance, cookies);
-  await testAdminScope(authInstance, cookies);
-  await testPersonalDefaultLabel(authInstance, cookies);
-  await testAdminLoadFailure(authInstance, cookies);
-  await testRestrictedNavigation(authInstance, cookies);
-  await testMemberUtilityFallbackRecovery(authInstance, cookies);
-  await testMemberStatusRecovery(authInstance, cookies);
-  await testDelayedAuthorizationResolution(authInstance, cookies);
-  await testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies);
-  await testIntegrationForms(authInstance, cookies);
-  await testIntegrationsAuthRecovery(authInstance, cookies, { admin: true });
-  await testIntegrationsAuthRecovery(authInstance, cookies, { admin: false });
-  await testIntegrationsRapidReopenDuringRecovery(authInstance, cookies);
-  await testIntegrationsIgnoreStaleListResponse(authInstance, cookies);
-  await testUnknownTabAndRepeatedOpen(authInstance, cookies);
-  await testAccessibilityAndThemes(authInstance, cookies);
+  await timeScenario('testFinder', () => testFinder(authInstance, cookies));
+  await timeScenario('testMemberLoadFailureAndFallbackCompatibility', () => testMemberLoadFailureAndFallbackCompatibility(authInstance, cookies));
+  await timeScenario('testMemberScope', () => testMemberScope(authInstance, cookies));
+  await timeScenario('testAdminScope', () => testAdminScope(authInstance, cookies));
+  await timeScenario('testPersonalDefaultLabel', () => testPersonalDefaultLabel(authInstance, cookies));
+  await timeScenario('testAdminLoadFailure', () => testAdminLoadFailure(authInstance, cookies));
+  await timeScenario('testRestrictedNavigation', () => testRestrictedNavigation(authInstance, cookies));
+  await timeScenario('testMemberUtilityFallbackRecovery', () => testMemberUtilityFallbackRecovery(authInstance, cookies));
+  await timeScenario('testMemberStatusRecovery', () => testMemberStatusRecovery(authInstance, cookies));
+  await timeScenario('testDelayedAuthorizationResolution', () => testDelayedAuthorizationResolution(authInstance, cookies));
+  await timeScenario('testEarlyEndpointRefreshAndRepeatedOpen', () => testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies));
+  await timeScenario('testIntegrationForms', () => testIntegrationForms(authInstance, cookies));
+  await timeScenario('testIntegrationsAuthRecovery (admin)', () => testIntegrationsAuthRecovery(authInstance, cookies, { admin: true }));
+  await timeScenario('testIntegrationsAuthRecovery (member)', () => testIntegrationsAuthRecovery(authInstance, cookies, { admin: false }));
+  await timeScenario('testIntegrationsRapidReopenDuringRecovery', () => testIntegrationsRapidReopenDuringRecovery(authInstance, cookies));
+  await timeScenario('testIntegrationsIgnoreStaleListResponse', () => testIntegrationsIgnoreStaleListResponse(authInstance, cookies));
+  await timeScenario('testUnknownTabAndRepeatedOpen', () => testUnknownTabAndRepeatedOpen(authInstance, cookies));
+  await timeScenario('testAccessibilityAndThemes', () => testAccessibilityAndThemes(authInstance, cookies));
 
-  const openInstance = await launchInstance('noauth', { authEnabled: false });
-  seedEndpoints(openInstance);
-  await testAuthDisabledOperator(openInstance);
-  await testIntegrationsAuthRecovery(openInstance, {}, { admin: true, authDisabled: true });
+  let openInstance = null;
+  await timeScenario('setup: noauth instance', async () => {
+    openInstance = await launchInstance('noauth', { authEnabled: false });
+    seedEndpoints(openInstance);
+  });
+  await timeScenario('testAuthDisabledOperator', () => testAuthDisabledOperator(openInstance));
+  await timeScenario('testIntegrationsAuthRecovery (noauth operator)', () => testIntegrationsAuthRecovery(openInstance, {}, { admin: true, authDisabled: true }));
+
+  if (PROFILE && scenarioTimings.length > 0) {
+    console.log('\n================ SCENARIO TIMING BREAKDOWN ================');
+    console.log('Scenario | Duration (ms)');
+    console.log('---|---');
+    for (const s of scenarioTimings) {
+      console.log(`${s.name} | ${s.durationMs}`);
+    }
+    const totalDuration = scenarioTimings.reduce((sum, s) => sum + s.durationMs, 0);
+    console.log('---|---');
+    console.log(`TOTAL | ${totalDuration}`);
+    console.log('===========================================================\n');
+  }
 
   console.log(`\n401/403 responses seen per persona: ${JSON.stringify(forbiddenReport)}`);
   const failed = results.filter(result => !result.pass);
