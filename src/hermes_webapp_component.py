@@ -1252,7 +1252,20 @@ class WebappComponent:
 
     def webapp_patches(self):
         """The reviewed patches a new managed release carries, in the order they are applied."""
-        return (*self.usage_patches(), self.transcript_clarity_patch())
+        return (*self.usage_patches(), self.transcript_clarity_patch(), self.goal_kanban_patch(), self.worker_git_hang_patch())
+
+    def goal_kanban_patch(self):
+        path = (self.application_root / 'integrations/hermes-mode/patches/goal-kanban.patch').resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed goal-Kanban patch is missing from this Odysseus installation.')
+        return path
+
+
+    def worker_git_hang_patch(self):
+        path = (self.application_root / 'integrations/hermes-mode/patches/webapp-worker-git-hang.patch').resolve()
+        if not path.is_file():
+            raise ComponentError('The reviewed worker git-hang patch is missing from this Odysseus installation.')
+        return path
 
     def usage_patches(self):
         """The seven-patch set (through the usage/context patch) releases carried before the transcript-clarity patch (kept for rollback)."""
