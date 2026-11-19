@@ -121,12 +121,28 @@ def load_shard_metadata(meta_path: Path) -> dict[str, object]:
     return data
 
 
-def parse_junit_xml(
+class JUnitDetails:
+    """Aggregated test execution details parsed from a JUnit XML report."""
+
+    def __init__(self) -> None:
+        self.file_durations: dict[str, float] = {}
+        self.file_testcase_counts: dict[str, int] = {}
+        self.file_skipped_counts: dict[str, int] = {}
+
+    @property
+    def skipped_only_files(self) -> set[str]:
+        return {
+            f for f, count in self.file_testcase_counts.items()
+            if count > 0 and self.file_skipped_counts.get(f, 0) == count
+        }
+
+
+def parse_junit_xml_details(
     xml_path: str | Path,
     repo_root: Path | None = None,
     strict: bool = False,
-) -> dict[str, float]:
-    """Parse a JUnit XML report and aggregate execution durations by file.
+) -> JUnitDetails:
+    """Parse a JUnit XML report and return detailed testcase counts and durations.
 
     When strict is True, rejects missing, non-numeric, non-finite, or negative
     times, and unresolvable test files.
@@ -141,7 +157,7 @@ def parse_junit_xml(
     except (ET.ParseError, OSError) as e:
         raise ValueError(f"Failed to parse JUnit XML {path}: {e}") from e
 
-    file_durations: dict[str, float] = {}
+    details = JUnitDetails()
 
     for tc in root.iter("testcase"):
         raw_file = tc.get("file")
@@ -184,9 +200,29 @@ def parse_junit_xml(
                 )
             duration = 0.0
 
-        file_durations[file_key] = file_durations.get(file_key, 0.0) + duration
+        is_skipped = any(child.tag.split("}")[-1] == "skipped" for child in tc)
 
-    return file_durations
+        details.file_testcase_counts[file_key] = details.file_testcase_counts.get(file_key, 0) + 1
+        if is_skipped:
+            details.file_skipped_counts[file_key] = details.file_skipped_counts.get(file_key, 0) + 1
+        details.file_durations[file_key] = details.file_durations.get(file_key, 0.0) + duration
+
+    return details
+
+
+def parse_junit_xml(
+    xml_path: str | Path,
+    repo_root: Path | None = None,
+    strict: bool = False,
+) -> dict[str, float]:
+    """Parse a JUnit XML report and aggregate execution durations by file.
+
+    Files where every testcase was skipped are omitted so they do not receive an
+    artificially low measured duration (0.0s) and retain heuristic fallback.
+    """
+    details = parse_junit_xml_details(xml_path, repo_root=repo_root, strict=strict)
+    skipped_only = details.skipped_only_files
+    return {k: v for k, v in details.file_durations.items() if k not in skipped_only}
 
 
 def parse_durations_json(
@@ -395,6 +431,8 @@ def main() -> int:
         run_ids: set[str] = set()
         run_attempts: set[str] = set()
         all_sidecar_inventories: list[set[str]] = []
+        shard_sidecars: list[tuple[Path, str, set[str], dict[str, int]]] = []
+        all_skipped_only_files: set[str] = set()
 
         for r in args.input:
             p = Path(r)
@@ -512,6 +550,81 @@ def main() -> int:
 
             all_sidecar_inventories.append(inventory_set)
 
+            if "selected_files" not in meta:
+                print(
+                    f"Error: missing selected_files in {meta_path}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            raw_selected = meta.get("selected_files")
+            if not isinstance(raw_selected, list):
+                print(
+                    f"Error: selected_files in {meta_path} must be a list, got {type(raw_selected).__name__}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            selected_set: set[str] = set()
+            for item in raw_selected:
+                norm_item = normalize_inventory_key(item) if isinstance(item, str) else None
+                if not norm_item:
+                    print(
+                        f"Error: unresolvable or invalid test file path {item!r} in selected_files in {meta_path}",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if norm_item in selected_set:
+                    print(
+                        f"Error: duplicate file {norm_item} in selected_files in {meta_path}",
+                        file=sys.stderr,
+                    )
+                    return 2
+                selected_set.add(norm_item)
+
+            if "selected_test_counts" not in meta:
+                print(
+                    f"Error: missing selected_test_counts in {meta_path}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            raw_counts = meta.get("selected_test_counts")
+            if not isinstance(raw_counts, dict):
+                print(
+                    f"Error: selected_test_counts in {meta_path} must be a dict, got {type(raw_counts).__name__}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            selected_counts: dict[str, int] = {}
+            for k, v in raw_counts.items():
+                norm_k = normalize_inventory_key(k) if isinstance(k, str) else None
+                if not norm_k:
+                    print(
+                        f"Error: invalid test file key {k!r} in {meta_path} selected_test_counts",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if type(v) is not int or v <= 0:
+                    print(
+                        f"Error: invalid test count {v!r} for {norm_k} in {meta_path} selected_test_counts",
+                        file=sys.stderr,
+                    )
+                    return 2
+                selected_counts[norm_k] = v
+
+            if set(selected_counts.keys()) != selected_set:
+                diff = set(selected_counts.keys()) ^ selected_set
+                sample = ", ".join(sorted(diff)[:5])
+                print(
+                    f"Error: mismatch between selected_files and selected_test_counts in {meta_path}: {sample}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            shard_sidecars.append((p, shard_str, selected_set, selected_counts))
+
         if len(commit_shas) > 1:
             print(
                 f"Error: reports represent mixed source revisions: {', '.join(sorted(commit_shas))}",
@@ -570,6 +683,35 @@ def main() -> int:
 
         authoritative_inventory = first_inv
 
+        seen_selected: dict[str, str] = {}
+        for _, s_str, s_files, _ in shard_sidecars:
+            for f in s_files:
+                if f in seen_selected:
+                    print(
+                        f"Error: overlapping shard assignment: {f} assigned to both shard {seen_selected[f]} and shard {s_str}",
+                        file=sys.stderr,
+                    )
+                    return 2
+                seen_selected[f] = s_str
+
+        all_selected_union = set(seen_selected.keys())
+        if all_selected_union != authoritative_inventory:
+            missing_selection = authoritative_inventory - all_selected_union
+            extra_selection = all_selected_union - authoritative_inventory
+            if missing_selection:
+                sample = ", ".join(sorted(missing_selection)[:5])
+                print(
+                    f"Error: shard assignments omit collected test files: {sample}",
+                    file=sys.stderr,
+                )
+            if extra_selection:
+                sample = ", ".join(sorted(extra_selection)[:5])
+                print(
+                    f"Error: shard assignments include unexpected files not in collection inventory: {sample}",
+                    file=sys.stderr,
+                )
+            return 2
+
         if args.collected_inventory:
             inv_p = Path(args.collected_inventory)
             if not inv_p.is_file():
@@ -609,6 +751,34 @@ def main() -> int:
         provenance_run_id = next(iter(run_ids))
         provenance_run_attempt = next(iter(run_attempts))
 
+        for p, shard_str, selected_set, selected_counts in shard_sidecars:
+            try:
+                shard_details = parse_junit_xml_details(p, repo_root=repo_root, strict=True)
+            except Exception as e:
+                print(f"Error parsing shard report {p}: {e}", file=sys.stderr)
+                return 1
+
+            unexpected_files = set(shard_details.file_testcase_counts.keys()) - selected_set
+            if unexpected_files:
+                sample = ", ".join(sorted(unexpected_files)[:5])
+                print(
+                    f"Error: shard report {p} contains testcases for unexpected file(s) not assigned to shard {shard_str}: {sample}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            for f_key, expected_cnt in selected_counts.items():
+                actual_cnt = shard_details.file_testcase_counts.get(f_key, 0)
+                if actual_cnt != expected_cnt:
+                    print(
+                        f"Error: shard report {p} testcase count mismatch for {f_key}: "
+                        f"expected {expected_cnt} testcases, found {actual_cnt}",
+                        file=sys.stderr,
+                    )
+                    return 2
+
+            all_skipped_only_files.update(shard_details.skipped_only_files)
+
     try:
         new_durations = aggregate_reports(
             args.input,
@@ -631,7 +801,8 @@ def main() -> int:
         if not expected_test_files:
             print("Error: authoritative collection inventory is empty", file=sys.stderr)
             return 2
-        missing_files = expected_test_files - set(new_durations.keys())
+        covered_files = set(new_durations.keys()) | all_skipped_only_files
+        missing_files = expected_test_files - covered_files
         if missing_files:
             sample = ", ".join(sorted(missing_files)[:5])
             print(
@@ -640,7 +811,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        unexpected_files = set(new_durations.keys()) - expected_test_files
+        unexpected_files = covered_files - expected_test_files
         if unexpected_files:
             sample = ", ".join(sorted(unexpected_files)[:5])
             print(
@@ -649,6 +820,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        if all_skipped_only_files:
+            for f in sorted(all_skipped_only_files):
+                print(f"Notice: omitting skipped-only file {f} from duration manifest (treated as unprofiled)")
 
     out_path = Path(args.output)
     if not out_path.is_absolute():

@@ -147,7 +147,7 @@ def load_duration_manifest(
         return None
 
     version = data.get("version")
-    if version not in SUPPORTED_MANIFEST_VERSIONS:
+    if type(version) is not int or version not in SUPPORTED_MANIFEST_VERSIONS:
         return None
 
     raw_durations = data.get("durations")

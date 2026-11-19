@@ -149,7 +149,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(getattr(pytest.mark, marker_name))
 
     spec = _shard_spec(config)
-    if spec is None or spec.selects_everything:
+    export_requested = bool(os.environ.get("PYTEST_COLLECTION_EXPORT") or os.environ.get("RUNNER_TEMP"))
+    if spec is None and not export_requested:
         return
 
     from tests._shards import (
@@ -166,35 +167,54 @@ def pytest_collection_modifyitems(config, items):
         for item in items
     ]
 
-    # Record the actual pytest-collected suite file inventory before shard deselection
-    # when requested, so authoritative duration generation verifies exact collection coverage.
-    export_path = os.environ.get("PYTEST_COLLECTION_EXPORT")
-    if export_path:
-        import json
-        from pathlib import Path
-        ep = Path(export_path)
-        ep.parent.mkdir(parents=True, exist_ok=True)
-        ep.write_text(json.dumps(sorted(set(keys))) + "\n", encoding="utf-8")
-    elif os.environ.get("RUNNER_TEMP"):
-        import json
-        from pathlib import Path
-        ep = Path(os.environ["RUNNER_TEMP"]) / "pytest-collection.json"
-        ep.write_text(json.dumps(sorted(set(keys))) + "\n", encoding="utf-8")
+    if spec is not None and not spec.selects_everything:
+        durations = load_duration_manifest(root=root)
+        weights = accumulate_file_weights(
+            ((key, item.get_closest_marker("slow") is not None) for key, item in zip(keys, items)),
+            durations=durations,
+        )
+        fixed_loads = default_fixed_shard_loads(spec.count, durations_active=durations is not None)
+        selected_files = plan_shards(weights, spec.count, fixed_loads=fixed_loads)[spec.index - 1]
 
-    durations = load_duration_manifest(root=root)
-    weights = accumulate_file_weights(
-        ((key, item.get_closest_marker("slow") is not None) for key, item in zip(keys, items)),
-        durations=durations,
-    )
-    fixed_loads = default_fixed_shard_loads(spec.count, durations_active=durations is not None)
-    selected_files = plan_shards(weights, spec.count, fixed_loads=fixed_loads)[spec.index - 1]
+        selected, deselected = [], []
+        for key, item in zip(keys, items):
+            (selected if key in selected_files else deselected).append(item)
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+    else:
+        selected = items
 
-    selected, deselected = [], []
-    for key, item in zip(keys, items):
-        (selected if key in selected_files else deselected).append(item)
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
-    items[:] = selected
+    if export_requested:
+        # Record the actual pytest-collected suite file inventory and the shard-selected
+        # per-file test counts after shard deselection, so authoritative duration generation
+        # verifies exact collection coverage and full test execution on every shard.
+        selected_keys = [
+            relative_file_key(getattr(item, "path", None) or item.fspath, root)
+            for item in selected
+        ]
+        selected_test_counts: dict[str, int] = {}
+        for sk in selected_keys:
+            selected_test_counts[sk] = selected_test_counts.get(sk, 0) + 1
+
+        payload = {
+            "collected_files": sorted(set(keys)),
+            "selected_files": sorted(set(selected_keys)),
+            "selected_test_counts": selected_test_counts,
+        }
+
+        export_path = os.environ.get("PYTEST_COLLECTION_EXPORT")
+        if export_path:
+            import json
+            from pathlib import Path
+            ep = Path(export_path)
+            ep.parent.mkdir(parents=True, exist_ok=True)
+            ep.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        elif os.environ.get("RUNNER_TEMP"):
+            import json
+            from pathlib import Path
+            ep = Path(os.environ["RUNNER_TEMP"]) / "pytest-collection.json"
+            ep.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -300,7 +300,7 @@ jobs:
         run: |
           python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD" \
             --junitxml="$RUNNER_TEMP/pytest-report.xml" \
-            -o junit_duration_report=call
+            -o junit_duration_report=total
 
       - name: Record shard metadata sidecar
         if: always() && steps.docs-check.outputs.docs_only != 'true'
@@ -315,15 +315,31 @@ jobs:
           runner_temp = Path(os.environ.get("RUNNER_TEMP", "."))
           inv_file = runner_temp / "pytest-collection.json"
           collected_files = None
+          selected_files = None
+          selected_test_counts = None
           collection_error = None
 
           if inv_file.is_file():
               try:
                   parsed = json.loads(inv_file.read_text(encoding="utf-8"))
-                  if isinstance(parsed, list) and parsed:
+                  if isinstance(parsed, dict):
+                      cf = parsed.get("collected_files")
+                      sf = parsed.get("selected_files")
+                      stc = parsed.get("selected_test_counts")
+                      if (
+                          isinstance(cf, list) and cf
+                          and isinstance(sf, list)
+                          and isinstance(stc, dict)
+                      ):
+                          collected_files = cf
+                          selected_files = sf
+                          selected_test_counts = stc
+                      else:
+                          collection_error = f"Invalid collection export in {inv_file}: missing or malformed keys"
+                  elif isinstance(parsed, list) and parsed:
                       collected_files = parsed
                   else:
-                      collection_error = f"Invalid collected inventory in {inv_file}: expected non-empty list"
+                      collection_error = f"Invalid collected inventory in {inv_file}: expected non-empty payload"
               except Exception as e:
                   collection_error = f"Failed to parse collection export {inv_file}: {e}"
           else:
@@ -337,6 +353,8 @@ jobs:
               "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
               "pytest_outcome": os.environ.get("PYTEST_OUTCOME", ""),
               "collected_files": collected_files,
+              "selected_files": selected_files,
+              "selected_test_counts": selected_test_counts,
           }
           if collection_error:
               meta["collection_error"] = collection_error

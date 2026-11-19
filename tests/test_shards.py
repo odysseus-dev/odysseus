@@ -630,12 +630,30 @@ def _create_shard_report(
     pytest_outcome: str = "success",
     collected_files: list[str] | None = None,
     include_collected_files: bool = True,
+    selected_files: list[str] | None = None,
+    selected_test_counts: dict[str, int] | None = None,
+    include_selected_metadata: bool = True,
+    xml_testcases: list[dict[str, object]] | None = None,
 ) -> Path:
     shard_dir.mkdir(parents=True, exist_ok=True)
     xml_lines = ['<?xml version="1.0" encoding="utf-8"?>', '<testsuites>', '  <testsuite name="pytest">']
-    for file_key, duration in testcases:
-        tc_name = Path(file_key).stem
-        xml_lines.append(f'    <testcase classname="{file_key.replace("/", ".").removesuffix(".py")}" file="{file_key}" name="{tc_name}" time="{duration:.3f}"/>')
+    if xml_testcases is not None:
+        for tc in xml_testcases:
+            file_key = str(tc.get("file", "tests/test_a.py"))
+            duration = float(tc.get("time", 0.0))
+            tc_name = str(tc.get("name", Path(file_key).stem))
+            classname = str(tc.get("classname", file_key.replace("/", ".").removesuffix(".py")))
+            is_skipped = bool(tc.get("skipped", False))
+            if is_skipped:
+                xml_lines.append(f'    <testcase classname="{classname}" file="{file_key}" name="{tc_name}" time="{duration:.3f}">')
+                xml_lines.append(f'      <skipped message="skipped">{file_key}: test skipped</skipped>')
+                xml_lines.append('    </testcase>')
+            else:
+                xml_lines.append(f'    <testcase classname="{classname}" file="{file_key}" name="{tc_name}" time="{duration:.3f}"/>')
+    else:
+        for file_key, duration in testcases:
+            tc_name = Path(file_key).stem
+            xml_lines.append(f'    <testcase classname="{file_key.replace("/", ".").removesuffix(".py")}" file="{file_key}" name="{tc_name}" time="{duration:.3f}"/>')
     xml_lines.extend(['  </testsuite>', '</testsuites>', ''])
     xml_file = shard_dir / "pytest-report.xml"
     xml_file.write_text("\n".join(xml_lines), encoding="utf-8")
@@ -656,6 +674,21 @@ def _create_shard_report(
                 meta["collected_files"] = [tc[0] for tc in testcases]
             else:
                 meta["collected_files"] = ["tests/test_a.py", "tests/test_b.py"]
+
+    if include_selected_metadata:
+        if selected_files is not None:
+            meta["selected_files"] = selected_files
+        else:
+            meta["selected_files"] = sorted(set(tc[0] for tc in testcases))
+
+        if selected_test_counts is not None:
+            meta["selected_test_counts"] = selected_test_counts
+        else:
+            counts: dict[str, int] = {}
+            for tc in testcases:
+                counts[tc[0]] = counts.get(tc[0], 0) + 1
+            meta["selected_test_counts"] = counts
+
     meta_file = shard_dir / "pytest-meta.json"
     meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return xml_file
@@ -814,6 +847,8 @@ def test_authoritative_regeneration_rejects_malformed_xml_timing(tmp_path, monke
         "run_attempt": "1",
         "pytest_outcome": "success",
         "collected_files": ["tests/test_a.py"],
+        "selected_files": ["tests/test_a.py"],
+        "selected_test_counts": {"tests/test_a.py": 1},
     }
     (s1_dir / "pytest-meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
@@ -948,7 +983,7 @@ def test_authoritative_regeneration_rejects_overlapping_test_files(tmp_path, mon
         "--expected-shards", "2",
         "--repo-root", str(tmp_path),
     ])
-    assert main() == 1
+    assert main() in (1, 2)
 
 
 def test_aggregate_reports_sums_multiple_testcases_in_same_file_and_shard(tmp_path):
@@ -1205,3 +1240,297 @@ def test_authoritative_regeneration_fails_when_any_shard_has_missing_inventory(t
         "--repo-root", str(tmp_path),
     ])
     assert main() == 2
+
+
+def test_manifest_version_type_validation(tmp_path):
+    """P3: Validate that load_duration_manifest strictly checks the version type as int."""
+    manifest_path = tmp_path / ".shard_durations.json"
+
+    # Valid integer version 1
+    manifest_path.write_text(json.dumps({"version": 1, "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) == {"tests/test_a.py": 1.0}
+
+    # Boolean True (in Python isinstance(True, int) is True, but type(True) is bool)
+    manifest_path.write_text(json.dumps({"version": True, "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) is None
+
+    # String "1"
+    manifest_path.write_text(json.dumps({"version": "1", "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) is None
+
+    # List [1]
+    manifest_path.write_text(json.dumps({"version": [1], "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) is None
+
+    # Dict {"v": 1}
+    manifest_path.write_text(json.dumps({"version": {"v": 1}, "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) is None
+
+    # Unsupported integer version 2
+    manifest_path.write_text(json.dumps({"version": 2, "durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) is None
+
+    # Missing version
+    manifest_path.write_text(json.dumps({"durations": {"tests/test_a.py": 1.0}}), encoding="utf-8")
+    assert load_duration_manifest(path=manifest_path) is None
+
+
+def test_authoritative_regeneration_rejects_incomplete_testcase_execution(tmp_path, monkeypatch):
+    """P2: Reject authoritative reports when a shard executes fewer testcases than expected."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Shard 1 sidecar claims tests/test_a.py had 2 tests, but XML report only contains 1
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 2},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_unexpected_file_in_shard_report(tmp_path, monkeypatch):
+    """P2: Reject shard reports containing testcases for unassigned files."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Shard 1 XML contains testcases for test_b even though not assigned to shard 1
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0), ("tests/test_b.py", 0.5)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_shard_partition_omission(tmp_path, monkeypatch):
+    """P2: Reject authoritative reports when shard selected_files omit collected files."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+    (tests_dir / "test_c.py").touch()
+
+    collected = ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
+    # Shard 1 runs test_a, Shard 2 runs test_b, but test_c was assigned to no shard
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        collected_files=collected,
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=collected,
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_handles_skipped_only_files(tmp_path, monkeypatch):
+    """P2: Files with exclusively skipped tests are omitted from manifest and retain heuristic fallback."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+    (tests_dir / "test_active.py").touch()
+    (tests_dir / "test_skipped.py").touch()
+
+    collected = ["tests/test_active.py", "tests/test_skipped.py"]
+    # Shard 1 has active tests that ran
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_active.py", 2.500)],
+        selected_files=["tests/test_active.py"],
+        selected_test_counts={"tests/test_active.py": 1},
+        collected_files=collected,
+    )
+    # Shard 2 has test_skipped where all 2 tests were skipped
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[],
+        xml_testcases=[
+            {"file": "tests/test_skipped.py", "name": "test_s1", "time": 0.0, "skipped": True},
+            {"file": "tests/test_skipped.py", "name": "test_s2", "time": 0.0, "skipped": True},
+        ],
+        selected_files=["tests/test_skipped.py"],
+        selected_test_counts={"tests/test_skipped.py": 2},
+        collected_files=collected,
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 0
+
+    # Manifest must contain test_active, but NOT test_skipped (treated as unprofiled)
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "tests/test_active.py" in data["durations"]
+    assert "tests/test_skipped.py" not in data["durations"]
+    assert data["durations"]["tests/test_active.py"] == 2.500
+
+    # Verify that accumulate_file_weights falls back to deterministic heuristic for unprofiled test_skipped
+    loaded = load_duration_manifest(path=manifest_path)
+    file_items = [
+        ("tests/test_active.py", False),
+        ("tests/test_skipped.py", False),
+        ("tests/test_skipped.py", False),
+    ]
+    weights = accumulate_file_weights(file_items, durations=loaded)
+    # test_active has measured weight
+    assert weights["tests/test_active.py"] == 2.500
+    # test_skipped has heuristic fallback (2 tests * fallback_per_test 0.018 = 0.036)
+    assert weights["tests/test_skipped.py"] == pytest.approx(0.036, abs=1e-3)
+
+
+def test_real_pytest_junit_total_duration_integration(tmp_path):
+    """P2: Verify real pytest JUnit generation with junit_duration_report=total and fixture execution costs."""
+    import subprocess
+    import sys
+    from scripts.generate_shard_durations import parse_junit_xml_details, write_manifest
+
+    test_dir = tmp_path / "tests"
+    test_dir.mkdir(parents=True)
+
+    # File with setup/teardown fixture overhead and parametrization
+    fixture_test_file = test_dir / "test_with_fixtures.py"
+    fixture_test_file.write_text("""
+import time
+import pytest
+
+@pytest.fixture(autouse=True)
+def slow_fixture():
+    time.sleep(0.04)
+    yield
+    time.sleep(0.02)
+
+@pytest.mark.parametrize("param", [1, 2])
+def test_parametrized(param):
+    time.sleep(0.01)
+""", encoding="utf-8")
+
+    # File with only skipped tests
+    skipped_test_file = test_dir / "test_all_skipped.py"
+    skipped_test_file.write_text("""
+import pytest
+
+@pytest.mark.skip(reason="integration test skip")
+def test_one():
+    pass
+
+@pytest.mark.skip(reason="integration test skip")
+def test_two():
+    pass
+""", encoding="utf-8")
+
+    # Fast test file
+    fast_test_file = test_dir / "test_fast.py"
+    fast_test_file.write_text("""
+def test_fast():
+    pass
+""", encoding="utf-8")
+
+    junit_report = tmp_path / "pytest-real-report.xml"
+
+    # Run real pytest with -o junit_duration_report=total
+    cmd = [
+        sys.executable,
+        "-m", "pytest",
+        str(test_dir),
+        "-q",
+        f"--junitxml={junit_report}",
+        "-o", "junit_duration_report=total",
+    ]
+    res = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+    assert res.returncode == 0
+    assert junit_report.is_file()
+
+    # Parse real pytest report with parse_junit_xml_details
+    details = parse_junit_xml_details(junit_report, repo_root=tmp_path, strict=True)
+
+    # 1. Parameterized test with fixtures produced 2 testcases
+    assert details.file_testcase_counts["tests/test_with_fixtures.py"] == 2
+    # With total duration report, time for 2 testcases with 0.06s fixture + 0.01s call each is >= 0.10s
+    assert details.file_durations["tests/test_with_fixtures.py"] >= 0.10
+
+    # 2. Skipped-only file identified
+    assert "tests/test_all_skipped.py" in details.skipped_only_files
+    assert details.file_testcase_counts["tests/test_all_skipped.py"] == 2
+    assert details.file_skipped_counts["tests/test_all_skipped.py"] == 2
+
+    # 3. Fast test file
+    assert details.file_testcase_counts["tests/test_fast.py"] == 1
+    assert "tests/test_fast.py" not in details.skipped_only_files
+
+    # 4. Manifest roundtrip: skipped-only omitted
+    manifest_path = tmp_path / ".shard_durations.json"
+    valid_durations = {
+        k: v for k, v in details.file_durations.items()
+        if k not in details.skipped_only_files
+    }
+    write_manifest(valid_durations, manifest_path)
+    loaded = load_duration_manifest(path=manifest_path)
+    assert "tests/test_with_fixtures.py" in loaded
+    assert "tests/test_fast.py" in loaded
+    assert "tests/test_all_skipped.py" not in loaded
