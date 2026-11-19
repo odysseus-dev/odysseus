@@ -5,6 +5,7 @@ and a stub gateway writes the same gateway.pid record the real one does. Nothing
 import hashlib
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 import shutil
 import socket
@@ -648,6 +649,145 @@ class LifecycleTests(ComponentCase):
             self.component.stop(force=True)
         self.assertEqual(self.component.status()['state'], 'ready')
         record.write_text(json.dumps(data))
+
+
+class DrainEngagementTests(ComponentCase):
+    """restart/stop --drain must engage the gateway's reversible external-drain marker BEFORE the idle wait and
+    release it on every outcome. Disposable fixtures only: the stub gateway stands in for the real one, admission
+    polls are scripted to model the gateway/goal-wake reaction to an engaged drain (the DRAIN-1 coupling), and the
+    marker is a real file in the fixture's disposable gateway home. Nothing here touches a live gateway."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = self.managed()
+        self.marker = Path(self.config['home']) / '.drain_request.json'
+        self.addCleanup(self.stop_quietly)
+
+    def stop_quietly(self):
+        if self.marker.is_dir():
+            self.marker.rmdir()
+        try:
+            self.component.stop(force=True)
+        except Exception:
+            pass
+
+    def test_drain_engages_the_marker_before_the_idle_wait_and_releases_it_on_success(self):
+        self.component.start(timeout=60)
+        seen = []
+        def admissions(config):
+            seen.append(json.loads(self.marker.read_text(encoding='utf-8')) if self.marker.exists() else None)
+            return 0
+        with mock.patch.object(WebappComponent, '_running_admissions', side_effect=admissions):
+            self.assertEqual(self.component.stop(drain=5)['state'], 'stopped')
+        self.assertEqual(len(seen), 1)                                  # proven idle on the first poll
+        payload = seen[0]
+        self.assertIsNotNone(payload)                                   # engaged BEFORE the first admission poll
+        self.assertEqual(payload['action'], 'drain')                    # the gateway's write_drain_request contract
+        self.assertEqual(payload['principal'], 'odysseus-webapp')
+        self.assertIs(payload['suppress_notification'], False)
+        self.assertIsInstance(payload['epoch'], str)
+        requested_at = datetime.fromisoformat(payload['requested_at'])
+        self.assertIsNotNone(requested_at.tzinfo)                       # UTC-stamped, as the watcher's expiry check expects
+        self.assertFalse(self.marker.exists())                          # released before the kill
+
+    def test_the_idle_wait_converges_once_turns_yield_to_the_engaged_drain(self):
+        self.component.start(timeout=60)
+        (Path(self.config['home']) / 'busy.flag').write_text('1')       # the five-minute heuristic still looks busy
+        polls = []
+        def admissions(config):
+            polls.append(self.marker.exists())
+            return 2 if len(polls) == 1 else 0                          # DRAIN-1 coupling: wakes yield only while draining
+        with mock.patch.object(WebappComponent, '_running_admissions', side_effect=admissions):
+            self.assertEqual(self.component.stop(drain=10)['state'], 'stopped')
+        self.assertEqual(polls, [True, True])                           # the marker stayed engaged across the whole wait
+        self.assertFalse(self.marker.exists())
+
+    def test_drain_timeout_releases_the_marker_and_leaves_the_gateway_running(self):
+        self.component.start(timeout=60)
+        with mock.patch.object(WebappComponent, '_running_admissions', return_value=2):
+            with self.assertRaises(controls.ActiveRuns):
+                self.component.stop(drain=1)
+        self.assertFalse(self.marker.exists())                          # no stuck drain after a timed-out wait
+        self.assertEqual(self.component.status()['state'], 'ready')
+
+    def test_no_drain_requested_and_force_never_touch_the_marker(self):
+        self.component.start(timeout=60)
+        seen = []
+        def admissions(config):
+            seen.append(self.marker.exists())
+            return 0
+        with mock.patch.object(WebappComponent, '_running_admissions', side_effect=admissions):
+            self.assertEqual(self.component.stop()['state'], 'stopped')                     # drain=0: exact old behavior
+        self.assertEqual(seen, [False])
+        self.assertFalse(self.marker.exists())
+        self.component.start(timeout=60)
+        with mock.patch.object(WebappComponent, '_running_admissions', return_value=2):
+            self.assertEqual(self.component.stop(force=True, drain=30)['state'], 'stopped')  # force skips wait AND engagement
+        self.assertFalse(self.marker.exists())
+
+    def test_a_pre_existing_operator_drain_marker_is_restored_on_release(self):
+        self.component.start(timeout=60)
+        foreign = json.dumps({'action': 'drain', 'requested_at': '2026-11-19T12:00:00+00:00', 'principal': 'dashboard',
+                              'epoch': '', 'suppress_notification': True})
+        self.marker.write_text(foreign, encoding='utf-8')
+        during = []
+        def admissions(config):
+            during.append(json.loads(self.marker.read_text(encoding='utf-8'))['principal'])
+            return 0
+        with mock.patch.object(WebappComponent, '_running_admissions', side_effect=admissions):
+            self.assertEqual(self.component.stop(drain=5)['state'], 'stopped')
+        self.assertEqual(during, ['odysseus-webapp'])                   # our drain is what the wait runs under
+        self.assertEqual(self.marker.read_text(encoding='utf-8'), foreign)   # the operator's marker restored byte-for-byte
+        self.component.start(timeout=60)
+        with mock.patch.object(WebappComponent, '_running_admissions', return_value=2):
+            with self.assertRaises(controls.ActiveRuns):
+                self.component.stop(drain=1)
+        self.assertEqual(self.marker.read_text(encoding='utf-8'), foreign)   # timeout restores it too
+
+    def test_an_unreadable_marker_location_fails_before_anything_is_stopped(self):
+        self.component.start(timeout=60)
+        self.marker.mkdir()                                             # a directory at the marker path cannot be read or written
+        with self.assertRaisesRegex(ComponentError, 'drain marker'):
+            self.component.stop(drain=5)
+        self.assertEqual(self.component.status()['state'], 'ready')
+        self.marker.rmdir()
+
+    def test_a_failed_marker_write_stops_nothing_and_leaves_no_marker(self):
+        self.component.start(timeout=60)
+        real_atomic_bytes = hwc.atomic_bytes
+        def fail_marker_write(path, value):
+            if Path(path).name == '.drain_request.json':
+                raise OSError('fixture: disk full')
+            return real_atomic_bytes(path, value)
+        with mock.patch.object(hwc, 'atomic_bytes', side_effect=fail_marker_write):
+            with self.assertRaisesRegex(ComponentError, 'Could not engage'):
+                self.component.stop(drain=5)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.component.status()['state'], 'ready')
+
+    def test_a_failed_release_aborts_before_the_kill_so_no_stuck_drain_survives(self):
+        self.component.start(timeout=60)
+        def admissions(config):
+            if self.marker.exists():                                    # once engaged, wedge the path so release cannot remove it
+                self.marker.unlink()
+                self.marker.mkdir()
+            return 0
+        with mock.patch.object(WebappComponent, '_running_admissions', side_effect=admissions):
+            with self.assertRaisesRegex(ComponentError, 'could not be released'):
+                self.component.stop(drain=5)
+        self.assertEqual(self.component.status()['state'], 'ready')     # the kill never ran; the operator gets a manual-removal message
+        self.marker.rmdir()
+
+    def test_restart_with_drain_engages_and_leaves_no_marker_for_the_new_gateway(self):
+        self.component.start(timeout=60)
+        seen = []
+        def admissions(config):
+            seen.append(self.marker.exists())
+            return 0
+        with mock.patch.object(WebappComponent, '_running_admissions', side_effect=admissions):
+            self.assertEqual(self.component.restart(drain=5)['state'], 'ready')
+        self.assertEqual(seen, [True])
+        self.assertFalse(self.marker.exists())                          # the restarted gateway never boots into draining
 
 
 if __name__ == '__main__':
