@@ -42,9 +42,16 @@ def _extract_source(source: str, start: str, end: str) -> str:
     return start + tail.split(end, 1)[0]
 
 
+_STATIC_LOADER_REGISTER = (
+    'data:text/javascript,import{register}from"node:module";'
+    'import{pathToFileURL}from"node:url";'
+    'register("./tests/helpers/static_js_loader.mjs",pathToFileURL("./"));'
+)
+
+
 def _run_node(source: str) -> dict:
     proc = subprocess.run(
-        ["node", "--input-type=module"],
+        ["node", "--import", _STATIC_LOADER_REGISTER, "--input-type=module"],
         input=source,
         capture_output=True,
         text=True,
