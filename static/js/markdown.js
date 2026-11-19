@@ -959,12 +959,7 @@ function replaceFencedBlocks(source, render) {
 // character becomes an inert token that no later pass treats as syntax; the token
 // is replaced by the literal character once rendering is finished. Chat keeps its
 // historical behavior, where `\(`, `\[` and `\.` are left for math and plain text.
-const ESCAPE_TOKEN_RE = /___ESC_(\d{2,3})___/g;
-const escapeToken = (char) => `___ESC_${char.charCodeAt(0)}___`;
-const unescapeTokens = (text) => text.replace(ESCAPE_TOKEN_RE, (_, code) => String.fromCharCode(Number(code)));
-const escapedCharHtml = (char) => (char === '&' ? '&amp;' : char === '<' ? '&lt;' : char === '>' ? '&gt;' : char);
-
-function extractCodeSpansAndEscapes(source, makeCodeSpan) {
+function extractCodeSpansAndEscapes(source, makeCodeSpan, escapeToken) {
   let out = '';
   let index = 0;
   while (index < source.length) {
@@ -1016,6 +1011,15 @@ export function mdToHtml(src, opts) {
   // placeholder gets captured as literal code content and never restored inside
   // the final <pre><code> block.
   const commonmark = Boolean(opts && opts.commonmark);
+  // Pick a prefix absent from the source so prose and code can contain literal
+  // marker strings without the restoration pass mistaking them for escapes.
+  let escapePrefix = '___ESC_';
+  for (let suffix = 0; commonmark && s.includes(escapePrefix); suffix++) escapePrefix = `___ESC${suffix}_`;
+  const escapePattern = commonmark ? new RegExp(`${escapePrefix}(\\d{2,3})___`, 'g') : null;
+  const restoreEscapes = (text, encode) => commonmark ? text.replace(escapePattern, (_, code) => {
+    const char = String.fromCharCode(Number(code));
+    return encode ? encode(char) : char;
+  }) : text;
   const renderFence = (lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
@@ -1072,7 +1076,7 @@ export function mdToHtml(src, opts) {
       const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
       inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
       return placeholder;
-    });
+    }, (char) => `${escapePrefix}${char.charCodeAt(0)}___`);
   } else {
     s = s.replace(/`([^`]+?)`/g, (match, code) => {
       if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_') || code.startsWith('___SVG_BLOCK_')) return match;
@@ -1082,7 +1086,7 @@ export function mdToHtml(src, opts) {
     });
   }
   // Escape tokens must not leak into attribute values.
-  const literal = (text) => (commonmark ? unescapeTokens(text) : text);
+  const literal = (text) => restoreEscapes(text);
 
   // Some models occasionally omit the requested ```svg fence. Treat a
   // complete raw SVG element as the same visual artifact, while fenced and
@@ -1177,19 +1181,19 @@ export function mdToHtml(src, opts) {
   );
 
   // Extract <details>...</details> blocks and replace with placeholders.
-  s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
+  const preserveAllowedHtml = (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
+    // Restore attribute values before the sanitizer checks the parsed HTML.
+    // Character references cannot introduce structural markup.
+    const html = restoreEscapes(match, (char) => `&#${char.charCodeAt(0)};`);
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(html));
     return placeholder;
-  });
+  };
+  s = s.replace(/<details>([\s\S]*?)<\/details>/gi, preserveAllowedHtml);
 
   // ALSO preserve <a>/<img> tags the same way (they're now in the HTML from
   // markdown conversion)
-  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, (match) => {
-    const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
-    return placeholder;
-  });
+  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, preserveAllowedHtml);
 
   // Now escape everything else
   s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1203,7 +1207,7 @@ export function mdToHtml(src, opts) {
   // Typeset straight away when KaTeX is already in, otherwise bank the source in
   // an inert placeholder for renderMath() to swap once the library lands.
   const pushMath = (math, displayMode) => {
-    const raw = decodeMathSource(math).trim();
+    const raw = decodeMathSource(restoreEscapes(math, (char) => `\\${char}`)).trim();
     const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
     if (window.katex) {
       mathBlocks.push(katex.renderToString(raw, { displayMode, throwOnError: false }));
@@ -1339,6 +1343,10 @@ export function mdToHtml(src, opts) {
   // Remove empty paragraphs
   s = s.replace(/<p><\/p>/g, '');
 
+  // Restore escapes in the rendered text before reinserting protected blocks.
+  // Encode underscores so escaping cannot create another block's placeholder.
+  s = restoreEscapes(s, (char) => char === '_' ? '&#95;' : escapeHtml(char));
+
   // Every restore below passes a function replacer rather than the block string
   // itself. With a string replacement, `String.replace` reads `$&`, `` $` ``,
   // `$'` and `$$` in the *replacement* as substitution patterns, so a restored
@@ -1377,8 +1385,6 @@ export function mdToHtml(src, opts) {
   inlineCodeBlocks.forEach((block, index) => {
     s = s.replace(`___INLINE_CODE_${index}___`, () => block);
   });
-
-  if (commonmark) s = s.replace(ESCAPE_TOKEN_RE, (_, code) => escapedCharHtml(String.fromCharCode(Number(code))));
 
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }

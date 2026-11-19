@@ -77,6 +77,26 @@ try {
   assert.deepEqual((await semanticSummary(page, '#doc-email-richbody')).blocks, visual.blocks);
   assert.equal((await readDocument(context, doc.id)).current_content, saved, 'no-op reopen leaves the source byte for byte');
   record('reload keeps source and Visual identical');
+
+  const literals = await createMarkdownDocument(context, 'Literal markers', 'Record ___ESC_42___ and \\*\n\n`___ESC_42___`\n\n~~~text\n___ESC_42___\n~~~');
+  await openDocument(page, literals.id, { visual: false });
+  await page.locator('#doc-header-preview-btn').click();
+  const literalPreview = page.locator('#doc-md-preview');
+  await literalPreview.waitFor({ state: 'visible' });
+  assert.ok((await literalPreview.innerText()).includes('Record ___ESC_42___ and *'));
+  assert.deepEqual(await literalPreview.locator('code').allTextContents(), ['___ESC_42___', '___ESC_42___\n']);
+  record('Preview preserves literal marker text in prose and code');
+
+  const crlf = await createMarkdownDocument(context, 'CRLF source', 'First\r\n\r\nLast\r\n');
+  await openDocument(page, crlf.id);
+  await page.locator('[data-mdview="edit"]').click();
+  const source = page.locator('#doc-editor-textarea');
+  assert.equal(await source.inputValue(), 'First\n\nLast\n', 'textarea displays normalized line endings');
+  await source.press('Control+End');
+  await page.keyboard.insertText('Added\n\nAnother\n');
+  await saveAndWait(page, crlf.id);
+  assert.equal((await readDocument(context, crlf.id)).current_content, 'First\r\n\r\nLast\r\nAdded\r\n\r\nAnother\r\n');
+  record('Source edits preserve a CRLF document’s line endings');
 } catch (error) {
   console.error('[FAIL]', error);
   process.exitCode = 1;

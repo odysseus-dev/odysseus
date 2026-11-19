@@ -316,10 +316,12 @@ export function saveCurrentToMap() {
         // (it's hidden behind the rendered PDF view, so its value isn't the source
         // of truth). Overwriting here dropped the pdf_form_source marker, so after
         // minimize->restore the doc came back blank.
-        // Textareas normalize line endings even without an edit. Capturing a
-        // source fallback must retain the original bytes until its text changes.
-        if (textarea.value !== String(doc.content || '').replace(/\r\n?/g, '\n')) {
-          doc.content = textarea.value;
+        // Textareas normalize line endings. Keep the original bytes on a no-op
+        // and maintain a CRLF Markdown document's convention on a Source edit.
+        const previous = String(doc.content || '');
+        if (textarea.value !== previous.replace(/\r\n?/g, '\n')) {
+          const useCrlf = isVisualMarkdownDoc(doc) && previous.includes('\r\n') && !/(?<!\r)\n|\r(?!\n)/.test(previous);
+          doc.content = useCrlf ? textarea.value.replace(/\n/g, '\r\n') : textarea.value;
         }
         persistMarkdownDraft(doc);
       }

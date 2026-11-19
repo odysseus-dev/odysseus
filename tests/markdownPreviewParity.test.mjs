@@ -91,6 +91,32 @@ describe('Visual serialization and the application Preview agree', () => {
     assert.equal((cells.match(/<td\b/g) || []).length, 2);
     assert.match(cells, />x\|y</);
   });
+
+  it('keeps literal escape-marker text in prose, code spans and code fences', () => {
+    const marker = '___ESC_42___';
+    const source = `Record ${marker} and \\*\n\n\`${marker}\`\n\n~~~text\n${marker}\n~~~`;
+    const preview = markdown.mdToHtml(source, MARKDOWN_DOCUMENT_RENDER_OPTIONS);
+    assert.match(preview, /Record ___ESC_42___ and \*/);
+    assert.match(preview, /<code>___ESC_42___<\/code>/);
+    assert.match(preview, /<code[^>]+>___ESC_42___\n<\/code>/);
+    assert.match(preview, /data-code="___ESC_42___\n"/);
+  });
+
+  it('leaves TeX escapes in dollar-delimited math for KaTeX', () => {
+    const katex = window.katex;
+    const formula = String.raw`\{x\}`;
+    try {
+      window.katex = globalThis.katex = { renderToString: (source) => {
+        assert.equal(source, formula);
+        return '<span class="katex">math</span>';
+      } };
+      const preview = markdown.mdToHtml(`$${formula}$`, MARKDOWN_DOCUMENT_RENDER_OPTIONS);
+      assert.match(preview, /class="katex"/);
+    } finally {
+      window.katex = katex;
+      delete globalThis.katex;
+    }
+  });
 });
 
 describe('Chat rendering is unchanged by document escape handling', () => {
