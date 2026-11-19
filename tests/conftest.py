@@ -194,13 +194,16 @@ def pytest_collection_modifyitems(config, items):
             for item in selected
         ]
         selected_test_counts: dict[str, int] = {}
-        for sk in selected_keys:
+        selected_test_names: dict[str, list[str]] = {}
+        for sk, item in zip(selected_keys, selected):
             selected_test_counts[sk] = selected_test_counts.get(sk, 0) + 1
+            selected_test_names.setdefault(sk, []).append(item.name)
 
         payload = {
             "collected_files": sorted(set(keys)),
             "selected_files": sorted(set(selected_keys)),
             "selected_test_counts": selected_test_counts,
+            "selected_test_names": selected_test_names,
         }
 
         export_path = os.environ.get("PYTEST_COLLECTION_EXPORT")

@@ -128,6 +128,8 @@ class JUnitDetails:
         self.file_durations: dict[str, float] = {}
         self.file_testcase_counts: dict[str, int] = {}
         self.file_skipped_counts: dict[str, int] = {}
+        self.file_testcases: dict[str, list[str]] = {}
+        self.file_duplicate_testcases: dict[str, list[str]] = {}
 
     @property
     def skipped_only_files(self) -> set[str]:
@@ -135,6 +137,24 @@ class JUnitDetails:
             f for f, count in self.file_testcase_counts.items()
             if count > 0 and self.file_skipped_counts.get(f, 0) == count
         }
+
+
+class ShardSidecarInfo:
+    """Parsed and validated shard sidecar metadata."""
+
+    def __init__(
+        self,
+        report_path: Path,
+        shard_str: str,
+        selected_files: set[str],
+        selected_test_counts: dict[str, int],
+        selected_test_names: dict[str, list[str]] | None = None,
+    ) -> None:
+        self.report_path = report_path
+        self.shard_str = shard_str
+        self.selected_files = selected_files
+        self.selected_test_counts = selected_test_counts
+        self.selected_test_names = selected_test_names
 
 
 def parse_junit_xml_details(
@@ -201,6 +221,13 @@ def parse_junit_xml_details(
             duration = 0.0
 
         is_skipped = any(child.tag.split("}")[-1] == "skipped" for child in tc)
+        tc_name = tc.get("name", "unnamed")
+
+        if file_key not in details.file_testcases:
+            details.file_testcases[file_key] = []
+        if tc_name in details.file_testcases[file_key]:
+            details.file_duplicate_testcases.setdefault(file_key, []).append(tc_name)
+        details.file_testcases[file_key].append(tc_name)
 
         details.file_testcase_counts[file_key] = details.file_testcase_counts.get(file_key, 0) + 1
         if is_skipped:
@@ -418,6 +445,13 @@ def main() -> int:
     authoritative_inventory: set[str] | None = None
 
     if args.authoritative:
+        if args.merge:
+            print(
+                "Error: --merge cannot be combined with --authoritative; authoritative regeneration must produce a fresh snapshot matching exact suite execution",
+                file=sys.stderr,
+            )
+            return 2
+
         if len(args.input) < args.expected_shards:
             print(
                 f"Error: authoritative regeneration requires at least {args.expected_shards} "
@@ -431,7 +465,7 @@ def main() -> int:
         run_ids: set[str] = set()
         run_attempts: set[str] = set()
         all_sidecar_inventories: list[set[str]] = []
-        shard_sidecars: list[tuple[Path, str, set[str], dict[str, int]]] = []
+        shard_sidecars: list[ShardSidecarInfo] = []
         all_skipped_only_files: set[str] = set()
 
         for r in args.input:
@@ -623,7 +657,16 @@ def main() -> int:
                 )
                 return 2
 
-            shard_sidecars.append((p, shard_str, selected_set, selected_counts))
+            raw_selected_names = meta.get("selected_test_names")
+            shard_sidecars.append(
+                ShardSidecarInfo(
+                    report_path=p,
+                    shard_str=shard_str,
+                    selected_files=selected_set,
+                    selected_test_counts=selected_counts,
+                    selected_test_names=raw_selected_names if isinstance(raw_selected_names, dict) else None,
+                )
+            )
 
         if len(commit_shas) > 1:
             print(
@@ -684,15 +727,15 @@ def main() -> int:
         authoritative_inventory = first_inv
 
         seen_selected: dict[str, str] = {}
-        for _, s_str, s_files, _ in shard_sidecars:
-            for f in s_files:
+        for s_info in shard_sidecars:
+            for f in s_info.selected_files:
                 if f in seen_selected:
                     print(
-                        f"Error: overlapping shard assignment: {f} assigned to both shard {seen_selected[f]} and shard {s_str}",
+                        f"Error: overlapping shard assignment: {f} assigned to both shard {seen_selected[f]} and shard {s_info.shard_str}",
                         file=sys.stderr,
                     )
                     return 2
-                seen_selected[f] = s_str
+                seen_selected[f] = s_info.shard_str
 
         all_selected_union = set(seen_selected.keys())
         if all_selected_union != authoritative_inventory:
@@ -751,12 +794,26 @@ def main() -> int:
         provenance_run_id = next(iter(run_ids))
         provenance_run_attempt = next(iter(run_attempts))
 
-        for p, shard_str, selected_set, selected_counts in shard_sidecars:
+        for s_info in shard_sidecars:
+            p = s_info.report_path
+            shard_str = s_info.shard_str
+            selected_set = s_info.selected_files
+            selected_counts = s_info.selected_test_counts
+            raw_selected_names = s_info.selected_test_names
             try:
                 shard_details = parse_junit_xml_details(p, repo_root=repo_root, strict=True)
             except Exception as e:
                 print(f"Error parsing shard report {p}: {e}", file=sys.stderr)
                 return 1
+
+            if shard_details.file_duplicate_testcases:
+                for f_dup, dup_names in shard_details.file_duplicate_testcases.items():
+                    sample = ", ".join(dup_names[:5])
+                    print(
+                        f"Error: shard report {p} contains duplicate testcase(s) in {f_dup}: {sample}",
+                        file=sys.stderr,
+                    )
+                return 2
 
             unexpected_files = set(shard_details.file_testcase_counts.keys()) - selected_set
             if unexpected_files:
@@ -776,6 +833,29 @@ def main() -> int:
                         file=sys.stderr,
                     )
                     return 2
+
+            if raw_selected_names is not None:
+                for f_key, expected_names in raw_selected_names.items():
+                    norm_f = normalize_inventory_key(f_key) if isinstance(f_key, str) else None
+                    if norm_f and isinstance(expected_names, list) and norm_f in selected_set:
+                        reported_names = set(shard_details.file_testcases.get(norm_f, []))
+                        expected_set = set(expected_names)
+                        if reported_names != expected_set:
+                            missing_tcs = expected_set - reported_names
+                            extra_tcs = reported_names - expected_set
+                            if missing_tcs:
+                                sample = ", ".join(sorted(missing_tcs)[:5])
+                                print(
+                                    f"Error: shard report {p} missing expected testcases in {norm_f}: {sample}",
+                                    file=sys.stderr,
+                                )
+                            if extra_tcs:
+                                sample = ", ".join(sorted(extra_tcs)[:5])
+                                print(
+                                    f"Error: shard report {p} contains unexpected testcases in {norm_f}: {sample}",
+                                    file=sys.stderr,
+                                )
+                            return 2
 
             all_skipped_only_files.update(shard_details.skipped_only_files)
 

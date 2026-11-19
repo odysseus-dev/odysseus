@@ -317,6 +317,7 @@ jobs:
           collected_files = None
           selected_files = None
           selected_test_counts = None
+          selected_test_names = None
           collection_error = None
 
           if inv_file.is_file():
@@ -326,6 +327,7 @@ jobs:
                       cf = parsed.get("collected_files")
                       sf = parsed.get("selected_files")
                       stc = parsed.get("selected_test_counts")
+                      stn = parsed.get("selected_test_names")
                       if (
                           isinstance(cf, list) and cf
                           and isinstance(sf, list)
@@ -334,6 +336,7 @@ jobs:
                           collected_files = cf
                           selected_files = sf
                           selected_test_counts = stc
+                          selected_test_names = stn if isinstance(stn, dict) else None
                       else:
                           collection_error = f"Invalid collection export in {inv_file}: missing or malformed keys"
                   elif isinstance(parsed, list) and parsed:
@@ -356,6 +359,8 @@ jobs:
               "selected_files": selected_files,
               "selected_test_counts": selected_test_counts,
           }
+          if selected_test_names:
+              meta["selected_test_names"] = selected_test_names
           if collection_error:
               meta["collection_error"] = collection_error
           (runner_temp / "pytest-meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

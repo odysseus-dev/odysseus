@@ -651,8 +651,16 @@ def _create_shard_report(
             else:
                 xml_lines.append(f'    <testcase classname="{classname}" file="{file_key}" name="{tc_name}" time="{duration:.3f}"/>')
     else:
+        tc_file_counts: dict[str, int] = {}
+        for file_key, _ in testcases:
+            tc_file_counts[file_key] = tc_file_counts.get(file_key, 0) + 1
+        tc_file_seen: dict[str, int] = {}
         for file_key, duration in testcases:
-            tc_name = Path(file_key).stem
+            tc_file_seen[file_key] = tc_file_seen.get(file_key, 0) + 1
+            if tc_file_counts[file_key] > 1:
+                tc_name = f"{Path(file_key).stem}_{tc_file_seen[file_key]}"
+            else:
+                tc_name = Path(file_key).stem
             xml_lines.append(f'    <testcase classname="{file_key.replace("/", ".").removesuffix(".py")}" file="{file_key}" name="{tc_name}" time="{duration:.3f}"/>')
     xml_lines.extend(['  </testsuite>', '</testsuites>', ''])
     xml_file = shard_dir / "pytest-report.xml"
@@ -1534,3 +1542,66 @@ def test_fast():
     assert "tests/test_with_fixtures.py" in loaded
     assert "tests/test_fast.py" in loaded
     assert "tests/test_all_skipped.py" not in loaded
+
+
+def test_authoritative_regeneration_rejects_merge(tmp_path, monkeypatch):
+    """P2: Reject --merge in authoritative mode so output is always a fresh snapshot."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(tmp_path / "s1", "1/2", [("tests/test_a.py", 1.0)])
+    r2 = _create_shard_report(tmp_path / "s2", "2/2", [("tests/test_b.py", 2.0)])
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--merge",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_duplicate_testcase_replacing_another(tmp_path, monkeypatch):
+    """P3: Reject authoritative report where a duplicate testcase replaces another test."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # tests/test_a.py expects 2 testcases (count=2), but report contains duplicate 'test_one' twice
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[],
+        xml_testcases=[
+            {"file": "tests/test_a.py", "name": "test_one", "time": 1.0},
+            {"file": "tests/test_a.py", "name": "test_one", "time": 1.0},
+        ],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 2},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    # Must reject with code 2 due to duplicate testcase detection
+    assert main() == 2
