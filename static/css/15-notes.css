@@ -258,7 +258,7 @@ body.notes-drag-mode .note-card {
    linkified content so URLs are tappable. Click anywhere off a link
    to flip to edit mode (focuses the underlying textarea). */
 .note-form-content-reader {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.55;
   padding: 10px 6px;
   white-space: pre-wrap;
@@ -630,7 +630,7 @@ body.notes-drag-mode .note-card {
 /* Mobile: bigger, more legible note cards + a sticky quick-add bar so you can
    add a to-do without scrolling back up; and keep media inside the card. */
 @media (max-width: 768px) {
-  .note-card { padding: 14px 16px; padding-right: 34px; min-height: 84px; font-size: 15px; }
+  .note-card { padding: 14px 16px; padding-right: 34px; min-height: 84px; font-size: 16px; }
   .note-card-image { max-height: 260px; max-width: 100%; object-fit: cover; }
   /* Sticky create-todo bar — pin it to the top of the scrolling list pane.
      Safe now that the cards no longer shrink (the list actually overflows). */
@@ -1271,7 +1271,7 @@ body.notes-drag-mode .note-card {
      row reads as one consistent bar. */
   .notes-quick-input {
     height: 36px;
-    font-size: 15px;
+    font-size: 16px;
   }
   .notes-quick-icon {
     padding: 9px;
@@ -1385,7 +1385,7 @@ body.notes-drag-mode .note-card {
   border: none;
   border-radius: 12px;
   padding: 4px 4px 4px 9px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   font-weight: 500;
@@ -1413,7 +1413,7 @@ body.notes-drag-mode .note-card {
   gap: 4px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   padding: 2px 7px;
   border-radius: 10px;
@@ -1442,7 +1442,7 @@ body.notes-drag-mode .note-card {
   font-size: 12px;
 }
 .note-reminder-menu-title {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   opacity: 0.5;
@@ -1467,7 +1467,7 @@ body.notes-drag-mode .note-card {
 .note-reminder-menu-item:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .note-reminder-menu-item.active { color: var(--accent); }
 .note-reminder-menu-sub {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   margin-left: 12px;
 }
@@ -1533,7 +1533,7 @@ body.notes-drag-mode .note-card {
   line-height: 1;
 }
 .note-reminder-menu-sublabel {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   padding: 6px 14px 2px;
   letter-spacing: 0.3px;
@@ -1650,7 +1650,7 @@ body.notes-drag-mode .note-card {
   border-radius: 999px;
   padding: 2px 6px;
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
   cursor: pointer;
@@ -1906,7 +1906,7 @@ body.notes-drag-mode .note-card {
   background: transparent;
   border: 1px solid var(--border);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 10px;
   border-radius: 10px;
   cursor: pointer;
@@ -1939,7 +1939,7 @@ body.notes-drag-mode .note-card {
   border-radius: 7px;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
   color: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   margin-left: 3px;
 }
@@ -2006,7 +2006,7 @@ body.notes-drag-mode .note-card {
   background: color-mix(in srgb, var(--accent-warm) 18%, transparent);
   color: var(--accent-warm);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2147,7 +2147,7 @@ body.notes-drag-mode .note-card {
 }
 .notes-today-progress {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
@@ -2162,7 +2162,7 @@ body.notes-drag-mode .note-card {
 
 /* Bulk action bar */
 .notes-bulk-info {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   margin-left: 4px;
 }
@@ -2256,7 +2256,7 @@ body.notes-drag-mode .note-card {
 }
 /* Inline due date next to title */
 .note-due-inline {
-  font-size: 9px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -2305,7 +2305,7 @@ body.notes-drag-mode .note-card {
 .note-cl-grip {
   cursor: grab;
   opacity: 0.2;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: -2px;
   user-select: none;
   flex-shrink: 0;
@@ -3185,7 +3185,7 @@ body.notes-drag-mode .note-card {
   padding: 0;
 }
 .cal-quickadd-status {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   font-variant-numeric: tabular-nums;
 }
@@ -3329,7 +3329,7 @@ button.cal-nav.cal-toolbar-arrow {
   background: color-mix(in srgb, var(--bg) 76%, var(--fg) 24%);
   transform: translateY(-50%) scale(1.04);
 }
-button.cal-today-btn { font-size:10px; opacity:0.5; }
+button.cal-today-btn { font-size:11px; opacity:0.5; }
 button.cal-add-btn { background:var(--accent); color:#fff; border:none; border-radius:50%; width:24px; height:24px; line-height:22px; font-size:18px; cursor:pointer; flex-shrink:0; padding:0; box-sizing:border-box; font-family:inherit; vertical-align:middle; text-align:center; }
 button.cal-add-btn.cal-add-btn-text {
   width:auto; min-width:0;
@@ -3381,7 +3381,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm {
    the reference and we want the same rotation centre / motion. The label
    is shrunk and hidden until hover so the pill is compact at rest. */
 button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm .cal-add-label {
-  font-size: 10px;
+  font-size: 11px;
   max-width: 0;
   margin-left: 0;
   opacity: 0;
@@ -3506,7 +3506,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
    icon-only reader buttons. */
 .reader-btn-label {
   display: inline-block;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0.02em;
@@ -3932,7 +3932,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   text-overflow: ellipsis;
 }
 .email-account-unread-count {
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   font-weight: 700;
   color: var(--accent, var(--red));
@@ -3955,7 +3955,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   flex: 0 0 auto;
 }
 .email-accounts-loading-label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   position: relative;
   top: 2px;
@@ -3980,7 +3980,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   gap: 7px;
   padding: 8px 9px 4px;
   color: color-mix(in srgb, var(--fg) 58%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.2;
@@ -4022,7 +4022,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   flex: 0 0 auto;
   min-height: 14px;
   padding: 1px 4px 0;
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.2;
   text-align: center;
   opacity: 0.58;
