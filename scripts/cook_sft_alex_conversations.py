@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import fcntl
+try:  # POSIX only; Windows falls back to msvcrt in acquire_lock().
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX hosts
+    fcntl = None
 import json
 import re
 import sys
@@ -248,14 +251,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def acquire_lock(lock_handle) -> bool:
+    """Take a non-blocking exclusive lock; False when another process owns it."""
+    try:
+        if fcntl is not None:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:  # Windows: fcntl is unavailable, lock one byte through msvcrt.
+            import msvcrt
+            msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:  # BlockingIOError on POSIX, PermissionError on Windows
+        return False
+    return True
+
 def main() -> int:
     args = parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     lock_path = args.output.with_suffix(args.output.suffix + ".lock")
     lock_handle = lock_path.open("w", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if not acquire_lock(lock_handle):
         raise SystemExit(f"another cooker already owns {lock_path}")
     endpoint = endpoint_from_db(args.data_dir, args.endpoint_id, args.model)
     seeds = load_seeds(args.seeds)
