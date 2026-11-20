@@ -1298,7 +1298,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     # Auto-detect best available image model if still not set
     if not model_spec:
-        for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
+        for candidate in ("gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-1.5"):
             try:
                 await asyncio.to_thread(_resolve_model, candidate, owner=owner)
                 model_spec = candidate
