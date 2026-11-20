@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.request
 
-from core.atomic_io import atomic_write_json, atomic_write_text
+from core.atomic_io import atomic_write_json, atomic_write_text, store_transaction
 from src import windows_restart_os as win
 
 TERMINAL = {'done', 'completed', 'finished', 'error', 'failed', 'stopped', 'cancelled', 'canceled', 'ended', 'killed'}
@@ -74,8 +74,8 @@ def _uninitialized_background(state_dir):
     from src.native_workers import registry_for
     directory = Path(state_dir)
     def no_artifacts():
-        if not directory.is_dir() or any((directory / name).exists() for name in (
-                'bg_jobs.json', 'bg_jobs', 'containment_grants.json')):
+        if not directory.is_dir() or any((directory / name).exists() or (directory / name).is_symlink()
+                                         for name in ('bg_jobs.json', 'bg_jobs', 'containment_grants.json')):
             return False
         publications = directory / 'process_resources'
         if publications.is_symlink():
@@ -265,6 +265,124 @@ def prepare_worker_inventory(config):
             target = legacy
     os.environ['ODYSSEUS_WORKERS_DIR'] = str(target)
     return str(target)
+_BG_JOB_ARTIFACT_SUFFIXES = frozenset({'log', 'exit', 'result.json', 'authority.json', 'sh', 'cmd.sh'})
+
+
+def _bg_jobs_recoverable(state_dir):
+    """Read-only idle proof for a mature install whose bg_jobs.json is absent.
+
+    Unlike _uninitialized_background (which requires zero launch artifacts),
+    this accounts for the artifacts a long-lived install legitimately keeps.
+    ALL of: a complete supervisor scan with zero supervisors; an initialized
+    native registry with every worker terminal; no unreleased background
+    grant naming a live or unverifiable supervisor; and every bg_jobs/
+    remnant job carrying a durable exit code — re-checked against artifacts
+    appearing mid-proof. Any ambiguity is not recoverable; the guard keeps
+    refusing. Never writes; materialization belongs to serve().
+    """
+    from src import process_ownership
+    from src.native_workers import registry_for
+    directory = Path(state_dir)
+    store = directory / 'bg_jobs.json'
+
+    def accounted():
+        if store.exists() or store.is_symlink():
+            return False
+        jobs_dir = directory / 'bg_jobs'
+        if jobs_dir.is_symlink():
+            return False
+        if jobs_dir.exists():
+            if not jobs_dir.is_dir():
+                return False
+            seen, exited = set(), set()
+            for file in jobs_dir.iterdir():
+                if file.is_symlink() or not file.is_file():
+                    return False
+                job_id, dot, suffix = file.name.partition('.')
+                if not dot or not re.fullmatch(r'[0-9a-f]{12}', job_id) or suffix not in _BG_JOB_ARTIFACT_SUFFIXES:
+                    return False
+                seen.add(job_id)
+                if suffix == 'exit':
+                    try:
+                        int(file.read_text(encoding='utf-8').strip() or '1')
+                    except (OSError, ValueError):
+                        return False
+                    exited.add(job_id)
+            if seen - exited:
+                return False
+        grants_file = directory / 'containment_grants.json'
+        if grants_file.is_symlink():
+            return False
+        if grants_file.exists():
+            if not grants_file.is_file():
+                return False
+            try:
+                grants = json.loads(grants_file.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                return False
+            if not isinstance(grants, dict):
+                return False
+            for record in grants.values():
+                if not isinstance(record, dict):
+                    return False
+                if record.get('released_at') or record.get('lifetime') != 'background':
+                    continue
+                pid, token = record.get('supervisor_pid'), record.get('supervisor_token')
+                if type(pid) is not int or pid <= 0 or not token:
+                    return False
+                if process_ownership.verify(pid, token) not in {process_ownership.GONE, process_ownership.FOREIGN}:
+                    return False
+        return True
+
+    try:
+        if not accounted():
+            return False
+        snapshot = registry_for(str(directory / 'process_resources')).snapshot()
+        if not snapshot['initialized'] or snapshot['unknown'] or any(
+                row['state'] not in {'completed', 'failed', 'cancelled'} for row in snapshot['workers']):
+            return False
+        scan = _native_background_processes()
+        if not (isinstance(scan, dict) and scan.get('complete') is True and scan.get('supervisors') == []):
+            return False
+        return accounted()
+    except Exception:
+        return False
+
+
+def prepare_bg_jobs_inventory(config):
+    """Materialize an empty bg_jobs inventory at serve() startup, only under proof.
+
+    A mature install whose store was never written (or was lost) otherwise
+    refuses cooperative restart forever. The empty dict is exactly the schema
+    bg_jobs and file_guard accept, written atomically under the same store
+    lock as every bg_jobs writer, and only while _bg_jobs_recoverable proves
+    no live background work — before and after taking the lock. An existing
+    store is never touched; any ambiguity leaves it absent so the guard keeps
+    refusing. Recovery is best-effort: it never blocks or fails startup.
+    """
+    store = Path(config['state_dir']) / 'bg_jobs.json'
+    if store.is_symlink():
+        return {'state': 'unproven', 'initialized': False}
+    if store.exists():
+        return {'state': 'present', 'initialized': False}
+    if not _bg_jobs_recoverable(config['state_dir']):
+        return {'state': 'unproven', 'initialized': False}
+
+    @store_transaction(lambda: store)
+    def materialize():
+        if store.is_symlink():
+            return {'state': 'unproven', 'initialized': False}
+        if store.exists():
+            return {'state': 'present', 'initialized': False}
+        if not _bg_jobs_recoverable(config['state_dir']):
+            return {'state': 'unproven', 'initialized': False}
+        atomic_write_json(str(store), {})
+        return {'state': 'initialized', 'initialized': True}
+
+    try:
+        return materialize()
+    except OSError:
+        return {'state': 'unproven', 'initialized': False}
 
 
 def file_guard(state_dir, workers_dir, gateway_db):
@@ -294,6 +412,9 @@ def file_guard(state_dir, workers_dir, gateway_db):
         except FileNotFoundError:
             if filename == 'bg_jobs.json' and _uninitialized_background(state_dir):
                 background = {'state': 'uninitialized_idle', 'basis': 'no launch artifacts and complete supervisor scan'}
+            elif filename == 'bg_jobs.json' and _bg_jobs_recoverable(state_dir):
+                background = {'state': 'recovered_idle',
+                              'basis': 'complete supervisor scan, terminal native registry and accounted launch artifacts'}
             else:
                 errors.append('unknown ' + filename)
         except Exception:
@@ -760,6 +881,7 @@ async def serve(config):
     from src.native_workers import registry_for
     await asyncio.to_thread(registry_for(str(Path(config['state_dir']) / 'process_resources')).initialize)
     config['workers_dir'] = await asyncio.to_thread(prepare_worker_inventory, config)
+    await asyncio.to_thread(prepare_bg_jobs_inventory, config)
     if config.get('lab_application'):
         if config['port'] in {7000, 9130} or config['gateway_port'] in {7000, 9130} or config['chroma_port'] in {7000, 9130}:
             raise ValueError('Lab application cannot use production ports')
