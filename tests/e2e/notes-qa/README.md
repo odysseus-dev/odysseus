@@ -24,7 +24,9 @@ data dir and SQLite file, `AUTH_ENABLED=true`, ChromaDB on a dead port), creates
 an admin `alice` and a non-admin `bob`, gives alice the repo's stub model
 (`tests/browser/openai_stub.py`), fills in both specs' environment variables
 and runs `npx playwright test`. It stops the instance at the end; `--keep`
-leaves it up and prints the PIDs. Port 7860 is refused.
+leaves it up and prints the PIDs. Port 7860 is refused. Set
+`NOTES_QA_PASSWORD` to give both accounts a password you can log in with
+afterwards; otherwise they are random and never written anywhere.
 
 Extra arguments go to Playwright:
 

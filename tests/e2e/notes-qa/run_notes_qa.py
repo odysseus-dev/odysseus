@@ -110,8 +110,11 @@ def main(argv=None):
     try:
         _wait_http(f"http://127.0.0.1:{stub_port}/v1/models", stub, "Stub model", 30)
         _wait_http(origin + "/", server, "Scratch server", float(os.environ.get("NOTES_SERVER_START_TIMEOUT", 90)))
-        owner = {"username": "alice", "password": secrets.token_urlsafe(18) + "Aa1!"}
-        collab = {"username": "bob", "password": secrets.token_urlsafe(18) + "Aa1!"}
+        # NOTES_QA_PASSWORD sets both accounts' password, to log into a --keep
+        # instance afterwards. Otherwise they are random and never written down.
+        chosen = os.environ.get("NOTES_QA_PASSWORD")
+        owner = {"username": "alice", "password": chosen or secrets.token_urlsafe(18) + "Aa1!"}
+        collab = {"username": "bob", "password": chosen or secrets.token_urlsafe(18) + "Aa1!"}
         admin = Api(origin)
         admin.call("POST", "/api/auth/setup", owner)
         admin.call("POST", "/api/auth/login", owner)
@@ -128,10 +131,8 @@ def main(argv=None):
         )
         returncode = subprocess.run(["npx", "playwright", "test", "-c", str(CONFIG), *playwright_args], cwd=ROOT, env=spec_env).returncode
         if args.keep:
-            accounts = target / "accounts.env"
-            accounts.write_text(f"alice={owner['password']}\nbob={collab['password']}\n")
-            accounts.chmod(0o600)
-            print(f"\nKept: {origin} (server PID {server.pid}, stub PID {stub.pid}), data in {target}, passwords in {accounts}")
+            login = "NOTES_QA_PASSWORD" if chosen else "random passwords (set NOTES_QA_PASSWORD to log in to a kept instance)"
+            print(f"\nKept: {origin} (server PID {server.pid}, stub PID {stub.pid}), data in {target}, accounts alice and bob, {login}")
             print(f"Stop with: kill {server.pid} {stub.pid}")
             return returncode
     finally:
