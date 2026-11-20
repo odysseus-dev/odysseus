@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { escapeHtml, escapeHtmlString } from '../frontend/src/shared/domain/html.js';
+import { escapeHtml, escapeHtmlString, escapeHtmlText, escapeHtmlDoubleQuoted } from '../frontend/src/shared/domain/html.js';
+import { compactUrlSchemeValue } from '../frontend/src/shared/domain/urlSchemes.js';
+import { normalizeCookbookModelDir } from '../static/js/cookbookModelDirectories.js';
 
 test('shared HTML encoding preserves strict string and nullish coercion contracts', () => {
   const text = `&amp;<tag attr="one">'two'</tag>`;
@@ -14,6 +16,26 @@ test('shared HTML encoding preserves strict string and nullish coercion contract
   assert.equal(escapeHtml(0), '0');
   assert.equal(escapeHtml(false), 'false');
   assert.throws(() => escapeHtmlString(42), TypeError);
+});
+
+test('contextual encoders preserve the existing text and quoted-attribute spellings', () => {
+  const text = `<node attr="x">' &amp;</node>`;
+  assert.equal(escapeHtmlText(text), `&lt;node attr="x"&gt;' &amp;amp;&lt;/node&gt;`);
+  assert.equal(escapeHtmlDoubleQuoted(text), `&lt;node attr=&quot;x&quot;&gt;' &amp;amp;&lt;/node&gt;`);
+});
+
+test('scheme comparison removes the existing control ranges and keeps punctuation', () => {
+  assert.equal(compactUrlSchemeValue(' HT\tTPS:\u007f//EXAMPLE.TEST/PaTh?x=A '), 'https://example.test/path?x=a');
+  assert.equal(compactUrlSchemeValue('a\u00a0b'), 'a\u00a0b');
+  assert.equal(compactUrlSchemeValue(false), '');
+});
+
+test('Cookbook directory normalization preserves non-Unix and already-rooted paths', () => {
+  assert.equal(normalizeCookbookModelDir(' home/user/models ✕✖ '), '/home/user/models');
+  assert.equal(normalizeCookbookModelDir('/mnt/disk/models'), '/mnt/disk/models');
+  assert.equal(normalizeCookbookModelDir('~/.cache/models'), '~/.cache/models');
+  assert.equal(normalizeCookbookModelDir('C:/Models'), 'C:/Models');
+  assert.equal(normalizeCookbookModelDir(false), '');
 });
 
 import {

@@ -14,6 +14,7 @@ docker/entrypoint.sh text eol=lf
 frontend/src/** text eol=lf
 static/js/actionMenuOrder.js text eol=lf
 static/js/shared/domain/html.js text eol=lf
+static/js/shared/domain/urlSchemes.js text eol=lf
 static/js/shared/platform/clipboard.js text eol=lf
 static/js/escMenuStack.js text eol=lf
 static/js/toolWindowZOrder.js text eol=lf

@@ -8,3 +8,12 @@ export function escapeHtmlString(text) {
 export function escapeHtml(value) {
   return escapeHtmlString(String(value ?? ''));
 }
+
+// Text segments and double-quoted attributes can preserve their original serialization.
+export function escapeHtmlText(text) {
+  return text.replace(/[&<>]/g, char => ENTITIES[char]);
+}
+
+export function escapeHtmlDoubleQuoted(text) {
+  return text.replace(/[&<>"]/g, char => ENTITIES[char]);
+}

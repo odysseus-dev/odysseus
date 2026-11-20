@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1156-shared-clipboard';
+const CACHE_NAME = 'odysseus-v1157-shared-domain';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -68,6 +68,7 @@ const PRECACHE = [
   '/static/js/authStatus.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
   '/static/js/shared/domain/html.js',
+  '/static/js/shared/domain/urlSchemes.js',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
   '/static/js/sessions.js',
@@ -156,6 +157,8 @@ const PRECACHE = [
   '/static/js/chatStream.js?v=20261026devsync1',
   '/static/js/chat.js?v=20260917toolttft1',
   '/static/js/cookbook.js',
+  '/static/js/cookbookModelDirectories.js',
+  '/static/js/cookbookSchedule.js',
   '/static/js/search-chat.js',
   '/static/js/compare/index.js?v=20260909mobilepaneaddscroll1',
   '/static/js/compare/vote.js?v=20260828resendcaldrag1',

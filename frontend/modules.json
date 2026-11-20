@@ -10,6 +10,10 @@
       "deployment": "js/shared/domain/html.js"
     },
     {
+      "source": "shared/domain/urlSchemes.js",
+      "deployment": "js/shared/domain/urlSchemes.js"
+    },
+    {
       "source": "shared/platform/clipboard.js",
       "deployment": "js/shared/platform/clipboard.js"
     },
