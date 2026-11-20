@@ -1,8 +1,7 @@
 """Deterministic, balanced partition of the test suite into parallel shards.
 
-The suite runs ~7.8k tests in a single pytest workload. This module splits that
-workload into N sections that CI runs as parallel jobs, so wall-clock time is
-bounded by the slowest section rather than by the whole suite.
+This module splits a pytest workload into N sections that CI runs as
+parallel jobs, with test execution time bounded by the slowest section.
 
 Two properties matter more than speed, and both are structural here rather than
 checked after the fact:
@@ -36,9 +35,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-# Number of sections CI runs in parallel. Kept here as documentation of the
-# intended default; the shard count actually used comes from the --shard value.
-DEFAULT_SHARD_COUNT = 4
+# Number of sections in the CI matrix and its authoritative telemetry bundle.
+# pytest takes the actual shard count from the --shard value.
+DEFAULT_SHARD_COUNT = 6
 
 # Relative cost of one test item. Measured on dev at 2026-10-02 over a full
 # `pytest -q --durations=25` run: the five `slow`-marked items average 9.0 s

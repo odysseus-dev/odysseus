@@ -137,10 +137,10 @@ jobs:
       # the moment one shard goes red.
       fail-fast: false
       matrix:
-        # Shards partition the suite by test file, so the four together run
-        # every test exactly once. tests/_shards.py owns the partition and
+        # Shards partition the suite by test file, so the matrix runs every
+        # test exactly once. tests/_shards.py owns the partition and
         # tests/test_shards.py pins this list to its DEFAULT_SHARD_COUNT.
-        shard: ["1/4", "2/4", "3/4", "4/4"]
+        shard: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

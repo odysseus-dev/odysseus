@@ -12,6 +12,7 @@ import json
 import os
 
 import pytest
+import yaml
 
 from tests._shards import (
     DEFAULT_ITEM_DURATION_SECONDS,
@@ -300,12 +301,11 @@ def test_key_without_a_root_is_the_path_as_given():
 def test_default_shard_count_matches_the_ci_matrix():
     """A matrix that drifts from the default silently stops running a shard."""
     workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
-    text = workflow.read_text(encoding="utf-8")
-    for index in range(1, DEFAULT_SHARD_COUNT + 1):
-        assert f'"{index}/{DEFAULT_SHARD_COUNT}"' in text, (
-            f"ci.yml does not run shard {index}/{DEFAULT_SHARD_COUNT}"
-        )
-    assert f'"{DEFAULT_SHARD_COUNT + 1}/' not in text
+    python_tests = yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"]["python-tests"]
+    shards = python_tests["strategy"]["matrix"]["shard"]
+    assert shards == [
+        f"{index}/{DEFAULT_SHARD_COUNT}" for index in range(1, DEFAULT_SHARD_COUNT + 1)
+    ]
 
 
 # --- duration manifest loading and fallback ----------------------------------
@@ -2194,8 +2194,11 @@ def test_ci_workflow_mobile_layout_predicate_is_generic():
     """Verify that ci.yml uses a generic predicate for mobile layout checks."""
     workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
     text = workflow.read_text(encoding="utf-8")
-    assert "startsWith(matrix.shard, '1/')" in text, (
-        "ci.yml must use generic startsWith(matrix.shard, '1/') for mobile layout checks"
+    steps = yaml.safe_load(text)["jobs"]["python-tests"]["steps"]
+    mobile_steps = [step for step in steps if "tests/e2e/ios-layout.config.cjs" in step.get("run", "")]
+    assert len(mobile_steps) == 1
+    assert mobile_steps[0]["if"] == (
+        "steps.docs-check.outputs.docs_only != 'true' && startsWith(matrix.shard, '1/')"
     )
     assert "matrix.shard == '1/4'" not in text, (
         "ci.yml must not hardcode matrix.shard == '1/4'"
