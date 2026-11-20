@@ -6,6 +6,12 @@ receipts and execution limits are in the [case study](notes-case-study.md) and
 [validation report](notes-validation.md). The proposal below retains the original
 responsibility map for comparison. Notes integration and the recipient's independent
 H reproduction remain pending.
+
+The later Notes rework (the markdown content model and the note window)
+changed the module graph after this roadmap; the
+current modules are in the [module inventory](notes-module-inventory.md), and
+the behaviour is specified in `specs/calendar-tasks-notes.md`. This page is
+left as written.
 F1 remains an entirely separate foundation-only PR. The complete Notes
 decomposition, regression tests, compatibility validation and final reference
 case study belong to one comprehensive draft PR targeting official `dev`.

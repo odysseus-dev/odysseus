@@ -64,6 +64,8 @@ function _loadDraftRecovery(id) {
   } catch { return []; }
 }
 
+function _clearDraftRecovery(id) { try { localStorage.removeItem(_draftRecoveryKey(id)); } catch {} }
+
 function _keepDraftForRecovery(id, draft) {
   const drafts = _loadDraftRecovery(id);
   const stored = JSON.stringify(draft);
@@ -72,7 +74,7 @@ function _keepDraftForRecovery(id, draft) {
 }
 
 return { _loadPendingHighlights, _loadGlowedReminders, _saveGlowedReminders, _loadActiveHighlights, _saveActiveHighlights, _savePendingHighlights, _loadFiredReminders, _saveFiredReminders, _draftKey, _loadDraft, _clearDraft,
-  _loadDraftRecovery, _keepDraftForRecovery,
+  _loadDraftRecovery, _keepDraftForRecovery, _clearDraftRecovery,
   getItem: key => localStorage.getItem(key),
   setItem: (key, value) => localStorage.setItem(key, value),
   removeItem: key => localStorage.removeItem(key),
