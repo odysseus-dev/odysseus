@@ -166,13 +166,6 @@ function _windowAtPointer() {
   });
 }
 
-function _containsPointer(el) {
-  if (!el || _lastPointerClientX == null || _lastPointerClientY == null) return false;
-  const r = el.getBoundingClientRect();
-  return _lastPointerClientX >= r.left && _lastPointerClientX <= r.right
-    && _lastPointerClientY >= r.top && _lastPointerClientY <= r.bottom;
-}
-
 function _closeHoveredWindow() {
   let win = _windowAtPointer();
   if (!win) {

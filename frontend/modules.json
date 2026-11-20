@@ -14,6 +14,14 @@
       "deployment": "js/shared/platform/clipboard.js"
     },
     {
+      "source": "shared/ui/escMenuStack.js",
+      "deployment": "js/escMenuStack.js"
+    },
+    {
+      "source": "shared/ui/toolWindowZOrder.js",
+      "deployment": "js/toolWindowZOrder.js"
+    },
+    {
       "source": "features/notes/domain/recurrence.js",
       "deployment": "js/features/notes/domain/recurrence.js"
     },
@@ -171,14 +179,6 @@
         },
         {
           "specifier": "/static/js/modalSnap.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/toolWindowZOrder.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/escMenuStack.js",
           "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
         },
         {
@@ -441,14 +441,6 @@
         },
         {
           "specifier": "/static/js/modalManager.js",
-          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
-        },
-        {
-          "specifier": "/static/js/escMenuStack.js",
-          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
-        },
-        {
-          "specifier": "/static/js/toolWindowZOrder.js",
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
         },
         {

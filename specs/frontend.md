@@ -35,7 +35,7 @@ This spec covers the current browser app in:
 
 ## Runtime Shape
 
-The browser runtime is a static native-ES-module SPA served by FastAPI, without a runtime Node/build dependency. Incremental maintained sources now live under `frontend/src/`, with explicit source-to-deployment mappings in `frontend/modules.json`; the map publishes `shared/actionMenuOrder.js`, the Notes feature graph and shared confetti to committed `static/js/` outputs. `scripts/build_frontend.py` publishes/checks those bytes during development, never application startup. Legacy modules remain authored under `static/`; there is no Vite/React/TypeScript bundle.
+The browser runtime is a static native-ES-module SPA served by FastAPI, without a runtime Node/build dependency. Incremental maintained sources now live under `frontend/src/`, with explicit source-to-deployment mappings in `frontend/modules.json`; the map publishes the Notes and Documents feature graphs and shared modules to committed `static/js/` outputs. The shared domain encoder escapes plain text, and the shared platform clipboard adapter serves the Settings integration forms. The Escape registry and tool-window z-order helpers are maintained under `shared/ui/` and keep their established runtime URLs. `scripts/build_frontend.py` publishes/checks those bytes during development, never application startup. Legacy modules remain authored under `static/`; there is no Vite/React/TypeScript bundle.
 
 `app.py` owns:
 

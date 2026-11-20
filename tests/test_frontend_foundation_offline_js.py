@@ -1,7 +1,7 @@
 """Real Chromium proof at the existing /static/ service-worker scope.
 
 This deliberately does not widen SW scope or claim offline SPA root reload.
-The helper is first evaluated offline, after install-time precaching only.
+The shared helpers are first evaluated offline, after install-time precaching only.
 """
 import json
 import shutil
@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
-def test_precached_helper_imports_offline_in_a_fresh_page_and_panels_stay_lazy():
+def test_precached_shared_helpers_import_offline_and_panels_stay_lazy():
     script = r'''
       import assert from 'node:assert/strict';
       import { chromium } from 'playwright';
@@ -28,11 +28,18 @@ def test_precached_helper_imports_offline_in_a_fresh_page_and_panels_stay_lazy()
           await navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1');
           const registration = await navigator.serviceWorker.ready;
           if (!navigator.serviceWorker.controller) await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
-          const response = await caches.match('/static/js/actionMenuOrder.js');
-          return { scope: registration.scope, cached: !!response && response.ok };
+          const paths = [
+            '/static/js/actionMenuOrder.js',
+            '/static/js/shared/domain/html.js',
+            '/static/js/shared/platform/clipboard.js',
+            '/static/js/escMenuStack.js',
+            '/static/js/toolWindowZOrder.js',
+          ];
+          const cached = await Promise.all(paths.map(async path => !!(await caches.match(path))?.ok));
+          return { scope: registration.scope, cached };
         });
         assert.equal(installed.scope, `${origin}/static/`);
-        assert.equal(installed.cached, true);
+        assert.deepEqual(installed.cached, [true, true, true, true, true]);
         // New page gives a fresh ES-module map. No helper import occurred online.
         await context.setOffline(true);
         const offline = await context.newPage();
@@ -43,7 +50,18 @@ def test_precached_helper_imports_offline_in_a_fresh_page_and_panels_stay_lazy()
           const helper = await import('/static/js/actionMenuOrder.js');
           const again = await import('./actionMenuOrder.js');
           const panels = await import('/static/js/panels.js?v=20260909movepicklayer1');
+          const { escapeHtml } = await import('/static/js/shared/domain/html.js');
+          const { copyText } = await import('/static/js/shared/platform/clipboard.js');
+          const stack = await import('/static/js/escMenuStack.js');
+          const { topPortalZ } = await import('/static/js/toolWindowZOrder.js');
+          let dismissed = 0;
+          stack.registerMenuDismiss(() => { dismissed++; });
+          const sameStack = (await import('./escMenuStack.js')).dismissTopEscapeLayer();
           return {
+            escaped: escapeHtml('<a>'),
+            emptyCopy: await copyText(''),
+            sameStack: sameStack && dismissed === 1,
+            portalZ: topPortalZ(),
             sameModule: helper === again,
             exports: Object.keys(helper).sort(),
             order: helper.orderActionMenuItems([{ label: 'Delete' }, { label: 'Rename' }]).map(i => i.label),
@@ -51,6 +69,10 @@ def test_precached_helper_imports_offline_in_a_fresh_page_and_panels_stay_lazy()
           };
         });
         assert.equal(result.sameModule, true);
+        assert.equal(result.escaped, '&lt;a&gt;');
+        assert.equal(result.emptyCopy, false);
+        assert.equal(result.sameStack, true);
+        assert.equal(result.portalZ, 10031);
         assert.deepEqual(result.order, ['Rename', 'Delete']);
         assert.ok(result.panels.includes('editor'));
         assert.equal(requests.some(url => url.includes('/galleryEditor.js')), false);
