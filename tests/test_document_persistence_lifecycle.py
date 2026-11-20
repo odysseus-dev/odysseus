@@ -7,88 +7,252 @@ and prevention of cross-document overwrites.
 """
 
 import atexit
+import collections
 import json
 import os
+import queue
+import signal
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
 
-from tests.helpers.stylesheets import stylesheet_link_tags
-
 ROOT = Path(__file__).resolve().parents[1]
+
+STARTUP_TIMEOUT = 20.0
+SCENARIO_TIMEOUT = 30.0
 
 
 class LifecycleBrowserWorker:
     """Persistent Node and Playwright worker managing isolated browser contexts."""
 
-    def __init__(self):
+    def __init__(self, startup_timeout: float = STARTUP_TIMEOUT, scenario_timeout: float = SCENARIO_TIMEOUT):
         self._proc = None
+        self._startup_timeout = startup_timeout
+        self._scenario_timeout = scenario_timeout
+        self._stdout_queue = queue.Queue()
+        self._stderr_lines = collections.deque(maxlen=100)
+        self._stdout_thread = None
+        self._stderr_thread = None
+
+    def _drain_stdout(self, proc: subprocess.Popen):
+        try:
+            for line in proc.stdout:
+                self._stdout_queue.put(line)
+        except Exception:
+            pass
+        finally:
+            self._stdout_queue.put(None)
+
+    def _drain_stderr(self, proc: subprocess.Popen):
+        try:
+            for line in proc.stderr:
+                self._stderr_lines.append(line)
+        except Exception:
+            pass
+
+    def _get_stderr_diagnostics(self) -> str:
+        lines = list(self._stderr_lines)
+        return "".join(lines).strip() if lines else "(no stderr output recorded)"
+
+    def _terminate_process_group(self):
+        if self._proc is None:
+            return
+        pid = self._proc.pid
+        try:
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+
+        try:
+            self._proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                self._proc.wait(timeout=2.0)
+            except Exception:
+                pass
 
     def start(self):
-        if self._proc is not None and self._proc.poll() is None:
-            return
+        if self._proc is not None:
+            if self._proc.poll() is None:
+                return
+            exit_code = self._proc.poll()
+            self.close()
+            raise RuntimeError(
+                f"Persistence browser worker was terminated unexpectedly with code {exit_code}.\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            )
+
         runner_path = ROOT / "tests" / "helpers" / "document_persistence_lifecycle_runner.mjs"
         env = os.environ.copy()
-        self._proc = subprocess.Popen(
-            ["node", str(runner_path), "--worker"],
-            cwd=ROOT,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-        ready_line = self._proc.stdout.readline()
-        if not ready_line:
-            stderr = self._proc.stderr.read()
-            raise RuntimeError(f"Failed to start persistence browser worker:\n{stderr}")
-        ready_data = json.loads(ready_line)
+        self._stdout_queue = queue.Queue()
+        self._stderr_lines.clear()
+
+        try:
+            self._proc = subprocess.Popen(
+                ["node", str(runner_path), "--worker"],
+                cwd=ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+                env=env,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to spawn persistence browser worker process: {exc}") from exc
+
+        self._stdout_thread = threading.Thread(target=self._drain_stdout, args=(self._proc,), daemon=True)
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, args=(self._proc,), daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+        try:
+            ready_line = self._stdout_queue.get(timeout=self._startup_timeout)
+        except queue.Empty:
+            self.close()
+            raise TimeoutError(
+                f"Persistence browser worker failed to start within {self._startup_timeout}s.\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            )
+
+        if ready_line is None:
+            try:
+                exit_code = self._proc.wait(timeout=1.0)
+            except Exception:
+                exit_code = self._proc.poll()
+            self.close()
+            raise RuntimeError(
+                f"Persistence browser worker exited unexpectedly with code {exit_code} before ready handshake.\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            )
+
+        try:
+            ready_data = json.loads(ready_line)
+        except json.JSONDecodeError as exc:
+            self.close()
+            raise RuntimeError(
+                f"Persistence browser worker emitted malformed handshake: {ready_line!r}\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            ) from exc
+
         if ready_data.get("status") != "ready":
-            raise RuntimeError(f"Unexpected worker handshake: {ready_line}")
+            self.close()
+            raise RuntimeError(
+                f"Unexpected handshake response from persistence browser worker: {ready_data}\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            )
 
     def run_scenario(self, scenario_name: str) -> dict:
         self.start()
+
+        if self._proc.poll() is not None:
+            exit_code = self._proc.poll()
+            self.close()
+            raise RuntimeError(
+                f"Cannot run scenario '{scenario_name}': worker terminated unexpectedly with code {exit_code}.\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            )
+
         req = json.dumps({"scenario": scenario_name}) + "\n"
         try:
             self._proc.stdin.write(req)
             self._proc.stdin.flush()
-            resp_line = self._proc.stdout.readline()
-        except (BrokenPipeError, OSError):
+        except (BrokenPipeError, OSError) as exc:
+            exit_code = self._proc.poll()
             self.close()
-            self.start()
-            self._proc.stdin.write(req)
-            self._proc.stdin.flush()
-            resp_line = self._proc.stdout.readline()
+            raise RuntimeError(
+                f"Failed to deliver scenario '{scenario_name}' to browser worker (exit code: {exit_code}): {exc}\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            ) from exc
 
-        if not resp_line:
-            stderr = self._proc.stderr.read()
+        try:
+            resp_line = self._stdout_queue.get(timeout=self._scenario_timeout)
+        except queue.Empty:
+            self._terminate_process_group()
+            self.close()
+            raise TimeoutError(
+                f"Scenario '{scenario_name}' timed out after {self._scenario_timeout}s without response from worker.\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            )
+
+        if resp_line is None:
+            try:
+                exit_code = self._proc.wait(timeout=1.0)
+            except Exception:
+                exit_code = self._proc.poll()
             self.close()
             raise RuntimeError(
-                f"Worker closed stdout unexpectedly while running {scenario_name}:\n{stderr}"
+                f"Browser worker closed stdout unexpectedly (exit code: {exit_code}) while executing scenario '{scenario_name}'.\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
-        resp = json.loads(resp_line)
-        if not resp.get("ok"):
+
+        try:
+            resp = json.loads(resp_line)
+        except json.JSONDecodeError as exc:
+            self.close()
             raise RuntimeError(
-                f"Scenario {scenario_name} failed in browser runner:\n{resp.get('error')}"
+                f"Scenario '{scenario_name}' returned malformed JSON from worker: {resp_line!r}\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
+            ) from exc
+
+        if not resp.get("ok"):
+            error_msg = resp.get("error", "Unknown worker error")
+            raise RuntimeError(
+                f"Scenario '{scenario_name}' failed in browser runner:\n{error_msg}\n"
+                f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
+
         return resp["data"]
 
     def close(self):
         if self._proc is None:
             return
-        try:
-            if self._proc.poll() is None and self._proc.stdin:
-                self._proc.stdin.write(json.dumps({"action": "close"}) + "\n")
-                self._proc.stdin.flush()
-                self._proc.wait(timeout=3)
-        except Exception:
+
+        proc = self._proc
+        self._proc = None
+
+        if proc.poll() is None and proc.stdin:
             try:
-                self._proc.kill()
+                proc.stdin.write(json.dumps({"action": "close"}) + "\n")
+                proc.stdin.flush()
+                proc.wait(timeout=2.0)
             except Exception:
                 pass
-        finally:
-            self._proc = None
+
+        if proc.poll() is None:
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    pgid = os.getpgid(proc.pid)
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
 
 
 _worker = None
@@ -114,24 +278,6 @@ def _lifecycle_browser_session():
 
 def _run_lifecycle_scenario(scenario_name: str) -> dict:
     return _get_worker().run_scenario(scenario_name)
-
-
-def _run_browser_test(js_script: str) -> dict:
-    """Fallback runner for standalone raw JavaScript snippets."""
-    full_script = js_script.replace("__ODY_STYLESHEETS__", stylesheet_link_tags())
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", full_script],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        f"Node runner failed with exit code {result.returncode}\n"
-        f"STDOUT:\n{result.stdout}\n"
-        f"STDERR:\n{result.stderr}"
-    )
-    return json.loads(result.stdout)
 
 
 def test_scenario_1_autosave_identity_on_document_switch():

@@ -5,7 +5,6 @@
  * of repeated Node and Chromium process launches.
  */
 
-import { performance } from 'node:perf_hooks';
 import readline from 'node:readline';
 import { chromium } from 'playwright';
 import { stylesheetLinkTags } from './stylesheets.mjs';
@@ -15,7 +14,6 @@ const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 export async function launchBrowser() {
   const launchOptions = {
     headless: true,
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
   };
   if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH) {
     launchOptions.executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
@@ -778,6 +776,16 @@ async function runWorker() {
   const stylesheets = await stylesheetLinkTags();
   const browser = await launchBrowser();
 
+  const cleanupAndExit = async () => {
+    try {
+      await browser.close();
+    } catch (_) {}
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', cleanupAndExit);
+  process.on('SIGINT', cleanupAndExit);
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -809,10 +817,7 @@ async function runWorker() {
   });
 
   rl.on('close', async () => {
-    try {
-      await browser.close();
-    } catch (_) {}
-    process.exit(0);
+    await cleanupAndExit();
   });
 }
 
