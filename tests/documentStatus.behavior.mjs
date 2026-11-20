@@ -356,6 +356,10 @@ function mockEvaluate(fileName, module) {
       calls.portalZ += 1;
       return 40;
     });
+    set('markdownModule', {
+      sanitizeAllowedHtml(value) { return String(value || ''); },
+      mdToHtml(value) { return String(value || ''); },
+    });
     return;
   }
   throw new Error(`No mock exports for ${fileName}`);
@@ -375,7 +379,7 @@ async function loadDocumentStatus() {
     if (useMock) {
       if (fileName !== 'host.js') throw new Error(`Unexpected unresolved import ${specifier} from ${parent}`);
       const mod = new SyntheticModule(
-        ['bindMenuDismiss', 'getDocumentStats', 'parseMarkdownOutline', 'topPortalZ'],
+        ['bindMenuDismiss', 'getDocumentStats', 'parseMarkdownOutline', 'topPortalZ', 'markdownModule'],
         function evaluate() { mockEvaluate(fileName, this); },
         { identifier: url },
       );
@@ -731,6 +735,7 @@ describe('documentStatus', () => {
       '_renderDocumentSaveState',
       '_renderDocumentStats',
       '_scheduleDocumentHistoryControls',
+      '_scheduleDocumentOutline',
       '_scheduleDocumentStats',
       '_setDocumentHistoryControlState',
       '_syncDocumentHistoryControlsNow',

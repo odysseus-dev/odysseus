@@ -1479,6 +1479,9 @@ test('pdf lifecycle: switching to markdown releases transient PDF resources with
     return true;
   });
 
+  // This scenario edits Markdown B through the source textarea, so it pins the
+  // Markdown source editor instead of the visual default.
+  await page.evaluate(() => localStorage.setItem('odysseus-doc-md-editor-mode', 'markdown'));
   await page.evaluate(() => {
     const active = { docPointerdown: 0, docKeydown: 0, paneMousemove: 0, paneMouseleave: 0 };
     const tracked = new WeakMap();

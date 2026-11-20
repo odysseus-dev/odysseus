@@ -47,7 +47,11 @@ export function _insertRichTextImages(uploadedFiles) {
     selection.addRange(range);
     const token = `doc-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     images[images.length - 1].dataset.editorImageToken = token;
-    document.execCommand('insertHTML', false, `${images.map(image => image.outerHTML).join('<br>')}<br><br>`);
+    const imageHtml = images.map(image => image.outerHTML);
+    const markup = rich.classList.contains('markdown-visual-mode')
+      ? imageHtml.map(html => '<p>' + html + '</p>').join('') + '<p><br></p>'
+      : imageHtml.join('<br>') + '<br><br>';
+    document.execCommand('insertHTML', false, markup);
     const inserted = rich.querySelector(`[data-editor-image-token="${token}"]`);
     if (inserted) {
       inserted.removeAttribute('data-editor-image-token');

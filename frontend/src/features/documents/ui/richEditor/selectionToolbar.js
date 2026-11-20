@@ -110,7 +110,8 @@ function _ensureRichSelectionToolbar(rich) {
 
 function _renderRichSelectionToolbar(rich) {
     _richSelectionToolbarFrame = 0;
-    if (!rich?.isConnected || rich.style.display === 'none') {
+    // Markdown Visual mode uses the fixed Markdown toolbar, never this floating one.
+    if (!rich?.isConnected || rich.style.display === 'none' || rich.classList.contains('markdown-visual-mode')) {
       _hideRichSelectionToolbar();
       return;
     }
@@ -216,11 +217,13 @@ function _renderRichSelectionToolbar(rich) {
   }
 
 export function _scheduleRichSelectionToolbar(rich) {
+    if (rich?.classList?.contains('markdown-visual-mode')) return;
     if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
     _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
   }
 
 export function _followRichSelectionToolbarLayout(rich, duration = 360) {
+    if (rich?.classList?.contains('markdown-visual-mode')) return;
     if (_richSelectionToolbarFollowFrame) cancelAnimationFrame(_richSelectionToolbarFollowFrame);
     const deadline = performance.now() + duration;
     const follow = () => {

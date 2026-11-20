@@ -18,7 +18,8 @@ import { _dismissDocKb } from './panel/paneLayout.js';
 
 import { _emailRichbodyActive, _richTextContentToHtml, _scheduleEmailRichbodySave, _syncEmailRichbody, _syncRichEmptyImport } from './richEditor/richBodySync.js';
 
-import { _showRichTextEditor } from './richEditor/richBodyWiring.js';
+import { _showRichTextEditor, _showMarkdownVisualEditor, _hideMarkdownVisualEditor } from './richEditor/richBodyWiring.js';
+import { hideMarkdownCompatBanner, isMarkdownVisualModeActive, isVisualMarkdownDoc, renderMarkdownCompatBanner, resolveMarkdownEditorMode } from './richEditor/markdownVisualSync.js';
 
 import { _measurePos } from './selection/selectionHighlights.js';
 
@@ -74,6 +75,13 @@ export function _wirePreviewModes() {
       escHtml: _escHtml,
       isRichTextLang: _isRichTextLang,
       isDocxLang: _isDocxLang,
+      isVisualMarkdownDoc,
+      resolveMarkdownEditorMode,
+      showMarkdownVisualEditor: _showMarkdownVisualEditor,
+      hideMarkdownVisualEditor: _hideMarkdownVisualEditor,
+      syncEmailRichbody: _syncEmailRichbody,
+      renderMarkdownCompatBanner,
+      hideMarkdownCompatBanner,
     });
   }
 
@@ -84,6 +92,13 @@ export function _wireDiffViewer() {
       updateLineNumbers,
       lineNumberContentEl: _lineNumberContentEl,
       showToast: (msg) => uiModule?.showToast?.(msg),
+      getActiveDoc: () => (activeDocId ? docs.get(activeDocId) : null),
+      captureSourceToDoc: () => saveCurrentToMap(),
+      isVisualMarkdownDoc,
+      resolveMarkdownEditorMode,
+      showMarkdownVisualEditor: _showMarkdownVisualEditor,
+      hideMarkdownVisualEditor: _hideMarkdownVisualEditor,
+      syncHeaderActions: _syncHeaderActions,
       onAcceptChanges: () => {
         const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
         if (lang === 'markdown') {
@@ -115,6 +130,19 @@ export function _wireSuggestions() {
       showEmailFields: _showEmailFields,
       syncHighlighting,
       refreshMarkdownPreviewIfVisible: _refreshMarkdownPreviewIfVisible,
+      refreshVisualMarkdownIfActive: (doc) => {
+        // Only an active visual view must follow a source-level change. The
+        // textarea is captured through saveCurrentToMap (with the visual view
+        // detached) and the view re-renders from it; source and Preview modes
+        // already read the textarea.
+        if (!doc || !isVisualMarkdownDoc(doc) || !isMarkdownVisualModeActive()) return;
+        _hideMarkdownVisualEditor();
+        saveCurrentToMap();
+        if (resolveMarkdownEditorMode(doc) !== 'visual' || !_showMarkdownVisualEditor(doc)) {
+          renderMarkdownCompatBanner(doc._visualCompatReasons);
+        }
+        _syncHeaderActions();
+      },
       isHtmlPreviewActive,
       isRenderLang: _isRenderLang,
       themedRenderSrcdoc: _themedRenderSrcdoc,

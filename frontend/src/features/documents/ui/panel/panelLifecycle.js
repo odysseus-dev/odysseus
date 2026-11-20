@@ -537,16 +537,6 @@ if (!escapeLayeringInstalled) {
         return;
       }
 
-      // A pinned text selection is the user's most local Escape target. Clear
-      // it before closing any menu, toolbar, or the document itself.
-      if (_selections.length > 0) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation?.();
-        clearSelection();
-        return;
-      }
-
       const versionPanel = document.getElementById('doc-version-panel');
       if (versionPanel && !versionPanel.classList.contains('hidden')) {
         e.preventDefault();
@@ -587,6 +577,17 @@ if (!escapeLayeringInstalled) {
         _hideRichSlashMenu();
         return;
       }
+
+      // A pinned text selection is the user's most local Escape target. Clear
+      // it before closing the document itself.
+      if (_selections.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        clearSelection();
+        return;
+      }
+
       if (_richSelectionToolbar) {
         const rich = _emailRichbodyActive();
         const selection = window.getSelection?.();

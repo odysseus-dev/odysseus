@@ -1,4 +1,4 @@
-import { closePanel } from '../../application/documentCommands.js';
+import { closePanel, saveCurrentToMap } from '../../application/documentCommands.js';
 import { enterDiffMode } from '../diffViewer.js';
 // ui/header/headerActions.js
 
@@ -12,7 +12,7 @@ import { copyDocument, runDocument } from '../documentActions.js';
 
 import { closeTab } from '../documentFlows.js';
 
-import { _handleMarkdownPreviewClickHint, syncHighlighting } from '../editor/sourceEditor.js';
+import { _handleMarkdownPreviewClickHint, syncHighlighting, updateLineNumbers } from '../editor/sourceEditor.js';
 
 import { _sendSignedReply } from '../email/signedReply.js';
 
@@ -21,6 +21,20 @@ import { _closeVersionPanel, toggleVersionHistory } from '../history/versionHist
 import { _dismissDocKb, _wireSwipeDismiss } from '../panel/paneLayout.js';
 
 import { _emailRichbodyActive, _scheduleEmailRichbodySave, _syncEmailRichbody } from '../richEditor/richBodySync.js';
+import { _hideMarkdownVisualEditor, _showMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import { alignText } from '../../domain/sourceFidelity.js';
+import { markdownToVisualHtml } from '../../domain/markdownVisualCodec.js';
+import { segmentMarkdownBlocks } from '../../domain/sourceSegmentation.js';
+import {
+  assessMarkdownVisualSupport,
+  discardVisualDraft,
+  getVisualCaretBlockInfo,
+  hideMarkdownCompatBanner,
+  isMarkdownVisualModeActive,
+  isVisualMarkdownDoc,
+  renderMarkdownCompatBanner,
+  setMarkdownModePreference,
+} from '../richEditor/markdownVisualSync.js';
 
 import { _scheduleSelRerender } from '../selection/selectionHighlights.js';
 
@@ -31,7 +45,7 @@ import { _syncDocumentToolbarSeparators } from '../toolbar/toolbar.js';
 import { _hidePdfViewPane, _isFormBackedDoc, _pdfViewState, _renderPdfPane } from '../pdfTools.js';
 import { _undoPdfPaneAction } from '../pdfTools.js';
 import { _diffModeActive, exitDiffMode } from '../diffViewer.js';
-import { toggleCsvPreview, toggleDocxPreview, toggleHtmlPreview, toggleMarkdownPreview, toggleRichTextPreview } from '../previewModes.js';
+import { _setMarkdownPreviewActive, toggleCsvPreview, toggleDocxPreview, toggleHtmlPreview, toggleMarkdownPreview, toggleRichTextPreview } from '../previewModes.js';
 import { showExportMenu } from '../exportDocx.js';
 import { _importFromDevice } from '../importFromDevice.js';
 
@@ -145,13 +159,17 @@ export function _syncHeaderActions() {
       : false;
     const _outputActive = _outputPanel && _outputPanel.style.display !== 'none';
 
+    const doc = activeDocId && docs.get(activeDocId);
+    const isPdfDoc = !!(doc && _isFormBackedDoc(doc.content || ''));
+    const visualMdActive = lang === 'markdown' && !isPdfDoc && !_mdActive && isMarkdownVisualModeActive();
+
     let show = false;
     actionBtn.classList.remove('active');
 
-    // The markdown Edit/Preview toggle is a two-icon switch; other modes use
-    // the single dynamic preview button.
+    // The markdown Visual/Markdown toggle is a two-option segmented switch;
+    // hidden for form-backed PDFs.
     const mdToggle = document.getElementById('doc-md-view-toggle');
-    if (mdToggle) mdToggle.style.display = (lang === 'markdown') ? 'inline-flex' : 'none';
+    if (mdToggle) mdToggle.style.display = (lang === 'markdown' && !isPdfDoc) ? 'inline-flex' : 'none';
     const renderToggle = document.getElementById('doc-render-view-toggle');
     if (renderToggle) {
       renderToggle.style.display = _hasViewToggle(lang) ? 'inline-flex' : 'none';
@@ -212,10 +230,22 @@ export function _syncHeaderActions() {
     }
 
     if (lang === 'markdown') {
-      show = false;
+      show = Boolean(doc);
+      actionBtn.textContent = _mdActive ? 'Edit' : 'Preview';
+      actionBtn.title = _mdActive ? 'Return to editor' : 'Preview Markdown';
+      actionBtn.setAttribute('aria-pressed', String(Boolean(_mdActive)));
       if (mdToggle) {
-        mdToggle.querySelector('[data-mdview="edit"]')?.classList.toggle('active', !_mdActive);
-        mdToggle.querySelector('[data-mdview="preview"]')?.classList.toggle('active', _mdActive);
+        const visualBtn = mdToggle.querySelector('[data-mdview="visual"]');
+        const editBtn = mdToggle.querySelector('[data-mdview="edit"]');
+        const compatBlocked = !isPdfDoc && isVisualMarkdownDoc(doc)
+          && Array.isArray(doc?._visualCompatReasons) && doc._visualCompatReasons.length > 0;
+        const visualOn = !_mdActive && visualMdActive;
+        const markdownOn = !_mdActive && !visualMdActive;
+        visualBtn?.classList.toggle('active', visualOn);
+        visualBtn?.classList.toggle('is-compat-blocked', compatBlocked);
+        visualBtn?.setAttribute('aria-pressed', visualOn ? 'true' : 'false');
+        editBtn?.classList.toggle('active', markdownOn);
+        editBtn?.setAttribute('aria-pressed', markdownOn ? 'true' : 'false');
         mdToggle.classList.toggle('is-preview-active', !!_mdActive);
       }
     } else if (lang === 'csv') {
@@ -253,7 +283,8 @@ export function _syncHeaderActions() {
     // The unified segmented Code/Run-or-View toggle (`#doc-render-view-toggle`)
     // covers CSV / Python / JS / bash / HTML / SVG / XML. When it's shown,
     // suppress the single morph button to avoid two redundant controls.
-    if (_hasViewToggle(lang)) show = false;
+    if (_hasViewToggle(lang) && lang !== 'markdown') show = false;
+    if (lang !== 'markdown') actionBtn.removeAttribute('aria-pressed');
     actionBtn.style.display = show ? '' : 'none';
     document.querySelectorAll('.md-toolbar-edit-only').forEach(el => {
       el.style.display = (lang === 'markdown' && _mdActive) ? 'none' : '';
@@ -264,7 +295,11 @@ export function _syncHeaderActions() {
       aiWritingButton.style.display = writingMode && !(lang === 'markdown' && _mdActive) ? '' : 'none';
     }
     document.querySelectorAll('.md-toolbar-rich-only').forEach(el => {
-      el.style.display = _isRichTextLang(lang) ? '' : 'none';
+      const action = el.dataset.md || el.dataset.dd;
+      const isMdOnlyRichAction = action === 'alert';
+      const allowInMdVisual = visualMdActive && (action === 'quote' || action === 'table' || action === 'alert' || action === 'code' || action === 'removeformat');
+      const allowInRich = _isRichTextLang(lang) && !isMdOnlyRichAction;
+      el.style.display = (allowInRich || allowInMdVisual) ? '' : 'none';
     });
     const richMode = _isRichTextLang(lang);
     const attachButton = document.getElementById('md-toolbar-attach-btn');
@@ -280,21 +315,21 @@ export function _syncHeaderActions() {
     const inlineImageButton = document.getElementById('md-toolbar-inline-image-btn');
     if (inlineImageButton) inlineImageButton.style.display = (lang === 'email' || richMode) ? '' : 'none';
     document.querySelectorAll('.md-toolbar-inline-format').forEach(el => {
-      el.style.display = (lang === 'email' || richMode) ? '' : 'none';
+      // Visual Markdown reuses the separator control; it offers only the plain
+      // divider, which is the one style Markdown can represent (`---`).
+      const allowInMdVisual = visualMdActive && el.dataset.dd === 'separator';
+      el.style.display = (lang === 'email' || richMode || allowInMdVisual) ? '' : 'none';
     });
     const alignButton = document.querySelector('.md-toolbar-align-control[data-dd="align"]');
     if (alignButton) alignButton.style.display = (lang === 'email' || richMode) ? '' : 'none';
     _syncDocumentToolbarSeparators(document.getElementById('md-toolbar-items'));
     const fsBtn = document.getElementById('doc-fontsize-btn');
     if (fsBtn) {
-      const doc = activeDocId && docs.get(activeDocId);
-      const isPdfDoc = !!(doc && _isFormBackedDoc(doc.content || ''));
-      fsBtn.style.display = (isPdfDoc || richMode || (lang === 'markdown' && _mdActive)) ? 'none' : '';
+      fsBtn.style.display = (isPdfDoc || richMode || visualMdActive || (lang === 'markdown' && _mdActive)) ? 'none' : '';
     }
     const redoBtn = document.getElementById('doc-redo-btn');
     if (redoBtn) {
-      const doc = activeDocId && docs.get(activeDocId);
-      redoBtn.style.display = (doc && _isFormBackedDoc(doc.content || '')) ? 'none' : '';
+      redoBtn.style.display = isPdfDoc ? 'none' : '';
     }
     const outlineBtn = document.getElementById('doc-outline-toolbar-btn');
     if (outlineBtn) {
@@ -306,6 +341,7 @@ export function _syncHeaderActions() {
     if (mdToolbar) {
       mdToolbar.classList.toggle('md-preview-active', lang === 'markdown' && !!_mdActive);
       mdToolbar.classList.toggle('md-write-active', lang === 'markdown' && !_mdActive);
+      mdToolbar.classList.toggle('md-visual-active', visualMdActive);
     }
     const stats = document.getElementById('doc-stats');
     if (stats) stats.style.display = (_hasViewToggle(lang) && lang !== 'csv') ? 'none' : '';
@@ -339,6 +375,134 @@ document.getElementById('doc-version-badge').addEventListener('click', toggleVer
 document.getElementById('doc-version-close').addEventListener('click', () => _closeVersionPanel({ restoreFocus: true }));
 }
 
+// Map text boundaries rather than counting Markdown delimiters as visible text.
+function mapCaretTextOffset(from, to, offset) {
+  const at = Math.min(Math.max(0, offset), from.length);
+  const alignment = alignText(from, to);
+  if (!alignment) return Math.min(at, to.length);
+  for (let index = at; index < alignment.length; index++) {
+    if (alignment[index] >= 0) return alignment[index];
+  }
+  for (let index = at - 1; index >= 0; index--) {
+    if (alignment[index] >= 0) return alignment[index] + 1;
+  }
+  return 0;
+}
+
+/**
+ * Switch the active Markdown document between the Visual editor and the Markdown
+ * source editor. The current content is captured through `saveCurrentToMap`, which
+ * owns the pane-identity and history-preview guards, so a switch never writes
+ * stale or previewed content into the document.
+ * @param {'visual'|'markdown'} requestedMode
+ * @returns {boolean} true when the requested mode is shown
+ */
+export function _setMarkdownEditorMode(requestedMode, { focus = true, persistPreference = true, notifyBlocked = true, discardVisualDraft: forceDiscard = false } = {}) {
+    const doc = activeDocId ? docs.get(activeDocId) : null;
+    if (!doc || !isVisualMarkdownDoc(doc)) return false;
+
+    const rich = document.getElementById('doc-email-richbody');
+    const ta = document.getElementById('doc-editor-textarea');
+    const mdPrev = document.getElementById('doc-md-preview');
+    const wasPreview = !!(mdPrev && mdPrev.style.display !== 'none');
+
+    if (requestedMode === 'visual' && !wasPreview && isMarkdownVisualModeActive()) {
+      doc._markdownEditorMode = 'visual';
+      if (persistPreference) setMarkdownModePreference('visual');
+      return true;
+    }
+
+    let visualCaretInfo = null;
+    if (requestedMode === 'markdown' && rich && rich.classList.contains('markdown-visual-mode')) {
+      visualCaretInfo = getVisualCaretBlockInfo(rich);
+    }
+    let targetBlockIndex = null;
+    let targetOffset = 0;
+    if (requestedMode === 'visual' && ta && (document.activeElement === ta || focus)) {
+      const sourceCaretPos = ta.selectionStart || 0;
+      const segments = segmentMarkdownBlocks(ta.value);
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (sourceCaretPos >= seg.startOffset && sourceCaretPos <= seg.endOffset) {
+          targetBlockIndex = i;
+          const rendered = new DOMParser().parseFromString(markdownToVisualHtml(seg.raw), 'text/html');
+          targetOffset = mapCaretTextOffset(seg.raw, rendered.body.textContent || '', sourceCaretPos - seg.startOffset);
+          break;
+        }
+      }
+    }
+
+    saveCurrentToMap();
+
+    if (requestedMode === 'markdown' && doc._visualSyncBlocked) {
+      if (!forceDiscard) {
+        _syncHeaderActions();
+        _scheduleDocumentHistoryControls();
+        return false;
+      }
+      discardVisualDraft(doc);
+    }
+    const currentContent = doc.content || '';
+    const showSource = (caretInfo = null) => {
+      if (!ta) return;
+      if (ta.value !== currentContent) ta.value = currentContent;
+      syncHighlighting(ta.value, 'markdown');
+      updateLineNumbers(ta.value);
+      if (caretInfo) {
+        const segments = segmentMarkdownBlocks(ta.value);
+        const seg = segments[Math.min(caretInfo.blockIndex, segments.length - 1)];
+        if (seg) {
+          const localOffset = mapCaretTextOffset(caretInfo.blockText ?? seg.raw, seg.raw, caretInfo.offsetInBlock || 0);
+          const pos = Math.min(seg.endOffset, seg.startOffset + localOffset);
+          try {
+            ta.setSelectionRange(pos, pos);
+          } catch (_) {}
+        }
+      }
+      if (focus) {
+        try { ta.focus(); } catch (_) {}
+      }
+    };
+
+    if (requestedMode === 'visual') {
+      if (wasPreview) _setMarkdownPreviewActive(false, { remember: true });
+      const compat = assessMarkdownVisualSupport(currentContent);
+      doc._visualCompatReasons = compat.supported ? [] : compat.reasons;
+      const shown = compat.supported && _showMarkdownVisualEditor(doc, { focus, targetBlockIndex, targetOffset });
+      if (!shown) {
+        _hideMarkdownVisualEditor();
+        renderMarkdownCompatBanner(doc._visualCompatReasons);
+        showSource();
+        if (notifyBlocked) {
+          uiModule?.showToast?.(`Markdown mode preserved: ${doc._visualCompatReasons[0] || 'unsupported syntax'}`);
+        }
+        _syncHeaderActions();
+        _scheduleDocumentHistoryControls();
+        return false;
+      }
+      doc._markdownEditorMode = 'visual';
+      if (persistPreference) setMarkdownModePreference('visual');
+      _syncHeaderActions();
+      _scheduleDocumentHistoryControls();
+      return true;
+    }
+
+    // Record the choice first so leaving Preview does not re-mount the visual view.
+    doc._markdownEditorMode = 'markdown';
+    if (persistPreference) setMarkdownModePreference('markdown');
+    if (wasPreview) _setMarkdownPreviewActive(false, { remember: true });
+    _hideMarkdownVisualEditor();
+
+    const compat = assessMarkdownVisualSupport(currentContent);
+    doc._visualCompatReasons = compat.supported ? [] : compat.reasons;
+    if (!compat.supported) renderMarkdownCompatBanner(compat.reasons);
+    else hideMarkdownCompatBanner();
+    showSource(visualCaretInfo);
+    _syncHeaderActions();
+    _scheduleDocumentHistoryControls();
+    return true;
+  }
+
 export function bindHeaderActionsSecondary({ pane, divider, paneLifetime, isRight }) {
 document.getElementById('doc-header-preview-btn').addEventListener('click', () => {
       const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
@@ -359,11 +523,8 @@ document.getElementById('doc-header-preview-btn').addEventListener('click', () =
 document.getElementById('doc-md-view-toggle')?.addEventListener('click', (e) => {
       const opt = e.target.closest('.md-view-opt');
       if (!opt) return;
-      const wantPreview = opt.dataset.mdview === 'preview';
-      const mdPrev = document.getElementById('doc-md-preview');
-      const isPreview = mdPrev && mdPrev.style.display !== 'none';
-      if (wantPreview !== isPreview) toggleMarkdownPreview();
-      _syncHeaderActions();
+      const targetMode = opt.dataset.mdview === 'visual' ? 'visual' : 'markdown';
+      _setMarkdownEditorMode(targetMode, { focus: true, persistPreference: true, notifyBlocked: true });
     });
 document.getElementById('doc-md-preview')?.addEventListener('click', _handleMarkdownPreviewClickHint);
 document.getElementById('doc-render-view-toggle')?.addEventListener('click', (e) => {
