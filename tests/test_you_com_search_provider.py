@@ -432,7 +432,7 @@ def test_provider_availability_without_key():
 def test_frontend_optional_key_behavior():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
-    settings_js = (root / "static/js/settings.js").read_text(encoding="utf-8")
+    settings_js = (root / "static/js/settings/searchProviders.js").read_text(encoding="utf-8")
 
     # 1. You.com is registered as an optional-key provider
     assert "_searchOptionalKey = { you_com: 1 };" in settings_js

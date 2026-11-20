@@ -14,6 +14,7 @@ from typing import Dict, Optional
 from src.tools._common import _parse_tool_args
 from src.tool_utils import get_upload_handler
 from src.upload_handler import reserve_upload_references
+from core.notes_markdown import items_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             id=str(_uuid.uuid4()),
             owner=owner,
             title=expected_title,
-            items=json.dumps([{"text": text, "done": False, "checked": False}]),
+            content=items_to_markdown([{"text": text, "done": False}]),
             note_type="todo",
             label="calendar",
             due_date=due_date,

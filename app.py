@@ -909,6 +909,10 @@ app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_ma
 from routes.font_routes import setup_font_routes
 app.include_router(setup_font_routes())
 
+# Per-model generation settings (Settings → Added Models)
+from routes.model_customization import setup_model_customization_routes
+app.include_router(setup_model_customization_routes())
+
 
 # MCP (Model Context Protocol)
 from src.mcp_manager import McpManager

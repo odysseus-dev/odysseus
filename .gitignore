@@ -130,3 +130,6 @@ _scratch/
 data/trust/keys/
 data/trust/ledger.jsonl
 data/trust/*.lock
+
+# Real-application browser validation reports (scripts/run_real_playwright_validation.py)
+/artifacts/

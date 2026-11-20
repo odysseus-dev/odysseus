@@ -33,6 +33,7 @@ from src.agent_loop import (
 )
 from src.agent_loop import _normalize_ody_qwen_text_artifacts
 from src import agent_runs
+from src.model_customization import resolve_temperature
 from src import shutdown as _shutdown
 from src.model_context import estimate_tokens
 from src.context_compactor import (
@@ -2187,36 +2188,31 @@ def _format_selected_notes_context(notes) -> str:
     """Format selected Notes/Todos as reference context for the model."""
     sections = []
 
+    from core.notes_markdown import derive_note_type, effective_content, parse_task_lines
+
     for index, note in enumerate(notes, start=1):
+        # Checklists are `- [ ]` task lines inside content; the content block
+        # carries them verbatim and the Items block restates them with indices.
+        content = effective_content(note.content, note.items, getattr(note, "image_url", None))
         lines = [
             f"--- Selected Note {index} ---",
             f"Title: {note.title or '(untitled)'}",
-            f"Type: {note.note_type or 'note'}",
+            f"Type: {derive_note_type(note.note_type, content)}",
         ]
 
-        if note.content:
+        if content:
             lines.extend([
                 "Content:",
-                str(note.content),
+                content,
             ])
 
-        if note.items:
-            try:
-                items = json.loads(note.items)
-            except (TypeError, json.JSONDecodeError):
-                items = []
-
-            if isinstance(items, list):
-                lines.append("Items:")
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-
-                    status = "done" if item.get("done") else "pending"
-                    text = str(item.get("text") or "").strip()
-
-                    if text:
-                        lines.append(f"- [{status}] {text}")
+        tasks = parse_task_lines(content)
+        if tasks:
+            lines.append("Items:")
+            for task in tasks:
+                status = "done" if task["done"] else "pending"
+                if task["text"]:
+                    lines.append(f"- [{status}] {task['text']}")
 
         sections.append("\n".join(lines))
 
@@ -2406,7 +2402,7 @@ def setup_chat_routes(
             request_messages,
             fallback_statuses=foreground_policy.eligible_statuses,
             candidate_request_factory=candidate_request_factory,
-            temperature=(sess.temperature_override if getattr(sess, "temperature_override", None) is not None else 1.0),
+            temperature=getattr(sess, "temperature_override", None),
             max_tokens=(sess.max_tokens_override if getattr(sess, "max_tokens_override", None) is not None else 0),
             prompt_type=preset_id,
             session_id=session,
@@ -4273,7 +4269,7 @@ def setup_chat_routes(
                     async for chunk in stream_llm_with_fallback(
                         _foreground_candidates,
                         messages,
-                        temperature=(temperature_override if temperature_override is not None else 1.0),
+                        temperature=temperature_override,
                         # Respect the preset; 0/unset = let the server decide (no
                         # cap), matching agent mode. The old hard 4096 fallback
                         # truncated reasoning models mid-<think> — they'd burn the
@@ -4696,7 +4692,7 @@ def setup_chat_routes(
                         sess.model,
                         messages,
                         headers=sess.headers,
-                        temperature=(temperature_override if temperature_override is not None else 1.0),
+                        temperature=(temperature_override if temperature_override is not None else resolve_temperature(sess.endpoint_url, sess.model, None)),
                         max_tokens=_max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,

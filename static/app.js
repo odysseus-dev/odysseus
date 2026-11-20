@@ -58,6 +58,7 @@ import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';
 import { getSettings } from './js/appConfig.js';
+import { loadAuthStatus, settingsAccessFromStatus } from './js/authStatus.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260910sidebarbounce1';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
@@ -1350,11 +1351,15 @@ function initializeEventListeners() {
   }
 
   // Fetch auth status — populate user bar and show admin button if admin
-  fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
-    .then(r => r.json())
+  loadAuthStatus()
     .then(d => {
       window._isAdmin = !!d.is_admin;
-      if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+      // Whether this caller may change server-wide settings. Unlike
+      // is_admin, this is true for the operator of an AUTH_ENABLED=false
+      // install, whom the server treats as an administrator.
+      window._canManageSettings = settingsAccessFromStatus(d).canManage;
+      if (typeof settingsModule.syncAdminVisibility === 'function') settingsModule.syncAdminVisibility();
+      if (window._canManageSettings && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {

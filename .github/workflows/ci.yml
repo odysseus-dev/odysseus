@@ -97,6 +97,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check frontend architecture
         run: node scripts/check_frontend.mjs
+      - name: Check document references and exports
+        run: node scripts/check_document_references.mjs
       # Syntax-check our own JS (skip vendored libs in static/lib).
       - name: node --check
         run: |
@@ -105,8 +107,25 @@ jobs:
             node --check "$f"
           done
           node --check scripts/check_frontend.mjs
-      - name: Test frontend architecture gates and stateless proof
-        run: node --test tests/frontendArchitecture.test.mjs
+          node --check scripts/check_document_references.mjs
+      - name: Test frontend architecture gates and reference checks
+        run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs
+      - name: Test document behavior suites
+        run: |
+          node --test tests/domainModules.test.mjs \
+            tests/documentBehaviorRunner.test.mjs \
+            tests/documentPersistence.test.mjs \
+            tests/documentActions.test.mjs \
+            tests/documentUpdate.test.mjs \
+            tests/documentStatus.test.mjs \
+            tests/documentVersionHistory.test.mjs \
+            tests/markdownImages.test.mjs \
+            tests/documentTabBar.test.mjs \
+            tests/selectionHighlights.test.mjs \
+            tests/documentLiveStream.test.mjs \
+            tests/documentToolbar.test.mjs \
+            tests/documentOverflow.test.mjs \
+            tests/documentFlows.test.mjs
 
   python-tests:
     name: Python tests (pytest ${{ matrix.shard }})
@@ -118,10 +137,10 @@ jobs:
       # the moment one shard goes red.
       fail-fast: false
       matrix:
-        # Shards partition the suite by test file, so the four together run
-        # every test exactly once. tests/_shards.py owns the partition and
+        # Shards partition the suite by test file, so the matrix runs every
+        # test exactly once. tests/_shards.py owns the partition and
         # tests/test_shards.py pins this list to its DEFAULT_SHARD_COUNT.
-        shard: ["1/4", "2/4", "3/4", "4/4"]
+        shard: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -151,6 +170,13 @@ jobs:
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Compute shard identifier
+        if: steps.docs-check.outputs.docs_only != 'true'
+        id: shard-id
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: printf 'tag=%s\n' "$SHARD" | tr '/' '-' >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
@@ -160,8 +186,17 @@ jobs:
       - name: Install FFmpeg and bubblewrap and validate system CA trust
         if: steps.docs-check.outputs.docs_only != 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap ca-certificates
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v bwrap >/dev/null 2>&1; then
+            # Ensure acquire retries and timeouts are bounded so stalled pool mirrors
+            # fail over to Canonical's fallback mirror in seconds rather than hanging.
+            # Written to zzz-ci-retries so it sorts after upstream runner configuration.
+            printf '%s\n' \
+              'Acquire::Retries "1";' \
+              'Acquire::http::Timeout "15";' \
+              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+            sudo apt-get update || sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap ca-certificates
+          fi
           python scripts/check_ca_trust.py --system
           command -v ffmpeg
           ffmpeg -version | head -n 1
@@ -173,7 +208,7 @@ jobs:
         with:
           version: "0.13.5"
           enable-cache: true
-          cache-dependency-glob: requirements.txt
+          cache-dependency-glob: "requirements*.txt"
           prune-cache: false
       - run: |
           uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
@@ -188,16 +223,21 @@ jobs:
           cache: npm
       - run: npm ci
         if: steps.docs-check.outputs.docs_only != 'true'
-      # Browser binaries are keyed on the lockfile's Playwright version. On a
-      # hit, --with-deps still installs the system libraries but skips the
-      # browser downloads.
+      # Browser binaries are keyed on the lockfile's Playwright version.
+      # Ubuntu 24.04 runner images already provide all required Chromium system
+      # libraries; installing chromium directly skips redundant apt passes and
+      # completes in <1s on cache hits.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium and verify launch
         if: steps.docs-check.outputs.docs_only != 'true'
+        run: |
+          npx playwright install chromium
+          node -e "const { chromium } = require('playwright'); (async () => { const b = await chromium.launch(); await b.close(); })()"
+          python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(); b.close(); p.stop()"
       - run: mkdir -p data  # sqlite DB lives at ./data/app.db
         if: steps.docs-check.outputs.docs_only != 'true'
       - name: Validate Python and system CA trust
@@ -253,13 +293,99 @@ jobs:
           PY
 
       - name: pytest (shard ${{ matrix.shard }})
+        id: pytest
         if: steps.docs-check.outputs.docs_only != 'true'
         env:
           PYTEST_SHARD: ${{ matrix.shard }}
-        run: python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD"
+          PYTEST_COLLECTION_EXPORT: ${{ runner.temp }}/pytest-collection.json
+        run: |
+          python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD" \
+            --junitxml="$RUNNER_TEMP/pytest-report.xml" \
+            -o junit_duration_report=total
 
-      - name: Playwright mobile layout checks (shard 1/4 only)
-        if: steps.docs-check.outputs.docs_only != 'true' && matrix.shard == '1/4'
+      - name: Record shard metadata sidecar
+        if: always() && steps.docs-check.outputs.docs_only != 'true'
+        env:
+          SHARD: ${{ matrix.shard }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          runner_temp = Path(os.environ.get("RUNNER_TEMP", "."))
+          inv_file = runner_temp / "pytest-collection.json"
+          collected_files = None
+          selected_files = None
+          selected_test_counts = None
+          selected_test_names = None
+          collection_error = None
+
+          if inv_file.is_file():
+              try:
+                  parsed = json.loads(inv_file.read_text(encoding="utf-8"))
+                  if isinstance(parsed, dict):
+                      cf = parsed.get("collected_files")
+                      sf = parsed.get("selected_files")
+                      stc = parsed.get("selected_test_counts")
+                      stn = parsed.get("selected_test_names")
+                      if (
+                          isinstance(cf, list) and cf
+                          and isinstance(sf, list)
+                          and isinstance(stc, dict)
+                          and isinstance(stn, dict)
+                      ):
+                          collected_files = cf
+                          selected_files = sf
+                          selected_test_counts = stc
+                          selected_test_names = stn
+                      else:
+                          collection_error = f"Invalid collection export in {inv_file}: missing or malformed keys"
+                  elif isinstance(parsed, list) and parsed:
+                      collected_files = parsed
+                  else:
+                      collection_error = f"Invalid collected inventory in {inv_file}: expected non-empty payload"
+              except Exception as e:
+                  collection_error = f"Failed to parse collection export {inv_file}: {e}"
+          else:
+              collection_error = f"Collection export not found at {inv_file}"
+
+          meta = {
+              "schema_version": 1,
+              "shard": os.environ.get("SHARD", ""),
+              "commit_sha": os.environ.get("GITHUB_SHA", ""),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+              "pytest_outcome": os.environ.get("PYTEST_OUTCOME", ""),
+              "collected_files": collected_files,
+              "selected_files": selected_files,
+              "selected_test_counts": selected_test_counts,
+              "selected_test_names": selected_test_names,
+          }
+          if collection_error:
+              meta["collection_error"] = collection_error
+          (runner_temp / "pytest-meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+          # When pytest succeeded, collection export failure must be visible and fail the step.
+          # When pytest failed, sidecar and JUnit artifacts are preserved for diagnosis.
+          if os.environ.get("PYTEST_OUTCOME") == "success" and collection_error:
+              print(f"::error::{collection_error}")
+              raise SystemExit(1)
+          PY
+
+      - name: Upload shard test report
+        if: always() && steps.docs-check.outputs.docs_only != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pytest-junit-${{ steps.shard-id.outputs.tag }}
+          path: |
+            ${{ runner.temp }}/pytest-report.xml
+            ${{ runner.temp }}/pytest-meta.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Playwright mobile layout checks (shard 1 only)
+        if: steps.docs-check.outputs.docs_only != 'true' && startsWith(matrix.shard, '1/')
         run: |
           ODYSSEUS_TEST_PYTHON=python ODYSSEUS_LAYOUT_BROWSER=chromium npx --no-install playwright test \
             --config tests/e2e/ios-layout.config.cjs \

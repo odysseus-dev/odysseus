@@ -55,7 +55,7 @@ def test_dispatch_reminder_sends_with_google_oauth_without_smtp_password():
 
 
 def test_reminder_settings_offer_oauth_smtp_accounts():
-    source = (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
+    source = (_REPO / "static" / "js" / "settings" / "reminders.js").read_text(encoding="utf-8")
     helper = source[source.index("const smtpAccountReady"):source.index("const smtpAccountReady") + 260]
 
     assert "account.has_smtp_password || account.oauth_provider === 'google'" in helper

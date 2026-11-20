@@ -118,7 +118,9 @@ def test_real_reminder_uses_stored_note_and_ignores_overrides(monkeypatch):
     }]
 
 
-def test_real_checklist_reminder_body_is_built_from_stored_items(monkeypatch):
+def test_unmigrated_checklist_reminder_body_still_lists_legacy_items(monkeypatch):
+    # A row the startup migration skipped keeps `items`; the reminder reads it
+    # through the same content fold, after the note's own text.
     endpoint, calls, _db = _endpoint(monkeypatch, _note(items=(
         '[{"text":"first","done":false},'
         '{"text":"finished","done":true},'
@@ -127,7 +129,25 @@ def test_real_checklist_reminder_body_is_built_from_stored_items(monkeypatch):
 
     asyncio.run(endpoint(_Request({"note_id": "note-1"}, user="alice")))
 
-    assert calls[0]["note_body"] == "Pending (2):\n- first\n- second"
+    assert calls[0]["note_body"] == "Stored body\n\nPending (2):\n- first\n- second"
+
+
+def test_checklist_reminder_body_is_built_from_task_lines(monkeypatch):
+    endpoint, calls, _db = _endpoint(monkeypatch, _note(
+        content="- [ ] first\n- [x] finished\n```\n- [ ] fenced sample\n```\n  - [ ] second",
+    ))
+
+    asyncio.run(endpoint(_Request({"note_id": "note-1"}, user="alice")))
+
+    assert calls[0]["note_body"] == "```\n- [ ] fenced sample\n```\n\nPending (2):\n- first\n- second"
+
+
+def test_fully_done_checklist_reminder_counts_items(monkeypatch):
+    endpoint, calls, _db = _endpoint(monkeypatch, _note(content="- [x] a\n- [x] b"))
+
+    asyncio.run(endpoint(_Request({"note_id": "note-1"}, user="alice")))
+
+    assert calls[0]["note_body"] == "2 items"
 
 
 def test_non_admin_cannot_fire_synthetic_test_reminder(monkeypatch):
