@@ -1327,6 +1327,7 @@ body.notes-drag-mode .note-card {
   .note-form-remind-btn > svg { color: var(--accent, var(--red)); }
   .note-form-archive-btn { display: none !important; }
   .notes-pane #notes-archive-toggle { display: none !important; }
+  .notes-pane.notes-pane-archive #notes-archive-toggle { display: inline-flex !important; }
   .note-form-save.archive-mode {
     color: var(--accent, var(--red)) !important;
     border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
