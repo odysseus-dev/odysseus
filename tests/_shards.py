@@ -58,7 +58,7 @@ SLOW_ITEM_DURATION_SECONDS = 9.0
 MIN_FILE_DURATION_SECONDS = 0.001
 
 # Fixed workload duration in seconds for shards running non-pytest CI tasks.
-# Shard 1/4 runs Playwright mobile layout checks (tests/e2e/ios-layout.config.cjs).
+# Shard 1 runs Playwright mobile layout checks (tests/e2e/ios-layout.config.cjs).
 MOBILE_LAYOUT_DURATION_SECONDS = 48.0
 
 # Standard name for the committed duration manifest.
@@ -225,14 +225,14 @@ def default_fixed_shard_loads(
 ) -> dict[int, float] | None:
     """Return default fixed non-pytest workloads per shard (0-based index).
 
-    In the 4-shard CI workflow, shard 1 (index 0) executes mobile layout
+    In the CI workflow, shard 1 (index 0) executes mobile layout
     validation (~48s) after pytest. When duration profiles are active,
     accounting for this fixed load balances total job duration across runners.
 
     When no duration manifest is active, fixed loads are NOT applied so that
     legacy heuristic scheduling behavior is preserved exactly.
     """
-    if count == 4 and durations_active:
+    if count >= 1 and durations_active:
         return {0: MOBILE_LAYOUT_DURATION_SECONDS}
     return None
 

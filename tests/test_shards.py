@@ -102,7 +102,7 @@ def test_file_weights_of_an_empty_collection_are_empty():
 
 # --- plan_shards: the partition guarantees -----------------------------------
 
-@pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 8])
+@pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6, 8])
 def test_every_file_lands_in_exactly_one_shard(count):
     weights = even_weights(37)
     plan = plan_shards(weights, count)
@@ -235,16 +235,19 @@ def test_plan_shards_preserves_exhaustive_disjoint_with_asymmetric_sequence():
 
 
 def test_default_fixed_shard_loads_matches_mobile_layout():
-    # When 4 shards and durations are active, shard 0 gets MOBILE_LAYOUT_DURATION_SECONDS
-    loads_durations = default_fixed_shard_loads(4, durations_active=True)
-    assert loads_durations == {0: MOBILE_LAYOUT_DURATION_SECONDS}
+    # When durations are active, shard 0 gets MOBILE_LAYOUT_DURATION_SECONDS for any count >= 1
+    for count in (1, 2, 4, 6, 8, 12):
+        assert default_fixed_shard_loads(count, durations_active=True) == {
+            0: MOBILE_LAYOUT_DURATION_SECONDS
+        }
 
-    # When non-4 shards, returns None
-    assert default_fixed_shard_loads(6, durations_active=True) is None
-    assert default_fixed_shard_loads(1, durations_active=True) is None
+    # When count < 1, returns None
+    assert default_fixed_shard_loads(0, durations_active=True) is None
+    assert default_fixed_shard_loads(-1, durations_active=True) is None
 
     # When duration manifest is not active, returns None to preserve legacy scheduling exactly
-    assert default_fixed_shard_loads(4, durations_active=False) is None
+    for count in (1, 2, 4, 6, 8):
+        assert default_fixed_shard_loads(count, durations_active=False) is None
 
 
 def test_fallback_scheduling_matches_original_scheduler_exactly():
@@ -2067,3 +2070,133 @@ def test_authoritative_regeneration_supports_class_based_tests_with_identical_me
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert "tests/test_classes.py" in data["durations"]
     assert data["durations"]["tests/test_classes.py"] == 2.5
+
+
+# --- Candidate configuration validation (4, 6, and 8 shards) ------------------
+
+@pytest.mark.parametrize("candidate_count", [4, 6, 8])
+def test_candidate_shard_counts_exhaustive_and_disjoint(candidate_count):
+    """Verify exhaustive and disjoint assignment across candidate shard counts."""
+    weights = {f"tests/test_{i:04d}.py": (1.0 + (i % 7) * 2.5) for i in range(250)}
+    fixed_loads = default_fixed_shard_loads(candidate_count, durations_active=True)
+    plan = plan_shards(weights, candidate_count, fixed_loads=fixed_loads)
+
+    assert len(plan) == candidate_count
+    assigned_files = [file_key for shard in plan for file_key in shard]
+    assert sorted(assigned_files) == sorted(weights.keys())
+    assert len(assigned_files) == len(weights)
+
+    seen = set()
+    for shard in plan:
+        assert seen.isdisjoint(shard)
+        seen.update(shard)
+
+
+@pytest.mark.parametrize("candidate_count", [4, 6, 8])
+def test_candidate_shard_counts_deterministic(candidate_count):
+    """Verify that shard plan is purely deterministic regardless of input ordering."""
+    items = [(f"tests/test_{i:03d}.py", 1.0 + (i % 5)) for i in range(120)]
+    weights_forward = dict(items)
+    weights_reversed = dict(reversed(items))
+    fixed_loads = default_fixed_shard_loads(candidate_count, durations_active=True)
+
+    plan_forward = plan_shards(weights_forward, candidate_count, fixed_loads=fixed_loads)
+    plan_reversed = plan_shards(weights_reversed, candidate_count, fixed_loads=fixed_loads)
+
+    assert plan_forward == plan_reversed
+
+
+@pytest.mark.parametrize("candidate_count", [4, 6, 8])
+def test_candidate_shard_counts_mobile_layout_balancing(candidate_count):
+    """Verify mobile layout fixed workload balances total runner work."""
+    weights = even_weights(400, weight=1.0)
+    fixed_loads = default_fixed_shard_loads(candidate_count, durations_active=True)
+    assert fixed_loads == {0: MOBILE_LAYOUT_DURATION_SECONDS}
+
+    plan = plan_shards(weights, candidate_count, fixed_loads=fixed_loads)
+    loads = shard_loads(weights, plan, fixed_loads=fixed_loads)
+
+    assert len(plan[0]) < len(plan[1])
+
+    max_load = max(loads)
+    min_load = min(loads)
+    assert max_load - min_load <= 1.0
+
+
+def test_candidate_shard_counts_mobile_layout_predicate():
+    """Verify that startsWith(matrix.shard, '1/') selects exactly shard 1 for candidates."""
+    candidate_matrices = {
+        4: [f"{i}/4" for i in range(1, 5)],
+        6: [f"{i}/6" for i in range(1, 7)],
+        8: [f"{i}/8" for i in range(1, 9)],
+    }
+    for count, matrix in candidate_matrices.items():
+        matched = [shard for shard in matrix if shard.startswith("1/")]
+        assert matched == [f"1/{count}"], f"Failed to match exactly shard 1 for {count} shards: {matched}"
+
+
+@pytest.mark.parametrize("candidate_count", [4, 6, 8])
+def test_candidate_shard_counts_manifest_compatibility_and_fallback(candidate_count, tmp_path):
+    """Verify manifest loading with measured durations and safe fallback for unprofiled files."""
+    manifest_data = {
+        "version": 1,
+        "revision": "abc1234",
+        "durations": {
+            "tests/test_profiled_slow.py": 25.0,
+            "tests/test_profiled_fast.py": 0.5,
+        },
+    }
+    manifest_file = tmp_path / "test_manifest.json"
+    manifest_file.write_text(json.dumps(manifest_data), encoding="utf-8")
+    durations = load_duration_manifest(path=manifest_file)
+    assert durations is not None
+
+    entries = [
+        ("tests/test_profiled_slow.py", False),
+        ("tests/test_profiled_fast.py", False),
+        ("tests/test_unprofiled_ordinary.py", False),
+        ("tests/test_unprofiled_slow.py", True),
+    ]
+    weights = accumulate_file_weights(entries, durations=durations)
+
+    assert weights["tests/test_profiled_slow.py"] == 25.0
+    assert weights["tests/test_profiled_fast.py"] == 0.5
+    assert weights["tests/test_unprofiled_ordinary.py"] == DEFAULT_ITEM_DURATION_SECONDS
+    assert weights["tests/test_unprofiled_slow.py"] == SLOW_ITEM_DURATION_SECONDS
+
+    fixed_loads = default_fixed_shard_loads(candidate_count, durations_active=True)
+    plan = plan_shards(weights, candidate_count, fixed_loads=fixed_loads)
+    all_files = [f for shard in plan for f in shard]
+    assert sorted(all_files) == sorted(weights.keys())
+
+
+@pytest.mark.parametrize("candidate_count", [4, 6, 8])
+def test_candidate_shard_counts_boundary_and_invalid_selectors(candidate_count):
+    """Verify valid and invalid shard spec selectors for candidate configurations."""
+    for idx in range(1, candidate_count + 1):
+        spec = parse_shard_spec(f"{idx}/{candidate_count}")
+        assert spec.index == idx
+        assert spec.count == candidate_count
+        assert str(spec) == f"{idx}/{candidate_count}"
+
+    for bad in [
+        f"0/{candidate_count}",
+        f"{candidate_count + 1}/{candidate_count}",
+        f"-1/{candidate_count}",
+        f"{candidate_count}/0",
+        f"1/{candidate_count}/1",
+    ]:
+        with pytest.raises(ShardSpecError):
+            parse_shard_spec(bad)
+
+
+def test_ci_workflow_mobile_layout_predicate_is_generic():
+    """Verify that ci.yml uses a generic predicate for mobile layout checks."""
+    workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+    text = workflow.read_text(encoding="utf-8")
+    assert "startsWith(matrix.shard, '1/')" in text, (
+        "ci.yml must use generic startsWith(matrix.shard, '1/') for mobile layout checks"
+    )
+    assert "matrix.shard == '1/4'" not in text, (
+        "ci.yml must not hardcode matrix.shard == '1/4'"
+    )
