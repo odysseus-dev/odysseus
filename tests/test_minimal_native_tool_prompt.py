@@ -1032,6 +1032,22 @@ def test_broad_calendar_list_discards_model_invented_range_and_query() -> None:
     }
 
 
+def test_broad_calendar_list_keeps_the_model_range_for_a_named_period() -> None:
+    from src.agent_loop import _normalize_calendar_list_range_args
+
+    # The prompt bounds would resolve a bare "January" to this year's, which
+    # has already passed; the model's range is the one the user asked for.
+    args = {"action": "list_events", "start": "2027-01-01", "end": "2027-02-01"}
+    normalized, changed = _normalize_calendar_list_range_args(
+        dict(args),
+        today="2026-11-20",
+        user_text="What's on my calendar in January?",
+    )
+
+    assert not changed
+    assert normalized == args
+
+
 def test_calendar_create_strips_accidental_utc_suffix_for_local_wall_time() -> None:
     from src.agent_loop import _normalize_calendar_create_relative_args
 
