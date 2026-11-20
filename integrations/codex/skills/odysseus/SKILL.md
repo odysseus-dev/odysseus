@@ -50,7 +50,16 @@ python3 integrations/codex/scripts/odysseus_api.py todos list
 python3 integrations/codex/scripts/odysseus_api.py todos add "Follow up"
 ```
 
-Supported todo actions are `list`, `add`, `update`, `delete`, and `toggle_item`.
+Supported todo actions are `list`, `get` (alias `view`), `add`, `update`, `delete`, and `toggle_item`.
+
+To toggle a task, use `list` to find the note ID, then POST `get` with that ID. Read the task's zero-based index from `results` and the `body_revision` from the same response. Send both with the note ID.
+
+```bash
+python3 integrations/codex/scripts/odysseus_api.py POST /api/codex/todos '{"action":"get","id":"NOTE_ID"}'
+python3 integrations/codex/scripts/odysseus_api.py POST /api/codex/todos '{"action":"toggle_item","id":"NOTE_ID","index":0,"body_revision":"REVISION_FROM_GET"}'
+```
+
+On HTTP 409, run `get` again and verify the intended task before retrying with its current index and revision.
 
 **Reminders (todos with a due date)** — the backend parses natural language. Send `due_date` in the body via the generic POST so the time becomes a structured reminder, NOT a literal substring inside the title. The `todos add TITLE` shortcut only sets the title, so use the POST form for anything with a time:
 

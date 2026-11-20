@@ -400,7 +400,7 @@ function _isDangerousSrcset(value) {
   return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
 }
 
-function _cleanAllowedHtmlOnce(htmlString) {
+function _cleanAllowedHtmlOnce(htmlString, noteFetches) {
   const tpl = document.createElement('template');
   tpl.innerHTML = htmlString;
   for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
@@ -413,6 +413,10 @@ function _cleanAllowedHtmlOnce(htmlString) {
     }
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
+      if (noteFetches && _isNoteFetch(name, attr.value)) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
       // Drop every inline event handler (onerror, onclick, onmouseover, ...)
       // and srcdoc (a frame-less script vector).
       if (name.startsWith('on') || name === 'srcdoc') {
@@ -439,6 +443,12 @@ function _cleanAllowedHtmlOnce(htmlString) {
 }
 
 export function sanitizeAllowedHtml(html) {
+  return _sanitizeAllowedHtmlTo(html, false);
+}
+
+// `noteFetches` also strips what would fetch from another origin (see
+// _isNoteFetch); mdToHtml asks for it in notes mode.
+function _sanitizeAllowedHtmlTo(html, noteFetches) {
   const raw = String(html == null ? '' : html);
   // Non-browser context (e.g. a future SSR/Node import): fail closed by
   // escaping rather than trusting the markup.
@@ -448,7 +458,7 @@ export function sanitizeAllowedHtml(html) {
   // tree (the basis of mutation-XSS), so re-clean until it stops changing.
   let out = raw;
   for (let i = 0; i < 4; i++) {
-    const next = _cleanAllowedHtmlOnce(out);
+    const next = _cleanAllowedHtmlOnce(out, noteFetches);
     if (next === out) break;
     out = next;
   }
@@ -925,20 +935,101 @@ function replaceRawSvgBlocks(source, makePlaceholder) {
   return output;
 }
 
+// Notes render task lines as interactive checkboxes (`opts.tasks ===
+// 'interactive'`). Which lines are tasks, and their 0-based index, must match
+// core/notes_markdown.py and features/notes/domain/markdownTasks.js exactly:
+// the index is what the toggle endpoint flips. So before any other pass, the
+// note source is walked with those fence rules, every fenced block becomes a
+// code placeholder, and every task line is stamped with its index. Pinned by
+// tests/fixtures/notes_task_vectors.json.
+const NOTE_TASK_RE = /^([ \t]*)([-*+])[ \t]+\[([ xX])\][ \t]?([^\n]*)$/;
+// `[^\n]*`, not `.*`: a lone CR or U+2028 on the opener line must not stop it
+// being a fence, or the boxes after it would be numbered differently here.
+const NOTE_FENCE_RE = /^[ \t]*(`{3,}|~{3,})([^\n]*)$/;
+const NOTE_TASK_TOKEN_RE = /^___MD_TASK_(\d+)_(\d+)___ ?/;
+const NOTE_MAX_TASK_INDENT = 3;
+
+function _noteTaskIndent(ws) {
+  let width = 0;
+  for (const ch of ws) width += ch === '\t' ? 2 : 1;
+  return Math.min(NOTE_MAX_TASK_INDENT, Math.floor(width / 2));
+}
+
+function prepareNoteTasks(src, renderFence) {
+  const out = [];
+  let fence = null;
+  let index = 0;
+  for (const raw of String(src).replace(/\r\n/g, '\n').split('\n')) {
+    const marker = NOTE_FENCE_RE.exec(raw);
+    if (fence) {
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.len) {
+        out.push(renderFence(fence.lang, fence.body.join('\n')));
+        fence = null;
+      } else {
+        fence.body.push(raw);
+      }
+      continue;
+    }
+    if (marker) {
+      fence = { char: marker[1][0], len: marker[1].length, lang: (/^\s*(\w+)/.exec(marker[2]) || [])[1], body: [] };
+      continue;
+    }
+    const task = NOTE_TASK_RE.exec(raw);
+    if (task) {
+      const text = task[4].trim();
+      out.push(`- [${task[3]}] ___MD_TASK_${index++}_${_noteTaskIndent(task[1])}___${text ? ' ' + text : ''}`);
+      continue;
+    }
+    out.push(raw);
+  }
+  if (fence) out.push(renderFence(fence.lang, fence.body.join('\n')));
+  return out.join('\n');
+}
+
+// Note images (`opts.images === 'notes'`) load from this origin only: an
+// upload, a raster data: URL or a same-origin blob:. Anything else renders as
+// a plain link, so a note an agent wrote cannot make the page fetch an
+// attacker URL just by being displayed.
+export function noteImageSrc(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(url)) return url;
+  try {
+    if (/^blob:/i.test(url)) return new URL(url.slice(5)).origin === window.location.origin ? url : '';
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/upload/')) {
+      return parsed.pathname + parsed.search;
+    }
+  } catch (_) {
+    return '';
+  }
+  return '';
+}
+
+// The markdown image pass is not the only way a note can name an image: raw
+// <img>, <video poster>, srcset or a CSS url() inside preserved HTML (e.g. a
+// <details> block) would survive the script-only checks above. For notes,
+// `_sanitizeAllowedHtmlTo(html, true)` strips the fetching attributes in
+// the same inert template walk. Inline styles can also load resources.
+function _isNoteFetch(name, value) {
+  return name === 'srcset' || name === 'poster' || name === 'background' || name === 'xlink:href'
+    || name === 'style'
+    || (name === 'src' && !noteImageSrc(value));
+}
+
 export function mdToHtml(src, opts) {
+  const interactiveTasks = !!opts && opts.tasks === 'interactive';
+  const notesImages = !!opts && opts.images === 'notes';
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
   const inlineCodeBlocks = [];
   const mermaidBlocks = [];
   const svgBlocks = [];
-  let s = extractMoreListPayloads(flattenLegacyNoteMoreDetails(src ?? ''));
-
   // Extract fenced code blocks before any markdown/HTML preservation passes.
   // Otherwise placeholders from the allowed-HTML sanitizer (e.g.
   // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
   // placeholder gets captured as literal code content and never restored inside
   // the final <pre><code> block.
-  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+  const fencedBlockPlaceholder = (_, lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+$/gm, '')
@@ -976,7 +1067,11 @@ export function mdToHtml(src, opts) {
     codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
 
     return placeholder;
-  });
+  };
+  // Notes number their task lines on the raw source, before anything else.
+  if (interactiveTasks) src = prepareNoteTasks(src ?? '', (lang, code) => fencedBlockPlaceholder(null, lang, code));
+  let s = extractMoreListPayloads(flattenLegacyNoteMoreDetails(src ?? ''));
+  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, fencedBlockPlaceholder);
 
   // Extract inline code spans before the link/autolink/HTML passes, mirroring
   // the fenced-block handling above. A URL inside `inline code` (e.g.
@@ -1049,7 +1144,15 @@ export function mdToHtml(src, opts) {
   // Convert markdown images before links so ![alt](url) does not become
   // literal "!" plus a normal link.
   s = s.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (match, alt, url, title) => {
-    return imageHtml(alt, url, title);
+    if (!notesImages) return imageHtml(alt, url, title);
+    const imgSrc = noteImageSrc(url);
+    if (!imgSrc) return linkHtml(alt || url, url);
+    // Built from escaped parts here, so it skips the allowed-HTML sanitizer,
+    // which would strip the data: URLs this policy accepts.
+    const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
+    const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
+    allowedHtmlBlocks.push(`<img class="md-note-image" src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt || '')}"${safeTitle} loading="lazy" decoding="async">`);
+    return placeholder;
   });
 
   // Convert markdown links [text](url) to clickable links
@@ -1086,7 +1189,7 @@ export function mdToHtml(src, opts) {
   // Extract <details>...</details> blocks and replace with placeholders.
   s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
+    allowedHtmlBlocks.push(_sanitizeAllowedHtmlTo(match, notesImages));
     return placeholder;
   });
 
@@ -1094,7 +1197,7 @@ export function mdToHtml(src, opts) {
   // markdown conversion)
   s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
+    allowedHtmlBlocks.push(_sanitizeAllowedHtmlTo(match, notesImages));
     return placeholder;
   });
 
@@ -1201,6 +1304,10 @@ export function mdToHtml(src, opts) {
   // as a list item. Used by plan mode: plan + progress render as a checklist.
   s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
     const done = mark.toLowerCase() === 'x';
+    const token = interactiveTasks ? NOTE_TASK_TOKEN_RE.exec(text) : null;
+    if (token) {
+      return `<uli class="md-task${done ? ' md-task-done' : ''}" data-task-index="${token[1]}" data-done="${done}" data-indent="${token[2]}"><span class="md-task-box" role="checkbox" aria-checked="${done}" tabindex="0"></span><span class="md-task-text">${text.slice(token[0].length)}</span></uli>`;
+    }
     return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
   });
 
@@ -1266,6 +1373,14 @@ export function mdToHtml(src, opts) {
   inlineCodeBlocks.forEach((block, index) => {
     s = s.replace(`___INLINE_CODE_${index}___`, () => block);
   });
+
+  // A task line that ended up somewhere a list cannot render (inside inline
+  // code, a <details> block) keeps its text; it just isn't clickable.
+  if (interactiveTasks) {
+    s = s.replace(/___MD_TASK_\d+_\d+___ ?/g, '');
+    // Stamped last: the paragraph pass above only recognises a bare <ul>.
+    s = s.replace(/<ul><li class="md-task/g, '<ul class="md-tasklist"><li class="md-task');
+  }
 
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }

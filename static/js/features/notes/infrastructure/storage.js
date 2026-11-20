@@ -55,7 +55,24 @@ function _loadDraft(id) {
 
 function _clearDraft(id) { try { localStorage.removeItem(_draftKey(id)); } catch {} }
 
+function _draftRecoveryKey(id) { return 'odysseus-note-recovery-' + id; }
+
+function _loadDraftRecovery(id) {
+  try {
+    const drafts = JSON.parse(localStorage.getItem(_draftRecoveryKey(id)) || '[]');
+    return Array.isArray(drafts) ? drafts : [];
+  } catch { return []; }
+}
+
+function _keepDraftForRecovery(id, draft) {
+  const drafts = _loadDraftRecovery(id);
+  const stored = JSON.stringify(draft);
+  if (drafts.some(entry => JSON.stringify(entry) === stored)) return;
+  localStorage.setItem(_draftRecoveryKey(id), JSON.stringify([...drafts, draft]));
+}
+
 return { _loadPendingHighlights, _loadGlowedReminders, _saveGlowedReminders, _loadActiveHighlights, _saveActiveHighlights, _savePendingHighlights, _loadFiredReminders, _saveFiredReminders, _draftKey, _loadDraft, _clearDraft,
+  _loadDraftRecovery, _keepDraftForRecovery,
   getItem: key => localStorage.getItem(key),
   setItem: (key, value) => localStorage.setItem(key, value),
   removeItem: key => localStorage.removeItem(key),

@@ -51,12 +51,6 @@ def test_expanded_tags_strip_hides_when_no_useful_filters_exist():
     assert "bar.style.display = 'none';" in SRC
 
 
-def test_drawing_preview_opens_its_note_editor():
-    assert "note.note_type === 'draw' ? ' note-card-drawing' : ''" in SRC
-    assert "body.querySelectorAll('.note-card-drawing .note-card-image')" in SRC
-    assert "tapToEditOrSelect(el.closest('.note-card'))" in SRC
-
-
 def test_drawing_defaults_follow_theme_surface_and_highlight():
     assert "const surfaceColor = resolveThemeColor('var(--panel, var(--bg))'" in SRC
     assert "resolveThemeColor('var(--accent, var(--red))'" in SRC

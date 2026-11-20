@@ -2188,36 +2188,31 @@ def _format_selected_notes_context(notes) -> str:
     """Format selected Notes/Todos as reference context for the model."""
     sections = []
 
+    from core.notes_markdown import derive_note_type, effective_content, parse_task_lines
+
     for index, note in enumerate(notes, start=1):
+        # Checklists are `- [ ]` task lines inside content; the content block
+        # carries them verbatim and the Items block restates them with indices.
+        content = effective_content(note.content, note.items, getattr(note, "image_url", None))
         lines = [
             f"--- Selected Note {index} ---",
             f"Title: {note.title or '(untitled)'}",
-            f"Type: {note.note_type or 'note'}",
+            f"Type: {derive_note_type(note.note_type, content)}",
         ]
 
-        if note.content:
+        if content:
             lines.extend([
                 "Content:",
-                str(note.content),
+                content,
             ])
 
-        if note.items:
-            try:
-                items = json.loads(note.items)
-            except (TypeError, json.JSONDecodeError):
-                items = []
-
-            if isinstance(items, list):
-                lines.append("Items:")
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-
-                    status = "done" if item.get("done") else "pending"
-                    text = str(item.get("text") or "").strip()
-
-                    if text:
-                        lines.append(f"- [{status}] {text}")
+        tasks = parse_task_lines(content)
+        if tasks:
+            lines.append("Items:")
+            for task in tasks:
+                status = "done" if task["done"] else "pending"
+                if task["text"]:
+                    lines.append(f"- [{status}] {task['text']}")
 
         sections.append("\n".join(lines))
 

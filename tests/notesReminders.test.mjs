@@ -18,7 +18,7 @@ function harness(notes = []) {
   const reminders = createNotesReminders({
     app, clock: { now: () => now }, scheduler, persistence, dismissedKey: REMINDER_DISMISSED_AT_KEY,
     notifications: { show: (...args) => shown.push(args) }, fetchNotes: async () => {},
-    hasItems: note => ['todo', 'goal', 'checklist'].includes(note.note_type), isNoteFullyDone: () => false,
+    isNoteFullyDone: () => false,
     api: { listNotes: async () => ({ ok: true, json: async () => ({ notes }) }), patchNote: async (...args) => patches.push(args), fireReminder: body => { fired.push(body); return response; } },
     effects: { badge: () => {}, highlight: id => highlighted.push(id) },
   });
@@ -38,6 +38,21 @@ test('startup and loop are idempotent, and panel closure leaves background sched
   assert.equal(h.intervals.size, 0);
   h.reminders._startReminderLoop();
   assert.equal(h.intervals.size, 0);
+});
+
+test('the start-up read leaves alone a list the open panel already shows', async () => {
+  const h = harness([{ id: 'mine', title: 'newer on the server' }]);
+  h.app.replaceNotes([{ id: 'mine', title: 'shown' }]);
+  h.app.setOpen(true);
+  h.reminders.start();
+  await [...h.timeouts.values()][0].fn();
+  assert.equal(h.app.state.notes[0].title, 'shown', 'the open panel list is not swapped under its cards');
+  assert.deepEqual([...h.intervals.values()].map(t => t.ms), [30000], 'the reminder loop still starts');
+  const closed = harness([{ id: 'loaded', title: 'from the server' }]);
+  closed.app.replaceNotes([]);
+  closed.reminders.start();
+  await [...closed.timeouts.values()][0].fn();
+  assert.deepEqual(closed.app.state.notes.map(n => n.id), ['loaded'], 'with Notes closed it loads the list for the loop');
 });
 
 test('fresh reminders dispatch once, stale reminders mark silently, recurring reminders advance', async () => {
@@ -71,10 +86,22 @@ test('slow synthesis and rejected dispatch use the local fallback exactly once',
   await new Promise(setImmediate);
   assert.deepEqual(h.shown, [['Title', 'Raw', 'a']]);
   h.setResponse(Promise.reject(Error('offline')));
-  h.reminders._fireReminder({ id: 'b', note_type: 'todo', items: [{ text: 'Task', done: false }] });
+  h.reminders._fireReminder({ id: 'b', note_type: 'todo', content: '- [ ] Task\n- [x] Done', items: [{ text: 'Task', done: false }, { text: 'Done', done: true }] });
   await new Promise(setImmediate);
   assert.equal(h.shown.length, 2);
   assert.equal(h.fired[1].body, 'Pending (1):\n- Task');
+});
+
+test('a mixed note fires its prose and open tasks as plain text, never raw task or image markdown', async () => {
+  const h = harness();
+  h.setResponse(Promise.reject(Error('offline')));
+  h.reminders._fireReminder({
+    id: 'c', title: 'Trip', note_type: 'note',
+    content: 'Lisbon in May\n\n![](/api/upload/0123456789abcdef0123456789abcdef.png "w=50")\n- [ ] book flights\n- [x] passport',
+  });
+  await new Promise(setImmediate);
+  assert.equal(h.fired[0].body, 'Lisbon in May\n\nPending (1):\n- book flights');
+  assert.deepEqual(h.shown, [['Trip', 'Lisbon in May\n\nPending (1):\n- book flights', 'c']]);
 });
 
 test('notification denial, unsupported browsers and permission errors remain fail-safe', async () => {

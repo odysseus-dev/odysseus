@@ -28,7 +28,11 @@ export function createColors({
 
   function _isBgImage(c) { return typeof c === 'string' && c.startsWith('bg:'); }
 
-  function _bgImageUrl(c) { return _isBgImage(c) ? c.slice(3) : ''; }
+  // A picture background is an upload on this site and nothing else: the
+  // colour lands in a style on every card that shows the note, including a
+  // collaborator's. An origin in front (older clients wrote one) is dropped.
+  const BG_UPLOAD_RE = /^bg:(?:https?:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?)?(\/api\/upload\/[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)$/i;
+  function _bgImageUrl(c) { return (typeof c === 'string' && BG_UPLOAD_RE.exec(c.trim())?.[1]) || ''; }
 
   function _dotBg(value, noteColor) {
     if (value === 'custom') {
@@ -44,8 +48,8 @@ export function createColors({
   }
 
   function _customColorStyle(c) {
-    if (!_isBgImage(c)) return '';
     const url = _bgImageUrl(c);
+    if (!url) return '';
     return `background-image: linear-gradient(color-mix(in srgb, var(--panel) 60%, transparent), color-mix(in srgb, var(--panel) 60%, transparent)), url('${url}'); background-size: cover; background-position: center; border-color: color-mix(in srgb, var(--fg) 25%, var(--border));`;
   }
 

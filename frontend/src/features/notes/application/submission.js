@@ -10,7 +10,7 @@ export function createNotesSubmission({
 }) {
   const state = app.state;
   const { _loadFiredReminders, _saveFiredReminders, _loadGlowedReminders, _saveGlowedReminders, _loadDraft, _clearDraft } = persistence;
-  function submitNote(payload, note, isEdit) {
+  function submitNote(payload, note, isEdit, onSaved) {
       // Reset fired reminder if due_date changed (so re-arm works), and also
       // clear the entry-glow seen flag so the new firing glows again on the
       // next time the user opens the panel.
@@ -36,32 +36,33 @@ export function createNotesSubmission({
           .reduce((m, n) => Math.min(m, n.sort_order || 0), 0);
         payload.sort_order = minUnpinned - 1;
       }
-      // Optimistic update : update local state first, render, then save in background
-      app.setEditingId(null);
       const draftId = isEdit ? note.id : '__new__';
       const submittedDraft = JSON.stringify(_loadDraft(draftId));
-      if (isEdit) {
-        const idx = state.notes.findIndex(n => n.id === note.id);
-        if (idx >= 0) app.replaceNoteAt(idx, { ...state.notes[idx], ...payload });
-      } else {
-        app.prependNote({ ...payload, id: 'tmp_' + uid(), created_at: new Date(clock.now()).toISOString(), updated_at: new Date(clock.now()).toISOString() });
+      const temporaryId = isEdit ? null : 'tmp_' + uid();
+      if (!isEdit) {
+        app.setEditingId(null);
+        app.prependNote({ ...payload, id: temporaryId, created_at: new Date(clock.now()).toISOString(), updated_at: new Date(clock.now()).toISOString() });
+        effects.render();
       }
-      effects.render();
-      // Background save
-      api.saveNote(payload).then(saved => {
-        if (JSON.stringify(_loadDraft(draftId)) === submittedDraft) _clearDraft(draftId);
-        if (!isEdit && saved && saved.id) {
-          // Replace temp ID with real one from server. AND re-render : the
-          // existing card's `data-note-id="tmp_xxx"` is stale after Object.assign
-          // bumps the in-memory id, so all subsequent clicks (edit, done, copy,
-          // archive, delete) silently fail to find the note in `_notes`.
-          const tmp = state.notes.find(n => n.id.startsWith('tmp_'));
-          if (tmp) app.mergeNote(tmp, saved);
-          effects.render();
+      return api.saveNote(payload).then(saved => {
+        if (!onSaved && JSON.stringify(_loadDraft(draftId)) === submittedDraft) _clearDraft(draftId);
+        const current = state.notes.find(n => n.id === (isEdit ? note.id : temporaryId));
+        if (current && (!isEdit || current.body_revision === payload.body_revision)) app.mergeNote(current, saved);
+        const formIsOpen = onSaved ? onSaved(saved) : true;
+        if (isEdit && formIsOpen && state.editingId === note.id) app.setEditingId(null);
+        if (formIsOpen || !state.editingId) effects.render();
+      }).catch(async err => {
+        if (isEdit && err.status === 409) {
+          effects.showError('Note changed elsewhere. Copy your draft and reopen the note to see the latest version.');
+          try {
+            const saved = await api.getNote(note.id);
+            const current = state.notes.find(n => n.id === note.id);
+            if (current && current.body_revision === payload.body_revision) app.mergeNote(current, saved);
+          } catch { /* The draft stays in the form and local storage. */ }
+          return;
         }
-      }).catch(err => {
         effects.showError('Save failed: ' + err.message);
-        fetchNotes().then(() => effects.render());
+        if (!isEdit) fetchNotes().then(() => effects.render());
       });
 
   }

@@ -1090,18 +1090,18 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_notes",
-            "description": "Saved notes/checklists only; no tools for word definitions like musical note or pinned; tagged/archive lists use action=list+label/archived; archive uses update. Use view only with an explicit note id when you need the full body. Search is only for saved-note title/topic lookup. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder. Delete only when the user explicitly says delete.",
+            "description": "Saved notes/checklists only; no tools for word definitions like musical note or pinned; tagged/archive lists use action=list+label/archived; archive uses update. Use get (alias view) only with an explicit note id when you need the full body; it lists checklist items as `[x] i: text` with the index toggle_item takes. Search is only for saved-note title/topic lookup. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder. Delete only when the user explicitly says delete.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string",
-                               "enum": ["list", "search", "view", "add", "update", "delete", "toggle_item"],
+                               "enum": ["list", "search", "view", "add", "update", "delete", "toggle_item", "get"],
                                "description": "The action to perform"},
-                    "id": {"type": "string", "description": "Note id (for view/update/delete/toggle_item); 8-char prefix is fine"},
+                    "id": {"type": "string", "description": "Note id (for get/update/delete/toggle_item); 8-char prefix is fine"},
                     "note_id": {"type": "string", "description": "Alias for id; accepted for view/update/delete/toggle_item when the model emits note_id"},
                     "query": {"type": "string", "description": "Search text for action='search'"},
                     "title": {"type": "string", "description": "Note title (for add/update, or exact-title delete when no id is available)"},
-                    "content": {"type": "string", "description": "Freeform body text. Use this for note_type='note'. Do NOT use this for checklists — pass `checklist_items` instead."},
+                    "content": {"type": "string", "description": "Markdown body. Use this for note_type='note'. A note stores its checklist as `- [ ]` / `- [x]` lines inside content, so content you write may contain them; to create or replace a checklist, still pass `checklist_items`."},
                     "note_type": {"type": "string", "enum": ["note", "checklist"],
                                   "description": "'note' = freeform text in `content`. 'checklist' = structured to-do items in `checklist_items`. Defaults to 'checklist' if checklist_items is supplied, else 'note'."},
                     "checklist_items": {"type": "array",
@@ -1117,7 +1117,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "pinned": {"type": "boolean", "description": "Pin the note to the top"},
                     "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list: show archived notes when true."},
                     "due_date": {"type": "string", "description": "Reminder time. Accepts natural language ('tomorrow at 9am', '11pm today') or ISO 8601. Fires a notification at that time."},
-                    "index": {"type": "integer", "description": "Required for toggle_item: 0-based checklist item index. Use view if unknown."},
+                    "index": {"type": "integer", "description": "Required for toggle_item: 0-based checklist item index from get/view."},
+                    "body_revision": {"type": "string", "description": "Required for toggle_item and recommended for update: copy the Body revision from get/view. On conflict, view again and verify the item before retrying."},
                     "done": {"type": "boolean", "description": "For toggle_item: target checked state; omit to toggle."}
                 },
                 "required": ["action"]

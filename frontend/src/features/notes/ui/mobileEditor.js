@@ -83,14 +83,18 @@ export function createMobileEditor({
         _closeMobileFullscreenEdit({ save: false });
       });
     }
-    // The built-in Save handler does the API call + refresh, but doesn't
-    // dismiss our overlay. Augment it (do NOT replace : the original is
-    // async and we'd lose the API call) to schedule a close once the
-    // save+render has had time to complete.
+    // Wait for the form's save acknowledgment before closing the overlay.
+    form.addEventListener('note-saved', () => {
+      if (_mobileFsOverlay === overlay) _closeMobileFullscreenEdit({ save: false, keepDraft: false });
+    });
     const saveBtn = form.querySelector('.note-form-save');
     if (saveBtn) {
       saveBtn.addEventListener('click', () => {
-        setTimeout(() => _closeMobileFullscreenEdit({ save: false }), 350);
+        if (saveBtn.classList.contains('archive-mode')) {
+          setTimeout(() => {
+            if (_mobileFsOverlay === overlay) _closeMobileFullscreenEdit({ save: false });
+          }, 350);
+        }
       });
     }
     // Make the checklist row drag handle (⋮⋮) actually work on touch.
@@ -189,10 +193,10 @@ export function createMobileEditor({
     // in the overlay that ISN'T a link hides the overlay and focuses the
     // textarea so the user can start editing. Tapping a link opens it.
     const ta = form.querySelector('.note-form-content');
-    if (ta && (note.content || '').trim()) {
+    if (ta && (_n.content || '').trim()) {
       const reader = document.createElement('div');
       reader.className = 'note-form-content-reader';
-      reader.innerHTML = _linkify(note.content || '');
+      reader.innerHTML = _linkify(_n.content || '');
       ta.style.display = 'none';
       ta.insertAdjacentElement('beforebegin', reader);
       reader.addEventListener('click', (e) => {
@@ -215,8 +219,10 @@ export function createMobileEditor({
   function _closeMobileFullscreenEdit(opts = {}) {
     if (!_mobileFsOverlay) return;
     const overlay = _mobileFsOverlay;
-    overlay.querySelector('.note-form')?._flushDraft?.();
+    if (opts.keepDraft !== false) overlay.querySelector('.note-form')?._flushDraft?.();
     _mobileFsOverlay = null;
+    if (state.editingId === _mobileFsNoteId) app.setEditingId(null);
+    _mobileFsNoteId = null;
     // If the form has a Save button, click it on close so edits aren't lost
     // when the user uses the back arrow instead of an explicit Save.
     if (opts.save) {
@@ -227,8 +233,6 @@ export function createMobileEditor({
     overlay.classList.add('closing');
     setTimeout(() => {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      _mobileFsNoteId = null;
-      app.setEditingId(null);
       // Refresh the grid so any save the user made is reflected.
       if (opts.save !== false) { _fetchNotes().then(_renderNotes).catch(() => {}); }
     }, 220);
