@@ -8,6 +8,7 @@ import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import { downloadProgressPercent, setDownloadProgressBadge } from './cookbookDownloadProgress.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
@@ -2401,6 +2402,11 @@ export function _renderRunningTab() {
         const _bdg = _taskBadge(task);
         badge.textContent = _bdg.text;
         badge.className = 'cookbook-task-status' + (_bdg.cls ? ' ' + _bdg.cls : '');
+        if (task.type === 'download' && task.status === 'running') {
+          badge.style.setProperty('--download-progress', `${downloadProgressPercent(_bdg.text)}%`);
+        } else {
+          badge.style.removeProperty('--download-progress');
+        }
         badge.style.display = '';
       }
       // Indicator: spinning wave while running, green check when finished.
@@ -2451,6 +2457,9 @@ export function _renderRunningTab() {
 
     const _bdg = _taskBadge(task);
     const _bdgTitle = (task._unreachable && task.status === 'running') ? ' title="Server not responding — it may have crashed"' : '';
+    const _bdgProgressStyle = (task.type === 'download' && task.status === 'running')
+      ? ` style="--download-progress:${downloadProgressPercent(_bdg.text)}%"`
+      : '';
     const displayName = _taskDisplayName(task);
     const logoName = task.type === 'download' ? (task.payload?.repo_id || task.name) : task.name;
     el.innerHTML = `
@@ -2459,7 +2468,7 @@ export function _renderRunningTab() {
         <span class="cookbook-task-name">${modelLogo(logoName)}${esc(displayName)}</span>
         <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span>${_canLaunchDownloadedTask(task) ? '<button type="button" class="cookbook-task-serve-btn" title="Open in Launch"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Launch</span></button>' : ''}<span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
         <button type="button" class="cookbook-task-start-now" title="Start this queued download now" style="display:${(task.type === 'download' && task.status === 'queued') ? '' : 'none'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"/></svg><span>start now</span></button>
-        <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
+        <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}${_bdgProgressStyle}>${esc(_bdg.text)}</span>
         <button type="button" class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
       <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
@@ -3471,8 +3480,7 @@ async function _reconnectTask(el, task) {
                   task.sessionId = data.session_id;
                   el._lastProgress = null;
                   el._lastProgressTime = Date.now();
-                  badge.textContent = 'restarted';
-                  badge.className = 'cookbook-task-status cookbook-task-running';
+                  setDownloadProgressBadge(badge, 'restarted');
                   continue;
                 }
               } catch {}
@@ -3510,33 +3518,28 @@ async function _reconnectTask(el, task) {
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              setDownloadProgressBadge(badge, text, overallPct);
             } else if (_dlAgg != null) {
               // Real aggregate byte progress — most accurate; take the max of all signals.
               let pct = _dlAgg;
               if (_fetchPct != null) pct = Math.max(pct, _fetchPct);
               let text = `${pct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              setDownloadProgressBadge(badge, text, pct);
             } else if (totalFiles > 0 && completed < totalFiles) {
               const curFilePct = lastPct ? parseInt(lastPct) / 100 : 0;
               let overallPct = Math.round(((completed + curFilePct) / totalFiles) * 100);
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              setDownloadProgressBadge(badge, text, overallPct);
             } else if (_fetchPct != null && _fetchPct < 100) {
               // Resume start: only the aggregate is meaningful yet.
               let text = `${_fetchPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              setDownloadProgressBadge(badge, text, _fetchPct);
             } else if (completed > 0 && completed >= totalFiles) {
-              badge.textContent = 'finishing';
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              setDownloadProgressBadge(badge, 'finishing', 100);
             }
             if (snapshot.includes('DOWNLOAD_FAILED')) {
               // The wrapper prints DOWNLOAD_FAILED but exits 0, and per-file

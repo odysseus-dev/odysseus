@@ -2247,7 +2247,27 @@
   line-height: 16px;
 }
 .cookbook-task-running { background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent); color: var(--green, #50fa7b); }
-.cookbook-task-downloading { background: color-mix(in srgb, var(--color-accent, #00aaff) 20%, transparent); color: var(--color-accent, #00aaff); }
+.cookbook-task[data-type="download"][data-status="running"] .cookbook-task-status {
+  box-sizing: border-box;
+  width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: center;
+}
+.cookbook-task-downloading {
+  position: relative;
+  background: color-mix(in srgb, var(--color-accent, #00aaff) 10%, transparent);
+  color: var(--color-accent, #00aaff);
+}
+.cookbook-task-downloading::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--download-progress, 0%);
+  background: color-mix(in srgb, var(--color-accent, #00aaff) 24%, transparent);
+  transition: width 0.25s ease;
+  pointer-events: none;
+}
 /* Stopping: same pill treatment as "running" but orange. */
 .cookbook-task-stopping { background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent); color: var(--orange, #ffb86c); }
 .cookbook-task-done { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
@@ -2495,6 +2515,9 @@
     /* Vertical alignment of the phase/loading badge against the task title. */
     position: relative;
     top: 2px;
+  }
+  .cookbook-task[data-type="download"][data-status="running"] .cookbook-task-status {
+    width: 80px;
   }
   /* Keep the ascii wave aligned with the badge (both 2px down). */
   .cookbook-task-wave {
