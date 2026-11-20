@@ -114,7 +114,7 @@ if ($pyExe -like "*WindowsApps*python.exe") {
 }
 
 if (-not $pyExe) {
-    Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (or open the Python launcher with 'py -3.11') from https://www.python.org/downloads/, then re-run this script."
+    Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (check 'py -0' for what the Python launcher sees) from https://www.python.org/downloads/, then re-run this script."
 }
 $pythonLabel = ("Using Python {0}: {1} {2}" -f $pyVersion, $pyExe, ($pyArgs -join ' ')).TrimEnd()
 Write-Host $pythonLabel
