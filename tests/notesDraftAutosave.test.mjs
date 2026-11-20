@@ -58,13 +58,38 @@ test('failed network save retains recoverable edits including empty text', async
 
 test('older save cannot clear newer draft and writes are serialized', async () => {
   const releases=[], writes=[];
-  const h=harness((id,payload) => { writes.push(payload.content); return new Promise(r=>releases.push(r)); });
+  const h=harness((id,payload) => { writes.push(payload); return new Promise(r=>releases.push(r)); });
+  h.form._bodyRevision = 'original';
   h.fields['.note-form-content'].value='First'; h.input(); await h.drain();
   h.fields['.note-form-content'].value='Second'; h.input(); await h.drain();
-  assert.deepEqual(writes,['First']);
-  releases.shift()({}); await new Promise(setImmediate);
+  assert.deepEqual(writes.map(write => write.content), ['First']);
+  releases.shift()({ body_revision: 'first' }); await new Promise(setImmediate);
   assert.equal(h.draft().content,'Second');
-  assert.deepEqual(writes,['First','Second']);
-  releases.shift()({}); await new Promise(setImmediate);
+  assert.equal(h.draft().body_revision, 'first');
+  assert.deepEqual(writes.map(write => [write.content, write.body_revision]), [['First', 'original'], ['Second', 'first']]);
+  releases.shift()({ body_revision: 'second' }); await new Promise(setImmediate);
   assert.equal(h.draft(),null);
+});
+
+test('save acknowledgment does not rebase a draft written by another editor', async () => {
+  const h = harness();
+  h.form._bodyRevision = 'original';
+  const submitted = h.form._flushDraft();
+  h.fields['.note-form-content'].value = 'Local edit after submission';
+  h.input();
+  const foreign = { ...h.draft(), _draftWriter: 'another editor' };
+  h.data.set('odysseus-note-draft-note1', JSON.stringify(foreign));
+  h.form._acknowledgeDraftSave(submitted, 'original', 'saved');
+  assert.deepEqual(h.draft(), foreign);
+  assert.equal(h.form._bodyRevision, 'saved');
+});
+
+test('reopening an edited note does not lay a stale draft over newer server content', () => {
+  const h = harness();
+  h.form._bodyRevision = 'older';
+  h.fields['.note-form-content'].value = 'Local edits';
+  h.input();
+  const current = { body_revision: 'newer', content: 'Server update' };
+  assert.deepEqual(h.context._applyDraftToNote(current, 'note1'), { note: current, restored: false });
+  assert.equal(h.draft().content, 'Local edits');
 });

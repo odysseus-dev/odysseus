@@ -300,7 +300,10 @@ def setup_codex_routes(
         owner = _scope_owner(request, allowed)
         args = dict(body)
         args["action"] = action
-        return await do_manage_notes(json.dumps(args), owner=owner)
+        result = await do_manage_notes(json.dumps(args), owner=owner)
+        if result.get("conflict"):
+            raise HTTPException(409, result["error"])
+        return result
 
     @router.get("/emails")
     async def list_emails(

@@ -10,7 +10,7 @@ def test_notes_domain_application_infrastructure_and_compatibility_contracts():
     files = [
         "notesCharacterization", "notesRecurrence", "notesInfrastructure",
         "notesApplication", "notesReminders", "notesWorkflows", "notesDraftAutosave",
-        "selectedNotesContext", "noteTestOracle",
+        "selectedNotesContext", "noteTestOracle", "notesMarkdownTasks", "notesMarkdownRender",
     ]
     result = subprocess.run(
         ["node", "--test", *[f"tests/{name}.test.mjs" for name in files]], cwd=ROOT,

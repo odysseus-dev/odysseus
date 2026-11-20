@@ -27,6 +27,14 @@ def test_blockquoted_html_codefence_does_not_leak_placeholders(node_available):
     assert result.returncode == 0, result.stderr + result.stdout
 
 
+def test_markdown_renderer_modes_stay_independent(node_available):
+    result = subprocess.run(
+        ["node", "--test", "tests/markdownRendererModes.test.mjs"],
+        cwd=_REPO, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", with_katex: bool = False):
     script = textwrap.dedent(
         r"""
