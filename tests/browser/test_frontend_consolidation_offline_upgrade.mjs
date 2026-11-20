@@ -2,11 +2,11 @@
 // from deployed base (360f6e9b1) to candidate (refactor/frontend-shared-consolidation).
 //
 // Procedure:
-//   1. Run deployed BASE application from git archive (cache: odysseus-v1154-pr40-editor-precache).
+//   1. Run deployed BASE application from git archive (reads baseline cache name).
 //   2. Register service worker and confirm base cache is active and populated.
 //   3. Close browser and switch server to CANDIDATE application (this worktree) on the same origin.
-//   4. Reopen browser, let browser discover updated worker (cache: odysseus-v1160-pr40-editor-precache).
-//   5. Confirm new worker installs and activates, and old v1154 cache is evicted.
+//   4. Reopen browser, let browser discover updated worker (candidate cache name).
+//   5. Confirm new worker installs and activates, and baseline cache is evicted.
 //   6. Clear HTTP cache, stop server, go offline.
 //   7. Reload/import offline: verify updated entry points and newly consolidated shared modules
 //      load together from CacheStorage without errors.
@@ -18,11 +18,13 @@ import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import net from 'net';
 
-import { tmpdir } from 'os';
+import { tmpdir, homedir } from 'os';
 
 const REPO_ROOT = resolve(join(fileURLToPath(import.meta.url), '..', '..', '..'));
+const CANDIDATE_ROOT = process.env.CANDIDATE_ROOT || REPO_ROOT;
 const BASE_REF = process.env.BASE_REF || '360f6e9b112c5c28e2f1c6197f9a25d070ac1a7e';
 const SCRATCH_BASE = process.env.TMPDIR || tmpdir();
+const CACHE_NAME_PATTERN = /^odysseus-v\d+-pr40-editor-precache$/;
 
 const results = [];
 const servers = [];
@@ -36,12 +38,13 @@ function check(name, pass, detail = '') {
 
 function resolvePython() {
   const candidates = [
-    process.env.PYTHON,
     process.env.ODYSSEUS_TEST_PYTHON,
+    process.env.PYTHON,
     process.env.VIRTUAL_ENV ? join(process.env.VIRTUAL_ENV, 'bin', 'python') : null,
+    join(REPO_ROOT, '..', '..', 'dev', 'venvs', 'main', 'bin', 'python'),
     join(REPO_ROOT, 'venv', 'bin', 'python'),
     join(REPO_ROOT, '.venv', 'bin', 'python'),
-    '/home/alteixeira20/Projects/odysseus-harness-browser/.venv/bin/python',
+    join(homedir(), '.cache', 'odysseus-ci-baseline-py311', 'bin', 'python'),
     'python3',
   ].filter(Boolean);
   for (const candidate of candidates) {
@@ -169,10 +172,11 @@ async function main() {
   console.log(`Extracting base commit ${BASE_REF}...`);
   const baseRoot = extractBase();
   const baseCacheName = getCacheName(baseRoot);
-  const candidateCacheName = getCacheName(REPO_ROOT);
+  const candidateCacheName = getCacheName(CANDIDATE_ROOT);
 
-  check('base cache name is v1154', baseCacheName === 'odysseus-v1154-pr40-editor-precache', baseCacheName);
-  check('candidate cache name is v1160', candidateCacheName === 'odysseus-v1160-pr40-editor-precache', candidateCacheName);
+  check('base cache name follows repository convention', CACHE_NAME_PATTERN.test(baseCacheName), baseCacheName);
+  check('candidate cache name follows repository convention', CACHE_NAME_PATTERN.test(candidateCacheName), candidateCacheName);
+  check('candidate version differs from baseline', candidateCacheName !== baseCacheName, `${candidateCacheName} vs ${baseCacheName}`);
 
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
@@ -186,7 +190,7 @@ async function main() {
     args: ['--disable-dev-shm-usage', '--no-sandbox'],
   });
 
-  // Step 1: Run deployed base app and populate v1154 cache
+  // Step 1: Run deployed base app and populate baseline cache
   console.log(`Starting base app server on port ${port}...`);
   const baseServer = await startApp('base', baseRoot, port);
   context = await launch();
@@ -201,7 +205,7 @@ async function main() {
   });
 
   const baseCaches = await page.evaluate(async () => await caches.keys());
-  check('base worker activated and cached with v1154', baseCaches.includes(baseCacheName), JSON.stringify(baseCaches));
+  check('base worker activated and cached with baseline cache', baseCaches.includes(baseCacheName), JSON.stringify(baseCaches));
 
   await context.close();
   context = null;
@@ -209,7 +213,7 @@ async function main() {
   console.log('Base app stopped. Starting candidate app server on the same port...');
 
   // Step 2: Run candidate app server and upgrade service worker
-  await startApp('candidate', REPO_ROOT, port);
+  await startApp('candidate', CANDIDATE_ROOT, port);
   context = await launch();
   page = await context.newPage();
   await page.goto(`${origin}${probePage}`, { waitUntil: 'domcontentloaded' });
@@ -221,10 +225,10 @@ async function main() {
   });
 
   // Wait for new worker to activate and old cache to be removed
-  await until(page, async candidateName => {
+  await until(page, async ({ candidateName, baseName }) => {
     const keys = await caches.keys();
-    return keys.includes(candidateName) && !keys.includes('odysseus-v1154-pr40-editor-precache');
-  }, candidateCacheName);
+    return keys.includes(candidateName) && !keys.includes(baseName);
+  }, { candidateName: candidateCacheName, baseName: baseCacheName });
 
   await until(page, async () => {
     const reg = (await navigator.serviceWorker.getRegistrations())[0];
