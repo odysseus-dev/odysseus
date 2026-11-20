@@ -4,6 +4,7 @@ Legacy successful page-command/batch/recovery tests have been superseded by
 failed-before-dispatch resource tests in test_browser_resource_identity.py.
 """
 import asyncio
+import os
 import pytest
 import base64
 import json
@@ -162,6 +163,7 @@ def _cli_proc(calls, identity=None):
     return _Proc()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
 def test_private_browser_timeout_terminates_the_process_group(monkeypatch) -> None:
     from src import process_lifecycle, process_ownership
 
@@ -180,6 +182,7 @@ def test_private_browser_timeout_terminates_the_process_group(monkeypatch) -> No
     assert calls == [(1234, web_tools.signal.SIGKILL), "fallback-kill"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
 @pytest.mark.parametrize("verdict", ["foreign", "unverifiable", "gone"])
 def test_cli_group_is_not_signalled_once_its_identity_is_lost(monkeypatch, verdict) -> None:
     """A reaped CLI's pid may be reissued; its group is then not ours to kill."""
