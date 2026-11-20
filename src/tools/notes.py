@@ -16,15 +16,16 @@ from core.notes_markdown import (
     apply_items_to_content,
     derive_note_type,
     effective_content,
+    fold_image_url,
     fold_legacy_columns,
     keep_task_lines,
     merge_items_into_content,
     normalize_note_color,
-    null_folded_field_error,
     parse_task_lines,
     strip_task_lines,
     toggle_task,
 )
+from core.note_writes import NOTE_BODY_CONFLICT, guard_note_body, note_body_revision
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +75,6 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             args["color"] = normalize_note_color(args["color"])
         except ValueError as exc:
             return {"error": f"{exc}. Nothing was saved.", "exit_code": 1}
-    if action == "update":
-        refused = null_folded_field_error(args)
-        if refused:
-            return {"error": f"{refused} Nothing was saved.", "exit_code": 1}
     if action == "add" and any(args.get(key) for key in ("id", "note_id", "noteId")):
         return {
             "error": 'Nothing saved. add creates a new note and cannot take an existing note ID. '
@@ -107,6 +104,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     if bound is not None:
         bound.validate()
     db = SessionLocal()
+
+    def _body_conflict():
+        return {"error": NOTE_BODY_CONFLICT, "conflict": True, "exit_code": 1}
 
     def _norm_note_title(value: str) -> str:
         text = (value or "").strip().lower()
@@ -217,6 +217,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             # next model context.
             if not full_content:
                 continue
+            lines.append(f"  Body revision: {note_body_revision(n)}")
             # The prose first, then every task line with the index that
             # toggle_item takes.
             prose = strip_task_lines(content)
@@ -282,7 +283,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
-            return {"results": _format_note_list([note], full_content=True), "exit_code": 0}
+            return {"results": _format_note_list([note], full_content=True),
+                    "body_revision": note_body_revision(note), "exit_code": 0}
 
         elif action == "add":
             # Accept the various field names models emit: `text` is the most
@@ -491,6 +493,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             new_items = args.get("checklist_items")
             if new_items is None:
                 new_items = args.get("items")
+            revision = args.get("body_revision")
+            if args.get("content") is not None or new_items is not None or args.get("note_type") is not None or revision is not None:
+                if (revision is not None and revision != note_body_revision(note)) or not guard_note_body(db, note):
+                    return _body_conflict()
             if args.get("content") is not None or new_items is not None:
                 fold_legacy_columns(note)
             previous_content = note.content
@@ -501,6 +507,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             # own keeps the task lines; clearing them takes checklist_items: [].
             if args.get("content") is not None and new_items is None:
                 note.content = keep_task_lines(previous_content, note.content)
+            if args.get("content") is not None and note.image_url:
+                note.content = fold_image_url(note.content, note.image_url)
             # Parse due_date the same way the `add` action does. The schema
             # advertises natural language ("tomorrow at 9am"), and naive ISO
             # strings need the user's tz offset attached so the frontend's
@@ -520,6 +528,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 note.content = apply_items_to_content(
                     note.content, new_items if isinstance(new_items, list) else _norm_note_items(new_items)
                 )
+                note.items = None
             if "pinned" in args:
                 note.pinned = args["pinned"]
             if "archived" in args:
@@ -578,6 +587,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
+            if "done" in args and not isinstance(args["done"], bool):
+                return {"error": "done must be a boolean (true or false)", "exit_code": 1}
+            if args.get("body_revision") != note_body_revision(note) or not guard_note_body(db, note):
+                return _body_conflict()
             fold_legacy_columns(note)
             content = note.content or ""
             tasks = parse_task_lines(content)
@@ -585,8 +598,6 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "Note has no checklist items", "exit_code": 1}
             if index < 0 or index >= len(tasks):
                 return {"error": f"Item index {index} out of range (0-{len(tasks)-1})", "exit_code": 1}
-            if "done" in args and not isinstance(args["done"], bool):
-                return {"error": "done must be a boolean (true or false)", "exit_code": 1}
             item = tasks[index]
             if "done" not in args or args["done"] != item["done"]:
                 content, item = toggle_task(content, index)

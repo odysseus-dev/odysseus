@@ -1,89 +1,71 @@
-/** Checklist item workflows. Supplied feedback callbacks update the invoking view. */
-import { applyItemsToContent, appendTaskLine, toggleTask as toggleTaskLine } from '../domain/markdownTasks.js';
+/** Checklist actions reconcile with the canonical note returned by the server. */
+export function createChecklistOperations({ app, api, effects }) {
+  const state = app.state;
+  const pending = new Set();
+  const findNote = id => state.notes.find(note => note.id === id);
 
-export function createChecklistOperations({
-  app,
-  api,
-  effects,
-  uid
-}) {
-    const state = app.state;
-    // Items are task lines inside `content`. Every optimistic change updates
-    // both, using the same rules the server applies, so the card (which renders
-    // content) and the item indices stay in step until the next fetch.
-    function itemNote(id, index) {
-      const note = state.notes.find(n => n.id === id);
-      return note && Array.isArray(note.items) && note.items[index] ? note : null;
-    }
-    const snapshot = note => ({ content: note.content, items: note.items });
-    function setItems(note, items) {
-      app.mergeNote(note, { items, content: applyItemsToContent(note.content, items) });
-    }
-    function toggledContent(content, index) {
-      try { return toggleTaskLine(content || '', index).content; } catch { return content; }
-    }
-    function removeItem(id, index) {
-      const note = itemNote(id, index);
-      if (!note) return;
-      const before = snapshot(note);
-      setItems(note, note.items.filter((_, i) => i !== index));
-      effects.render();
-      api.patchNote(id, { items: note.items }).catch(() => {
-        app.mergeNote(note, before); effects.render(); effects.showError('Failed to remove item');
-      });
-    }
-    function editItem(note, index, text) {
-      const oldText = (note.items[index].text || '').trim();
-      if (text === oldText) { effects.render(); return; }
-      const before = snapshot(note);
-      setItems(note, text ? note.items.map((it, i) => (i === index ? { ...it, text } : it)) : note.items.filter((_, i) => i !== index));
-      api.patchNote(note.id, { items: note.items }).catch(() => {
-        app.mergeNote(note, before);
-        effects.render(); effects.showError('Failed to update item');
-      });
-      effects.render();
-    }
-    function addItem(id, text, added) {
-      const note = state.notes.find(n => n.id === id);
-      if (!note) return;
-      const before = snapshot(note);
-      const items = Array.isArray(note.items) ? [...note.items] : [];
-      items.push({ id: uid(), text, done: false });
-      app.mergeNote(note, { items, content: appendTaskLine(note.content, text).content });
-      added(); effects.render();
-      // Server-side append: no whole-checklist PUT that could overwrite a
-      // concurrent change to the same note.
-      return () => api.appendTask(id, text).catch(() => {
-        app.mergeNote(note, before); effects.render(); effects.showError('Failed to add item');
-      });
-    }
-    function toggleItem(id, index, changed, completed) {
-      const note = itemNote(id, index);
-      if (!note) return;
-      const wasDone = note.items.length > 0 && note.items.every(it => it.done);
-      const before = note.content;
-      app.updateItem(note, index, { done: !note.items[index].done });
-      app.mergeNote(note, { content: toggledContent(before, index) });
-      changed(note.items[index].done);
-      if (!wasDone && note.items.length > 0 && note.items.every(it => it.done)) completed();
-      api.toggleTask(id, index).catch(() => {
-        app.mergeNote(note, { content: before });
-        app.updateItem(note, index, { done: !note.items[index].done }); changed(note.items[index].done);
-      });
-    }
-    async function toggleTodayStep(id, index, changed, completed) {
-      const note = itemNote(id, index);
-      if (!note) return;
-      const before = note.content;
-      app.updateItem(note, index, { done: !note.items[index].done });
-      app.mergeNote(note, { content: toggledContent(before, index) }); changed();
-      try {
-        await api.toggleTask(id, index); effects.render();
-        if (note.items.every(it => it.done)) completed();
-      } catch {
-        app.mergeNote(note, { content: before });
-        app.updateItem(note, index, { done: !note.items[index].done });
+  function observedNote(id, revision) {
+    const note = findNote(id);
+    if (note?.body_revision === revision) return note;
+    effects.showError('Note changed. Review the checklist and try again.');
+    effects.render();
+  }
+
+  async function write(note, request, onSaved, errorMessage) {
+    if (!note || pending.has(note.id)) return;
+    const id = note.id;
+    const revision = note.body_revision;
+    const mergeBody = saved => {
+      const current = findNote(id);
+      if (current !== note || current.body_revision !== revision) return false;
+      const { content, items, note_type, image_url, body_revision } = saved;
+      app.mergeNote(current, { content, items, note_type, image_url, body_revision });
+      return true;
+    };
+    pending.add(id);
+    try {
+      const saved = await request(revision);
+      if (mergeBody(saved)) onSaved(saved);
+    } catch (err) {
+      if (err.status === 409) {
+        try { mergeBody(await api.getNote(id)); } catch { /* Keep the last known state if offline. */ }
       }
+      effects.showError(err.status === 409 ? 'Note changed. Review the checklist and try again.' : errorMessage);
+    } finally {
+      pending.delete(id);
+      effects.render();
     }
-    return { removeItem, editItem, addItem, toggleItem, toggleTodayStep };
+  }
+
+  function removeItem(id, index, revision) {
+    const note = observedNote(id, revision);
+    if (!note?.items?.[index]) return;
+    const items = note.items.filter((_, i) => i !== index);
+    return write(note, body_revision => api.patchNote(id, { items, body_revision }), () => {}, 'Failed to remove item');
+  }
+
+  function editItem(note, index, text) {
+    const item = note.items?.[index];
+    if (!item || text === (item.text || '').trim()) { effects.render(); return; }
+    const items = text
+      ? note.items.map((it, i) => (i === index ? { ...it, text } : it))
+      : note.items.filter((_, i) => i !== index);
+    return write(note, body_revision => api.patchNote(note.id, { items, body_revision }), () => {}, 'Failed to update item');
+  }
+
+  function addItem(id, text, added) {
+    return write(findNote(id), async () => (await api.appendTask(id, text)).note, added, 'Failed to add item');
+  }
+
+  function toggleItem(id, index, changed, completed, revision) {
+    const note = observedNote(id, revision);
+    if (!note?.items?.[index]) return;
+    const wasDone = note.items.every(item => item.done);
+    return write(note, async revision => (await api.toggleTask(id, index, revision)).note, saved => {
+      changed(saved.items[index].done);
+      if (!wasDone && saved.items.every(item => item.done)) completed();
+    }, 'Failed to toggle item');
+  }
+
+  return { removeItem, editItem, addItem, toggleItem, toggleTodayStep: toggleItem };
 }

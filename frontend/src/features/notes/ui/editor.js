@@ -41,6 +41,8 @@ export function createEditor({
     form.className = 'note-form';
     form.dataset.noteType = type;
     form.dataset.noteColor = color || '';
+    form.dataset.replaceContent = String(type === 'note' && note?.replace_content !== false);
+    form._bodyRevision = note?.body_revision;
     if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
     if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
     let currentImageUrl = _safeImgSrc(note?.image_url || '');
@@ -429,11 +431,10 @@ export function createEditor({
         due_date: form.querySelector('.note-form-due').value || null,
         repeat: form.querySelector('.note-form-repeat')?.value || 'none',
       };
-      // image_url is not a column: the server folds it into content, and a
-      // null is refused. Send it only when the photo changed here ('' removes it).
-      if (currentImageUrl !== initialImageUrl) payload.image_url = currentImageUrl || '';
+      if (currentImageUrl !== initialImageUrl) payload.image_url = currentImageUrl || null;
       if (currentType === 'note') {
         payload.content = form.querySelector('.note-form-content')?.value || '';
+        if (isEdit && form.dataset.replaceContent === 'true') payload.replace_content = true;
       } else if (currentType === 'draw') {
         // Upload the canvas PNG before saving so image_url points to a
         // persistent file. We block the save until upload completes : drawings
@@ -443,10 +444,6 @@ export function createEditor({
         if (!upload?.url) { uiModule.showError('Failed to save drawing'); return; }
         payload.image_url = upload.url;
         if (upload.galleryId) payload.gallery_id = upload.galleryId;
-        // The drawing lives in content as an image line; point it at the new
-        // upload so the card shows one drawing, not the old and the new.
-        const previousUrl = _safeImgSrc(note?.image_url || '');
-        if (isEdit && note?.content && previousUrl) payload.content = note.content.split(`](${previousUrl})`).join(`](${upload.url})`);
       } else if (currentType === 'goal') {
         // Legacy: existing goal-type notes still edit through this branch.
         // No AI involvement : save as a normal note with description + items.
@@ -467,8 +464,11 @@ export function createEditor({
           ? applyItemsToContent(note?.content || '', payload.items)
           : (goalDesc && steps ? `${goalDesc}\n\n${steps}` : (goalDesc || steps));
       }
-      if (isEdit) payload.id = note.id;
-      submitNote(payload, note, isEdit);
+      if (isEdit) {
+        payload.id = note.id;
+        payload.body_revision = form._bodyRevision;
+      }
+      await submitNote(payload, note, isEdit);
       } finally {
         // Re-enable on early returns / errors. On success the form is removed by
         // the optimistic re-render, so re-enabling the detached button is a no-op.

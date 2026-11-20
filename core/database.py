@@ -1568,9 +1568,9 @@ def _migrate_unify_notes():
 def _migrate_fold_image_url():
     """Move the legacy single `image_url` into content as `![](image_url)`.
 
-    Skipped when content already references the URL; the column is cleared
-    either way. `gallery_id` is left alone, so a drawing keeps its gallery
-    link. Same backup, per-row isolation and idempotency as
+    Keep the column as the identity of the legacy attachment for old writers.
+    Skip content that already references the URL. `gallery_id` is left alone.
+    Same backup, per-row isolation and idempotency as
     `_migrate_unify_notes`.
     """
     import sqlite3
@@ -1609,9 +1609,12 @@ def _migrate_fold_image_url():
                         continue
                     _, content, items_raw, image_url, note_type = row
                     new_content = fold_image_url(content, image_url)
+                    if new_content == content:
+                        conn.execute("COMMIT")
+                        continue
                     _backup_note_legacy_fields(conn, note_id, content, items_raw, image_url, note_type)
                     conn.execute(
-                        "UPDATE notes SET content = ?, image_url = NULL WHERE id = ?",
+                        "UPDATE notes SET content = ? WHERE id = ?",
                         (new_content, note_id),
                     )
                     conn.execute("COMMIT")

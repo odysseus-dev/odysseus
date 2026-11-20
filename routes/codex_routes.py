@@ -18,7 +18,6 @@ from fastapi.responses import StreamingResponse
 from core.middleware import require_admin
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
-from core.notes_markdown import null_folded_field_error
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
 
@@ -299,14 +298,12 @@ def setup_codex_routes(
         action = str(body.get("action") or "add").replace("-", "_").strip().lower()
         allowed = TODO_WRITE_SCOPES if action in WRITE_ACTIONS else TODO_READ_SCOPES
         owner = _scope_owner(request, allowed)
-        # The tool refuses these too, but answers 200 with an error body; an
-        # HTTP client gets the same 422 as PUT /api/notes/{id}.
-        refused = null_folded_field_error(body) if action == "update" else None
-        if refused:
-            raise HTTPException(422, refused)
         args = dict(body)
         args["action"] = action
-        return await do_manage_notes(json.dumps(args), owner=owner)
+        result = await do_manage_notes(json.dumps(args), owner=owner)
+        if result.get("conflict"):
+            raise HTTPException(409, result["error"])
+        return result
 
     @router.get("/emails")
     async def list_emails(

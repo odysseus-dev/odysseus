@@ -990,7 +990,7 @@ function prepareNoteTasks(src, renderFence) {
 // upload, a raster data: URL or a same-origin blob:. Anything else renders as
 // a plain link, so a note an agent wrote cannot make the page fetch an
 // attacker URL just by being displayed.
-function noteImageSrc(rawUrl) {
+export function noteImageSrc(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(url)) return url;
   try {
@@ -1008,12 +1008,11 @@ function noteImageSrc(rawUrl) {
 // The markdown image pass is not the only way a note can name an image: raw
 // <img>, <video poster>, srcset or a CSS url() inside preserved HTML (e.g. a
 // <details> block) would survive the script-only checks above. For notes,
-// `_sanitizeAllowedHtmlTo(html, true)` also strips every
-// fetching attribute that does not point at this origin, in the same inert
-// <template> walk, so the markup never reaches the page with them.
+// `_sanitizeAllowedHtmlTo(html, true)` strips the fetching attributes in
+// the same inert template walk. Inline styles can also load resources.
 function _isNoteFetch(name, value) {
   return name === 'srcset' || name === 'poster' || name === 'background' || name === 'xlink:href'
-    || (name === 'style' && /url\s*\(/i.test(value))
+    || name === 'style'
     || (name === 'src' && !noteImageSrc(value));
 }
 

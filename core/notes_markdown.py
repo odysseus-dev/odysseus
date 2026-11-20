@@ -605,42 +605,12 @@ def load_legacy_items(raw) -> Optional[List[Dict]]:
     return items if isinstance(items, list) else None
 
 
-# The fields that are not columns: checklists (`items`, the tool's
-# `checklist_items`) and the legacy `image_url` are lines inside `content`. A
-# null on one has no meaning of its own: "clear" would wipe the note's body
-# and "ignore" would answer success for a write that did nothing. Writers
-# refuse it and say how to clear instead.
-NULL_FOLDED_FIELD_HINTS = {
-    "content": "send an empty string to clear the note",
-    "items": "send [] to remove the checklist",
-    "checklist_items": "send [] to remove the checklist",
-    "image_url": "remove its image line from content",
-}
-
-
-def null_folded_field_error(values: Dict, sent: Optional[Iterable[str]] = None) -> Optional[str]:
-    """The refusal for a write that sends null on a folded field, else None.
-
-    `values` maps field names to what was sent; `sent` names the fields the
-    request actually carried (a pydantic model's `model_fields_set`), for
-    callers whose missing keys also read as None. Without it, a key's
-    presence in `values` decides.
-    """
-    keys = values.keys() if sent is None else sent
-    for field in NULL_FOLDED_FIELD_HINTS:
-        if field in keys and values.get(field) is None:
-            return f"{field} cannot be null; {NULL_FOLDED_FIELD_HINTS[field]}."
-    return None
-
-
 def effective_content(content: Optional[str], legacy_items=None, legacy_image_url=None) -> str:
     """Content with any not-yet-migrated legacy `items` and `image_url` folded in.
 
-    The startup migration clears both columns, but a row it skipped (malformed
-    JSON elsewhere in the row, a crash mid-boot, or a database that is not
-    SQLite, where the migration does not run) keeps them. Readers use this so
-    such a row still shows its checklist and its image the way the migration
-    would have stored them, instead of silently losing them.
+    The startup migration clears converted items and retains the legacy image
+    pointer. Readers can also project legacy values from rows that were skipped
+    or are stored on a backend without the boot migration.
     """
     out = content or ""
     items = load_legacy_items(legacy_items)
@@ -654,21 +624,15 @@ def effective_content(content: Optional[str], legacy_items=None, legacy_image_ur
 def fold_legacy_columns(note) -> None:
     """Move a row the startup migration skipped into content before a write.
 
-    `note` is any object with `content`, `items` and `image_url` attributes
-    (the ORM row). The columns are cleared once their values are in content,
-    exactly as the migration would leave the row. Unreadable `items` are left
-    in place for the migration to retry, and so is `image_url` on such a row,
-    so nothing the migration still needs is thrown away.
+    The image pointer and unreadable items remain available after the fold.
     """
     raw_items = getattr(note, "items", None)
-    if raw_items and load_legacy_items(raw_items) is None:
-        return
     image_url = (getattr(note, "image_url", None) or "").strip()
     if not raw_items and not image_url:
         return
     note.content = effective_content(note.content, raw_items, image_url)
-    note.items = None
-    note.image_url = None
+    if not raw_items or load_legacy_items(raw_items) is not None:
+        note.items = None
 
 
 def derive_note_type(stored_type: Optional[str], content: Optional[str]) -> str:
@@ -694,17 +658,6 @@ def markdown_image_url(url: Optional[str]) -> str:
     """`url` as a markdown image destination: trimmed, with the characters a
     destination cannot hold percent-encoded."""
     return "".join(_URL_ESCAPES.get(ch, ch) for ch in (url or "").strip())
-
-
-def legacy_image_url(content: Optional[str]) -> Optional[str]:
-    """The note's single legacy image: the last line that is only an untitled
-    image, which is what `fold_image_url` writes. None when there is none."""
-    found = None
-    for _, raw in _iter_lines_outside_fences(content or ""):
-        m = _BARE_IMAGE_LINE_RE.match(raw)
-        if m:
-            found = m.group(1)
-    return found
 
 
 def remove_image_line(content: Optional[str], url: Optional[str]) -> str:
@@ -737,18 +690,29 @@ def fold_image_url(content: Optional[str], url: Optional[str], replace: Optional
     No-op when `url` is empty or content already references it, so a repeated
     write never stacks a second copy (URLs with spaces or parentheses are
     written percent-encoded and still match). With `replace`, an existing
-    `](replace)` reference is swapped for the new URL instead of appending a
-    second image (a re-saved drawing, or a new `image_url` on a note).
+    standalone folded image line is swapped for the new URL. Other links,
+    inline images and code examples keep their original destinations.
     """
     base = content or ""
     url = markdown_image_url(url)
-    if not url or url in image_urls(base):
+    if not url:
         return base
     replace = markdown_image_url(replace)
+    present = url in image_urls(base)
     if replace and replace != url:
-        needle = f"]({replace})"
-        if needle in base:
-            return base.replace(needle, f"]({url})", 1)
+        if present:
+            return remove_image_line(base, replace)
+        hit = None
+        for lineno, raw in _iter_lines_outside_fences(base):
+            match = _BARE_IMAGE_LINE_RE.match(raw)
+            if match and match.group(1) == replace:
+                hit = lineno
+        if hit is not None:
+            parts = base.split("\n")
+            parts[hit] = parts[hit].replace(f"]({replace})", f"]({url})", 1)
+            return "\n".join(parts)
+    if present:
+        return base
     return _append_block_keeping_content(base, [f"![]({url})"])
 
 

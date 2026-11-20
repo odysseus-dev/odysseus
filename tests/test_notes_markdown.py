@@ -120,10 +120,9 @@ def test_effective_content_folds_unmigrated_items_only_when_readable():
 
 
 def test_legacy_image_helpers():
-    from core.notes_markdown import legacy_image_url, markdown_image_url, remove_image_line
+    from core.notes_markdown import markdown_image_url, remove_image_line
     assert markdown_image_url(" /a b(1).png ") == "/a%20b%281%29.png"
-    assert legacy_image_url("![x](/i)\n\n![](/a)\n![](/b) trailing") == "/a"
-    assert legacy_image_url("```\n![](/a)\n```") is None
+    assert remove_image_line("```\n![](/a)\n```", "/a") == "```\n![](/a)\n```"
     assert remove_image_line("Body\n\n![](/a)", "/a") == "Body"
     assert remove_image_line("![](/a)\nBody", "/a") == "Body"
     assert remove_image_line("Body", "/a") == "Body"

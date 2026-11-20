@@ -1117,7 +1117,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "pinned": {"type": "boolean", "description": "Pin the note to the top"},
                     "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list: show archived notes when true."},
                     "due_date": {"type": "string", "description": "Reminder time. Accepts natural language ('tomorrow at 9am', '11pm today') or ISO 8601. Fires a notification at that time."},
-                    "index": {"type": "integer", "description": "Required for toggle_item: 0-based checklist item index. Use view if unknown."},
+                    "index": {"type": "integer", "description": "Required for toggle_item: 0-based checklist item index from get/view."},
+                    "body_revision": {"type": "string", "description": "Required for toggle_item and recommended for update: copy the Body revision from get/view. On conflict, view again and verify the item before retrying."},
                     "done": {"type": "boolean", "description": "For toggle_item: target checked state; omit to toggle."}
                 },
                 "required": ["action"]

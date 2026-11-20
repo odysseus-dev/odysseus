@@ -68,3 +68,13 @@ test('older save cannot clear newer draft and writes are serialized', async () =
   releases.shift()({}); await new Promise(setImmediate);
   assert.equal(h.draft(),null);
 });
+
+test('reopening an edited note does not lay a stale draft over newer server content', () => {
+  const h = harness();
+  h.form._bodyRevision = 'older';
+  h.fields['.note-form-content'].value = 'Local edits';
+  h.input();
+  const current = { body_revision: 'newer', content: 'Server update' };
+  assert.deepEqual(h.context._applyDraftToNote(current, 'note1'), { note: current, restored: false });
+  assert.equal(h.draft().content, 'Local edits');
+});

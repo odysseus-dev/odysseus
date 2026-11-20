@@ -4042,7 +4042,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   white-space: normal;
   opacity: 1;
 }
-.note-content-preview.note-md-preview > :not(.md-tasklist) { opacity: 0.6; }
+.note-content-preview.note-md-preview > :not(.md-tasklist, :has(.md-note-image)) { opacity: 0.6; }
 .note-md-preview :is(p, ul, ol, pre, blockquote, h1, h2, h3, h4, h5, h6) { margin: 0; }
 .note-md-preview > * + * { margin-top: 4px; }
 .note-md-preview :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: 600; }

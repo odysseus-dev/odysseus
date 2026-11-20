@@ -3,8 +3,8 @@
 A note used to keep its checklist in a JSON `items` column and one image in
 `image_url`, next to a free-text `content`. It is now a single markdown
 document: task lines (`- [ ]` / `- [x]`) and images (`![](/api/upload/<id>)`)
-live in `content`, and the API derives `items`, `note_type` and a drawing's
-`image_url` from it. The contract is in
+live in `content`. The API derives `items` and `note_type`; the legacy
+`image_url` column identifies the attachment for older clients and drawings. The contract is in
 [`specs/calendar-tasks-notes.md`](../specs/calendar-tasks-notes.md), "Note
 Content Model". This page covers what the boot migration changes in an existing
 database, how to undo it, and what keeps working while old writers still send
@@ -27,6 +27,8 @@ They open the SQLite file named by `DATABASE_URL` directly, resolved through
 migrates too. With a non-SQLite `DATABASE_URL`, or before the file exists, they
 do nothing; rows keep their legacy columns and every reader folds both `items`
 and `image_url` on the fly (see "Idempotency and per-row isolation").
+The SQL rollback below applies to rows backed up by the SQLite boot migration.
+Keep a database snapshot before allowing writes on a different backend.
 
 ## What gets folded
 
@@ -54,7 +56,7 @@ to `NULL`.
 
 **`image_url`.** Every row with a non-blank `image_url` gets `![](image_url)`
 appended unless content already references that URL (after closing an open
-fence, as above), and `image_url` is set to `NULL`. `gallery_id` is left alone, so a drawing keeps its gallery link.
+fence, as above). The URL remains in `image_url` so a legacy prose edit keeps the attachment. A row whose body already has the image needs no rewrite. `gallery_id` is left alone, so a drawing keeps its gallery link.
 
 **`note_type`** is not rewritten. It is derived on read: `checklist` for a note
 that is only task lines, `note` otherwise, while `goal` and `draw` keep their
@@ -90,12 +92,11 @@ DELETE FROM note_legacy_fields;
 DROP TRIGGER IF EXISTS note_legacy_fields_follow_note_delete;
 ```
 
-- It restores the four columns as they were at migration time. Edits made to
-  those notes since are lost: it is a rollback, not a merge.
+- It restores the four columns as they were at migration time, discarding later edits to those fields on backed-up notes. Other columns retain their current values.
 - It only covers notes that existed at migration time. A note created
-  afterwards has no backup row and stays as current code wrote it, so code from
-  before the migration shows its checklist as literal `- [ ]` lines and finds no
-  `image_url` for a drawing created since.
+  afterwards has no backup row and keeps its Markdown. Older code shows its
+  checklist as literal `- [ ]` lines. Legacy attachment URLs and gallery links
+  still exist for new drawings created through the canvas.
 - Stop the app first, and take a copy with
   `sqlite3 data/app.db ".backup data/app.db.pre-rollback"`.
 - Run it together with code from before the migration. Started on current
@@ -110,8 +111,7 @@ DROP TRIGGER IF EXISTS note_legacy_fields_follow_note_delete;
 
 ## Idempotency and per-row isolation
 
-- A converted row has `items` (or `image_url`) `NULL`, so it is never selected
-  again; running the migration twice changes nothing the second time.
+- Converted checklist rows have `items` set to `NULL`. The image step checks rows with a legacy URL and skips those that already reference it. Repeated startup leaves both body and backup unchanged.
 - Each row commits or rolls back on its own. A row whose `items` is not a JSON
   array is skipped with a `notes unify migration: skipped note <id>` warning,
   keeps its columns, and is retried on the next boot. It does not stop the rows
@@ -124,17 +124,23 @@ DROP TRIGGER IF EXISTS note_legacy_fields_follow_note_delete;
   `items` are left in place for the migration to retry, by the tool as well as
   the routes.
 
+Installations that ran a preview which cleared `image_url` already have the
+image Markdown. They do not automatically recover the legacy attachment
+pointer. The rollback backup can predate subsequent edits, so reapplying its
+URL could restore a deliberately removed image. On those installations,
+review the affected notes before using the legacy attachment or canvas controls.
+
 ## What keeps working
 
 | Surface | Behaviour after the migration |
 | --- | --- |
-| REST `items` / `image_url` | `GET` still returns `items`, `note_type` and a drawing's `image_url`, derived from content; other notes read `image_url: null`. `POST`/`PUT` with `items` rewrite the task lines in place. Items lose their `id` and any other key, a blank item removes its line, and `items: []` reads back as `null`. `image_url` replaces the note's legacy image line, or adds it, and `""` removes it. On `PUT` (and the `/api/codex/todos` `update` action), an explicit `null` on `content`, `items` or `image_url` is a 422 that saves nothing; leave the key out instead. |
-| REST `content` | A `PUT` with `content` and no `items` keeps the existing task lines when the new text has none; `items: []` with it clears them. |
-| Checklist routes | `POST /api/notes/{id}/items/{index}/toggle` flips the task line in content by 0-based index; `POST /api/notes/{id}/items` appends one. |
+| REST legacy fields | `items` returns derived indices, text, completion and nesting. Legacy item IDs and other properties are dropped. `note_type` is derived except for goals and drawings. The legacy `image_url` remains available for all note types. A null clears the corresponding part of the body on PUT. |
+| REST `content` | A prose-only PUT keeps the legacy attachment and, if it contains no task lines, keeps the checklist. Send `replace_content: true` with the full document to remove omitted images or tasks. |
+| Checklist routes | Toggle requires `body_revision` from the GET that supplied the index. Missing and stale tokens return 409. Append retries a competing write from the committed body. |
 | `scripts/odysseus-notes` | `list`/`show`/`search` print derived `items` and `note_type`; `create --item TEXT` (repeatable) writes task lines. |
 | Calendar writers | Event reminders from `routes/calendar_routes.py` and the `manage_calendar` tool write a task line through `items_to_markdown()` instead of `items` JSON. |
 | Reminders | `/api/notes/fire-reminder` and the scheduler's note ping share `reminder_body()`: prose, then `Pending (N):` and the open tasks. |
 | Daily brief | Lists open tasks from any note with task lines (it used to read only `note_type == "checklist"`). |
 | Selected-notes chat context | Sends the content verbatim plus an `Items:` block restating the tasks. |
-| `manage_notes` | Takes `checklist_items` as before (`[]` clears); `update` with `content` alone keeps the task lines; `get`/`view` print `[x] i: text` with the index `toggle_item` takes. |
+| `manage_notes` | Takes `checklist_items` as before (`[]` clears); `update` with `content` alone keeps the task lines; `get`/`view` print `[x] i: text` with the index and body revision `toggle_item` takes. |
 | Backups | `scripts/odysseus-backup snapshot` copies `app.db` whole, including `note_legacy_fields`. The in-app JSON export (`/api/export`) never included notes and still does not. |

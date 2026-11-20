@@ -16,7 +16,11 @@ export function createDraftEditor({
       due_date: form.querySelector('.note-form-due')?.value || null,
       repeat: form.querySelector('.note-form-repeat')?.value || 'none',
     };
-    if (type === 'note') d.content = form.querySelector('.note-form-content')?.value || '';
+    if (form._bodyRevision) d.body_revision = form._bodyRevision;
+    if (type === 'note') {
+      d.content = form.querySelector('.note-form-content')?.value || '';
+      if (form.dataset.replaceContent === 'true') d.replace_content = true;
+    }
     else if (type === 'goal') { d.content = form.querySelector('.note-form-goal-desc')?.value || ''; d.items = _collectItems(form); }
     else d.items = _collectItems(form);
     return d;
@@ -34,6 +38,8 @@ export function createDraftEditor({
     const view = {
       get failed() { return form._autosaveFailed; },
       set failed(value) { form._autosaveFailed = value; },
+      get bodyRevision() { return form._bodyRevision; },
+      set bodyRevision(value) { form._bodyRevision = value; },
     };
     const draft = bindDraft({ collect: () => _collectFormDraft(form), id, view });
     form._flushDraft = draft.flush;
@@ -56,10 +62,12 @@ export function createDraftEditor({
   function _applyDraftToNote(note, id) {
     const d = _loadDraft(id);
     if (!d) return { note, restored: false };
+    if (d.body_revision && note?.body_revision !== d.body_revision) return { note, restored: false };
     const merged = { ...(note || {}) };
-    ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
+    ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items', 'body_revision'].forEach(k => {
       if (d[k] !== undefined) merged[k] = d[k];
     });
+    if (d.content !== undefined) merged.replace_content = d.replace_content === true;
     return { note: merged, restored: true };
   }
 

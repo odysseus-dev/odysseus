@@ -1,8 +1,7 @@
 """Notes API, tool and reminder paths over the markdown content model.
 
-Content is the source of truth: `items`, `note_type` and a drawing's
-`image_url` are derived from it, writers that still send `items` or
-`image_url` are folded into it, and the toggle/append routes edit task lines.
+Checklists and images render from Markdown, and the legacy image pointer
+keeps the independent attachment contract for old writers.
 Driven through httpx.ASGITransport for the reasons given in
 tests/test_notes_fail_closed_auth.py.
 """
@@ -10,6 +9,7 @@ import asyncio
 import datetime
 import json
 from types import SimpleNamespace
+from threading import Event
 
 import httpx
 import pytest
@@ -79,9 +79,9 @@ async def test_create_writes_items_and_image_into_content(notes):
         {"index": 1, "text": "Bank", "done": True, "indent": 1},
     ]
     assert body["note_type"] == "note"  # tasks plus an image: mixed
-    assert body["image_url"] is None
+    assert body["image_url"] == "/api/upload/receipt"
     stored = notes.row(body["id"])
-    assert stored.items is None and stored.image_url is None
+    assert stored.items is None and stored.image_url == body["image_url"]
 
 
 async def test_read_derives_items_and_type_from_content(notes):
@@ -120,13 +120,14 @@ async def test_put_image_url_folds_and_drawings_replace_their_canvas(notes):
     notes.seed("photo", content="Receipt")
     r = await notes.call("PUT", "/api/notes/photo", json={"image_url": "/api/upload/p1"})
     assert r.json()["content"] == "Receipt\n\n![](/api/upload/p1)"
-    assert r.json()["image_url"] is None
+    assert r.json()["image_url"] == "/api/upload/p1"
 
-    notes.seed("draw", content="![](/api/upload/d1)", note_type="draw", gallery_id="g1")
+    original = "[Canvas link](/api/upload/d1)\n\n```\n![](/api/upload/d1)\n```\n\n"
+    notes.seed("draw", content=original + "![](/api/upload/d1)", image_url="/api/upload/d1", note_type="draw", gallery_id="g1")
     got = (await notes.call("GET", "/api/notes/draw")).json()
     assert got["image_url"] == "/api/upload/d1" and got["note_type"] == "draw"
     r = await notes.call("PUT", "/api/notes/draw", json={"note_type": "draw", "image_url": "/api/upload/d2", "gallery_id": "g1"})
-    assert r.json()["content"] == "![](/api/upload/d2)"
+    assert r.json()["content"] == original + "![](/api/upload/d2)"
     assert r.json()["image_url"] == "/api/upload/d2"
     assert notes.row("draw").gallery_id == "g1"
 
@@ -140,7 +141,7 @@ async def test_put_image_url_replaces_removes_and_never_stacks(notes):
     assert notes.row("photo").content == "Receipt\n\n![](/api/upload/p1)"
 
     # A new URL replaces the note's legacy image; inline images are left alone.
-    notes.seed("mixed", content="Intro ![x](/api/upload/inline) text\n\n![](/api/upload/old)")
+    notes.seed("mixed", content="Intro ![x](/api/upload/inline) text\n\n![](/api/upload/old)", image_url="/api/upload/old")
     r = await notes.call("PUT", "/api/notes/mixed", json={"image_url": "/api/upload/new"})
     assert r.json()["content"] == "Intro ![x](/api/upload/inline) text\n\n![](/api/upload/new)"
     # An empty string removes it, and only it.
@@ -214,25 +215,133 @@ async def test_unmigrated_photo_note_shows_its_image_and_a_save_keeps_one(notes)
     notes.seed("photo", content="Receipt", image_url="/api/upload/receipt")
     got = (await notes.call("GET", "/api/notes/photo")).json()
     assert got["content"] == "Receipt\n\n![](/api/upload/receipt)"
-    r = await notes.call("PUT", "/api/notes/photo", json={"content": got["content"] + " kept"})
+    r = await notes.call("PUT", "/api/notes/photo", json={"content": "Receipt edited by a legacy client"})
     assert r.status_code == 200, r.text
     again = (await notes.call("GET", "/api/notes/photo")).json()
-    assert again["content"] == "Receipt\n\n![](/api/upload/receipt) kept"
+    assert again["content"] == "Receipt edited by a legacy client\n\n![](/api/upload/receipt)"
+
+
+async def test_migrated_photo_put_preserves_replaces_and_removes_attachment(notes, monkeypatch):
+    url = "/api/upload/old"
+    notes.seed("photo", content="Receipt", image_url=url)
+    monkeypatch.setattr(cdb, "DATABASE_URL", str(notes.factory.kw["bind"].url))
+    cdb._migrate_fold_image_url()
+    assert notes.row("photo").content == f"Receipt\n\n![]({url})"
+
+    path = "/api/notes/photo"
+    updated = await notes.call("PUT", path, json={"content": "Updated prose"})
+    assert updated.json()["image_url"] == url
+    assert notes.row("photo").content == f"Updated prose\n\n![]({url})"
+
+    new_url = "/api/upload/new"
+    await notes.call("PUT", path, json={"image_url": new_url})
+    assert notes.row("photo").content == f"Updated prose\n\n![]({new_url})"
+    await notes.call("PUT", path, json={"image_url": None})
+    assert notes.row("photo").content == "Updated prose"
+    assert notes.row("photo").image_url is None
+
+    # Current editor sends the complete document and its observed revision.
+    before = (await notes.call("PUT", path, json={"image_url": new_url})).json()
+    unrelated = "Final edit\n\n![](/api/upload/ordinary-markdown)"
+    updated = await notes.call("PUT", path, json={
+        "content": unrelated, "replace_content": True, "body_revision": before["body_revision"],
+    })
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["image_url"] is None
+    cdb._migrate_fold_image_url()
+    assert notes.row("photo").content == unrelated
 
 
 async def test_toggle_route_flips_the_indexed_task_line(notes):
     notes.seed("n", content="```\n- [ ] sample\n```\n- [ ] real\n  * [x] nested")
-    r = await notes.call("POST", "/api/notes/n/items/1/toggle")
+    revision = (await notes.call("GET", "/api/notes/n")).json()["body_revision"]
+    assert (await notes.call("POST", "/api/notes/n/items/1/toggle")).status_code == 409
+    r = await notes.call("POST", "/api/notes/n/items/1/toggle", json={"body_revision": revision})
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
     assert data["item"]["text"] == "nested" and data["item"]["done"] is False
     assert data["note"]["content"] == "```\n- [ ] sample\n```\n- [ ] real\n  * [ ] nested"
     assert [i["done"] for i in data["items"]] == [False, False]
-    assert (await notes.call("POST", "/api/notes/n/items/2/toggle")).status_code == 400
+    assert (await notes.call("POST", "/api/notes/n/items/2/toggle", json={"body_revision": data["note"]["body_revision"]})).status_code == 400
     assert (await notes.call("POST", "/api/notes/n/items/0/toggle", user="bob")).status_code == 404
     notes.seed("plain", content="no tasks")
-    assert (await notes.call("POST", "/api/notes/plain/items/0/toggle")).status_code == 400
+    plain_revision = (await notes.call("GET", "/api/notes/plain")).json()["body_revision"]
+    assert (await notes.call("POST", "/api/notes/plain/items/0/toggle", json={"body_revision": plain_revision})).status_code == 400
+
+
+def _pause_first_guard(monkeypatch, module=nr):
+    entered, release = Event(), Event()
+    sessions = []
+    original = module.guard_note_body
+
+    def guard(session, note):
+        sessions.append(session)
+        if len(sessions) == 1:
+            entered.set()
+            assert release.wait(10), "Competing request did not finish"
+        return original(session, note)
+
+    monkeypatch.setattr(module, "guard_note_body", guard)
+    return entered, release, sessions
+
+
+async def test_overlapping_appends_retry_the_stale_read(notes, monkeypatch):
+    notes.seed("n", content="- [ ] first\n\nFooter")
+    entered, release, sessions = _pause_first_guard(monkeypatch)
+    path = "/api/notes/n/items"
+    first = asyncio.create_task(notes.call("POST", path, json={"text": "paused"}))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        second = await notes.call("POST", path, json={"text": "committed first"})
+        assert second.status_code == 200, second.text
+    finally:
+        release.set()
+    response = await first
+    assert response.status_code == 200, response.text
+    assert len(sessions) == 3 and sessions[0] is sessions[2] and sessions[0] is not sessions[1]
+    assert notes.row("n").content == "- [ ] first\n- [ ] committed first\n- [ ] paused\n\nFooter"
+
+
+async def test_toggle_conflicts_with_reorder_during_and_before_request(notes, monkeypatch):
+    notes.seed("n", content="- [ ] A\n- [ ] B")
+    path = "/api/notes/n"
+    initial = (await notes.call("GET", path)).json()
+    body = {"body_revision": initial["body_revision"]}
+    toggle_path = path + "/items/0/toggle"
+    entered, release, sessions = _pause_first_guard(monkeypatch)
+    toggle = asyncio.create_task(notes.call("POST", toggle_path, json=body))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        reorder = await notes.call("PUT", path, json={**body, "items": [{"text": "B"}, {"text": "A"}]})
+        assert reorder.status_code == 200, reorder.text
+    finally:
+        release.set()
+    assert (await toggle).status_code == 409
+    assert len(sessions) == 2 and sessions[0] is not sessions[1]
+    assert (await notes.call("POST", toggle_path, json=body)).status_code == 409
+    assert notes.row("n").content == "- [ ] B\n- [ ] A"
+
+
+async def test_agent_update_conflicts_with_rest_append(notes, monkeypatch):
+    from src.tools import notes as agent_notes
+
+    notes.seed("shared", content="- [ ] A", title="Original")
+    entered, release, sessions = _pause_first_guard(monkeypatch, agent_notes)
+    update = asyncio.create_task(asyncio.to_thread(_manage, {
+        "action": "update", "id": "shared", "title": "Later title", "items": [{"text": "B"}],
+    }))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        append = await notes.call("POST", "/api/notes/shared/items", json={"text": "Appended"})
+        assert append.status_code == 200, append.text
+    finally:
+        release.set()
+    assert (await update)["conflict"] is True
+    assert len(sessions) == 1
+    saved = notes.row("shared")
+    assert saved.content == "- [ ] A\n- [ ] Appended"
+    assert saved.title == "Original"
 
 
 async def test_append_route_adds_one_task_after_the_last(notes):
@@ -386,21 +495,27 @@ def _manage(args, owner="alice"):
     return asyncio.run(do_manage_notes(json.dumps(args), owner=owner))
 
 
+def _toggle(note_id, index, **fields):
+    opened = _manage({"action": "view", "id": note_id})
+    return _manage({"action": "toggle_item", "id": note_id, "index": index,
+                    "body_revision": opened["body_revision"], **fields})
+
+
 def test_manage_notes_get_list_and_toggle_use_content(notes):
     notes.seed("abc12345-note", title="Packing", content="For Lisbon\n- [ ] passport\n- [x] charger")
     for action in ("get", "view", "read", "show", "open"):
         out = _manage({"action": action, "id": "abc12345"})
         assert out["exit_code"] == 0, out
-        assert out["results"].splitlines()[1:] == ["  For Lisbon", "  [ ] 0: passport", "  [x] 1: charger"]
+        assert out["results"].splitlines()[1:] == [f'  Body revision: {out["body_revision"]}', "  For Lisbon", "  [ ] 0: passport", "  [x] 1: charger"]
     assert "passport" not in _manage({"action": "list"})["results"]  # list stays a locator
 
-    out = _manage({"action": "toggle_item", "id": "abc12345", "index": 0})
+    out = _toggle("abc12345", 0)
     assert out["response"] == "Item 'passport' marked done"
     assert notes.row("abc12345-note").content == "For Lisbon\n- [x] passport\n- [x] charger"
-    out = _manage({"action": "toggle_item", "id": "abc12345", "index": 0, "done": True})
+    out = _toggle("abc12345", 0, done=True)
     assert out["response"] == "Item 'passport' marked done"
     assert notes.row("abc12345-note").content == "For Lisbon\n- [x] passport\n- [x] charger"
-    assert _manage({"action": "toggle_item", "id": "abc12345", "index": 5})["exit_code"] == 1
+    assert _toggle("abc12345", 5)["exit_code"] == 1
     assert _manage({"action": "get", "id": "abc12345"}, owner="bob")["exit_code"] == 1
 
 
@@ -433,17 +548,16 @@ def test_manage_notes_writes_fold_legacy_columns_and_keep_unreadable_items(notes
     assert out["exit_code"] == 0, out
     row = notes.row("old12345-note")
     assert row.items is not None, "a title-only write leaves the legacy columns alone"
-    out = _manage({"action": "toggle_item", "id": "old12345", "index": 0})
+    out = _toggle("old12345", 0)
     assert out["exit_code"] == 0, out
     row = notes.row("old12345-note")
     assert row.content == "Body\n\n- [x] tent\n\n![](/api/upload/r1)"
-    assert row.items is None and row.image_url is None
+    assert row.items is None and row.image_url == "/api/upload/r1"
 
     # Unreadable legacy items stay for the migration to retry, on both writes.
     notes.seed("bad12345-note", title="Bad", content="- [ ] a", items='{"text": "x"}')
-    assert _manage({"action": "toggle_item", "id": "bad12345", "index": 0})["exit_code"] == 0
+    assert _toggle("bad12345", 0)["exit_code"] == 0
     assert notes.row("bad12345-note").items == '{"text": "x"}'
     assert _manage({"action": "update", "id": "bad12345", "content": "- [x] a\nmore"})["exit_code"] == 0
     row = notes.row("bad12345-note")
     assert row.items == '{"text": "x"}' and row.content == "- [x] a\nmore"
-

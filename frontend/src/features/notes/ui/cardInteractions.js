@@ -76,16 +76,8 @@ export function createCardInteractions({
     body.querySelectorAll('.note-content-preview').forEach(el => {
       el.addEventListener('click', (e) => {
         // Links in rendered markdown open on their own; checkbox rows stop the event first.
-        if (e.target.closest('a')) { e.stopPropagation(); return; }
+        if (e.target.closest('a, summary')) { e.stopPropagation(); return; }
         e.stopPropagation(); tapToEditOrSelect(el.closest('.note-card'));
-      });
-    });
-    // A saved drawing is the note's primary content. Open its editor directly
-    // when the preview is clicked, matching title/content preview behavior.
-    body.querySelectorAll('.note-card-drawing .note-card-image').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        tapToEditOrSelect(el.closest('.note-card'));
       });
     });
     // Click empty area of checklist preview (not on checkbox/X) : edit
@@ -102,6 +94,7 @@ export function createCardInteractions({
         }
       }, { passive: false });
       el.addEventListener('click', (e) => {
+        if (e.target.closest('a, summary')) { e.stopPropagation(); return; }
         if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input')) return;
         e.stopPropagation();
         tapToEditOrSelect(el.closest('.note-card'));

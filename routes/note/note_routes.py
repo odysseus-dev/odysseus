@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
+from core.note_writes import NOTE_BODY_CONFLICT, guard_note_body, note_body_revision
 from core.notes_markdown import (
     append_task_line,
     apply_items_to_content,
@@ -18,10 +19,9 @@ from core.notes_markdown import (
     fold_image_url,
     fold_legacy_columns,
     image_urls,
-    legacy_image_url,
     keep_task_lines,
+    markdown_image_url,
     normalize_note_color,
-    null_folded_field_error,
     parse_task_lines,
     reminder_body,
     remove_image_line,
@@ -71,6 +71,12 @@ class NoteUpdate(BaseModel):
     repeat: Optional[str] = None
     sort_order: Optional[int] = None
     agent_session_id: Optional[str] = None
+    body_revision: Optional[str] = None
+    replace_content: bool = False
+
+
+class TaskToggle(BaseModel):
+    body_revision: Optional[str] = None
 
 
 class TaskAppend(BaseModel):
@@ -93,43 +99,21 @@ def _derived_items(content: Optional[str]) -> Optional[list]:
     ]
 
 
-def _drawing_image_url(note: Note, content: Optional[str]) -> Optional[str]:
-    """A drawing's canvas image: the column for an unmigrated row, else the
-    last image in content (where the migration and writes append it)."""
+def _write_image_url(note: Note, url: Optional[str]) -> None:
+    """Change the legacy attachment, leaving unrelated Markdown alone."""
+    previous = note.image_url
+    note.image_url = url if (url or "").strip() else None
     if note.image_url:
-        return note.image_url
-    urls = image_urls(content)
-    return urls[-1] if urls else None
-
-
-def _write_image_url(note: Note, url: str, note_type: Optional[str] = None) -> None:
-    """Apply a legacy `image_url` write to the note's content.
-
-    `image_url` names the note's single legacy image: a drawing's canvas
-    image, otherwise the last line that is only `![](url)` (what the fold
-    writes). A new URL replaces that image in place, or is appended once when
-    there is none; the same URL again is a no-op; an empty string removes it.
-    """
-    is_drawing = (note_type or note.note_type) == "draw"
-    previous = _drawing_image_url(note, note.content) if is_drawing else legacy_image_url(note.content)
-    if (url or "").strip():
-        note.content = fold_image_url(note.content, url, replace=previous)
+        note.content = fold_image_url(note.content, note.image_url, replace=previous)
     elif previous:
         note.content = remove_image_line(note.content, previous)
-    note.image_url = None
 
 
 def _note_to_dict(note: Note) -> Dict[str, Any]:
-    # `content` is the source of truth. `items`, `note_type` and a drawing's
-    # `image_url` are derived from it so existing clients keep their shape.
-    # A row the startup migration never folded (a non-SQLite database) shows
-    # its legacy `items` and `image_url` the way the migration would store them.
+    # Project any legacy fields still awaiting a fold for this row.
     content = effective_content(note.content, note.items, note.image_url)
     if not content and note.content is None:
         content = None
-    image_url = note.image_url
-    if note.note_type == "draw":
-        image_url = _drawing_image_url(note, content)
     ai_cls = None
     raw_ai = getattr(note, "ai_classification", None)
     if raw_ai:
@@ -152,7 +136,8 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
         "source": note.source,
         "session_id": note.session_id,
         "sort_order": note.sort_order or 0,
-        "image_url": image_url,
+        "image_url": note.image_url,
+        "body_revision": note_body_revision(note),
         "gallery_id": getattr(note, "gallery_id", None),
         "repeat": note.repeat or "none",
         "ai_classification": ai_cls,
@@ -720,7 +705,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             json.dumps(body.items) if body.items is not None else None,
         )
         # Checklist items and the legacy single image are written into the
-        # markdown content; the columns stay empty for new rows.
+        # markdown content. Keep the identity of a legacy attachment.
         content = body.content
         if body.items is not None:
             content = apply_items_to_content(content, body.items)
@@ -741,15 +726,16 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 due_date=body.due_date,
                 source=body.source,
                 session_id=body.session_id,
-                image_url=None,
+                image_url=body.image_url if (body.image_url or "").strip() else None,
                 gallery_id=body.gallery_id,
                 repeat=body.repeat or "none",
                 sort_order=body.sort_order if body.sort_order is not None else 0,
             )
             db.add(note)
+            db.flush()
+            result = _note_to_dict(note)
             db.commit()
-            db.refresh(note)
-            return _note_to_dict(note)
+            return result
         finally:
             db.close()
 
@@ -774,10 +760,9 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
     @router.put("/{note_id}")
     def update_note(request: Request, note_id: str, body: NoteUpdate):
         user = _owner(request)
-        # Before the note is read, so the answer is the same for every id.
-        refused = null_folded_field_error(body.model_dump(), body.model_fields_set)
-        if refused:
-            raise HTTPException(422, refused)
+        supplied = body.model_fields_set
+        if body.replace_content and "content" not in supplied:
+            raise HTTPException(422, "replace_content requires content")
         # Only when sent: assigning a field marks it as sent, so an edit
         # that leaves the colour out would otherwise clear it.
         if "color" in body.model_fields_set:
@@ -799,26 +784,33 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 body.content,
                 json.dumps(body.items) if body.items is not None else None,
             )
+            body_write = bool(supplied & {"content", "items", "image_url"})
+            if body_write or body.note_type is not None or body.body_revision is not None:
+                if (body.body_revision is not None and body.body_revision != note_body_revision(note)) or not guard_note_body(db, note):
+                    raise HTTPException(409, NOTE_BODY_CONFLICT)
             if body.title is not None:
                 note.title = body.title
             # Omitted fields preserve their values; explicit null clears the
             # nullable fields used by the editor's removal controls.
-            supplied = body.model_fields_set
-            if body.content is not None or body.items is not None or body.image_url is not None:
+            if body_write:
                 _fold_legacy_columns(note)
-            if body.content is not None:
-                # Text on its own (an agent or API client that edited the
-                # prose) keeps the task lines.
-                keeps_tasks = body.items is None
-                note.content = keep_task_lines(note.content, body.content) if keeps_tasks else body.content
-            # Writers that still send `items` (the current form, card edits,
-            # older API clients) rewrite the task lines in place.
-            if body.items is not None:
-                note.content = apply_items_to_content(note.content, body.items)
-            # `image_url` is folded into content, never stored. A re-saved
-            # drawing replaces its previous canvas image instead of stacking.
-            if body.image_url is not None:
-                _write_image_url(note, body.image_url, body.note_type)
+            if "content" in supplied:
+                if not body.replace_content and "items" not in supplied:
+                    note.content = keep_task_lines(note.content, body.content) or body.content
+                else:
+                    note.content = body.content
+                if body.replace_content and "image_url" not in supplied:
+                    if markdown_image_url(note.image_url) not in image_urls(note.content):
+                        note.image_url = None
+                    note.items = None
+            if "items" in supplied:
+                if note.content is not None or body.items:
+                    note.content = apply_items_to_content(note.content, body.items or [])
+                note.items = None
+            if "image_url" in supplied:
+                _write_image_url(note, body.image_url)
+            elif "content" in supplied and note.image_url:
+                note.content = fold_image_url(note.content, note.image_url)
             if body.note_type is not None:
                 note.note_type = body.note_type
             if "color" in supplied:
@@ -840,9 +832,10 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if "agent_session_id" in supplied:
                 note.agent_session_id = body.agent_session_id
 
+            db.flush()
+            result = _note_to_dict(note)
             db.commit()
-            db.refresh(note)
-            return _note_to_dict(note)
+            return result
         finally:
             db.close()
 
@@ -905,7 +898,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- TOGGLE CHECKLIST ITEM ---
     @router.post("/{note_id}/items/{index}/toggle")
-    def toggle_item(request: Request, note_id: str, index: int):
+    def toggle_item(request: Request, note_id: str, index: int, body: Optional[TaskToggle] = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -916,6 +909,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # let any user touch a row whose owner field was null/empty.
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
+            if body is None or body.body_revision != note_body_revision(note) or not guard_note_body(db, note):
+                raise HTTPException(409, NOTE_BODY_CONFLICT)
             _fold_legacy_columns(note)
             if not parse_task_lines(note.content):
                 raise HTTPException(400, "Note has no checklist items")
@@ -923,9 +918,9 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 note.content, item = toggle_task(note.content, index)
             except IndexError:
                 raise HTTPException(400, f"Item index {index} out of range")
-            db.commit()
-            db.refresh(note)
+            db.flush()
             data = _note_to_dict(note)
+            db.commit()
             return {"ok": True, "item": item, "items": data["items"], "note": data}
         finally:
             db.close()
@@ -943,19 +938,24 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         text = " ".join((body.text or "").split())
         if not text:
             raise HTTPException(400, "text required")
-        _reserve_note_uploads(user, text)
         db = SessionLocal()
         try:
-            note = db.query(Note).filter(Note.id == note_id).first()
-            if not note:
-                raise HTTPException(404, "Note not found")
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
-            _fold_legacy_columns(note)
-            note.content, item = append_task_line(note.content, text, body.indent or 0)
-            db.commit()
-            db.refresh(note)
-            return {"ok": True, "item": item, "note": _note_to_dict(note)}
+            for attempt in range(3):
+                note = db.get(Note, note_id)
+                if not note or (user is not None and note.owner != user):
+                    raise HTTPException(404, "Note not found")
+                if attempt == 0:
+                    _reserve_note_uploads(user, text)
+                if not guard_note_body(db, note):
+                    db.rollback()
+                    continue
+                _fold_legacy_columns(note)
+                note.content, item = append_task_line(note.content, text, body.indent or 0)
+                db.flush()
+                result = {"ok": True, "item": item, "note": _note_to_dict(note)}
+                db.commit()
+                return result
+            raise HTTPException(409, NOTE_BODY_CONFLICT)
         finally:
             db.close()
 

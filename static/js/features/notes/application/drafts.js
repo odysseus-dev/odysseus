@@ -28,11 +28,14 @@ export function createNotesDrafts({
       const { _ts, ...payload } = d;
       payload.label = [...new Set(payload.label.split(/\s+/).map(s => s.replace(/^#+/, '')).filter(Boolean))].join(' ') || null;
       pending = pending.then(async () => {
+        const revision = view.bodyRevision;
+        payload.body_revision = revision;
         try {
-          await api.patchNote(id, payload);
+          const saved = await api.patchNote(id, payload);
+          view.bodyRevision = saved.body_revision;
           view.failed = false;
           const note = state.notes.find(n => n.id === id);
-          if (note) app.mergeNote(note, payload);
+          if (note && note.body_revision === revision) app.mergeNote(note, saved);
           if (persistence.getItem(_draftKey(id)) === JSON.stringify(d)) _clearDraft(id);
         } catch {
           if (!view.failed) effects.showError('Note not synced. Your edits are kept on this device; retry Save.');

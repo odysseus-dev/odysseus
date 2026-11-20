@@ -67,51 +67,50 @@ test('pin and delete failures roll back captured state and order', async () => {
   assert.deepEqual(errors, ['Failed to pin', 'Failed to delete']);
 });
 
-test('item removal, quick add and checkbox errors preserve checklist contents', async () => {
-  const content = 'Intro\n- [ ] A\n- [x] B';
-  const app = owner([{ id: 'a', content, items: [{ id: 'first', text: 'A', done: false }, { id: 'second', text: 'B', done: true }] }]);
+test('failed checklist actions leave the current body in place', async () => {
+  const original = { id: 'a', body_revision: 'first', content: '- [ ] A', items: [{ text: 'A', done: false }] };
+  const app = owner([original]);
+  let reject;
   const offline = async () => { throw Error('offline'); };
-  const operations = createChecklistOperations({ app, api: { patchNote: offline, toggleTask: offline, appendTask: offline }, uid: () => 'new', effects: { render() {}, showError() {} } });
-  operations.removeItem('a', 0);
-  assert.equal(app.state.notes[0].items[0].id, 'second');
-  assert.equal(app.state.notes[0].content, 'Intro\n- [x] B');
-  await drain();
-  assert.deepEqual(app.state.notes[0].items.map(it => it.id), ['first', 'second']);
-  assert.equal(app.state.notes[0].content, content);
-  const done = [];
-  operations.toggleItem('a', 0, value => done.push(value), () => {});
-  assert.equal(app.state.notes[0].content, 'Intro\n- [x] A\n- [x] B');
-  await drain();
-  assert.deepEqual(done, [true, false]);
-  assert.equal(app.state.notes[0].content, content);
-  const persist = operations.addItem('a', 'C', () => {});
-  assert.equal(app.state.notes[0].items.length, 3);
-  assert.equal(app.state.notes[0].content, content + '\n- [ ] C');
-  persist(); await drain();
-  assert.equal(app.state.notes[0].items.length, 2);
-  assert.equal(app.state.notes[0].content, content);
-  operations.editItem(app.state.notes[0], 1, 'Changed');
-  assert.equal(app.state.notes[0].content, 'Intro\n- [ ] A\n- [x] Changed');
-  await drain();
-  assert.equal(app.state.notes[0].items[1].text, 'B');
-  assert.equal(app.state.notes[0].content, content);
+  const operations = createChecklistOperations({
+    app, api: { patchNote: offline, toggleTask: () => new Promise((_, fail) => { reject = fail; }), appendTask: offline },
+    effects: { render() {}, showError() {} },
+  });
+  await operations.removeItem('a', 0, 'first');
+  await operations.addItem('a', 'C', assert.fail);
+  await operations.editItem(app.state.notes[0], 0, 'New');
+  assert.equal(app.state.notes[0].content, '- [ ] A');
+  const toggle = operations.toggleItem('a', 0, assert.fail, assert.fail, 'first');
+  app.mergeNote(app.state.notes[0], { body_revision: 'second', content: '- [x] New', items: [{ text: 'New', done: true }] });
+  reject(Error('offline'));
+  await toggle;
+  assert.equal(app.state.notes[0].content, '- [x] New');
+  assert.equal(app.state.notes[0].items[0].text, 'New');
 });
 
-test('checkbox and quick add use the toggle and append endpoints, not a whole-list PUT', async () => {
+test('toggle conflict reloads the reordered note and confirmed actions use its revision', async () => {
   const calls = [];
-  const app = owner([{ id: 'a', content: '- [ ] A', items: [{ text: 'A', done: false }] }]);
+  const first = { id: 'a', body_revision: 'first', content: '- [ ] A\n- [ ] B', items: [{ text: 'A', done: false }, { text: 'B', done: false }] };
+  const reordered = { ...first, body_revision: 'reordered', content: '- [ ] B\n- [ ] A', items: first.items.slice().reverse() };
+  const appended = { ...reordered, body_revision: 'appended', content: reordered.content + '\n- [ ] C', items: [...reordered.items, { text: 'C', done: false }] };
+  const done = { ...appended, body_revision: 'done', content: '- [x] B\n- [ ] A\n- [ ] C', items: [{ text: 'B', done: true }, ...appended.items.slice(1)] };
+  const app = owner([first]);
   const api = {
-    patchNote: async (...args) => { calls.push(['patch', ...args]); },
-    toggleTask: async (...args) => { calls.push(['toggle', ...args]); },
-    appendTask: async (...args) => { calls.push(['append', ...args]); },
+    async getNote(id) { calls.push(['get', id]); return reordered; },
+    async toggleTask(id, index, rev) {
+      calls.push(['toggle', id, index, rev]);
+      if (rev === 'first') throw Object.assign(Error('conflict'), { status: 409 });
+      return { note: done };
+    },
+    async appendTask(id, text) { calls.push(['append', id, text]); return { note: appended }; },
   };
-  const operations = createChecklistOperations({ app, api, uid: () => 'new', effects: { render() {}, showError() {} } });
-  operations.toggleItem('a', 0, () => {}, () => {});
-  operations.addItem('a', 'B', () => {})();
-  await operations.toggleTodayStep('a', 1, () => {}, () => {});
-  await drain();
-  assert.deepEqual(calls, [['toggle', 'a', 0], ['append', 'a', 'B'], ['toggle', 'a', 1]]);
-  assert.equal(app.state.notes[0].content, '- [x] A\n- [x] B');
+  const operations = createChecklistOperations({ app, api, effects: { render() {}, showError() {} } });
+  await operations.toggleItem('a', 0, assert.fail, assert.fail, 'first');
+  assert.equal(app.state.notes[0].content, reordered.content);
+  await operations.addItem('a', 'C', () => {});
+  await operations.toggleTodayStep('a', 0, checked => assert.equal(checked, true), assert.fail, 'appended');
+  assert.deepEqual(calls, [['toggle', 'a', 0, 'first'], ['get', 'a'], ['append', 'a', 'C'], ['toggle', 'a', 0, 'appended']]);
+  assert.equal(app.state.notes[0].content, done.content);
 });
 
 test('submission preserves top ordering, server ID replacement and newer draft recovery', async () => {
@@ -164,10 +163,8 @@ test('listener owners release on replacement and disposal is idempotent', () => 
   }
 });
 
-test('render helpers reject script-capable media and escape URL attributes', () => {
+test('render helpers escape link attributes', () => {
   const helpers = createText({ uiModule: { esc: value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') } });
-  for (const value of ['javascript:alert(1)', 'data:image/svg+xml;base64,abc', 'data:text/html;base64,abc']) assert.equal(helpers._safeImgSrc(value), '');
-  assert.equal(helpers._safeImgSrc('data:image/png;base64,abc'), 'data:image/png;base64,abc');
   assert.equal(helpers._attrEsc('"\'<>`'), '&quot;&#39;&lt;&gt;&#96;');
   assert.match(helpers._linkify('<script> https://example.org/test'), /&lt;script&gt;/);
   assert.doesNotMatch(helpers._linkify('<script> https://example.org/test'), /<script>/i);

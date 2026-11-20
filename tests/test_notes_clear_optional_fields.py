@@ -1,11 +1,4 @@
-"""Explicit null must clear nullable note fields; omission must preserve them.
-
-`content`, `items` and `image_url` are not separate columns here: checklists
-and images are markdown lines inside `content`. A null for any of them is
-neither "clear" (that would wipe the body) nor a silent no-op: it is refused
-with a 422 that says how to clear instead, on PUT /api/notes/{id}, on the
-/api/codex/todos bridge and in the manage_notes tool.
-"""
+"""REST nulls clear fields and tool/bridge nulls keep their legacy behavior."""
 
 import asyncio
 import json
@@ -73,34 +66,25 @@ def _assert_folded_body(saved):
     assert "![](https://example.com/note.png)" in saved["content"]
 
 
-@pytest.mark.parametrize("field,hint", [
-    ("content", "send an empty string to clear the note"),
-    ("items", "send [] to remove the checklist"),
-    ("image_url", "remove its image line from content"),
+@pytest.mark.parametrize("field,content", [
+    ("content", "- [ ] Saved item\n\n![](https://example.com/note.png)"),
+    ("items", "Saved body\n\n\n![](https://example.com/note.png)"),
+    ("image_url", "Saved body\n\n- [ ] Saved item"),
 ])
-def test_null_on_a_content_field_is_refused(client, field, hint):
+def test_null_clears_only_the_requested_part(client, field, content):
     created = client.post("/api/notes", json={"title": "Body", **FOLDED_BODY})
     assert created.status_code == 200, created.text
     path = f"/api/notes/{created.json()['id']}"
-    before = client.get(path).json()
-    _assert_folded_body(before)
-
-    updated = client.put(path, json={"title": "Renamed", field: None})
-    assert updated.status_code == 422, updated.text
-    assert updated.json()["detail"] == f"{field} cannot be null; {hint}."
-    saved = client.get(path).json()
-    _assert_folded_body(saved)
-    assert saved["title"] == "Body", "a refused write saves nothing"
-    assert saved["updated_at"] == before["updated_at"]
+    updated = client.put(path, json={field: None})
+    assert updated.status_code == 200, updated.text
+    assert client.get(path).json()["content"] == content
 
 
-def test_null_content_is_refused_before_the_note_is_loaded(client):
-    # The same 422 for a missing note and for someone else's, so the refusal
-    # says nothing about which notes exist.
+def test_null_content_keeps_the_owner_check(client):
     created = client.post("/api/notes", json={"title": "Private"})
     other = client.put(f"/api/notes/{created.json()['id']}", json={"content": None}, headers={"x-test-user": "bob"})
     missing = client.put("/api/notes/does-not-exist", json={"content": None})
-    assert other.status_code == missing.status_code == 422
+    assert other.status_code == missing.status_code == 404
     assert other.json() == missing.json()
 
 
@@ -179,11 +163,10 @@ async def _bridge_post(monkeypatch, payload):
 
 
 @pytest.mark.parametrize("field", ["content", "items", "checklist_items", "image_url"])
-async def test_bridge_refuses_null_on_a_content_field(monkeypatch, field):
+async def test_bridge_passes_null_on_a_content_field(monkeypatch, field):
     response, calls = await _bridge_post(monkeypatch, {"action": "update", "id": "n1", field: None})
-    assert response.status_code == 422
-    assert response.json()["detail"].startswith(f"{field} cannot be null; ")
-    assert calls == [], "a refused update must not reach do_manage_notes"
+    assert response.status_code == 200
+    assert calls and calls[0][field] is None
 
 
 async def test_bridge_still_passes_null_on_a_real_column(monkeypatch):
@@ -214,16 +197,13 @@ def tool_note(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("field", ["content", "items", "checklist_items", "image_url"])
-def test_tool_refuses_null_on_a_content_field(tool_note, field):
+def test_tool_ignores_null_on_a_content_field(tool_note, field):
     from src import tool_implementations
 
     before = tool_note()
     result = asyncio.run(tool_implementations.do_manage_notes(
         json.dumps({"action": "update", "id": "tool-note-1", "title": "Renamed", field: None}), owner="alice"))
-    assert result["exit_code"] == 1
-    assert result["error"].startswith(f"{field} cannot be null; ")
-    assert result["error"].endswith("Nothing was saved.")
+    assert result["exit_code"] == 0
     after = tool_note()
-    assert after.title == "Body"
+    assert after.title == "Renamed"
     assert after.content == before.content
-    assert after.updated_at == before.updated_at

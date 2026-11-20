@@ -225,7 +225,7 @@ def test_image_url_folds_into_content_and_keeps_gallery_link(notes_db):
     notes_db.add("already", content="see ![](/api/upload/a1)", image_url="/api/upload/a1")
     notes_db.migrate()
     assert notes_db.row("photo")["content"] == "Receipt\n\n![](/api/upload/r1)"
-    assert notes_db.row("photo")["image_url"] is None
+    assert notes_db.row("photo")["image_url"] == "/api/upload/r1"
     drawing = notes_db.row("drawing")
     assert drawing["content"] == "![](/api/upload/d1)"
     assert drawing["gallery_id"] == "g1"
@@ -295,7 +295,7 @@ def test_driver_qualified_sqlite_url_migrates(notes_db, monkeypatch):
     notes_db.migrate()
     row = notes_db.row("n1")
     assert row["content"] == "Body\n\n- [ ] A\n\n![](/api/upload/i)"
-    assert row["items"] is None and row["image_url"] is None
+    assert row["items"] is None and row["image_url"] == "/api/upload/i"
     assert notes_db.backup("n1")["items"] == json.dumps([{"text": "A"}])
 
 
@@ -414,7 +414,7 @@ def test_fold_image_url_concurrency_newer_edit_survives(notes_db, monkeypatch):
                 db_file = db._note_migration_db_path()
                 with real_connect(db_file) as c_check:
                     row1 = c_check.execute("SELECT content, image_url FROM notes WHERE id = 'n1'").fetchone()
-                if row1 and row1[1] is None:
+                if row1 and "![](/api/upload/img1.png)" in row1[0]:
                     # n1 has been converted and committed; concurrent writer updates n2 before its transaction begins
                     with real_connect(db_file) as c2:
                         c2.execute("UPDATE notes SET content = 'Note 2 image edited concurrently' WHERE id = 'n2'")
@@ -430,7 +430,7 @@ def test_fold_image_url_concurrency_newer_edit_survives(notes_db, monkeypatch):
     row2 = notes_db.row("n2")
     assert "Note 2 image edited concurrently" in row2["content"]
     assert "![](/api/upload/img2.png)" in row2["content"]
-    assert row2["image_url"] is None
+    assert row2["image_url"] == "/api/upload/img2.png"
 
     backup2 = notes_db.backup("n2")
     assert backup2 is not None

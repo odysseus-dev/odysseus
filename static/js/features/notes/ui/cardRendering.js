@@ -23,21 +23,12 @@ export function createCardRendering({
   _renderLabelsInto,
   _renderNoteMarkdown,
   _renderQuickAdd,
-  _safeImgSrc,
   _sortedVisibleNotes,
   _updateRailBadge,
   _wireTodayView,
   state,
   uiModule
 }) {
-  // A drawing's canvas image is shown by the card's own <img>; leave its
-  // markdown line out of the body so it is not drawn twice.
-  function _bodySource(note) {
-    const content = note.content || '';
-    if (note.note_type !== 'draw' || !note.image_url) return content;
-    return content.split('\n').filter(line => !/^\s*!\[[^\]]*\]\(([^)\s]+)\)\s*$/.test(line) || !line.includes(`](${note.image_url})`)).join('\n');
-  }
-
   function _renderLoadingSkeleton() {
     const body = document.querySelector('#notes-pane .notes-pane-body');
     if (!body) return;
@@ -110,7 +101,7 @@ export function createCardRendering({
       // Every body goes through the same markdown renderer: task lines become
       // checkboxes (wired in cardChecklist), uploads render inline, and CSS
       // clips the height. A pure task list keeps the scrolling checklist box.
-      const source = _bodySource(note);
+      const source = note.content || '';
       const rendered = source.trim() ? _renderNoteMarkdown(source) : '';
       const contentHtml = !rendered
         ? ''
@@ -168,7 +159,6 @@ export function createCardRendering({
         <div class="note-card-title${note.title ? '' : ' empty'}" data-action="edit">${_esc(note.title || '')}</div>
         ${dueBadge}
       </div>
-      ${_safeImgSrc(note.image_url) ? `<img class="note-card-image" src="${_esc(_safeImgSrc(note.image_url))}" alt="" draggable="false" />` : ''}
       ${contentHtml}
       ${_hasItems(note) ? `<div class="note-cl-quickadd"><input type="text" class="note-cl-quickadd-input" placeholder="+ Add item" data-note-id="${note.id}" /></div>` : ''}
       ${reminderTagHtml}

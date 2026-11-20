@@ -49,7 +49,7 @@ import { applyEdgeDock, clearDockSide } from '/static/js/modalSnap.js';
 import { topToolWindowZ, topPortalZ } from '/static/js/toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '/static/js/escMenuStack.js';
 import { bindTourHintDismiss } from '/static/js/tourHintDismiss.js';
-import { mdToHtml } from '/static/js/markdown.js';
+import { mdToHtml, noteImageSrc } from '/static/js/markdown.js';
 
 const api = createNotesApi({ origin: window.location.origin, request: (...args) => fetch(...args) });
 const persistence = createNotesPersistence({ storage: typeof localStorage === 'undefined' ? undefined : localStorage });
@@ -187,7 +187,8 @@ function _agentSolveNote(...args) { return agentActions._agentSolveNote(...args)
 
 function _clearPastReminders(...args) { return deletion._clearPastReminders(...args); }
 const text = createText({
-  uiModule
+  uiModule,
+  noteImageSrc
 });
 const colors = createColors({
   api
@@ -298,7 +299,6 @@ const cardRendering = createCardRendering({
   _renderLabelsInto,
   _renderNoteMarkdown: source => mdToHtml(source, { tasks: 'interactive', images: 'notes' }),
   _renderQuickAdd,
-  _safeImgSrc,
   _sortedVisibleNotes,
   _updateRailBadge,
   _wireTodayView,
@@ -327,7 +327,6 @@ const cardOperations = createCardOperations({
 const checklistOperations = createChecklistOperations({
   app,
   api,
-  uid: _uid,
   effects: { render: _renderNotes, showError: (...args) => uiModule.showError(...args) }
 });
 const cardInteractions = createCardInteractions({
