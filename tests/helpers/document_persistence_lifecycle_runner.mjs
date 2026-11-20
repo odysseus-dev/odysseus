@@ -776,17 +776,29 @@ async function runWorker() {
   const stylesheets = await stylesheetLinkTags();
   const browser = await launchBrowser();
 
-  const cleanupAndExit = async () => {
-    try {
-      await browser.close();
-    } catch (_) {}
-    process.exit(0);
+  let rl;
+  let shutdownPromise = null;
+  const shutdown = async (exitCode = 0) => {
+    if (!shutdownPromise) {
+      shutdownPromise = (async () => {
+        if (rl) {
+          try {
+            rl.close();
+          } catch (_) {}
+        }
+        try {
+          await browser.close();
+        } catch (_) {}
+        process.exit(exitCode);
+      })();
+    }
+    return shutdownPromise;
   };
 
-  process.on('SIGTERM', cleanupAndExit);
-  process.on('SIGINT', cleanupAndExit);
+  process.on('SIGTERM', () => { shutdown(0); });
+  process.on('SIGINT', () => { shutdown(0); });
 
-  const rl = readline.createInterface({
+  rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: false,
@@ -800,9 +812,8 @@ async function runWorker() {
     try {
       const msg = JSON.parse(trimmed);
       if (msg.action === 'close') {
-        rl.close();
-        await browser.close();
-        process.exit(0);
+        await shutdown(0);
+        return;
       }
       if (msg.action === 'run' || msg.scenario) {
         const scenarioName = msg.scenario;
@@ -816,8 +827,8 @@ async function runWorker() {
     }
   });
 
-  rl.on('close', async () => {
-    await cleanupAndExit();
+  rl.on('close', () => {
+    shutdown(0);
   });
 }
 

@@ -13,7 +13,9 @@ import os
 import queue
 import signal
 import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -27,10 +29,17 @@ SCENARIO_TIMEOUT = 30.0
 class LifecycleBrowserWorker:
     """Persistent Node and Playwright worker managing isolated browser contexts."""
 
-    def __init__(self, startup_timeout: float = STARTUP_TIMEOUT, scenario_timeout: float = SCENARIO_TIMEOUT):
+    def __init__(
+        self,
+        startup_timeout: float = STARTUP_TIMEOUT,
+        scenario_timeout: float = SCENARIO_TIMEOUT,
+        cmd: list[str] | None = None,
+    ):
         self._proc = None
+        self._pgid = None
         self._startup_timeout = startup_timeout
         self._scenario_timeout = scenario_timeout
+        self._cmd = cmd
         self._stdout_queue = queue.Queue()
         self._stderr_lines = collections.deque(maxlen=100)
         self._stdout_thread = None
@@ -57,25 +66,31 @@ class LifecycleBrowserWorker:
         return "".join(lines).strip() if lines else "(no stderr output recorded)"
 
     def _terminate_process_group(self):
-        if self._proc is None:
+        pgid = self._pgid
+        if pgid is None:
             return
-        pid = self._proc.pid
+
         try:
-            pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
         except (ProcessLookupError, OSError):
             pass
 
-        try:
-            self._proc.wait(timeout=1.0)
-        except subprocess.TimeoutExpired:
+        deadline = time.time() + 0.8
+        while time.time() < deadline:
             try:
-                pgid = os.getpgid(pid)
+                os.killpg(pgid, 0)
+                time.sleep(0.05)
+            except (ProcessLookupError, OSError):
+                break
+        else:
+            try:
                 os.killpg(pgid, signal.SIGKILL)
             except (ProcessLookupError, OSError):
                 pass
+
+        if self._proc is not None:
             try:
-                self._proc.wait(timeout=2.0)
+                self._proc.wait(timeout=0.5)
             except Exception:
                 pass
 
@@ -95,9 +110,10 @@ class LifecycleBrowserWorker:
         self._stdout_queue = queue.Queue()
         self._stderr_lines.clear()
 
+        cmd = self._cmd if self._cmd is not None else ["node", str(runner_path), "--worker"]
         try:
             self._proc = subprocess.Popen(
-                ["node", str(runner_path), "--worker"],
+                cmd,
                 cwd=ROOT,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -107,6 +123,10 @@ class LifecycleBrowserWorker:
                 start_new_session=True,
                 env=env,
             )
+            try:
+                self._pgid = os.getpgid(self._proc.pid)
+            except OSError:
+                self._pgid = self._proc.pid
         except Exception as exc:
             raise RuntimeError(f"Failed to spawn persistence browser worker process: {exc}") from exc
 
@@ -214,45 +234,61 @@ class LifecycleBrowserWorker:
         return resp["data"]
 
     def close(self):
-        if self._proc is None:
+        proc = self._proc
+        pgid = self._pgid
+        self._proc = None
+        self._pgid = None
+
+        if proc is None and pgid is None:
             return
 
-        proc = self._proc
-        self._proc = None
-
-        if proc.poll() is None and proc.stdin:
+        if proc is not None and proc.poll() is None and proc.stdin:
             try:
                 proc.stdin.write(json.dumps({"action": "close"}) + "\n")
                 proc.stdin.flush()
-                proc.wait(timeout=2.0)
+                proc.wait(timeout=1.5)
             except Exception:
                 pass
 
-        if proc.poll() is None:
+        descendants_alive = False
+        if pgid is not None:
             try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
+                os.killpg(pgid, 0)
+                descendants_alive = True
             except (ProcessLookupError, OSError):
-                pass
-            try:
-                proc.wait(timeout=1.0)
-            except subprocess.TimeoutExpired:
+                descendants_alive = False
+
+        if (proc is not None and proc.poll() is None) or descendants_alive:
+            if pgid is not None:
                 try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
+                    os.killpg(pgid, signal.SIGTERM)
                 except (ProcessLookupError, OSError):
                     pass
-                try:
-                    proc.wait(timeout=2.0)
-                except Exception:
-                    pass
 
-        for pipe in (proc.stdin, proc.stdout, proc.stderr):
-            if pipe:
-                try:
-                    pipe.close()
-                except Exception:
-                    pass
+                deadline = time.time() + 0.8
+                while time.time() < deadline:
+                    try:
+                        os.killpg(pgid, 0)
+                        time.sleep(0.05)
+                    except (ProcessLookupError, OSError):
+                        break
+                else:
+                    try:
+                        os.killpg(pgid, signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        pass
+
+        if proc is not None:
+            try:
+                proc.wait(timeout=0.5)
+            except Exception:
+                pass
+            for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                if pipe:
+                    try:
+                        pipe.close()
+                    except Exception:
+                        pass
 
 
 _worker = None
@@ -486,3 +522,44 @@ def test_pdf_pane_annotation_undo_and_export_preserved():
     assert first_export >= 1
     assert data["afterUndoText"] == ""
     assert data["afterSecondUndoCount"] == 0
+
+
+def test_worker_cleanup_removes_descendants_when_parent_dies_abruptly():
+    """Verify worker.close() cleans up surviving descendants and reaps parent if parent dies abruptly."""
+    code = (
+        "import os, subprocess, sys, time\n"
+        "child = subprocess.Popen(['sleep', '30'])\n"
+        "sys.stdout.write('{\"status\": \"ready\"}\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(0.1)\n"
+        "os._exit(0)\n"
+    )
+    worker = LifecycleBrowserWorker(cmd=[sys.executable, "-c", code])
+    worker.start()
+    saved_pgid = worker._pgid
+    proc = worker._proc
+
+    time.sleep(0.3)
+    assert proc.poll() is not None
+
+    descendant_alive_before = False
+    try:
+        os.killpg(saved_pgid, 0)
+        descendant_alive_before = True
+    except (ProcessLookupError, OSError):
+        descendant_alive_before = False
+    assert descendant_alive_before is True, "Descendant process should be alive before worker cleanup"
+
+    worker.close()
+
+    assert worker._proc is None
+    assert worker._pgid is None
+    assert proc.poll() is not None
+
+    descendant_alive_after = False
+    try:
+        os.killpg(saved_pgid, 0)
+        descendant_alive_after = True
+    except (ProcessLookupError, OSError):
+        descendant_alive_after = False
+    assert descendant_alive_after is False, "Descendant process should have been terminated by worker.close()"
