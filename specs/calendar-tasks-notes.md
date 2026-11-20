@@ -110,17 +110,12 @@ Writers that still send the legacy fields are folded into content server-side, o
 
 Boot folds older rows on SQLite. Readers project unmigrated fields with `effective_content()`. The first body write folds readable legacy items and the image. Unreadable items survive unless explicitly replaced. See [the migration and rollback notes](../docs/notes-markdown-migration.md).
 
-Checklist endpoints:
-
-- `POST /api/notes/{id}/items/{index}/toggle` takes `{"body_revision":"<token>"}` and flips the task from that revision. Missing or stale revisions return 409. Reload the note and confirm the target before retrying. An invalid index in the matching revision returns 400. Success returns `{ok, item, items, note}`.
-- `POST /api/notes/{id}/items` accepts `{text, indent}` and appends one open task. It retries from current state when needed and returns 409 if concurrent writes persist. Empty text returns 400. Success returns `{ok, item, note}`.
-
 Clients that relied on persistent checklist IDs, custom item properties, the exact stored `note_type`, or a bodyless index toggle need updating. A mixed note takes the derived type `note` even when it contains tasks.
 
 ### Checklist Endpoints
 
-- `POST /api/notes/{id}/items/{index}/toggle` flips the done state of task line `index` in content, leaving indent, bullet and text as they were. It returns `{ok, item, items, note}`; a note without task lines or an out-of-range index is 400.
-- `POST /api/notes/{id}/items` with `{text, indent}` appends one open task after the last task line (or as a new block when there are none) so adding an item no longer PUTs the whole checklist. Empty text is 400. It returns `{ok, item, note}`.
+- Read the note with `GET /api/notes/{id}`. Take the intended task's zero-based `items[].index` and the `body_revision` from that same response. Send them as the path index and JSON body in `POST /api/notes/{id}/items/{index}/toggle` with `{"body_revision":"<token>"}`. Success returns `{ok, item, items, note}` and changes only the task's completion marker. With a matching revision, an invalid index or a note without tasks returns 400. A missing or stale revision returns 409. Read the note again and verify the intended task before retrying with its current index and revision.
+- `POST /api/notes/{id}/items` accepts `{text, indent}` and appends one open task after the last task line, or as a new block when there are none. It retries from current state when needed and returns 409 if concurrent writes persist. Empty text returns 400. Success returns `{ok, item, note}`.
 
 Card checkboxes use the toggle route; the card's add-item input uses the append route.
 

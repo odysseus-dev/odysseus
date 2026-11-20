@@ -252,6 +252,34 @@ async def test_migrated_photo_put_preserves_replaces_and_removes_attachment(note
     assert notes.row("photo").content == unrelated
 
 
+async def test_clear_removes_only_standalone_legacy_image_with_alt_text(notes, monkeypatch):
+    url = "/api/upload/receipt"
+    notes.seed(
+        "photo",
+        content=f"Inline ![detail]({url})\n\n![Receipt]({url})\n\n[link]({url})\n\n```\n![code]({url})\n```",
+        image_url=url,
+    )
+    monkeypatch.setattr(cdb, "DATABASE_URL", str(notes.factory.kw["bind"].url))
+    cdb._migrate_fold_image_url()
+    assert notes.row("photo").content.count(f"![Receipt]({url})") == 1
+    cleared = await notes.call("PUT", "/api/notes/photo", json={"image_url": None})
+    assert cleared.status_code == 200, cleared.text
+    expected = f"Inline ![detail]({url})\n\n[link]({url})\n\n```\n![code]({url})\n```"
+    assert cleared.json()["content"] == expected and cleared.json()["image_url"] is None
+    cdb._migrate_fold_image_url()
+    readback = (await notes.call("GET", "/api/notes/photo")).json()
+    assert readback["content"] == expected and readback["image_url"] is None
+
+
+async def test_full_replacement_with_only_an_inline_copy_clears_legacy_pointer(notes):
+    url = "/api/upload/receipt"
+    notes.seed("photo", content=f"![Receipt]({url})", image_url=url)
+    content = f"Detail ![Receipt]({url})"
+    result = await notes.call("PUT", "/api/notes/photo", json={"content": content, "replace_content": True})
+    assert result.status_code == 200, result.text
+    assert result.json()["content"] == content and result.json()["image_url"] is None
+
+
 async def test_toggle_route_flips_the_indexed_task_line(notes):
     notes.seed("n", content="```\n- [ ] sample\n```\n- [ ] real\n  * [x] nested")
     revision = (await notes.call("GET", "/api/notes/n")).json()["body_revision"]

@@ -10,7 +10,7 @@ export function createNotesSubmission({
 }) {
   const state = app.state;
   const { _loadFiredReminders, _saveFiredReminders, _loadGlowedReminders, _saveGlowedReminders, _loadDraft, _clearDraft } = persistence;
-  function submitNote(payload, note, isEdit) {
+  function submitNote(payload, note, isEdit, onSaved) {
       // Reset fired reminder if due_date changed (so re-arm works), and also
       // clear the entry-glow seen flag so the new firing glows again on the
       // next time the user opens the panel.
@@ -45,11 +45,12 @@ export function createNotesSubmission({
         effects.render();
       }
       return api.saveNote(payload).then(saved => {
-        if (JSON.stringify(_loadDraft(draftId)) === submittedDraft) _clearDraft(draftId);
+        if (!onSaved && JSON.stringify(_loadDraft(draftId)) === submittedDraft) _clearDraft(draftId);
         const current = state.notes.find(n => n.id === (isEdit ? note.id : temporaryId));
         if (current && (!isEdit || current.body_revision === payload.body_revision)) app.mergeNote(current, saved);
-        if (isEdit && state.editingId === note.id) app.setEditingId(null);
-        effects.render();
+        const formIsOpen = onSaved ? onSaved(saved) : true;
+        if (isEdit && formIsOpen && state.editingId === note.id) app.setEditingId(null);
+        if (formIsOpen || !state.editingId) effects.render();
       }).catch(async err => {
         if (isEdit && err.status === 409) {
           effects.showError('Note changed elsewhere. Copy your draft and reopen the note to see the latest version.');

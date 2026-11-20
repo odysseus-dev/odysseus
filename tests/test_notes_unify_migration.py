@@ -230,7 +230,17 @@ def test_image_url_folds_into_content_and_keeps_gallery_link(notes_db):
     assert drawing["content"] == "![](/api/upload/d1)"
     assert drawing["gallery_id"] == "g1"
     assert drawing["note_type"] == "draw"
-    assert notes_db.row("already")["content"] == "see ![](/api/upload/a1)"
+    assert notes_db.row("already")["content"] == "see ![](/api/upload/a1)\n\n![](/api/upload/a1)"
+
+
+def test_legacy_attachment_already_standalone_with_alt_text_survives_upgrade(notes_db):
+    url = "/api/upload/receipt"
+    notes_db.add("photo", content=f"Receipt\n\n![Receipt]({url})", image_url=url)
+    notes_db.migrate()
+    upgraded = notes_db.row("photo")
+    assert upgraded["content"] == f"Receipt\n\n![Receipt]({url})"
+    notes_db.migrate()  # restart / repeated startup migration
+    assert notes_db.row("photo") == upgraded
 
 
 def test_backup_row_holds_the_pre_migration_values(notes_db):

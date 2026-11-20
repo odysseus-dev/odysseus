@@ -415,7 +415,7 @@ export function createEditor({
       try {
       form._flushDraft?.();
       await form._stopDraftAutosave?.();
-      form._flushDraft?.();
+      const submittedDraft = form._flushDraft?.();
       const title = form.querySelector('.note-form-title').value.trim();
       // Normalize tag input: split on whitespace, strip leading #s, dedupe,
       // re-join with single spaces. Empty → null.
@@ -468,7 +468,12 @@ export function createEditor({
         payload.id = note.id;
         payload.body_revision = form._bodyRevision;
       }
-      await submitNote(payload, note, isEdit);
+      await submitNote(payload, note, isEdit, isEdit ? saved => {
+        form._acknowledgeDraftSave(submittedDraft, payload.body_revision, saved.body_revision);
+        const formIsOpen = form.isConnected && !form.closest('.note-fullscreen-overlay.closing');
+        if (formIsOpen) form.dispatchEvent(new Event('note-saved'));
+        return formIsOpen;
+      } : undefined);
       } finally {
         // Re-enable on early returns / errors. On success the form is removed by
         // the optimistic re-render, so re-enabling the detached button is a no-op.

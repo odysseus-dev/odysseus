@@ -371,7 +371,8 @@ const cardReorder = createCardReorder({
 const draftEditor = createDraftEditor({
   bindDraft: (...args) => drafts.bindDraft(...args),
   _collectItems,
-  _loadDraft
+  _loadDraft,
+  _loadDraftRecovery: persistence._loadDraftRecovery
 });
 const editor = createEditor({
   deleteFromEditor: id => deletion.deleteFromEditor(id),

@@ -18,9 +18,8 @@ from core.notes_markdown import (
     effective_content,
     fold_image_url,
     fold_legacy_columns,
-    image_urls,
+    has_legacy_image,
     keep_task_lines,
-    markdown_image_url,
     normalize_note_color,
     parse_task_lines,
     reminder_body,
@@ -800,7 +799,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 else:
                     note.content = body.content
                 if body.replace_content and "image_url" not in supplied:
-                    if markdown_image_url(note.image_url) not in image_urls(note.content):
+                    if not has_legacy_image(note.content, note.image_url):
                         note.image_url = None
                     note.items = None
             if "items" in supplied:

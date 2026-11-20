@@ -55,8 +55,11 @@ Task-looking lines inside a fenced code block are code, so a note whose only
 to `NULL`.
 
 **`image_url`.** Every row with a non-blank `image_url` gets `![](image_url)`
-appended unless content already references that URL (after closing an open
-fence, as above). The URL remains in `image_url` so a legacy prose edit keeps the attachment. A row whose body already has the image needs no rewrite. `gallery_id` is left alone, so a drawing keeps its gallery link.
+appended unless content already has a standalone image of that URL outside
+fenced code. A standalone image can have alt text and a title. Inline images
+remain part of the document. The URL stays in `image_url` so a legacy prose
+edit keeps the attachment. `gallery_id` is left alone, so a drawing keeps its
+gallery link.
 
 **`note_type`** is not rewritten. It is derived on read: `checklist` for a note
 that is only task lines, `note` otherwise, while `goal` and `draw` keep their

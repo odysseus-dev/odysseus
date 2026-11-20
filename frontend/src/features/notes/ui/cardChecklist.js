@@ -143,6 +143,7 @@ export function createCardChecklist({
     body.querySelectorAll('.note-checkbox').forEach(el => {
       const revision = revisionOf(el.dataset.noteId);
       el.addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
         if (state.selectMode) return; // let card-level handler take over
         e.preventDefault();
         e.stopPropagation();

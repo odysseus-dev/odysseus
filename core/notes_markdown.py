@@ -142,10 +142,6 @@ def _replace_spans(line: str, spans, repl) -> str:
     out.append(line[last:])
     return "".join(out)
 
-# A line that is only an untitled image, the way `fold_image_url` writes the
-# legacy single image. Group 1 = the URL.
-_BARE_IMAGE_LINE_RE = re.compile(r"^[ \t]*!\[\]\(([^)\s]+)\)[ \t]*$")
-
 # Characters a markdown link destination cannot hold unescaped. A legacy
 # `image_url` is written percent-encoded so the image parses back as the
 # same URL and a repeated write is recognised instead of stacked.
@@ -660,20 +656,33 @@ def markdown_image_url(url: Optional[str]) -> str:
     return "".join(_URL_ESCAPES.get(ch, ch) for ch in (url or "").strip())
 
 
-def remove_image_line(content: Optional[str], url: Optional[str]) -> str:
-    """Drop the last line that is only `![](url)`; other text is untouched."""
-    base = content or ""
-    target = markdown_image_url(url)
-    if not target:
-        return base
-    parts = base.split("\n")
+def _legacy_image_line(content: str, target: str) -> Optional[Tuple[int, int]]:
+    """Find the last standalone image of target and its destination offset."""
     hit = None
-    for lineno, raw in _iter_lines_outside_fences(base):
-        m = _BARE_IMAGE_LINE_RE.match(raw)
-        if m and m.group(1) == target:
-            hit = lineno
-    if hit is None:
+    if not target:
+        return hit
+    for lineno, raw in _iter_lines_outside_fences(content):
+        image = next(_scan_images(raw, titled=True), None)
+        if image is None:
+            continue
+        start, end, url = image
+        if url == target and not raw[:start].strip(" \t") and not raw[end:].strip(" \t"):
+            hit = lineno, raw.index("](", start + 2) + 2
+    return hit
+
+
+def has_legacy_image(content: Optional[str], url: Optional[str]) -> bool:
+    return _legacy_image_line(content or "", markdown_image_url(url)) is not None
+
+
+def remove_image_line(content: Optional[str], url: Optional[str]) -> str:
+    """Drop the last line that is only an image of `url`; other text is untouched."""
+    base = content or ""
+    match = _legacy_image_line(base, markdown_image_url(url))
+    if match is None:
         return base
+    hit, _ = match
+    parts = base.split("\n")
     # Take the blank separator line the fold wrote before it, too, when the
     # image line sat at the end or between two blank lines.
     start = hit
@@ -687,7 +696,7 @@ def remove_image_line(content: Optional[str], url: Optional[str]) -> str:
 def fold_image_url(content: Optional[str], url: Optional[str], replace: Optional[str] = None) -> str:
     """Put a legacy `image_url` into content as `![](url)`.
 
-    No-op when `url` is empty or content already references it, so a repeated
+    No-op when `url` is empty or has a matching standalone image, so a repeated
     write never stacks a second copy (URLs with spaces or parentheses are
     written percent-encoded and still match). With `replace`, an existing
     standalone folded image line is swapped for the new URL. Other links,
@@ -698,18 +707,17 @@ def fold_image_url(content: Optional[str], url: Optional[str], replace: Optional
     if not url:
         return base
     replace = markdown_image_url(replace)
-    present = url in image_urls(base)
+    # A matching inline image belongs to the document. Only a standalone
+    # image line represents the legacy attachment and can satisfy this fold.
+    present = _legacy_image_line(base, url) is not None
     if replace and replace != url:
         if present:
             return remove_image_line(base, replace)
-        hit = None
-        for lineno, raw in _iter_lines_outside_fences(base):
-            match = _BARE_IMAGE_LINE_RE.match(raw)
-            if match and match.group(1) == replace:
-                hit = lineno
-        if hit is not None:
+        match = _legacy_image_line(base, replace)
+        if match is not None:
+            hit, start = match
             parts = base.split("\n")
-            parts[hit] = parts[hit].replace(f"]({replace})", f"]({url})", 1)
+            parts[hit] = parts[hit][:start] + url + parts[hit][start + len(replace):]
             return "\n".join(parts)
     if present:
         return base

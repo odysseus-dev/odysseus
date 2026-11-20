@@ -135,6 +135,11 @@ def test_fold_image_url_appends_once_and_replaces_drawings():
     assert fold_image_url("", "/api/upload/a") == "![](/api/upload/a)"
     assert fold_image_url("x", "  ") == "x"
     assert fold_image_url("![](/api/upload/old)\nnote", "/api/upload/new", replace="/api/upload/old") == "![](/api/upload/new)\nnote"
+    assert fold_image_url(
+        '![Receipt](/api/upload/old "May")\nOther ![photo](/api/upload/old)',
+        "/api/upload/new",
+        replace="/api/upload/old",
+    ) == '![Receipt](/api/upload/new "May")\nOther ![photo](/api/upload/old)'
     # A fenced sample mentioning the URL is not a reference to it.
     assert fold_image_url("```\n![](/api/upload/a)\n```", "/api/upload/a").endswith("\n\n![](/api/upload/a)")
     assert image_urls('![a](/api/upload/1 "t") and ![](/api/upload/2)') == ["/api/upload/1", "/api/upload/2"]
