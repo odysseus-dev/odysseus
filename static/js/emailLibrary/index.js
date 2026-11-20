@@ -7,6 +7,9 @@
  */
 
 import spinnerModule from '../spinner.js';
+import { downloadBlob } from '../shared/platform/downloads.js';
+import { withClipboardTextarea } from '../shared/platform/clipboard.js';
+import { escapeHtmlText } from '../shared/domain/html.js';
 import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20260916largetoolscroll1';
 import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20260914aireply4';
 import settingsModule from '../settings.js?v=20260912writingstyle3';
@@ -398,17 +401,10 @@ async function _copyTextToClipboard(text) {
     }
   } catch (_) {}
   try {
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    ta.style.top = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    ta.remove();
-    return !!ok;
+    return !!withClipboardTextarea(value, 'position:fixed;left:-9999px;top:0', field => {
+      field.select();
+      return document.execCommand('copy');
+    }, { readOnly: true });
   } catch (_) {
     return false;
   }
@@ -1101,14 +1097,7 @@ function _selectedEmailExportPayload() {
 }
 
 function _downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'selected-email-attachments.zip';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  downloadBlob(blob, filename || 'selected-email-attachments.zip', 1500);
 }
 
 function _filenameFromContentDisposition(header) {
@@ -1203,11 +1192,11 @@ async function _printSelectedEmails(messages) {
     const fieldParts = [];
     for (const [lbl, val] of [['From', from], ['To', data.to], ['Cc', data.cc], ['Date', data.date_display || data.date || message.date]]) {
       if (!val) continue;
-      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const esc = (s) => escapeHtmlText(String(s));
       fieldParts.push(`<div class="email-export-pdf-field"><span class="email-export-pdf-label">${esc(lbl)}</span><span>${esc(val)}</span></div>`);
     }
 
-    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const esc = (s) => escapeHtmlText(String(s));
     articles.push(
       `<article class="email-export-pdf-message">` +
       `<h1>${esc(subject)}</h1>` +

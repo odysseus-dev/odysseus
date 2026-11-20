@@ -5,6 +5,8 @@
  */
 
 import { topPortalZ } from './toolWindowZOrder.js';
+import { downloadBlob } from './shared/platform/downloads.js';
+import { debounceTrailing } from './shared/platform/debounce.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
@@ -160,7 +162,10 @@ let _librarySessionCount = 0;
 let _libraryActiveLanguage = null;
 let _librarySort = 'recent';
 let _librarySearch = '';
-let _librarySearchDebounce = null;
+const _librarySearchDebounce = debounceTrailing((input) => {
+  _librarySearch = input.value.trim();
+  libraryFetch(false);
+}, 300);
 
 // Highlight the active search terms inside a plain string. Escapes first,
 // then wraps each whitespace-separated term in <mark>. Multi-term, matching
@@ -1539,14 +1544,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         });
         if (!res.ok) throw new Error('zip failed');
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'documents.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        downloadBlob(blob, 'documents.zip', 2000);
         if (uiModule) uiModule.showToast(`Exported ${ids.length} documents (zip)`);
       } catch (e) {
         if (uiModule) uiModule.showError('Failed to create zip');
@@ -3446,11 +3444,7 @@ function _setLibraryCountChipContent(chip, label, count) {
 
     const searchInput = document.getElementById('doclib-search');
     searchInput.addEventListener('input', () => {
-      clearTimeout(_librarySearchDebounce);
-      _librarySearchDebounce = setTimeout(() => {
-        _librarySearch = searchInput.value.trim();
-        libraryFetch(false);
-      }, 300);
+      _librarySearchDebounce(searchInput);
     });
 
     document.getElementById('doclib-sort').addEventListener('change', (e) => {
@@ -3678,7 +3672,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     _librarySelectMode = false;
     _librarySelectedIds.clear();
     _libraryImportMode = false;
-    clearTimeout(_librarySearchDebounce);
+    _librarySearchDebounce.cancel();
 
     const modal = document.getElementById('doclib-modal');
     if (modal) {

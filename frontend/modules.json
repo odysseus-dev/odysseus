@@ -18,6 +18,14 @@
       "deployment": "js/shared/platform/clipboard.js"
     },
     {
+      "source": "shared/platform/debounce.js",
+      "deployment": "js/shared/platform/debounce.js"
+    },
+    {
+      "source": "shared/platform/downloads.js",
+      "deployment": "js/shared/platform/downloads.js"
+    },
+    {
       "source": "shared/ui/escMenuStack.js",
       "deployment": "js/escMenuStack.js"
     },

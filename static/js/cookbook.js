@@ -36,6 +36,7 @@ import {
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { normalizeCookbookModelDir } from './cookbookModelDirectories.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
 
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
@@ -1012,13 +1013,10 @@ export function _copyText(text) {
 }
 
 function _fallbackCopy(text) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); } catch (_) {}
-  document.body.removeChild(ta);
+  withClipboardTextarea(text, 'position:fixed;left:-9999px;top:-9999px', field => {
+    field.select();
+    try { document.execCommand('copy'); } catch (_) {}
+  });
   return Promise.resolve();
 }
 

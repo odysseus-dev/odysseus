@@ -10,6 +10,8 @@ import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ, topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 import { escapeHtmlString } from './shared/domain/html.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
+import { debounceTrailing } from './shared/platform/debounce.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -289,13 +291,10 @@ export async function copyToClipboard(text) {
     showToast('Copied');
   }
   catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
+    withClipboardTextarea(text, 'position:fixed;left:-9999px;top:-9999px;opacity:0', field => {
+      field.select();
+      document.execCommand('copy');
+    });
     showToast('Copied');
   }
 }
@@ -712,15 +711,7 @@ export function autoResize(textarea) {
  * Debounce function for performance
  */
 export function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    const later = () => {
-      timeout = null;
-      func.apply(this, args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
+  return debounceTrailing(func, wait);
 }
 
 /**

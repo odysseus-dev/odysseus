@@ -124,3 +124,9 @@ def test_settings_shared_clipboard_contract():
     proc = _run_node("--test", str(_REPO / "tests/helpers/test_shared_settings_clipboard.mjs"))
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_shared_download_and_debounce_contracts():
+    proc = _run_node("--test", str(_REPO / "tests/helpers/test_shared_download_timing.mjs"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr

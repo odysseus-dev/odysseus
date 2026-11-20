@@ -1,3 +1,4 @@
+export { downloadBlob } from '../../static/js/shared/platform/downloads.js';
 // Mock the browser-owned host facade for the Node email workflow harness.
 // The mock looks up test globals at call time so each beforeEach setup remains
 // isolated while production modules keep explicit host imports.

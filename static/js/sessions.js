@@ -1,6 +1,7 @@
 // Session Management Functions
 // This module handles all session-related operations
 
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
 import Storage from './storage.js';
 import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260916largetoolscroll1';
 import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
@@ -1066,13 +1067,10 @@ function createSessionItem(s) {
         await navigator.clipboard.writeText(text);
       } catch (_clipErr) {
         // Fallback for non-secure contexts
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;left:-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
+        withClipboardTextarea(text, 'position:fixed;left:-9999px', field => {
+          field.select();
+          document.execCommand('copy');
+        });
       }
       uiModule.showToast('Chat copied to clipboard');
     } catch (e) {
