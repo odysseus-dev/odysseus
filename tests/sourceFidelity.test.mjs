@@ -968,3 +968,34 @@ describe('Line endings of edited blocks', () => {
     assert.equal(blocks.length, 3);
   });
 });
+
+describe('Table delimiter rows with short cells', () => {
+  // GFM needs one dash per delimiter cell. Shorter rows rendered as a table in
+  // Preview but as a paragraph of pipes in Visual mode.
+  const compact = ['| A | B |\n|:--|--:|\n| 1 | 2 |', '|A|B|\n|-|-|\n|1|2|', '| A | B |\n|---|--:|\n| 1 | 2 |'];
+
+  it('accepts one or more dashes per cell', () => {
+    for (const line of ['|:--|--:|', '|-|-|', '| - | :-: |']) assert.equal(isTableSeparatorLine(line), true, line);
+    for (const line of ['| | |', '|:|:|', '| a | - |']) assert.equal(isTableSeparatorLine(line), false, line);
+  });
+
+  for (const source of compact) {
+    it(`renders ${JSON.stringify(source)} as one table block`, () => {
+      assert.equal(inspectMarkdownVisualCompatibility(source).supported, true);
+      assert.match(markdownToVisualHtml(source), /^<table>/);
+      assert.equal(extractBlockSegments(segmentMarkdown(source)).length, 1);
+    });
+  }
+
+  it('keeps the short delimiter row when a cell is edited', () => {
+    const source = 'Intro.\n\n| A | B |\n|:--|--:|\n| 1 | 2 |\n';
+    const blocks = extractBlockSegments(segmentMarkdown(source));
+    const baseline = '| A | B |\n| :--- | ---: |\n| 1 | 2 |';
+    const result = applyLocalizedEdits(source, [{
+      op: 'replace', index: 1, baseline, edited: baseline.replace('| 1 |', '| 1X |'),
+      range: [blocks[1].startOffset, blocks[1].endOffset], blockId: blocks[1].blockId,
+    }], { render: markdownToVisualHtml, allowCanonicalFallback: false });
+    assert.equal(result.status, 'preserved');
+    assert.equal(result.markdown, 'Intro.\n\n| A | B |\n|:--|--:|\n| 1X | 2 |\n');
+  });
+});

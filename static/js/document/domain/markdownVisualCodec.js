@@ -178,7 +178,7 @@ function _isTableSeparatorLine(line) {
   if (!trimmed.includes('|') && !/^:?-{3,}:?$/.test(trimmed)) return false;
   const cells = _splitTableCells(trimmed);
   if (!cells.length) return false;
-  return cells.every(cell => /^:?-{3,}:?$/.test(cell));
+  return cells.every(cell => /^:?-+:?$/.test(cell));
 }
 
 function _parseTableAlignments(line) {

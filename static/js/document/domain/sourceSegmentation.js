@@ -68,7 +68,7 @@ export function isTableSeparatorLine(line) {
   const content = lineContent(line).trim();
   if (!content.includes('|') && !/^:?-{3,}:?$/.test(content)) return false;
   const cells = content.split('|').map(c => c.trim()).filter(Boolean);
-  return cells.length > 0 && cells.every(c => /^:?-{3,}:?$/.test(c));
+  return cells.length > 0 && cells.every(c => /^:?-+:?$/.test(c));
 }
 
 /**
