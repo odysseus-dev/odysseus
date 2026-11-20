@@ -63,6 +63,10 @@ The CLI serves the repository on an ephemeral port itself, so it does not need
 pytest. Under pytest the session static server is reused through
 `ODYSSEUS_TEST_STATIC_ORIGIN`.
 
+By default, capture executes with bounded concurrency (default: 2 workers).
+Concurrency can be set via `--concurrency N` on the CLI or using the
+`CSS_SNAPSHOT_CONCURRENCY` environment variable.
+
 `npm ci` is required: the capture drives Playwright's Chromium. Without it the
 browser tests skip.
 

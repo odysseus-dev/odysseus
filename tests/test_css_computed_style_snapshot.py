@@ -191,3 +191,13 @@ def test_reordering_two_conflicting_declarations_moves_the_digest():
     drift = snapshot.compare(unchanged, reordered)
     assert "app-shell/attach-strip" in drift["elements"]
     assert "bench/.attach-strip" in drift["elements"]
+
+
+@_requires_browser
+def test_concurrent_capture_matches_sequential_capture():
+    """Concurrency must produce identical results to sequential capture."""
+    variants = ["desktop-dark-comfortable", "desktop-light-compact"]
+    serial = snapshot.capture(static_origin(), variants=variants, concurrency=1)
+    concurrent = snapshot.capture(static_origin(), variants=variants, concurrency=2)
+    assert serial["snapshot"] == concurrent["snapshot"]
+    assert serial["missing"] == concurrent["missing"]
