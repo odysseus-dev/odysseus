@@ -219,7 +219,7 @@ function _sanitizeHtmlOnce(html) {
     if (style) {
       const kept = style.split(';').map(s => s.trim()).filter(decl => {
         if (!decl) return false;
-        const lower = _compactUrlSchemeValue(decl);
+        const lower = compactUrlSchemeValue(decl);
         if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:') || lower.includes('expression(')) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
         return !STRIP_CSS_PROPS.includes(prop);

@@ -36,6 +36,7 @@ def test_markdown_raw_html_sanitizer_strips_scriptable_css():
     src = (_REPO / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
 
     assert "if (name === 'style')" in src
+    assert "compactUrlSchemeValue(attr.value)" in src
     assert r"javascript:|vbscript:|data:|expression\(" in src
     assert "el.removeAttribute(attr.name);" in src
 

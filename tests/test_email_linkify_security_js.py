@@ -105,7 +105,7 @@ def test_email_html_sanitizer_runs_to_fixpoint():
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_linkify_preserves_text_and_link_targets_in_a_real_dom():
+def test_email_text_and_style_sanitization_in_a_real_dom():
     cases = [
         ("See https://example.test/contact?email=jane@example.test&next=1 and bob@example.test.",
          ["https://example.test/contact?email=jane@example.test&next=1", "mailto:bob@example.test"]),
@@ -127,7 +127,11 @@ def test_linkify_preserves_text_and_link_targets_in_a_real_dom():
         const origin = process.env.ODYSSEUS_TEST_STATIC_ORIGIN;
         await page.goto(`${origin}/static/js/documentStats.js`);
         const results = await page.evaluate(async (cases) => {
-          const { _escLinkify } = await import('/static/js/emailLibrary/utils.js');
+          const { _escLinkify, _sanitizeHtml } = await import('/static/js/emailLibrary/utils.js');
+          const styled = document.createElement('template');
+          styled.innerHTML = _sanitizeHtml('<p style="color: red; font-weight: bold">message</p>');
+          const style = styled.content.querySelector('p').getAttribute('style');
+          if (style !== 'font-weight: bold') throw new Error('Unexpected sanitized email style: ' + style);
           return cases.map(([raw]) => {
             const div = document.createElement('div');
             div.innerHTML = _escLinkify(raw);

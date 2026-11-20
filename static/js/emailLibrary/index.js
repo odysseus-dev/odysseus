@@ -3,14 +3,14 @@
  * Similar pattern to documentLibrary.js. Shows emails in a grid with search/filter.
  *
  * `static/js/emailLibrary.js` re-exports this module's public surface so the
- * old import { formatRecentAge } from '../shared/domain/relativeTime.js';
-import path keeps resolving; see the comment there.
+ * old import path keeps resolving; see the comment there.
  */
 
 import spinnerModule from '../spinner.js';
 import { downloadBlob } from '../shared/platform/downloads.js';
 import { withClipboardTextarea } from '../shared/platform/clipboard.js';
 import { escapeHtmlText } from '../shared/domain/html.js';
+import { formatRecentAge } from '../shared/domain/relativeTime.js';
 import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20260916largetoolscroll1';
 import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20260914aireply4';
 import settingsModule from '../settings.js?v=20260912writingstyle3';

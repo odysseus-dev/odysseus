@@ -422,7 +422,7 @@ function _cleanAllowedHtmlOnce(htmlString, noteFetches) {
         continue;
       }
       if (name === 'style') {
-        const value = _compactUrlSchemeValue(attr.value);
+        const value = compactUrlSchemeValue(attr.value);
         if (/javascript:|vbscript:|data:|expression\(/.test(value)) {
           el.removeAttribute(attr.name);
         }
