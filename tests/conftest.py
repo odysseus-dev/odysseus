@@ -78,7 +78,7 @@ def pytest_addoption(parser):
         default=None,
         metavar="N/M",
         help=(
-            "run only shard N of M (1-based), e.g. --shard 1/4. Shards partition "
+            "run only shard N of M (1-based), e.g. --shard 1/6. Shards partition "
             "the suite by test file, so together they run every test exactly "
             "once. See tests/_shards.py."
         ),

@@ -24,6 +24,11 @@ import sys
 import xml.etree.ElementTree as ET
 from typing import Mapping
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests._shards import DEFAULT_SHARD_COUNT
+
 
 MANIFEST_VERSION = 1
 DEFAULT_OUTPUT_RELATIVE = "tests/.shard_durations.json"
@@ -425,8 +430,8 @@ def main() -> int:
     parser.add_argument(
         "--expected-shards",
         type=int,
-        default=4,
-        help="Expected number of shard reports in authoritative mode (default: 4)",
+        default=DEFAULT_SHARD_COUNT,
+        help="Expected number of shard reports in authoritative mode (default: %(default)s)",
     )
     parser.add_argument(
         "--revision",

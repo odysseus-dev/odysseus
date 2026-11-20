@@ -1,8 +1,7 @@
 """Deterministic, balanced partition of the test suite into parallel shards.
 
-The suite runs ~7.8k tests in a single pytest workload. This module splits that
-workload into N sections that CI runs as parallel jobs, so wall-clock time is
-bounded by the slowest section rather than by the whole suite.
+This module splits a pytest workload into N sections that CI runs as
+parallel jobs, with test execution time bounded by the slowest section.
 
 Two properties matter more than speed, and both are structural here rather than
 checked after the fact:
@@ -36,9 +35,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-# Number of sections CI runs in parallel. Kept here as documentation of the
-# intended default; the shard count actually used comes from the --shard value.
-DEFAULT_SHARD_COUNT = 4
+# Number of sections in the CI matrix and its authoritative telemetry bundle.
+# pytest takes the actual shard count from the --shard value.
+DEFAULT_SHARD_COUNT = 6
 
 # Relative cost of one test item. Measured on dev at 2026-10-02 over a full
 # `pytest -q --durations=25` run: the five `slow`-marked items average 9.0 s
@@ -58,7 +57,7 @@ SLOW_ITEM_DURATION_SECONDS = 9.0
 MIN_FILE_DURATION_SECONDS = 0.001
 
 # Fixed workload duration in seconds for shards running non-pytest CI tasks.
-# Shard 1/4 runs Playwright mobile layout checks (tests/e2e/ios-layout.config.cjs).
+# Shard 1 runs Playwright mobile layout checks (tests/e2e/ios-layout.config.cjs).
 MOBILE_LAYOUT_DURATION_SECONDS = 48.0
 
 # Standard name for the committed duration manifest.
@@ -225,14 +224,14 @@ def default_fixed_shard_loads(
 ) -> dict[int, float] | None:
     """Return default fixed non-pytest workloads per shard (0-based index).
 
-    In the 4-shard CI workflow, shard 1 (index 0) executes mobile layout
+    In the CI workflow, shard 1 (index 0) executes mobile layout
     validation (~48s) after pytest. When duration profiles are active,
     accounting for this fixed load balances total job duration across runners.
 
     When no duration manifest is active, fixed loads are NOT applied so that
     legacy heuristic scheduling behavior is preserved exactly.
     """
-    if count == 4 and durations_active:
+    if count >= 1 and durations_active:
         return {0: MOBILE_LAYOUT_DURATION_SECONDS}
     return None
 
