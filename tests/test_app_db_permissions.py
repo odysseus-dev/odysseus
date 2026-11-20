@@ -59,6 +59,24 @@ def test_normalize_sqlite_url_preserves_sqlite_uri_filename():
     assert _normalize_sqlite_url(url) == url
 
 
+def test_normalize_database_url_rewrites_bare_postgres_to_psycopg2():
+    """Bare postgresql:// and postgres:// URLs must target psycopg2 on SQLAlchemy 2.1+."""
+    from core.database import _normalize_database_url
+
+    assert (
+        _normalize_database_url("postgresql://user:pass@host:5432/odysseus")
+        == "postgresql+psycopg2://user:pass@host:5432/odysseus"
+    )
+    assert (
+        _normalize_database_url("postgres://user:pass@host:5432/odysseus")
+        == "postgresql+psycopg2://user:pass@host:5432/odysseus"
+    )
+    explicit = "postgresql+psycopg://user:pass@host:5432/odysseus"
+    assert _normalize_database_url(explicit) == explicit
+    explicit_v2 = "postgresql+psycopg2://user:pass@host:5432/odysseus"
+    assert _normalize_database_url(explicit_v2) == explicit_v2
+
+
 def test_sqlite_db_path_handles_driver_and_query_forms():
     """The path fed to chmod must come from SQLAlchemy's parsed URL, not a naive
     replace("sqlite:///"). A driver-qualified URL (sqlite+pysqlite://) or one

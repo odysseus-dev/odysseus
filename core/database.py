@@ -69,8 +69,23 @@ def _normalize_sqlite_url(url: str) -> str:
     )
 
 
+def _normalize_database_url(url: str) -> str:
+    """Normalize relative SQLite paths and bare PostgreSQL URLs for psycopg2."""
+    url = _normalize_sqlite_url(url)
+    try:
+        parsed = make_url(url)
+    except Exception:
+        return url
+
+    if parsed.drivername in ("postgresql", "postgres"):
+        return parsed.set(drivername="postgresql+psycopg2").render_as_string(
+            hide_password=False
+        )
+    return url
+
+
 # Get database URL from environment, default to SQLite in DATA_DIR
-DATABASE_URL = _normalize_sqlite_url(os.getenv("DATABASE_URL", _default_database_url()))
+DATABASE_URL = _normalize_database_url(os.getenv("DATABASE_URL", _default_database_url()))
 
 # Create engine
 engine = create_engine(

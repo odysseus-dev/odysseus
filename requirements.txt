@@ -62,7 +62,7 @@ pytest-asyncio
 # using `httpx` above; this is test-client only.
 httpx2
 # DATABASE_URL defaults to sqlite (core/database.py), but when pointed at an
-# external Postgres, SQLAlchemy's postgresql dialect imports psycopg2 inside
-# create_engine() and raises ModuleNotFoundError if missing. -binary avoids
-# needing libpq-dev/pg_config on the host/image to compile it.
+# external Postgres, core/database.py normalizes bare postgresql:// URLs to
+# postgresql+psycopg2:// so SQLAlchemy 2.1+ uses psycopg2 instead of defaulting
+# to psycopg (v3). -binary avoids needing libpq-dev/pg_config on the host/image.
 psycopg2-binary
