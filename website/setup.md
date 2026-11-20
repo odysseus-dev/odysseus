@@ -48,9 +48,9 @@ ODYSSEUS_IMAGE=ghcr.io/odysseus-dev/odysseus:1.0.2-7c8070f
 
 Browse current tags at <https://github.com/odysseus-dev/odysseus/pkgs/container/odysseus>. (Until this package is made public and linked to the repo by an org owner, pulls fall back to the local build automatically — that fallback is intentional.)
 
-Open `http://localhost:7000` when the containers are healthy. Docker Compose
+Open `http://localhost:7011` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
-`APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
+`APP_PORT=7012` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
 > **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so
@@ -694,7 +694,7 @@ Common internal-only ports from the default docs/compose setup:
 
 | Port | Service |
 |---|---|
-| `7000` | Odysseus raw app port |
+| `7011` | Odysseus app port in the Docker Compose setup (`7000` for a native install) |
 | `8080` | SearXNG |
 | `8091` | ntfy |
 | `8100` | ChromaDB host port for manual/compose access |
@@ -714,7 +714,7 @@ Key settings:
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
-| `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
+| `APP_PORT` | `7011` | Docker Compose host port for the web UI. |
 | `APP_DATA_DIR` | `./data` | Docker Compose host directory for application data volumes. |
 | `APP_LOGS_DIR` | `./logs` | Docker Compose host directory for application logs. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
