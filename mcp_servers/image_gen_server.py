@@ -71,7 +71,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         # Auto-detect best available image model
         if not model_spec:
-            for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
+            for candidate in ("gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-1.5"):
                 try:
                     await asyncio.to_thread(_resolve_model, candidate)
                     model_spec = candidate
