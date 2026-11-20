@@ -4,6 +4,7 @@
  * Extracted from document.js to reduce file size.
  */
 
+import { formatArchiveAge, formatRecentAge } from './shared/domain/relativeTime.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { downloadBlob } from './shared/platform/downloads.js';
 import { debounceTrailing } from './shared/platform/debounce.js';
@@ -431,12 +432,9 @@ function _setLibraryCountChipContent(chip, label, count) {
     const now = Date.now();
     const then = new Date(isoString).getTime();
     const diffS = Math.floor((now - then) / 1000);
-    if (diffS < 60) return 'just now';
-    const diffM = Math.floor(diffS / 60);
-    if (diffM < 60) return diffM + 'm ago';
-    const diffH = Math.floor(diffM / 60);
-    if (diffH < 24) return diffH + 'h ago';
-    const diffD = Math.floor(diffH / 24);
+    const recent = formatRecentAge(diffS);
+    if (recent !== null) return recent;
+    const diffD = Math.floor(diffS / 86400);
     if (diffD === 1) return 'yesterday';
     if (diffD < 14) return diffD + 'd ago';
     const diffW = Math.floor(diffD / 7);
@@ -3426,15 +3424,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     // handler — which lives outside openLibrary's closure — can call it).
 
     function _relTime(iso) {
-      if (!iso) return '';
-      const diff = Date.now() - new Date(iso).getTime();
-      const mins = Math.floor(diff / 60000);
-      if (mins < 60) return mins + 'm ago';
-      const hrs = Math.floor(mins / 60);
-      if (hrs < 24) return hrs + 'h ago';
-      const days = Math.floor(hrs / 24);
-      if (days < 30) return days + 'd ago';
-      return new Date(iso).toLocaleDateString();
+      return formatArchiveAge(iso, Date.now());
     }
 
     // Switch to the initial tab. Always call this — even when the

@@ -3,7 +3,8 @@
  * Similar pattern to documentLibrary.js. Shows emails in a grid with search/filter.
  *
  * `static/js/emailLibrary.js` re-exports this module's public surface so the
- * old import path keeps resolving; see the comment there.
+ * old import { formatRecentAge } from '../shared/domain/relativeTime.js';
+import path keeps resolving; see the comment there.
  */
 
 import spinnerModule from '../spinner.js';
@@ -1503,13 +1504,7 @@ function _libRelativeTime(value) {
   const d = _libSyncDateFrom(value);
   if (!d) return '';
   const seconds = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
-  if (seconds < 45) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return formatRecentAge(seconds, 45) ?? `${Math.floor(seconds / 86400)}d ago`;
 }
 
 function _renderEmailSyncStatus() {

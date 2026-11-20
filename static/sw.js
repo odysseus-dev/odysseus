@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1158-shared-platform';
+const CACHE_NAME = 'odysseus-v1159-relative-time';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -69,6 +69,7 @@ const PRECACHE = [
   '/static/js/ui.js?v=20260916largetoolscroll1',
   '/static/js/shared/domain/html.js',
   '/static/js/shared/domain/urlSchemes.js',
+  '/static/js/shared/domain/relativeTime.js',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
   '/static/js/sessions.js',

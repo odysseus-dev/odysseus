@@ -15,6 +15,7 @@ frontend/src/** text eol=lf
 static/js/actionMenuOrder.js text eol=lf
 static/js/shared/domain/html.js text eol=lf
 static/js/shared/domain/urlSchemes.js text eol=lf
+static/js/shared/domain/relativeTime.js text eol=lf
 static/js/shared/platform/clipboard.js text eol=lf
 static/js/shared/platform/debounce.js text eol=lf
 static/js/shared/platform/downloads.js text eol=lf

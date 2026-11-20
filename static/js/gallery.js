@@ -2,6 +2,7 @@
  * Gallery Module — photo backup + AI-generated image library.
  */
 
+import { formatRecentAge } from './shared/domain/relativeTime.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { debounceTrailing } from './shared/platform/debounce.js';
 import { downloadBlob } from './shared/platform/downloads.js';
@@ -1232,9 +1233,8 @@ function _draftsWireOnce() {
 // Human-readable "x minutes ago" / "y days ago" for the drafts list.
 function _humanRelativeDate(when) {
   const diff = (Date.now() - when.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  const recent = formatRecentAge(diff);
+  if (recent !== null) return recent;
   if (diff < 86400 * 30) return Math.floor(diff / 86400) + 'd ago';
   return when.toLocaleDateString();
 }

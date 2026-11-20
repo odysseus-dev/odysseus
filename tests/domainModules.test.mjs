@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { escapeHtml, escapeHtmlString, escapeHtmlText, escapeHtmlDoubleQuoted } from '../frontend/src/shared/domain/html.js';
 import { compactUrlSchemeValue } from '../frontend/src/shared/domain/urlSchemes.js';
+import { formatArchiveAge, formatRecentAge } from '../frontend/src/shared/domain/relativeTime.js';
 import { normalizeCookbookModelDir } from '../static/js/cookbookModelDirectories.js';
 
 test('shared HTML encoding preserves strict string and nullish coercion contracts', () => {
@@ -807,4 +808,23 @@ test('_RICH_COLOR_PALETTE is frozen and contains dark and light palettes', () =>
   assert.deepEqual(_RICH_COLOR_PALETTE.light[4], ['#bbf7d0', 'Mint']);
   assert.deepEqual(_RICH_COLOR_PALETTE.light[5], ['#bae6fd', 'Sky']);
   assert.deepEqual(_RICH_COLOR_PALETTE.light[6], ['#ddd6fe', 'Lavender']);
+});
+
+test('relative-age helpers preserve age boundaries and distinct archive policy', () => {
+  assert.equal(formatRecentAge(59), 'just now');
+  assert.equal(formatRecentAge(45, 45), '0m ago');
+  assert.equal(formatRecentAge(60), '1m ago');
+  assert.equal(formatRecentAge(3599), '59m ago');
+  assert.equal(formatRecentAge(3600), '1h ago');
+  assert.equal(formatRecentAge(86399), '23h ago');
+  assert.equal(formatRecentAge(86400), null);
+  assert.equal(formatRecentAge(NaN), null);
+
+  const now = Date.parse('2026-01-31T00:00:00Z');
+  assert.equal(formatArchiveAge('', now), '');
+  assert.equal(formatArchiveAge('2026-01-31T00:00:01Z', now), '-1m ago');
+  assert.equal(formatArchiveAge('2026-01-31T00:00:00Z', now), '0m ago');
+  assert.equal(formatArchiveAge('2026-01-02T00:00:00Z', now), '29d ago');
+  assert.equal(formatArchiveAge('2026-01-01T00:00:00Z', now), new Date('2026-01-01T00:00:00Z').toLocaleDateString());
+  assert.equal(formatArchiveAge('invalid', now), new Date(NaN).toLocaleDateString());
 });
