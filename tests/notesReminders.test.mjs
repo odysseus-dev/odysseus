@@ -4,6 +4,7 @@ import { createNotesState } from '../frontend/src/features/notes/application/sta
 import { createNotesReminders } from '../frontend/src/features/notes/application/reminders.js';
 import { createNotesNotifications } from '../frontend/src/features/notes/infrastructure/notifications.js';
 import { createNotesPersistence, REMINDER_DISMISSED_AT_KEY } from '../frontend/src/features/notes/infrastructure/storage.js';
+import { _hasItems, _isNoteFullyDone } from '../frontend/src/features/notes/domain/noteRules.js';
 
 function harness(notes = []) {
   const now = Date.parse('2024-03-10T09:00'), app = createNotesState();
@@ -18,7 +19,7 @@ function harness(notes = []) {
   const reminders = createNotesReminders({
     app, clock: { now: () => now }, scheduler, persistence, dismissedKey: REMINDER_DISMISSED_AT_KEY,
     notifications: { show: (...args) => shown.push(args) }, fetchNotes: async () => {},
-    hasItems: note => ['todo', 'goal', 'checklist'].includes(note.note_type), isNoteFullyDone: () => false,
+    hasItems: _hasItems, isNoteFullyDone: _isNoteFullyDone,
     api: { listNotes: async () => ({ ok: true, json: async () => ({ notes }) }), patchNote: async (...args) => patches.push(args), fireReminder: body => { fired.push(body); return response; } },
     effects: { badge: () => {}, highlight: id => highlighted.push(id) },
   });
@@ -87,4 +88,52 @@ test('notification denial, unsupported browsers and permission errors remain fai
   assert.equal(await denied.ensurePermission(), false);
   const failed = createNotesNotifications({ browser: { Notification: true }, notify: { permission: 'default', requestPermission: async () => { throw Error('blocked'); } } });
   assert.equal(await failed.ensurePermission(), false);
+});
+
+for (const note_type of ['todo', 'goal', 'checklist']) {
+  for (const repeat of ['none', 'daily']) {
+    test(`completed ${note_type} (${repeat}) stays quiet and can be reopened`, async () => {
+      const now = Date.parse('2024-03-10T09:00');
+      const due_date = new Date(now - 1000).toISOString();
+      const h = harness([{ id: 'done', note_type, repeat, due_date, items: [{ text: 'Finished', done: true }] }]);
+      h.reminders._checkReminders();
+      assert.deepEqual(h.fired, []);
+      assert.deepEqual(h.shown, []);
+      assert.deepEqual(h.highlighted, []);
+      assert.deepEqual(h.patches, []);
+      assert.deepEqual([...h.persistence._loadFiredReminders()], []);
+      assert.equal(h.app.state.notes[0].due_date, due_date);
+      assert.equal(h.reminders._countDueReminders(), 0);
+      assert.equal(h.reminders._countFiredReminders(), 0);
+      h.app.updateItem(h.app.state.notes[0], 0, { done: false });
+      h.reminders._checkReminders();
+      await new Promise(setImmediate);
+      assert.equal(h.fired.length, 1);
+      assert.equal(h.shown.length, 1);
+      assert.deepEqual(h.highlighted, ['done']);
+      if (repeat === 'daily') assert.equal(h.patches.length, 1);
+    });
+  }
+}
+
+test('a server completion skip does not turn into a local toast or highlight', async () => {
+  const h = harness();
+  h.setResponse(Promise.resolve({ ok: true, json: async () => ({ skipped: true, reason: 'completed' }) }));
+  h.reminders._fireReminder({ id: 'stale', title: 'Already completed on another client', content: 'Raw' });
+  await new Promise(setImmediate);
+  assert.deepEqual(h.shown, []);
+  assert.deepEqual(h.highlighted, []);
+  assert.equal(h.timeouts.size, 0);
+});
+
+test('completion while dispatch is pending suppresses the local notification', async () => {
+  const h = harness([{ id: 'pending', note_type: 'todo', items: [{ text: 'Finish', done: false }] }]);
+  let resolve;
+  h.setResponse(new Promise(r => { resolve = r; }));
+  h.reminders._fireReminder(h.app.state.notes[0]);
+  h.app.updateItem(h.app.state.notes[0], 0, { done: true });
+  resolve({ ok: true, json: async () => ({ synthesis: 'Too late' }) });
+  await new Promise(setImmediate);
+  assert.deepEqual(h.shown, []);
+  assert.deepEqual(h.highlighted, []);
 });

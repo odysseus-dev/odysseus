@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -171,3 +172,15 @@ def test_admin_test_reminder_can_use_current_ui_overrides(monkeypatch):
             "reminder_webhook_payload_template": '{"content":"{{message}}"}',
         },
     }]
+
+
+@pytest.mark.parametrize("note_type", ["todo", "goal", "checklist"])
+def test_completed_owned_note_skips_delivery(monkeypatch, note_type):
+    endpoint, calls, db = _endpoint(monkeypatch, _note(
+        note_type=note_type, items=json.dumps([{"text": "Finished", "done": True}]),
+    ))
+    result = asyncio.run(endpoint(_Request({"note_id": "note-1"}, user="alice")))
+    assert calls == []
+    assert db.closed is True
+    assert result["skipped"] is True and result["reason"] == "completed"
+    assert all(result[key] is False for key in ("browser_sent", "email_sent", "ntfy_sent", "webhook_sent"))

@@ -31,7 +31,7 @@ export function createNotesReminders({
     const fired = _loadFiredReminders();
     let changed = false;
     for (const note of state.notes) {
-      if (!note.due_date || note.archived) continue;
+      if (!note.due_date || note.archived || _isNoteFullyDone(note)) continue;
       if (!_hasTimeComponent(note.due_date)) continue;
       if (fired.has(note.id)) continue;
       const due = new Date(note.due_date).getTime();
@@ -95,7 +95,12 @@ export function createNotesReminders({
     // return an LLM-written synthesis line and/or send an email. We still show
     // a local browser notification so the user gets immediate feedback even if
     // the server path is disabled or slow.
-    const showLocal = body => notifications.show(title, body, note.id);
+    const showLocal = body => {
+      const current = state.notes.find(n => n.id === note.id) || note;
+      if (_isNoteFullyDone(current)) return;
+      notifications.show(title, body, note.id);
+      effects.highlight(note.id);
+    };
 
     // Fire-and-forget server dispatch. If synthesis comes back quickly enough,
     // use it as the notification body; otherwise the local notification has
@@ -109,6 +114,7 @@ export function createNotesReminders({
         scheduler.clearTimeout(timer);
         if (shown) return;
         shown = true;
+        if (data?.skipped && data.reason === 'completed') return;
         const body = (data && data.synthesis) ? data.synthesis : rawBody;
         showLocal(body);
       })
@@ -117,9 +123,6 @@ export function createNotesReminders({
         if (!shown) { shown = true; showLocal(rawBody); }
       });
 
-    // Pulse the card if visible; otherwise queue it so the next time the user
-    // opens the notes panel the card gets a brief glow.
-    effects.highlight(note.id);
   }
 
   function _startReminderLoop() {

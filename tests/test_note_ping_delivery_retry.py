@@ -123,3 +123,31 @@ async def test_pruning_retains_dispatcher_receipt_and_other_due_note(reminder_sc
     assert set(cache) == {"note-1", "later"}
     assert cache["note-1"]["channel"] == "webhook"
     assert cache["later"]["channel"] == "email"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("note_type", ["todo", "goal", "checklist"])
+@pytest.mark.parametrize("channel", ["browser", "webhook"])
+async def test_completed_notes_do_not_send_or_checkpoint_and_can_reopen(reminder_scan, note_type, channel):
+    from core import database
+    from src.builtin_actions import TaskNoop
+    scan = reminder_scan
+    scan.channel["reminder_channel"] = channel
+    with scan.factory() as db:
+        note = db.get(database.Note, "note-1")
+        note.note_type = note_type
+        note.items = json.dumps([{"text": "Finished", "done": True}])
+        db.commit()
+    with pytest.raises(TaskNoop):
+        await scan.scan()
+    assert scan.calls == [] and scan.notices == []
+    assert "note-1" not in json.loads(scan.path.read_text())
+    with scan.factory() as db:
+        db.get(database.Note, "note-1").items = json.dumps([{"text": "Reopened", "done": False}])
+        db.commit()
+    scan.statuses[:] = [200]
+    message, ok = await scan.scan()
+    assert ok is True and "Pinged 1" in message
+    assert len(scan.notices) == 1
+    assert len(scan.calls) == (1 if channel == "webhook" else 0)
+    assert json.loads(scan.path.read_text())["note-1"]["channel"] == channel
