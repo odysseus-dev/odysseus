@@ -22,6 +22,7 @@ PUBLIC_GUIDES = {
     "backup-restore.md",
     "configuration-reference.md",
     "email-outlook.md",
+    "notes.md",
     "pr-blocker-audit.md",
     "security-ci.md",
     "setup.md",

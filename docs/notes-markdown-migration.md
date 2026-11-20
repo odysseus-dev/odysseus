@@ -142,8 +142,8 @@ review the affected notes before using the legacy attachment or canvas controls.
 | Checklist routes | Toggle requires `body_revision` from the GET that supplied the index. Missing and stale tokens return 409. Append retries a competing write from the committed body. |
 | `scripts/odysseus-notes` | `list`/`show`/`search` print derived `items` and `note_type`; `create --item TEXT` (repeatable) writes task lines. |
 | Calendar writers | Event reminders from `routes/calendar_routes.py` and the `manage_calendar` tool write a task line through `items_to_markdown()` instead of `items` JSON. |
-| Reminders | `/api/notes/fire-reminder` and the scheduler's note ping share `reminder_body()`: prose, then `Pending (N):` and the open tasks. |
-| Daily brief | Lists open tasks from any note with task lines (it used to read only `note_type == "checklist"`). |
+| Reminders | `/api/notes/fire-reminder` and the scheduler's note ping share `reminder_body()`: prose, then `Pending (N):` and the open tasks, as plain text with image markdown removed. The browser's local notification follows the same rules. |
+| Daily brief | Lists open tasks from any note with task lines (it used to read only `note_type == "checklist"`), leaving out the calendar's own reminder notes. |
 | Selected-notes chat context | Sends the content verbatim plus an `Items:` block restating the tasks. |
 | `manage_notes` | Takes `checklist_items` as before (`[]` clears); `update` with `content` alone keeps the task lines; `get`/`view` print `[x] i: text` with the index and body revision `toggle_item` takes. |
 | Backups | `scripts/odysseus-backup snapshot` copies `app.db` whole, including `note_legacy_fields`. The in-app JSON export (`/api/export`) never included notes and still does not. |
