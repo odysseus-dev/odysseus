@@ -781,39 +781,91 @@ async function testMemberUtilityFallbackRecovery(instance, cookies) {
   await member.page.selectOption('#set-utilityEpSelect', 'ep-beta');
   await member.page.waitForSelector('[data-settings-section="utility-model"] .settings-model-default-retry', { timeout: 8000 });
   const lockedAfterReloadFailure = await utilityControls(member.page);
+  const priorRow = await member.page.$('#set-utilityFallbacks .settings-fallback-row');
   // An endpoint refresh re-renders the fallback rows; they must stay read-only.
   await member.page.click('[data-settings-tab="search"]');
   await member.page.waitForSelector('[data-settings-panel="search"]:not(.hidden)');
 
-  let utilityRefreshSeen = false;
-  const utilityRefreshPromise = member.page.waitForResponse(response => {
-    const url = new URL(response.url());
-    if (response.request().method() === 'GET' && url.pathname === '/api/models') {
-      utilityRefreshSeen = true;
-      return response.ok();
+  const memberRefreshRequests = [];
+  const memberRefreshResponses = [];
+  let releaseMemberRefreshGate = null;
+  const memberRefreshGate = new Promise(resolve => { releaseMemberRefreshGate = resolve; });
+  let memberCatalogRequestsSeen = 0;
+  let memberResponseHeld = false;
+
+  await member.page.route('**/api/models*', async route => {
+    const url = new URL(route.request().url());
+    const reqKey = `${route.request().method()} ${url.pathname}${url.search}`;
+    memberRefreshRequests.push(reqKey);
+    const isCatalog = url.searchParams.get('foreground_fallback') === 'true';
+    if (isCatalog) {
+      memberCatalogRequestsSeen += 1;
+      // Hold the second sequential catalog response behind the gate
+      if (memberCatalogRequestsSeen === 2) {
+        memberResponseHeld = true;
+        await memberRefreshGate;
+      }
     }
-    return false;
-  }, { timeout: 8000 });
+    return route.continue();
+  });
+
+  const memberResponseListener = response => {
+    const url = new URL(response.url());
+    if (url.pathname === '/api/models') {
+      memberRefreshResponses.push(`${response.request().method()} ${url.pathname}${url.search} ${response.status()}`);
+    }
+  };
+  member.page.on('response', memberResponseListener);
 
   await member.page.click('[data-settings-tab="ai"]');
-  await utilityRefreshPromise;
   await member.page.waitForSelector('[data-settings-panel="ai"]:not(.hidden)');
-  await member.page.waitForFunction(() => {
+
+  // Wait until the sequential refresh sequence is observed and the second catalog request is held
+  const memberDeadline = Date.now() + 8000;
+  while (!memberResponseHeld && Date.now() < memberDeadline) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  if (!memberResponseHeld) {
+    throw new Error('Timed out waiting for member refresh sequence to issue second foreground_fallback request');
+  }
+
+  // Demonstrate that while the second catalog response is held:
+  // 1. The refresh sequence is incomplete (second catalog response has not landed)
+  // 2. The previous disabled state cannot pass as completed refresh
+  const memberCompletedWhileHeld = memberRefreshResponses.filter(r => r.includes('foreground_fallback=true')).length >= 2;
+
+  // Release the held catalog response to allow the sequential refresh to finish
+  releaseMemberRefreshGate();
+
+  // Wait for the complete refresh sequence to finish and the DOM to settle with the re-rendered row
+  await member.page.waitForFunction(prev => {
+    const current = document.querySelector('#set-utilityFallbacks .settings-fallback-row');
     const epSelect = document.querySelector('#set-utilityEpSelect');
     const retryBtn = document.querySelector('[data-settings-section="utility-model"] .settings-model-default-retry');
-    const rows = document.querySelectorAll('#set-utilityFallbacks .settings-fallback-row');
     const rowControls = Array.from(document.querySelectorAll('#set-utilityFallbacks select, #set-utilityFallbacks button'));
-    return epSelect && epSelect.disabled
+    return current !== null
+      && current !== prev
+      && epSelect && epSelect.disabled
       && retryBtn !== null
-      && rows.length === 1
       && rowControls.length > 0
       && rowControls.every(c => c.disabled);
-  }, null, { timeout: 8000 });
+  }, priorRow, { timeout: 8000 });
+
+  const memberResponseDeadline = Date.now() + 8000;
+  while (memberRefreshResponses.filter(r => r.includes('foreground_fallback=true')).length < 2 && Date.now() < memberResponseDeadline) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+
+  await member.page.unroute('**/api/models*');
+  member.page.off('response', memberResponseListener);
 
   const lockedAfterRefresh = await utilityControls(member.page);
   const fullyLocked = state => state.endpointDisabled && state.addDisabled && state.rowControls > 0 && state.enabledRowControls.length === 0;
+  const memberRefreshSequenceVerified = !memberCompletedWhileHeld
+    && memberRefreshRequests.filter(r => r.includes('foreground_fallback=true')).length >= 2
+    && memberRefreshResponses.filter(r => r.includes('foreground_fallback=true')).length >= 2;
   check('failed utility reload disables the fallback rows as well as the selects', fullyLocked(lockedAfterReloadFailure), JSON.stringify(lockedAfterReloadFailure));
-  check('utility fallback rows stay read-only through an endpoint refresh', utilityRefreshSeen && fullyLocked(lockedAfterRefresh), JSON.stringify({ utilityRefreshSeen, ...lockedAfterRefresh }));
+  check('utility fallback rows stay read-only through an endpoint refresh', memberRefreshSequenceVerified && fullyLocked(lockedAfterRefresh), JSON.stringify({ memberRefreshSequenceVerified, requests: memberRefreshRequests, ...lockedAfterRefresh }));
   await member.page.unroute('**/api/prefs');
 
   const retryResponsePromise = member.page.waitForResponse(response => {
@@ -1003,38 +1055,95 @@ async function testAdminLoadFailure(instance, cookies) {
   ));
   await openSettings(admin.page, 'ai');
   await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
+  const priorOption = await admin.page.$('#set-defaultEpSelect option');
   // Leave and return: the AI panel refreshes its endpoint lists on entry.
   await admin.page.click('[data-settings-tab="search"]');
   await admin.page.waitForSelector('[data-settings-panel="search"]:not(.hidden)');
 
-  let adminRefreshSeen = false;
-  const adminRefreshPromise = admin.page.waitForResponse(response => {
-    const url = new URL(response.url());
-    if (response.request().method() === 'GET' && url.pathname === '/api/model-endpoints') {
-      adminRefreshSeen = true;
-      return response.ok();
+  const adminRefreshRequests = [];
+  const adminRefreshResponses = [];
+  let releaseAdminRefreshGate = null;
+  const adminRefreshGate = new Promise(resolve => { releaseAdminRefreshGate = resolve; });
+  let adminResponseHeld = false;
+
+  await admin.page.route('**/api/model-endpoints', async route => {
+    adminRefreshRequests.push(`${route.request().method()} /api/model-endpoints`);
+    return route.continue();
+  });
+
+  await admin.page.route('**/api/models*', async route => {
+    const url = new URL(route.request().url());
+    const reqKey = `${route.request().method()} ${url.pathname}${url.search}`;
+    adminRefreshRequests.push(reqKey);
+    if (url.searchParams.get('foreground_fallback') === 'true') {
+      adminResponseHeld = true;
+      await adminRefreshGate;
     }
-    return false;
-  }, { timeout: 8000 });
+    return route.continue();
+  });
+
+  const adminResponseListener = response => {
+    const url = new URL(response.url());
+    if (url.pathname === '/api/model-endpoints' || url.pathname === '/api/models') {
+      adminRefreshResponses.push(`${response.request().method()} ${url.pathname}${url.search} ${response.status()}`);
+    }
+  };
+  admin.page.on('response', adminResponseListener);
 
   await admin.page.click('[data-settings-tab="ai"]');
-  await adminRefreshPromise;
   await admin.page.waitForSelector('[data-settings-panel="ai"]:not(.hidden)');
-  await admin.page.waitForFunction(() => {
+
+  // Wait until the sequential refresh sequence reaches the foreground fallback request and holds it
+  const adminDeadline = Date.now() + 8000;
+  while (!adminResponseHeld && Date.now() < adminDeadline) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  if (!adminResponseHeld) {
+    throw new Error('Timed out waiting for admin refresh sequence to issue foreground_fallback request');
+  }
+
+  // Demonstrate that while the foreground fallback response is held:
+  // 1. The refresh sequence is incomplete
+  const adminCompletedWhileHeld = adminRefreshResponses.some(r => r.includes('foreground_fallback=true'));
+
+  // Release the held catalog response to allow the sequential refresh to finish
+  releaseAdminRefreshGate();
+
+  // Wait for the complete refresh sequence to finish and DOM options to re-populate
+  await admin.page.waitForFunction(prev => {
     const epSelect = document.querySelector('#set-defaultEpSelect');
     const modelSelect = document.querySelector('#set-defaultModelSelect');
     const retryBtn = document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry');
+    const currentOption = epSelect ? epSelect.querySelector('option') : null;
     return epSelect && epSelect.disabled
       && modelSelect && modelSelect.disabled
-      && retryBtn !== null;
-  }, null, { timeout: 8000 });
+      && retryBtn !== null
+      && currentOption !== null
+      && currentOption !== prev;
+  }, priorOption, { timeout: 8000 });
+
+  const adminResponseDeadline = Date.now() + 8000;
+  while (!adminRefreshResponses.some(r => r.includes('foreground_fallback=true')) && Date.now() < adminResponseDeadline) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+
+  await admin.page.unroute('**/api/models*');
+  await admin.page.unroute('**/api/model-endpoints');
+  admin.page.off('response', adminResponseListener);
 
   const state = await admin.page.evaluate(() => ({
     endpointDisabled: document.querySelector('#set-defaultEpSelect').disabled,
     modelDisabled: document.querySelector('#set-defaultModelSelect').disabled,
     retryShown: Boolean(document.querySelector('[data-settings-section="default-chat"] .settings-model-default-retry')),
   }));
-  check('admin card stays read-only through an endpoint refresh while its values are unknown', adminRefreshSeen && state.endpointDisabled && state.modelDisabled && state.retryShown, JSON.stringify({ adminRefreshSeen, ...state }));
+
+  const adminRefreshSequenceVerified = !adminCompletedWhileHeld
+    && adminRefreshRequests.some(r => r.includes('/api/model-endpoints'))
+    && adminRefreshRequests.some(r => r.includes('foreground_fallback=true'))
+    && adminRefreshResponses.some(r => r.includes('/api/model-endpoints'))
+    && adminRefreshResponses.some(r => r.includes('foreground_fallback=true'));
+
+  check('admin card stays read-only through an endpoint refresh while its values are unknown', adminRefreshSequenceVerified && state.endpointDisabled && state.modelDisabled && state.retryShown, JSON.stringify({ adminRefreshSequenceVerified, requests: adminRefreshRequests, ...state }));
   await admin.page.unroute('**/api/auth/settings');
 
   const retryResponsePromise = admin.page.waitForResponse(response => {
