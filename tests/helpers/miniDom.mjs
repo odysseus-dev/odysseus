@@ -46,7 +46,9 @@ class Element {
 export function parseHtml(html) {
   const root = new Element('#root');
   const stack = [root];
-  const re = /<!--[\s\S]*?-->|<\/([a-zA-Z][\w-]*)\s*>|<([a-zA-Z][\w-]*)((?:\s+[^\s=>\/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>|([^<]+|<)/g;
+  // Each alternative inside a tag starts with a different character (a quote
+  // or anything else but `>`), so a long run of attributes cannot backtrack.
+  const re = /<!--[\s\S]*?-->|<\/([a-zA-Z][\w-]*)\s*>|<([a-zA-Z][\w-]*)((?:"[^"]*"|'[^']*'|[^'">])*)>|([^<]+|<)/g;
   let m;
   while ((m = re.exec(html))) {
     const top = stack[stack.length - 1];
@@ -58,15 +60,16 @@ export function parseHtml(html) {
       continue;
     }
     if (m[2]) {
+      const selfClosing = /\/\s*$/.test(m[3]);
       const attrs = [];
-      for (const a of m[3].matchAll(/([^\s=>\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) attrs.push([a[1].toLowerCase(), decode(a[2] ?? a[3] ?? a[4] ?? '')]);
+      for (const a of m[3].replace(/\/\s*$/, '').matchAll(/([^\s=>\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) attrs.push([a[1].toLowerCase(), decode(a[2] ?? a[3] ?? a[4] ?? '')]);
       const el = new Element(m[2], attrs);
       el.parentNode = top;
       top.childNodes.push(el);
-      if (!VOID.has(m[2].toLowerCase()) && !m[4]) stack.push(el);
+      if (!VOID.has(m[2].toLowerCase()) && !selfClosing) stack.push(el);
       continue;
     }
-    const text = new Text(decode(m[5]));
+    const text = new Text(decode(m[4]));
     text.parentNode = top;
     top.childNodes.push(text);
   }
