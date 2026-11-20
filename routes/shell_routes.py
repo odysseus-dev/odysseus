@@ -564,7 +564,11 @@ def _find_line_break(buf):
 EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
 STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
-TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+# Durable worker-receipt inventory: windows_app_restart.serve() publishes
+# ODYSSEUS_WORKERS_DIR before importing the app so receipt writers and the
+# restart guard share one non-volatile location. Without it (POSIX, legacy
+# launches) the historical temp location is unchanged.
+TMUX_LOG_DIR = Path(os.environ.get("ODYSSEUS_WORKERS_DIR") or (Path(tempfile.gettempdir()) / "odysseus-tmux"))
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 # PTY teardown. The PTY child leads its own session (os.setsid), so killing it
 # has to signal the whole process group and then confirm the group is gone —

@@ -11,8 +11,10 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -102,6 +104,169 @@ def _uninitialized_background(state_dir):
         return False
 
 
+LEGACY_WORKERS_DIRNAME = 'odysseus-tmux'
+DURABLE_WORKERS_DIRNAME = 'worker_receipts'
+RECEIPT_EXTRA_SUFFIXES = ('.token', '.ready')
+_WORKER_SCAN_IMAGES = ('bash.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'python.exe', 'pythonw.exe', 'sh.exe')
+
+
+def legacy_workers_dir():
+    """Volatile pre-durability receipt location; still observed so cleanup or
+    migration can never hide a receipt from the guard."""
+    return Path(tempfile.gettempdir()) / LEGACY_WORKERS_DIRNAME
+
+
+def durable_workers_dir(state_dir):
+    """Non-volatile receipt inventory. Deliberately NOT inside process_resources:
+    the uninitialized-background proof treats any extra publication there as an
+    artifact, and a fresh empty inventory must not break that proof."""
+    return Path(state_dir) / DURABLE_WORKERS_DIRNAME
+
+
+def _worker_process_scan():
+    """Command-line visibility of candidate worker images; incomplete is unknown.
+
+    Local-only CIM query: no commands or credentials leave the OS query. Worker
+    wrappers are bash/cmd/powershell hosts, so scanning only python images (as
+    the background proof does) would miss them.
+    """
+    names = ' OR '.join(f"Name='{name}'" for name in _WORKER_SCAN_IMAGES)
+    script = '''$ErrorActionPreference='Stop';
+[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new();
+$p=@(Get-CimInstance Win32_Process -Filter "NAMES");
+@{complete=(@($p | Where-Object {[string]::IsNullOrWhiteSpace($_.CommandLine)}).Count -eq 0 -and ($p.ProcessId -contains SELF_PID));
+processes=@($p | ForEach-Object {@{pid=[int]$_.ProcessId; name=[string]$_.Name; command_line=[string]$_.CommandLine}})} | ConvertTo-Json -Compress'''
+    try:
+        raw = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+            script.replace('NAMES', names).replace('SELF_PID', str(os.getpid()))], timeout=10,
+            stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+        value = json.loads(raw)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {'complete': False, 'processes': None}
+    if not isinstance(value, dict) or value.get('complete') is not True:
+        return {'complete': False, 'processes': None}
+    processes = value.get('processes')
+    if isinstance(processes, dict):  # ConvertTo-Json unrolls a one-element array.
+        processes = [processes]
+    if not isinstance(processes, list):
+        return {'complete': False, 'processes': None}
+    return {'complete': True, 'processes': processes}
+
+
+def _worker_scan_matches(processes, directories):
+    """PIDs whose command line names a receipt directory or a supervisor script.
+
+    The directory marker requires a path separator after the directory so an
+    ordinary --workers-dir/--state-dir argument (no trailing slash) never
+    self-matches the app or its launcher. Matching is conservative: any reader
+    or tailer of the inventory also counts as unproven-idle.
+    """
+    markers = []
+    for directory in directories:
+        normalized = str(directory).replace('\\', '/').rstrip('/').lower()
+        if normalized:
+            markers.append(normalized + '/')
+    matched = []
+    for row in processes:
+        if not isinstance(row, dict) or not isinstance(row.get('command_line'), str):
+            return None
+        line = row['command_line']
+        normalized = line.replace('\\', '/').lower()
+        if any(marker in normalized for marker in markers) or re.search(r'(containment_worker|bg_worker)\.py', line):
+            matched.append(row.get('pid'))
+    return matched
+
+
+def _worker_inventory_recoverable(state_dir, workers_dir):
+    """Read-only proof that an absent receipt directory names no live worker.
+
+    ALL of: no *.pid receipt in the durable or legacy location, an initialized
+    native registry with every worker terminal, and a complete process scan
+    with no worker marker, re-checked against receipts appearing mid-proof.
+    Any ambiguity is not recoverable; the guard keeps refusing.
+    """
+    from src.native_workers import registry_for
+    primary = Path(workers_dir)
+    legacy = legacy_workers_dir()
+
+    def no_receipts():
+        for location in (primary, legacy):
+            if location.is_symlink():
+                return False
+            if not location.exists():
+                continue
+            if not location.is_dir():
+                return False
+            try:
+                if next(location.glob('*.pid'), None) is not None:
+                    return False
+            except OSError:
+                return False
+        return True
+
+    try:
+        if primary.exists() or primary.is_symlink():
+            return False
+        if not no_receipts():
+            return False
+        snapshot = registry_for(str(Path(state_dir) / 'process_resources')).snapshot()
+        if not snapshot['initialized'] or snapshot['unknown'] or any(
+                row['state'] not in {'completed', 'failed', 'cancelled'} for row in snapshot['workers']):
+            return False
+        scan = _worker_process_scan()
+        if scan.get('complete') is not True:
+            return False
+        matched = _worker_scan_matches(scan['processes'], (primary, legacy))
+        if matched is None or matched:
+            return False
+        return no_receipts()
+    except OSError:
+        return False
+
+
+def _copy_receipt(pid_file, target):
+    """Copy a receipt and its identity/handoff sidecars; never overwrite."""
+    for source in (pid_file, *(pid_file.parent / (pid_file.name + suffix) for suffix in RECEIPT_EXTRA_SUFFIXES)):
+        destination = target / source.name
+        if source.is_file() and not destination.exists():
+            shutil.copy2(str(source), str(destination))
+
+
+def prepare_worker_inventory(config):
+    """Publish the durable receipt location before the app imports its writers.
+
+    Migrates legacy receipts by COPY (never delete): a live worker named by a
+    pre-migration receipt, or a late runner handoff into the old location, must
+    stay observable. An empty inventory is created only under the same idle
+    proof the guard requires; on any ambiguity the directory is left absent and
+    the guard keeps refusing. Migration failure falls back to the legacy
+    location rather than hiding receipts.
+    """
+    configured = config.get('workers_dir')
+    requested = Path(configured) if configured else durable_workers_dir(config['state_dir'])
+    legacy = legacy_workers_dir().resolve()
+    # Check the unresolved path: resolve() would silently follow a symlink and
+    # launder an untrusted location into the inventory the guard reads.
+    target = legacy if requested.is_symlink() else requested.resolve()
+    if target != legacy:
+        try:
+            legacy_receipts = sorted(legacy.glob('*.pid')) if legacy.is_dir() and not legacy.is_symlink() else []
+            if not target.exists():
+                if legacy_receipts:
+                    target.mkdir(parents=True)
+                    for pid_file in legacy_receipts:
+                        _copy_receipt(pid_file, target)
+                elif _worker_inventory_recoverable(config['state_dir'], target):
+                    target.mkdir(parents=True)
+            elif target.is_dir():
+                for pid_file in legacy_receipts:
+                    _copy_receipt(pid_file, target)
+        except OSError:
+            target = legacy
+    os.environ['ODYSSEUS_WORKERS_DIR'] = str(target)
+    return str(target)
+
+
 def file_guard(state_dir, workers_dir, gateway_db):
     errors = []
     receipts = []
@@ -133,15 +298,32 @@ def file_guard(state_dir, workers_dir, gateway_db):
                 errors.append('unknown ' + filename)
         except Exception:
             errors.append('unknown ' + filename)
+    worker_inventory = {'state': 'unknown'}
     try:
         directory = Path(workers_dir)
-        if not directory.is_dir():
-            raise ValueError('missing worker inventory')
-        for file in directory.glob('*.pid'):
-            observation = observe_worker_receipt(file)
-            receipts.append(observation)
-            if observation['state'] not in {'gone', 'obsolete'}:
-                errors.append('live or unknown worker receipt')
+        legacy = legacy_workers_dir()
+        locations = [directory] + ([] if legacy == directory else [legacy])
+        primary_absent = not directory.exists() and not directory.is_symlink()
+        for location in locations:
+            if not location.exists() and not location.is_symlink():
+                continue
+            if location.is_symlink() or not location.is_dir():
+                raise ValueError('invalid worker inventory location')
+            for file in location.glob('*.pid'):
+                observation = observe_worker_receipt(file)
+                receipts.append(observation)
+                if observation['state'] not in {'gone', 'obsolete'}:
+                    errors.append('live or unknown worker receipt')
+        if receipts:
+            worker_inventory = {'state': 'recorded'}
+        elif primary_absent:
+            if _worker_inventory_recoverable(state_dir, directory):
+                worker_inventory = {'state': 'recovered_idle',
+                                    'basis': 'no receipts, terminal native registry and complete worker process scan'}
+            else:
+                errors.append('unknown worker inventory')
+        else:
+            worker_inventory = {'state': 'recorded'}
     except Exception:
         errors.append('unknown worker inventory')
     from src.native_workers import registry_for
@@ -152,7 +334,8 @@ def file_guard(state_dir, workers_dir, gateway_db):
                                            for row in native_workers['workers']):
             errors.append('live or unknown durable worker inventory')
     return {'clear': not errors, 'errors': errors, 'worker_receipts': receipts,
-            'background_jobs': background, 'native_workers': native_workers}
+            'background_jobs': background, 'native_workers': native_workers,
+            'worker_inventory': worker_inventory}
 
 
 def health(port, path='/api/health', *, kind='app'):
@@ -576,6 +759,7 @@ async def serve(config):
     os.environ['APP_PORT'] = str(config['port'])
     from src.native_workers import registry_for
     await asyncio.to_thread(registry_for(str(Path(config['state_dir']) / 'process_resources')).initialize)
+    config['workers_dir'] = await asyncio.to_thread(prepare_worker_inventory, config)
     if config.get('lab_application'):
         if config['port'] in {7000, 9130} or config['gateway_port'] in {7000, 9130} or config['chroma_port'] in {7000, 9130}:
             raise ValueError('Lab application cannot use production ports')
