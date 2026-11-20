@@ -3,6 +3,7 @@
 
 import { esc } from '../../html.js';
 import { byId as el } from '../../dom.js';
+import { copyText } from '../../../shared/platform/clipboard.js';
 import { notifyIntegrationsChanged } from '../events.js';
 
 // Config shared by the Codex Agent and Claude Agent forms. Both use the same
@@ -401,28 +402,6 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
   };
   // Bind the explicit Create button; no auto-creation.
   el('uf-codex-create-btn')?.addEventListener('click', () => { _autoCreateCodex(); });
-  const _copyCodexToken = async (text) => {
-    const value = String(text || '');
-    if (!value) return false;
-    if (navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch (_) {}
-    }
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.setAttribute('readonly', 'readonly');
-    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1;';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, value.length);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-    ta.remove();
-    return ok;
-  };
   const _selectTextFallback = (text, containerId) => {
     const code = document.createElement('pre');
     code.textContent = text;
@@ -441,7 +420,7 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
     const btn = el('uf-codex-copy-setup');
     if (!token) return;
     const setup = setupForToken(token);
-    const ok = await _copyCodexToken(setup);
+    const ok = await copyText(setup);
     if (!btn) return;
     if (ok) {
       btn.innerHTML = CHECK_ICON;
@@ -457,7 +436,7 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
   });
   el('uf-codex-copy-token')?.addEventListener('click', async () => {
     const token = el('uf-codex-token')?.textContent || '';
-    const ok = await _copyCodexToken(token);
+    const ok = await copyText(token);
     const btn = el('uf-codex-copy-token');
     if (!btn) return;
     if (ok) {

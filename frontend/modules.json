@@ -10,6 +10,10 @@
       "deployment": "js/shared/domain/html.js"
     },
     {
+      "source": "shared/platform/clipboard.js",
+      "deployment": "js/shared/platform/clipboard.js"
+    },
+    {
       "source": "features/notes/domain/recurrence.js",
       "deployment": "js/features/notes/domain/recurrence.js"
     },
