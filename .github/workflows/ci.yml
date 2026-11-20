@@ -297,6 +297,7 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
         env:
           PYTEST_SHARD: ${{ matrix.shard }}
+          PYTEST_COLLECTION_EXPORT: ${{ runner.temp }}/pytest-collection.json
         run: |
           python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD" \
             --junitxml="$RUNNER_TEMP/pytest-report.xml" \
@@ -332,11 +333,12 @@ jobs:
                           isinstance(cf, list) and cf
                           and isinstance(sf, list)
                           and isinstance(stc, dict)
+                          and isinstance(stn, dict)
                       ):
                           collected_files = cf
                           selected_files = sf
                           selected_test_counts = stc
-                          selected_test_names = stn if isinstance(stn, dict) else None
+                          selected_test_names = stn
                       else:
                           collection_error = f"Invalid collection export in {inv_file}: missing or malformed keys"
                   elif isinstance(parsed, list) and parsed:
@@ -358,9 +360,8 @@ jobs:
               "collected_files": collected_files,
               "selected_files": selected_files,
               "selected_test_counts": selected_test_counts,
+              "selected_test_names": selected_test_names,
           }
-          if selected_test_names:
-              meta["selected_test_names"] = selected_test_names
           if collection_error:
               meta["collection_error"] = collection_error
           (runner_temp / "pytest-meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

@@ -149,7 +149,11 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(getattr(pytest.mark, marker_name))
 
     spec = _shard_spec(config)
-    export_requested = bool(os.environ.get("PYTEST_COLLECTION_EXPORT") or os.environ.get("RUNNER_TEMP"))
+    export_path = os.environ.pop("PYTEST_COLLECTION_EXPORT", None)
+    if not export_path and os.environ.get("RUNNER_TEMP") and spec is not None and not spec.selects_everything:
+        export_path = str(Path(os.environ["RUNNER_TEMP"]) / "pytest-collection.json")
+
+    export_requested = bool(export_path and spec is not None and not spec.selects_everything)
     if spec is None and not export_requested:
         return
 
@@ -197,7 +201,9 @@ def pytest_collection_modifyitems(config, items):
         selected_test_names: dict[str, list[str]] = {}
         for sk, item in zip(selected_keys, selected):
             selected_test_counts[sk] = selected_test_counts.get(sk, 0) + 1
-            selected_test_names.setdefault(sk, []).append(item.name)
+            nodeid = getattr(item, "nodeid", "")
+            test_ident = nodeid.split("::", 1)[1] if "::" in nodeid else item.name
+            selected_test_names.setdefault(sk, []).append(test_ident)
 
         payload = {
             "collected_files": sorted(set(keys)),
@@ -206,17 +212,11 @@ def pytest_collection_modifyitems(config, items):
             "selected_test_names": selected_test_names,
         }
 
-        export_path = os.environ.get("PYTEST_COLLECTION_EXPORT")
         if export_path:
             import json
             from pathlib import Path
             ep = Path(export_path)
             ep.parent.mkdir(parents=True, exist_ok=True)
-            ep.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        elif os.environ.get("RUNNER_TEMP"):
-            import json
-            from pathlib import Path
-            ep = Path(os.environ["RUNNER_TEMP"]) / "pytest-collection.json"
             ep.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 

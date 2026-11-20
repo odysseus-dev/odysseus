@@ -148,7 +148,7 @@ class ShardSidecarInfo:
         shard_str: str,
         selected_files: set[str],
         selected_test_counts: dict[str, int],
-        selected_test_names: dict[str, list[str]] | None = None,
+        selected_test_names: dict[str, list[str]],
     ) -> None:
         self.report_path = report_path
         self.shard_str = shard_str
@@ -222,12 +222,19 @@ def parse_junit_xml_details(
 
         is_skipped = any(child.tag.split("}")[-1] == "skipped" for child in tc)
         tc_name = tc.get("name", "unnamed")
+        classname = tc.get("classname", "")
+        file_mod = file_key.replace("/", ".").removesuffix(".py")
+        if classname and classname.startswith(file_mod + "."):
+            cls_part = classname[len(file_mod) + 1 :].replace(".", "::")
+            tc_ident = f"{cls_part}::{tc_name}"
+        else:
+            tc_ident = tc_name
 
         if file_key not in details.file_testcases:
             details.file_testcases[file_key] = []
-        if tc_name in details.file_testcases[file_key]:
-            details.file_duplicate_testcases.setdefault(file_key, []).append(tc_name)
-        details.file_testcases[file_key].append(tc_name)
+        if tc_ident in details.file_testcases[file_key]:
+            details.file_duplicate_testcases.setdefault(file_key, []).append(tc_ident)
+        details.file_testcases[file_key].append(tc_ident)
 
         details.file_testcase_counts[file_key] = details.file_testcase_counts.get(file_key, 0) + 1
         if is_skipped:
@@ -657,14 +664,75 @@ def main() -> int:
                 )
                 return 2
 
+            if "selected_test_names" not in meta:
+                print(
+                    f"Error: missing selected_test_names in {meta_path}",
+                    file=sys.stderr,
+                )
+                return 2
+
             raw_selected_names = meta.get("selected_test_names")
+            if not isinstance(raw_selected_names, dict):
+                print(
+                    f"Error: selected_test_names in {meta_path} must be a dict, got {type(raw_selected_names).__name__}",
+                    file=sys.stderr,
+                )
+                return 2
+
+            selected_names: dict[str, list[str]] = {}
+            for k, v in raw_selected_names.items():
+                norm_k = normalize_inventory_key(k) if isinstance(k, str) else None
+                if not norm_k:
+                    print(
+                        f"Error: invalid test file key {k!r} in {meta_path} selected_test_names",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if not isinstance(v, list) or not v:
+                    print(
+                        f"Error: invalid or empty testcase names list for {norm_k} in {meta_path} selected_test_names",
+                        file=sys.stderr,
+                    )
+                    return 2
+                for tc_item in v:
+                    if not isinstance(tc_item, str) or not tc_item.strip():
+                        print(
+                            f"Error: invalid testcase name {tc_item!r} in {norm_k} in {meta_path} selected_test_names",
+                            file=sys.stderr,
+                        )
+                        return 2
+                if len(v) != len(set(v)):
+                    print(
+                        f"Error: duplicate testcase names found for {norm_k} in {meta_path} selected_test_names",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if len(v) != selected_counts.get(norm_k):
+                    print(
+                        f"Error: testcase count mismatch for {norm_k} in {meta_path}: "
+                        f"selected_test_counts has {selected_counts.get(norm_k)}, "
+                        f"selected_test_names has {len(v)}",
+                        file=sys.stderr,
+                    )
+                    return 2
+                selected_names[norm_k] = v
+
+            if set(selected_names.keys()) != selected_set:
+                diff = set(selected_names.keys()) ^ selected_set
+                sample = ", ".join(sorted(diff)[:5])
+                print(
+                    f"Error: mismatch between selected_files and selected_test_names in {meta_path}: {sample}",
+                    file=sys.stderr,
+                )
+                return 2
+
             shard_sidecars.append(
                 ShardSidecarInfo(
                     report_path=p,
                     shard_str=shard_str,
                     selected_files=selected_set,
                     selected_test_counts=selected_counts,
-                    selected_test_names=raw_selected_names if isinstance(raw_selected_names, dict) else None,
+                    selected_test_names=selected_names,
                 )
             )
 
@@ -799,7 +867,7 @@ def main() -> int:
             shard_str = s_info.shard_str
             selected_set = s_info.selected_files
             selected_counts = s_info.selected_test_counts
-            raw_selected_names = s_info.selected_test_names
+            selected_names = s_info.selected_test_names
             try:
                 shard_details = parse_junit_xml_details(p, repo_root=repo_root, strict=True)
             except Exception as e:
@@ -834,28 +902,25 @@ def main() -> int:
                     )
                     return 2
 
-            if raw_selected_names is not None:
-                for f_key, expected_names in raw_selected_names.items():
-                    norm_f = normalize_inventory_key(f_key) if isinstance(f_key, str) else None
-                    if norm_f and isinstance(expected_names, list) and norm_f in selected_set:
-                        reported_names = set(shard_details.file_testcases.get(norm_f, []))
-                        expected_set = set(expected_names)
-                        if reported_names != expected_set:
-                            missing_tcs = expected_set - reported_names
-                            extra_tcs = reported_names - expected_set
-                            if missing_tcs:
-                                sample = ", ".join(sorted(missing_tcs)[:5])
-                                print(
-                                    f"Error: shard report {p} missing expected testcases in {norm_f}: {sample}",
-                                    file=sys.stderr,
-                                )
-                            if extra_tcs:
-                                sample = ", ".join(sorted(extra_tcs)[:5])
-                                print(
-                                    f"Error: shard report {p} contains unexpected testcases in {norm_f}: {sample}",
-                                    file=sys.stderr,
-                                )
-                            return 2
+            for norm_f, expected_names in selected_names.items():
+                reported_names = set(shard_details.file_testcases.get(norm_f, []))
+                expected_set = set(expected_names)
+                if reported_names != expected_set:
+                    missing_tcs = expected_set - reported_names
+                    extra_tcs = reported_names - expected_set
+                    if missing_tcs:
+                        sample = ", ".join(sorted(missing_tcs)[:5])
+                        print(
+                            f"Error: shard report {p} missing expected testcases in {norm_f}: {sample}",
+                            file=sys.stderr,
+                        )
+                    if extra_tcs:
+                        sample = ", ".join(sorted(extra_tcs)[:5])
+                        print(
+                            f"Error: shard report {p} contains unexpected testcases in {norm_f}: {sample}",
+                            file=sys.stderr,
+                        )
+                    return 2
 
             all_skipped_only_files.update(shard_details.skipped_only_files)
 

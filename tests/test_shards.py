@@ -9,6 +9,7 @@ module, not production code) and touch no filesystem.
 from pathlib import Path
 import tempfile
 import json
+import os
 
 import pytest
 
@@ -632,6 +633,7 @@ def _create_shard_report(
     include_collected_files: bool = True,
     selected_files: list[str] | None = None,
     selected_test_counts: dict[str, int] | None = None,
+    selected_test_names: dict[str, list[str]] | None = None,
     include_selected_metadata: bool = True,
     xml_testcases: list[dict[str, object]] | None = None,
 ) -> Path:
@@ -696,6 +698,36 @@ def _create_shard_report(
             for tc in testcases:
                 counts[tc[0]] = counts.get(tc[0], 0) + 1
             meta["selected_test_counts"] = counts
+
+        if selected_test_names is not None:
+            meta["selected_test_names"] = selected_test_names
+        else:
+            names: dict[str, list[str]] = {}
+            if xml_testcases is not None:
+                for tc in xml_testcases:
+                    fk = str(tc.get("file", "tests/test_a.py"))
+                    tn = str(tc.get("name", Path(fk).stem))
+                    cn = str(tc.get("classname", ""))
+                    fmod = fk.replace("/", ".").removesuffix(".py")
+                    if cn and cn.startswith(fmod + "."):
+                        cls_part = cn[len(fmod) + 1 :].replace(".", "::")
+                        ident = f"{cls_part}::{tn}"
+                    else:
+                        ident = tn
+                    names.setdefault(fk, []).append(ident)
+            elif testcases:
+                tc_file_counts = {}
+                for file_key, _ in testcases:
+                    tc_file_counts[file_key] = tc_file_counts.get(file_key, 0) + 1
+                tc_file_seen = {}
+                for file_key, _ in testcases:
+                    tc_file_seen[file_key] = tc_file_seen.get(file_key, 0) + 1
+                    if tc_file_counts[file_key] > 1:
+                        tn = f"{Path(file_key).stem}_{tc_file_seen[file_key]}"
+                    else:
+                        tn = Path(file_key).stem
+                    names.setdefault(file_key, []).append(tn)
+            meta["selected_test_names"] = names
 
     meta_file = shard_dir / "pytest-meta.json"
     meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
@@ -857,6 +889,7 @@ def test_authoritative_regeneration_rejects_malformed_xml_timing(tmp_path, monke
         "collected_files": ["tests/test_a.py"],
         "selected_files": ["tests/test_a.py"],
         "selected_test_counts": {"tests/test_a.py": 1},
+        "selected_test_names": {"tests/test_a.py": ["test_a"]},
     }
     (s1_dir / "pytest-meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
@@ -1298,6 +1331,7 @@ def test_authoritative_regeneration_rejects_incomplete_testcase_execution(tmp_pa
         testcases=[("tests/test_a.py", 1.0)],
         selected_files=["tests/test_a.py"],
         selected_test_counts={"tests/test_a.py": 2},
+        selected_test_names={"tests/test_a.py": ["test_one", "test_two"]},
         collected_files=["tests/test_a.py", "tests/test_b.py"],
     )
     r2 = _create_shard_report(
@@ -1586,6 +1620,7 @@ def test_authoritative_regeneration_rejects_duplicate_testcase_replacing_another
         ],
         selected_files=["tests/test_a.py"],
         selected_test_counts={"tests/test_a.py": 2},
+        selected_test_names={"tests/test_a.py": ["test_one", "test_two"]},
         collected_files=["tests/test_a.py", "tests/test_b.py"],
     )
     r2 = _create_shard_report(
@@ -1605,3 +1640,430 @@ def test_authoritative_regeneration_rejects_duplicate_testcase_replacing_another
     ])
     # Must reject with code 2 due to duplicate testcase detection
     assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_missing_selected_test_names(tmp_path, monkeypatch):
+    """P2: Reject authoritative report missing selected_test_names in sidecar."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    # Remove selected_test_names from s1 sidecar
+    s1_meta = tmp_path / "s1" / "pytest-meta.json"
+    meta = json.loads(s1_meta.read_text(encoding="utf-8"))
+    del meta["selected_test_names"]
+    s1_meta.write_text(json.dumps(meta), encoding="utf-8")
+
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_invalid_selected_test_names_type(tmp_path, monkeypatch):
+    """P2: Reject authoritative report where selected_test_names is not a dict."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    s1_meta = tmp_path / "s1" / "pytest-meta.json"
+    meta = json.loads(s1_meta.read_text(encoding="utf-8"))
+    meta["selected_test_names"] = ["test_a"]
+    s1_meta.write_text(json.dumps(meta), encoding="utf-8")
+
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_missing_or_unexpected_file_in_selected_test_names(tmp_path, monkeypatch):
+    """P2: Reject authoritative report when keys in selected_test_names do not match selected_files."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # Case 1: Missing file key in selected_test_names
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        selected_test_names={},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+    # Case 2: Extra file key in selected_test_names
+    s1_meta = tmp_path / "s1" / "pytest-meta.json"
+    meta = json.loads(s1_meta.read_text(encoding="utf-8"))
+    meta["selected_test_names"] = {
+        "tests/test_a.py": ["test_a"],
+        "tests/test_extra.py": ["test_extra"],
+    }
+    s1_meta.write_text(json.dumps(meta), encoding="utf-8")
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_empty_or_invalid_testcase_names(tmp_path, monkeypatch):
+    """P2: Reject authoritative report with empty lists, non-string, or empty string test names."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    s1_meta = tmp_path / "s1" / "pytest-meta.json"
+    meta = json.loads(s1_meta.read_text(encoding="utf-8"))
+
+    # Empty list
+    meta["selected_test_names"] = {"tests/test_a.py": []}
+    s1_meta.write_text(json.dumps(meta), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+    # Non-string element
+    meta["selected_test_names"] = {"tests/test_a.py": [123]}
+    s1_meta.write_text(json.dumps(meta), encoding="utf-8")
+    assert main() == 2
+
+    # Empty string element
+    meta["selected_test_names"] = {"tests/test_a.py": ["   "]}
+    s1_meta.write_text(json.dumps(meta), encoding="utf-8")
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_duplicate_testcase_in_sidecar_names(tmp_path, monkeypatch):
+    """P2: Reject authoritative report where selected_test_names contains duplicate test names."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 2},
+        selected_test_names={"tests/test_a.py": ["test_same", "test_same"]},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_count_and_names_length_mismatch(tmp_path, monkeypatch):
+    """P2: Reject authoritative report where selected_test_counts disagrees with selected_test_names length."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[("tests/test_a.py", 1.0)],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 2},
+        selected_test_names={"tests/test_a.py": ["test_single"]},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_rejects_name_discrepancy_between_junit_xml_and_sidecar(tmp_path, monkeypatch):
+    """P2: Reject authoritative report when reported JUnit test names differ from expected names even when counts match."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    # XML report has test_reported, sidecar expects test_expected (both count=1)
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[],
+        xml_testcases=[
+            {"file": "tests/test_a.py", "name": "test_reported", "time": 1.0},
+        ],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        selected_test_names={"tests/test_a.py": ["test_expected"]},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+
+
+def test_authoritative_regeneration_preserves_manifest_on_identity_failure(tmp_path, monkeypatch):
+    """P2: Any testcase identity failure must preserve existing manifest without modification."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    manifest_path = tests_dir / ".shard_durations.json"
+    initial_content = json.dumps({"version": 1, "durations": {"tests/test_preserved.py": 4.567}})
+    manifest_path.write_text(initial_content, encoding="utf-8")
+
+    (tests_dir / "test_a.py").touch()
+    (tests_dir / "test_b.py").touch()
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[],
+        xml_testcases=[
+            {"file": "tests/test_a.py", "name": "test_mismatch", "time": 1.0},
+        ],
+        selected_files=["tests/test_a.py"],
+        selected_test_counts={"tests/test_a.py": 1},
+        selected_test_names={"tests/test_a.py": ["test_expected"]},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_b.py", 2.0)],
+        selected_files=["tests/test_b.py"],
+        selected_test_counts={"tests/test_b.py": 1},
+        collected_files=["tests/test_a.py", "tests/test_b.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 2
+    assert manifest_path.read_text(encoding="utf-8") == initial_content
+
+
+def test_collection_export_isolated_from_non_shard_runs(tmp_path, monkeypatch):
+    """P2: Verify collection export only runs under sharding and pops environment variable."""
+    from tests.conftest import pytest_collection_modifyitems
+
+    export_target = tmp_path / "pytest-collection.json"
+    monkeypatch.setenv("PYTEST_COLLECTION_EXPORT", str(export_target))
+
+    class FakeItem:
+        def __init__(self, path_str: str, name: str):
+            self.path = Path(path_str)
+            self.fspath = path_str
+            self.name = name
+            self.nodeid = f"{path_str}::{name}"
+        def get_closest_marker(self, name):
+            return None
+        def add_marker(self, marker):
+            pass
+
+    class FakeConfig:
+        rootpath = tmp_path
+        def getoption(self, name):
+            if name == "shard":
+                return None  # No shard specified (e.g. child focus run)
+            return None
+
+    items = [FakeItem(str(tmp_path / "tests" / "test_a.py"), "test_one")]
+
+    # When no --shard is passed, export must NOT run
+    pytest_collection_modifyitems(FakeConfig(), items)
+    assert not export_target.exists()
+
+    # Now simulate shard execution (--shard 1/2)
+    class FakeShardConfig:
+        rootpath = tmp_path
+        def getoption(self, name):
+            if name == "shard":
+                return "1/2"
+            return None
+        class hook:
+            @staticmethod
+            def pytest_deselected(items):
+                pass
+
+    monkeypatch.setenv("PYTEST_COLLECTION_EXPORT", str(export_target))
+    pytest_collection_modifyitems(FakeShardConfig(), items)
+
+    # Export file must be created
+    assert export_target.exists()
+    data = json.loads(export_target.read_text(encoding="utf-8"))
+    assert "selected_test_names" in data
+    assert data["selected_test_names"] == {"tests/test_a.py": ["test_one"]}
+    # PYTEST_COLLECTION_EXPORT must be popped from os.environ
+    assert "PYTEST_COLLECTION_EXPORT" not in os.environ
+
+
+def test_authoritative_regeneration_supports_class_based_tests_with_identical_method_names(tmp_path, monkeypatch):
+    """P2: Verify class-based tests with identical method names reconcile via class qualification."""
+    from scripts.generate_shard_durations import main
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_classes.py").touch()
+    (tests_dir / "test_other.py").touch()
+    manifest_path = tests_dir / ".shard_durations.json"
+
+    r1 = _create_shard_report(
+        tmp_path / "s1", "1/2",
+        testcases=[],
+        xml_testcases=[
+            {"file": "tests/test_classes.py", "classname": "tests.test_classes.TestOne", "name": "test_dup", "time": 1.0},
+            {"file": "tests/test_classes.py", "classname": "tests.test_classes.TestTwo", "name": "test_dup", "time": 1.5},
+        ],
+        selected_files=["tests/test_classes.py"],
+        selected_test_counts={"tests/test_classes.py": 2},
+        selected_test_names={"tests/test_classes.py": ["TestOne::test_dup", "TestTwo::test_dup"]},
+        collected_files=["tests/test_classes.py", "tests/test_other.py"],
+    )
+    r2 = _create_shard_report(
+        tmp_path / "s2", "2/2",
+        testcases=[("tests/test_other.py", 2.0)],
+        selected_files=["tests/test_other.py"],
+        selected_test_counts={"tests/test_other.py": 1},
+        collected_files=["tests/test_classes.py", "tests/test_other.py"],
+    )
+
+    monkeypatch.setattr("sys.argv", [
+        "generate_shard_durations.py",
+        "--input", str(r1), str(r2),
+        "--authoritative",
+        "--expected-shards", "2",
+        "--output", str(manifest_path),
+        "--repo-root", str(tmp_path),
+    ])
+    assert main() == 0
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "tests/test_classes.py" in data["durations"]
+    assert data["durations"]["tests/test_classes.py"] == 2.5
