@@ -36,6 +36,10 @@ import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
+import {
+  MODEL_DOWNLOAD_COMPLETED_EVENT,
+  modelDownloadMatchesTarget,
+} from './cookbookModelCache.js';
 
 // Map a serve-backend code (vllm / sglang / llamacpp / mlx) → the package name
 // the Dependencies API reports. Used to look up "is this backend installed
@@ -164,6 +168,7 @@ export let _cachedModelIds = null; // repo IDs already downloaded
 // after the user has switched servers.
 let _hwfitFetchToken = 0;
 let _hwfitRequestController = null;
+let _cachedModelIdsFetchToken = 0;
 let _dismissedHwChips = new Set();
 // Permanently removed (X-clicked) chips. Separate from _dismissedHwChips
 // so the ranker treats "off" and "removed" the same (both ignore the
@@ -702,6 +707,76 @@ function _ollamaToHwfitRows(libModels, vramAvail, ramAvail) {
   return out;
 }
 
+function _cachedModelIdMatches(name) {
+  if (!_cachedModelIds) return false;
+  const value = String(name || '');
+  const short = value.split('/').pop();
+  return _cachedModelIds.has(value)
+    || [..._cachedModelIds].some(id => id === value || id.endsWith('/' + short));
+}
+
+function _renderCachedModelMarkers() {
+  const list = document.getElementById('hwfit-list');
+  if (!list) return;
+  list.querySelectorAll('.hwfit-dl-dot').forEach(dot => dot.remove());
+  list.querySelectorAll('.hwfit-row[data-model]').forEach(row => {
+    if (!_cachedModelIdMatches(row.dataset.model)) return;
+    const nameEl = row.querySelector('.hwfit-name');
+    if (nameEl) {
+      nameEl.insertAdjacentHTML('beforeend', '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>');
+    }
+  });
+}
+
+export async function _refreshCachedModelIds({ force = false } = {}) {
+  const remoteKey = _currentServerValue();
+  const remoteHost = _envState.remoteHost || '';
+  if (!force && _cachedModelIds && _lastCacheHost() === remoteKey) return _cachedModelIds;
+
+  const fetchToken = ++_cachedModelIdsFetchToken;
+  const cacheServer = _serverByVal(_envState.remoteServerKey || remoteHost);
+  const params = new URLSearchParams();
+  if (remoteHost) {
+    params.set('host', remoteHost);
+    if (cacheServer?.port) params.set('ssh_port', cacheServer.port);
+    if (cacheServer?.platform) params.set('platform', cacheServer.platform);
+  }
+
+  try {
+    const response = await _fetchHwfitWithTimeout(`/api/model/cached?${params}`, { credentials: 'same-origin' }, 20000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (data && data.error) throw new Error(data.error);
+    if (fetchToken !== _cachedModelIdsFetchToken || _currentServerValue() !== remoteKey) return null;
+    // Exclude stalled (download-shell) entries — a 12 KB README-only folder
+    // should not count as downloaded in the Scan/Download list.
+    _cachedModelIds = new Set((data.models || [])
+      .filter(model => model.status !== 'stalled')
+      .map(model => model.repo_id));
+    _setLastCacheHost(remoteKey);
+    _renderCachedModelMarkers();
+    return _cachedModelIds;
+  } catch (error) {
+    if (fetchToken === _cachedModelIdsFetchToken && _currentServerValue() === remoteKey) {
+      _setLastCacheHost(null);
+      console.warn('Cached model marker scan failed:', error);
+    }
+    throw error;
+  }
+}
+
+function _onModelDownloadCompleted(event) {
+  const target = { host: _envState.remoteHost || '', serverKey: _currentServerValue() };
+  if (!modelDownloadMatchesTarget(event?.detail, target)) return;
+  _cachedModelIds = null;
+  _setLastCacheHost(null);
+  _refreshCachedModelIds({ force: true }).catch(() => {});
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener(MODEL_DOWNLOAD_COMPLETED_EVENT, _onModelDownloadCompleted);
+}
+
 export async function _hwfitFetch(fresh = false, opts = {}) {
   const _tk = ++_hwfitFetchToken;
   _hwfitRequestController?.abort();
@@ -792,46 +867,9 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     try { wp.destroy(); } catch {}
     return;
   }
-  // Only fetch cached model IDs when server changes, not on every search/sort
-  const remoteKey = _currentServerValue();
-  if (!_cachedModelIds || _lastCacheHost() !== remoteKey) {
-    const _cacheFetchToken = _tk;
-    const _cacheSrv = _serverByVal(_envState.remoteServerKey || remoteHost);
-    const _cachePort = _cacheSrv?.port || '';
-    const _cacheParams = new URLSearchParams();
-    if (remoteHost) {
-      _cacheParams.set('host', remoteHost);
-      if (_cachePort) _cacheParams.set('ssh_port', _cachePort);
-      if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
-    }
-    _fetchHwfitWithTimeout(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' }, 20000)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then(d => {
-        if (_cacheFetchToken !== _hwfitFetchToken) return;
-        if (d && d.error) throw new Error(d.error);
-        // Exclude stalled (download-shell) entries — a 12 KB README-only
-        // folder shouldn't count as "downloaded" in the Scan/Download list.
-        _cachedModelIds = new Set((d.models || []).filter(m => m.status !== 'stalled').map(m => m.repo_id));
-        _setLastCacheHost(remoteKey);
-        // Re-mark rows if already rendered
-        list.querySelectorAll('.hwfit-row[data-model]').forEach(row => {
-          const name = row.dataset.model;
-          if (_cachedModelIds.has(name) || [..._cachedModelIds].some(id => id.endsWith('/' + name?.split('/').pop()))) {
-            const nameEl = row.querySelector('.hwfit-name');
-            if (nameEl && !nameEl.querySelector('.hwfit-dl-dot')) {
-              nameEl.insertAdjacentHTML('beforeend', '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>');
-            }
-          }
-        });
-      }).catch((err) => {
-        if (_cacheFetchToken !== _hwfitFetchToken) return;
-        console.warn('Cached model marker scan failed:', err);
-        _setLastCacheHost('');
-      });
-  }
+  // Only fetch cached model IDs when the server changes. Download completion
+  // forces this lightweight marker scan without repeating the hardware scan.
+  _refreshCachedModelIds().catch(() => {});
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'newest';
     const quantPref = document.getElementById('hwfit-quant')?.value || '';
@@ -1467,7 +1505,7 @@ export function _hwfitRenderList(el, models) {
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
-    const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
+    const dlDot = _cachedModelIdMatches(m.name) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
     // Append quant to the title when it's not already in the repo name. The
