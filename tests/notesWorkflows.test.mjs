@@ -104,6 +104,75 @@ test('submission preserves top ordering, server ID replacement and newer draft r
   assert.equal(renders, 2);
 });
 
+function pendingSubmissions() {
+  const app = owner([]), values = new Map(), requests = [];
+  let id = 0;
+  const persistence = createNotesPersistence({ storage: {
+    getItem: key => values.get(key), setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key),
+  } });
+  const submission = createNotesSubmission({
+    app, persistence, clock: { now: () => 0 }, uid: () => String(++id),
+    api: { saveNote: payload => new Promise(resolve => requests.push({ payload, resolve })) },
+    effects: { render() {}, showError() {} }, fetchNotes: async () => {},
+  });
+  return { app, submission, uidCount: () => id,
+    resolve(index) { requests[index].resolve({ ...requests[index].payload, id: 'server-' + index }); },
+  };
+}
+
+for (const order of [[0, 1], [1, 0]]) {
+  test(`overlapping create responses preserve each pending note (${order.join(',')})`, async () => {
+    const h = pendingSubmissions();
+    h.submission.submitNote({ title: 'A', content: 'First' }, null, false);
+    h.submission.submitNote({ title: 'B', content: 'Second' }, null, false);
+    const pending = h.app.state.notes.map(note => ({ ...note }));
+    h.resolve(order[0]); await drain();
+    const other = pending.find(note => note.title === (order[1] === 0 ? 'A' : 'B'));
+    assert.deepEqual(h.app.state.notes.find(note => note.id === other.id), other);
+    assert.equal(h.app.state.notes.find(note => note.id === 'server-' + order[0]).title, order[0] === 0 ? 'A' : 'B');
+    h.resolve(order[1]); await drain();
+    assert.equal(h.app.state.notes.length, 2);
+    assert.equal(h.app.state.notes.find(note => note.id === 'server-0').content, 'First');
+    assert.equal(h.app.state.notes.find(note => note.id === 'server-1').content, 'Second');
+  });
+}
+
+test('same-titled submissions retain their distinct content while another save is pending', async () => {
+  const h = pendingSubmissions();
+  h.submission.submitNote({ title: 'Same', content: 'First' }, null, false);
+  h.submission.submitNote({ title: 'Same', content: 'Second' }, null, false);
+  h.resolve(0); await drain();
+  assert.equal(h.app.state.notes.find(note => note.id === 'tmp_2')?.content, 'Second');
+  assert.equal(h.app.state.notes.find(note => note.id === 'server-0')?.content, 'First');
+  h.resolve(1); await drain();
+  assert.equal(h.app.state.notes.find(note => note.id === 'server-1').content, 'Second');
+});
+
+test('a removed create placeholder does not redirect its response into another pending note', async () => {
+  const h = pendingSubmissions();
+  h.submission.submitNote({ title: 'A' }, null, false);
+  h.submission.submitNote({ title: 'B' }, null, false);
+  h.app.replaceNotes(h.app.state.notes.filter(note => note.id !== 'tmp_1'));
+  h.resolve(0); await drain();
+  assert.deepEqual(h.app.state.notes.map(note => [note.id, note.title]), [['tmp_2', 'B']]);
+  h.resolve(1); await drain();
+  assert.deepEqual(h.app.state.notes.map(note => [note.id, note.title]), [['server-1', 'B']]);
+});
+
+test('editing an existing note does not consume a temporary create identity', async () => {
+  const h = pendingSubmissions();
+  h.app.replaceNotes([{ id: 'existing', title: 'Original' }]);
+  h.submission.submitNote({ id: 'existing', title: 'Edited' }, h.app.state.notes[0], true);
+  h.submission.submitNote({ title: 'New' }, null, false);
+  h.resolve(0); await drain();
+  assert.equal(h.uidCount(), 1);
+  assert.equal(h.app.state.notes.find(note => note.id === 'tmp_1')?.title, 'New');
+  assert.equal(h.app.state.notes.find(note => note.id === 'existing')?.title, 'Edited');
+  h.resolve(1); await drain();
+  assert.equal(h.app.state.notes.find(note => note.id === 'server-1')?.title, 'New');
+});
+
 test('selection can exit only after synchronous acceptance', () => {
   const app = owner([]), order = [];
   app.selectId('a');
