@@ -1676,6 +1676,66 @@ async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
   await session.context.close();
 }
 
+async function testIntegrationClipboard(instance, cookies) {
+  for (const viewport of [{ width: 1280, height: 860 }, { width: 390, height: 844 }]) {
+    const { page, context, errors } = await pageAs(instance, cookies.adminCookie, viewport);
+    try {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: instance.baseUrl });
+      await openSettings(page, 'integrations');
+      await page.click('#unified-intg-add-btn');
+      await page.click('.uf-type-option[data-value="email"]');
+      await page.click('#uf-email-provider-trigger');
+      await page.click('.ufp-option[data-value="gmail"]');
+      const copyLink = page.locator('.uf-prov-copy');
+      const [notice] = await Promise.all([
+        page.waitForRequest(request => (
+          request.method() === 'POST'
+          && new URL(request.url()).pathname === '/api/tasks/notification-logs'
+          && request.postDataJSON()?.body === 'Copied'
+        )),
+        copyLink.click(),
+      ]);
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      check(`provider URL copies and logs success at ${viewport.width}px`,
+        copied === await copyLink.getAttribute('data-url') && notice.postDataJSON().status === 'success');
+      await page.click('#uf-email-cancel');
+
+      if (viewport.width > 768) {
+        await page.click('#unified-intg-add-btn');
+        await page.click('.uf-type-option[data-value="codex"]');
+        await page.fill('#uf-codex-name-input', 'Clipboard regression test');
+        const [created] = await Promise.all([
+          page.waitForResponse(response => new URL(response.url()).pathname === '/api/tokens'
+            && response.request().method() === 'POST'),
+          page.click('#uf-codex-create-btn'),
+        ]);
+        check('agent clipboard test creates a disposable minimum-scope token', created.ok()
+          && /name="scopes"\r\n\r\nchat\r\n/.test(created.request().postData() || ''));
+        await page.waitForSelector('#uf-codex-copy-token');
+        await page.evaluate(() => {
+          navigator.clipboard.writeText = async () => { throw new Error('Clipboard write denied'); };
+          document.execCommand = command => {
+            const field = document.activeElement;
+            window.clipboardFallbackSelected = command === 'copy'
+              && field instanceof HTMLTextAreaElement && field.readOnly
+              && field.selectionStart === 0 && field.selectionEnd === field.value.length;
+            return false;
+          };
+        });
+        await page.click('#uf-codex-copy-token');
+        await page.waitForFunction(() => document.querySelector('#uf-codex-reveal > pre:last-child'));
+        check('denied agent clipboard write preserves manual selection and cleans up the temporary field',
+          await page.evaluate(() => window.clipboardFallbackSelected
+            && !document.querySelector('body > textarea[readonly]')
+            && document.querySelector('#uf-codex-token').textContent === window.getSelection().toString()));
+      }
+      check(`clipboard form interactions have no script errors at ${viewport.width}px`, errors.length === 0, errors.join(' | '));
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 async function testIntegrationForms(instance, cookies) {
   const admin = await pageAs(instance, cookies.adminCookie);
   await openSettings(admin.page, 'integrations');
@@ -2035,6 +2095,7 @@ async function main() {
   await timeScenario('testDelayedAuthorizationResolution', () => testDelayedAuthorizationResolution(authInstance, cookies));
   await timeScenario('testEarlyEndpointRefreshAndRepeatedOpen', () => testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies));
   await timeScenario('testIntegrationForms', () => testIntegrationForms(authInstance, cookies));
+  await timeScenario('testIntegrationClipboard', () => testIntegrationClipboard(authInstance, cookies));
   await timeScenario('testIntegrationsAuthRecovery (admin)', () => testIntegrationsAuthRecovery(authInstance, cookies, { admin: true }));
   await timeScenario('testIntegrationsAuthRecovery (member)', () => testIntegrationsAuthRecovery(authInstance, cookies, { admin: false }));
   await timeScenario('testIntegrationsRapidReopenDuringRecovery', () => testIntegrationsRapidReopenDuringRecovery(authInstance, cookies));

@@ -3,6 +3,8 @@
 // Pure helpers extracted from emailLibrary.js. No DOM state, no fetch,
 // no shared mutable references — safe to import anywhere.
 
+import { compactUrlSchemeValue } from '../shared/domain/urlSchemes.js';
+
 // ── Talon-inspired multilingual quote-detection regexes ───────────
 // Borrowed (loosely) from Mailgun's `talon` library. These are partial
 // regex source strings — combined with surrounding patterns by callers.
@@ -58,12 +60,8 @@ function _attrEsc(text) {
     .replace(/`/g, '&#96;');
 }
 
-function _compactUrlSchemeValue(value) {
-  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
-}
-
 function _isDangerousUrl(value) {
-  const compact = _compactUrlSchemeValue(value);
+  const compact = compactUrlSchemeValue(value);
   return compact.startsWith('javascript:') || compact.startsWith('vbscript:') || compact.startsWith('data:');
 }
 
@@ -221,7 +219,7 @@ function _sanitizeHtmlOnce(html) {
     if (style) {
       const kept = style.split(';').map(s => s.trim()).filter(decl => {
         if (!decl) return false;
-        const lower = _compactUrlSchemeValue(decl);
+        const lower = compactUrlSchemeValue(decl);
         if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:') || lower.includes('expression(')) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
         return !STRIP_CSS_PROPS.includes(prop);

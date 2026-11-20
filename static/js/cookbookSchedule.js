@@ -16,6 +16,8 @@
 // BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py + its
 // registration line in app.py.
 
+import { escapeHtml as esc } from './shared/domain/html.js';
+
 try { (function () {
   function _safe(fn) {
     return function () {
@@ -23,12 +25,6 @@ try { (function () {
       catch (e) { try { console.warn("[cookbookSchedule]", e); } catch (_) {} }
     };
   }
-  function esc(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-
   function fetchWithTimeout(input, init = {}, timeoutMs = 20000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
