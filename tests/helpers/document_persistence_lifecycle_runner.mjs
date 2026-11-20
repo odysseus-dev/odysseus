@@ -778,9 +778,9 @@ async function runWorker() {
 
   let rl;
   let shutdownPromise = null;
-  const shutdown = async (exitCode = 0) => {
+  const shutdown = (exitCode = 0) => {
     if (!shutdownPromise) {
-      shutdownPromise = (async () => {
+      const doShutdown = async () => {
         if (rl) {
           try {
             rl.close();
@@ -790,7 +790,8 @@ async function runWorker() {
           await browser.close();
         } catch (_) {}
         process.exit(exitCode);
-      })();
+      };
+      shutdownPromise = Promise.resolve().then(doShutdown);
     }
     return shutdownPromise;
   };

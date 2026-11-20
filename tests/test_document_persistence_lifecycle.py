@@ -75,8 +75,8 @@ class LifecycleBrowserWorker:
         except (ProcessLookupError, OSError):
             pass
 
-        deadline = time.time() + 0.8
-        while time.time() < deadline:
+        deadline = time.monotonic() + 0.8
+        while time.monotonic() < deadline:
             try:
                 os.killpg(pgid, 0)
                 time.sleep(0.05)
@@ -265,8 +265,8 @@ class LifecycleBrowserWorker:
                 except (ProcessLookupError, OSError):
                     pass
 
-                deadline = time.time() + 0.8
-                while time.time() < deadline:
+                deadline = time.monotonic() + 0.8
+                while time.monotonic() < deadline:
                     try:
                         os.killpg(pgid, 0)
                         time.sleep(0.05)
@@ -531,35 +531,130 @@ def test_worker_cleanup_removes_descendants_when_parent_dies_abruptly():
         "child = subprocess.Popen(['sleep', '30'])\n"
         "sys.stdout.write('{\"status\": \"ready\"}\\n')\n"
         "sys.stdout.flush()\n"
-        "time.sleep(0.1)\n"
+        "time.sleep(0.05)\n"
         "os._exit(0)\n"
     )
     worker = LifecycleBrowserWorker(cmd=[sys.executable, "-c", code])
-    worker.start()
-    saved_pgid = worker._pgid
-    proc = worker._proc
-
-    time.sleep(0.3)
-    assert proc.poll() is not None
-
-    descendant_alive_before = False
     try:
-        os.killpg(saved_pgid, 0)
-        descendant_alive_before = True
-    except (ProcessLookupError, OSError):
+        worker.start()
+        saved_pgid = worker._pgid
+        proc = worker._proc
+
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.02)
+        assert proc.poll() is not None, "Parent process should have exited"
+
         descendant_alive_before = False
-    assert descendant_alive_before is True, "Descendant process should be alive before worker cleanup"
+        try:
+            os.killpg(saved_pgid, 0)
+            descendant_alive_before = True
+        except (ProcessLookupError, OSError):
+            descendant_alive_before = False
+        assert descendant_alive_before is True, "Descendant process should be alive before worker cleanup"
 
-    worker.close()
+        worker.close()
 
-    assert worker._proc is None
-    assert worker._pgid is None
-    assert proc.poll() is not None
+        assert worker._proc is None
+        assert worker._pgid is None
+        assert proc.poll() is not None
 
-    descendant_alive_after = False
-    try:
-        os.killpg(saved_pgid, 0)
-        descendant_alive_after = True
-    except (ProcessLookupError, OSError):
         descendant_alive_after = False
-    assert descendant_alive_after is False, "Descendant process should have been terminated by worker.close()"
+        try:
+            os.killpg(saved_pgid, 0)
+            descendant_alive_after = True
+        except (ProcessLookupError, OSError):
+            descendant_alive_after = False
+        assert descendant_alive_after is False, "Descendant process should have been terminated by worker.close()"
+    finally:
+        worker.close()
+
+
+def test_worker_shutdown_is_idempotent_across_competing_triggers():
+    """Verify Node worker shutdown is idempotent across competing close triggers."""
+    harness = """
+import readline from 'node:readline';
+
+let rl;
+let shutdownPromise = null;
+let browserCloseCount = 0;
+
+const fakeBrowser = {
+  close: async () => {
+    browserCloseCount += 1;
+    await new Promise(r => setTimeout(r, 10));
+  }
+};
+
+const shutdown = (exitCode = 0) => {
+  if (!shutdownPromise) {
+    const doShutdown = async () => {
+      if (rl) {
+        try {
+          rl.close();
+        } catch (_) {}
+      }
+      try {
+        await fakeBrowser.close();
+      } catch (_) {}
+      process.stdout.write(JSON.stringify({ browserCloseCount }) + '\\n');
+      process.exit(exitCode);
+    };
+    shutdownPromise = Promise.resolve().then(doShutdown);
+  }
+  return shutdownPromise;
+};
+
+process.on('SIGTERM', () => { shutdown(0); });
+process.on('SIGINT', () => { shutdown(0); });
+
+rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false,
+});
+
+rl.on('close', () => {
+  shutdown(0);
+});
+
+rl.on('line', async (line) => {
+  const msg = JSON.parse(line.trim());
+  if (msg.action === 'close') {
+    const p1 = shutdown(0);
+    const p2 = shutdown(0);
+    process.emit('SIGTERM');
+    rl.close();
+    await Promise.all([p1, p2]);
+  }
+});
+
+process.stdout.write(JSON.stringify({ status: 'ready' }) + '\\n');
+"""
+    proc = subprocess.Popen(
+        ["node", "--input-type=module", "-e", harness],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        ready_line = proc.stdout.readline()
+        assert json.loads(ready_line.strip())["status"] == "ready"
+
+        proc.stdin.write(json.dumps({"action": "close"}) + "\n")
+        proc.stdin.flush()
+
+        result_line = proc.stdout.readline()
+        result = json.loads(result_line.strip())
+        assert result["browserCloseCount"] == 1, f"Expected exactly 1 browser.close() invocation, got {result['browserCloseCount']}"
+
+        proc.wait(timeout=2.0)
+        assert proc.returncode == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=1.0)
