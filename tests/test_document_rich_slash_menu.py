@@ -157,7 +157,7 @@ def test_slash_menu_filters_converts_blocks_inserts_tables_and_fits_mobile():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

@@ -109,7 +109,7 @@ def test_typing_markers_converts_blocks_and_preserves_following_text():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {

@@ -18,7 +18,7 @@ def _run_node(script: str):
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)

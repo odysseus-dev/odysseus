@@ -271,7 +271,7 @@ def results():
     proc = subprocess.run(
         ["node", "--input-type=module", "-e", _HARNESS],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
     )
     assert proc.returncode == 0, f"node harness failed:\n{proc.stderr}"

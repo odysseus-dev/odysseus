@@ -15,6 +15,6 @@ def test_notes_domain_application_infrastructure_and_compatibility_contracts():
     result = subprocess.run(
         ["node", "--test", *[f"tests/{name}.test.mjs" for name in files]], cwd=ROOT,
         env=dict(os.environ, ENDPOINT_URL="http://127.0.0.1:1"),
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr

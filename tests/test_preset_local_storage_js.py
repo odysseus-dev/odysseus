@@ -34,7 +34,7 @@ def _load_values():
         ["node", "--input-type=module"],
         input=js,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )

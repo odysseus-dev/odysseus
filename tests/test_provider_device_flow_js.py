@@ -17,7 +17,7 @@ def _run_node(script: str):
         ["node", "--input-type=module"],
         input=script,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )

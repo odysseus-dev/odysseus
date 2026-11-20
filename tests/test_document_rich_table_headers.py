@@ -121,7 +121,7 @@ def test_mobile_header_row_and_column_toggle_independently_with_undo():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
