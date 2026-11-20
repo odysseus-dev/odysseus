@@ -285,22 +285,22 @@ export function _replaceFindAll() {
   const ta = _getTextarea();
   let count = 0;
   if (rich) {
-    const clone = rich.cloneNode(true);
-    const ranges = _buildRichFindRanges(clone, query);
+    const ranges = _buildRichFindRanges(rich, query);
     count = ranges.length;
     if (count) {
-      [...ranges].reverse().forEach(range => {
-        range.deleteContents();
-        range.insertNode(document.createTextNode(replacement));
-      });
       _clearRichFindHighlights();
-      const selection = window.getSelection();
-      const wholeDocument = document.createRange();
-      wholeDocument.selectNodeContents(rich);
-      selection.removeAllRanges();
-      selection.addRange(wholeDocument);
       rich.focus();
-      document.execCommand('insertHTML', false, clone.innerHTML);
+      const selection = window.getSelection();
+      // Replace each match in place, last first, with native text insertion.
+      // Re-inserting the whole body as HTML let the browser carry the first
+      // block's formatting (for example a heading) into every following block;
+      // per-match insertion keeps every block intact and stays on the native
+      // undo stack (one step per replacement).
+      [...ranges].reverse().forEach(range => {
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.execCommand('insertText', false, replacement);
+      });
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
     }

@@ -125,3 +125,6 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Real-application browser validation reports (scripts/run_real_playwright_validation.py)
+/artifacts/

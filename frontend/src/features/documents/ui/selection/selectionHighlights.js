@@ -7,6 +7,7 @@ import { activeDocId, docs } from '../../application/documentState.js';
 import { _isRichTextLang } from '../../domain/documentKinds.js';
 import { _ensureDocPaneMounted, loadDocument } from '../documentFlows.js';
 import { _emailRichbodyActive } from '../richEditor/richBodySync.js';
+import { isMarkdownVisualModeActive } from '../richEditor/markdownVisualSync.js';
 import { _scheduleDocumentStats } from '../status/documentStatus.js';
 
 export let _selections = [];
@@ -67,7 +68,8 @@ export function updateRichSelectionState(rich) {
     const fullText = _richRootText(rich);
     const startLine = fullText.slice(0, start).split('\n').length;
     const endLine = fullText.slice(0, end).split('\n').length;
-    const entry = { kind: 'rich', text: selectedText, startLine, endLine, start, end };
+    const docId = activeDocId;
+    const entry = { kind: 'rich', text: selectedText, startLine, endLine, start, end, docId };
     const overlapIdx = _selections.findIndex(s => s.kind === 'rich' && (
       (start >= s.start && start <= s.end) || (end >= s.start && end <= s.end)
       || (start <= s.start && end >= s.end)
@@ -145,6 +147,10 @@ export function updateSelectionState() {
 
 function showSelectionBadge() {
     let badge = document.getElementById('doc-selection-badge');
+    if (isMarkdownVisualModeActive()) {
+      if (badge) badge.style.display = 'none';
+      return;
+    }
     if (!badge) {
       badge = document.createElement('span');
       badge.id = 'doc-selection-badge';
@@ -229,6 +235,7 @@ function _validateSelections(text) {
     const richText = rich ? _richRootText(rich) : '';
     const survivors = [];
     for (const s of _selections) {
+      if (s.docId && activeDocId && s.docId !== activeDocId) continue;
       const captured = s.text || '';
       if (!captured) continue;
       const source = s.kind === 'rich' ? richText : text;
@@ -293,27 +300,29 @@ function renderAllSelectionHighlights() {
           CSS.highlights.set(_richSelectionHighlightName, new Highlight(...richRanges));
         }
       } catch (_) {}
-      const richSelections = _selections.filter(s => s.kind === 'rich');
-      richRanges.forEach((range, rangeIndex) => {
-        const rects = Array.from(range.getClientRects());
-        const rect = rects[rects.length - 1];
-        if (!rect || (!rect.width && !rect.height)) return;
-        const clearBtn = document.createElement('button');
-        clearBtn.type = 'button';
-        clearBtn.className = 'doc-selection-rich-clear';
-        clearBtn.title = 'Remove this selection';
-        clearBtn.setAttribute('aria-label', 'Remove this selection');
-        clearBtn.textContent = '×';
-        clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
-        clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
-        const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
-        clearBtn.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          clearSelectionAt(selectionIndex);
+      if (!isMarkdownVisualModeActive()) {
+        const richSelections = _selections.filter(s => s.kind === 'rich');
+        richRanges.forEach((range, rangeIndex) => {
+          const rects = Array.from(range.getClientRects());
+          const rect = rects[rects.length - 1];
+          if (!rect || (!rect.width && !rect.height)) return;
+          const clearBtn = document.createElement('button');
+          clearBtn.type = 'button';
+          clearBtn.className = 'doc-selection-rich-clear';
+          clearBtn.title = 'Remove this selection';
+          clearBtn.setAttribute('aria-label', 'Remove this selection');
+          clearBtn.textContent = '×';
+          clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
+          clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
+          const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
+          clearBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            clearSelectionAt(selectionIndex);
+          });
+          document.body.appendChild(clearBtn);
         });
-        document.body.appendChild(clearBtn);
-      });
+      }
     }
     const sourceSelections = _selections.filter(s => s.kind !== 'rich');
     if (_selections.length === 0) { showSelectionBadge(); return; }
@@ -488,6 +497,13 @@ function clearSelectionAt(index) {
   }
 
 export function getSelectionContext() {
+    // Markdown Visual mode reads the live selection on demand. Other editors keep
+    // sending only selections they recorded, so a selection the user cleared is
+    // never resurrected from the surviving browser highlight.
+    if (_selections.length === 0 && isMarkdownVisualModeActive()) {
+      const rich = _emailRichbodyActive();
+      if (rich) updateRichSelectionState(rich);
+    }
     if (_selections.length === 0) return null;
     // Re-anchor / drop stale selections before handing them to chat —
     // shipping text from a stale offset would mean the AI sees content
@@ -513,7 +529,7 @@ export async function restoreSelectionReference(reference, options = {}) {
 
     _ensureDocPaneMounted();
     const doc = docs.get(activeDocId);
-    const rich = _isRichTextLang(doc.language) ? _emailRichbodyActive() : null;
+    const rich = (_isRichTextLang(doc.language) || isMarkdownVisualModeActive()) ? _emailRichbodyActive() : null;
     const textarea = document.getElementById('doc-editor-textarea');
     const source = rich ? _richRootText(rich) : (textarea?.value || doc.content || '');
     const supplied = Array.isArray(options.selections)

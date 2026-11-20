@@ -288,6 +288,10 @@
       "deployment": "js/document/ui/richEditor/links.js"
     },
     {
+      "source": "features/documents/ui/richEditor/markdownVisualSync.js",
+      "deployment": "js/document/ui/richEditor/markdownVisualSync.js"
+    },
+    {
       "source": "features/documents/ui/richEditor/richBodySync.js",
       "deployment": "js/document/ui/richEditor/richBodySync.js"
     },
@@ -354,6 +358,18 @@
     {
       "source": "features/documents/domain/richTextRules.js",
       "deployment": "js/document/domain/richTextRules.js"
+    },
+    {
+      "source": "features/documents/domain/markdownVisualCodec.js",
+      "deployment": "js/document/domain/markdownVisualCodec.js"
+    },
+    {
+      "source": "features/documents/domain/sourceSegmentation.js",
+      "deployment": "js/document/domain/sourceSegmentation.js"
+    },
+    {
+      "source": "features/documents/domain/sourceFidelity.js",
+      "deployment": "js/document/domain/sourceFidelity.js"
     },
     {
       "source": "features/documents/application/documentCommands.js",

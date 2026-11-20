@@ -10,6 +10,7 @@ import { activeDocId, docs } from '../../application/documentState.js';
 import { _htmlToPlainText, _isRichTextLang } from '../../domain/documentKinds.js';
 import { _normalizeRichLinkUrl, _isRichInlineCodeMarker } from '../../domain/richTextRules.js';
 import { _buildEmailContent, _parseEmailHeader } from '../../domain/emailMessage.js';
+import { isVisualMarkdownDoc, syncVisualMarkdownToDoc } from './markdownVisualSync.js';
 
 export function _emailPlainTextToHtml(text) {
     const d = document.createElement('div');
@@ -83,6 +84,10 @@ export function _syncEmailRichbody(rich) {
       ta.value = html;
       doc.content = html;
       _syncRichEmptyImport(rich);
+      return;
+    }
+    if (doc && isVisualMarkdownDoc(doc) && rich.classList.contains('markdown-visual-mode')) {
+      syncVisualMarkdownToDoc(rich, { doc });
       return;
     }
     ta.value = rich.innerText;

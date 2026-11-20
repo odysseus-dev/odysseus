@@ -17,6 +17,7 @@ let _diffNewContent = null;
 let _diffChunks = [];          // [{id, oldLines, newLines, startLine, resolved, accepted}]
 let _diffUnresolvedCount = 0;
 let _currentChunkIndex = -1;
+let _diffHiddenVisualMode = false;
 
 let _deps = {};
 
@@ -209,6 +210,9 @@ function enterDiffMode(oldContent, newContent, options = {}) {
     return;
   }
 
+  const rich = typeof document !== 'undefined' ? document.getElementById('doc-email-richbody') : null;
+  _diffHiddenVisualMode = !!(rich && rich.style.display !== 'none' && rich.classList.contains('markdown-visual-mode'));
+  if (_diffHiddenVisualMode) _deps.hideMarkdownVisualEditor?.();
   const textarea = _getTextarea();
   if (textarea) textarea.readOnly = true;
   const wrap = _getWrap();
@@ -623,6 +627,18 @@ function _resolveAllChunks(accept) {
 
     syncHighlighting();
     updateLineNumbers(textarea ? textarea.value : '');
+    const restoreVisual = _diffHiddenVisualMode;
+    _diffHiddenVisualMode = false;
+    if (restoreVisual) {
+      const doc = _deps.getActiveDoc?.();
+      // The resolved source is authoritative; capture it, then re-render the
+      // visual view from it.
+      _deps.captureSourceToDoc?.();
+      if (!acceptedAnyDiffChunk && doc && _deps.isVisualMarkdownDoc?.(doc) && _deps.resolveMarkdownEditorMode?.(doc) === 'visual') {
+        _deps.showMarkdownVisualEditor?.(doc);
+        _deps.syncHeaderActions?.();
+      }
+    }
     if (persist) saveDocument({ silent: true });
     if (acceptedAnyDiffChunk) {
       if (typeof _deps !== 'undefined' && _deps.onAcceptChanges) {
