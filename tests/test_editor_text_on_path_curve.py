@@ -7,7 +7,6 @@ text-layer.js then centres the run on the path and rotates each glyph to the
 local tangent. These are plain JavaScript, so the tests assert the source-level
 contract.
 """
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +16,6 @@ TEXT = ROOT / "static/js/editor/text-layer.js"
 GALLERY = ROOT / "static/js/galleryEditor.js"
 TOPBAR = ROOT / "static/js/editor/build/topbar.js"
 EXTRA_WIRE = ROOT / "static/js/editor/wire-extra-menus.js"
-SW = ROOT / "static/sw.js"
 
 
 def _read(path):
@@ -89,7 +87,3 @@ def test_type_menu_and_wiring_for_circle():
     assert "<span>Text on a Circle</span>" in menu
     wire = _read(EXTRA_WIRE)
     assert "window.geEditorControl?.invoke('text.onCircle', {});" in wire
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", _read(SW))

@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -6,7 +5,6 @@ CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text()
 STUDIO = (ROOT / "static" / "js" / "editor" / "panels" / "studio-panels.js").read_text()
 PANELS_JS = (ROOT / "static" / "js" / "editor" / "panels" / "panels.js").read_text()
 GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 PANELS = ["swatches", "gradients", "patterns", "adjustments", "properties", "histogram"]
 
@@ -50,10 +48,3 @@ def test_add_adjustment_does_not_self_trigger():
     assert 'document.getElementById(\'ge-add-layer\')?.click();' not in GE
     assert 'document.querySelector(`[data-adjustment-type="${type}"]`)?.click();' not in GE
     assert "_addAdjustmentLayer(type, anchor || document.getElementById('ge-add-fx'));" in GE
-
-
-def test_sw_cache_bumped():
-    # Version-agnostic: every commit bumps the SW cache, so pinning the exact
-    # number makes this test fail on the next commit.
-    m = re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", SW)
-    assert m

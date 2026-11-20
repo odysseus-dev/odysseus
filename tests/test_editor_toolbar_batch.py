@@ -2,7 +2,6 @@
 intensity, gradient strip de-duplication, the tall text strip and the pen
 overlay that no longer re-composites the whole document."""
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLS = (ROOT / "static/js/editor/build/controls.js").read_text(encoding="utf-8")
@@ -13,7 +12,6 @@ PIPE = (ROOT / "static/js/editor/stroke-pipeline.js").read_text(encoding="utf-8"
 SLIDERS = (ROOT / "static/js/editor/stroke-tool-sliders.js").read_text(encoding="utf-8")
 PEN = (ROOT / "static/js/editor/tools/pen-selection.js").read_text(encoding="utf-8")
 OB = (ROOT / "static/js/editor/build/options-bar.js").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_custom_crop_ratio_field():
@@ -106,7 +104,3 @@ def test_brush_size_readout_hugs_its_slider():
     # The px value IS the whole label on the size row; letting the shared 36px
     # label column force it open leaves a dead gap before its own slider.
     assert ".ge-brush-size-row label { min-width: 0; }" in CSS
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", SW)

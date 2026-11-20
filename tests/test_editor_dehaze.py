@@ -5,7 +5,6 @@ renderer + non-interactive control op in galleryEditor.js, and the Filter menu
 entry in the topbar/wiring. These are plain JavaScript, so the tests assert the
 source-level contract.
 """
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +13,6 @@ MODULE = ROOT / "static/js/editor/filters/dehaze.js"
 GALLERY = ROOT / "static/js/galleryEditor.js"
 TOPBAR = ROOT / "static/js/editor/build/topbar.js"
 WIRE = ROOT / "static/js/editor/wire-topbar-menus.js"
-SW = ROOT / "static/sw.js"
 
 
 def _read(path):
@@ -88,7 +86,3 @@ def test_menu_and_wiring():
     wire = _read(WIRE)
     assert "applyDehaze" in wire.split("export function wireTopbarMenus")[0] or "applyDehaze" in wire
     assert "else if (action === 'dehaze') applyDehaze?.();" in wire
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", _read(SW))

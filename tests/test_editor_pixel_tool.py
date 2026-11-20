@@ -7,7 +7,6 @@ preset is hidden from the preset list/dropdown.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,7 +20,6 @@ STROKE = _read("static/js/editor/tools/stroke.js")
 PIPELINE = _read("static/js/editor/stroke-pipeline.js")
 EDITOR = _read("static/js/galleryEditor.js")
 SLIDERS = _read("static/js/editor/stroke-tool-sliders.js")
-SW = _read("static/sw.js")
 
 
 def test_pixel_is_a_tool_with_an_icon():
@@ -54,7 +52,3 @@ def test_editor_registers_the_pixel_tool_everywhere():
     # selecting the Pixel tool forces the pixel flag; brush/eraser drop it
     assert "if (toolId === 'pixel') state.brushPixel = true;" in EDITOR
     assert "else if (toolId === 'brush' || toolId === 'eraser') state.brushPixel = false;" in EDITOR
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

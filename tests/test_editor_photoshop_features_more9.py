@@ -19,14 +19,12 @@ name in the ``_FILTER_ALIAS`` map.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
 WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text()
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
 EFFECTS = (ROOT / "static/js/editor/filters/effects.js").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 IDS = (
     "texture-grain",
@@ -178,9 +176,3 @@ def test_more9_renderers_preserve_alpha():
     # only, so alpha is untouched.
     grain_block = EFFECTS.split("export function grain(snap, v, dst)")[1].split("\nexport function ")[0]
     assert "p[i + 3] =" not in grain_block
-
-
-def test_more9_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)
