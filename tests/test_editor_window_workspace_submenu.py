@@ -60,5 +60,5 @@ def test_workspace_flyout_releases_the_menu_clip():
     assert ".ge-window-menu:has(.ge-menu-parent.open)" in CSS
 
 
-def test_submenu_helper_is_precached_and_cache_bumped():
+def test_submenu_helper_is_precached():
     assert "'/static/js/editor/submenu-toggles.js'" in SW
