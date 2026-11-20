@@ -20,6 +20,7 @@ static/js/shared/platform/clipboard.js text eol=lf
 static/js/shared/platform/debounce.js text eol=lf
 static/js/shared/platform/downloads.js text eol=lf
 static/js/escMenuStack.js text eol=lf
+static/js/shared/ui/optionNavigation.js text eol=lf
 static/js/toolWindowZOrder.js text eol=lf
 
 # Windows-native scripts stay CRLF.

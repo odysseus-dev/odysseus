@@ -34,6 +34,10 @@
       "deployment": "js/escMenuStack.js"
     },
     {
+      "source": "shared/ui/optionNavigation.js",
+      "deployment": "js/shared/ui/optionNavigation.js"
+    },
+    {
       "source": "shared/ui/toolWindowZOrder.js",
       "deployment": "js/toolWindowZOrder.js"
     },
