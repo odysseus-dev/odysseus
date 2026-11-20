@@ -1,5 +1,5 @@
 /** Page-owned reminder scheduler and notification delivery workflow. */
-import { _hasTimeComponent, _isDueTodayOrOverdue, _advanceRecurring } from '../domain/recurrence.js';
+import { _hasTimeComponent, _isDueTodayOrOverdue, _advanceRecurring, _noteDueValue } from '../domain/recurrence.js';
 export function createNotesReminders({
   app,
   api,
@@ -25,6 +25,15 @@ export function createNotesReminders({
   let startupTimer = null;
   let started = false;
   let disposed = false;
+  const pending = new Set();
+  const shownOccurrences = new Map();
+  function advanceReminder(note, next) {
+    const expected_reminder = { due_date: note.due_date, repeat: note.repeat, reminder_timezone: note.reminder_timezone ?? null };
+    app.mergeNote(note, { due_date: next });
+    _patchNote(note.id, { due_date: next, expected_reminder })
+      .then(saved => { if (saved && typeof saved === 'object') app.mergeNote(note, saved); })
+      .catch(() => { _fetchNotes().catch(() => {}); });
+  }
   function _checkReminders() {
     if (!state.notes.length) return;
     const now = clock.now();
@@ -33,17 +42,29 @@ export function createNotesReminders({
     for (const note of state.notes) {
       if (!note.due_date || note.archived) continue;
       if (!_hasTimeComponent(note.due_date)) continue;
-      if (fired.has(note.id)) continue;
-      const due = new Date(note.due_date).getTime();
+      if (fired.has(note.id) && !(note.reminder_timezone && note.repeat && note.repeat !== 'none')) continue;
+      const due = new Date(_noteDueValue(note)).getTime();
       if (isNaN(due)) continue;
+      if (note.reminder_timezone && note.repeat && note.repeat !== 'none') {
+        if (due <= now && !pending.has(note.id)) {
+          pending.add(note.id);
+          const previous = note.due_date;
+          const operation = due > now - 60000 ? _fireReminder(note) : api.fireReminder({
+            note_id: note.id, expected_due_date: previous, advance_only: true,
+          }).then(r => r.ok ? r.json() : null);
+          operation.then(data => {
+            if (data?.schedule && note.due_date === previous) app.mergeNote(note, data.schedule);
+          }).catch(() => {}).finally(() => pending.delete(note.id));
+        }
+        continue;
+      }
       if (due <= now && due > now - 60000) {
         _fireReminder(note);
         // Recurring? advance the due_date instead of marking as fired
         if (note.repeat && note.repeat !== 'none') {
           const next = _advanceRecurring(note.due_date, note.repeat, clock);
           if (next) {
-            app.mergeNote(note, { due_date: next });
-            _patchNote(note.id, { due_date: next }).catch(() => {});
+            advanceReminder(note, next);
             // Don't add to fired : new due_date is in the future
             continue;
           }
@@ -55,8 +76,7 @@ export function createNotesReminders({
         if (note.repeat && note.repeat !== 'none') {
           const next = _advanceRecurring(note.due_date, note.repeat, clock);
           if (next) {
-            app.mergeNote(note, { due_date: next });
-            _patchNote(note.id, { due_date: next }).catch(() => {});
+            advanceReminder(note, next);
             continue;
           }
         }
@@ -95,7 +115,12 @@ export function createNotesReminders({
     // return an LLM-written synthesis line and/or send an email. We still show
     // a local browser notification so the user gets immediate feedback even if
     // the server path is disabled or slow.
-    const showLocal = body => notifications.show(title, body, note.id);
+    const occurrence = note.due_date;
+    const showLocal = body => {
+      if (note.reminder_timezone && shownOccurrences.get(note.id) === occurrence) return;
+      if (note.reminder_timezone) shownOccurrences.set(note.id, occurrence);
+      notifications.show(title, body, note.id);
+    };
 
     // Fire-and-forget server dispatch. If synthesis comes back quickly enough,
     // use it as the notification body; otherwise the local notification has
@@ -103,14 +128,15 @@ export function createNotesReminders({
     let shown = false;
     const timer = scheduler.setTimeout(() => { if (!shown) { shown = true; showLocal(rawBody); } }, 1500);
 
-    api.fireReminder({ note_id: note.id, title, body: rawBody })
+    const delivery = api.fireReminder({ note_id: note.id, title, body: rawBody, expected_due_date: occurrence })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         scheduler.clearTimeout(timer);
-        if (shown) return;
-        shown = true;
-        const body = (data && data.synthesis) ? data.synthesis : rawBody;
-        showLocal(body);
+        if (!shown) {
+          shown = true;
+          if (!data?.skipped) showLocal((data && data.synthesis) ? data.synthesis : rawBody);
+        }
+        return data;
       })
       .catch(() => {
         scheduler.clearTimeout(timer);
@@ -120,6 +146,7 @@ export function createNotesReminders({
     // Pulse the card if visible; otherwise queue it so the next time the user
     // opens the notes panel the card gets a brief glow.
     effects.highlight(note.id);
+    return delivery;
   }
 
   function _startReminderLoop() {
@@ -129,7 +156,7 @@ export function createNotesReminders({
   }
 
   function _countDueReminders() {
-    return state.notes.filter(n => !n.archived && _isDueTodayOrOverdue(n.due_date, clock) && !_isNoteFullyDone(n)).length;
+    return state.notes.filter(n => !n.archived && _isDueTodayOrOverdue(_noteDueValue(n), clock) && !_isNoteFullyDone(n)).length;
   }
 
   function _countFiredReminders() {
@@ -139,7 +166,7 @@ export function createNotesReminders({
     return state.notes.filter(n => {
       if (n.archived || _isNoteFullyDone(n)) return false;
       if (!n.due_date || !_hasTimeComponent(n.due_date)) return false;
-      const t = new Date(n.due_date).getTime();
+      const t = new Date(_noteDueValue(n)).getTime();
       if (isNaN(t) || t > now) return false;
       return t > state.firedDotDismissedAt;
     }).length;

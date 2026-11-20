@@ -6,6 +6,10 @@ import * as rules from '../frontend/src/features/notes/domain/recurrence.js';
 
 const baseline = fs.readFileSync(new URL('./fixtures/notesRecurrenceBaseline.mjs', import.meta.url), 'utf8');
 const timed = new Set(['_formatDueDate', '_isDueOverdue', '_isDueTodayOrOverdue', '_laterTodayDate', '_tomorrowDate', '_nextWeekDate', '_formatReminderTag', '_snapToRepeat', '_advanceRecurring']);
+test('date-only labels do not become timed reminders through their UTC projection', () => {
+  assert.equal(rules._noteDueValue({ due_date: '2026-03-10', reminder_timezone: 'America/New_York',
+    reminder_schedule: { due_date: '2026-03-10', reminder_timezone: 'America/New_York', due_at: '2026-03-10T04:00:00Z' } }), '2026-03-10');
+});
 for (const zone of ['UTC', 'Europe/Lisbon', 'America/New_York', 'Australia/Sydney']) {
   test(`recurrence differential oracle in ${zone}`, () => {
     const oldZone = process.env.TZ;
@@ -39,3 +43,16 @@ for (const zone of ['UTC', 'Europe/Lisbon', 'America/New_York', 'Australia/Sydne
     } finally { if (oldZone === undefined) delete process.env.TZ; else process.env.TZ = oldZone; }
   });
 }
+
+test('legacy repeat labels use the saved zone calendar across a date boundary', () => {
+  const previous = process.env.TZ;
+  process.env.TZ = 'Europe/Berlin';
+  try {
+    const note = { due_date: '2026-03-10T03:00:00Z', repeat: 'weekly', reminder_timezone: 'America/New_York',
+      reminder_schedule: { due_date: '2026-03-10T03:00:00Z', reminder_timezone: 'America/New_York',
+        due_at: '2026-03-10T03:00:00+00:00', local_date: '2026-03-09T23:00' } };
+    assert.equal(rules._formatRepeatLabel(note.repeat, rules._noteRepeatDate(note)), 'Weekly on Mondays');
+    note.due_date = '2026-03-12T09:00';
+    assert.equal(rules._noteRepeatDate(note).getDay(), 4, 'changed date must not reuse stale metadata');
+  } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
+});

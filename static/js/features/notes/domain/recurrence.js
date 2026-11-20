@@ -1,6 +1,20 @@
 // Local-time date and recurrence rules. Callers supply the clock at the original read sites.
 export const _ORDINALS = ['1st', '2nd', '3rd', '4th', '5th'];
 export const _DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+export function _noteDueValue(note) {
+  if (!note?.reminder_timezone || !_hasTimeComponent(note?.due_date)) return note?.due_date;
+  const saved = note.reminder_schedule;
+  // The server binds the UTC projection to its original wall time and zone.
+  // An optimistic date edit must not reuse the previous instant.
+  return saved?.due_date === note.due_date && saved?.reminder_timezone === note.reminder_timezone
+    ? saved.due_at : NaN;
+}
+export function _noteRepeatDate(note) {
+  const saved = note?.reminder_schedule;
+  const wallTime = saved?.due_date === note?.due_date && saved?.reminder_timezone === note?.reminder_timezone
+    ? saved?.local_date : null;
+  return new Date(wallTime || note?.due_date);
+}
 export function _hasTimeComponent(dateStr) {
   return typeof dateStr === 'string' && /T\d{2}:\d{2}/.test(dateStr);
 }

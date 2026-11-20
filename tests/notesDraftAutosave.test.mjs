@@ -40,6 +40,15 @@ test('typing is backed up synchronously, even before the autosave timer', () => 
   assert.equal(h.draft().content, 'Just typed');
 });
 
+test('unrelated autosave retains the reminder zone from the stored note', async () => {
+  const writes = [];
+  const h = harness(async (id, payload) => { writes.push(payload); return {}; });
+  h.context.app.mergeNote(h.context.app.state.notes[0], { due_date: '2026-03-07T09:00', reminder_timezone: 'America/New_York' });
+  h.fields['.note-form-due'] = { value: '2026-03-07T09:00' };
+  h.input(); await h.drain();
+  assert.equal(writes[0].reminder_timezone, 'America/New_York');
+});
+
 test('checklist type without an active pill preserves items', () => {
   const h = harness(); h.form.dataset.noteType='checklist';
   h.form.items=[{text:'Drop keys',done:false}]; h.input();

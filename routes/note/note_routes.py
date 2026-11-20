@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core.database import SessionLocal, Note
 from core.middleware import INTERNAL_TOOL_USER
@@ -23,7 +23,22 @@ logger = logging.getLogger(__name__)
 # Request models
 # ---------------------------------------------------------------------------
 
-class NoteCreate(BaseModel):
+class ReminderTimezoneModel(BaseModel):
+    reminder_timezone: Optional[str] = None
+
+    @field_validator("reminder_timezone")
+    @classmethod
+    def validate_reminder_timezone(cls, value):
+        if value is not None:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            try:
+                ZoneInfo(value)
+            except (ValueError, ZoneInfoNotFoundError) as exc:
+                raise ValueError("Invalid reminder timezone") from exc
+        return value
+
+
+class NoteCreate(ReminderTimezoneModel):
     title: str = ""
     content: Optional[str] = None
     items: Optional[list] = None
@@ -40,7 +55,13 @@ class NoteCreate(BaseModel):
     sort_order: Optional[int] = None
 
 
-class NoteUpdate(BaseModel):
+class ReminderSchedule(ReminderTimezoneModel):
+    due_date: str
+    repeat: str
+
+
+class NoteUpdate(ReminderTimezoneModel):
+    expected_reminder: Optional[ReminderSchedule] = None
     title: Optional[str] = None
     content: Optional[str] = None
     items: Optional[list] = None
@@ -60,6 +81,22 @@ class NoteUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _note_schedule_fields(note):
+    from src.note_recurrence import parse_note_due
+    from zoneinfo import ZoneInfo
+    zone = getattr(note, "reminder_timezone", None)
+    due = parse_note_due(note.due_date, zone) if zone and note.due_date else None
+    return {
+        "due_date": note.due_date,
+        "repeat": note.repeat or "none",
+        "reminder_timezone": zone,
+        "archived": note.archived,
+        "reminder_schedule": ({"due_date": note.due_date, "reminder_timezone": zone,
+                               "due_at": due.isoformat(),
+                               "local_date": due.astimezone(ZoneInfo(zone)).replace(tzinfo=None).isoformat(timespec="minutes")} if due else None),
+    }
+
 
 def _note_to_dict(note: Note) -> Dict[str, Any]:
     items = None
@@ -85,14 +122,12 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
         "color": note.color,
         "label": note.label,
         "pinned": note.pinned,
-        "archived": note.archived,
-        "due_date": note.due_date,
+        **_note_schedule_fields(note),
         "source": note.source,
         "session_id": note.session_id,
         "sort_order": note.sort_order or 0,
         "image_url": note.image_url,
         "gallery_id": getattr(note, "gallery_id", None),
-        "repeat": note.repeat or "none",
         "ai_classification": ai_cls,
         "ai_content_hash": getattr(note, "ai_content_hash", None),
         "agent_session_id": getattr(note, "agent_session_id", None),
@@ -147,6 +182,7 @@ async def dispatch_reminder(
     owner: str = "",
     queue_browser: bool = True,
     settings_override: dict | None = None,
+    due_date: str | None = None,
 ) -> dict:
     """Fire a reminder via the configured channel (browser/email/ntfy/webhook).
 
@@ -162,6 +198,7 @@ async def dispatch_reminder(
     nothing is "sent" synchronously for it — the channel just routes there.
     """
     from src.settings import load_settings
+    from src.note_recurrence import note_now_utc
     settings = {**load_settings(), **(settings_override or {})}
     channel = settings.get("reminder_channel", "browser")
     llm_on = bool(settings.get("reminder_llm_synthesis", False))
@@ -182,8 +219,10 @@ async def dispatch_reminder(
             last = cache.get(cache_key)
             if last:
                 last_channel = None
+                last_due = None
                 if isinstance(last, dict):
                     last_channel = last.get("channel")
+                    last_due = last.get("due_date")
                     last = last.get("at")
                 last_dt = _dt.fromisoformat(str(last))
                 if last_dt.tzinfo is None:
@@ -192,7 +231,9 @@ async def dispatch_reminder(
                 # written by the frontend even when the email/ntfy send failed.
                 # Treat those as browser-only dedupe so email reminders can be
                 # retried by the backend scanner after a failed frontend path.
-                should_skip = last_dt >= _dt.now(_tz.utc) - _td(minutes=25)
+                should_skip = last_dt >= note_now_utc() - _td(minutes=25)
+                if due_date and last_due is not None and last_due != due_date:
+                    should_skip = False
                 if should_skip and channel in ("email", "ntfy", "webhook"):
                     should_skip = last_channel == channel
                 if should_skip:
@@ -203,6 +244,7 @@ async def dispatch_reminder(
                         "webhook_sent": False,
                         "browser_sent": True,
                         "skipped": True,
+                        "delivered_due_date": last_due,
                     }
         except Exception as _e:
             logger.debug(f"dispatch_reminder: cache read failed: {_e}")
@@ -554,9 +596,11 @@ async def dispatch_reminder(
                 _cache = {}
             sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "webhook" if webhook_sent else "browser"
             _cache[cache_key or str(note_id)] = {
-                "at": _dt.now(_tz.utc).isoformat(),
+                "at": note_now_utc().isoformat(),
                 "channel": sent_channel,
             }
+            if due_date:
+                _cache[cache_key or str(note_id)]["due_date"] = due_date
             _STATE.write_text(_json.dumps(_cache), encoding="utf-8")
         except Exception as _e:
             logger.debug(f"dispatch_reminder: cache write failed: {_e}")
@@ -679,6 +723,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 image_url=body.image_url,
                 gallery_id=body.gallery_id,
                 repeat=body.repeat or "none",
+                reminder_timezone=body.reminder_timezone,
                 sort_order=body.sort_order if body.sort_order is not None else 0,
             )
             db.add(note)
@@ -719,6 +764,23 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
 
+            if body.expected_reminder is not None:
+                if not body.due_date or not body.model_fields_set <= {"due_date", "expected_reminder"}:
+                    raise HTTPException(400, "Expected reminder updates only advance the due date")
+                expected = body.expected_reminder
+                note_owner = note.owner
+                db.query(Note).filter(
+                    Note.id == note_id, Note.owner == note_owner,
+                    Note.archived == False,  # noqa: E712
+                    Note.due_date == expected.due_date, Note.repeat == expected.repeat,
+                    Note.reminder_timezone == expected.reminder_timezone,
+                ).update({Note.due_date: body.due_date}, synchronize_session=False)
+                db.commit()
+                latest = db.query(Note).filter(Note.id == note_id, Note.owner == note_owner).first()
+                if latest is None:
+                    raise HTTPException(404, "Note not found")
+                return _note_to_dict(latest)
+
             _reserve_note_uploads(
                 user,
                 body.image_url,
@@ -754,6 +816,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 note.gallery_id = body.gallery_id
             if body.repeat is not None:
                 note.repeat = body.repeat
+            if "reminder_timezone" in body.model_fields_set:
+                note.reminder_timezone = body.reminder_timezone
             if body.sort_order is not None:
                 note.sort_order = body.sort_order
             if "agent_session_id" in supplied:
@@ -868,7 +932,11 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         is_test = note_id.startswith("test-")
         is_admin = _is_admin_or_single_user(request, user or caller)
         _override: dict = {}
+        occurrence = None
+        snapshot = None
         if is_test:
+            if body.get("advance_only"):
+                raise HTTPException(400, "A stored reminder is required")
             if not is_admin:
                 raise HTTPException(403, "Admin only")
             title = (body.get("title") or "Test Reminder").strip() or "Test Reminder"
@@ -895,16 +963,52 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                     raise HTTPException(404, "Note not found")
                 if caller is not None and note.owner != caller:
                     raise HTTPException(404, "Note not found")
+                if "expected_due_date" in body:
+                    occurrence = body["expected_due_date"]
+                    if occurrence != note.due_date:
+                        return {"skipped": True, "due_date": note.due_date, "schedule": _note_schedule_fields(note)}
+                if body.get("advance_only") and (not occurrence or not note.reminder_timezone):
+                    return {"skipped": True, "schedule": _note_schedule_fields(note)}
+                if occurrence and note.reminder_timezone:
+                    from datetime import timedelta
+                    from src.note_recurrence import advance_note_schedule, note_now_utc, parse_note_due
+                    from src.constants import NOTE_REMINDER_WINDOW_SECONDS
+                    snapshot = (note.id, note.owner, note.due_date, note.repeat, note.reminder_timezone)
+                    due = parse_note_due(note.due_date, note.reminder_timezone)
+                    now = note_now_utc()
+                    window = timedelta(seconds=NOTE_REMINDER_WINDOW_SECONDS)
+                    if note.archived or not due or due > now or body.get("advance_only") or due < now - window:
+                        if not note.archived and due and due < now - window:
+                            advance_note_schedule(db, snapshot, after=now - window)
+                            db.refresh(note)
+                        return {"skipped": True, "schedule": _note_schedule_fields(note)}
                 title, note_body = _reminder_text_from_note(note)
             finally:
                 db.close()
 
-        return await dispatch_reminder(
+        result = await dispatch_reminder(
             title=title, note_body=note_body, note_id=note_id,
             owner=caller or "",
             queue_browser=False,
             settings_override=_override or None,
+            **({"due_date": occurrence} if occurrence else {}),
         )
+        if snapshot:
+            from src.settings import load_settings
+            from src.note_recurrence import advance_note_schedule, note_now_utc
+            channel = result.get("channel") or load_settings().get("reminder_channel", "browser")
+            delivered = result.get(f"{channel}_sent")
+            delivered = delivered or (result.get("skipped") and result.get("delivered_due_date") == occurrence)
+            db = SessionLocal()
+            try:
+                if delivered:
+                    advance_note_schedule(db, snapshot, after=note_now_utc())
+                latest = db.query(Note).filter(Note.id == note_id, Note.owner == snapshot[1]).first()
+                if latest is not None:
+                    result["schedule"] = _note_schedule_fields(latest)
+            finally:
+                db.close()
+        return result
 
     # --- REORDER NOTES ---
     @router.post("/reorder")

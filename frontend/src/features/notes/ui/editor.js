@@ -273,7 +273,7 @@ export function createEditor({
       setTimeout(_grow, 360);
     }
 
-    _wireReminderPicker(form);
+    _wireReminderPicker(form, note);
 
     // Photo upload
     const photoBtn = form.querySelector('.note-form-photo-btn');
