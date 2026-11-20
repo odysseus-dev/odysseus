@@ -19,11 +19,12 @@ def test_precached_shared_helpers_import_offline_and_panels_stay_lazy():
       import assert from 'node:assert/strict';
       import { chromium } from 'playwright';
       const origin = process.env.ODYSSEUS_TEST_STATIC_ORIGIN;
+      const panelsPath = '/static/js/panels.js?v=20260909movepicklayer1';
       const browser = await chromium.launch({ headless: true });
       try {
         const context = await browser.newContext({ serviceWorkers: 'allow' });
         const page = await context.newPage();
-        await page.goto(`${origin}/static/js/panels.js`);
+        await page.goto(`${origin}${panelsPath}`);
         const installed = await page.evaluate(async () => {
           await navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1');
           const registration = await navigator.serviceWorker.ready;
@@ -43,13 +44,13 @@ def test_precached_shared_helpers_import_offline_and_panels_stay_lazy():
         // New page gives a fresh ES-module map. No helper import occurred online.
         await context.setOffline(true);
         const offline = await context.newPage();
-        await offline.goto(`${origin}/static/js/panels.js`);
+        await offline.goto(`${origin}${panelsPath}`);
         const requests = [];
         offline.on('request', request => requests.push(request.url()));
-        const result = await offline.evaluate(async () => {
+        const result = await offline.evaluate(async panelsPath => {
           const helper = await import('/static/js/actionMenuOrder.js');
           const again = await import('./actionMenuOrder.js');
-          const panels = await import('/static/js/panels.js?v=20260909movepicklayer1');
+          const panels = await import(panelsPath);
           const { escapeHtml } = await import('/static/js/shared/domain/html.js');
           const { copyText } = await import('/static/js/shared/platform/clipboard.js');
           const stack = await import('/static/js/escMenuStack.js');
@@ -67,7 +68,7 @@ def test_precached_shared_helpers_import_offline_and_panels_stay_lazy():
             order: helper.orderActionMenuItems([{ label: 'Delete' }, { label: 'Rename' }]).map(i => i.label),
             panels: panels.panelNames(),
           };
-        });
+        }, panelsPath);
         assert.equal(result.sameModule, true);
         assert.equal(result.escaped, '&lt;a&gt;');
         assert.equal(result.emptyCopy, false);
