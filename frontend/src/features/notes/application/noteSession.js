@@ -44,6 +44,12 @@ export function createNoteSession({
     try { return JSON.parse(persistence.getItem(key()) || 'null'); } catch { return null; }
   }
 
+  function clearSavedBackup(draftKey, record) {
+    try {
+      if (persistence.getItem(draftKey) === record) persistence.removeItem(draftKey);
+    } catch { effects.backupUnavailable?.(); }
+  }
+
   // The draft remembers the body revision it was typed against. A draft left
   // by another tab, against another revision, is kept for recovery rather
   // than overwritten.
@@ -71,7 +77,7 @@ export function createNoteSession({
     const draft = collect();
     if (draft.title === saved.title && draft.content === saved.content) {
       dirty = false;
-      persistence._clearDraft(id || '__new__');
+      if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
       return;
     }
     if (!id && !draft.title.trim() && isBlank(draft.content)) { dirty = false; return; }
@@ -86,7 +92,7 @@ export function createNoteSession({
         const created = await api.saveNote({ ...pendingMeta, ...extras, title: draft.title, content: draft.content });
         wrote = true;
         adopt(created, draft);
-        if (persistence.getItem(draftKey) === record) persistence.removeItem(draftKey);
+        clearSavedBackup(draftKey, record);
         effects.created?.(created);
         return;
       }
@@ -97,7 +103,7 @@ export function createNoteSession({
       const result = await api.patchNote(id, body);
       wrote = true;
       adopt(result, draft);
-      if (persistence.getItem(draftKey) === record) persistence.removeItem(draftKey);
+      clearSavedBackup(draftKey, record);
       effects.saved?.(result);
     } catch (error) {
       if (error?.status === 409) {
@@ -159,15 +165,25 @@ export function createNoteSession({
 
   function resolveConflict(choice) {
     if (!conflict) return pending;
-    const server = conflict.server;
-    conflict = null;
+    const activeConflict = conflict;
+    const server = activeConflict.server;
     if (choice === 'reload') {
-      adopt(server);
-      dirty = false;
-      persistence._clearDraft(id || '__new__');
-      effects.reloaded?.(server);
-      return pending;
+      return enqueue(async () => {
+        if (conflict !== activeConflict) return;
+        let current = server;
+        if (!current) {
+          try { current = await api.getNote(id); }
+          catch (error) { effects.failed?.(error); return; }
+        }
+        if (!current || conflict !== activeConflict) return;
+        adopt(current);
+        dirty = false;
+        conflict = null;
+        if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+        effects.reloaded?.(current);
+      });
     }
+    conflict = null;
     // Keep mine: write the local text over the newer server copy.
     dirty = true;
     return enqueue(async () => {
