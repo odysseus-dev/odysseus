@@ -1,3 +1,4 @@
+import { _writeContacts } from './contactsWrite.js';
 // Unified Integrations panel: the combined list of API, CalDAV, CardDAV, email,
 // vault, MCP and agent integrations and their create/edit forms.
 
@@ -241,16 +242,21 @@ export async function initUnifiedIntegrations({ openSettings, restricted = () =>
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'contacts') {
-            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
+            await _writeContacts('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' }, 'Could not clear contacts');
           }
           else if (type === 'carddav') {
-            await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) });
+            await _writeContacts('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) }, 'Could not remove CardDAV configuration');
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
-        } catch (_) {}
+        } catch (err) {
+          if (type === 'contacts' || type === 'carddav') {
+            uiModule.showError(err?.message || 'Could not remove contacts');
+            return;
+          }
+        }
         formEl.style.display = 'none';
         closeForm();
         await renderList();

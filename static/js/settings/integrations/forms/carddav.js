@@ -1,3 +1,4 @@
+import { _writeContacts } from '../contactsWrite.js';
 // CardDAV contacts integration form and its contacts manager. Extracted from
 // the unified integrations host; the host passes { formEl, renderList }.
 
@@ -64,7 +65,7 @@ export async function showCardDavForm({ formEl, renderList, closeForm }) {
     const body = { carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
     if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
     try {
-      await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await _writeContacts('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Could not save CardDAV configuration');
       el('uf-carddav-msg').textContent = 'Saved';
       el('uf-carddav-msg').style.color = 'var(--green, #50fa7b)';
       // Refresh both the sub-panel (contacts manager) AND the
@@ -73,8 +74,8 @@ export async function showCardDavForm({ formEl, renderList, closeForm }) {
       await _renderContactsManager();
       await renderList();
       notifyIntegrationsChanged();
-    } catch (_) {
-      el('uf-carddav-msg').textContent = 'Failed';
+    } catch (err) {
+      el('uf-carddav-msg').textContent = err?.message || 'Failed';
       el('uf-carddav-msg').style.color = 'var(--red)';
     }
   });
@@ -94,8 +95,11 @@ export async function showCardDavForm({ formEl, renderList, closeForm }) {
     // name aren't useful as a contact.
     if (!name && !email) { (name ? el('cm-add-email') : el('cm-add-name')).focus(); return; }
     try {
-      await fetch('/api/contacts/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, phone, address }) });
-    } catch (_) {}
+      await _writeContacts('/api/contacts/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, phone, address }) }, 'Could not add contact');
+    } catch (err) {
+      uiModule.showError(err?.message || 'Could not add contact');
+      return;
+    }
     el('cm-add-name').value = '';
     el('cm-add-email').value = '';
     if (el('cm-add-phone')) el('cm-add-phone').value = '';
@@ -154,6 +158,7 @@ export async function showCardDavForm({ formEl, renderList, closeForm }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
+        if (!r.ok) throw new Error('Import failed');
         const d = await r.json();
         if (d.error) throw new Error(d.error);
         imported += Number(d.imported || 0);
@@ -279,8 +284,11 @@ async function _renderContactsManager() {
         address: row.querySelector('.contact-edit-address')?.value.trim() || '',
       };
       try {
-        await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      } catch (_) {}
+        await _writeContacts('/api/contacts/' + encodeURIComponent(uid), { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Could not save contact');
+      } catch (err) {
+        uiModule.showError(err?.message || 'Could not save contact');
+        return;
+      }
       await _renderContactsManager();
     });
     row.querySelector('.contact-del')?.addEventListener('click', async () => {
@@ -289,8 +297,11 @@ async function _renderContactsManager() {
         : window.confirm('Delete this contact?');
       if (!ok) return;
       try {
-        await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
-      } catch (_) {}
+        await _writeContacts('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' }, 'Could not delete contact');
+      } catch (err) {
+        uiModule.showError(err?.message || 'Could not delete contact');
+        return;
+      }
       await _renderContactsManager();
     });
   });
