@@ -261,9 +261,39 @@ async function preparePageBaseHtml(parser, origin, page) {
   return { baseHtml: html, headers };
 }
 
+const DEFAULT_CONCURRENCY = 2;
+const MAX_CONCURRENCY = 4;
+
+function resolveConcurrency(jobValue, envValue) {
+  const raw = jobValue !== undefined && jobValue !== null ? jobValue : envValue;
+  if (raw === undefined || raw === null || raw === '') {
+    return DEFAULT_CONCURRENCY;
+  }
+  let num;
+  if (typeof raw === 'number') {
+    num = raw;
+  } else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new Error(`invalid concurrency: "${raw}" (expected integer between 1 and ${MAX_CONCURRENCY})`);
+    }
+    num = Number(trimmed);
+  } else {
+    throw new Error(`invalid concurrency: ${raw} (expected integer between 1 and ${MAX_CONCURRENCY})`);
+  }
+
+  if (!Number.isInteger(num) || num < 1) {
+    throw new Error(`invalid concurrency: ${num} (expected integer between 1 and ${MAX_CONCURRENCY})`);
+  }
+  if (num > MAX_CONCURRENCY) {
+    throw new Error(`concurrency ${num} exceeds maximum allowed (${MAX_CONCURRENCY})`);
+  }
+  return num;
+}
+
 async function main() {
   const job = JSON.parse(await readStdin());
-  const concurrency = Math.max(1, parseInt(job.concurrency || process.env.CSS_SNAPSHOT_CONCURRENCY || '2', 10));
+  const concurrency = resolveConcurrency(job.concurrency, process.env.CSS_SNAPSHOT_CONCURRENCY);
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--hide-scrollbars'] });
 
@@ -331,24 +361,35 @@ async function main() {
             // only that one. Every other sheet passes through untouched.
             await tab.route('**/static/**/*.css*', async route => {
               const url = route.request().url();
-              let entry = cssCache.get(url);
-              if (!entry) {
-                const response = await route.fetch();
-                const original = await response.text();
-                const body = swapRuleOccurrences(original, job.swapRule);
-                if (body === null) {
-                  entry = { body: original, headers: response.headers(), didSwap: false };
-                } else {
-                  entry = {
+              let pending = cssCache.get(url);
+              if (!pending) {
+                pending = (async () => {
+                  const response = await route.fetch();
+                  const status = response.status();
+                  const headers = response.headers();
+                  const original = await response.text();
+                  if (status < 200 || status >= 300) {
+                    return { status, body: original, headers, didSwap: false };
+                  }
+                  const body = swapRuleOccurrences(original, job.swapRule);
+                  if (body === null) {
+                    return { status, body: original, headers, didSwap: false };
+                  }
+                  return {
+                    status,
                     body,
-                    headers: { ...response.headers(), 'content-type': 'text/css; charset=utf-8' },
+                    headers: { ...headers, 'content-type': 'text/css; charset=utf-8' },
                     didSwap: true,
                   };
-                }
-                cssCache.set(url, entry);
+                })().catch(err => {
+                  cssCache.delete(url);
+                  throw err;
+                });
+                cssCache.set(url, pending);
               }
+              const entry = await pending;
               if (entry.didSwap) swapped += 1;
-              await route.fulfill({ body: entry.body, headers: entry.headers });
+              await route.fulfill({ status: entry.status, body: entry.body, headers: entry.headers });
             });
           }
 

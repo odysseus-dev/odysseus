@@ -247,7 +247,7 @@ def main(argv=None):
                              "before capturing (harness self-test)")
     parser.add_argument("--variants", help="comma-separated variant names to restrict the run to")
     parser.add_argument("--concurrency", type=int, default=None,
-                        help="number of concurrent browser captures (default: 2)")
+                        help="number of concurrent browser captures (1-4, default: 2)")
     parser.add_argument("--node", default="node", help="node binary to use")
     args = parser.parse_args(argv)
 
