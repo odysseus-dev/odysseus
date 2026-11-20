@@ -78,17 +78,21 @@ def _operation(capture: DispatchCapture, action: Any) -> OperationRef:
                         getattr(backend, "request_id", "") if backend is not None else "")
 
 
-def _write_file_digest(execution_input: str, path: str) -> str:
+def _write_file_digest(execution_input: str, resource: Any) -> str:
     """The exact bytes WriteFileTool commits for this admitted input, or ''."""
-    from src.agent_tools.filesystem_tools import _unwrap_fenced_source_body
+    from src.agent_tools.filesystem_tools import _unwrap_fenced_source_body, _write_file_text
     try:
         args = json.loads(execution_input)
     except (TypeError, ValueError):
         return ""
     body = args.get("content") if isinstance(args, dict) else None
-    if not isinstance(body, str) or os.linesep != "\n":
+    if not isinstance(body, str):
         return ""
-    return hashlib.sha256(_unwrap_fenced_source_body(body, path).encode("utf-8")).hexdigest()
+    original = "" if resource.identity is None else _pre_state_text(resource, newline="")
+    if original is None:
+        return ""
+    body = _unwrap_fenced_source_body(body, resource.path)
+    return hashlib.sha256(_write_file_text(original, body).encode("utf-8")).hexdigest()
 
 
 def _pre_state_text(resource: Any, *, newline: str | None) -> str | None:
@@ -129,13 +133,12 @@ def _edit_file_digest(execution_input: str, resource: Any) -> str:
 
 def _patch_update_digest(op: dict, resource: Any) -> str:
     """SHA-256 of the exact bytes apply_patch writes for one update, or ''."""
-    from src.agent_tools.filesystem_tools import _apply_patch_hunks
-    # apply_patch reads updates with universal newlines and writes newline="".
-    original = _pre_state_text(resource, newline=None)
+    from src.agent_tools.filesystem_tools import _patch_file_text
+    original = _pre_state_text(resource, newline="")
     if original is None:
         return ""
     try:
-        updated = _apply_patch_hunks(original, op["hunks"], op["path"])
+        updated = _patch_file_text(original, op["hunks"], op["path"])
     except ValueError:
         return ""
     return hashlib.sha256(updated.encode("utf-8")).hexdigest()
@@ -155,7 +158,7 @@ def _filesystem_scope(bound: Any) -> tuple[tuple[ResourceRef, ...], tuple[Postco
     refs = tuple(resource_ref(b.resource, b.role) for b in bound.bindings)
     obligations: list[Postcondition] = []
     if tool == "write_file":
-        expected = _write_file_digest(bound.execution_input, bound.bindings[0].resource.path)
+        expected = _write_file_digest(bound.execution_input, bound.bindings[0].resource)
         intent = bound.write_intent
         if intent is not None:
             from src.agent_tools.filesystem_tools import _unwrap_fenced_source_body
