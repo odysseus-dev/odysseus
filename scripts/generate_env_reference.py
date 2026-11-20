@@ -1005,6 +1005,13 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "Seconds the server waits for in-flight requests and background loops to "
         "finish during a graceful shutdown.",
     ),
+    "ODYSSEUS_REPLAY_TOOL_HISTORY": (
+        "Agent loop and tool execution", USER,
+        "Set to 0, false, no or off to disable replay of historical tool calls "
+        "in the chat route. When enabled, Odysseus replays assistant tool_calls "
+        "and matching role:tool results from prior turns so the model does not "
+        "interpret every question as answered from memory.",
+    ),
 }
 
 
