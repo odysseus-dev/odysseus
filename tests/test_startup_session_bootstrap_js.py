@@ -299,6 +299,7 @@ def results(tmp_path_factory):
         pytest.skip("node is not installed")
 
     module_dir = tmp_path_factory.mktemp("session-bootstrap-js")
+    shutil.copytree(_REPO / "static" / "js" / "shared", module_dir / "shared")
     source = _SESSIONS.read_text(encoding="utf-8")
     versioned_rewrites = (
         (
