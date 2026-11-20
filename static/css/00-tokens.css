@@ -26,6 +26,10 @@
  *   Syntax:   --hl-keyword, --hl-string, --hl-comment, --hl-function,
  *             --hl-number, --hl-builtin, --hl-variable, --hl-params,
  *             --hl-bg, --hl-fg
+ *   Markdown: --md-heading-1..6, --md-bold, --md-italic, --md-bold-italic,
+ *             --md-strikethrough, --md-inline-code, --md-quote-text,
+ *             --md-quote-border, --md-rule, --md-list-marker, --md-link,
+ *             --md-link-underline, --md-table-header
  *   Accents:  --accent-primary, --accent-error (set by theme.js)
  *   Semantic: --color-error, --color-success, --color-warning, --color-danger,
  *             --color-accent, --color-muted, --color-muted-alt

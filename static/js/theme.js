@@ -221,6 +221,7 @@ const ADV_KEYS = [
   { key: 'userBubbleBg',       css: '--user-bubble-bg',    label: 'User Chat Bubble', group: 'Chat Bubbles' },
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
+  { key: 'modelNameColor',     css: '--model-name-color',  label: 'Model Name',       group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
   { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
   { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
@@ -231,6 +232,24 @@ const ADV_KEYS = [
   { key: 'sendBtnHover',       css: '--send-btn-hover',    label: 'Send Hover',       group: 'Chat Input / Prompt Area' },
   { key: 'codeBg',             css: '--code-bg',           label: 'Code Bg',          group: 'Code Blocks' },
   { key: 'codeFg',             css: '--code-fg',           label: 'Code Text',        group: 'Code Blocks' },
+  { key: 'markdownHeading1',   css: '--md-heading-1',      label: 'Heading 1',        group: 'Markdown' },
+  { key: 'markdownHeading2',   css: '--md-heading-2',      label: 'Heading 2',        group: 'Markdown' },
+  { key: 'markdownHeading3',   css: '--md-heading-3',      label: 'Heading 3',        group: 'Markdown' },
+  { key: 'markdownHeading4',   css: '--md-heading-4',      label: 'Heading 4',        group: 'Markdown' },
+  { key: 'markdownHeading5',   css: '--md-heading-5',      label: 'Heading 5',        group: 'Markdown' },
+  { key: 'markdownHeading6',   css: '--md-heading-6',      label: 'Heading 6',        group: 'Markdown' },
+  { key: 'markdownBold',      css: '--md-bold',           label: 'Bold',             group: 'Markdown' },
+  { key: 'markdownItalic',    css: '--md-italic',         label: 'Italic',           group: 'Markdown' },
+  { key: 'markdownBoldItalic', css: '--md-bold-italic',    label: 'Bold + Italic',    group: 'Markdown' },
+  { key: 'markdownStrikethrough', css: '--md-strikethrough', label: 'Strikethrough', group: 'Markdown' },
+  { key: 'markdownInlineCode', css: '--md-inline-code',    label: 'Inline Code',      group: 'Markdown' },
+  { key: 'markdownQuoteText', css: '--md-quote-text',      label: 'Blockquote Text',  group: 'Markdown' },
+  { key: 'markdownQuoteBorder', css: '--md-quote-border',  label: 'Blockquote Border', group: 'Markdown' },
+  { key: 'markdownRule',      css: '--md-rule',           label: 'Horizontal Rule',  group: 'Markdown' },
+  { key: 'markdownListMarker', css: '--md-list-marker',    label: 'List Marker',      group: 'Markdown' },
+  { key: 'markdownLink',      css: '--md-link',           label: 'Link',             group: 'Markdown' },
+  { key: 'markdownLinkUnderline', css: '--md-link-underline', label: 'Link Underline', group: 'Markdown' },
+  { key: 'markdownTableHeader', css: '--md-table-header',  label: 'Table Header',     group: 'Markdown' },
   { key: 'toggleActive',       css: '--toggle-active',     label: 'Toggle On',        group: 'Controls' },
 ];
 
@@ -241,6 +260,7 @@ function computeAdvancedDefaults(colors) {
     userBubbleBg: colors.bg,
     aiBubbleBg: colors.panel,
     bubbleBorder: colors.border,
+    modelNameColor: red,
     sidebarBg: colors.panel,
     brandColor: red,
     brandMixTo: colors.fg,
@@ -251,6 +271,24 @@ function computeAdvancedDefaults(colors) {
     sendBtnHover: red,
     codeBg: syn.bg,
     codeFg: syn.fg,
+    markdownHeading1: red,
+    markdownHeading2: syn.function,
+    markdownHeading3: syn.string,
+    markdownHeading4: syn.builtin,
+    markdownHeading5: syn.variable,
+    markdownHeading6: syn.number,
+    markdownBold: syn.builtin,
+    markdownItalic: syn.params,
+    markdownBoldItalic: red,
+    markdownStrikethrough: colors.fg,
+    markdownInlineCode: syn.string,
+    markdownQuoteText: colors.fg,
+    markdownQuoteBorder: syn.function,
+    markdownRule: colors.border,
+    markdownListMarker: syn.function,
+    markdownLink: syn.function,
+    markdownLinkUnderline: syn.function,
+    markdownTableHeader: red,
     toggleActive: red,
   };
 }
@@ -289,6 +327,29 @@ function generateHarmonyColors(accentHex, harmonyType, mode) {
     panel: hslToHex(bgH, bgS * 0.6, panelL),
     border: hslToHex(borderH, borderS, borderL),
     red: accentHex,
+  };
+}
+
+function computeHarmonyMarkdownColors(colors) {
+  return {
+    markdownHeading1: colors.red,
+    markdownHeading2: colors.red,
+    markdownHeading3: colors.red,
+    markdownHeading4: colors.red,
+    markdownHeading5: colors.red,
+    markdownHeading6: colors.red,
+    markdownBold: colors.fg,
+    markdownItalic: colors.fg,
+    markdownBoldItalic: colors.fg,
+    markdownStrikethrough: colors.fg,
+    markdownInlineCode: colors.red,
+    markdownQuoteText: colors.fg,
+    markdownQuoteBorder: colors.border,
+    markdownRule: colors.border,
+    markdownListMarker: colors.red,
+    markdownLink: colors.fg,
+    markdownLinkUnderline: colors.fg,
+    markdownTableHeader: colors.red,
   };
 }
 
@@ -1298,6 +1359,12 @@ export function initThemeUI() {
       const type = document.getElementById('harmony-type').value;
       const mode = document.getElementById('harmony-mode').value;
       const colors = generateHarmonyColors(accent, type, mode);
+      const advanced = { ...(readAdvanced() || {}) };
+      const generatedMarkdownColors = computeHarmonyMarkdownColors(colors);
+      for (const { key, group } of ADV_KEYS) {
+        if (group === 'Markdown') advanced[key] = generatedMarkdownColors[key];
+      }
+      if (Object.keys(advanced).length) colors.advanced = advanced;
       applyColors(colors);
       syncPickers(colors);
       _saveFull('custom', colors);
