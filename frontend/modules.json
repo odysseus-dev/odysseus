@@ -42,6 +42,50 @@
       "deployment": "js/toolWindowZOrder.js"
     },
     {
+      "source": "shared/domain/modelSort.js",
+      "deployment": "js/modelSort.js"
+    },
+    {
+      "source": "shared/platform/appConfig.js",
+      "deployment": "js/appConfig.js"
+    },
+    {
+      "source": "shared/platform/authStatus.js",
+      "deployment": "js/authStatus.js"
+    },
+    {
+      "source": "shared/platform/browserCapabilities.js",
+      "deployment": "js/platform.js"
+    },
+    {
+      "source": "shared/platform/storage.js",
+      "deployment": "js/storage.js"
+    },
+    {
+      "source": "shared/ui/modalSnap.js",
+      "deployment": "js/modalSnap.js"
+    },
+    {
+      "source": "shared/ui/modalVisibility.js",
+      "deployment": "js/modalVisibility.js"
+    },
+    {
+      "source": "shared/ui/spinner.js",
+      "deployment": "js/spinner.js"
+    },
+    {
+      "source": "shared/ui/tourHintDismiss.js",
+      "deployment": "js/tourHintDismiss.js"
+    },
+    {
+      "source": "shared/ui/windowDrag.js",
+      "deployment": "js/windowDrag.js"
+    },
+    {
+      "source": "shared/ui/windowResize.js",
+      "deployment": "js/windowResize.js"
+    },
+    {
       "source": "features/notes/domain/recurrence.js",
       "deployment": "js/features/notes/domain/recurrence.js"
     },
@@ -190,19 +234,7 @@
           "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
         },
         {
-          "specifier": "/static/js/windowDrag.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
           "specifier": "/static/js/tileManager.js?v=20260910responsivebounds1",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/modalSnap.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/tourHintDismiss.js",
           "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
         },
         {
@@ -445,10 +477,6 @@
         },
         {
           "specifier": "/static/js/langIcons.js?v=20260831richtexttools91",
-          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
-        },
-        {
-          "specifier": "/static/js/spinner.js",
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
         },
         {

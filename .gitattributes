@@ -52,3 +52,16 @@ static/js/shared/ui/confetti.js text eol=lf
 
 # Document editor deployment modules.
 static/js/document/** text eol=lf
+
+# Existing runtime paths of maintained shared infrastructure.
+static/js/modelSort.js text eol=lf
+static/js/appConfig.js text eol=lf
+static/js/authStatus.js text eol=lf
+static/js/platform.js text eol=lf
+static/js/storage.js text eol=lf
+static/js/modalSnap.js text eol=lf
+static/js/modalVisibility.js text eol=lf
+static/js/spinner.js text eol=lf
+static/js/tourHintDismiss.js text eol=lf
+static/js/windowDrag.js text eol=lf
+static/js/windowResize.js text eol=lf
