@@ -451,35 +451,6 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
       if (latest) { latest.innerHTML = COPY_ICON; latest.style.color = ''; latest.style.opacity = '0.7'; }
     }, 1600);
   });
-  function _wireScopeChange(scope) {
-    scope.querySelectorAll('.uf-codex-scope').forEach(cb => {
-      if (cb.dataset.wired === '1') return;
-      cb.dataset.wired = '1';
-      cb.addEventListener('change', async () => {
-        const tokenId = cb.dataset.tokenId;
-        const panel = formEl.querySelector(`.uf-codex-token[data-token-id="${CSS.escape(tokenId)}"]`);
-        const msg = formEl.querySelector(`.uf-codex-scope-msg[data-token-id="${CSS.escape(tokenId)}"]`);
-        const scopes = Array.from(panel.querySelectorAll('.uf-codex-scope:checked')).map(input => input.dataset.scope);
-        try {
-          const r = await fetch(`/api/tokens/${tokenId}`, {
-            method: 'PATCH',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scopes }),
-          });
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(d.detail || 'Failed');
-          if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
-          await renderList();
-        } catch (err) {
-          cb.checked = !cb.checked;
-          if (msg) { msg.textContent = err?.message || 'Failed'; msg.style.color = 'var(--red)'; }
-        }
-      });
-    });
-  }
-  // Note: don't call _wireScopeChange(formEl) here. The existing-token
-  // editor (current) already wires its own change handler that PATCHes
-  // immediately. The inline scopes for a *just-created* token should
-  // remain unwired so they only persist on Save click below.
+  // Existing-token changes patch immediately. Scopes on a new token are saved
+  // only through the explicit Save action.
 }

@@ -18,7 +18,7 @@ def test_every_edit_schedules_a_debounced_autosave():
     save_state = _slice(source, "function _saveState", "function closeEditor")
     assert "_schedulePersist()" in save_state
 
-    schedule = _slice(source, "function _schedulePersist", "function _buildDraftPayload")
+    schedule = _slice(source, "function _schedulePersist", "function _serializationSnapshot")
     assert "const PERSIST_DEBOUNCE_MS = 800;" in source
     assert "if (_draftSavingDisabled()) return;" in schedule
     assert "if (!state.editorOpen || !state.layers.length) return;" in schedule
