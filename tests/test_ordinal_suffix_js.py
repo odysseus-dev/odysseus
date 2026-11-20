@@ -19,7 +19,7 @@ _HAS_NODE = shutil.which("node") is not None
 def _suffixes(nums):
     arr = json.dumps(nums)
     js = f"""
-    import {{ ordinalSuffix }} from '{_HELPER.as_posix()}';
+    import {{ ordinalSuffix }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify({arr}.map(n => n + ordinalSuffix(n))));
     """
     proc = subprocess.run(["node", "--input-type=module"], input=js,

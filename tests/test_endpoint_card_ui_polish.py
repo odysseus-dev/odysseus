@@ -31,7 +31,7 @@ class TestEndpointCardUrlPresentation:
     def test_should_display_endpoint_base_url_policy(self):
         js = f"""
           import fs from 'node:fs';
-          import {{ isChatgptSubscriptionEndpoint }} from '{(_REPO / 'static' / 'js' / 'chatgptSubscriptionUsage.js').as_posix()}';
+          import {{ isChatgptSubscriptionEndpoint }} from '{(_REPO / 'static' / 'js' / 'chatgptSubscriptionUsage.js').as_uri()}';
           const source = fs.readFileSync('{_ADMIN_JS.as_posix()}', 'utf8');
           const fnStart = source.indexOf('function shouldDisplayEndpointBaseUrl');
           const fnEnd = source.indexOf('// ChatGPT per-endpoint usage panel', fnStart);
@@ -76,7 +76,7 @@ class TestEndpointCardUrlPresentation:
     def test_endpoint_detail_html_suppresses_first_class_urls_and_keeps_others(self):
         js = f"""
           import fs from 'node:fs';
-          import {{ isChatgptSubscriptionEndpoint }} from '{(_REPO / 'static' / 'js' / 'chatgptSubscriptionUsage.js').as_posix()}';
+          import {{ isChatgptSubscriptionEndpoint }} from '{(_REPO / 'static' / 'js' / 'chatgptSubscriptionUsage.js').as_uri()}';
           const source = fs.readFileSync('{_ADMIN_JS.as_posix()}', 'utf8');
           const fnStart = source.indexOf('function shouldDisplayEndpointBaseUrl');
           const fnEnd = source.indexOf('// ChatGPT per-endpoint usage panel', fnStart);

@@ -21,7 +21,7 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _split(row: str):
     js = f"""
-    import {{ splitTableRow }} from '{_HELPER.as_posix()}';
+    import {{ splitTableRow }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify(splitTableRow({json.dumps(row)})));
     """
     proc = subprocess.run(
@@ -50,7 +50,7 @@ def test_header_row_unaffected():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_non_string_row_falls_back_to_empty_cell():
     js = f"""
-    import {{ splitTableRow }} from '{_HELPER.as_posix()}';
+    import {{ splitTableRow }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify([
       splitTableRow(null),
       splitTableRow({{"bad": "row"}})

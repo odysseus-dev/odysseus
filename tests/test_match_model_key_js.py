@@ -23,7 +23,7 @@ _KEYS = ["gpt-4o", "gpt-4o-mini", "gpt-4", "o1", "o1-mini", "o1-pro", "o3", "o3-
 
 def _match(name):
     js = (
-        f"import {{ matchModelKey }} from '{_HELPER.as_posix()}';"
+        f"import {{ matchModelKey }} from '{_HELPER.as_uri()}';"
         f"console.log(JSON.stringify(matchModelKey({json.dumps(name)}, {json.dumps(_KEYS)})));"
     )
     proc = subprocess.run(
