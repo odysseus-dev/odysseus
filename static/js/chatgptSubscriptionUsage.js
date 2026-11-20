@@ -176,7 +176,7 @@ function _barHtml(win, esc) {
 
 /**
  * Render the compact usage card body for one account. `esc` is the host
- * page's HTML escaper (defaults to a local one). Buttons carry data
+ * page's HTML escaper (defaults to the shared encoder). Buttons carry data
  * attributes with the exact auth/endpoint ids so handlers target only this
  * account.
  */
