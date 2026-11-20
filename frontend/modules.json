@@ -6,6 +6,10 @@
       "deployment": "js/actionMenuOrder.js"
     },
     {
+      "source": "shared/domain/html.js",
+      "deployment": "js/shared/domain/html.js"
+    },
+    {
       "source": "features/notes/domain/recurrence.js",
       "deployment": "js/features/notes/domain/recurrence.js"
     },

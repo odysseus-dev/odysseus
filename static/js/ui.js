@@ -9,6 +9,7 @@ import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ, topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
+import { escapeHtmlString } from './shared/domain/html.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -951,15 +952,9 @@ export function styledPrompt(message, {
   });
 }
 
-// Lookup table for esc(); hoisted out of the replace callback so it is
-// allocated once rather than per matched character.
-const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-/**
- * HTML-escape a string to prevent XSS.
- * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
- */
+/** HTML-escape a string for legacy UI consumers. */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
+  return escapeHtmlString(s || '');
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──

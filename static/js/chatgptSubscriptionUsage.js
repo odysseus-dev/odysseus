@@ -6,6 +6,8 @@
 // kept, missing windows are tolerated and nothing (reset times, percentages)
 // is ever invented.
 
+import { escapeHtml } from './shared/domain/html.js';
+
 function _num(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
@@ -19,15 +21,6 @@ function _clampPercent(value) {
   const n = _num(value);
   if (n === null) return null;
   return Math.max(0, Math.min(100, n));
-}
-
-function _defaultEsc(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 export function formatDuration(totalSeconds) {
@@ -188,7 +181,7 @@ function _barHtml(win, esc) {
  * account.
  */
 export function renderUsageCardHtml(viewModel, options = {}) {
-  const esc = typeof options.esc === 'function' ? options.esc : _defaultEsc;
+  const esc = typeof options.esc === 'function' ? options.esc : escapeHtml;
   const vm = viewModel || {};
   const authId = esc(vm.authId || '');
   const endpointId = esc(options.endpointId || '');

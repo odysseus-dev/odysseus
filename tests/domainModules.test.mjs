@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { escapeHtml, escapeHtmlString } from '../frontend/src/shared/domain/html.js';
+
+test('shared HTML encoding preserves strict string and nullish coercion contracts', () => {
+  const text = `&amp;<tag attr="one">'two'</tag>`;
+  const expected = '&amp;amp;&lt;tag attr=&quot;one&quot;&gt;&#39;two&#39;&lt;/tag&gt;';
+  assert.equal(escapeHtmlString(text), expected);
+  assert.equal(escapeHtml(text), expected);
+  assert.equal(escapeHtml(''), '');
+  assert.equal(escapeHtml(null), '');
+  assert.equal(escapeHtml(undefined), '');
+  assert.equal(escapeHtml(0), '0');
+  assert.equal(escapeHtml(false), 'false');
+  assert.throws(() => escapeHtmlString(42), TypeError);
+});
+
 import {
   AUTO_DETECT_DELAY,
   AUTO_DETECT_MIN_CHARS,
