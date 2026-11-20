@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["dmg"],
+    "icon": ["../static/icons/icon-512.png", "icons/icon.icns"],
+    "macOS": { "signingIdentity": "-" }
+  }
+}

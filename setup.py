@@ -273,11 +273,18 @@ def main():
 
     admin_status = "failed"
 
-    try:
-        admin_status = create_default_admin()
-    except Exception as e:
-        print(f"  [warn] Admin creation failed: {e}")
-        admin_status = "failed"
+    # Mirrors the AUTH_ENABLED parse in app.py / src/owner_identity.py. No login is
+    # ever required in this mode, so there's nothing for an admin account to gate.
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").strip().lower() != "false"
+    if not auth_enabled:
+        print("  [skip] AUTH_ENABLED=false — no admin account needed")
+        admin_status = "auth_disabled"
+    else:
+        try:
+            admin_status = create_default_admin()
+        except Exception as e:
+            print(f"  [warn] Admin creation failed: {e}")
+            admin_status = "failed"
 
     print("\n=== Setup complete ===")
     # start-macos.sh launches the server itself (on its own port) right after
@@ -292,6 +299,8 @@ def main():
         print("Login with your admin credentials.\n")
     elif admin_status == "exists":
         print("Login with your existing admin credentials.\n")
+    elif admin_status == "auth_disabled":
+        print("Auth is disabled (AUTH_ENABLED=false) — no login required.\n")
     elif admin_status == "skipped":
         print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
     elif admin_status == "failed":
