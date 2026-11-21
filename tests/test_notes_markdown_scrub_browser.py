@@ -140,9 +140,11 @@ def test_notes_cards_mount_images_locally_and_editor_sends_full_document(page):
     page.route(f"{ORIGIN}{upload}", lambda route: route.fulfill(body=base64.b64decode(PIXEL), content_type="image/png"))
     _mount_notes(page)
     card = page.locator('.note-card[data-note-id="plain"]')
-    card.locator('img[alt="upload"]').wait_for()
-    page.wait_for_function("""() => ['upload', 'raster'].every(alt =>
-      document.querySelector(`.note-card img[alt="${alt}"]`)?.naturalWidth === 1)""")
+    # A card leads with the note's first image as its thumbnail; the others
+    # render in the note window (checked below).
+    card.locator('img.note-card-image[alt="upload"]').wait_for()
+    page.wait_for_function("""() => document.querySelector(
+      '.note-card[data-note-id="plain"] img.note-card-image[alt="upload"]')?.naturalWidth === 1""")
     card.locator("details summary").click()
     assert card.get_by_role("link", name="external").get_attribute("href") == foreign
     assert page.locator('.note-card[data-note-id="draw"] img').count() == 0
@@ -151,6 +153,9 @@ def test_notes_cards_mount_images_locally_and_editor_sends_full_document(page):
     # The note window saves the whole document, against the revision it saw.
     card.locator('.note-card-title').click()
     _window_body(page).wait_for()
+    page.wait_for_function("""() => ['upload', 'raster'].every(alt =>
+      document.querySelector(`#note-window-modal .note-window-body img[alt="${alt}"]`)?.naturalWidth === 1)""")
+    assert page.foreign_requests == []
     page.locator('#note-window-modal .note-window-toolbar [data-md="source"]').click()
     page.locator('#note-window-modal .note-window-source').fill("Replacement without images")
     page.wait_for_function("() => document.querySelector('.note-card[data-note-id=\"plain\"]') && !document.querySelector('.note-card[data-note-id=\"plain\"] img')")
@@ -213,8 +218,12 @@ def test_edit_typed_during_save_restores_with_new_revision(page, mobile):
     payload = pending[0].request.post_data_json
     assert payload["content"] == "Submitted text" and payload["body_revision"] == "r1"
     assert payload["replace_content"] is True
-    draft = page.evaluate("() => JSON.parse(localStorage.getItem('odysseus-note-draft-draft'))")
-    assert draft["content"] == "Submitted text, then a later edit"
+    # Backups are batched (DRAFT_BACKUP_INTERVAL_MS): the later text must reach
+    # the draft while the first save is still held.
+    page.wait_for_function(
+        "() => JSON.parse(localStorage.getItem('odysseus-note-draft-draft') || 'null')?.content"
+        " === 'Submitted text, then a later edit'", timeout=2000)
+    assert len(pending) == 1
     # The first save lands at r2: the later text goes next, against r2.
     with page.expect_request(lambda request: request.method == "PUT") as saved:
         note.update(content=payload["content"], body_revision="r2")
