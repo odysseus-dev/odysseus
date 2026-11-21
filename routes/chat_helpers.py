@@ -1844,9 +1844,16 @@ def run_post_response_tasks(
     """
     _extraction_jobs: list = []
 
-    # Memory extraction — only every 4th message pair to avoid excess LLM calls
-    _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
-    _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
+    # Memory extraction — run every 2nd user turn so turns that persist extra
+    # messages (such as tool approval cards) do not permanently shift history
+    # parity and disable extraction for the rest of the chat (#7113).
+    _history = getattr(sess, "history", None) or []
+    _user_turn_count = sum(
+        1
+        for msg in _history
+        if (msg.get("role") if hasattr(msg, "get") else getattr(msg, "role", None)) == "user"
+    )
+    _should_extract = (_user_turn_count >= 2) and (_user_turn_count % 2 == 0)
     _chat_memory_extract = getattr(sess, "memory_extraction_enabled", True) is not False
     if allow_background_extraction and not incognito and not compare_mode and _chat_memory_extract and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
