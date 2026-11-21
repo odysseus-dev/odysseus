@@ -22,12 +22,23 @@ logger = logging.getLogger(__name__)
 def _find_npx() -> str:
     """Find the npx binary, checking common locations if not on PATH.
 
-    On Windows the shim is `npx.cmd`, which `which_tool` resolves via PATHEXT.
+    On Windows, Node.js installs both an extensionless POSIX shell script
+    (`npx`) and a Windows command wrapper (`npx.cmd`) side by side. Prefer
+    `npx.cmd` on Windows so subprocess creation never picks the extensionless
+    POSIX script (which fails with WinError 193).
     """
-    npx = which_tool("npx")
-    if npx:
-        return npx
     if IS_WINDOWS:
+        npx_cmd = which_tool("npx.cmd")
+        if npx_cmd:
+            return npx_cmd
+        npx = which_tool("npx")
+        if npx:
+            lower = npx.lower()
+            if lower.endswith((".cmd", ".exe", ".bat", ".com")):
+                return npx
+            sibling_cmd = npx + ".cmd"
+            if os.path.isfile(sibling_cmd):
+                return sibling_cmd
         # Minimal-PATH fallbacks: npm's global bin lives under %APPDATA%\npm,
         # and node's installer dir carries npx.cmd alongside node.exe.
         appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
@@ -43,6 +54,9 @@ def _find_npx() -> str:
             if os.path.isfile(cand):
                 return cand
         return "npx.cmd"  # fallback, will fail with a clear error
+    npx = which_tool("npx")
+    if npx:
+        return npx
     # Common POSIX locations when PATH is minimal (e.g. systemd)
     for candidate in [
         os.path.expanduser("~/.npm-global/bin/npx"),
