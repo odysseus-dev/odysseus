@@ -174,3 +174,204 @@ test('draft recovery predicate preserves drafts with different content from save
   assert.equal(recoveredList.length, 1);
   assert.equal(recoveredList[0].content, 'different unsaved draft');
 });
+
+function makeRealisticStorage() {
+  const map = new Map();
+  return {
+    getItem: k => (map.has(String(k)) ? map.get(String(k)) : null),
+    setItem: (k, v) => map.set(String(k), String(v)),
+    removeItem: (k) => map.delete(String(k)),
+    key: (i) => Array.from(map.keys())[i] ?? null,
+    get length() { return map.size; },
+    _map: map,
+  };
+}
+
+function setupRealisticSession({ note = null, api = {}, storage = makeRealisticStorage(), clockTime = 1000 } = {}) {
+  const persistence = createNotesPersistence({ storage });
+  const draft = { title: note?.title || '', content: note?.content || '' };
+  let now = clockTime;
+  const session = createNoteSession({
+    api,
+    persistence,
+    note,
+    clock: { now: () => ++now },
+    scheduler: { setTimeout: () => 1, clearTimeout: () => {} },
+    collect: () => draft,
+  });
+  return { session, draft, storage, persistence };
+}
+
+test('Finding A 1: two concurrent unsaved new notes have isolated storage keys and preserve both drafts', () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  sessionA.draft.title = 'Alpha';
+  sessionA.draft.content = 'alpha content';
+  sessionA.session.markDirty();
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'Bravo';
+  sessionB.draft.content = 'bravo content';
+  sessionB.session.markDirty();
+
+  const keys = Array.from(storage._map.keys());
+  assert.equal(keys.length, 2);
+  assert.ok(keys.every(k => k.startsWith('odysseus-note-draft-__new__-')));
+  assert.notEqual(keys[0], keys[1]);
+
+  const vals = Array.from(storage._map.values());
+  assert.ok(vals.some(v => v.includes('alpha content')));
+  assert.ok(vals.some(v => v.includes('bravo content')));
+});
+
+test('Finding A 2: abandoning unsaved new note A preserves unsaved new note B', () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  sessionA.draft.title = 'Alpha';
+  sessionA.draft.content = 'alpha content';
+  sessionA.session.markDirty();
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'Bravo';
+  sessionB.draft.content = 'bravo content';
+  sessionB.session.markDirty();
+
+  sessionA.session.abandon();
+
+  const remaining = Array.from(storage._map.values());
+  assert.equal(remaining.length, 1);
+  assert.ok(remaining[0].includes('bravo content'));
+  assert.ok(!remaining.some(v => v.includes('alpha content')));
+});
+
+test('Finding A 3: discarding unsaved new note A preserves unsaved new note B', () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  sessionA.draft.title = 'Alpha';
+  sessionA.draft.content = 'alpha content';
+  sessionA.session.markDirty();
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'Bravo';
+  sessionB.draft.content = 'bravo content';
+  sessionB.session.markDirty();
+
+  sessionA.session.discardDraft();
+
+  const remaining = Array.from(storage._map.values());
+  assert.equal(remaining.length, 1);
+  assert.ok(remaining[0].includes('bravo content'));
+  assert.ok(!remaining.some(v => v.includes('alpha content')));
+});
+
+test('Finding A 4: saving unsaved new note A preserves unsaved new note B', async () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({
+    note: null,
+    storage,
+    clockTime: 100,
+    api: { saveNote: async body => ({ ...body, id: 'created-a', body_revision: 'c1' }) },
+  });
+  sessionA.draft.title = 'Alpha';
+  sessionA.draft.content = 'alpha content';
+  sessionA.session.markDirty();
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'Bravo';
+  sessionB.draft.content = 'bravo content';
+  sessionB.session.markDirty();
+
+  await sessionA.session.flush();
+
+  const remaining = Array.from(storage._map.values());
+  assert.equal(remaining.length, 1);
+  assert.ok(remaining[0].includes('bravo content'));
+  assert.ok(!remaining.some(v => v.includes('alpha content')));
+});
+
+test('Finding A 5: restoring unsaved new note A preserves unsaved new note B', () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  sessionA.draft.title = 'Alpha';
+  sessionA.draft.content = 'alpha content';
+  sessionA.session.markDirty();
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'Bravo';
+  sessionB.draft.content = 'bravo content';
+  sessionB.session.markDirty();
+
+  // Session A restores its draft
+  const draftA = sessionA.session.storedDraft();
+  assert.equal(draftA.content, 'alpha content');
+  sessionA.draft.content = draftA.content;
+  sessionA.session.markDirty();
+
+  const remaining = Array.from(storage._map.values());
+  assert.equal(remaining.length, 2);
+  assert.ok(remaining.some(v => v.includes('alpha content')));
+  assert.ok(remaining.some(v => v.includes('bravo content')));
+});
+
+test('Finding A 6: removing a legacy draft does not remove active writer-specific drafts', () => {
+  const storage = makeRealisticStorage();
+  storage.setItem('odysseus-note-draft-__new__', JSON.stringify({ title: 'Legacy', content: 'legacy content' }));
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'Bravo';
+  sessionB.draft.content = 'bravo content';
+  sessionB.session.markDirty();
+
+  // Clear legacy draft without writer
+  sessionB.persistence._clearDraft(null);
+
+  assert.equal(storage.getItem('odysseus-note-draft-__new__'), null);
+  const remainingDraftKeys = [];
+  for (let i = 0; i < storage.length; i++) {
+    const k = storage.key(i);
+    if (k?.startsWith('odysseus-note-draft-__new__-')) {
+      remainingDraftKeys.push(k);
+    }
+  }
+  assert.equal(remainingDraftKeys.length, 1);
+  assert.ok(storage.getItem(remainingDraftKeys[0]).includes('bravo content'));
+});
+
+test('Finding A 7: repeated cleanup remains safe and idempotent', () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  sessionA.draft.title = 'Alpha';
+  sessionA.draft.content = 'alpha content';
+  sessionA.session.markDirty();
+
+  assert.doesNotThrow(() => {
+    sessionA.session.abandon();
+    sessionA.session.abandon();
+    sessionA.session.discardDraft();
+    sessionA.session.discardDraft();
+  });
+  assert.equal(storage.length, 0);
+});
+
+test('Finding A 8: existing saved-note recovery continues working alongside writer drafts', () => {
+  const storage = makeRealisticStorage();
+  const existingNote = { id: 'saved-note-1', title: 'Note 1', content: 'original', body_revision: 'r1' };
+
+  const session1 = setupRealisticSession({ note: existingNote, storage, clockTime: 100 });
+  session1.draft.content = 'Edit from Tab 1';
+  session1.session.markDirty();
+
+  const session2 = setupRealisticSession({ note: existingNote, storage, clockTime: 200 });
+  session2.draft.content = 'Edit from Tab 2';
+  session2.session.markDirty();
+
+  // Tab 1 edit was preserved in recovery
+  const recoveryKey = 'odysseus-note-recovery-' + existingNote.id;
+  const recoveredList = JSON.parse(storage.getItem(recoveryKey) || '[]');
+  assert.equal(recoveredList.length, 1);
+  assert.equal(recoveredList[0].content, 'Edit from Tab 1');
+
+  // Tab 2 edit is in primary draft key
+  const primaryDraft = JSON.parse(storage.getItem('odysseus-note-draft-' + existingNote.id) || 'null');
+  assert.equal(primaryDraft.content, 'Edit from Tab 2');
+});

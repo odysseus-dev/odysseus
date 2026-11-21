@@ -129,7 +129,7 @@ export function createNoteWindow({
   }
 
   function register(ctx) {
-    Modals.register(NOTE_WINDOW_ID, { restoreFn: () => {}, closeFn: () => { if (current === ctx) close(); }, label: ctx.label, icon: NOTE_ICON });
+    Modals.register(NOTE_WINDOW_ID, { restoreFn: () => { sync(); }, closeFn: () => { if (current === ctx) close(); }, label: ctx.label, icon: NOTE_ICON });
   }
 
   function banner(ctx, message, actions = []) {
@@ -370,9 +370,9 @@ export function createNoteWindow({
       else if (event.key === 'Escape') { event.preventDefault(); close(); }
     });
     // Blur flushes; it never writes on its own (the session saves only after a real edit).
-    els.body.addEventListener('blur', () => ctx.session.flush());
-    els.source.addEventListener('blur', () => ctx.session.flush());
-    els.title.addEventListener('blur', () => ctx.session.flush());
+    els.body.addEventListener('blur', () => { ctx.session.flush().then(() => sync()); });
+    els.source.addEventListener('blur', () => { ctx.session.flush().then(() => sync()); });
+    els.title.addEventListener('blur', () => { ctx.session.flush().then(() => sync()); });
 
     ctx.reminder = wireReminderPicker(els.content, {
       onChange: () => {
@@ -465,6 +465,7 @@ export function createNoteWindow({
     if (!note) return false;
     if (current && current.session.id === note.id) {
       if (Modals.isMinimized(NOTE_WINDOW_ID)) Modals.restore(NOTE_WINDOW_ID);
+      sync();
       return true;
     }
     const opener = document.activeElement;
@@ -490,9 +491,21 @@ export function createNoteWindow({
     if (ctx.color !== (note.color || '')) showColor(ctx, note.color);
     syncMeta(ctx, note);
     if (!note.body_revision || note.body_revision === ctx.session.base) return;
-    if (ctx.session.dirty || ctx.editor.edited || ctx.session.conflict) {
+    if (ctx.session.dirty || ctx.session.saving || ctx.session.conflict) {
       return;
     }
+    const currentMarkdown = ctx.editor.getMarkdown();
+    const currentTitle = ctx.els.title.value;
+    if (currentMarkdown !== ctx.session.saved.content || currentTitle !== ctx.session.saved.title) {
+      return;
+    }
+    const active = document.activeElement;
+    const isInteracting = active && (active === ctx.els.title || active === ctx.els.body || active === ctx.els.source || ctx.els.body.contains(active));
+    if (isInteracting) {
+      ctx.pendingSync = true;
+      return;
+    }
+    ctx.pendingSync = false;
     ctx.session.replace(note);
     ctx.els.title.value = note.title || '';
     ctx.editor.setContent(note.content || '');

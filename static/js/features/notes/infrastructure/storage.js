@@ -48,13 +48,19 @@ function _saveFiredReminders(set) {
 }
 
 function _draftKey(id, writer) {
-  if (!id) return _DRAFT_PREFIX + (writer ? `__new__-${writer}` : '__new__');
+  if (!id || id === '__new__') return _DRAFT_PREFIX + (writer ? `__new__-${writer}` : '__new__');
   return _DRAFT_PREFIX + id;
 }
 
-function _loadDraft(id) {
-  if (id) {
+function _loadDraft(id, writer) {
+  if (id && id !== '__new__') {
     try { return JSON.parse(localStorage.getItem(_draftKey(id)) || 'null'); } catch { return null; }
+  }
+  if (writer) {
+    try {
+      const own = localStorage.getItem(_draftKey('__new__', writer));
+      if (own) return JSON.parse(own);
+    } catch {}
   }
   try {
     const standard = localStorage.getItem(_draftKey(null));
@@ -74,26 +80,24 @@ function _loadDraft(id) {
   return null;
 }
 
-function _clearDraft(id) {
+function _clearDraft(id, writer) {
   try {
-    localStorage.removeItem(_draftKey(id));
     if (!id || id === '__new__') {
-      if (typeof localStorage.length === 'number' && typeof localStorage.key === 'function') {
-        const toRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(_DRAFT_PREFIX + '__new__-')) toRemove.push(k);
-        }
-        toRemove.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+      if (writer) {
+        localStorage.removeItem(_draftKey('__new__', writer));
+        return;
       }
+      localStorage.removeItem(_draftKey(null));
+      return;
     }
+    localStorage.removeItem(_draftKey(id));
   } catch {}
 }
 
-function _draftRecoveryKey(id) { return 'odysseus-note-recovery-' + (id || '__new__'); }
+function _draftRecoveryKey(id) { return 'odysseus-note-recovery-' + (id && id !== '__new__' ? id : '__new__'); }
 
 function _loadDraftRecovery(id) {
-  const targetId = id || '__new__';
+  const targetId = id && id !== '__new__' ? id : '__new__';
   const list = [];
   try {
     const drafts = JSON.parse(localStorage.getItem(_draftRecoveryKey(targetId)) || '[]');
@@ -126,7 +130,7 @@ function _clearDraftRecovery(id) { try { localStorage.removeItem(_draftRecoveryK
 
 function _keepDraftForRecovery(id, draft) {
   if (!draft || typeof draft !== 'object') return;
-  const targetId = id || '__new__';
+  const targetId = id && id !== '__new__' ? id : '__new__';
   const drafts = _loadDraftRecovery(targetId);
   const stored = JSON.stringify(draft);
   if (drafts.some(entry => JSON.stringify(entry) === stored)) return;

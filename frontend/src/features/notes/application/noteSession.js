@@ -28,6 +28,7 @@ export function createNoteSession({
   let dirty = false;
   let timer = null;
   let pending = Promise.resolve();
+  let inFlight = 0;
   let conflict = null;
   let wrote = false;
   const key = () => persistence._draftKey(id, writer);
@@ -35,7 +36,8 @@ export function createNoteSession({
   // Every write goes through one queue, so a colour change can never land
   // between a content save and its response.
   const enqueue = work => {
-    const run = pending.then(work);
+    inFlight++;
+    const run = pending.then(work).finally(() => { inFlight--; });
     pending = run.catch(() => {});
     return run;
   };
@@ -92,7 +94,7 @@ export function createNoteSession({
       dirty = false;
       try {
         if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
-        if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+        if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__', writer);
       } catch {}
       return;
     }
@@ -209,7 +211,7 @@ export function createNoteSession({
         conflict = null;
         try {
           if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
-          if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+          if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__', writer);
         } catch {}
         effects.reloaded?.(current);
       });
@@ -238,7 +240,8 @@ export function createNoteSession({
     if (draft && draft.content === saved.content && draft.title === saved.title) {
       try {
         if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
-        persistence._clearDraft(id || '__new__');
+        if (!id || readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__', writer);
+        if (!raw?._draftWriter) persistence._clearDraft(id || '__new__');
       } catch {}
       draft = null;
     }
@@ -260,7 +263,7 @@ export function createNoteSession({
     conflict = null;
     try {
       if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
-      persistence._clearDraft(id || '__new__');
+      if (id || readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__', writer);
     } catch {}
   }
 
@@ -270,7 +273,7 @@ export function createNoteSession({
     /** A same-tab write elsewhere (a card checkbox) moved the note on. */
     rebase: revision => { base = revision || base; },
     /** Take a newer server copy while nothing local is pending. */
-    replace: serverNote => { if (!dirty) adopt(serverNote); },
+    replace: serverNote => { if (!dirty && inFlight === 0) adopt(serverNote); },
     flush,
     patchMeta,
     toggleTask,
@@ -279,7 +282,12 @@ export function createNoteSession({
     discardDraft: () => {
       try {
         if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
-        persistence._clearDraft(id || '__new__');
+        if (id || readDraft()?._draftWriter === writer || !readDraft()?._draftWriter) {
+          persistence._clearDraft(id || '__new__', writer);
+        }
+        if (!readDraft()?._draftWriter) {
+          persistence._clearDraft(id || '__new__');
+        }
         persistence._clearDraftRecovery?.(id || '__new__');
       } catch {}
     },
@@ -288,6 +296,7 @@ export function createNoteSession({
     get base() { return base; },
     get saved() { return { ...saved }; },
     get dirty() { return dirty; },
+    get saving() { return inFlight > 0; },
     get conflict() { return conflict; },
     get meta() { return { ...pendingMeta }; },
   };
