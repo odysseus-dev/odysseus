@@ -43,6 +43,38 @@ async function openNote(browser, api, id, setup = null) {
   return { context, page, errors, body: page.locator('#note-window-modal .note-window-body') };
 }
 
+test('typing during a checklist request survives the response and the next save', async ({ browser }) => {
+  const api = await signIn(OWNER);
+  let context;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let received = false;
+  const text = 'text typed during the toggle';
+  try {
+    const id = await makeNote(api, 'Checklist response race', '- [ ] Item');
+    const opened = await openNote(browser, api, id, ctx => ctx.route(`**/api/notes/${id}/items/0/toggle`, async route => {
+      const response = await route.fetch();
+      received = true;
+      await gate;
+      await route.fulfill({ response });
+    }));
+    ({ context } = opened);
+    const { body, page } = opened;
+    await body.locator('li input[type=checkbox], li [role=checkbox]').first().click();
+    await expect.poll(() => received).toBe(true);
+    await body.press('End');
+    await page.keyboard.insertText(` ${text}`);
+    await expect(body).toContainText(text);
+    release();
+    await expect.poll(async () => (await read(api, id)).content).toContain(`- [x] Item ${text}`);
+    await expect(body).toContainText(text);
+  } finally {
+    release();
+    await context?.close();
+    await api.dispose();
+  }
+});
+
 let owner, collab;
 test.beforeAll(async () => { owner = await signIn(OWNER); collab = await signIn(COLLAB); });
 test.afterAll(async () => { for (const id of created) await owner.delete(`/api/notes/${id}`); });

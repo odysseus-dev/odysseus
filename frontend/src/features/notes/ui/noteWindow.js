@@ -197,7 +197,7 @@ export function createNoteWindow({
       }
       mergeIntoState(ctx, result.note);
       showMeta(ctx);
-      if (ctx.editor.getMarkdown() !== ctx.session.saved.content) ctx.editor.setContent(ctx.session.saved.content);
+      if (!ctx.session.dirty && ctx.editor.getMarkdown() !== ctx.session.saved.content) ctx.editor.setContent(ctx.session.saved.content);
       const items = result.items || result.note?.items || [];
       if (done && items.length && items.every(item => item.done)) effects.celebrate(target.getBoundingClientRect());
     } catch {
