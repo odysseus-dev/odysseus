@@ -8,7 +8,7 @@
 // "See what changed" in the toast and in the chat open the History on it.
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { getNote, openNotes, runItemAgent, sqlite, tapOrClick, until } from './notesHarness.mjs';
+import { getNote, openNotes, putBody, runItemAgent, sqlite, tapOrClick, until } from './notesHarness.mjs';
 
 const evidence = process.env.NOTES_NATIVE_EVIDENCE_DIR;
 
@@ -22,14 +22,14 @@ export async function checkHistory({ browser, owner, size, agent = false }) {
   const V3 = `Third words ${size}`;
   const CHAT = `history-chat-${size}`;
   const note = await (await owner.api.post('/api/notes', { data: { title: `History ${size}`, content: V1 } })).json();
-  assert.equal((await owner.api.put(`/api/notes/${note.id}`, { data: { content: V2 } })).ok(), true);
+  assert.equal((await putBody(owner.api, note.id, { content: V2 })).ok(), true);
   // That version stands for an agent edit from a named chat an hour ago, so
   // the next save is outside the gap and the list shows both kinds.
   sqlite("UPDATE note_versions SET source = 'agent', session_id = ?, created_at = datetime(created_at, '-1 hour') WHERE note_id = ?", [CHAT, note.id]);
   sqlite("INSERT INTO sessions (id, name, endpoint_url, model, owner, archived, created_at, updated_at) VALUES (?, ?, '', 'stub', ?, 0, datetime('now'), datetime('now'))",
     [CHAT, `Agent: History ${size}`, owner.username]);
   // Text sent on its own keeps the note's task lines: this is what is stored.
-  const third = await (await owner.api.put(`/api/notes/${note.id}`, { data: { content: V3 } })).json();
+  const third = await (await putBody(owner.api, note.id, { content: V3 })).json();
   assert.ok(third.content.startsWith(V3));
   const listed = await versionsOf(owner.api, note.id);
   assert.deepEqual(listed.map(v => v.source), ['user', 'agent']);

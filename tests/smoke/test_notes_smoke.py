@@ -22,8 +22,10 @@ def test_a_note_round_trips(client):
         assert read.status_code == 200, read.text
         assert read.json().get("content") == BODY, read.text
 
+        # A body write names the body it was made from, else it is a 409.
         edited = client.put(f"{NOTES_PATH}/{note_id}",
-                            json={"title": TITLE, "content": EDITED_BODY})
+                            json={"title": TITLE, "content": EDITED_BODY,
+                                  "body_revision": read.json()["body_revision"]})
         assert edited.status_code == 200, edited.text
         assert client.get(f"{NOTES_PATH}/{note_id}").json()["content"] == EDITED_BODY
     finally:

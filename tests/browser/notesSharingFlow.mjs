@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-  createAccount, getNote, imagesLoaded, openNotes, origin, pngOf, refreshNotes, tapOrClick, until, untilNote, uploadPng, VIEWPORTS,
+  createAccount, getNote, imagesLoaded, openNotes, origin, pngOf, putBody, refreshNotes, tapOrClick, until, untilNote, uploadPng, VIEWPORTS,
 } from './notesHarness.mjs';
 
 const evidence = process.env.NOTES_NATIVE_EVIDENCE_DIR;
@@ -369,7 +369,7 @@ export async function checkSharedRefresh({ browser, owner, admin, size }) {
   // A request of our own, answered, means every earlier request was reported.
   const settle = () => page.evaluate(() => fetch('/api/health').then(r => r.status));
 
-  await poller.api.put(`/api/notes/${theirs.id}`, { data: { content: 'after one poll' } });
+  assert.equal((await putBody(poller.api, theirs.id, { content: 'after one poll' })).ok(), true);
   await page.clock.fastForward(20000);
   await card.filter({ hasText: 'after one poll' }).waitFor();
 
@@ -379,7 +379,7 @@ export async function checkSharedRefresh({ browser, owner, admin, size }) {
   await page.evaluate(id => void window.notesModule.openNote(id, { focus: null }), theirs.id);
   const windowBody = page.locator('#note-window-modal .note-window-body');
   await windowBody.focus();
-  await poller.api.put(`/api/notes/${theirs.id}`, { data: { content: 'changed while it was open' } });
+  assert.equal((await putBody(poller.api, theirs.id, { content: 'changed while it was open' })).ok(), true);
   await page.clock.fastForward(20000);
   await windowBody.filter({ hasText: 'changed while it was open' }).waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('note-window-body')), true, 'focus stays in the note');
@@ -415,7 +415,7 @@ export async function checkSharedRefresh({ browser, owner, admin, size }) {
   // A failed read keeps the list; the next good one brings the change.
   const listRead = url => url.pathname === '/api/notes';
   await page.route(listRead, route => route.fulfill({ status: 500, body: 'down' }));
-  await poller.api.put(`/api/notes/${theirs.id}`, { data: { content: 'changed during the outage' } });
+  assert.equal((await putBody(poller.api, theirs.id, { content: 'changed during the outage' })).ok(), true);
   reads.length = 0;
   await page.clock.fastForward(20000);
   await until(async () => reads.length, n => n > 0, 'the failed re-read');
