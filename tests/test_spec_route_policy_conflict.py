@@ -242,3 +242,58 @@ async def test_contractless_spec_run_gains_no_tool_authority(monkeypatch):
     spec_menus = await offered_tools("spec")
     assert spec_menus and spec_menus == await offered_tools("compact")
     assert all("manage_calendar" not in menu for menu in spec_menus)
+
+
+def test_email_search_keeps_read_continuation_when_router_picks_draft(monkeypatch):
+    schemas = [
+        {"type": "function", "function": {
+            "name": name, "description": name,
+            "parameters": {"type": "object", "properties": {}},
+        }}
+        for name in (
+            "mcp__email__draft_email",
+            "mcp__email__search_emails",
+            "mcp__email__read_email",
+        )
+    ]
+
+    class FakeMCPManager:
+        def get_all_openai_schemas(self, disabled):
+            return schemas
+
+    fake = types.ModuleType("src.spec_router")
+    fake.LAST_DECISIONS = [{
+        "choice": "t10",
+        "top": [("draft_email", 0.468), ("search_emails", 0.082)],
+    }]
+    fake.latest_decision = lambda: fake.LAST_DECISIONS[-1]
+    fake.spec_route_tools = lambda *a, **kw: ({"draft_email"}, True)
+    monkeypatch.setitem(sys.modules, "src.spec_router", fake)
+    monkeypatch.setattr(agent_loop, "_configured_model_tool_surface_raw", lambda *a, **kw: "spec")
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: FakeMCPManager())
+    monkeypatch.setenv("ODYSSEUS_SPEC_MODE", "strict")
+    monkeypatch.setenv("ODYSSEUS_SPEC_SUBSET_OF_BASE", "1")
+
+    prompt = "can you search my emails to find the answers inside the message bodies?"
+    policy = ToolPolicy()
+    contract = resolve_turn_contract(
+        capabilities={"email"}, required_capabilities=set(),
+        schemas=schemas, policy=policy,
+        selected_tools={
+            "mcp__email__draft_email",
+            "mcp__email__search_emails",
+            "mcp__email__read_email",
+        },
+        message=prompt,
+    )
+    assert "mcp__email__search_emails" in contract.offered
+    assert "mcp__email__read_email" in contract.offered
+
+    routed = agent_loop._spec_router_contract(
+        contract, [{"role": "user", "content": prompt}],
+        set(), "http://fixture", "Ajax", "fixture", {},
+        tool_policy=policy,
+    )
+    assert routed.routing_experiment == "spec-router"
+    assert "mcp__email__search_emails" in routed.offered
+    assert "mcp__email__read_email" in routed.offered
