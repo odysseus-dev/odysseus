@@ -331,3 +331,21 @@ def test_context_recovery_retries_transport_wrapper_after_overflow(monkeypatch):
     assert trim_budgets[1][0] < trim_budgets[0][0]
     assert any("recovered" in chunk for chunk in chunks)
     assert not any(chunk.startswith("event: error") for chunk in chunks)
+
+
+def test_parse_context_error_recognizes_llamacpp_format():
+    err = "request (40960 tokens) exceeds available context size (32768 tokens)"
+    details = parse_context_error(err)
+    assert details is not None
+    assert details.input_tokens == 40960
+    assert details.context_limit == 32768
+    assert details.input_tokens_is_lower_bound is False
+
+
+def test_plan_context_recovery_handles_llamacpp_overflow():
+    err = "request (40,960 tokens) exceeds available context size (32,768 tokens)"
+    plan = plan_context_recovery(err, 0, [{"role": "user", "content": "hi"}])
+    assert plan is not None
+    assert plan.context_limit == 32768
+    assert plan.observed_input_tokens == 40960
+    assert plan.max_tokens == 1024
