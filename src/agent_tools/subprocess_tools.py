@@ -277,6 +277,27 @@ def _namespace_dir_chain(path: str) -> list[str]:
     return args
 
 
+_ISOLATED_TMP_PATH_RE = re.compile(r"(^|[\s'\"=:(,\[])/tmp/")
+
+
+def _rewrite_isolated_tmp_paths(content: str, cwd: str) -> str:
+    """Map standalone ``/tmp/...`` paths to ``<cwd>/.tmp/...`` without rewriting
+    ``/tmp/`` suffixes inside longer paths like ``./tmp/``, ``~/tmp/``,
+    ``/var/tmp/``, ``$HOME/tmp/``, ``{root}/tmp/``, or ``data/tmp/``.
+
+    Only creates ``<cwd>/.tmp`` when at least one standalone ``/tmp/`` path is
+    actually rewritten.
+    """
+    text = str(content or "")
+    if "/tmp/" not in text or not _ISOLATED_TMP_PATH_RE.search(text):
+        return text
+    isolated_prefix = _isolated_tmp_dir(cwd).rstrip("/") + "/"
+    return _ISOLATED_TMP_PATH_RE.sub(
+        lambda match: match.group(1) + isolated_prefix,
+        text,
+    )
+
+
 def _isolated_tmp_dir(cwd: str) -> str:
     """The workspace-local stand-in for the host ``/tmp``.
 
@@ -657,9 +678,7 @@ class BashTool:
                 ),
                 "exit_code": 1,
             }
-        if "/tmp/" in content:
-            isolated_tmp = _isolated_tmp_dir(agent_cwd())
-            content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
+        content = _rewrite_isolated_tmp_paths(content, agent_cwd())
         return await _run_owned_command(content, ctx, tool="bash", timeout=DEFAULT_BASH_TIMEOUT)
 
 class HostShellTool:
@@ -934,9 +953,7 @@ class PythonTool:
             require_launch("python", cwd=agent_cwd(), content=content)
         except ResourceIdentityError as error:
             return {"error": str(error), "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
-        if "/tmp/" in content:
-            isolated_tmp = _isolated_tmp_dir(agent_cwd())
-            content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
+        content = _rewrite_isolated_tmp_paths(content, agent_cwd())
         _subproc_env = ctx.get("subproc_env")
         content = _python_with_configured_import_paths(
             _python_with_visible_final_expression(content), _subproc_env
