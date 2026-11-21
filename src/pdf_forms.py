@@ -171,6 +171,8 @@ def extract_fields(path: str) -> list[dict[str, Any]]:
                     label = _infer_label(page, w.rect, words)
                 value = w.field_value if w.field_value is not None else ""
                 on_state = _widget_on_state(w) if wtype == "checkbox" else ""
+                if wtype == "checkbox" and value == "Off":
+                    value = ""
 
                 if name not in grouped:
                     # AdobeSign-style signature placeholders are stored as
