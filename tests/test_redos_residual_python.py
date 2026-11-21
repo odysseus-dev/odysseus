@@ -84,7 +84,7 @@ def test_md_links_to_html_matches_reference(text):
 @pytest.mark.parametrize("flood", [
     "[" + "[\\" * 40_000,          # CodeQL's reported shape
     "[a](http://x" * 8_000,        # URL that never closes, repeated
-])
+], ids=["open-brackets-40k", "unclosed-url-8k"])
 def test_md_links_to_html_floods_are_linear(flood):
     from routes.email.email_routes import _md_links_to_html
 
@@ -153,7 +153,7 @@ def test_normalize_thinking_garbled_tags_unchanged(text, expected):
 @pytest.mark.parametrize("flood", [
     "a" + "\n" * 80_000 + "x",
     "The user x\n<think>" + "\t" * 80_000 + "x",
-])
+], ids=["newlines-80k", "tabs-in-think-80k"])
 def test_normalize_thinking_floods_are_linear(flood):
     from routes.chat_helpers import _normalize_thinking
 
@@ -174,7 +174,7 @@ def test_calendar_time_first_phrases_still_parse():
 @pytest.mark.parametrize("payload", [
     "a" + "\t" * 80_000 + "x",       # CodeQL's reported shape (time-first regex)
     "a" + "\t" * 80_000 + "m",       # am/pm normaliser on the same input
-])
+], ids=["tabs-80k-time", "tabs-80k-ampm"])
 def test_calendar_parsers_whitespace_flood_is_linear(payload):
     from routes.calendar_routes import _parse_dt, parse_due_for_user
 
