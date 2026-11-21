@@ -78,8 +78,14 @@ def make_oauth_state(account_id: str, owner: str) -> str:
     """
     import hmac as _hmac, hashlib as _hl, secrets as _sec
     from src.secret_storage import _load_or_create_key
+    import time as _time
     nonce = _sec.token_hex(16)
-    payload = json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
+    issued = int(_time.time())
+    payload = json.dumps(
+        {"a": account_id, "o": owner, "n": nonce,
+         "iat": issued, "exp": issued + 600},
+        separators=(",", ":"),
+    )
     sig = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
     return base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
 
@@ -98,9 +104,71 @@ def verify_oauth_state(state: str) -> dict | None:
         expected = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
         if not _hmac.compare_digest(sig, expected):
             return None
-        return json.loads(payload)
+        data = json.loads(payload)
+        import time as _time
+        now = int(_time.time())
+        issued = data.get("iat")
+        expires = data.get("exp")
+
+        if type(issued) is not int or type(expires) is not int:
+            return None
+        if issued > now or expires <= now:
+            return None
+        if expires <= issued or expires - issued > 600:
+            return None
+
+        return data
     except Exception:
         return None
+
+
+def consume_oauth_state(state_data: dict) -> bool:
+    """Atomically consume a verified OAuth state nonce; fail closed."""
+    import time as _time
+    from sqlalchemy.exc import IntegrityError
+    from core.database import SessionLocal, OAuthConsumedState
+
+    if not isinstance(state_data, dict):
+        return False
+
+    nonce = state_data.get("n")
+    expires = state_data.get("exp")
+    issued = state_data.get("iat")
+    now = int(_time.time())
+
+    if (
+        not isinstance(nonce, str)
+        or len(nonce) != 32
+        or any(c not in "0123456789abcdef" for c in nonce)
+        or type(issued) is not int
+        or type(expires) is not int
+        or issued > now
+        or expires <= now
+        or expires <= issued
+        or expires - issued > 600
+    ):
+        return False
+
+    db = None
+    try:
+        db = SessionLocal()
+        db.query(OAuthConsumedState).filter(
+            OAuthConsumedState.expires_at <= now
+        ).delete(synchronize_session=False)
+        db.add(OAuthConsumedState(nonce=nonce, expires_at=expires))
+        db.commit()
+        return True
+    except IntegrityError:
+        if db is not None:
+            db.rollback()
+        return False
+    except Exception:
+        if db is not None:
+            db.rollback()
+        return False
+    finally:
+        if db is not None:
+            db.close()
 
 
 def _refresh_google_token(account_id: str) -> str | None:

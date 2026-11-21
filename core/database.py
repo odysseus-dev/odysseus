@@ -674,6 +674,15 @@ class Signature(TimestampMixin, Base):
     svg = Column(EncryptedText, nullable=True)         # vector signature, encrypted at rest
 
 
+class OAuthConsumedState(Base):
+    """Persist consumed OAuth state nonces to prevent callback replay."""
+
+    __tablename__ = "oauth_consumed_states"
+
+    nonce = Column(String, primary_key=True)
+    expires_at = Column(Integer, nullable=False)
+
+
 class ApiToken(TimestampMixin, Base):
     """API tokens for external integrations (n8n, Make, etc.)."""
     __tablename__ = "api_tokens"
