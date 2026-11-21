@@ -39,11 +39,21 @@ class EmbeddingLane:
         vecs = self.client.encode(list(texts), normalize_embeddings=True)
         return vecs.tolist() if hasattr(vecs, "tolist") else [list(v) for v in vecs]
 
-    def count(self) -> int:
+    def probe_count(self) -> Optional[int]:
+        """Row count, or None when the collection can no longer be counted.
+
+        ``count`` reports both a legitimately empty collection and a handle
+        whose collection no longer exists as 0. Callers that have to tell those
+        apart ask here instead.
+        """
         try:
             return int(self.collection.count())
         except Exception:
-            return 0
+            return None
+
+    def count(self) -> int:
+        counted = self.probe_count()
+        return counted if counted is not None else 0
 
     def stats(self) -> Dict[str, Any]:
         return {
@@ -338,6 +348,17 @@ def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane]) ->
 
 def lane_count(lanes: Sequence[EmbeddingLane]) -> int:
     return max((lane.count() for lane in lanes), default=0)
+
+
+def lanes_unreachable(lanes: Sequence[EmbeddingLane]) -> bool:
+    """True when no lane can answer a count.
+
+    Recreating the ChromaDB container invalidates every cached handle at once,
+    so they all stop counting together. A store that is merely empty answers 0,
+    which is a healthy state and must not be read as a backend failure.
+    """
+    probes = [lane.probe_count() for lane in lanes]
+    return not probes or all(probe is None for probe in probes)
 
 
 def dedupe_results(results: Iterable[Dict[str, Any]], id_key: str = "id", limit: Optional[int] = None) -> List[Dict[str, Any]]:
