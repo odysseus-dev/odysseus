@@ -164,6 +164,17 @@ class TestEstimateTokens:
 
         assert replacement_dump == 1004
 
+    def test_digits_are_not_estimated_with_latin_character_ratio(self):
+        # Qwen and Gemma tokenizers encode every digit as its own token, so
+        # number-heavy text such as a CSV price list is far denser than ASCII
+        # prose (#7115).
+        price_list = "1042,12.50,2026-01-15\n" * 50  # 800 digits, 300 other chars
+        digits = estimate_tokens([{"role": "user", "content": price_list}])
+        latin = estimate_tokens([{"role": "user", "content": "a" * len(price_list)}])
+
+        assert digits == 4 + 800 + int(300 * 0.3)
+        assert digits > latin * 2
+
 
 class TestLookupKnown:
     def test_claude_sonnet(self):
