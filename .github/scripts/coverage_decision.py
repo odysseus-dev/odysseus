@@ -62,15 +62,25 @@ SHARED_FRONTEND_PATTERNS = (
     re.compile(r"^scripts/check_frontend\.mjs$"),
 )
 
-AUTH_API_PATTERNS = (
-    re.compile(r"^core/auth\.py$"),
-    re.compile(r"^core/session_manager\.py$"),
-    re.compile(r"^core/database\.py$"),
-    re.compile(r"^routes/auth_routes\.py$"),
-    re.compile(r"^routes/api_token_routes\.py$"),
-    re.compile(r"^routes/editor_routes\.py$"),
+BROWSER_FACING_BACKEND_PATTERNS = (
     re.compile(r"^app\.py$"),
+    re.compile(r"^core/"),
+    re.compile(r"^routes/"),
+    re.compile(r"^services/"),
+    re.compile(r"^src/app_initializer\.py$"),
+    re.compile(r"^src/app_helpers\.py$"),
+    re.compile(r"^src/config\.py$"),
     re.compile(r"^src/constants\.py$"),
+    re.compile(r"^src/task_scheduler\.py$"),
+    re.compile(r"^src/process_reaper\.py$"),
+    re.compile(r"^src/bg_monitor\.py$"),
+    re.compile(r"^src/generated_images\.py$"),
+    re.compile(r"^src/owner_identity\.py$"),
+    re.compile(r"^src/mcp_manager\.py$"),
+    re.compile(r"^src/agent_tools\.py$"),
+    re.compile(r"^src/rag_singleton\.py$"),
+    re.compile(r"^src/upload_handler\.py$"),
+    re.compile(r"^src/event_bus\.py$"),
     re.compile(r"^tests/emailReplyBrowser\.test\.mjs$"),
 )
 
@@ -95,13 +105,18 @@ NATIVE_NODE_TEST_PATTERNS = (
     re.compile(r"^tests/.*\.behavior\.mjs$"),
 )
 
-SAFE_BACKEND_PYTEST_PATTERNS = (
-    re.compile(r"^src/"),
-    re.compile(r"^routes/"),
-    re.compile(r"^services/"),
-    re.compile(r"^tests/cli/"),
-    re.compile(r"^tests/helpers/"),
+ISOLATED_BACKEND_PYTEST_PATTERNS = (
     re.compile(r"^tests/test_"),
+    re.compile(r"^tests/helpers/"),
+    re.compile(r"^tests/cli/"),
+    re.compile(r"^src/cli/"),
+    re.compile(r"^scripts/check_ca_trust\.py$"),
+    re.compile(r"^scripts/benchmarks/"),
+    re.compile(r"^src/personal_docs\.py$"),
+    re.compile(r"^src/search_providers/"),
+    re.compile(r"^src/memory_vector\.py$"),
+    re.compile(r"^src/embeddings\.py$"),
+    re.compile(r"^src/chroma_client\.py$"),
 )
 
 
@@ -281,7 +296,7 @@ def classify_paths(paths: Iterable[str]) -> tuple[bool, bool, str]:
     triggers_test_infra: list[str] = []
     triggers_photo_editor: list[str] = []
     triggers_shared_frontend: list[str] = []
-    triggers_auth_api: list[str] = []
+    triggers_browser_backend: list[str] = []
     triggers_native_node: list[str] = []
     safe_backend: list[str] = []
     docs_only: list[str] = []
@@ -294,13 +309,13 @@ def classify_paths(paths: Iterable[str]) -> tuple[bool, bool, str]:
             triggers_photo_editor.append(path)
         elif any(pat.search(path) for pat in SHARED_FRONTEND_PATTERNS):
             triggers_shared_frontend.append(path)
-        elif any(pat.search(path) for pat in AUTH_API_PATTERNS):
-            triggers_auth_api.append(path)
+        elif any(pat.search(path) for pat in BROWSER_FACING_BACKEND_PATTERNS):
+            triggers_browser_backend.append(path)
         elif any(pat.search(path) for pat in NATIVE_NODE_TEST_PATTERNS):
             triggers_native_node.append(path)
         elif any(pat.search(path) for pat in DOCS_PATTERNS):
             docs_only.append(path)
-        elif any(pat.search(path) for pat in SAFE_BACKEND_PYTEST_PATTERNS):
+        elif any(pat.search(path) for pat in ISOLATED_BACKEND_PYTEST_PATTERNS):
             safe_backend.append(path)
         else:
             unknown_paths.append(path)
@@ -313,52 +328,49 @@ def classify_paths(paths: Iterable[str]) -> tuple[bool, bool, str]:
             f"Unknown or unclassified paths changed ({len(unknown_paths)}): {unknown_paths[:3]}",
         )
 
+    req_node = False
+    req_browser = False
+    reasons: list[str] = []
+
     # 2. Test runner, workflow, or manifest changes: full execution
     if triggers_test_infra:
-        return (
-            True,
-            True,
-            f"Test runner, workflow, or manifest changes ({len(triggers_test_infra)}): {triggers_test_infra[:3]}",
-        )
+        req_node = True
+        req_browser = True
+        reasons.append(f"Test runner, workflow, or manifest changes ({len(triggers_test_infra)} files)")
 
-    # 3. Shared frontend infrastructure: full execution
-    if triggers_shared_frontend:
-        return (
-            True,
-            True,
-            f"Shared frontend infrastructure changed ({len(triggers_shared_frontend)}): {triggers_shared_frontend[:3]}",
-        )
-
-    # 4. Auth, sessions, or core application API: full execution
-    if triggers_auth_api:
-        return (
-            True,
-            True,
-            f"Authentication, sessions, or shared API changed ({len(triggers_auth_api)}): {triggers_auth_api[:3]}",
-        )
-
-    # 5. Photo editor: run browser suite + node suite
+    # 3. Photo Editor or gallery editor: full execution
     if triggers_photo_editor:
-        return (
-            True,
-            True,
-            f"Photo Editor or gallery editor changed ({len(triggers_photo_editor)}): {triggers_photo_editor[:3]}",
-        )
+        req_node = True
+        req_browser = True
+        reasons.append(f"Photo Editor or gallery editor ({len(triggers_photo_editor)} files)")
+
+    # 4. Shared frontend infrastructure: full execution
+    if triggers_shared_frontend:
+        req_node = True
+        req_browser = True
+        reasons.append(f"Shared frontend infrastructure changed ({len(triggers_shared_frontend)} files)")
+
+    # 5. Browser-facing backend APIs, routes, or server lifecycle: full execution
+    if triggers_browser_backend:
+        req_node = True
+        req_browser = True
+        reasons.append(f"Authentication, sessions, or browser-facing backend API changed ({len(triggers_browser_backend)} files)")
 
     # 6. Native Node test files changed
     if triggers_native_node:
-        return (
-            True,
-            False,
-            f"Native Node tests changed ({len(triggers_native_node)}): {triggers_native_node[:3]}",
-        )
+        req_node = True
+        reasons.append(f"Native Node tests changed ({len(triggers_native_node)} files)")
+
+    if req_node or req_browser:
+        reason_str = "Selected suites triggered by: " + "; ".join(reasons)
+        return req_node, req_browser, reason_str
 
     # 7. Documentation only
     if docs_only and not safe_backend:
         return (
             False,
             False,
-            f"Documentation-only changes ({len(docs_only)} files)",
+            f"Documentation-only changes ({len(docs_only)} files; suites skipped)",
         )
 
     # 8. Safe backend Python / CLI without frontend, auth, or test-infra impact
@@ -366,7 +378,7 @@ def classify_paths(paths: Iterable[str]) -> tuple[bool, bool, str]:
         return (
             False,
             False,
-            f"Independent backend Python or CLI changes ({len(safe_backend)} files; validated by pytest shards)",
+            f"Isolated backend Python / CLI changes ({len(safe_backend)} files; validated by pytest shards)",
         )
 
     # Fallback default

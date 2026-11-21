@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
 const path = require('node:path');
 
 test('static editor modules survive a cache upgrade and offline reopen', async ({ browser }, testInfo) => {
@@ -8,9 +9,14 @@ test('static editor modules survive a cache upgrade and offline reopen', async (
     serviceWorkers: 'allow',
   });
   const page = await context.newPage();
-  const pickerUrl = '/static/js/colorPicker.js?v=20260910eyedropper1';
-  const cssUrl = '/static/css/13-image-editor.css?v=20260929csssplit';
-  const editorUrl = '/static/js/galleryEditor.js?v=20260909movepicklayer1';
+  const swPath = path.join(__dirname, '../../../static/sw.js');
+  const swContent = fs.readFileSync(swPath, 'utf8');
+  const cssMatch = swContent.match(/['"](\/static\/css\/13-image-editor\.css(?:\?[^'"]*)?)['"]/);
+  const cssUrl = cssMatch ? cssMatch[1] : '/static/css/13-image-editor.css';
+  const pickerMatch = swContent.match(/['"](\/static\/js\/colorPicker\.js(?:\?[^'"]*)?)['"]/);
+  const pickerUrl = pickerMatch ? pickerMatch[1] : '/static/js/colorPicker.js?v=20260910eyedropper1';
+  const editorMatch = swContent.match(/['"](\/static\/js\/galleryEditor\.js(?:\?[^'"]*)?)['"]/);
+  const editorUrl = editorMatch ? editorMatch[1] : '/static/js/galleryEditor.js?v=20260909movepicklayer1';
   try {
     // The app's worker intentionally controls /static/, not the SPA root.
     await page.goto('/static/js/panels.js?v=20260909movepicklayer1');

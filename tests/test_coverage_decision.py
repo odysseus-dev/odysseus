@@ -267,3 +267,49 @@ def test_control_targeted_application_regression_not_skipped():
     run_node, run_browser, _ = classify_paths(paths)
     assert run_browser is True, "modelPicker edit must not be skipped"
     assert run_node is True
+
+
+def test_control_backend_browser_dependencies_trigger_browser():
+    """Verify that browser-facing backend APIs and lifecycle trigger browser validation."""
+    for backend_path in [
+        "routes/gallery/gallery_routes.py",
+        "routes/editor_draft_routes.py",
+        "routes/email_routes.py",
+        "core/auth.py",
+        "core/database.py",
+        "core/session_manager.py",
+        "src/app_initializer.py",
+        "src/task_scheduler.py",
+        "app.py",
+    ]:
+        run_node, run_browser, reason = classify_paths([backend_path])
+        assert run_browser is True, f"{backend_path} must trigger browser suite"
+        assert run_node is True, f"{backend_path} must trigger node suite"
+        assert "browser-facing backend" in reason
+
+
+def test_control_unknown_backend_dependencies_fail_conservative():
+    """Verify that unknown backend paths trigger conservative full execution."""
+    paths = ["src/unknown_new_subsystem.py"]
+    run_node, run_browser, reason = classify_paths(paths)
+    assert run_browser is True, "Unknown backend path must trigger browser suite"
+    assert run_node is True, "Unknown backend path must trigger node suite"
+    assert "Unknown or unclassified" in reason
+
+
+def test_control_mixed_changes_produce_union():
+    """Verify that mixed changes require the union of all necessary suites."""
+    # Docs + native node test -> node=True, browser=False
+    run_node, run_browser, _ = classify_paths(["docs/README.md", "tests/notesColors.test.mjs"])
+    assert run_node is True
+    assert run_browser is False
+
+    # Isolated backend + photo editor -> node=True, browser=True
+    run_node, run_browser, _ = classify_paths(["tests/test_shards.py", "static/js/editor/brushes.js"])
+    assert run_node is True
+    assert run_browser is True
+
+    # Docs + route -> node=True, browser=True
+    run_node, run_browser, _ = classify_paths(["docs/README.md", "routes/auth_routes.py"])
+    assert run_node is True
+    assert run_browser is True

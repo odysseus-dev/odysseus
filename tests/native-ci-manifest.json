@@ -138,6 +138,15 @@
     ],
     "tests/turnRendering.test.mjs": [
       "tests/test_turn_rendering_js.py"
+    ],
+    "tests/helpers/test_shared_download_timing.mjs": [
+      "tests/test_settings_shell_js_behavior.py"
+    ],
+    "tests/helpers/test_shared_settings_clipboard.mjs": [
+      "tests/test_settings_shell_js_behavior.py"
+    ],
+    "tests/helpers/test_shared_ui_options.mjs": [
+      "tests/test_settings_shell_js_behavior.py"
     ]
   }
 }
