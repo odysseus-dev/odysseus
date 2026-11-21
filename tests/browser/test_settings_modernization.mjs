@@ -1077,6 +1077,7 @@ async function testAdminLoadFailure(instance, cookies) {
   await openSettings(admin.page, 'ai');
   await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
   await initialRefreshPromise;
+  await admin.page.evaluate(() => new Promise(r => setTimeout(r, 50)));
   const priorOption = await admin.page.$('#set-defaultEpSelect option');
   // Leave and return: the AI panel refreshes its endpoint lists on entry.
   await admin.page.click('[data-settings-tab="search"]');
