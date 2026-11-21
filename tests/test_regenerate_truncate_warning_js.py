@@ -117,6 +117,10 @@ _HARNESS_PREAMBLE = """
         querySelector() { return null; }
         querySelectorAll() { return []; }
         appendChild(child) { this.children.push(child); return child; }
+        insertBefore(child) { this.children.push(child); return child; }
+        get childNodes() { return this.children; }
+        get firstChild() { return this.children[0] || null; }
+        remove() {}
         addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
         removeEventListener() {}
         focus() {}
@@ -176,7 +180,7 @@ _HARNESS_PREAMBLE = """
 """
 
 
-def _scenario_script(func_call_js: str, roles: list, target_index: int, confirm_resolution, then_js: str = "", db_ids: bool = False, refuse_truncate: bool = False, file_ids: dict | None = None) -> str:
+def _scenario_script(func_call_js: str, roles: list, target_index: int, confirm_resolution, then_js: str = "", db_ids: bool = False, refuse_truncate: bool = False, file_ids: dict | None = None, raw: dict | None = None) -> str:
     # Globals are stubbed above as plain synchronous statements *before* the
     # dynamic import()s below run — unlike a static `import` declaration,
     # dynamic import() executes in program order, so chat.js's transitive
@@ -207,8 +211,15 @@ def _scenario_script(func_call_js: str, roles: list, target_index: int, confirm_
       // only the newest of them, so ids (not positions) identify a message.
       if ({json.dumps(db_ids)}) msgs.forEach((m, i) => {{ m.dataset.dbId = `db-${{i + 40}}`; }});
       // Attach uploaded files ({{ index: file_id }}) the way rendered bubbles do.
+      // The photo card sits inside .body, as in a rendered bubble: it is only
+      // found while the body still holds its content.
       for (const [i, fileId] of Object.entries({json.dumps(file_ids or {})})) {{
-        msgs[i].querySelectorAll = (sel) => sel === '[data-file-id]' ? [{{ dataset: {{ fileId }} }}] : [];
+        const _b = msgs[i].querySelector('.body');
+        msgs[i].querySelectorAll = (sel) => sel === '[data-file-id]' && _b.innerHTML !== '' ? [{{ dataset: {{ fileId }} }}] : [];
+      }}
+      // The bubble's own text ({{ index: raw }}), e.g. '' for a photo-only message.
+      for (const [i, text] of Object.entries({json.dumps(raw or {})})) {{
+        msgs[i].dataset.raw = text;
       }}
       // Record the attachments queued for each send as the button is clicked.
       const sentAttachments = [];
@@ -349,7 +360,8 @@ def test_resend_append_only_never_truncates_or_prompts():
 
 _EDIT_AND_SEND = """
       const _body = target.querySelector('.body');
-      const [_editor, _btnRow] = _body.children;
+      const _wrap = _body.children.find(c => c.className === 'edit-wrap');
+      const [_editor, _btnRow] = _wrap.children;
       _editor.value = 'edited question';
       await _btnRow.children[0].fire('click');
 """
@@ -546,3 +558,76 @@ def test_refused_regenerate_does_not_leak_queued_attachments():
     assert result["truncateCalled"] is True
     assert result["sendClicks"] == []
     assert result["pendingAttachments"] is None
+
+
+# ---------------------------------------------------------------------------
+# Photos survive Edit and Resend
+# ---------------------------------------------------------------------------
+# The photo card lives inside the bubble body. Edit used to clear the body for
+# its text box before reading the photo ids, so the edit went out without the
+# photo. A turn sent to a vision model is saved with reference lines in place
+# of the image; those lines must not come back as the user's words.
+
+_MARKER = (
+    "[1 inline media payload omitted]\r\n"
+    "[Attachment: image.png | id=file-abc.png | mime=image/png | size=2219438 bytes | sha256=5ec5]"
+)
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_edit_reads_the_photo_before_the_text_box_replaces_the_bubble():
+    roles = ["user", "ai"]
+    script = _scenario_script("chat.editUserMessage(target)", roles, 0, True, _EDIT_AND_SEND, file_ids={0: "file-abc.png"})
+    result = _run_node(script)
+    assert result["sendClicks"] == ["edited question"]
+    assert result["sentAttachments"] == [["file-abc.png"]]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_photo_only_message_can_be_edited_and_sent_with_no_text():
+    roles = ["user", "ai"]
+    then_js = """
+      const _wrap = target.querySelector('.body').children.find(c => c.className === 'edit-wrap');
+      const [_editor, _btnRow] = _wrap.children;
+      globalThis.__boxStart = _editor.value;
+      await _btnRow.children[0].fire('click');
+      sendClicks.push('box:' + globalThis.__boxStart);
+"""
+    script = _scenario_script("chat.editUserMessage(target)", roles, 0, True, then_js,
+                              file_ids={0: "file-abc.png"}, raw={0: ""})
+    result = _run_node(script)
+    assert result["sendClicks"] == ["", "box:"]
+    assert result["sentAttachments"] == [["file-abc.png"]]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_edit_box_leaves_out_the_saved_attachment_lines():
+    roles = ["user", "ai"]
+    then_js = """
+      const _wrap = target.querySelector('.body').children.find(c => c.className === 'edit-wrap');
+      sendClicks.push('box:' + _wrap.children[0].value);
+"""
+    script = _scenario_script("chat.editUserMessage(target)", roles, 0, True, then_js,
+                              file_ids={0: "file-abc.png"}, raw={0: "what is this?\r\n" + _MARKER})
+    result = _run_node(script)
+    assert result["sendClicks"] == ["box:what is this?"]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_resend_sends_the_photo_not_the_saved_attachment_lines():
+    roles = ["user", "ai"]
+    script = _scenario_script("chat.resendUserMessage(target)", roles, 0, True,
+                              file_ids={0: "file-abc.png"}, raw={0: _MARKER})
+    result = _run_node(script)
+    assert result["sendClicks"] == [""]
+    assert result["sentAttachments"] == [["file-abc.png"]]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_regenerate_sends_the_photo_not_the_saved_attachment_lines():
+    roles = ["user", "ai"]
+    script = _scenario_script("chat.regenerateFrom(target)", roles, 1, True,
+                              file_ids={0: "file-abc.png"}, raw={0: _MARKER})
+    result = _run_node(script)
+    assert result["sendClicks"] == [""]
+    assert result["sentAttachments"] == [["file-abc.png"]]

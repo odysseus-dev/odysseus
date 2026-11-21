@@ -3,6 +3,7 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
+import { composerHasAttachments } from './js/composerAttachments.js';
 import uiModule from './js/ui.js?v=20260916largetoolscroll1';
 import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
@@ -10,7 +11,7 @@ import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js?v=20260908personaname1';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260917toolttft1';
+import chatModule, { _pendingRegenAttachmentIds } from './js/chat.js?v=20261114resendphoto1';
 import compareModule from './js/compare/index.js?v=20260909mobilepaneaddscroll1';
 import documentModule from './js/document.js?v=20260916docctx2';
 import searchChatModule from './js/search-chat.js';
@@ -22,7 +23,7 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer from './js/chatRenderer.js?v=20261114resendphoto1';
 // Keep this specifier identical to every consumer (especially chat.js).
 // Different query strings create separate ES-module instances with separate
 // current-session state, so the picker can display one model while chat sends
@@ -4010,7 +4011,10 @@ function startOdysseusApp() {
   }
 
   function _hasAttachments() {
-    return fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount() > 0;
+    return composerHasAttachments(
+      fileHandlerModule.getPendingCount ? fileHandlerModule.getPendingCount() : 0,
+      _pendingRegenAttachmentIds(),
+    );
   }
 
   function _updateStreamingSubmitButton() {
