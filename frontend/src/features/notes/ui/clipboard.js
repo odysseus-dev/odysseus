@@ -1,5 +1,6 @@
 /** Note clipboard feedback and the Copy/Agent corner menu. */
 import { _serializeNoteForCopy } from '../domain/noteRules.js';
+import { copyText } from '/static/js/shared/platform/clipboard.js';
 export function createClipboard({
   _agentSolveNote,
   _leaveNote,
@@ -58,19 +59,7 @@ export function createClipboard({
     if (!note) return false;
     const text = _serializeNoteForCopy(note);
     if (!text) return false;
-    let ok = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      ok = true;
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed'; ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      try { ok = document.execCommand('copy'); } catch { ok = false; }
-      ta.remove();
-    }
+    const ok = await copyText(text);
     if (ok) {
       if (btnEl && !btnEl._copyFlashing) {
         const original = btnEl.innerHTML;
