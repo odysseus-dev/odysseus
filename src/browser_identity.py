@@ -120,7 +120,7 @@ class TrustedProducer:
         if (self.path != PRODUCER_ROOT / ("agent-browser-" + self.platform)
                 or self.path.is_symlink() or not self.path.is_file()
                 or self.path.stat().st_mode & 0o022
-                or self.path.stat().st_uid != os.getuid() and self.path.stat().st_uid != 0
+                or self.path.stat().st_uid != getattr(os, "getuid", lambda: 0)() and self.path.stat().st_uid != 0
                 or hashlib.sha256(self.path.read_bytes()).hexdigest() != PRODUCER_HASHES.get(self.platform)):
             raise ResourceIdentityError("Browser producer is not an allowlisted release binary")
 
