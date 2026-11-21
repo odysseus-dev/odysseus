@@ -1357,6 +1357,15 @@ export function mdToHtml(src, opts) {
     const rows = table.trim().split('\n');
     if (rows.length < 2) return table;
 
+    // Delimiter colons apply to the same column in both header and body rows.
+    const alignments = /^[\s|:\-]+$/.test(rows[1])
+      ? splitTableRow(rows[1]).map(marker => {
+          if (!/^:?-+:?$/.test(marker)) return 'left';
+          if (marker.startsWith(':') && marker.endsWith(':')) return 'center';
+          return marker.endsWith(':') ? 'right' : 'left';
+        })
+      : [];
+
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
     rows.forEach((row, idx) => {
@@ -1369,9 +1378,10 @@ export function mdToHtml(src, opts) {
 
       html += '<tr>';
 
-      cells.forEach(cell => {
+      cells.forEach((cell, column) => {
         const tag = idx === 0 ? 'th' : 'td';
-        html += `<${tag} style="padding: 8px; text-align: left; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
+        const alignment = alignments[column] || 'left';
+        html += `<${tag} style="padding: 8px; text-align: ${alignment}; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
       });
 
       html += '</tr>';
