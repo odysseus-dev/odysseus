@@ -1180,7 +1180,10 @@ class ManageDocumentTool:
                 # Reserve the closing fence and the longest possible paging
                 # notice before selecting the page. The common output cap must
                 # never hide content that next_offset claims was delivered.
-                notice = f"\n... (truncated, {len(body)} chars total; next_offset={len(body)})"
+                notice = (
+                    f"\n... (truncated, {len(body)} chars total; next_offset={len(body)}; "
+                    f"call again with offset={len(body)} for next page)"
+                )
                 page_budget = MAX_OUTPUT_CHARS - len(header) - len(notice) - len("\n```")
                 if page_budget < 1:
                     return {"error": "Document title or language is too long to display a read page", "exit_code": 1}
@@ -1189,7 +1192,10 @@ class ManageDocumentTool:
                 truncated = end < len(body)
                 preview = body[offset:end]
                 if truncated:
-                    preview += f"\n... (truncated, {len(body)} chars total; next_offset={end})"
+                    preview += (
+                        f"\n... (truncated, {len(body)} chars total; next_offset={end}; "
+                        f"call again with offset={end} for next page)"
+                    )
                 return {
                     "response": f"{header}{preview}\n```",
                     "document": {
