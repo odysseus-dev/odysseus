@@ -1110,7 +1110,7 @@ const NOTE_LINK_ATTRS = new Set(['href', 'xlink:href', 'action', 'formaction']);
 
 /** True when a note may keep `value` as a link target (see NOTE_LINK_SCHEMES). */
 export function noteLinkAllowed(value) {
-  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(_compactUrlSchemeValue(value));
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(compactUrlSchemeValue(value));
   return !scheme || NOTE_LINK_SCHEMES.has(scheme[1]);
 }
 
