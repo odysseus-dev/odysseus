@@ -90,6 +90,17 @@ function _clearDraft(id, writer) {
       localStorage.removeItem(_draftKey(null));
       return;
     }
+    if (writer) {
+      const raw = localStorage.getItem(_draftKey(id));
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed._draftWriter && parsed._draftWriter !== writer) {
+            return;
+          }
+        } catch {}
+      }
+    }
     localStorage.removeItem(_draftKey(id));
   } catch {}
 }
@@ -126,7 +137,29 @@ function _loadDraftRecovery(id) {
   return list;
 }
 
-function _clearDraftRecovery(id) { try { localStorage.removeItem(_draftRecoveryKey(id || '__new__')); } catch {} }
+function _clearDraftRecovery(id, writer) {
+  try {
+    const targetId = id && id !== '__new__' ? id : '__new__';
+    const key = _draftRecoveryKey(targetId);
+    if (!writer) {
+      localStorage.removeItem(key);
+      return;
+    }
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const drafts = JSON.parse(raw);
+    if (!Array.isArray(drafts)) {
+      localStorage.removeItem(key);
+      return;
+    }
+    const remaining = drafts.filter(entry => entry && (!entry._draftWriter || entry._draftWriter !== writer));
+    if (remaining.length === 0) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(remaining));
+    }
+  } catch {}
+}
 
 function _keepDraftForRecovery(id, draft) {
   if (!draft || typeof draft !== 'object') return;

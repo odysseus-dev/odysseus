@@ -252,7 +252,13 @@ export function createNoteSession({
       .filter(Boolean);
     if (!draft && !recovered.length) return null;
     const stale = !!draft && !!id && raw.body_revision !== undefined && raw.body_revision !== base;
-    return { ...(draft || { title: saved.title, content: null }), stale, recovered };
+    const foreign = !!(raw && raw._draftWriter && raw._draftWriter !== writer);
+    return {
+      ...(draft || { title: saved.title, content: null }),
+      stale,
+      recovered,
+      ...(foreign ? { foreign: true } : {}),
+    };
   }
 
   /** Stop without saving: the note is being deleted. */
@@ -279,16 +285,31 @@ export function createNoteSession({
     toggleTask,
     resolveConflict,
     storedDraft,
-    discardDraft: () => {
+    dismissDraft: () => {},
+    discardDraft: (options = {}) => {
       try {
         if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
-        if (id || readDraft()?._draftWriter === writer || !readDraft()?._draftWriter) {
-          persistence._clearDraft(id || '__new__', writer);
+        const raw = readDraft();
+        const isForeign = !!(raw?._draftWriter && raw._draftWriter !== writer);
+        if (!isForeign || options?.includeForeign) {
+          if (id || raw?._draftWriter === writer || !raw?._draftWriter) {
+            persistence._clearDraft(id || '__new__', writer);
+          }
+          if (!raw?._draftWriter || options?.includeForeign) {
+            persistence._clearDraft(id || '__new__');
+          }
         }
-        if (!readDraft()?._draftWriter) {
-          persistence._clearDraft(id || '__new__');
+        if (!id || id === '__new__') {
+          if (options?.includeForeign) {
+            persistence._clearDraftRecovery?.('__new__');
+          } else {
+            persistence._clearDraftRecovery?.('__new__', writer);
+          }
+        } else {
+          if (!isForeign || options?.includeForeign) {
+            persistence._clearDraftRecovery?.(id);
+          }
         }
-        persistence._clearDraftRecovery?.(id || '__new__');
       } catch {}
     },
     close: () => flush(),

@@ -375,3 +375,182 @@ test('Finding A 8: existing saved-note recovery continues working alongside writ
   const primaryDraft = JSON.parse(storage.getItem('odysseus-note-draft-' + existingNote.id) || 'null');
   assert.equal(primaryDraft.content, 'Edit from Tab 2');
 });
+
+test('Finding A Scenario 1: Active foreign draft is preserved when dismissed by another tab', () => {
+  const storage = makeRealisticStorage();
+  const existingNote = { id: 'saved-note-scen1', title: 'Note 1', content: 'server original', body_revision: 'r1' };
+
+  // Tab A edits
+  const tabA = setupRealisticSession({ note: existingNote, storage, clockTime: 100 });
+  tabA.draft.content = 'Unsaved typing in Tab A';
+  tabA.session.markDirty();
+
+  assert.equal(storage.getItem('odysseus-note-draft-saved-note-scen1') !== null, true);
+
+  // Tab B opens the same note
+  const tabB = setupRealisticSession({ note: existingNote, storage, clockTime: 200 });
+  const storedInB = tabB.session.storedDraft();
+  assert.equal(storedInB.content, 'Unsaved typing in Tab A');
+  assert.equal(storedInB.foreign, true);
+
+  // Tab B dismisses recovery
+  tabB.session.dismissDraft();
+
+  // Tab A draft must still be in storage
+  assert.equal(storage.getItem('odysseus-note-draft-saved-note-scen1') !== null, true);
+  const rawA = JSON.parse(storage.getItem('odysseus-note-draft-saved-note-scen1'));
+  assert.equal(rawA.content, 'Unsaved typing in Tab A');
+});
+
+test('Finding A Scenario 2: Explicit recovery discard destroys foreign draft only when includeForeign is requested', () => {
+  const storage = makeRealisticStorage();
+  const existingNote = { id: 'saved-note-scen2', title: 'Note 2', content: 'server original', body_revision: 'r1' };
+
+  // Tab A edits
+  const tabA = setupRealisticSession({ note: existingNote, storage, clockTime: 100 });
+  tabA.draft.content = 'Unsaved typing in Tab A';
+  tabA.session.markDirty();
+
+  // Tab B opens note
+  const tabB = setupRealisticSession({ note: existingNote, storage, clockTime: 200 });
+  assert.equal(tabB.session.storedDraft().foreign, true);
+
+  // Tab B calls normal discardDraft: should NOT destroy Tab A draft
+  tabB.session.discardDraft();
+  assert.equal(storage.getItem('odysseus-note-draft-saved-note-scen2') !== null, true);
+
+  // Tab B calls explicit discard with includeForeign: true
+  tabB.session.discardDraft({ includeForeign: true });
+  assert.equal(storage.getItem('odysseus-note-draft-saved-note-scen2'), null);
+});
+
+test('Finding A Scenario 3: Independent recovery snapshots from multiple sessions survive discard of another session', () => {
+  const storage = makeRealisticStorage();
+  // Recovery key for __new__ has entries from Writer A and Writer B
+  storage.setItem('odysseus-note-recovery-__new__', JSON.stringify([
+    { _draftWriter: 'writerA', title: 'A', content: 'Snapshot A' },
+    { _draftWriter: 'writerB', title: 'B', content: 'Snapshot B' },
+  ]));
+
+  const persistence = createNotesPersistence({ storage });
+  // Writer A clears its recovery
+  persistence._clearDraftRecovery('__new__', 'writerA');
+
+  const remaining = JSON.parse(storage.getItem('odysseus-note-recovery-__new__') || '[]');
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0]._draftWriter, 'writerB');
+  assert.equal(remaining[0].content, 'Snapshot B');
+});
+
+test('Finding A Scenario 4: Concurrent new note drafts and recovery states remain isolated on discard', () => {
+  const storage = makeRealisticStorage();
+  const sessionA = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  sessionA.draft.title = 'New A';
+  sessionA.draft.content = 'Content A';
+  sessionA.session.markDirty();
+
+  const sessionB = setupRealisticSession({ note: null, storage, clockTime: 200 });
+  sessionB.draft.title = 'New B';
+  sessionB.draft.content = 'Content B';
+  sessionB.session.markDirty();
+
+  // Seed recovery entries for both
+  sessionA.persistence._keepDraftForRecovery('__new__', { _draftWriter: 'writer-other', content: 'Preserved snapshot' });
+
+  // Discard A
+  sessionA.session.discardDraft();
+
+  // B draft is intact
+  const bKeys = [];
+  for (let i = 0; i < storage.length; i++) {
+    const k = storage.key(i);
+    if (k?.startsWith('odysseus-note-draft-__new__-')) bKeys.push(k);
+  }
+  assert.equal(bKeys.length, 1);
+  assert.ok(storage.getItem(bKeys[0]).includes('Content B'));
+
+  // Other recovery entries in __new__ are intact
+  const recoveryList = JSON.parse(storage.getItem('odysseus-note-recovery-__new__') || '[]');
+  assert.ok(recoveryList.some(e => e.content === 'Preserved snapshot'));
+});
+
+test('Finding A Scenario 5: Successful save in one session removes only that session draft and preserves recoverable work', async () => {
+  const storage = makeRealisticStorage();
+  // Existing recovery entry on saved note
+  storage.setItem('odysseus-note-recovery-scen5', JSON.stringify([
+    { _draftWriter: 'writer-earlier', title: 'Note 5', content: 'Earlier recovery draft' },
+  ]));
+
+  const existingNote = { id: 'scen5', title: 'Note 5', content: 'original', body_revision: 'r1' };
+  const sessionA = setupRealisticSession({
+    note: existingNote,
+    storage,
+    clockTime: 100,
+    api: { patchNote: async (id, body) => ({ id, ...body, body_revision: 'r2' }) },
+  });
+  sessionA.draft.content = 'Edited in A';
+  sessionA.session.markDirty();
+
+  await sessionA.session.flush();
+
+  // Primary draft for A was removed upon successful save
+  assert.equal(storage.getItem('odysseus-note-draft-scen5'), null);
+  // Earlier recovery entry remains intact
+  const recoveryList = JSON.parse(storage.getItem('odysseus-note-recovery-scen5') || '[]');
+  assert.equal(recoveryList.length, 1);
+  assert.equal(recoveryList[0].content, 'Earlier recovery draft');
+});
+
+test('Finding A Scenario 6: Legacy drafts without _draftWriter are compatible and clear appropriately', () => {
+  const storage = makeRealisticStorage();
+  const existingNote = { id: 'scen6', title: 'Note 6', content: 'original', body_revision: 'r1' };
+  storage.setItem('odysseus-note-draft-scen6', JSON.stringify({ title: 'Legacy Title', content: 'Legacy content' }));
+
+  const session = setupRealisticSession({ note: existingNote, storage, clockTime: 100 });
+  const stored = session.session.storedDraft();
+  assert.equal(stored.content, 'Legacy content');
+  assert.equal(stored.foreign, undefined);
+
+  session.session.discardDraft();
+  assert.equal(storage.getItem('odysseus-note-draft-scen6'), null);
+});
+
+test('Finding A Scenario 7: Repeated discard, abandonment, and cleanup are idempotent and safe', () => {
+  const storage = makeRealisticStorage();
+  const session = setupRealisticSession({ note: null, storage, clockTime: 100 });
+  session.draft.content = 'Draft text';
+  session.session.markDirty();
+
+  assert.doesNotThrow(() => {
+    session.session.dismissDraft();
+    session.session.dismissDraft();
+    session.session.discardDraft();
+    session.session.discardDraft();
+    session.session.abandon();
+    session.session.abandon();
+  });
+});
+
+test('Finding A Scenario 8: Recoverable drafts remain available after failed saves and reloads', async () => {
+  const storage = makeRealisticStorage();
+  const existingNote = { id: 'scen8', title: 'Note 8', content: 'original', body_revision: 'r1' };
+  const session = setupRealisticSession({
+    note: existingNote,
+    storage,
+    clockTime: 100,
+    api: { patchNote: async () => { throw new Error('network down'); } },
+  });
+  session.draft.content = 'Unsaved offline draft';
+  session.session.markDirty();
+
+  await session.session.flush();
+
+  // Save failed: draft must still be stored
+  assert.equal(storage.getItem('odysseus-note-draft-scen8') !== null, true);
+  assert.ok(storage.getItem('odysseus-note-draft-scen8').includes('Unsaved offline draft'));
+
+  // Reload session
+  const reloadedSession = setupRealisticSession({ note: existingNote, storage, clockTime: 200 });
+  const stored = reloadedSession.session.storedDraft();
+  assert.equal(stored.content, 'Unsaved offline draft');
+});

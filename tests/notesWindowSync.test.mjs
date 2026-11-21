@@ -9,8 +9,8 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
   const listeners = {};
   const attrs = {};
   const classList = new Set();
-  const children = [];
   function makeEl(tag = 'div') {
+    const elChildren = [];
     const el = {
       tagName: tag.toUpperCase(),
       id: '',
@@ -19,6 +19,8 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
       value: '',
       textContent: '',
       innerHTML: '',
+      children: elChildren,
+      _children: elChildren,
       style: { setProperty: () => {} },
       classList: {
         add: (...c) => c.forEach(x => classList.add(x)),
@@ -28,9 +30,24 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
       },
       setAttribute: (k, v) => { attrs[k] = String(v); },
       getAttribute: k => attrs[k] ?? null,
-      appendChild: c => { children.push(c); return c; },
-      replaceChildren: (...c) => { children.length = 0; children.push(...c); },
+      appendChild: c => { elChildren.push(c); return c; },
+      replaceChildren: (...c) => { elChildren.length = 0; elChildren.push(...c); },
       remove: () => {},
+      contains: other => {
+        if (other === el) return true;
+        const queue = [...elChildren];
+        const seen = new Set([el]);
+        while (queue.length > 0) {
+          const item = queue.shift();
+          if (item === other) return true;
+          if (item && typeof item === 'object' && !seen.has(item)) {
+            seen.add(item);
+            if (Array.isArray(item._children)) queue.push(...item._children);
+            if (item._subs) Object.values(item._subs).forEach(sub => queue.push(sub));
+          }
+        }
+        return false;
+      },
       addEventListener: (e, f) => { (listeners[e] = listeners[e] || []).push(f); },
       querySelector: sel => {
         if (!el._subs) el._subs = {};
@@ -135,11 +152,18 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
 
   win.open(note.id);
 
+  const modalEl = bodyEl.children[0];
+  const contentEl = modalEl?.children?.[0];
+  const titleEl = contentEl?.querySelector?.('.note-window-title');
+
   return {
     win,
     app,
     note: currentNote,
     editor,
+    modalEl,
+    contentEl,
+    titleEl,
     getEditorMarkdown: () => editorMarkdown,
     setEditorMarkdown: (md, markEdited = true) => {
       editorMarkdown = md;
@@ -369,6 +393,205 @@ test('Finding B 6: conflict resolution reload followed by subsequent synchroniza
     // Window must sync cleanly
     assert.equal(h.getEditorMarkdown(), 'Post-conflict newer update');
     assert.equal(session.base, 'r4');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Browser Scenario A: Focused clean editor defers synchronization while interacting and reconciles on blur', async () => {
+  const h = setupWindowTest({
+    note: { id: 'note-scen-a', title: 'Checklist A', content: '- [ ] item 1', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async (id, body) => ({ id, ...body, body_revision: 'r2' }),
+    },
+  });
+  try {
+    const session = h.getSession();
+    // 1-4. Edit and autosave
+    h.setEditorMarkdown('- [ ] item 1 edited');
+    session.markDirty();
+    await session.flush();
+    assert.equal(session.dirty, false);
+    assert.equal(session.base, 'r2');
+
+    // 5. Keep focus inside editor
+    globalThis.document.activeElement = h.titleEl;
+
+    // 6. Checklist update from card arrives
+    h.app.mergeNote(h.note, { body_revision: 'r3', content: '- [x] item 1 edited' });
+
+    // 7. Verify sync is deferred while focused
+    h.win.sync();
+    assert.equal(h.getEditorMarkdown(), '- [ ] item 1 edited');
+    assert.equal(session.base, 'r2');
+
+    // 8. Blur the editor
+    globalThis.document.activeElement = null;
+    h.win.sync();
+
+    // 9. Verify update is incorporated
+    assert.equal(h.getEditorMarkdown(), '- [x] item 1 edited');
+    assert.equal(session.base, 'r3');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Browser Scenario B: Minimized window synchronizes when restored', async () => {
+  const h = setupWindowTest({
+    note: { id: 'note-scen-b', title: 'Minimizable', content: '- [ ] task 1', body_revision: 'r1' },
+  });
+  try {
+    const session = h.getSession();
+    // 1-2. Note is clean
+    assert.equal(session.dirty, false);
+
+    // 3. Minimize window
+    h.Modals.setMinimized(true);
+
+    // 4. Toggle checklist item from card
+    h.app.mergeNote(h.note, { body_revision: 'r2', content: '- [x] task 1' });
+
+    // 5. Restore window (restore triggers sync)
+    h.Modals.restore();
+    h.win.sync();
+
+    // 6. Verify updated checklist displayed
+    assert.equal(h.getEditorMarkdown(), '- [x] task 1');
+    assert.equal(session.base, 'r2');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Browser Scenario C: In-flight save is protected and completes cleanly without losing local edits', async () => {
+  let resolveSave;
+  const inFlightPromise = new Promise(res => { resolveSave = res; });
+  const h = setupWindowTest({
+    note: { id: 'note-scen-c', title: 'In-Flight Note', content: 'Base content', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async (id, body) => {
+        await inFlightPromise;
+        return { id, ...body, body_revision: 'r2' };
+      },
+    },
+  });
+  try {
+    const session = h.getSession();
+    h.setEditorMarkdown('User typed edits');
+    session.markDirty();
+
+    // Trigger save (now in-flight)
+    const savePromise = session.flush();
+    assert.equal(session.saving, true);
+
+    // Remote card update arrives during in-flight save
+    h.app.mergeNote(h.note, { body_revision: 'r-card', content: 'Remote card edit' });
+    h.win.sync();
+
+    // Must not overwrite local edits during in-flight save
+    assert.equal(h.getEditorMarkdown(), 'User typed edits');
+    assert.equal(session.base, 'r1');
+
+    // Complete in-flight save
+    resolveSave();
+    await savePromise;
+    assert.equal(session.saving, false);
+    assert.equal(session.base, 'r2');
+    assert.equal(session.saved.content, 'User typed edits');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Browser Scenario D: Genuine concurrent edit triggers HTTP 409 conflict and preserves local edits', async () => {
+  const serverVersion = { id: 'note-scen-d', title: 'Server Note', content: 'Server edit', body_revision: 'r2' };
+  const h = setupWindowTest({
+    note: { id: 'note-scen-d', title: 'Conflict Note', content: 'Initial content', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async () => {
+        const err = new Error('conflict');
+        err.status = 409;
+        throw err;
+      },
+      getNote: async () => serverVersion,
+    },
+  });
+  try {
+    const session = h.getSession();
+    h.setEditorMarkdown('Local conflict edit');
+    session.markDirty();
+    await session.flush();
+
+    // 409 entered conflict
+    assert.ok(session.conflict);
+    assert.equal(session.conflict.local.content, 'Local conflict edit');
+
+    // Resolving conflict with Keep mine writes local text over server revision
+    let keepMineBody = null;
+    h.note.api = {
+      patchNote: async (id, body) => {
+        keepMineBody = body;
+        return { id, ...body, body_revision: 'r3' };
+      },
+    };
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Browser Scenario E: Failed save followed by external revision preserves local edits', async () => {
+  const h = setupWindowTest({
+    note: { id: 'note-scen-e', title: 'Offline Note', content: 'Initial', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async () => { throw new Error('network down'); },
+    },
+  });
+  try {
+    const session = h.getSession();
+    h.setEditorMarkdown('Local offline work');
+    session.markDirty();
+    await session.flush();
+
+    assert.equal(session.dirty, true);
+
+    // External revision arrives
+    h.app.mergeNote(h.note, { body_revision: 'r2', content: 'Server updated content' });
+    h.win.sync();
+
+    // Local content must remain intact
+    assert.equal(h.getEditorMarkdown(), 'Local offline work');
+    assert.equal(session.base, 'r1');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Browser Scenario F: Focus on toolbar or modal elements defers sync and reconciles when focus leaves modal', () => {
+  const h = setupWindowTest({
+    note: { id: 'note-scen-f', title: 'Toolbar Focus', content: '- [ ] item 1', body_revision: 'r1' },
+  });
+  try {
+    const session = h.getSession();
+    // Simulate active element inside modal (toolbar button)
+    const toolbarButton = h.contentEl.querySelector('.note-window-toolbar');
+    globalThis.document.activeElement = toolbarButton;
+
+    // External update arrives
+    h.app.mergeNote(h.note, { body_revision: 'r2', content: '- [x] item 1' });
+
+    // While interacting with formatting controls, sync is deferred
+    h.win.sync();
+    assert.equal(h.getEditorMarkdown(), '- [ ] item 1');
+    assert.equal(session.base, 'r1');
+
+    // When focus leaves modal (activeElement is outside)
+    globalThis.document.activeElement = null;
+    h.win.sync();
+
+    // Reconciled cleanly
+    assert.equal(h.getEditorMarkdown(), '- [x] item 1');
+    assert.equal(session.base, 'r2');
   } finally {
     h.cleanup();
   }

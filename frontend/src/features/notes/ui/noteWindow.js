@@ -339,20 +339,36 @@ export function createNoteWindow({
 
     const draft = ctx.session.storedDraft();
     if (draft && !typed && draft.content !== null && !draft.stale && !draft.recovered.length) {
-      banner(ctx, note ? 'This note has unsaved changes from earlier on this device.' : 'You have an unsaved note from earlier on this device.', [
-        { label: 'Restore', run: () => { banner(ctx, null); els.title.value = draft.title; ctx.editor.setContent(draft.content); ctx.session.markDirty(); } },
-        { label: 'Discard', run: () => { banner(ctx, null); ctx.session.discardDraft(); } },
-      ]);
+      if (draft.foreign) {
+        banner(ctx, 'This note has unsaved changes from another session on this device.', [
+          { label: 'Restore', run: () => { banner(ctx, null); els.title.value = draft.title; ctx.editor.setContent(draft.content); ctx.session.markDirty(); } },
+          { label: 'Dismiss', run: () => { ctx.session.dismissDraft?.(); banner(ctx, null); } },
+          { label: 'Discard draft', run: () => { banner(ctx, null); ctx.session.discardDraft({ includeForeign: true }); } },
+        ]);
+      } else {
+        banner(ctx, note ? 'This note has unsaved changes from earlier on this device.' : 'You have an unsaved note from earlier on this device.', [
+          { label: 'Restore', run: () => { banner(ctx, null); els.title.value = draft.title; ctx.editor.setContent(draft.content); ctx.session.markDirty(); } },
+          { label: 'Discard', run: () => { banner(ctx, null); ctx.session.discardDraft(); } },
+        ]);
+      }
     } else if (draft && !typed) {
       // The note changed after the draft was typed (or another tab left one):
       // restoring would write over that change, so the draft is offered to
       // copy from instead, and kept until it is discarded.
       const texts = [...(draft.content !== null ? [draft] : []), ...draft.recovered]
         .map(entry => [entry.title, entry.content].filter(Boolean).join('\n\n'));
-      banner(ctx, 'This note changed after your unsaved draft on this device was written. Copy what you want to keep into the note.', [
-        { label: 'Copy draft', run: () => { navigator.clipboard?.writeText(texts.join('\n\n')).then(() => effects.showToast?.('Draft copied'), () => effects.showError('Copy failed')); } },
-        { label: 'Discard', run: () => { banner(ctx, null); ctx.session.discardDraft(); } },
-      ]);
+      if (draft.foreign || draft.recovered.length) {
+        banner(ctx, 'This note changed after an unsaved draft on this device was written. Copy what you want to keep into the note.', [
+          { label: 'Copy draft', run: () => { navigator.clipboard?.writeText(texts.join('\n\n')).then(() => effects.showToast?.('Draft copied'), () => effects.showError('Copy failed')); } },
+          { label: 'Dismiss', run: () => { ctx.session.dismissDraft?.(); banner(ctx, null); } },
+          { label: 'Discard drafts', run: () => { banner(ctx, null); ctx.session.discardDraft({ includeForeign: true }); } },
+        ]);
+      } else {
+        banner(ctx, 'This note changed after your unsaved draft on this device was written. Copy what you want to keep into the note.', [
+          { label: 'Copy draft', run: () => { navigator.clipboard?.writeText(texts.join('\n\n')).then(() => effects.showToast?.('Draft copied'), () => effects.showError('Copy failed')); } },
+          { label: 'Discard', run: () => { banner(ctx, null); ctx.session.discardDraft(); } },
+        ]);
+      }
     } else if (!note && typed) {
       ctx.session.markDirty();
     }
@@ -373,6 +389,13 @@ export function createNoteWindow({
     els.body.addEventListener('blur', () => { ctx.session.flush().then(() => sync()); });
     els.source.addEventListener('blur', () => { ctx.session.flush().then(() => sync()); });
     els.title.addEventListener('blur', () => { ctx.session.flush().then(() => sync()); });
+    els.modal.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (current === ctx && !els.modal?.contains?.(document.activeElement)) {
+          sync();
+        }
+      }, 0);
+    });
 
     ctx.reminder = wireReminderPicker(els.content, {
       onChange: () => {
@@ -500,7 +523,7 @@ export function createNoteWindow({
       return;
     }
     const active = document.activeElement;
-    const isInteracting = active && (active === ctx.els.title || active === ctx.els.body || active === ctx.els.source || ctx.els.body.contains(active));
+    const isInteracting = active && (active === ctx.els.title || active === ctx.els.body || active === ctx.els.source || ctx.els.modal?.contains?.(active));
     if (isInteracting) {
       ctx.pendingSync = true;
       return;
