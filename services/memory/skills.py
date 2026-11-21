@@ -386,6 +386,7 @@ class SkillsManager:
         fallback_for_toolsets: Optional[List[str]] = None,
         status: str = "draft",
         version: str = "1.0.0",
+        body_extra: Optional[str] = None,
     ) -> Dict:
         # Normalize name
         nm = slugify(name or title or description or "skill")
@@ -446,7 +447,10 @@ class SkillsManager:
             procedure=list(procedure if procedure is not None else (steps or [])),
             pitfalls=list(pitfalls or []),
             verification=list(verification or []),
-            body_extra=(solution if solution and not procedure else ""),
+            body_extra=(
+                body_extra if body_extra is not None
+                else (solution if solution and not procedure else "")
+            ),
         )
         self._write_skill(sk)
 
