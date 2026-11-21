@@ -8,6 +8,7 @@ import tempfile
 import time
 from datetime import datetime
 import logging
+from contextlib import contextmanager
 
 # Leading list-marker like "1.", "12)", or "3:" plus surrounding whitespace.
 # Strips one prefix per call so import-from-LLM-output doesn't leave the
@@ -35,15 +36,17 @@ from src.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
 logger = logging.getLogger(__name__)
 
 
-def _load_for_update(memory_manager) -> List[Dict[str, Any]]:
-    """Load the whole store for a read-modify-write cycle.
+@contextmanager
+def _memory_transaction(memory_manager):
+    """Hold a strict whole-store read/modify/write transaction.
 
     A transient read failure must not look like an empty store: the caller
     would append to ``[]`` and save that back, atomically destroying every
     existing memory (issue #5673). Surface it as a 503 and change nothing.
     """
     try:
-        return memory_manager.load_all_for_update()
+        with memory_manager.transaction() as entries:
+            yield entries
     except MemoryStoreUnreadable as e:
         logger.error("Refusing to rewrite the memory store: %s", e)
         raise HTTPException(
@@ -132,12 +135,14 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user)
         if memory_data.session_id:
             new_entry["session_id"] = memory_data.session_id
-        all_mem = _load_for_update(memory_manager)
-        all_mem.append(new_entry)
-        memory_manager.save(all_mem)
+        with _memory_transaction(memory_manager) as all_mem:
+            user_mem = all_mem if user is None else [m for m in all_mem if m.get("owner") == user]
+            if memory_manager.find_duplicates(text, user_mem):
+                return {"ok": True, "count": len(user_mem), "message": "Memory already exists"}
+            all_mem.append(new_entry)
         # Sync vector index
         if memory_vector and memory_vector.healthy:
-            memory_vector.add(new_entry["id"], text)
+            memory_manager.sync_vector(memory_vector, [new_entry["id"]])
         try:
             from src.event_bus import fire_event
             fire_event("memory_added", user)
@@ -332,7 +337,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             "ok": "error" not in result,
             "before": result.get("before", 0),
             "after": result.get("after", 0),
-            "removed": result.get("before", 0) - result.get("after", 0),
+            "removed": result.get("removed", result.get("before", 0) - result.get("after", 0)),
             # True when the audit skipped the LLM because nothing changed
             # since the last tidy. Frontend already says "Already clean"
             # for removed==0, so this is here for future use / debugging.
@@ -510,14 +515,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def pin_memory(request: Request, memory_id: str, pinned: bool = Form(True)):
         """Pin or unpin a memory. Pinned memories are always included in context."""
         user = _owner(request)
-        all_mem = _load_for_update(memory_manager)
-        for i, memory in enumerate(all_mem):
-            if memory["id"] == memory_id:
-                _verify_memory_owner(memory, user)
-                all_mem[i]["pinned"] = pinned
-                memory_manager.save(all_mem)
-                return {"ok": True, "pinned": pinned}
-        raise HTTPException(404, f"Memory item {memory_id} not found")
+        with _memory_transaction(memory_manager) as all_mem:
+            for memory in all_mem:
+                if memory["id"] == memory_id:
+                    _verify_memory_owner(memory, user)
+                    memory["pinned"] = pinned
+                    return {"ok": True, "pinned": pinned}
+            raise HTTPException(404, f"Memory item {memory_id} not found")
 
     # Wildcard routes MUST come last — otherwise they swallow /import, /search, etc.
     @router.get("/{memory_id}")
@@ -535,41 +539,33 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def update_memory(request: Request, memory_id: str, text: str = Form(...), category: str = Form(None)):
         """Update an existing memory item with new text and optional category."""
         user = _owner(request)
-        all_mem = _load_for_update(memory_manager)
-        for i, memory in enumerate(all_mem):
-            if memory["id"] == memory_id:
-                _verify_memory_owner(memory, user)
-                all_mem[i]["text"] = text.strip()
-                if category:
-                    all_mem[i]["category"] = category
-                all_mem[i]["timestamp"] = int(time.time())
-
-                memory_manager.save(all_mem)
-                # Sync vector index (remove old, add updated)
-                if memory_vector and memory_vector.healthy:
-                    memory_vector.remove(memory_id)
-                    memory_vector.add(memory_id, text.strip())
-                return {"ok": True, "message": "Memory updated successfully"}
-
-        raise HTTPException(404, f"Memory item {memory_id} not found")
+        with _memory_transaction(memory_manager) as all_mem:
+            target = next((memory for memory in all_mem if memory["id"] == memory_id), None)
+            if target is None:
+                raise HTTPException(404, f"Memory item {memory_id} not found")
+            _verify_memory_owner(target, user)
+            target["text"] = text.strip()
+            if category:
+                target["category"] = category
+            target["timestamp"] = int(time.time())
+        # The vector backend must not hold the file transaction open.
+        if memory_vector and memory_vector.healthy:
+            memory_manager.sync_vector(memory_vector, [memory_id])
+        return {"ok": True, "message": "Memory updated successfully"}
 
     @router.delete("/{memory_id}")
     def delete_memory(request: Request, memory_id: str):
         """Delete a memory item by its ID."""
         user = _owner(request)
-        all_mem = _load_for_update(memory_manager)
-
-        # Find and verify ownership before deleting
-        target = next((m for m in all_mem if m["id"] == memory_id), None)
-        if not target:
-            raise HTTPException(404, f"Memory item {memory_id} not found")
-        _verify_memory_owner(target, user)
-
-        all_mem = [m for m in all_mem if m["id"] != memory_id]
-        memory_manager.save(all_mem)
+        with _memory_transaction(memory_manager) as all_mem:
+            target = next((m for m in all_mem if m["id"] == memory_id), None)
+            if not target:
+                raise HTTPException(404, f"Memory item {memory_id} not found")
+            _verify_memory_owner(target, user)
+            all_mem[:] = [m for m in all_mem if m["id"] != memory_id]
         # Sync vector index
         if memory_vector and memory_vector.healthy:
-            memory_vector.remove(memory_id)
+            memory_manager.sync_vector(memory_vector, [memory_id])
         return {"ok": True, "message": "Memory deleted successfully"}
 
     return router

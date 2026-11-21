@@ -57,7 +57,7 @@ def _owner_scoped_store(entries: list[dict]) -> bool:
     return any(_entry_owner(entry) for entry in entries if isinstance(entry, dict))
 
 
-def _scope_entries(for_update: bool = False) -> tuple[str | None, list[dict], list[dict], str | None]:
+def _scope_entries(for_update: bool = False, entries=None) -> tuple[str | None, list[dict], list[dict], str | None]:
     """Return configured owner, all entries, visible entries, and optional error.
 
     ``for_update=True`` is for read-modify-write callers. They save the ``all
@@ -65,13 +65,14 @@ def _scope_entries(for_update: bool = False) -> tuple[str | None, list[dict], li
     instead of degrading to ``[]`` — otherwise the save writes their one new
     entry over the whole store (issue #5673).
     """
-    if for_update:
-        try:
-            entries = _memory_manager.load_all_for_update()
-        except MemoryStoreUnreadable as e:
-            return None, [], [], f"{_UNREADABLE_STORE_ERROR} ({e})"
-    else:
-        entries = _memory_manager.load_all()
+    if entries is None:
+        if for_update:
+            try:
+                entries = _memory_manager.load_all_for_update()
+            except MemoryStoreUnreadable as e:
+                return None, [], [], f"{_UNREADABLE_STORE_ERROR} ({e})"
+        else:
+            entries = _memory_manager.load_all()
     owner = _configured_owner()
     if owner is None and _owner_scoped_store(entries):
         return None, entries, [], _OWNER_SCOPE_ERROR
@@ -179,15 +180,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         category = arguments.get("category", "fact")
         if not text:
             return _text_result("Error: Memory text cannot be empty")
-        owner, memories, _visible, scope_error = _scope_entries(for_update=True)
-        if scope_error:
-            return _text_result(scope_error)
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
-        memories.append(entry)
-        _memory_manager.save(memories)
+        try:
+            with _memory_manager.transaction() as memories:
+                owner, memories, _visible, scope_error = _scope_entries(entries=memories)
+                if scope_error:
+                    return _text_result(scope_error)
+                entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
+                memories.append(entry)
+
+        except MemoryStoreUnreadable as error:
+            return _text_result(f"{_UNREADABLE_STORE_ERROR} ({error})")
+
         if _memory_vector and _memory_vector.healthy:
             try:
-                _memory_vector.add(entry["id"], text)
+                _memory_manager.sync_vector(_memory_vector, [entry["id"]])
             except Exception:
                 pass
         return _text_result(f"Memory added: [{category}] {text} (id: {entry['id'][:8]})")
@@ -197,26 +203,30 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         new_text = arguments.get("text", "")
         if not memory_id or not new_text:
             return _text_result("Error: edit needs memory_id and text")
-        _owner, memories, visible, scope_error = _scope_entries()
-        if scope_error:
-            return _text_result(scope_error)
-        full_id = None
-        for m in visible:
-            if m.get("id", "").startswith(memory_id):
-                full_id = m["id"]
-                break
-        if not full_id:
-            return _text_result(f"Error: Memory '{memory_id}' not found")
-        for m in memories:
-            if m.get("id") == full_id:
-                m["text"] = new_text
-                m["timestamp"] = int(time.time())
-                break
-        _memory_manager.save(memories)
+        try:
+            with _memory_manager.transaction() as memories:
+                _owner, memories, visible, scope_error = _scope_entries(entries=memories)
+                if scope_error:
+                    return _text_result(scope_error)
+                full_id = None
+                for m in visible:
+                    if m.get("id", "").startswith(memory_id):
+                        full_id = m["id"]
+                        break
+                if not full_id:
+                    return _text_result(f"Error: Memory '{memory_id}' not found")
+                for m in memories:
+                    if m.get("id") == full_id:
+                        m["text"] = new_text
+                        m["timestamp"] = int(time.time())
+                        break
+
+        except MemoryStoreUnreadable as error:
+            return _text_result(f"{_UNREADABLE_STORE_ERROR} ({error})")
+
         if _memory_vector and _memory_vector.healthy and full_id:
             try:
-                _memory_vector.remove(full_id)
-                _memory_vector.add(full_id, new_text)
+                _memory_manager.sync_vector(_memory_vector, [full_id])
             except Exception:
                 pass
         return _text_result(f"Memory updated: {new_text}")
@@ -225,25 +235,30 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         memory_id = arguments.get("memory_id", "")
         if not memory_id:
             return _text_result("Error: delete needs memory_id")
-        _owner, memories, visible, scope_error = _scope_entries()
-        if scope_error:
-            return _text_result(scope_error)
-        full_id = None
-        deleted_text = ""
-        deleted_category = ""
-        for m in visible:
-            if m.get("id", "").startswith(memory_id):
-                full_id = m["id"]
-                deleted_text = m.get("text", "")
-                deleted_category = m.get("category", "")
-                break
-        if not full_id:
-            return _text_result(f"Error: Memory '{memory_id}' not found")
-        memories = [m for m in memories if m.get("id") != full_id]
-        _memory_manager.save(memories)
+        try:
+            with _memory_manager.transaction() as memories:
+                _owner, memories, visible, scope_error = _scope_entries(entries=memories)
+                if scope_error:
+                    return _text_result(scope_error)
+                full_id = None
+                deleted_text = ""
+                deleted_category = ""
+                for m in visible:
+                    if m.get("id", "").startswith(memory_id):
+                        full_id = m["id"]
+                        deleted_text = m.get("text", "")
+                        deleted_category = m.get("category", "")
+                        break
+                if not full_id:
+                    return _text_result(f"Error: Memory '{memory_id}' not found")
+                memories[:] = [m for m in memories if m.get("id") != full_id]
+
+        except MemoryStoreUnreadable as error:
+            return _text_result(f"{_UNREADABLE_STORE_ERROR} ({error})")
+
         if _memory_vector and _memory_vector.healthy and full_id:
             try:
-                _memory_vector.remove(full_id)
+                _memory_manager.sync_vector(_memory_vector, [full_id])
             except Exception:
                 pass
         cat = f"[{deleted_category}] " if deleted_category else ""

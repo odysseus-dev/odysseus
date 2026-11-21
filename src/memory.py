@@ -5,10 +5,16 @@ import os
 import time
 import uuid
 import re
+import threading
 from typing import List, Dict, Tuple
 from datetime import datetime
+from contextlib import contextmanager
+from copy import deepcopy
+
+from core.atomic_io import atomic_write_json, store_lock
 
 logger = logging.getLogger(__name__)
+_TRANSACTIONS = threading.local()
 
 
 class MemoryStoreUnreadable(RuntimeError):
@@ -118,9 +124,102 @@ class MemoryManager:
     
     def ensure_file_exists(self):
         """Create memory file if it doesn't exist."""
-        if not os.path.exists(self.memory_file):
-            with open(self.memory_file, 'w', encoding='utf-8') as f:
-                json.dump([], f, ensure_ascii=False, indent=2)
+        if os.path.exists(self.memory_file):
+            return
+        with store_lock(self.memory_file):
+            if not os.path.exists(self.memory_file):
+                atomic_write_json(self.memory_file, [], ensure_ascii=False, indent=2)
+
+    @contextmanager
+    def transaction(self):
+        """Mutate a fresh whole-store snapshot under one process/thread lock.
+
+        Callers must keep this block synchronous and short: no model, vector,
+        or other network calls. Exceptions discard the in-memory changes.
+        """
+        key = (os.getpid(), os.path.abspath(self.memory_file))
+        active = getattr(_TRANSACTIONS, "paths", None)
+        if active is None:
+            active = _TRANSACTIONS.paths = set()
+        if key in active:
+            raise RuntimeError("Nested memory transactions would overwrite their outer snapshot")
+        with store_lock(self.memory_file):
+            active.add(key)
+            try:
+                entries = self.load_all_for_update()
+                before = deepcopy(entries)
+                yield entries
+                if entries != before:
+                    self.save(entries)
+            finally:
+                active.remove(key)
+
+    def sync_vector(self, vector, memory_ids):
+        """Refresh changed IDs from committed JSON, without locking out writers.
+
+        A separate lock orders vector refreshes across processes. Each refresh
+        rereads current JSON, so a delayed add/edit cannot resurrect a deleted
+        vector or overwrite a newer edit. JSON remains authoritative if the
+        embedding backend fails; keyword recall still works.
+        """
+        memory_ids = set(memory_ids)
+        if not memory_ids or not vector or not getattr(vector, "healthy", True):
+            return
+        try:
+            with store_lock(self.memory_file + ".vectors"):
+                current = {entry["id"]: entry for entry in self.load_all_for_update()}
+                for mid in memory_ids:
+                    try:
+                        # MemoryVectorStore.add skips IDs already indexed;
+                        # remove first so an edit replaces the old embedding.
+                        vector.remove(mid)
+                        if mid in current:
+                            vector.add(mid, current[mid]["text"])
+                    except Exception:
+                        logger.warning("Memory vector refresh failed for %s", mid, exc_info=True)
+        except (MemoryStoreUnreadable, OSError):
+            logger.warning("Memory vector refresh skipped: store unavailable", exc_info=True)
+
+    def apply_snapshot(self, before: List[Dict], proposed: List[Dict]) -> Dict:
+        """Apply an asynchronous audit only to records unchanged since its read.
+
+        New records and concurrent edits/deletes win over the old audit. The
+        return value describes actual commits, so vector updates and reports
+        can follow those rather than the model's stale proposal.
+        """
+        originals = {entry["id"]: entry for entry in before}
+        replacements = {entry["id"]: entry for entry in proposed}
+        if replacements.keys() - originals.keys():
+            raise ValueError("Snapshot proposal contains unknown memory IDs")
+        removed, updated, conflicts = [], [], []
+        with self.transaction() as current:
+            # Older stores omit metadata that load() fills in (notably a
+            # timestamp generated at read time). Those generated defaults are
+            # not concurrent edits. Compare only metadata actually on disk.
+            with open(self.memory_file, "r", encoding="utf-8") as handle:
+                persisted = {entry.get("id"): entry for entry in json.load(handle)
+                             if isinstance(entry, dict)}
+            merged = []
+            for entry in current:
+                mid = entry["id"]
+                original = originals.get(mid)
+                replacement = replacements.get(mid)
+                if original is None or replacement == original:
+                    merged.append(entry)
+                elif any(entry.get(key) != original.get(key) for key in entry.keys() | original.keys()
+                         if key not in {"timestamp", "source", "category", "uses"}
+                         or key in persisted.get(mid, {})):
+                    conflicts.append(mid)
+                    merged.append(entry)
+                elif replacement is None:
+                    removed.append(deepcopy(entry))
+                else:
+                    replacement = deepcopy(replacement)
+                    updated.append(replacement)
+                    merged.append(replacement)
+            current[:] = merged
+            saved = deepcopy(current)
+        return {"entries": saved, "removed": removed, "updated": updated, "conflicts": conflicts}
     
     def _read_entries(self) -> List[Dict]:
         """Parse the store, or raise :class:`MemoryStoreUnreadable`.
@@ -144,13 +243,29 @@ class MemoryManager:
         except json.JSONDecodeError as e:
             # This is the branch that actually destroyed stores: the file reads
             # back fine, so nothing stops the save that follows. A truncated
-            # memory.json is reachable because core/database.py rewrites it with
-            # a plain open(..,"w") + json.dump during migration.
+            # memory.json can come from an interrupted older writer or an
+            # external modification.
             #
             # Preserved behaviour: a corrupt store still gets one shot at the
             # pre-JSON memory.txt migration. Only raise when that finds nothing,
             # so we never report "empty" for a store we simply failed to parse.
-            legacy = self._migrate_from_legacy()
+            # Another process may have recovered/written the store after this
+            # read. Recheck under the same writer lock before migrating.
+            try:
+                with store_lock(self.memory_file):
+                    try:
+                        with open(self.memory_file, "r", encoding="utf-8") as f:
+                            recovered = json.load(f)
+                    except json.JSONDecodeError:
+                        legacy = self._migrate_from_legacy()
+                    except OSError as read_error:
+                        raise MemoryStoreUnreadable(str(read_error)) from read_error
+                    else:
+                        if not isinstance(recovered, list):
+                            raise MemoryStoreUnreadable("Recovered memory store is not a JSON array")
+                        return self._validate_entries(recovered)
+            except OSError as read_error:
+                raise MemoryStoreUnreadable(str(read_error)) from read_error
             if legacy:
                 return legacy
             raise MemoryStoreUnreadable(
@@ -182,7 +297,8 @@ class MemoryManager:
 
         Propagates :class:`MemoryStoreUnreadable` instead of degrading to ``[]``
         so a caller can never append to an empty view and persist it over a
-        store that was only temporarily unreadable (issue #5673).
+        store that was only temporarily unreadable (issue #5673). Use this for
+        audit snapshots; synchronous read/modify/write belongs in transaction().
         """
         return self._read_entries()
 
@@ -195,21 +311,18 @@ class MemoryManager:
 
     def claim_ownerless(self, owner: str):
         """Assign all ownerless memory entries to the given owner."""
+        claimed = 0
         try:
-            entries = self.load_all_for_update()
+            with self.transaction() as entries:
+                for entry in entries:
+                    if not entry.get("owner"):
+                        entry["owner"] = owner
+                        claimed += 1
         except MemoryStoreUnreadable as e:
             # Skip the sweep rather than rewrite the store from an unknown view.
             logger.error("Skipping ownerless claim, memory store unreadable: %s", e)
             return
-        changed = False
-        claimed = 0
-        for entry in entries:
-            if not entry.get("owner"):
-                entry["owner"] = owner
-                changed = True
-                claimed += 1
-        if changed:
-            self.save(entries)
+        if claimed:
             logger.info("Claimed %d ownerless memories for %s", claimed, owner)
     
     def _validate_entries(self, entries: List[Dict]) -> List[Dict]:
@@ -272,10 +385,10 @@ class MemoryManager:
                 entry["category"] = "fact"
         
         # Use atomic write
-        tmp_file = self.memory_file + ".tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_file, self.memory_file)
+        # Full replacement is explicit; read/modify/write callers use
+        # transaction() so a stale read cannot overwrite another writer.
+        with store_lock(self.memory_file):
+            atomic_write_json(self.memory_file, entries, ensure_ascii=False, indent=2)
     
     def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
         """Add a new memory entry."""
@@ -301,18 +414,14 @@ class MemoryManager:
             return
         id_set = set(ids)
         try:
-            entries = self.load_all_for_update()
+            with self.transaction() as entries:
+                for entry in entries:
+                    if entry.get("id") in id_set:
+                        entry["uses"] = int(entry.get("uses", 0) or 0) + 1
         except MemoryStoreUnreadable as e:
             # Best-effort counter; never worth rewriting the store blind.
             logger.error("Skipping uses bump, memory store unreadable: %s", e)
             return
-        changed = False
-        for e in entries:
-            if e.get("id") in id_set:
-                e["uses"] = int(e.get("uses", 0) or 0) + 1
-                changed = True
-        if changed:
-            self.save(entries)
     
     def find_duplicates(self, text: str, entries: List[Dict] = None) -> List[Dict]:
         """Find duplicate memory entries based on text content."""
