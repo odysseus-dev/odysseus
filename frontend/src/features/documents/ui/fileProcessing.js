@@ -181,11 +181,10 @@ export async function readFileContent(file) {
 // ── Extension and language mapping ────────────────────────────────────────────
 
 /**
- * File extension to Odysseus document language identifier.
- * Extensions not present in this map are treated as plain text (language = null).
- * This is the authoritative mapping for the Document Library import flow.
+ * Common source code and text file extension mappings shared across device
+ * and document library import workflows.
  */
-export const EXT_TO_LANG = Object.freeze({
+export const COMMON_EXT_TO_LANG = Object.freeze({
   '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
   '.html': 'html', '.htm': 'html', '.css': 'css', '.md': 'markdown',
   '.json': 'json', '.yml': 'yaml', '.yaml': 'yaml', '.sh': 'bash',
@@ -193,10 +192,25 @@ export const EXT_TO_LANG = Object.freeze({
   '.java': 'java', '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp',
   '.rb': 'ruby', '.php': 'php', '.xml': 'xml',
   '.toml': 'toml', '.ini': 'ini', '.txt': '', '.log': '',
-  '.cfg': 'ini', '.conf': 'ini', '.env': '', '.jsx': 'javascript',
-  '.tsx': 'typescript', '.vue': 'html', '.svelte': 'html',
+  '.csv': 'csv', '.tsv': 'csv', '.jsx': 'javascript', '.tsx': 'typescript',
+});
+
+/**
+ * File extension to language mapping for direct device import (importFromDevice.js).
+ * Preserves the exact original classification policy of importFromDevice.js.
+ */
+export const DEVICE_IMPORT_EXT_TO_LANG = COMMON_EXT_TO_LANG;
+
+/**
+ * File extension to Odysseus document language identifier for the Document Library.
+ * Extends COMMON_EXT_TO_LANG with additional Document-Library-specific web/config/office mappings.
+ * Extensions not present in this map are treated as plain text (language = null).
+ */
+export const EXT_TO_LANG = Object.freeze({
+  ...COMMON_EXT_TO_LANG,
+  '.cfg': 'ini', '.conf': 'ini', '.env': '',
+  '.vue': 'html', '.svelte': 'html',
   '.scss': 'css', '.sass': 'css', '.less': 'css',
-  '.csv': 'csv', '.tsv': 'csv',
   '.xlsx': 'csv', '.xls': 'csv', '.ods': 'csv',
   '.docx': 'docx', '.doc': 'markdown',
 });

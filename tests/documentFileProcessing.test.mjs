@@ -191,27 +191,6 @@ function parseAttrs(str) {
   return attrs;
 }
 
-function findMatchingClose(html, start, tag) {
-  const openRe = new RegExp(`<${tag}(?:\\s[^>]*)?>`, 'gi');
-  const closeTag = `</${tag}>`;
-  let depth = 0;
-  let i = start;
-  // Look for closing tag, tracking nesting
-  while (i < html.length) {
-    const nextClose = html.indexOf(closeTag, i);
-    if (nextClose === -1) return -1;
-    // Count any opens between i and nextClose
-    openRe.lastIndex = i;
-    let m;
-    let opens = 0;
-    while ((m = openRe.exec(html)) !== null && m.index < nextClose) opens++;
-    if (opens <= depth) return nextClose;
-    depth += opens;
-    i = nextClose + closeTag.length;
-  }
-  return -1;
-}
-
 const VOID_TAGS = new Set(['br', 'hr', 'img', 'input', 'link', 'meta']);
 
 function parseNodes(html) {
@@ -352,43 +331,60 @@ describe('htmlToMarkdown', () => {
   });
 });
 
-describe('EXT_TO_LANG', () => {
+describe('EXT_TO_LANG and DEVICE_IMPORT_EXT_TO_LANG', () => {
   let api;
   before(async () => { api = await loadModule({}); });
 
-  it('maps common source extensions', () => {
-    assert.equal(api.EXT_TO_LANG['.py'], 'python');
-    assert.equal(api.EXT_TO_LANG['.js'], 'javascript');
-    assert.equal(api.EXT_TO_LANG['.ts'], 'typescript');
-    assert.equal(api.EXT_TO_LANG['.md'], 'markdown');
-    assert.equal(api.EXT_TO_LANG['.json'], 'json');
-    assert.equal(api.EXT_TO_LANG['.sql'], 'sql');
-    assert.equal(api.EXT_TO_LANG['.rs'], 'rust');
+  it('maps common source extensions in both mappings', () => {
+    for (const mapping of [api.EXT_TO_LANG, api.DEVICE_IMPORT_EXT_TO_LANG]) {
+      assert.equal(mapping['.py'], 'python');
+      assert.equal(mapping['.js'], 'javascript');
+      assert.equal(mapping['.ts'], 'typescript');
+      assert.equal(mapping['.md'], 'markdown');
+      assert.equal(mapping['.json'], 'json');
+      assert.equal(mapping['.sql'], 'sql');
+      assert.equal(mapping['.rs'], 'rust');
+      assert.equal(mapping['.txt'], '');
+      assert.equal(mapping['.log'], '');
+    }
   });
 
-  it('maps spreadsheet extensions to csv', () => {
+  it('preserves importFromDevice unclassified extensions as undefined in DEVICE_IMPORT_EXT_TO_LANG', () => {
+    // These extensions were never classified in importFromDevice.js and must remain unclassified (undefined)
+    // so that importFromDevice treats them as language=null / plain text.
+    const unclassifiedInDevice = [
+      '.cfg', '.conf', '.env', '.vue', '.svelte', '.scss', '.sass', '.less', '.doc', '.docx', '.xlsx', '.xls', '.ods'
+    ];
+    for (const ext of unclassifiedInDevice) {
+      assert.equal(api.DEVICE_IMPORT_EXT_TO_LANG[ext], undefined, `Expected ${ext} to be undefined in DEVICE_IMPORT_EXT_TO_LANG`);
+    }
+  });
+
+  it('classifies web, config, and office extensions in EXT_TO_LANG for Document Library', () => {
+    assert.equal(api.EXT_TO_LANG['.cfg'], 'ini');
+    assert.equal(api.EXT_TO_LANG['.conf'], 'ini');
+    assert.equal(api.EXT_TO_LANG['.env'], '');
+    assert.equal(api.EXT_TO_LANG['.vue'], 'html');
+    assert.equal(api.EXT_TO_LANG['.svelte'], 'html');
+    assert.equal(api.EXT_TO_LANG['.scss'], 'css');
+    assert.equal(api.EXT_TO_LANG['.sass'], 'css');
+    assert.equal(api.EXT_TO_LANG['.less'], 'css');
     assert.equal(api.EXT_TO_LANG['.xlsx'], 'csv');
     assert.equal(api.EXT_TO_LANG['.xls'], 'csv');
     assert.equal(api.EXT_TO_LANG['.ods'], 'csv');
-  });
-
-  it('maps docx to docx language', () => {
     assert.equal(api.EXT_TO_LANG['.docx'], 'docx');
+    assert.equal(api.EXT_TO_LANG['.doc'], 'markdown');
   });
 
-  it('maps plain text extensions to empty string', () => {
-    assert.equal(api.EXT_TO_LANG['.txt'], '');
-    assert.equal(api.EXT_TO_LANG['.log'], '');
-    assert.equal(api.EXT_TO_LANG['.env'], '');
-  });
-
-  it('is frozen', () => {
+  it('both mappings are frozen', () => {
     assert.ok(Object.isFrozen(api.EXT_TO_LANG));
+    assert.ok(Object.isFrozen(api.DEVICE_IMPORT_EXT_TO_LANG));
   });
 
   it('returns undefined for unknown extensions', () => {
     assert.equal(api.EXT_TO_LANG['.unknown'], undefined);
     assert.equal(api.EXT_TO_LANG['.xyz'], undefined);
+    assert.equal(api.DEVICE_IMPORT_EXT_TO_LANG['.unknown'], undefined);
   });
 });
 

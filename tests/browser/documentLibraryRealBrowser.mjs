@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
-const CHROME_PATH = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/usr/bin/google-chrome';
+const CHROME_PATH = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.CHROME_PATH;
 
 // In-memory documents store for mock API
 const documents = [];
@@ -166,11 +166,14 @@ async function runValidation() {
   const { server, origin } = await startServer();
   console.log(`Test server running at ${origin}`);
 
-  const browser = await chromium.launch({
-    executablePath: CHROME_PATH,
+  const launchOptions = {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  };
+  if (CHROME_PATH) {
+    launchOptions.executablePath = CHROME_PATH;
+  }
+  const browser = await chromium.launch(launchOptions);
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
@@ -235,7 +238,7 @@ async function runValidation() {
     await page.waitForFunction(() => {
       const card = document.querySelector('.doclib-card[data-doc-id]');
       return card !== null;
-    }, { timeout: 5000 });
+    }, null, { timeout: 5000 });
 
     const plainCard = page.locator('.doclib-card:has-text("test-plain")');
     assert.ok(await plainCard.count() >= 1, 'Plain text document card should be rendered');
@@ -265,7 +268,7 @@ async function runValidation() {
       const cards = document.querySelectorAll('.doclib-card');
       const texts = Array.from(cards).map(c => c.textContent);
       return texts.some(t => t.includes('Quarter1')) && texts.some(t => t.includes('Quarter2'));
-    }, { timeout: 5000 });
+    }, null, { timeout: 5000 });
 
     console.log('✓ Multi-sheet spreadsheet import verified (both sheets created)');
 
@@ -283,7 +286,7 @@ async function runValidation() {
     await page.waitForFunction(() => {
       const cards = document.querySelectorAll('.doclib-card');
       return Array.from(cards).some(c => c.textContent.includes('project-proposal'));
-    }, { timeout: 5000 });
+    }, null, { timeout: 5000 });
     console.log('✓ DOCX import delegation verified');
 
     // 5. PDF import delegation
@@ -300,7 +303,7 @@ async function runValidation() {
     await page.waitForFunction(() => {
       const cards = document.querySelectorAll('.doclib-card');
       return Array.from(cards).some(c => c.textContent.includes('contract'));
-    }, { timeout: 5000 });
+    }, null, { timeout: 5000 });
     console.log('✓ PDF import delegation verified');
 
     // 6. Selection and interactions in Document Library

@@ -3,7 +3,7 @@
  * Device file import flow (PDF, DOCX, spreadsheet deferral, and source/text files).
  */
 
-import { EXT_TO_LANG, SPREADSHEET_EXTENSIONS } from './fileProcessing.js';
+import { DEVICE_IMPORT_EXT_TO_LANG, SPREADSHEET_EXTENSIONS } from './fileProcessing.js';
 
 let _deps = {};
 
@@ -72,7 +72,7 @@ export function _importFromDevice() {
           reader.onerror = () => rej(reader.error);
           reader.readAsText(file);
         });
-        const lang = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
+        const lang = DEVICE_IMPORT_EXT_TO_LANG[ext] !== undefined ? DEVICE_IMPORT_EXT_TO_LANG[ext] : null;
         const body = { title: baseTitle, language: lang, content };
         if (sid) body.session_id = sid;
         const r = await fetch(`${apiBase}/api/document`, {

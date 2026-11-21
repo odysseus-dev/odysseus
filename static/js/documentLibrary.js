@@ -23,8 +23,6 @@ import {
 import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
 import {
   ensureXLSX,
-  ensureMammoth,
-  htmlToMarkdown,
   readFileContent,
   EXT_TO_LANG,
   SPREADSHEET_EXTENSIONS,
