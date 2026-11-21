@@ -3009,7 +3009,7 @@ def note_read_intent(user_text: str) -> tuple[str, bool]:
     return query, needs_body
 
 
-def required_read_operation_for_request(message: str, history: Iterable = ()) -> RequiredReadOperation | None:
+def _required_read_operation_for_request(message: str, history: Iterable = ()) -> RequiredReadOperation | None:
     """Resolve complete list/read requests, or repeat an exact prior read.
 
     Do not invent identifiers, resolve relative dates, extract a read from a
@@ -4152,6 +4152,68 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
             tool, action = _FUZZY_SAFE_READS[fuzzy_family]
             return RequiredReadOperation(tool, {"action": action} if action else {}, maximum)
     return None
+
+
+# `list_events` without start/end lists today plus the tool's default 14 days
+# (src/tools/calendar.py), so a sealed listing with no range only answers a
+# request that names no time outside that window. Near-term scopes (today,
+# tomorrow, a weekday, this or next week, this month) keep the sealed read, as
+# the routing tests expect.
+_CALENDAR_TIME_OUTSIDE_DEFAULT_WINDOW = re.compile(
+    r"\b\d{4}-\d{1,2}-\d{1,2}\b"
+    r"|\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b"
+    r"|\b\d{1,2}(?:st|nd|rd|th)\b"
+    r"|\b(?:january|february|march|april|june|july|august|september|october"
+    r"|november|december|jan|feb|apr|jun|jul|aug|sept?|oct|nov|dec)\b"
+    r"|\bmay\s+\d{1,2}\b|\b\d{1,2}\s+(?:of\s+)?may\b"
+    r"|\b(?:in|during|until|till|since|before|after)\s+may\b"
+    r"|\b(?:next|last|past|previous|following)\s+month\b"
+    r"|\b(?:this|next|last|past|previous|following)\s+(?:year|quarter)\b"
+    r"|\b(?:yesterday|ago)\b"
+    r"|\b(?:last|past|previous)\s+(?:week(?:end)?|night|few\s+days|\d+\s+days"
+    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"|\bin\s+(?:a|an|\d+|two|three|four|five|six|a\s+few|a\s+couple\s+of)"
+    r"\s+(?:weeks?|months?|years?)\b"
+    r"|\b(?:christmas|xmas|new\s+year(?:['’]?s)?|easter|thanksgiving|halloween)\b",
+    re.I,
+)
+
+
+def names_time_outside_default_calendar_window(text: str) -> bool:
+    """True when a calendar request names a date or period the default listing can miss."""
+    return bool(_CALENDAR_TIME_OUTSIDE_DEFAULT_WINDOW.search(str(text or "")))
+
+
+def required_read_operation_for_request(message: str, history: Iterable = ()) -> RequiredReadOperation | None:
+    """Resolve a sealed read, with one extra rule for calendar listings.
+
+    A listing without start/end only covers the default window, so sealing it
+    for a dated request ("what's on my calendar in January?") or a compound one
+    ("...and what's the weather?") answers a different question. Leave those to
+    the model, which can pass a range and do the other part. This only ever
+    drops a sealed read; it never adds one.
+    """
+    operation = _required_read_operation_for_request(message, history)
+    if (
+        operation is not None
+        and operation.tool == "manage_calendar"
+        and operation.args.get("action") == "list_events"
+        and not operation.args.get("start")
+        and not operation.args.get("end")
+    ):
+        text = re.sub(
+            r"\b(?:do\s+not|don['’]?t|dont|no)\b[^.!?\n]*",
+            "",
+            _normalize_request_lead(message),
+            flags=re.I,
+        )
+        families = {
+            family for family, pattern in _FAMILY_WORDS.items()
+            if re.search(pattern, text, re.I)
+        }
+        if names_time_outside_default_calendar_window(text) or len(families) > 1:
+            return None
+    return operation
 
 
 def _families_for_tool(tool: str) -> frozenset[str]:
