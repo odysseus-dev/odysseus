@@ -3374,6 +3374,12 @@ export function isGalleryOpen() {
   return _open;
 }
 
+// Swipe-to-dismiss (ui.js) hides the sheet and fires `modal-dismissed` without
+// calling closeGallery(); clear the open flag so the next tap reopens (#3850).
+window.addEventListener('modal-dismissed', (e) => {
+  if (e.detail?.id === 'gallery-modal') closeGallery();
+});
+
 // ---- Utilities ----
 
 function _esc(str) {

@@ -219,6 +219,12 @@ export function init(apiBase, markdownMod, sessionMod) {
 }
 
 export function isOpen() { return _open; }
+
+// Swipe-to-dismiss (ui.js) hides the sheet and fires `modal-dismissed` without
+// calling closePanel(); clear the open flag so the next tap reopens (#3850).
+window.addEventListener('modal-dismissed', (e) => {
+  if (e.detail?.id === 'research-overlay') closePanel();
+});
 export function toggle() {
   if (_open) {
     // If minimized, restore instead of closing
