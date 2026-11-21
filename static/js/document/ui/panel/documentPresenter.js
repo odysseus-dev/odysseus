@@ -7,6 +7,7 @@ import { _setDocxPreviewActive, _setMarkdownPreviewActive, exitHtmlPreview, setH
 import { _isFormBackedDoc, _releasePdfPane, _syncPdfPaneToDoc } from '../pdfTools.js';
 import { _restoreSuggestionsFromStorage } from '../suggestions.js';
 
+import { clearMarkdownDraft, persistMarkdownDraft } from '../../application/documentSession.js';
 import { _cancelAutoSave, _flushAutoSave } from '../../application/persistence.js';
 
 import { _isDocxLang, _isRichTextLang } from '../../domain/documentKinds.js';
@@ -25,7 +26,15 @@ import { _closeVersionPanel, _historyOwnsView, _versionHistory } from '../histor
 
 import { _sanitizedRichTextHtml, _syncRichEmptyImport } from '../richEditor/richBodySync.js';
 
-import { _showRichTextEditor } from '../richEditor/richBodyWiring.js';
+import { _showRichTextEditor, _showMarkdownVisualEditor, _hideMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import {
+  hideMarkdownCompatBanner,
+  hideMarkdownSyncWarningBanner,
+  isVisualMarkdownDoc,
+  renderMarkdownCompatBanner,
+  resolveMarkdownEditorMode,
+  syncVisualMarkdownToDoc,
+} from '../richEditor/markdownVisualSync.js';
 
 import { _hideRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
 
@@ -72,7 +81,8 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
     const prevId = activeDocId;
     if (prevId && prevId !== docId && docs.has(prevId)) {
       const prev = docs.get(prevId);
-      if (prev.language !== 'email' && !(prev.content || '').trim() && !(prev.title || '').trim()) {
+      if (!prev._visualSyncBlocked && prev.language !== 'email' && !(prev.content || '').trim() && !(prev.title || '').trim()) {
+        clearMarkdownDraft(prev);
         markDeleted(prevId);
         _cancelAutoSave(prevId);
         fetch(`${API_BASE}/api/document/${prevId}`, { method: 'DELETE' }).catch(() => {});
@@ -168,7 +178,10 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
     // Font size does nothing for a PDF (annotations are placed, not styled) —
     // hide it on PDFs so the toolbar only shows what actually works.
     const _fsBtn = document.getElementById('doc-fontsize-btn');
-    if (_fsBtn) _fsBtn.style.display = (isPdf || _isRichTextLang(doc.language)) ? 'none' : '';
+    const isEmail = doc.language === 'email';
+    const isRichText = _isRichTextLang(doc.language);
+    const visualMdDoc = !isEmail && !isRichText && isVisualMarkdownDoc(doc);
+    if (_fsBtn) _fsBtn.style.display = (isPdf || isRichText || visualMdDoc) ? 'none' : '';
     // Exit CSV preview when switching docs, or auto-show for CSV
     const isCsv = doc.language === 'csv';
     const csvPreview = document.getElementById('doc-csv-preview');
@@ -187,9 +200,9 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
     // Show/hide email fields. Markdown preview uses the same editor wrapper
     // as email source mode, so clear it before showing the rich email body;
     // otherwise the source wrapper can reappear over the composer.
-    const isEmail = doc.language === 'email';
-    const isRichText = _isRichTextLang(doc.language);
     if (isEmail) {
+      hideMarkdownCompatBanner();
+      document.getElementById('doc-email-richbody')?.classList.remove('markdown-visual-mode');
       _setMarkdownPreviewActive(false, { remember: false });
       const forceHeaderFields = !!doc._skipLocalDraftOnce;
       const applyLocalDraft = forceHeaderFields ? false : true;
@@ -200,9 +213,28 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
       if (isRichText) {
         _setMarkdownPreviewActive(false, { remember: false });
         _showRichTextEditor(doc);
+      } else if (visualMdDoc) {
+        const wantsMarkdownPreview = doc._markdownPreviewActive === true;
+        const resolvedMode = resolveMarkdownEditorMode(doc);
+        if (wantsMarkdownPreview) {
+          _hideMarkdownVisualEditor();
+          hideMarkdownCompatBanner();
+          hideMarkdownSyncWarningBanner(true);
+          _setMarkdownPreviewActive(true, { remember: false });
+        } else if (resolvedMode === 'visual') {
+          _setMarkdownPreviewActive(false, { remember: false });
+          _showMarkdownVisualEditor(doc);
+        } else {
+          _hideMarkdownVisualEditor();
+          _setMarkdownPreviewActive(false, { remember: false });
+          hideMarkdownSyncWarningBanner(true);
+          if (doc._visualCompatReasons?.length) renderMarkdownCompatBanner(doc._visualCompatReasons);
+          else hideMarkdownCompatBanner();
+        }
       } else {
-        const wantsMarkdownPreview = !isPdf && (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
-        _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
+        _hideMarkdownVisualEditor();
+        hideMarkdownCompatBanner();
+        _setMarkdownPreviewActive(false, { remember: false });
         if (_isDocxLang(doc.language)) {
           requestAnimationFrame(() => _setDocxPreviewActive(doc._docxPreviewActive !== false, { remember: false }));
         }
@@ -224,6 +256,11 @@ export function switchToDoc(docId, { captureCurrent = true, preserveHistory = fa
 
   }
 
+function _visibleVisualMarkdownSurface() {
+    const rich = document.getElementById('doc-email-richbody');
+    return rich && rich.style.display !== 'none' && rich.classList.contains('markdown-visual-mode') ? rich : null;
+  }
+
 export function saveCurrentToMap() {
     // The active ID can still identify the previous document while a new pane
     // is mounting. Only its populated owner may supply a draft snapshot.
@@ -243,6 +280,13 @@ export function saveCurrentToMap() {
       if (rich && rich.style.display !== 'none') {
         doc.content = _sanitizedRichTextHtml(rich);
         if (textarea) textarea.value = doc.content;
+      }
+    } else if (isVisualMarkdownDoc(doc) && _visibleVisualMarkdownSurface()) {
+      // Visual Markdown owns the content while shown; the source editor and
+      // Preview fall through to the textarea branch below.
+      syncVisualMarkdownToDoc(_visibleVisualMarkdownSurface(), { doc });
+      if (doc._visualSyncBlocked) {
+        doc._visualDraftHtml = _visibleVisualMarkdownSurface().innerHTML;
       }
     } else if (doc.language === 'email' && textarea) {
       const to = document.getElementById('doc-email-to')?.value || '';
@@ -272,7 +316,14 @@ export function saveCurrentToMap() {
         // (it's hidden behind the rendered PDF view, so its value isn't the source
         // of truth). Overwriting here dropped the pdf_form_source marker, so after
         // minimize->restore the doc came back blank.
-        doc.content = textarea.value;
+        // Textareas normalize line endings. Keep the original bytes on a no-op
+        // and maintain a CRLF Markdown document's convention on a Source edit.
+        const previous = String(doc.content || '');
+        if (textarea.value !== previous.replace(/\r\n?/g, '\n')) {
+          const useCrlf = isVisualMarkdownDoc(doc) && previous.includes('\r\n') && !/(?<!\r)\n|\r(?!\n)/.test(previous);
+          doc.content = useCrlf ? textarea.value.replace(/\n/g, '\r\n') : textarea.value;
+        }
+        persistMarkdownDraft(doc);
       }
     }
   }

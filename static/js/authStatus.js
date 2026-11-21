@@ -11,6 +11,8 @@
 
 let _statusPromise = null;
 
+export const SESSION_ENDED_EVENT = 'odysseus:session-ended';
+
 export function loadAuthStatus() {
   if (!_statusPromise) {
     _statusPromise = fetch('/api/auth/status', { credentials: 'same-origin' })

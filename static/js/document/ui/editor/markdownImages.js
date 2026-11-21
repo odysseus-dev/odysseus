@@ -81,8 +81,12 @@ export async function _uploadMarkdownImages(files) {
       const uploaded = Array.isArray(data?.files) ? data.files : [];
       if (!uploaded.length) throw new Error('No uploaded files returned');
       if (!pane?.isConnected || pane !== document.getElementById('doc-editor-pane') || pane.dataset.activeDocumentId !== docId || activeDocId !== docId) return;
-      if (_isRichTextLang(language) || emailRichBody) _insertRichTextImages(uploaded);
-      else _insertMarkdownImages(uploaded);
+      const activeRich = _emailRichbodyActive();
+      if (_isRichTextLang(language) || emailRichBody || (language === 'markdown' && activeRich)) {
+        _insertRichTextImages(uploaded);
+      } else {
+        _insertMarkdownImages(uploaded);
+      }
       if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
     } catch (err) {
       console.error('Failed to insert markdown image:', err);

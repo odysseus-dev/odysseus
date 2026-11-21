@@ -1,6 +1,7 @@
 /** Escaping, safe image sources and link rendering. */
 export function createText({
-  uiModule
+  uiModule,
+  noteImageSrc
 }) {
   function _esc(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
@@ -11,14 +12,6 @@ export function createText({
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/`/g, '&#96;');
-  }
-
-  function _safeImgSrc(s) {
-    const v = (s || '').trim();
-    if (!v) return '';
-    if (v.startsWith('/') || v.startsWith('./') || v.startsWith('../')) return v;
-    if (/^https?:\/\//i.test(v) || /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(v)) return v;
-    return '';
   }
 
   function _linkify(s) {
@@ -35,5 +28,5 @@ export function createText({
     });
   }
 
-  return { _esc, _attrEsc, _safeImgSrc, _linkify };
+  return { _esc, _attrEsc, _safeImgSrc: noteImageSrc, _linkify };
 }

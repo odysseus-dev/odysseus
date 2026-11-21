@@ -33,6 +33,7 @@ const MOCK_FILES = new Set([
   'versionHistory.js',
   'documentStatus.js',
   'documentActions.js',
+  'documentSession.js',
 ]);
 
 function classList() {
@@ -207,6 +208,10 @@ function mockEvaluate(fileName, module) {
     });
     return;
   }
+  if (fileName === 'documentSession.js') {
+    set('persistMarkdownDraft', () => true);
+    return;
+  }
   if (fileName === 'diffViewer.js') {
     set('diffLines', (...args) => realDiffLines(...args));
     set('exitDiffMode', (...args) => { calls.exitDiff.push(args); });
@@ -234,6 +239,8 @@ function mockEvaluate(fileName, module) {
   }
   if (fileName === 'richBodyWiring.js') {
     set('_showRichTextEditor', (...args) => { calls.showRich.push(args); });
+    set('_showMarkdownVisualEditor', () => {});
+    set('_hideMarkdownVisualEditor', () => {});
     return;
   }
   if (fileName === 'suggestions.js') {
@@ -298,7 +305,7 @@ async function loadDocumentUpdate() {
         'previewModes.js': ['_setMarkdownPreviewActive', '_isMarkdownPreviewVisible', 'toggleCsvPreview', 'toggleHtmlPreview', '_themedRenderSrcdoc', '_htmlPreviewActive'],
         'sourceEditor.js': ['syncHighlighting', 'attemptAutoDetect', '_refreshMarkdownPreviewIfVisible'],
         'composerFields.js': ['_showEmailFields'],
-        'richBodyWiring.js': ['_showRichTextEditor'],
+        'richBodyWiring.js': ['_showRichTextEditor', '_showMarkdownVisualEditor', '_hideMarkdownVisualEditor'],
         'suggestions.js': ['suspendSuggestions', '_restoreSuggestionsFromStorage'],
         'pdfTools.js': ['_isFormBackedDoc', '_pdfViewState', '_refreshPdfPreviewIframe'],
         'localDraft.js': ['_clearEmailLocalDraft', '_persistEmailLocalDraftSoon'],
@@ -306,6 +313,7 @@ async function loadDocumentUpdate() {
         'versionHistory.js': ['_closeVersionPanel'],
         'documentStatus.js': ['_syncEditorPlaceholder'],
         'documentActions.js': ['autoTitleFromContent'],
+        'documentSession.js': ['persistMarkdownDraft'],
       }[fileName];
       if (!exportNames) {
         throw new Error(`Unexpected unresolved import ${specifier} from ${parent}`);
@@ -480,6 +488,7 @@ describe('documentUpdate', () => {
     });
     const doc = env.state.docs.get('doc-1');
     assert.equal(doc.content, 'Hello\nworld');
+    assert.equal(doc._persistedContent, doc.content, 'a newly received document uses the server text as its recovery baseline');
     assert.equal(doc.title, 'Notes');
     assert.equal(doc.language, 'markdown');
     assert.equal(doc.version, 2);

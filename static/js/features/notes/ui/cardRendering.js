@@ -21,8 +21,8 @@ export function createCardRendering({
   _linkify,
   _loadActiveHighlights,
   _renderLabelsInto,
+  _renderNoteMarkdown,
   _renderQuickAdd,
-  _safeImgSrc,
   _sortedVisibleNotes,
   _updateRailBadge,
   _wireTodayView,
@@ -98,45 +98,23 @@ export function createCardRendering({
       const dueFmt = _formatDueDate(note.due_date);
       const overdue = _isDueOverdue(note.due_date);
 
-      let contentHtml = '';
-      if (_hasItems(note) && Array.isArray(note.items)) {
-        // Goal notes can carry a free-form description above the step list :
-        // todos rarely do, but the same render works for both.
-        if (note.note_type === 'goal' && (note.content || '').trim()) {
-          const fullText = note.content || '';
-          const preview = fullText.length > 300 ? fullText.slice(0, 300) + '…' : fullText;
-          contentHtml += `<div class="note-goal-desc">${_esc(preview)}</div>`;
-        }
-        contentHtml += '<div class="note-checklist-preview">';
-        // Show ALL items : the preview container is scrollable (CSS caps
-        // its max-height + overflow-y:auto), so there's no need to truncate.
-        for (let i = 0; i < note.items.length; i++) {
-          const item = note.items[i];
-          const doneClass = item.done ? ' done' : '';
-          const indent = Math.min(item.indent || 0, 3);
-          contentHtml += `<div class="note-checkbox${doneClass}" data-note-id="${note.id}" data-idx="${i}" style="padding-left:${indent * 16}px">
-          <span class="note-check-dot" title="Mark done"></span>
-          <span class="note-check-text">${_linkify(item.text)}</span>
-          <button class="note-checkbox-edit" data-note-id="${note.id}" data-idx="${i}" title="Edit item">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button class="note-checkbox-rm" data-note-id="${note.id}" data-idx="${i}" title="Delete item">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>`;
-        }
-        contentHtml += '</div>';
-      } else {
-        const fullText = note.content || '';
-        const preview = fullText.length > 600 ? fullText.slice(0, 600) + '…' : fullText;
-        // _linkify already calls _esc internally, so URLs become clickable
-        // anchors (used by e.g. the "remind me to reply" email deep-link).
-        contentHtml = preview ? `<div class="note-content-preview">${_linkify(preview)}</div>` : '';
-      }
+      // Every body goes through the same markdown renderer: task lines become
+      // checkboxes (wired in cardChecklist), uploads render inline, and CSS
+      // clips the height. A pure task list keeps the scrolling checklist box.
+      const source = note.content || '';
+      const rendered = source.trim() ? _renderNoteMarkdown(source) : '';
+      const contentHtml = !rendered
+        ? ''
+        : (note.note_type === 'checklist' || note.note_type === 'todo') && Array.isArray(note.items)
+          ? `<div class="note-checklist-preview note-md-preview">${rendered}</div>`
+          : `<div class="note-content-preview note-md-preview">${rendered}</div>`;
 
       const isBg = _isBgImage(note.color);
-      const cc = (note.color && !isBg) ? ' note-color-' + note.color : '';
-      const cardStyle = isBg ? ` style="${_customColorStyle(note.color)}"` : '';
+      // Only a palette name becomes a class, and only an upload a style: the
+      // colour is the owner's, and this card may be a collaborator's.
+      const cc = (note.color && !isBg && Object.hasOwn(COLOR_HEX, note.color)) ? ' note-color-' + note.color : '';
+      const bgStyle = isBg ? _customColorStyle(note.color) : '';
+      const cardStyle = bgStyle ? ` style="${_esc(bgStyle)}"` : '';
       const isStandard = !note.note_type || note.note_type === 'note';
       const visualClass = isStandard && !note.color ? ` note-standard note-standard-v${_standardVisualVariant(note)}` : '';
       const sel = state.selectedIds.has(note.id) ? ' note-card-selected' : '';
@@ -181,7 +159,6 @@ export function createCardRendering({
         <div class="note-card-title${note.title ? '' : ' empty'}" data-action="edit">${_esc(note.title || '')}</div>
         ${dueBadge}
       </div>
-      ${_safeImgSrc(note.image_url) ? `<img class="note-card-image" src="${_esc(_safeImgSrc(note.image_url))}" alt="" draggable="false" />` : ''}
       ${contentHtml}
       ${_hasItems(note) ? `<div class="note-cl-quickadd"><input type="text" class="note-cl-quickadd-input" placeholder="+ Add item" data-note-id="${note.id}" /></div>` : ''}
       ${reminderTagHtml}

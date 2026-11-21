@@ -1432,6 +1432,241 @@ def _migrate_add_notes_sort_order():
         except Exception:
             pass
 
+
+# Original values of every note the markdown-content migrations rewrote. A row
+# is written once, before that note is first changed, and never overwritten, so
+# it always holds the pre-migration state. Rolling back is plain SQL:
+#
+#   UPDATE notes SET
+#     content   = (SELECT content   FROM note_legacy_fields WHERE note_id = notes.id),
+#     items     = (SELECT items     FROM note_legacy_fields WHERE note_id = notes.id),
+#     image_url = (SELECT image_url FROM note_legacy_fields WHERE note_id = notes.id),
+#     note_type = (SELECT note_type FROM note_legacy_fields WHERE note_id = notes.id)
+#   WHERE id IN (SELECT note_id FROM note_legacy_fields);
+#   DELETE FROM note_legacy_fields;
+#   DROP TRIGGER IF EXISTS note_legacy_fields_follow_note_delete;
+#
+# That restores the columns as they were at migration time; edits made to
+# those notes afterwards are lost, so it is a rollback, not a merge.
+NOTE_LEGACY_FIELDS_DDL = (
+    "CREATE TABLE IF NOT EXISTS note_legacy_fields ("
+    "note_id TEXT PRIMARY KEY, content TEXT, items TEXT, image_url TEXT, "
+    "note_type TEXT, migrated_at TEXT NOT NULL)"
+)
+
+
+# A backup row is only useful while its note exists. Every delete path (the
+# route, the agent tool, calendar deletes, the CLI, the admin wipe, account
+# deletion) goes through the `notes` table, so one trigger removes the row
+# with its note instead of each path having to remember it.
+NOTE_LEGACY_FIELDS_TRIGGER = "note_legacy_fields_follow_note_delete"
+NOTE_LEGACY_FIELDS_TRIGGER_DDL = (
+    f"CREATE TRIGGER IF NOT EXISTS {NOTE_LEGACY_FIELDS_TRIGGER} AFTER DELETE ON notes "
+    "BEGIN DELETE FROM note_legacy_fields WHERE note_id = OLD.id; END"
+)
+
+def _note_migration_db_path() -> Optional[str]:
+    """The SQLite file the note migrations open, or None.
+
+    Resolved through `_sqlite_db_path`, so a driver-qualified URL such as
+    `sqlite+pysqlite:///...` migrates like `sqlite:///...`. None for another
+    backend, an in-memory database, or a file that does not exist yet.
+    """
+    try:
+        path = _sqlite_db_path(make_url(DATABASE_URL))
+    except Exception:
+        return None
+    if not path or not os.path.exists(path):
+        return None
+    return path
+
+
+def _backup_note_legacy_fields(conn, note_id, content, items, image_url, note_type):
+    conn.execute(
+        "INSERT OR IGNORE INTO note_legacy_fields "
+        "(note_id, content, items, image_url, note_type, migrated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (note_id, content, items, image_url, note_type, datetime.now(timezone.utc).isoformat()),
+    )
+
+
+def _migrate_unify_notes():
+    """Fold the legacy `items` checklist into markdown task lines in `content`.
+
+    A note is one markdown document now; the API derives `items` from the task
+    lines. Every row that still has a non-empty `items` array gets the items
+    appended to its content (see `merge_items_into_content`), then `items` is
+    cleared. The original columns go to `note_legacy_fields` first, in the same
+    transaction as the rewrite.
+
+    Each row commits or rolls back on its own: one malformed legacy row is
+    skipped, keeps its `items` for the next boot, and does not stop the rows
+    after it. Idempotent: a converted row has `items` NULL and is not selected
+    again.
+    """
+    import sqlite3
+    from core.notes_markdown import load_legacy_items, merge_items_into_content
+    db_path = _note_migration_db_path()
+    if not db_path:
+        return
+    log = logging.getLogger(__name__)
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.isolation_level = None
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()]
+        if not columns or "items" not in columns:
+            return
+        conn.execute(NOTE_LEGACY_FIELDS_DDL)
+        candidate_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM notes "
+                "WHERE items IS NOT NULL AND items != '' AND items != '[]'"
+            ).fetchall()
+        ]
+        converted = skipped = 0
+        for note_id in candidate_ids:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = conn.execute(
+                        "SELECT id, content, items, image_url, note_type FROM notes "
+                        "WHERE id = ? AND items IS NOT NULL AND items != '' AND items != '[]'",
+                        (note_id,),
+                    ).fetchone()
+                    if not row:
+                        conn.execute("COMMIT")
+                        continue
+                    _, content, items_raw, image_url, note_type = row
+                    items = load_legacy_items(items_raw)
+                    if items is None:
+                        raise ValueError("items is not a JSON array")
+                    new_content = merge_items_into_content(content, items)
+                    _backup_note_legacy_fields(conn, note_id, content, items_raw, image_url, note_type)
+                    conn.execute(
+                        "UPDATE notes SET content = ?, items = NULL WHERE id = ?",
+                        (new_content, note_id),
+                    )
+                    conn.execute("COMMIT")
+                    converted += 1
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+            except Exception as row_err:
+                skipped += 1
+                log.warning(f"notes unify migration: skipped note {note_id}: {row_err}")
+        if skipped:
+            log.warning(f"notes unify migration: {skipped} note(s) kept their items for a retry")
+        if converted:
+            log.info(f"Migrated: folded checklist items into content for {converted} note(s)")
+    except Exception as e:
+        log.warning(f"notes unify migration skipped: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _migrate_fold_image_url():
+    """Move the legacy single `image_url` into content as `![](image_url)`.
+
+    Keep the column as the identity of the legacy attachment for old writers.
+    Skip content that already references the URL. `gallery_id` is left alone.
+    Same backup, per-row isolation and idempotency as
+    `_migrate_unify_notes`.
+    """
+    import sqlite3
+    from core.notes_markdown import fold_image_url
+    db_path = _note_migration_db_path()
+    if not db_path:
+        return
+    log = logging.getLogger(__name__)
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.isolation_level = None
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()]
+        if not columns or "image_url" not in columns:
+            return
+        conn.execute(NOTE_LEGACY_FIELDS_DDL)
+        candidate_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM notes "
+                "WHERE image_url IS NOT NULL AND TRIM(image_url) != ''"
+            ).fetchall()
+        ]
+        converted = skipped = 0
+        for note_id in candidate_ids:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = conn.execute(
+                        "SELECT id, content, items, image_url, note_type FROM notes "
+                        "WHERE id = ? AND image_url IS NOT NULL AND TRIM(image_url) != ''",
+                        (note_id,),
+                    ).fetchone()
+                    if not row:
+                        conn.execute("COMMIT")
+                        continue
+                    _, content, items_raw, image_url, note_type = row
+                    new_content = fold_image_url(content, image_url)
+                    if new_content == content:
+                        conn.execute("COMMIT")
+                        continue
+                    _backup_note_legacy_fields(conn, note_id, content, items_raw, image_url, note_type)
+                    conn.execute(
+                        "UPDATE notes SET content = ? WHERE id = ?",
+                        (new_content, note_id),
+                    )
+                    conn.execute("COMMIT")
+                    converted += 1
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+            except Exception as row_err:
+                skipped += 1
+                log.warning(f"notes image migration: skipped note {note_id}: {row_err}")
+        if converted:
+            log.info(f"Migrated: moved image_url into content for {converted} note(s)")
+    except Exception as e:
+        log.warning(f"notes image migration skipped: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _migrate_note_legacy_fields_cleanup():
+    """Tie `note_legacy_fields` rows to their note's lifetime.
+
+    Installs `NOTE_LEGACY_FIELDS_TRIGGER` once the backup table exists and
+    drops the rows whose note was deleted before the trigger was there.
+    Idempotent; a database without the backup table is left alone.
+    """
+    import sqlite3
+    db_path = _note_migration_db_path()
+    if not db_path:
+        return
+    log = logging.getLogger(__name__)
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "note_legacy_fields" not in tables or "notes" not in tables:
+            return
+        with conn:
+            conn.execute(NOTE_LEGACY_FIELDS_TRIGGER_DDL)
+            dropped = conn.execute(
+                "DELETE FROM note_legacy_fields WHERE note_id NOT IN (SELECT id FROM notes)"
+            ).rowcount
+        if dropped:
+            log.info(f"Cleaned up: dropped {dropped} note_legacy_fields row(s) of deleted notes")
+    except Exception as e:
+        log.warning(f"note_legacy_fields cleanup skipped: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _migrate_add_mode_column():
     """Add mode column to sessions table if it doesn't exist."""
     import sqlite3
@@ -2419,6 +2654,9 @@ def init_db():
     _migrate_add_pinned_models_column()
     _migrate_add_cookbook_serve_session_id_column()
     _migrate_add_notes_sort_order()
+    _migrate_unify_notes()
+    _migrate_fold_image_url()
+    _migrate_note_legacy_fields_cleanup()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()

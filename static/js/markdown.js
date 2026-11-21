@@ -400,7 +400,7 @@ function _isDangerousSrcset(value) {
   return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
 }
 
-function _cleanAllowedHtmlOnce(htmlString) {
+function _cleanAllowedHtmlOnce(htmlString, noteFetches) {
   const tpl = document.createElement('template');
   tpl.innerHTML = htmlString;
   for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
@@ -413,6 +413,10 @@ function _cleanAllowedHtmlOnce(htmlString) {
     }
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
+      if (noteFetches && _isNoteFetch(name, attr.value)) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
       // Drop every inline event handler (onerror, onclick, onmouseover, ...)
       // and srcdoc (a frame-less script vector).
       if (name.startsWith('on') || name === 'srcdoc') {
@@ -439,6 +443,12 @@ function _cleanAllowedHtmlOnce(htmlString) {
 }
 
 export function sanitizeAllowedHtml(html) {
+  return _sanitizeAllowedHtmlTo(html, false);
+}
+
+// `noteFetches` also strips what would fetch from another origin (see
+// _isNoteFetch); mdToHtml asks for it in notes mode.
+function _sanitizeAllowedHtmlTo(html, noteFetches) {
   const raw = String(html == null ? '' : html);
   // Non-browser context (e.g. a future SSR/Node import): fail closed by
   // escaping rather than trusting the markup.
@@ -448,7 +458,7 @@ export function sanitizeAllowedHtml(html) {
   // tree (the basis of mutation-XSS), so re-clean until it stops changing.
   let out = raw;
   for (let i = 0; i < 4; i++) {
-    const next = _cleanAllowedHtmlOnce(out);
+    const next = _cleanAllowedHtmlOnce(out, noteFetches);
     if (next === out) break;
     out = next;
   }
@@ -925,20 +935,174 @@ function replaceRawSvgBlocks(source, makePlaceholder) {
   return output;
 }
 
+// Fenced code for documents (opts.commonmark): a line-based scanner. A fence opens on
+// a line indented up to three spaces and closes on a line holding only a fence at
+// least as long, and an unclosed fence runs to the end. Chat keeps its historical
+// ``` regex, which tolerates a fence indented under a list step, inside a quote, or
+// followed by text on its closing line.
+function replaceFencedBlocks(source, render) {
+  const lines = source.split('\n');
+  const output = [];
+  for (let index = 0; index < lines.length; index++) {
+    const opening = lines[index].match(/^[ ]{0,3}(`{3,}|~{3,})([^\n]*)$/);
+    if (!opening || (opening[1][0] === '`' && opening[2].includes('`'))) {
+      output.push(lines[index]);
+      continue;
+    }
+    const marker = opening[1];
+    const code = [];
+    while (++index < lines.length) {
+      const closing = lines[index].match(/^[ ]{0,3}(`{3,}|~{3,})[ \t]*\r?$/);
+      if (closing && closing[1][0] === marker[0] && closing[1].length >= marker.length) break;
+      code.push(lines[index]);
+    }
+    const lang = opening[2].trim().match(/^[a-zA-Z0-9_-]+/)?.[0] || '';
+    // The content keeps its final line break when the fence was closed.
+    output.push(render(lang, code.join('\n') + (index < lines.length ? '\n' : '')));
+  }
+  return output.join('\n');
+}
+
+// CommonMark backslash escapes and code spans for documents (opts.commonmark).
+// Both are resolved in one left-to-right pass so an escaped backtick cannot open a
+// span and a backslash inside a span stays literal. An escaped ASCII punctuation
+// character becomes an inert token that no later pass treats as syntax; the token
+// is replaced by the literal character once rendering is finished. Chat keeps its
+// historical behavior, where `\(`, `\[` and `\.` are left for math and plain text.
+function extractCodeSpansAndEscapes(source, makeCodeSpan, escapeToken) {
+  let out = '';
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === '\\' && index + 1 < source.length && /[!-\/:-@\[-`{-~]/.test(source[index + 1])) {
+      out += escapeToken(source[index + 1]);
+      index += 2;
+      continue;
+    }
+    if (char === '`') {
+      let run = 1;
+      while (source[index + run] === '`') run++;
+      let close = -1;
+      for (let probe = index + run; probe < source.length;) {
+        if (source[probe] !== '`') { probe++; continue; }
+        let length = 1;
+        while (source[probe + length] === '`') length++;
+        if (length === run) { close = probe; break; }
+        probe += length;
+      }
+      const code = close === -1 ? '' : source.slice(index + run, close);
+      // A span never crosses a blank line, and an empty one is not a span.
+      if (close !== -1 && code !== '' && !/\n[ \t]*\n/.test(code)) {
+        out += makeCodeSpan(code);
+        index = close + run;
+        continue;
+      }
+      out += source.slice(index, index + run);
+      index += run;
+      continue;
+    }
+    out += char;
+    index++;
+  }
+  return out;
+}
+
+// Notes render task lines as interactive checkboxes (`opts.tasks ===
+// 'interactive'`). Which lines are tasks, and their 0-based index, must match
+// core/notes_markdown.py and features/notes/domain/markdownTasks.js exactly:
+// the index is what the toggle endpoint flips. So before any other pass, the
+// note source is walked with those fence rules, every fenced block becomes a
+// code placeholder, and every task line is stamped with its index. Pinned by
+// tests/fixtures/notes_task_vectors.json.
+const NOTE_TASK_RE = /^([ \t]*)([-*+])[ \t]+\[([ xX])\][ \t]?([^\n]*)$/;
+// `[^\n]*`, not `.*`: a lone CR or U+2028 on the opener line must not stop it
+// being a fence, or the boxes after it would be numbered differently here.
+const NOTE_FENCE_RE = /^[ \t]*(`{3,}|~{3,})([^\n]*)$/;
+const NOTE_TASK_TOKEN_RE = /^___MD_TASK_(\d+)_(\d+)___ ?/;
+const NOTE_MAX_TASK_INDENT = 3;
+
+function _noteTaskIndent(ws) {
+  let width = 0;
+  for (const ch of ws) width += ch === '\t' ? 2 : 1;
+  return Math.min(NOTE_MAX_TASK_INDENT, Math.floor(width / 2));
+}
+
+function prepareNoteTasks(src, renderFence) {
+  const out = [];
+  let fence = null;
+  let index = 0;
+  for (const raw of String(src).replace(/\r\n/g, '\n').split('\n')) {
+    const marker = NOTE_FENCE_RE.exec(raw);
+    if (fence) {
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.len) {
+        out.push(renderFence(fence.lang, fence.body.join('\n')));
+        fence = null;
+      } else {
+        fence.body.push(raw);
+      }
+      continue;
+    }
+    if (marker) {
+      fence = { char: marker[1][0], len: marker[1].length, lang: (/^\s*(\w+)/.exec(marker[2]) || [])[1], body: [] };
+      continue;
+    }
+    const task = NOTE_TASK_RE.exec(raw);
+    if (task) {
+      const text = task[4].trim();
+      out.push(`- [${task[3]}] ___MD_TASK_${index++}_${_noteTaskIndent(task[1])}___${text ? ' ' + text : ''}`);
+      continue;
+    }
+    out.push(raw);
+  }
+  if (fence) out.push(renderFence(fence.lang, fence.body.join('\n')));
+  return out.join('\n');
+}
+
+// Note images (`opts.images === 'notes'`) load from this origin only: an
+// upload, a raster data: URL or a same-origin blob:. Anything else renders as
+// a plain link, so a note an agent wrote cannot make the page fetch an
+// attacker URL just by being displayed.
+export function noteImageSrc(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(url)) return url;
+  try {
+    if (/^blob:/i.test(url)) return new URL(url.slice(5)).origin === window.location.origin ? url : '';
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/upload/')) {
+      return parsed.pathname + parsed.search;
+    }
+  } catch (_) {
+    return '';
+  }
+  return '';
+}
+
+// The markdown image pass is not the only way a note can name an image: raw
+// <img>, <video poster>, srcset or a CSS url() inside preserved HTML (e.g. a
+// <details> block) would survive the script-only checks above. For notes,
+// `_sanitizeAllowedHtmlTo(html, true)` strips the fetching attributes in
+// the same inert template walk. Inline styles can also load resources.
+function _isNoteFetch(name, value) {
+  return name === 'srcset' || name === 'poster' || name === 'background' || name === 'xlink:href'
+    || name === 'style'
+    || (name === 'src' && !noteImageSrc(value));
+}
+
 export function mdToHtml(src, opts) {
+  const interactiveTasks = !!opts && opts.tasks === 'interactive';
+  const notesImages = !!opts && opts.images === 'notes';
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
   const inlineCodeBlocks = [];
   const mermaidBlocks = [];
   const svgBlocks = [];
-  let s = extractMoreListPayloads(flattenLegacyNoteMoreDetails(src ?? ''));
-
   // Extract fenced code blocks before any markdown/HTML preservation passes.
   // Otherwise placeholders from the allowed-HTML sanitizer (e.g.
   // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
   // placeholder gets captured as literal code content and never restored inside
   // the final <pre><code> block.
-  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+  const commonmark = Boolean(opts && opts.commonmark);
+  const renderFence = (lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+$/gm, '')
@@ -964,7 +1128,8 @@ export function mdToHtml(src, opts) {
       return placeholder;
     }
 
-    const escaped = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    // Documents keep the fenced text exactly; chat trims it as it always has.
+    const escaped = (commonmark ? code.replace(/\r\n/g, '\n') : cleaned).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
     const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
 
     const langClass = lang ? ` class="language-${lang}"` : '';
@@ -976,7 +1141,26 @@ export function mdToHtml(src, opts) {
     codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
 
     return placeholder;
-  });
+  };
+
+  // Notes number their task lines on the raw source, before anything else.
+  if (interactiveTasks) src = prepareNoteTasks(src ?? '', renderFence);
+  let s = extractMoreListPayloads(flattenLegacyNoteMoreDetails(src ?? ''));
+
+  // Documents (opts.commonmark) resolve backslash escapes to inert tokens. Pick a
+  // prefix absent from the source so prose and code can contain literal marker
+  // strings without the restoration pass mistaking them for escapes.
+  let escapePrefix = '___ESC_';
+  for (let suffix = 0; commonmark && s.includes(escapePrefix); suffix++) escapePrefix = `___ESC${suffix}_`;
+  const escapePattern = commonmark ? new RegExp(`${escapePrefix}(\\d{2,3})___`, 'g') : null;
+  const restoreEscapes = (text, encode) => commonmark ? text.replace(escapePattern, (_, code) => {
+    const char = String.fromCharCode(Number(code));
+    return encode ? encode(char) : char;
+  }) : text;
+
+  s = commonmark
+    ? replaceFencedBlocks(s, renderFence)
+    : s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => renderFence(lang, code));
 
   // Extract inline code spans before the link/autolink/HTML passes, mirroring
   // the fenced-block handling above. A URL inside `inline code` (e.g.
@@ -984,12 +1168,22 @@ export function mdToHtml(src, opts) {
   // autolink matches it, wraps it in an <a> tag, and swaps that for an
   // ___ALLOWED_HTML_ placeholder — corrupting the command. The old inline-code
   // pass ran after those passes, too late to protect it.
-  s = s.replace(/`([^`]+?)`/g, (match, code) => {
-    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_') || code.startsWith('___SVG_BLOCK_')) return match;
-    const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
-    inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
-    return placeholder;
-  });
+  if (commonmark) {
+    s = extractCodeSpansAndEscapes(s, (code) => {
+      const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+      inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+      return placeholder;
+    }, (char) => `${escapePrefix}${char.charCodeAt(0)}___`);
+  } else {
+    s = s.replace(/`([^`]+?)`/g, (match, code) => {
+      if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_') || code.startsWith('___SVG_BLOCK_')) return match;
+      const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+      inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+      return placeholder;
+    });
+  }
+  // Escape tokens must not leak into attribute values.
+  const literal = (text) => restoreEscapes(text);
 
   // Some models occasionally omit the requested ```svg fence. Treat a
   // complete raw SVG element as the same visual artifact, while fenced and
@@ -1049,21 +1243,32 @@ export function mdToHtml(src, opts) {
   // Convert markdown images before links so ![alt](url) does not become
   // literal "!" plus a normal link.
   s = s.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (match, alt, url, title) => {
-    return imageHtml(alt, url, title);
+    alt = literal(alt);
+    url = literal(url);
+    if (title !== undefined) title = literal(title);
+    if (!notesImages) return imageHtml(alt, url, title);
+    const imgSrc = noteImageSrc(url);
+    if (!imgSrc) return linkHtml(alt || url, url);
+    // Built from escaped parts here, so it skips the allowed-HTML sanitizer,
+    // which would strip the data: URLs this policy accepts.
+    const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
+    const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
+    allowedHtmlBlocks.push(`<img class="md-note-image" src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt || '')}"${safeTitle} loading="lazy" decoding="async">`);
+    return placeholder;
   });
 
   // Convert markdown links [text](url) to clickable links
   // Internal #hash links navigate in-page; external links open in new tab
   s = s.replace(/\[((?:\\.|[^\]\\\n])+)\]\(([^)]+)\)/g, (match, text, url) => {
     const label = text.replace(/\\([\[\]])/g, '$1');
-    return linkHtml(label, url);
+    return linkHtml(label, literal(url));
   });
 
   // Autolink bare URLs (http/https). Skips URLs already inside <a> tags
   // (placed by markdown link replacement above) and URLs in backticks.
   s = s.replace(
     /(^|[\s(<])(https?:\/\/[^\s<>"'`\]]+[^\s<>"'`\].,;:!?])/g,
-    (match, prefix, url) => `${prefix}${linkHtml(url, url)}`
+    (match, prefix, url) => `${prefix}${linkHtml(literal(url), literal(url))}`
   );
 
   // Autolink scheme-less domains the model often emits as plain text
@@ -1079,24 +1284,24 @@ export function mdToHtml(src, opts) {
     (match, prefix, domain) => {
       const trail = (domain.match(/[.,;:!?)]+$/) || [''])[0];
       const core = trail ? domain.slice(0, -trail.length) : domain;
-      return `${prefix}${linkHtml(core, 'https://' + core)}${trail}`;
+      return `${prefix}${linkHtml(literal(core), 'https://' + literal(core))}${trail}`;
     }
   );
 
   // Extract <details>...</details> blocks and replace with placeholders.
-  s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
+  const preserveAllowedHtml = (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
+    // Restore attribute values before the sanitizer checks the parsed HTML.
+    // Character references cannot introduce structural markup.
+    const html = restoreEscapes(match, (char) => `&#${char.charCodeAt(0)};`);
+    allowedHtmlBlocks.push(_sanitizeAllowedHtmlTo(html, notesImages));
     return placeholder;
-  });
+  };
+  s = s.replace(/<details>([\s\S]*?)<\/details>/gi, preserveAllowedHtml);
 
   // ALSO preserve <a>/<img> tags the same way (they're now in the HTML from
   // markdown conversion)
-  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, (match) => {
-    const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
-    return placeholder;
-  });
+  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, preserveAllowedHtml);
 
   // Now escape everything else
   s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1110,7 +1315,7 @@ export function mdToHtml(src, opts) {
   // Typeset straight away when KaTeX is already in, otherwise bank the source in
   // an inert placeholder for renderMath() to swap once the library lands.
   const pushMath = (math, displayMode) => {
-    const raw = decodeMathSource(math).trim();
+    const raw = decodeMathSource(restoreEscapes(math, (char) => `\\${char}`)).trim();
     const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
     if (window.katex) {
       mathBlocks.push(katex.renderToString(raw, { displayMode, throwOnError: false }));
@@ -1180,8 +1385,16 @@ export function mdToHtml(src, opts) {
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
   // Bold, italic, strikethrough
-  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  if (commonmark) {
+    // Documents: adjacent and nested emphasis, with escaped markers left alone.
+    s = s.replace(/(?<!\\)\*\*\*([^*\n]+)(?<!\\)\*\*\*/g, '<strong><em>$1</em></strong>');
+    s = s.replace(/(?<!\\)\*\*((?:[^*\n]|(?<!\\)\*(?!\s)[^*\n]+(?<!\s)(?<!\\)\*)+)(?<!\\)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(?<!\\)\*\*([^*\n]+)(?<!\\)\*\*/g, '<strong>$1</strong>').replace(/(?<!\\)\*(?!\s)([^*\n]+?)(?<!\s)(?<!\\)\*/g, '<em>$1</em>');
+    s = s.replace(/(?<!\\)~~([^~\n]+)(?<!\\)~~/g, '<del>$1</del>');
+  } else {
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  }
 
   // Headers
   s = s.replace(/^###### (.*)$/gm, '<h6>$1</h6>')
@@ -1192,21 +1405,26 @@ export function mdToHtml(src, opts) {
        .replace(/^# (.*)$/gm, '<h1>$1</h1>');
 
   // Ordered lists (1. 2. 3. etc.)
-  s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
+  // Documents also accept indented items (nested lists render flat) and `+` bullets.
+  s = s.replace(commonmark ? /^[ \t]*(\d+)\. (.*)$/gm : /^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
   // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
   // the generic unordered-list rule so the "- " prefix isn't consumed first.
   // Emits <uli> (with a class) so the unordered-list wrapper below treats it
   // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
+  s = s.replace(commonmark ? /^[ \t]*(?:[-*+] )\[([ xX])\] (.*)$/gm : /^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
     const done = mark.toLowerCase() === 'x';
+    const token = interactiveTasks ? NOTE_TASK_TOKEN_RE.exec(text) : null;
+    if (token) {
+      return `<uli class="md-task${done ? ' md-task-done' : ''}" data-task-index="${token[1]}" data-done="${done}" data-indent="${token[2]}"><span class="md-task-box" role="checkbox" aria-checked="${done}" tabindex="0"></span><span class="md-task-text">${text.slice(token[0].length)}</span></uli>`;
+    }
     return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
   });
 
   // Unordered lists. <uli> may carry attributes (task-item class), so the
   // wrapper preserves them when converting <uli ...> → <li ...>.
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
+  s = s.replace(commonmark ? /^[ \t]*(?:[-*+] )(.*)$/gm : /^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
   s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
     `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
 
@@ -1225,8 +1443,21 @@ export function mdToHtml(src, opts) {
     return `<p>${withLineBreaks}</p>`;
   });
 
+  // Documents: a quote whose first line is `[!NOTE]` (or TIP, IMPORTANT, WARNING,
+  // CAUTION) is a GitHub-style alert, shown with its label as in the Visual editor.
+  if (commonmark) {
+    s = s.replace(/<blockquote><p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]<\/p>/gi, (_, kind) => {
+      const name = kind.toLowerCase();
+      return `<blockquote class="markdown-alert markdown-alert-${name}"><p><span class="markdown-alert-label">${name[0].toUpperCase()}${name.slice(1)}</span></p>`;
+    });
+  }
+
   // Remove empty paragraphs
   s = s.replace(/<p><\/p>/g, '');
+
+  // Restore escapes in the rendered text before reinserting protected blocks.
+  // Encode underscores so escaping cannot create another block's placeholder.
+  s = restoreEscapes(s, (char) => char === '_' ? '&#95;' : escapeHtml(char));
 
   // Every restore below passes a function replacer rather than the block string
   // itself. With a string replacement, `String.replace` reads `$&`, `` $` ``,
@@ -1266,6 +1497,14 @@ export function mdToHtml(src, opts) {
   inlineCodeBlocks.forEach((block, index) => {
     s = s.replace(`___INLINE_CODE_${index}___`, () => block);
   });
+
+  // A task line that ended up somewhere a list cannot render (inside inline
+  // code, a <details> block) keeps its text; it just isn't clickable.
+  if (interactiveTasks) {
+    s = s.replace(/___MD_TASK_\d+_\d+___ ?/g, '');
+    // Stamped last: the paragraph pass above only recognises a bare <ul>.
+    s = s.replace(/<ul><li class="md-task/g, '<ul class="md-tasklist"><li class="md-task');
+  }
 
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }

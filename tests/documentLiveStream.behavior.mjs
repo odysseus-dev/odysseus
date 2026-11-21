@@ -203,6 +203,10 @@ function mockEvaluate(fileName, module) {
     set('_closeVersionPanel', () => { calls.closeVersion += 1; });
     return;
   }
+  if (fileName === 'richBodyWiring.js') {
+    set('_hideMarkdownVisualEditor', () => {});
+    return;
+  }
   if (fileName === 'documentStatus.js') {
     set('_syncEditorPlaceholder', () => { calls.placeholder += 1; });
     return;
@@ -235,6 +239,7 @@ const MOCK_EXPORTS = {
   'composerFields.js': ['_showEmailFields', '_hideEmailFields', '_syncStreamingEmailFields'],
   'emailBody.js': ['_renderStreamingEmailBody'],
   'versionHistory.js': ['_closeVersionPanel'],
+  'richBodyWiring.js': ['_hideMarkdownVisualEditor'],
   'documentStatus.js': ['_syncEditorPlaceholder'],
   'suggestions.js': ['suspendSuggestions', '_restoreSuggestionsFromStorage'],
   'previewModes.js': ['exitHtmlPreview'],

@@ -1,0 +1,29 @@
+{
+ "_comment": "mdToHtml(input) with no options, captured from unmodified dev (4d0610a1). Plan mode and chat must keep rendering task lines byte-for-byte like this.",
+ "cases": [
+  {
+   "input": "Plan:\n- [ ] Read the spec\n- [x] Write tests\n* [ ] Ship it",
+   "html": "<p>Plan:</p>\n<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">Read the spec</span></li>\n<li class=\"task-item task-done\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">Write tests</span></li>\n<li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">Ship it</span></li></ul>"
+  },
+  {
+   "input": "## Progress\n\n- [x] step one\n- [ ] step two with `code` and **bold**\n\nDone soon.",
+   "html": "<h2>Progress</h2>\n\n<ul><li class=\"task-item task-done\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">step one</span></li>\n<li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">step two with <code>code</code> and <strong>bold</strong></span></li></ul>\n<p>Done soon.</p>"
+  },
+  {
+   "input": "```md\n- [ ] inside a fence\n```\n- [ ] after the fence",
+   "html": "<pre><code class=\"language-md\" data-lang=\"md\">- [ ] inside a fence</code><button type=\"button\" class=\"edit-code\" title=\"Edit\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"/><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\"/></svg></button><button type=\"button\" class=\"copy-code\" data-code=\"- [ ] inside a fence\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\"/></svg></button></pre>\n<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">after the fence</span></li></ul>"
+  },
+  {
+   "input": "  - [ ] indented task\n+ [ ] plus bullet\n- [ ]no space",
+   "html": "<p>  - [ ] indented task</p>\n<p>+ [ ] plus bullet</p>\n<ul><li>[ ]no space</li></ul>"
+  },
+  {
+   "input": "![chart](https://example.com/c.png) and ![up](/api/upload/abc)\n\n[link](https://example.org)",
+   "html": "<a class=\"chat-image\" href=\"https://example.com/c.png\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open image in a new tab\"><img class=\"chat-inline-image\" src=\"https://example.com/c.png\" alt=\"chart\" loading=\"lazy\" decoding=\"async\" referrerpolicy=\"no-referrer\"><span class=\"chat-image-fallback\">chart — https:&#47;&#47;example.com/c.png</span></a> and up\n\n<a href=\"https://example.org/\" target=\"_blank\" rel=\"noopener noreferrer\">link</a>"
+  },
+  {
+   "input": "~~~\n- [ ] tilde fenced\n~~~\n| a | b |\n|---|---|\n| 1 | 2 |",
+   "html": "<p>~<del></p>\n<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">tilde fenced</span></li></ul></del>~<table style=\"border-collapse: collapse; width: 100%; margin: 10px 0;\"><tr><th style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">a</th><th style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">b</th></tr><tbody><tr><td style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">1</td><td style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">2</td></tr></tbody></table>"
+  }
+ ]
+}

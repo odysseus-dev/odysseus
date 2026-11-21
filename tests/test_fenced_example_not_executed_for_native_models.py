@@ -25,6 +25,7 @@ import asyncio
 import json
 
 import src.agent_loop as al
+import src.model_context as mc
 from src.tool_capabilities import ToolGateDecision
 
 
@@ -64,6 +65,15 @@ def _patch_common(monkeypatch, exec_calls):
         exec_calls.append(block)
         return ("bash", {"output": "ok", "exit_code": 0})
     monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+    # Prevent model-context discovery from attempting live network HTTP requests
+    # to mock or local endpoints (which would block on connection timeouts).
+    # Strict raising ensures any symbol rename or removal fails test setup immediately.
+    monkeypatch.setattr(
+        mc,
+        "_query_context_length",
+        lambda endpoint_url, model: (mc.DEFAULT_CONTEXT, False),
+        raising=True,
+    )
 
 
 def _run_loop(monkeypatch, model, deltas, native_calls=None, max_rounds=2, endpoint_url=None):
@@ -160,6 +170,29 @@ def test_non_native_model_fenced_tool_call_still_executed(monkeypatch):
     assert len(exec_calls) == 1, f"non-native model's fenced tool call should still execute: {exec_calls}"
     assert exec_calls[0].tool_type == "bash"
     assert "echo hi" in exec_calls[0].content
+
+
+def test_harness_context_stub_prevents_network_probes_during_agent_loop(monkeypatch):
+    """Verify that the test harness context stub isolates agent loop execution from network I/O."""
+    exec_calls = []
+    _patch_common(monkeypatch, exec_calls)
+
+    network_probes = []
+    def _trap_httpx_get(*args, **kwargs):
+        network_probes.append((args, kwargs))
+        raise RuntimeError("Unexpected live network attempt in offline unit test")
+
+    monkeypatch.setattr(mc.httpx, "get", _trap_httpx_get, raising=True)
+
+    events = _run_loop(
+        monkeypatch, "llama-2-7b-chat",
+        ["```bash\necho offline-deterministic\n```"],
+        max_rounds=2,
+        endpoint_url="http://192.168.1.50:8000/v1",
+    )
+    assert len(exec_calls) == 1
+    assert "echo offline-deterministic" in exec_calls[0].content
+    assert network_probes == [], f"expected zero live network probes, got: {network_probes}"
 
 
 # ---------------------------------------------------------------------------

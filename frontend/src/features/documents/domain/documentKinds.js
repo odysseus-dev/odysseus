@@ -15,6 +15,7 @@ export const _DOC_SAVE_STATE = {
   dirty: { label: 'Unsaved', title: 'Changes are waiting to be saved' },
   saving: { label: 'Saving', title: 'Saving document' },
   saved: { label: 'Saved', title: 'All changes saved' },
+  blocked: { label: 'Save blocked', title: 'Resolve the visual draft to resume saving' },
   error: { label: 'Save failed', title: 'Document could not be saved' },
 };
 
@@ -417,3 +418,11 @@ export function _htmlToPlainText(input) {
 export function _hasRichHtmlElement(input) {
   return _inspectHtmlText(input).hasRichElement;
 }
+
+/**
+ * Options every Markdown document surface passes to the shared renderer. Documents
+ * keep `:shortcode:` text literal and parse CommonMark (backslash escapes, fences and lists), the same
+ * escapes the Visual editor writes when it serializes literal Markdown characters.
+ * Chat does not pass these options and keeps its historical rendering.
+ */
+export const MARKDOWN_DOCUMENT_RENDER_OPTIONS = Object.freeze({ shortcodes: false, commonmark: true });
