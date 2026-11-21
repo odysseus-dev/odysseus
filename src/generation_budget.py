@@ -26,12 +26,14 @@ _CONTEXT_ERROR_MARKERS = (
 _CONTEXT_LIMIT_PATTERNS = (
     r"maximum context(?: length| window| size)?(?: is(?: only)?| of|:)?\s*([\d,]+)",
     r"maximum context(?: length| window| size)?\s*\(([\d,]+)\)",
+    r"(?:available\s+)?context(?: length| window| size)\s*\(([\d,]+)(?:\s*tokens)?\)",
     r"context(?: length| window| size)(?: is(?: only)?| of|:|=)\s*([\d,]+)",
     r"max(?:imum)?[_ ]model[_ ]len(?: is| of|:|=)?\s*([\d,]+)",
 )
 
 _INPUT_TOKEN_PATTERNS = (
     r"input length\s*\(([\d,]+)\)",
+    r"request\s*\(([\d,]+)(?:\s*tokens)?\)\s*exceeds",
     r"(?:request has|resulted in|contains?)\s*([\d,]+)\s*(?:input|prompt)?\s*tokens",
     r"([\d,]+)\s*(?:input|prompt)\s*tokens",
     r"([\d,]+)\s*in (?:the )?messages",
