@@ -1177,7 +1177,7 @@ class TaskScheduler:
             # explicitly turned them off for this task — quiets chatty
             # housekeeping cron tasks without disabling them entirely.
             should_notify = (
-                (task.task_type or "llm") in {"llm", "research"}
+                ((task.task_type or "llm") in {"llm", "research"} or output == "notification")
                 and getattr(task, "notifications_enabled", True)
             )
             if should_notify:
@@ -1188,6 +1188,8 @@ class TaskScheduler:
                     owner=task.owner,
                     body=run.result if output == "notification" else None,
                 )
+                if run.status == "success" and output == "notification":
+                    await self._notify_via_reminder_channel(task, run)
             elif run.status == "error":
                 self.add_notification(
                     task.name,
@@ -1836,6 +1838,27 @@ class TaskScheduler:
             pass
 
         return result
+
+    async def _notify_via_reminder_channel(self, task, run):
+        """Send notification-output results without another browser alert or synthesis."""
+        try:
+            from routes.note_routes import dispatch_reminder
+
+            delivery = await dispatch_reminder(
+                title=task.name or "Task",
+                note_body=run.result or "",
+                note_id="",  # Task runs must not share the note-reminder dedupe cache.
+                owner=task.owner,
+                queue_browser=False,
+                settings_override={"reminder_llm_synthesis": False},
+            )
+            channel = delivery.get("channel")
+            if channel in {"email", "ntfy", "webhook"} and not delivery.get(f"{channel}_sent"):
+                logger.warning("Task %r notification delivery failed via %s: %s",
+                               task.name, channel, delivery.get(f"{channel}_error") or "No delivery confirmation")
+        except Exception as exc:
+            # Delivery trouble must not relabel an already completed task as failed.
+            logger.warning("Task %r notification delivery failed: %s", task.name, exc)
 
     async def _deliver_task_result(self, task, result: str, db, model: str = None):
         """Deliver a completed task result according to output_target.
