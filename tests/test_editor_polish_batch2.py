@@ -143,8 +143,8 @@ def test_crop_can_start_outside_the_canvas_without_panning():
     # image (so it can be pulled out past the edge) instead of the canvas-area
     # pan grabbing the pointer and switching to hand mode.
     CE = (ROOT / "static/js/editor/canvas-events.js").read_text(encoding="utf-8")
-    assert "if (state.tool !== 'lasso' && state.tool !== 'crop') return;" in CE
-    assert "(state.tool === 'lasso' || state.tool === 'crop') && !directPan" in CE
+    assert "['marquee', 'lasso', 'crop'].includes(state.tool)" in CE
+    assert "if (canStartOutside() && !directPan)" in CE
     # Pressing editor chrome inside the area (e.g. the crop Apply panel) must
     # not start a fresh crop.
     assert ".ge-crop-apply, .ge-adj-popup, .ge-transform-popup, .ge-fx-popup, .ge-inpaint-popup" in CE

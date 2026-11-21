@@ -1,11 +1,13 @@
 /** Checklist rows, goal forms, keyboard input and item collection. */
+import { stripTaskLines } from '../domain/markdownTasks.js';
 export function createChecklist({
   _esc,
   _uid,
   spawnConfetti
 }) {
   function _buildGoalHtml(note, items) {
-    const desc = (note?.content || '').toString();
+    // Content holds the description and the steps; the steps show as rows below.
+    const desc = stripTaskLines((note?.content || '').toString());
     return `
     <div class="note-form-goal">
       <textarea class="note-form-goal-desc" placeholder="Description (optional)" rows="3">${_esc(desc)}</textarea>

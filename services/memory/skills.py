@@ -500,6 +500,19 @@ class SkillsManager:
         sk.path = self._skill_file(cat, nm)
         return sk.to_dict()
 
+    def has_skill(self, name: str, owner: Optional[str] = None) -> bool:
+        """Whether `owner` already has a skill called `name`, in any category.
+
+        Update and delete find a skill by name within its owner, so two of
+        one owner's skills sharing a name would make them act on whichever
+        file is walked first.
+        """
+        for path in self._iter_skill_files():
+            sk = self._read_skill(path)
+            if sk and sk.name == name and (sk.owner or "") == (owner or ""):
+                return True
+        return False
+
     def update_skill(self, skill_id: str, updates: Dict, owner: Optional[str] = None) -> bool:
         """`skill_id` is the slug name. Allows updating any field plus
         renames if `name` changes (file is moved on disk).
@@ -551,6 +564,9 @@ class SkillsManager:
             # Rename
             new_name = slugify(updates.get("name") or sk.name)
             if new_name != sk.name:
+                if self.has_skill(new_name, owner=owner):
+                    logger.warning(f"Skill rename target name in use: {new_name}")
+                    return False
                 sk.name = new_name
 
             # Write to potentially new path

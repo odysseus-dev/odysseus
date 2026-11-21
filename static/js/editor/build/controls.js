@@ -55,6 +55,11 @@ export function controlsHTML({ color, brushSize, wandTolerance, bucketTolerance 
         <label>Color</label>
         <input type="color" class="ge-color-picker" value="${color}" />
       </div>
+      <div class="ge-control-row ge-eraser-row" id="ge-brush-softness-row">
+        <span class="ge-eraser-preview" id="ge-brush-preview-softness" aria-hidden="true"></span>
+        <label>Softness <span id="ge-brush-softness-label">100%</span></label>
+        <input type="range" id="ge-brush-softness" min="0" max="1200" value="100" title="Brush edge softness and feathered falloff" />
+      </div>
       <div class="ge-control-row ge-brush-size-row">
         <label><span class="ge-size-label">${brushSize}px</span></label>
       <input type="range" class="ge-size-slider" min="0" max="1000" value="${brushSliderValue}" />
@@ -93,11 +98,6 @@ export function controlsHTML({ color, brushSize, wandTolerance, bucketTolerance 
                 <span class="ge-eraser-preview" id="ge-brush-preview-flow" aria-hidden="true"></span>
                 <label>Flow <span id="ge-brush-flow-label">100%</span></label>
                 <input type="range" id="ge-brush-flow" min="5" max="100" value="100" />
-              </div>
-              <div class="ge-control-row ge-eraser-row" id="ge-brush-softness-row">
-                <span class="ge-eraser-preview" id="ge-brush-preview-softness" aria-hidden="true"></span>
-                <label>Softness <span id="ge-brush-softness-label">100%</span></label>
-                <input type="range" id="ge-brush-softness" min="0" max="300" value="100" title="Soft brush edge — blurs the stroke's alpha for a feathered fade at the perimeter." />
               </div>
             </div>
             <div class="ge-brush-stroke-group" data-stroke-tool="eraser">

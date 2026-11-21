@@ -64,6 +64,7 @@ def _note(owner=None, **overrides):
         "owner": owner,
         "title": "Original",
         "content": "",
+        "image_url": None,
         "note_type": "note",
         "color": None,
         "label": None,

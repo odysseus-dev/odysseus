@@ -10,11 +10,26 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
+from core.note_writes import NOTE_BODY_CONFLICT, guard_note_body, note_body_revision
+from core.notes_markdown import (
+    append_task_line,
+    apply_items_to_content,
+    derive_note_type,
+    effective_content,
+    fold_image_url,
+    fold_legacy_columns,
+    has_legacy_image,
+    keep_task_lines,
+    normalize_note_color,
+    parse_task_lines,
+    reminder_body,
+    remove_image_line,
+    toggle_task,
+)
 from core.middleware import INTERNAL_TOOL_USER
 from src.auth_helpers import require_user
 from src.constants import DATA_DIR
 from src.upload_handler import reserve_upload_references
-from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
 
@@ -55,19 +70,49 @@ class NoteUpdate(BaseModel):
     repeat: Optional[str] = None
     sort_order: Optional[int] = None
     agent_session_id: Optional[str] = None
+    body_revision: Optional[str] = None
+    replace_content: bool = False
+
+
+class TaskToggle(BaseModel):
+    body_revision: Optional[str] = None
+
+
+class TaskAppend(BaseModel):
+    text: str
+    indent: Optional[int] = 0
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _derived_items(content: Optional[str]) -> Optional[list]:
+    """The legacy `items` shape, read from the task lines in `content`."""
+    tasks = parse_task_lines(content)
+    if not tasks:
+        return None
+    return [
+        {"index": t["index"], "text": t["text"], "done": t["done"], "indent": t["indent"]}
+        for t in tasks
+    ]
+
+
+def _write_image_url(note: Note, url: Optional[str]) -> None:
+    """Change the legacy attachment, leaving unrelated Markdown alone."""
+    previous = note.image_url
+    note.image_url = url if (url or "").strip() else None
+    if note.image_url:
+        note.content = fold_image_url(note.content, note.image_url, replace=previous)
+    elif previous:
+        note.content = remove_image_line(note.content, previous)
+
+
 def _note_to_dict(note: Note) -> Dict[str, Any]:
-    items = None
-    if note.items:
-        try:
-            items = json.loads(note.items)
-        except (json.JSONDecodeError, TypeError):
-            items = None
+    # Project any legacy fields still awaiting a fold for this row.
+    content = effective_content(note.content, note.items, note.image_url)
+    if not content and note.content is None:
+        content = None
     ai_cls = None
     raw_ai = getattr(note, "ai_classification", None)
     if raw_ai:
@@ -79,9 +124,9 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
         "id": note.id,
         "owner": note.owner,
         "title": note.title,
-        "content": note.content,
-        "items": items,
-        "note_type": note.note_type,
+        "content": content,
+        "items": _derived_items(content),
+        "note_type": derive_note_type(note.note_type, content),
         "color": note.color,
         "label": note.label,
         "pinned": note.pinned,
@@ -91,6 +136,7 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
         "session_id": note.session_id,
         "sort_order": note.sort_order or 0,
         "image_url": note.image_url,
+        "body_revision": note_body_revision(note),
         "gallery_id": getattr(note, "gallery_id", None),
         "repeat": note.repeat or "none",
         "ai_classification": ai_cls,
@@ -101,30 +147,19 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
     }
 
 
+def _fold_legacy_columns(note: Note) -> None:
+    """Move a row the startup migration skipped into content before a write.
+
+    Shared with the agent tool (`core.notes_markdown.fold_legacy_columns`):
+    unreadable `items` are left in place for the migration to retry.
+    """
+    fold_legacy_columns(note)
+
+
 def _reminder_text_from_note(note: Note) -> tuple[str, str]:
     """Return the reminder title/body from a stored note row."""
     title = (note.title or "Note reminder").strip() or "Note reminder"
-    if note.items:
-        try:
-            items = json.loads(note.items)
-        except (json.JSONDecodeError, TypeError):
-            items = None
-        if isinstance(items, list):
-            pending: list[str] = []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("done") or item.get("checked"):
-                    continue
-                text = str(item.get("text") or "").strip()
-                if text:
-                    pending.append(text)
-            if pending:
-                shown = "\n".join(f"- {text}" for text in pending[:8])
-                extra = f"\n...and {len(pending) - 8} more" if len(pending) > 8 else ""
-                return title, f"Pending ({len(pending)}):\n{shown}{extra}"
-            return title, f"{len(items)} item{'s' if len(items) != 1 else ''}"
-    return title, (note.content or "").strip()[:400]
+    return title, reminder_body(effective_content(note.content, note.items, getattr(note, "image_url", None)))
 
 
 
@@ -276,9 +311,9 @@ async def dispatch_reminder(
                         r").*",
                         _re.IGNORECASE,
                     )
-                    # Echo of the prompt's "Pending:" / "<N> pending" tail.
+                    # Echo of the prompt's "Pending (N):" / "<N> pending" tail.
                     _echo = _re.compile(
-                        r"^\s*(?:pending\s*[:.]|(?:\d+|one|two|three|four|five)\s+pending\b)",
+                        r"^\s*(?:pending\s*(?:\(\d+\))?\s*[:.]|(?:\d+|one|two|three|four|five)\s+pending\b)",
                         _re.IGNORECASE,
                     )
                     lines = [ln for ln in synthesis.splitlines() if ln.strip()]
@@ -605,6 +640,12 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         if missing_id:
             raise HTTPException(409, f"Referenced upload is no longer available: {missing_id}")
 
+    def _checked_color(value):
+        try:
+            return normalize_note_color(value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
     def _is_admin_or_single_user(request: Request, user: str | None) -> bool:
         if user == INTERNAL_TOOL_USER:
             return True
@@ -654,6 +695,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
     @router.post("")
     def create_note(request: Request, body: NoteCreate):
         user = _owner(request)
+        body.color = _checked_color(body.color)
         _reserve_note_uploads(
             user,
             body.image_url,
@@ -661,14 +703,21 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             body.content,
             json.dumps(body.items) if body.items is not None else None,
         )
+        # Checklist items and the legacy single image are written into the
+        # markdown content. Keep the identity of a legacy attachment.
+        content = body.content
+        if body.items is not None:
+            content = apply_items_to_content(content, body.items)
+        if body.image_url:
+            content = fold_image_url(content, body.image_url)
         db = SessionLocal()
         try:
             note = Note(
                 id=str(uuid.uuid4()),
                 owner=user,
                 title=body.title,
-                content=body.content,
-                items=json.dumps(body.items) if body.items is not None else None,
+                content=content,
+                items=None,
                 note_type=body.note_type,
                 color=body.color,
                 label=body.label,
@@ -676,15 +725,16 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 due_date=body.due_date,
                 source=body.source,
                 session_id=body.session_id,
-                image_url=body.image_url,
+                image_url=body.image_url if (body.image_url or "").strip() else None,
                 gallery_id=body.gallery_id,
                 repeat=body.repeat or "none",
                 sort_order=body.sort_order if body.sort_order is not None else 0,
             )
             db.add(note)
+            db.flush()
+            result = _note_to_dict(note)
             db.commit()
-            db.refresh(note)
-            return _note_to_dict(note)
+            return result
         finally:
             db.close()
 
@@ -709,6 +759,13 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
     @router.put("/{note_id}")
     def update_note(request: Request, note_id: str, body: NoteUpdate):
         user = _owner(request)
+        supplied = body.model_fields_set
+        if body.replace_content and "content" not in supplied:
+            raise HTTPException(422, "replace_content requires content")
+        # Only when sent: assigning a field marks it as sent, so an edit
+        # that leaves the colour out would otherwise clear it.
+        if "color" in body.model_fields_set:
+            body.color = _checked_color(body.color)
         db = SessionLocal()
         try:
             note = db.query(Note).filter(Note.id == note_id).first()
@@ -726,16 +783,33 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 body.content,
                 json.dumps(body.items) if body.items is not None else None,
             )
+            body_write = bool(supplied & {"content", "items", "image_url"})
+            if body_write or body.note_type is not None or body.body_revision is not None:
+                if (body.body_revision is not None and body.body_revision != note_body_revision(note)) or not guard_note_body(db, note):
+                    raise HTTPException(409, NOTE_BODY_CONFLICT)
             if body.title is not None:
                 note.title = body.title
             # Omitted fields preserve their values; explicit null clears the
             # nullable fields used by the editor's removal controls.
-            supplied = body.model_fields_set
+            if body_write:
+                _fold_legacy_columns(note)
             if "content" in supplied:
-                note.content = body.content
+                if not body.replace_content and "items" not in supplied:
+                    note.content = keep_task_lines(note.content, body.content) or body.content
+                else:
+                    note.content = body.content
+                if body.replace_content and "image_url" not in supplied:
+                    if not has_legacy_image(note.content, note.image_url):
+                        note.image_url = None
+                    note.items = None
             if "items" in supplied:
-                note.items = json.dumps(body.items) if body.items is not None else None
-                flag_modified(note, "items")
+                if note.content is not None or body.items:
+                    note.content = apply_items_to_content(note.content, body.items or [])
+                note.items = None
+            if "image_url" in supplied:
+                _write_image_url(note, body.image_url)
+            elif "content" in supplied and note.image_url:
+                note.content = fold_image_url(note.content, note.image_url)
             if body.note_type is not None:
                 note.note_type = body.note_type
             if "color" in supplied:
@@ -748,8 +822,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 note.archived = body.archived
             if "due_date" in supplied:
                 note.due_date = body.due_date
-            if "image_url" in supplied:
-                note.image_url = body.image_url
             if "gallery_id" in supplied:
                 note.gallery_id = body.gallery_id
             if body.repeat is not None:
@@ -759,9 +831,10 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if "agent_session_id" in supplied:
                 note.agent_session_id = body.agent_session_id
 
+            db.flush()
+            result = _note_to_dict(note)
             db.commit()
-            db.refresh(note)
-            return _note_to_dict(note)
+            return result
         finally:
             db.close()
 
@@ -824,7 +897,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- TOGGLE CHECKLIST ITEM ---
     @router.post("/{note_id}/items/{index}/toggle")
-    def toggle_item(request: Request, note_id: str, index: int):
+    def toggle_item(request: Request, note_id: str, index: int, body: Optional[TaskToggle] = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -835,16 +908,53 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # let any user touch a row whose owner field was null/empty.
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
-            if not note.items:
+            if body is None or body.body_revision != note_body_revision(note) or not guard_note_body(db, note):
+                raise HTTPException(409, NOTE_BODY_CONFLICT)
+            _fold_legacy_columns(note)
+            if not parse_task_lines(note.content):
                 raise HTTPException(400, "Note has no checklist items")
-            items = json.loads(note.items)
-            if index < 0 or index >= len(items):
+            try:
+                note.content, item = toggle_task(note.content, index)
+            except IndexError:
                 raise HTTPException(400, f"Item index {index} out of range")
-            items[index]["done"] = not items[index].get("done", False)
-            note.items = json.dumps(items)
-            flag_modified(note, "items")
+            db.flush()
+            data = _note_to_dict(note)
             db.commit()
-            return {"ok": True, "items": items}
+            return {"ok": True, "item": item, "items": data["items"], "note": data}
+        finally:
+            db.close()
+
+    # --- APPEND CHECKLIST ITEM ---
+    @router.post("/{note_id}/items")
+    def append_item(request: Request, note_id: str, body: TaskAppend):
+        """Append one open task line server-side.
+
+        Quick-add used to PUT the whole checklist, which raced any other
+        write to the same note. This reads the stored content and adds the
+        line in one transaction.
+        """
+        user = _owner(request)
+        text = " ".join((body.text or "").split())
+        if not text:
+            raise HTTPException(400, "text required")
+        db = SessionLocal()
+        try:
+            for attempt in range(3):
+                note = db.get(Note, note_id)
+                if not note or (user is not None and note.owner != user):
+                    raise HTTPException(404, "Note not found")
+                if attempt == 0:
+                    _reserve_note_uploads(user, text)
+                if not guard_note_body(db, note):
+                    db.rollback()
+                    continue
+                _fold_legacy_columns(note)
+                note.content, item = append_task_line(note.content, text, body.indent or 0)
+                db.flush()
+                result = {"ok": True, "item": item, "note": _note_to_dict(note)}
+                db.commit()
+                return result
+            raise HTTPException(409, NOTE_BODY_CONFLICT)
         finally:
             db.close()
 

@@ -1,10 +1,10 @@
 """Regression guard for issue #2467 — cross-document overwrite via a stale AI-edit diff.
 
-document.js keeps the AI-edit diff state (``_diffModeActive`` / ``_diffOldContent`` /
-``_diffNewContent`` / ``_diffChunks``) as a module-global singleton bound to whatever
-document was active when the diff opened. ``handleDocUpdate()`` switches the active
-document (``activeDocId``) whenever an AI update targets a different doc. If a pending
-diff is not discarded first, a later tab switch (``switchToDoc`` → ``exitDiffMode(true)``)
+The AI-edit diff state (``_diffModeActive`` / ``_diffOldContent`` /
+``_diffNewContent`` / ``_diffChunks``) is bound to the document that was active
+when the diff opened. ``handleDocUpdate()`` switches the active document
+(``activeDocId``) whenever an AI update targets another document. If a pending
+diff is not discarded first, a later tab switch (``switchToDoc`` to ``exitDiffMode(true)``)
 or Accept/Reject-All flushes the stale diff's content into the now-active document and
 silently overwrites it.
 
@@ -18,33 +18,22 @@ still overwrite the new doc. Kept as a static source check because document.js i
 browser-coupled and not importable in pytest.
 """
 
-from pathlib import Path
-from tests.helpers.document_source import document_source
+from tests.helpers.document_source import document_source, function_body
 
-ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = document_source()
 
 GUARD = "if (_diffModeActive) exitDiffMode(true);"
 
 
-def _function_body(src: str, signature: str) -> str:
-    """Return the full text of a JS function, brace-matched from its signature."""
-    start = src.index(signature)
-    depth = 0
-    i = src.index("{", start)
-    while i < len(src):
-        if src[i] == "{":
-            depth += 1
-        elif src[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return src[start : i + 1]
-        i += 1
-    raise AssertionError(f"unbalanced braces after {signature!r}")
+HANDLE_DOC_UPDATE = function_body("handleDocUpdate")
+STREAM_DOC_OPEN = function_body("streamDocOpen")
 
 
-HANDLE_DOC_UPDATE = _function_body(DOC_JS, "export function handleDocUpdate(data)")
-STREAM_DOC_OPEN = _function_body(DOC_JS, "export function streamDocOpen(title, language)")
+def _find_reassign(fn_body: str) -> int:
+    for target in ("setActiveDocId(docId);", "activeDocId = docId;"):
+        if target in fn_body:
+            return fn_body.index(target)
+    raise ValueError("activeDocId reassignment not found")
 
 
 def test_handle_doc_update_discards_pending_diff():
@@ -55,20 +44,20 @@ def test_handle_doc_update_discards_pending_diff():
 
 def test_diff_discard_runs_before_active_doc_is_switched():
     # The discard must run while activeDocId still points at the previously
-    # active doc, so exitDiffMode(true) restores and saves THAT doc — not the new
+    # active doc, so exitDiffMode(true) restores and saves THAT doc - not the new
     # one. Any activeDocId reassignment inside handleDocUpdate must come after it.
     guard_at = HANDLE_DOC_UPDATE.index("if (_diffModeActive) exitDiffMode(true,")
-    reassign_at = HANDLE_DOC_UPDATE.index("activeDocId = docId;")
+    reassign_at = _find_reassign(HANDLE_DOC_UPDATE)
     assert guard_at < reassign_at
 
 
 def test_stream_doc_open_discards_pending_diff_before_switching():
     # The AI-creates-a-new-document path switches activeDocId inside
     # streamDocOpen (before any doc_update reaches handleDocUpdate), so the guard
-    # must be here too — and before streamDocOpen reassigns activeDocId, or the
+    # must be here too - and before streamDocOpen reassigns activeDocId, or the
     # streamed new doc gets overwritten by the stale diff (the issue's own repro).
     assert GUARD in STREAM_DOC_OPEN
-    assert STREAM_DOC_OPEN.index(GUARD) < STREAM_DOC_OPEN.index("activeDocId = docId;")
+    assert STREAM_DOC_OPEN.index(GUARD) < _find_reassign(STREAM_DOC_OPEN)
 
 
 def test_diff_discard_reuses_the_existing_idiom():

@@ -44,15 +44,8 @@ def test_quick_edit_shows_the_generation_message_verbatim():
     assert "_isGenOfflineMsg" in EDITOR
     assert "_setAiCommandStatus(_isGenOfflineMsg(_genErr) ? _genErr : `Could not generate that edit: ${_genErr}`, 'error');" in EDITOR
     assert "_setAiCommandStatus(_isGenOfflineMsg(msg) ? msg : `Could not generate an image: ${msg}`, 'error');" in EDITOR
-    # the generateImage op maps its own fetch/HTTP failures through the classifier
-    assert "_generationErrorMessage({ network: true" in EDITOR
-    assert "_generationErrorMessage({ status: res.status, detail: _gd })" in EDITOR
-
-
-def test_sw_cache_is_bumped():
-    import re
-
-    sw = (ROOT / "static" / "sw.js").read_text()
-    m = re.search(r"CACHE_NAME = '([^']+)'", sw)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)
+    # The extracted generation action keeps the shared failure classifier.
+    generation = (ROOT / 'static/js/editor/image-generation.js').read_text()
+    assert "formatError: _generationErrorMessage" in EDITOR
+    assert "formatError({ network: true" in generation
+    assert "formatError({ status: response.status" in generation

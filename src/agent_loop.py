@@ -14,12 +14,12 @@ import csv
 import difflib
 import html
 import json
+import logging
 import os
 import re
 import shlex
 import shutil
 import time
-import logging
 import hashlib
 from src.web_recovery import WebRecoveryBudget
 from itertools import count
@@ -44,6 +44,7 @@ from src.model_profiles import (
     is_odysseus_merged_tools_model,
     tool_schema_profile,
 )
+from src.action_intents import NAMED_COMPUTER_TASK
 from src.agent_evidence import (
     EvidenceLedger,
     command_has_mutation_effect,
@@ -8764,7 +8765,7 @@ _LOCAL_COMPUTER_REFERENCE_RE = re.compile(
     r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"
-    r"|\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b)(?:[a-z][a-z0-9_.-]{1,31})\b",
+    rf"|{NAMED_COMPUTER_TASK}",
     re.IGNORECASE,
 )
 _LOCAL_NETWORK_REFERENCE_RE = re.compile(
@@ -16994,6 +16995,20 @@ def _detect_runaway_call(call_freq, threshold=15):
     sig = next((s for s, n in call_freq.items() if n >= threshold), None)
     return sig.split(":", 1)[0] if sig else None
 
+def _tool_approval_gate_bypassed(
+    exact_approval: Optional[ExactToolApproval] = None,
+) -> bool:
+    """Return whether the post-external-context tool approval gate is bypassed.
+
+    ``tool_approval_mode=off`` (admin setting, Settings → Agent Tools) bypasses
+    the gate on every run, the same effect as ``ODYSSEUS_TOOL_APPROVAL_GATE=0``.
+    A chat-session grant bypasses it only within the scope of its own task.
+    """
+    return (
+        get_setting("tool_approval_mode", "ask") == "off"
+        or bool(exact_approval and exact_approval.allow_remaining_actions)
+    )
+
 
 def _tool_result_signature(tool_result_records: list[dict]) -> str:
     """Return a bounded fingerprint of the observable result of a tool batch.
@@ -21437,9 +21452,7 @@ async def stream_agent_loop(
             )
             or messages_contain_external_untrusted_context(messages)
         ),
-        approval_gate_bypassed=bool(
-            exact_approval and exact_approval.allow_remaining_actions
-        ),
+        approval_gate_bypassed=_tool_approval_gate_bypassed(exact_approval),
         delegated_credential=bool(delegated_credential),
     )
     _has_tui_host_bridge = _tui_host_bridge_is_usable(client_runtime_context)
@@ -24193,11 +24206,14 @@ async def stream_agent_loop(
                 budget_is_explicit,
                 hard_max=hard_max,
             )
-            if candidate_context <= 8192:
+            if 0 < candidate_context <= 8192:
                 # Small local servers often tokenize chat wrappers and tool
                 # results much more generously than our rough estimator. Keep
                 # substantial headroom for those wrappers and generation so a
                 # follow-up tool round cannot exceed the server's n_ctx.
+                # 0 means the window is unknown, which already gets the
+                # conservative default budget; clamping it as well cut every
+                # request to 1200 tokens and dropped open documents (#6678).
                 effective_budget = min(
                     effective_budget,
                     max(1200, int(candidate_context * 0.40)),
@@ -27833,16 +27849,25 @@ async def stream_agent_loop(
                                 if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
                                     _streamed_tool_markup += _delta_text
                                     if not _streamed_tool_markup_complete(_streamed_tool_markup):
-                                        continue
-                                    _visible_markup_tail = strip_tool_blocks(
-                                        _streamed_tool_markup,
-                                        skip_fenced=True,
-                                    ).strip()
-                                    _streamed_tool_markup = ""
-                                    if not _visible_markup_tail:
-                                        continue
-                                    _delta_text = _visible_markup_tail
-                                    data["delta"] = _delta_text
+                                        if _streamed_tool_markup_starts(_streamed_tool_markup):
+                                            continue
+                                        # False alarm: a bare "<" (e.g. ``x < 2``) looked like
+                                        # a tag prefix, but the buffer can no longer become a
+                                        # tool tag. Release it as prose instead of holding the
+                                        # rest of the answer forever.
+                                        _delta_text = _streamed_tool_markup
+                                        _streamed_tool_markup = ""
+                                        data["delta"] = _delta_text
+                                    else:
+                                        _visible_markup_tail = strip_tool_blocks(
+                                            _streamed_tool_markup,
+                                            skip_fenced=True,
+                                        ).strip()
+                                        _streamed_tool_markup = ""
+                                        if not _visible_markup_tail:
+                                            continue
+                                        _delta_text = _visible_markup_tail
+                                        data["delta"] = _delta_text
                             full_response += _delta_text
                         if not _suppress_unavailable_web_delta:
                             _qwen_buffered_route = bool(

@@ -746,6 +746,10 @@ def setup_session_routes(
                 meta = get_chatgpt_model_metadata(model)
                 if not meta or current_effort not in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
                     session.thinking_mode = "off"
+            elif getattr(session, "thinking_mode", "") in {"on", "off"}:
+                from src.model_profiles import supports_user_thinking_toggle
+                if not supports_user_thinking_toggle(model):
+                    session.thinking_mode = "off"
             # Persist to DB
             db = SessionLocal()
             try:

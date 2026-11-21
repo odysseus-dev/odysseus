@@ -1,46 +1,68 @@
 # Native test merge gate
 
-`Native test suites` runs on pull requests, dev/main pushes and manual dispatch.
-`Authoritative native suites` fails unless both the native Node and complete
-Chromium jobs succeed; it has no continue-on-error, retries or path bypass.
-Repository administrators must require this check alongside the four pytest
-checks in branch protection. The audited public dev branch had no protection or
-ruleset, so merely adding workflow jobs cannot prevent a manual merge.
+`Native test suites` runs on pull requests, `dev`/`main` pushes, and manual workflow dispatch.
+It establishes authoritative JavaScript and browser validation without imposing unnecessary merge latency on normal pull requests.
 
-`tests/native-ci-manifest.json` exhaustively partitions all native Node files:
-16 run in the native job,14 through existing pytest wrappers, one through the
-existing frontend architecture CI step, and the formerly live email-reply file
-through an explicitly identified Playwright driver. The manifest validator fails
-for omitted/duplicate/unreachable entries. Node emits individual JUnit identities
-and propagates its failure exit. No native file is newly run in each pytest shard.
+## Selective Architecture
 
-The browser job uses the existing one-worker Chromium config and all 136 Photo
-Editor cases (including cursor and brush regressions), plus one driver for the native
-email-reply contract (137 cases total). Its ephemeral account,
-SQLite DB and server are created by the config/setup; reuseExistingServer remains
-false. NPX startup is offline/cache-only in a private cache; Notes/editor behavior
-and Python MCP services remain real. No developer app or external account is used.
+The workflow implements a three-level execution architecture:
 
-Default CI trace suppression remains intact. Only this job's explicit opt-in plus
-a newly generated authenticated synthetic fixture marker permits failure traces.
-The existing structured sanitizer runs before artifacts are uploaded; invalid
-ownership, failed sanitization and missing tooling purge sensitive artifacts.
-Unsupported or malformed sensitive records cause the affected archive to be removed
-fail-closed. An independent fail-closed verification step (.github/scripts/verify_sanitized_artifacts.py)
-runs after test suite execution or abnormal runner termination to prevent publishing
-unsanitized diagnostics while preserving safe JUnit reporting. The verifier returns a nonzero
-exit code upon any inspection or deletion failure, publishable XML is restricted to recognized
-JUnit reports with sensitive tokens redacted, and workflow upload steps execute only when
-independent verification succeeds (steps.<id>.outcome == 'success').
-Never upload the fixture directory, database or browser storage state.
+1. **Level A: Coverage Verification and Selection**
+   Runs on every pull request in approximately 10 to 15 seconds without launching Chromium or heavy application dependencies. It validates the complete 74-file test inventory against `tests/native-ci-manifest.json`, checks that declared pytest wrappers exist and invoke their assigned tests, and computes required test execution from the PR diff against merge base (`git merge-base`).
 
-The stroke budget now excludes measured synthetic event-delivery pacing and also
-bounds actual Chromium main-thread work at the original5s. All240 samples and
-pixel/thumbnail/undo/redo assertions remain. Per-case timing attachments expose
-both clocks rather than treating driver frame cadence as application work.
+2. **Level B: Selective PR Validation**
+   Runs only the suites required by the PR diff:
+   - Documentation-only changes (`docs/`, `website/`, `*.md`) skip both Node and Chromium jobs, taking negligible critical-path CI time.
+   - Independent backend Python changes validated by pytest shards skip Node and Chromium jobs.
+   - Photo Editor changes (`static/js/editor/`, `tests/e2e/photo-editor/`) trigger the Chromium browser suite and native Node tests.
+   - Shared frontend infrastructure changes (`static/app.js`, `static/index.html`, `static/css/`, `static/js/shared/`, `package.json`) trigger both suites.
+   - Authentication, session, and core API changes (`core/auth.py`, `core/session_manager.py`, `routes/auth_routes.py`, `app.py`) trigger both suites.
+   - Test infrastructure, runner, workflow, or manifest changes trigger both suites.
+   - Unknown or unclassified paths fall back conservatively to full execution fail-closed.
 
-Three Bombadil properties remain opt-in: they require a Bombadil/browser scenario
-and bounded fuzz campaign; no authoritative execution is claimed. The two model
-smoke scripts require supplied model endpoints/models and remain explicit live
-operations. No credentials or live-service authorization are implied by CI setup.
-Firefox/WebKit alternatives remain opt-in and are not certified by Chromium CI.
+3. **Level C: Full Integration Validation**
+   Runs all 19 native Node suites (84 test cases) and all 36 Chromium suites (137 test cases) on:
+   - Every push to `dev`.
+   - Every push to `main`.
+   - Explicit manual workflow dispatches (`workflow_dispatch`).
+
+## Aggregate Status Check and Enforcement
+
+`Authoritative native suites` is the single required status check. Because the workflow uses no workflow-level `paths:` filter, this job is always created on every PR and push.
+
+The aggregate gate evaluates:
+1. `coverage-decision` must have succeeded without error.
+2. If `run_node` is required (`true`), `native-node` must have succeeded. If skipped or failed, the gate fails.
+3. If `run_browser` is required (`true`), `browser` must have succeeded. If skipped or failed, the gate fails.
+4. If a suite was permitted to skip by policy (`false`), its job status must be `skipped`.
+5. Any unexpected failure, cancellation, or unpermitted skip fails the gate immediately.
+
+Repository administrators must configure branch protection or rulesets to require `Authoritative native suites`. Note that the repository ruleset `Protect dev` is currently disabled; maintainers must enable enforcement for this gate to block merges.
+
+## Test Inventory and Execution Ownership
+
+All 74 discovered test files importing `node:test` are partitioned into explicit, disjoint categories in `tests/native-ci-manifest.json`:
+- **19 files in `native-ci`:** Directly executed by `node .github/scripts/run_native_tests.mjs` (84 test cases total, including `notesColors.test.mjs`, `notesReminderText.test.mjs`, and `markdownPreviewParity.test.mjs`).
+- **1 file in `browser-ci`:** `tests/emailReplyBrowser.test.mjs`, executed against the disposable authenticated application via `tests/e2e/photo-editor/email-reply-native.spec.js`.
+- **1 file in `architecture-ci`:** `tests/frontendArchitecture.test.mjs`, executed during frontend architecture gates.
+- **15 files in `ci-syntax`:** Document behavior and reference suites executed in `ci.yml` `node-syntax`.
+- **11 files in `behavior-delegates`:** Behavioral modules invoked via `runBehaviorSuite` by their corresponding runner tests.
+- **27 files in `python-ci`:** Validated via established pytest wrappers in `python-tests` shards.
+
+The manifest validator (`.github/scripts/coverage_decision.py --validate-manifest`) verifies that every assigned file exists, that wrappers execute their declared tests, and that no unassigned or duplicated tests exist.
+
+## Browser Testing and Performance Safeguards
+
+The Chromium browser job runs 137 test cases (136 Photo Editor scenarios and 1 native email reply contract driver) against a fresh authenticated loopback app.
+- Server startup overhead is bounded by disabling background MCP server connections (`ODYSSEUS_DISABLE_MCP=1`), model warmups (`ODYSSEUS_STARTUP_WARMUPS=0`), and tool index prewarming (`ODYSSEUS_TOOL_INDEX_PREWARM=0`).
+- Tracing is disabled in CI by default (`trace: 'off'`) to prevent screencast and DOM capture overhead across all scenarios. Tracing requires explicit opt-in (`PLAYWRIGHT_ENABLE_TRACE=1`).
+- Failure screenshots (`screenshot: 'only-on-failure'`) remain active for diagnostics.
+
+## Artifact Security and Confinement
+
+- **Fail-closed verification gate (`.github/scripts/verify_sanitized_artifacts.py`):** Pre-upload verification step returns a nonzero exit code on any inspection or deletion failure.
+- **Conditional artifact upload:** Artifact upload steps execute only when independent verification succeeds (`if: always() && steps.<id>.outcome == 'success'`).
+- **Restrictive published-JUnit representation:** Publishable XML files are restricted strictly to recognized JUnit report filenames and allowed structural elements. Free-form elements (`<properties>`, `<property>`, `<system-out>`, `<system-err>`) are pruned.
+- **Skipped-element sanitization:** Clears free-form text inside `<skipped>` tags and normalizes status attributes strictly to safe tokens.
+- **Credential scrubbing:** Tokens, Bearer/Basic headers, URL credentials, and passwords in XML attributes or failure text are scrubbed and replaced with `[REDACTED]`. Unrecognized XML files are purged.
+- **Fixture ownership contract:** Teardown requires disposable fixture proofs (`.disposable-ci-fixture.json`). Never upload the database or browser storage state.

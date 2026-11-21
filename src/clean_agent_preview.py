@@ -27,6 +27,7 @@ from src.context_compactor import (
 )
 from src.agent_runtime.runtime_selection import COMPACT_PREVIEW_MODE
 from src import agent_runs
+from src.model_customization import apply_sampling
 from src.agent_evidence import command_has_mutation_effect, workspace_artifact_is_usable
 from src.tool_capabilities import ToolEffect, ToolRunSecurityContext, capabilities_for_action
 from src.tool_execution import execute_tool_block
@@ -247,7 +248,7 @@ ALLOWED_EFFECTS = frozenset({
     ToolEffect.BROKERED_NETWORK_READ, ToolEffect.WRITE_PRIVATE,
 })
 SAFE_ACTIONS = {
-    'manage_notes': frozenset({'list', 'search', 'find', 'view', 'add', 'update', 'delete', 'toggle_item'}),
+    'manage_notes': frozenset({'list', 'search', 'find', 'view', 'get', 'read', 'show', 'open', 'add', 'update', 'delete', 'toggle_item'}),
     'manage_calendar': frozenset({'list_calendars', 'list_events', 'create_event', 'update_event', 'delete_event'}),
     'manage_memory': frozenset({'list', 'search', 'add', 'edit', 'delete'}),
     'manage_skills': frozenset({'list', 'index', 'view', 'view_ref', 'search', 'add', 'edit', 'patch', 'delete'}),
@@ -1229,7 +1230,7 @@ def tasks_terminal_response(raw, *, user_text='', max_items=20):
     text = str(payload or '').strip()
     rows = []
     for line in text.splitlines():
-        match = re.match(r'^\s*\d+\.\s+(.*?)\s+\(([^)]+)\)\s+—\s+(.+)$', line)
+        match = re.match(r'^\s*\d+\.\s(.*?)\s\(([^()]+)\)\s+—\s+(.+)$', line)
         if match:
             details = match[3].strip()
             rows.append({
@@ -1346,7 +1347,7 @@ def skills_terminal_response(raw, *, user_text='', max_items=20):
             continue
         match = re.match(r'^\s*-\s+\*\*([^*]+)\*\*(?:\s+\(([^)]+)\))?', line)
         if not match:
-            match = re.match(r'^\s*-\s+([^:]+?)(?:\s+\(([^)]+)\))?(?:\s*:|$)', line)
+            match = re.match(r'^\s*-\s+([^\s:][^:]*?)(?:\s\(([^()]+)\)(?:\s*:|$)|:|$)', line)
         if match and status:
             rows.append((status, match.group(1).strip(), (match.group(2) or '').strip()))
     if not rows:
@@ -5065,7 +5066,7 @@ def email_search_result_empty(value):
         try:
             decoded = json.loads(value)
         except (TypeError, ValueError):
-            return bool(re.fullmatch(r'\s*No emails matched [^\n]+\.?\s*', value, re.I))
+            return bool(re.fullmatch(r'\s*No emails matched [^\n]+(?:\n\s*)?', value, re.I))
         if decoded == value:
             return False
         value = decoded
@@ -5339,6 +5340,16 @@ def private_browser_effective_url(result):
     return urls[-1] if urls else ''
 
 
+def is_google_sorry_url(url):
+    """Recognize Google's rate-limit interstitial."""
+    # Matching the host separately keeps this linear; one combined pattern
+    # rescans the host from every dot.
+    return any(
+        re.fullmatch(r'(?:[^/]+\.)?google\.[^/]+', host[1], re.I)
+        for host in re.finditer(r'https?://([^/]+)/sorry/', url, re.I)
+    )
+
+
 def browser_observation_page_missing(raw):
     """Recognize a rendered error page, rather than an article mentioning 404."""
     text = str(raw or '')
@@ -5541,6 +5552,7 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
             **request,
             'messages': provider_wire_messages(request['messages']),
         }
+        apply_sampling(provider_request, endpoint_url, request.get('model'))
         response_started = False
         try:
             async with client.stream(
@@ -8213,11 +8225,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         browser_search_url = requested_browser_url or effective_browser_url
                         is_search_engine_navigation = contains_search_engine_navigation(
                             browser_search_url
-                        ) or bool(re.search(
-                            r'https?://(?:[^/]+\.)?google\.[^/]+/sorry/',
-                            effective_browser_url,
-                            re.I,
-                        ))
+                        ) or is_google_sorry_url(effective_browser_url)
                         has_native_search = any(
                             canonical(schema['function']['name']) == 'web_search'
                             for schema in offered

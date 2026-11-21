@@ -1,4 +1,6 @@
 /** Build and wire note, checklist, goal and drawing editor forms. */
+import { applyItemsToContent, itemsToMarkdown, stripTaskLines } from '../domain/markdownTasks.js';
+
 export function createEditor({
   deleteFromEditor,
   submitNote,
@@ -39,9 +41,12 @@ export function createEditor({
     form.className = 'note-form';
     form.dataset.noteType = type;
     form.dataset.noteColor = color || '';
+    form.dataset.replaceContent = String(type === 'note' && note?.replace_content !== false);
+    form._bodyRevision = note?.body_revision;
     if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
     if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
     let currentImageUrl = _safeImgSrc(note?.image_url || '');
+    const initialImageUrl = currentImageUrl;
     form.innerHTML = `
     <div class="note-form-header">
       <input type="text" class="note-form-title" placeholder="Title" value="${_esc(note?.title || '')}" />
@@ -119,7 +124,7 @@ export function createEditor({
     // *editing* an existing goal-typed note : but the switch handler still
     // accepts Goal→Todo/Note transitions (downgrading legacy goals), so
     // these stashes still earn their keep.
-    let _stashedGoalDesc = (type === 'goal') ? (note?.content || '') : null;
+    let _stashedGoalDesc = (type === 'goal') ? stripTaskLines(note?.content || '') : null;
     let _stashedGoalItems = (type === 'goal' && Array.isArray(note?.items)) ? note.items.slice() : null;
 
     // Drawing also stashes the saved image URL so it survives Note↔Draw flips.
@@ -410,7 +415,7 @@ export function createEditor({
       try {
       form._flushDraft?.();
       await form._stopDraftAutosave?.();
-      form._flushDraft?.();
+      const submittedDraft = form._flushDraft?.();
       const title = form.querySelector('.note-form-title').value.trim();
       // Normalize tag input: split on whitespace, strip leading #s, dedupe,
       // re-join with single spaces. Empty → null.
@@ -425,10 +430,11 @@ export function createEditor({
         label: labelVal,
         due_date: form.querySelector('.note-form-due').value || null,
         repeat: form.querySelector('.note-form-repeat')?.value || 'none',
-        image_url: currentImageUrl || null,
       };
+      if (currentImageUrl !== initialImageUrl) payload.image_url = currentImageUrl || null;
       if (currentType === 'note') {
         payload.content = form.querySelector('.note-form-content')?.value || '';
+        if (isEdit && form.dataset.replaceContent === 'true') payload.replace_content = true;
       } else if (currentType === 'draw') {
         // Upload the canvas PNG before saving so image_url points to a
         // persistent file. We block the save until upload completes : drawings
@@ -441,13 +447,33 @@ export function createEditor({
       } else if (currentType === 'goal') {
         // Legacy: existing goal-type notes still edit through this branch.
         // No AI involvement : save as a normal note with description + items.
-        payload.content = form.querySelector('.note-form-goal-desc')?.value || '';
+        // Both live in content: the description, then the steps as task lines.
+        const desc = (form.querySelector('.note-form-goal-desc')?.value || '').replace(/\s+$/, '');
         payload.items = _collectItems(form);
+        const steps = itemsToMarkdown(payload.items);
+        payload.content = desc && steps ? `${desc}\n\n${steps}` : (desc || steps);
       } else {
+        // Items are task lines in content. A note that was already a
+        // checklist keeps its other lines; one switched to Todo here becomes
+        // exactly the list on screen.
+        // A former goal keeps its description above the list.
         payload.items = _collectItems(form);
+        const steps = itemsToMarkdown(payload.items);
+        const goalDesc = type === 'goal' ? stripTaskLines(note?.content || '') : '';
+        payload.content = type === 'todo'
+          ? applyItemsToContent(note?.content || '', payload.items)
+          : (goalDesc && steps ? `${goalDesc}\n\n${steps}` : (goalDesc || steps));
       }
-      if (isEdit) payload.id = note.id;
-      submitNote(payload, note, isEdit);
+      if (isEdit) {
+        payload.id = note.id;
+        payload.body_revision = form._bodyRevision;
+      }
+      await submitNote(payload, note, isEdit, isEdit ? saved => {
+        form._acknowledgeDraftSave(submittedDraft, payload.body_revision, saved.body_revision);
+        const formIsOpen = form.isConnected && !form.closest('.note-fullscreen-overlay.closing');
+        if (formIsOpen) form.dispatchEvent(new Event('note-saved'));
+        return formIsOpen;
+      } : undefined);
       } finally {
         // Re-enable on early returns / errors. On success the form is removed by
         // the optimistic re-render, so re-enabling the detached button is a no-op.

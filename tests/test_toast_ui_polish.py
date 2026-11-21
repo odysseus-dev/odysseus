@@ -53,7 +53,7 @@ def test_welcome_tips_are_plain_and_brief():
 
 def test_sidebar_shortcut_avoids_browser_bookmark_binding():
     keyboard = (ROOT / "static/js/keyboard-shortcuts.js").read_text(encoding="utf-8")
-    settings = (ROOT / "static/js/settings.js").read_text(encoding="utf-8")
+    settings = (ROOT / "static/js/settings/shortcuts.js").read_text(encoding="utf-8")
 
     assert "toggle_sidebar: 'ctrl+alt+b'" in keyboard
     assert "toggle_sidebar: 'ctrl+alt+b'" in settings

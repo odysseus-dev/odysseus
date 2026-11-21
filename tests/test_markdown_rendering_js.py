@@ -27,6 +27,14 @@ def test_blockquoted_html_codefence_does_not_leak_placeholders(node_available):
     assert result.returncode == 0, result.stderr + result.stdout
 
 
+def test_markdown_renderer_modes_stay_independent(node_available):
+    result = subprocess.run(
+        ["node", "--test", "tests/markdownRendererModes.test.mjs"],
+        cwd=_REPO, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", with_katex: bool = False):
     script = textwrap.dedent(
         r"""
@@ -541,3 +549,193 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+def _doc_case(markdown: str):
+    """Render with the options every Markdown document surface passes."""
+    return _run_markdown_case(markdown, render_expr="mod.mdToHtml(input, { shortcodes: false, commonmark: true })")
+
+def test_markdown_asterisk_lists_render_equivalent_to_dash_and_plus_lists(node_available):
+    asterisk_html = _doc_case("* First item\n* Second item\n* Third item")
+    dash_html = _doc_case("- First item\n- Second item\n- Third item")
+    plus_html = _doc_case("+ First item\n+ Second item\n+ Third item")
+
+    expected = "<ul><li>First item</li>\n<li>Second item</li>\n<li>Third item</li></ul>"
+    assert asterisk_html == expected
+    assert dash_html == expected
+    assert plus_html == expected
+    assert "<em>" not in asterisk_html
+    assert "<p>" not in asterisk_html
+
+
+def test_markdown_nested_and_task_lists(node_available):
+    # Nested lists
+    nested_ast = _doc_case("* Parent\n  * Child\n* Tail")
+    nested_dash = _doc_case("- Parent\n  - Child\n- Tail")
+    nested_plus = _doc_case("+ Parent\n  + Child\n+ Tail")
+
+    assert "<em>" not in nested_ast
+    assert nested_ast == nested_dash == nested_plus
+    assert "<li>Parent</li>" in nested_ast
+    assert "<li>Child</li>" in nested_ast
+    assert "<li>Tail</li>" in nested_ast
+
+    # Task lists across marker styles
+    task_ast = _doc_case("* [ ] Open\n* [x] Done")
+    task_dash = _doc_case("- [ ] Open\n- [x] Done")
+    task_plus = _doc_case("+ [ ] Open\n+ [x] Done")
+
+    assert task_ast == task_dash == task_plus
+    assert 'class="task-item"' in task_ast
+    assert 'class="task-item task-done"' in task_ast
+
+
+def test_markdown_emphasis_inside_list_items(node_available):
+    html = _doc_case(
+        "* First with *italic* text\n"
+        "* Second with **bold** text\n"
+        "* Third with ***both*** text\n"
+        "- Dash with *italic* text\n"
+        "+ Plus with *italic* text"
+    )
+
+    assert "<em>italic</em>" in html
+    assert "<strong>bold</strong>" in html
+    assert "<strong><em>both</em></strong>" in html
+    assert "<em> First with" not in html
+    assert html.count("<ul>") == 1
+    assert html.count("</ul>") == 1
+    assert html.count("<li>") == 5
+
+
+def test_markdown_adjacent_emphasis_and_multiline_constructs(node_available):
+    # Adjacent bold and italic
+    adj_html = _doc_case("*foo***bar** and **foo***bar* and ***both***")
+    assert "<em>foo</em><strong>bar</strong>" in adj_html
+    assert "<strong>foo</strong><em>bar</em>" in adj_html
+    assert "<strong><em>both</em></strong>" in adj_html
+
+    # Strikethrough
+    strike_html = _doc_case("~~strikethrough text~~")
+    assert "<del>strikethrough text</del>" in strike_html
+
+    # Legitimate multiline Markdown constructs
+    # Multiline blockquote
+    bq_html = _doc_case("> First line of quote\n> Second line of quote")
+    assert "<blockquote>" in bq_html
+    assert "First line of quote" in bq_html
+    assert "Second line of quote" in bq_html
+
+    # Multiline pipe table
+    tbl_html = _doc_case("| Col1 | Col2 |\n| --- | --- |\n| A | B |\n| C | D |")
+    assert "<table" in tbl_html
+    assert ">Col1</th>" in tbl_html
+    assert ">A</td>" in tbl_html
+
+
+def test_markdown_escaped_asterisks_and_arithmetic(node_available):
+    # Escaped asterisks must remain literal and not trigger emphasis
+    escaped_html = _doc_case("Literal \\*stars\\* stay and \\*\\*bold\\*\\* stay")
+    assert "<em>" not in escaped_html
+    assert "<strong>" not in escaped_html
+    assert escaped_html == "<p>Literal *stars* stay and **bold** stay</p>"
+
+    # Arithmetic expressions with space-flanked asterisks
+    math_html = _doc_case("Calculation: 4 * 5 = 20 and 6 * 7 = 42")
+    assert "<em>" not in math_html
+    assert "4 * 5 = 20 and 6 * 7 = 42" in math_html
+
+
+def test_markdown_fenced_code_and_security_sanitization(node_available):
+    # Fenced code block preserving asterisks and newlines
+    code_html = _doc_case(
+        "```python\n"
+        "def multiply(x, y):\n"
+        "    *nums = [x, y]  # asterisk unpack\n"
+        "    return nums[0] * nums[1]\n"
+        "```"
+    )
+    assert "<pre><code" in code_html
+    assert "nums[0] * nums[1]" in code_html
+    assert "<em>" not in code_html
+
+    # Security: raw script tags escaped, javascript: URLs rejected
+    sec_html = _doc_case(
+        "<script>alert('xss')</script>\n\n"
+        "[Click here](javascript:alert(1))\n\n"
+        "![Alt](javascript:alert(2))"
+    )
+    assert "<script>" not in sec_html
+    assert "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;" in sec_html or "&lt;script&gt;" in sec_html
+    assert 'href="javascript:' not in sec_html
+    assert 'src="javascript:' not in sec_html
+
+
+# ── Chat rendering is unchanged by the Documents dialect ──────────────────────
+# `mdToHtml` is shared. The CommonMark behavior the Markdown editor needs is opt-in
+# (`commonmark: true`), so chat keeps rendering exactly what it rendered before.
+
+def test_chat_fence_indented_under_a_numbered_step_is_a_code_block(node_available):
+    html = _run_markdown_case("1. Step\n    ```bash\n    ls -la\n    ```\n2. Next")
+    assert '<pre><code class="language-bash"' in html
+    assert "ls -la" in html
+    assert "``<code>" not in html
+    assert "<li>Next</li>" in html
+
+
+def test_chat_fence_closing_line_may_carry_text(node_available):
+    html = _run_markdown_case("Intro\n```py\nx=1\n``` then done.\nafter text")
+    code = html.split("</code>")[0]
+    assert "then done" not in code
+    assert "</pre> then done." in html
+    assert "<p>after text</p>" in html
+
+
+def test_chat_fence_inside_a_quote_is_a_code_block(node_available):
+    html = _run_markdown_case("> note\n> ```js\n> x()\n> ```\n\nafter")
+    assert '<pre><code class="language-js"' in html
+    assert "``<code>" not in html
+
+
+def test_chat_code_block_copy_payload_has_no_trailing_newline(node_available):
+    html = _run_markdown_case("```js\nlet a = 1;\n```")
+    assert '<code class="language-js" data-lang="js">let a = 1;</code>' in html
+    assert 'data-code="let a = 1;"' in html
+
+
+def test_chat_list_rules_are_unchanged_outside_documents(node_available):
+    # Characterization of the shared renderer without the document option.
+    assert _run_markdown_case("+ a\n+ b") == "<p>+ a</p>\n<p>+ b</p>"
+    assert _run_markdown_case("- a\n  - b") == "<ul><li>a</li></ul>  - b"
+    assert _run_markdown_case("1. a\n   1. b").startswith("<ol><li>a</li></ol>\n<p>   1. b")
+    assert _run_markdown_case("- [ ] a\n  - [x] b").endswith("</ul>  - [x] b")
+    assert _run_markdown_case("- a\n- b") == "<ul><li>a</li>\n<li>b</li></ul>"
+    assert _run_markdown_case("1. a\n2. b") == "<ol><li>a</li>\n<li>b</li></ol>"
+
+
+def test_chat_keeps_backslashes_math_delimiters_and_table_pipes(node_available):
+    assert _run_markdown_case("C:\\temp\\x") == "<p>C:\\temp\\x</p>"
+    assert "\\(" not in _run_markdown_case("Inline \\(x+1\\) here", with_katex=True)
+    assert "\\[" not in _run_markdown_case("\\[x^2\\]", with_katex=True)
+    row = _run_markdown_case("| a | b |\n| --- | --- |\n| x\\|y | 2 |")
+    assert row.count("<td") == 3
+
+
+def test_document_dialect_fences_lists_and_escapes(node_available):
+    # Fences: tildes, longer fences, closing run of at least the opening length.
+    tilde = _doc_case("~~~py\nx=1\n~~~")
+    assert '<pre><code class="language-py"' in tilde and "<del>" not in tilde
+    nested = _doc_case("````md\n```js\ninner\n```\n````")
+    assert nested.count("<pre>") == 1 and "```js" in nested
+    # A closing fence followed by text is code, as in CommonMark.
+    assert "then done" in _doc_case("```\ncode\n``` then done.\n```").split("</code>")[0]
+    # Indented and nested items render as list items.
+    assert _doc_case("- a\n  - b").count("<li>") == 2
+    assert _doc_case("+ a\n+ b").count("<li>") == 2
+    # Escapes: literal characters, not backslashes; \( is not math here.
+    assert _doc_case("2\\*3\\*4") == "<p>2*3*4</p>"
+    assert _doc_case("C:\\\\temp") == "<p>C:\\temp</p>"
+    assert "<td" in _doc_case("| a | b |\n| --- | --- |\n| x\\|y | 2 |") and _doc_case("| a | b |\n| --- | --- |\n| x\\|y | 2 |").count("<td") == 2
+    assert _doc_case("\\`not code\\`") == "<p>`not code`</p>"
+    assert _doc_case("`a\\` b") == "<p><code>a\\</code> b</p>"
+    assert _doc_case("``a`b`` and `c`") == "<p><code>a`b</code> and <code>c</code></p>"

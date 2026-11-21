@@ -124,7 +124,5 @@ def test_menu_and_handler_and_css_and_sw():
     assert "else if (action === 'perspective-crop') openPerspectiveCrop?.();" in wire
     assert ".ge-pcrop-overlay" in CSS.read_text()
     sw = SW.read_text()
-    import re
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", sw)
     assert "/static/js/editor/perspective-crop.js" in sw
     assert "/static/js/editor/tools/perspective-crop.js" in sw

@@ -1321,7 +1321,12 @@ function _renderEditorLanding() {
     // openEditor() now returns a Promise — it's async because the size
     // prompt is a styled modal. Await it before checking whether the
     // editor actually opened (the user may have cancelled).
-    await openEditor(null, null, null, 'New canvas');
+    try {
+      await openEditor(null, null, null, 'New canvas');
+    } catch (error) {
+      // openEditor reports the initialization error and tears down its shell.
+      console.error('[gallery] New canvas failed', error);
+    }
     if (!document.querySelector('#gallery-editor-container .gallery-editor')) {
       _renderEditorLanding();
     }

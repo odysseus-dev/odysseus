@@ -49,6 +49,7 @@ import { applyEdgeDock, clearDockSide } from '/static/js/modalSnap.js';
 import { topToolWindowZ, topPortalZ } from '/static/js/toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from '/static/js/escMenuStack.js';
 import { bindTourHintDismiss } from '/static/js/tourHintDismiss.js';
+import { mdToHtml, noteImageSrc } from '/static/js/markdown.js';
 
 const api = createNotesApi({ origin: window.location.origin, request: (...args) => fetch(...args) });
 const persistence = createNotesPersistence({ storage: typeof localStorage === 'undefined' ? undefined : localStorage });
@@ -72,7 +73,6 @@ const reminders = createNotesReminders({
   scheduler,
   fetchNotes: () => _fetchNotes(),
   isNoteFullyDone: note => _isNoteFullyDone(note),
-  hasItems: note => _hasItems(note),
   dismissedKey: REMINDER_DISMISSED_AT_KEY,
   effects: { badge: () => _updateRailBadge(), highlight: id => {
  _setReminderCardGlow(id, true);
@@ -187,7 +187,8 @@ function _agentSolveNote(...args) { return agentActions._agentSolveNote(...args)
 
 function _clearPastReminders(...args) { return deletion._clearPastReminders(...args); }
 const text = createText({
-  uiModule
+  uiModule,
+  noteImageSrc
 });
 const colors = createColors({
   api
@@ -296,8 +297,8 @@ const cardRendering = createCardRendering({
   _linkify,
   _loadActiveHighlights,
   _renderLabelsInto,
+  _renderNoteMarkdown: source => mdToHtml(source, { tasks: 'interactive', images: 'notes' }),
   _renderQuickAdd,
-  _safeImgSrc,
   _sortedVisibleNotes,
   _updateRailBadge,
   _wireTodayView,
@@ -326,7 +327,6 @@ const cardOperations = createCardOperations({
 const checklistOperations = createChecklistOperations({
   app,
   api,
-  uid: _uid,
   effects: { render: _renderNotes, showError: (...args) => uiModule.showError(...args) }
 });
 const cardInteractions = createCardInteractions({
@@ -371,7 +371,8 @@ const cardReorder = createCardReorder({
 const draftEditor = createDraftEditor({
   bindDraft: (...args) => drafts.bindDraft(...args),
   _collectItems,
-  _loadDraft
+  _loadDraft,
+  _loadDraftRecovery: persistence._loadDraftRecovery
 });
 const editor = createEditor({
   deleteFromEditor: id => deletion.deleteFromEditor(id),

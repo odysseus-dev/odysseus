@@ -1798,11 +1798,13 @@ body.bg-pattern-ascii-fireflies {
       border-color: var(--fg);
       background-color: var(--panel);
     }
+    /* background-color, not the `background` shorthand: the shorthand also resets
+       background-image, which wiped custom carets off selects in light theme. */
     :root.light input,
     :root.light textarea,
     :root.light button,
     :root.light select {
-      background:#eaeaea;
+      background-color: #eaeaea;
       color-scheme: light;
     }
     input[type="text"] { height:32px; width:100%; }
@@ -6481,6 +6483,13 @@ body.bg-pattern-ascii-fireflies {
       display:flex; justify-content:flex-end; gap:8px; padding-top:6px;
       border-top:1px solid var(--border); margin-top:4px;
     }
+    /* The global `button { height:32px }` would hold a wrapped label (e.g.
+       "Delete chat and images") to one line's height, so its second line
+       spills out below the button. Let confirm buttons grow to fit; 32px
+       stays the minimum, so single-line buttons look the same. */
+    .styled-confirm-box .confirm-btn {
+      height:auto; min-height:32px;
+    }
     @media (max-width:768px) {
       .styled-confirm-box {
         width: 85vw;
@@ -6516,10 +6525,8 @@ body.bg-pattern-ascii-fireflies {
     }
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
-    #styled-confirm-ok {
-      position: relative;
-      top: 2px;
-    }
+    #styled-confirm-ok .styled-confirm-btn-label,
+    #styled-confirm-alt .styled-confirm-btn-label,
     #styled-confirm-cancel .styled-confirm-cancel-label {
       position:relative;
       top:2px;

@@ -75,9 +75,9 @@ module.exports = defineConfig({
     serviceWorkers: 'block',
     ...(authenticated ? { storageState: path.join(dataDirectory, 'browser-auth.json') } : {}),
     screenshot: 'only-on-failure',
-    // Default CI suppression remains; only the fresh synthetic fixture opts in.
-    // Local developer tracing requires explicit PLAYWRIGHT_ENABLE_TRACE=1.
-    trace: (traceOptIn || disposableCIArtifacts()) ? 'retain-on-failure' : 'off',
+    // Default CI suppression remains: tracing disabled by default in CI to avoid capture overhead.
+    // Explicit local or diagnostic tracing requires PLAYWRIGHT_ENABLE_TRACE=1.
+    trace: traceOptIn ? 'retain-on-failure' : 'off',
   },
   webServer: {
     command: `${JSON.stringify(python)} -m uvicorn app:app --host 127.0.0.1 --port ${port}`,
@@ -90,9 +90,11 @@ module.exports = defineConfig({
       AUTH_ENABLED: authenticated ? 'true' : 'false',
       DATABASE_URL: `sqlite:///${databasePath}`,
       ODYSSEUS_DATA_DIR: dataDirectory,
+      ODYSSEUS_DISABLE_MCP: '1',
       ODYSSEUS_STARTUP_WARMUPS: '0',
       ODYSSEUS_TOOL_INDEX_PREWARM: '0',
       ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE: '1',
+      PYTHON_DOTENV_DISABLED: '1',
       npm_config_offline: 'true',
       npm_config_cache: path.join(dataDirectory, 'npm-cache'),
       RESPONSE_COMPRESSION_ENABLED: 'false',

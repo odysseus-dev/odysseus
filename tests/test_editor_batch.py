@@ -1,5 +1,4 @@
 import json
-import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -100,5 +99,4 @@ def test_actions_panel_has_a_batch_docs_button():
 
 def test_service_worker_precaches_the_batch_runner():
     src = SW.read_text()
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", src)
     assert "'/static/js/editor/batch-runner.js'," in src

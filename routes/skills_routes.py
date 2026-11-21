@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from services.memory.skill_format import slugify
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
 from services.skills import evaluation as _evaluation
@@ -836,6 +837,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         updates = body.dict(exclude_none=True)
         if not updates:
             return {"ok": True}
+        if "name" in updates:
+            new_name = slugify(updates["name"] or match.get("name"))
+            if new_name != match.get("name") and skills_manager.has_skill(new_name, owner=user):
+                raise HTTPException(409, f"A skill named '{new_name}' already exists")
         ok = skills_manager.update_skill(match.get("name"), updates, owner=user)
         if not ok:
             raise HTTPException(404, "Skill not found")

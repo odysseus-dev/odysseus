@@ -10,7 +10,7 @@ import os
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
@@ -1957,6 +1957,30 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         return str(e), False
 
 
+def _daily_brief_utc_boundary(local_dt, tz=None):
+    """Convert a local wall-clock boundary using the offset at that boundary."""
+    if local_dt.tzinfo is None and tz is not None:
+        local_dt = local_dt.replace(tzinfo=tz)
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _daily_brief_local_start(event, tz=None):
+    """Keep date-only/floating rows local; convert only stored UTC instants."""
+    start = event.dtstart
+    if event.is_utc and not event.all_day:
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        return start.astimezone(tz).replace(tzinfo=None)
+    return start
+
+
+def _is_calendar_reminder_note(note) -> bool:
+    """A note the calendar wrote as an event's reminder (src/tools/calendar.py, routes/calendar_routes.py)."""
+    return getattr(note, "source", None) == "calendar" or (
+        getattr(note, "label", None) == "calendar" and getattr(note, "note_type", None) == "todo"
+    )
+
+
 async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
     """Build a short morning digest: today's calendar events, unread email count
     + top-N senders/subjects, active todos."""
@@ -1966,10 +1990,13 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
 
         from core.database import SessionLocal, CalendarEvent, CalendarCal, Note
         from routes.email_helpers import _imap_connect, _decode_header
+        from sqlalchemy import and_, or_
 
         # ----- Calendar: today's events -----
         today = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today + _td(days=1)
+        utc_today = _daily_brief_utc_boundary(today)
+        utc_tomorrow = _daily_brief_utc_boundary(tomorrow)
         # v2 review HIGH-12: gate the OR-null branch on single-user
         # (unconfigured) deploys only. In a multi-user deploy, one
         # user's daily brief must not include another user's notes or
@@ -1982,13 +2009,25 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         db = SessionLocal()
         try:
             ev_q = db.query(CalendarEvent).join(CalendarCal).filter(
-                CalendarEvent.dtstart < tomorrow,
-                CalendarEvent.dtend > today,
+                or_(
+                    and_(
+                        CalendarEvent.is_utc.is_(True),
+                        CalendarEvent.all_day.is_not(True),
+                        CalendarEvent.dtstart < utc_tomorrow,
+                        CalendarEvent.dtend > utc_today,
+                    ),
+                    and_(
+                        or_(CalendarEvent.is_utc.is_not(True), CalendarEvent.all_day.is_(True)),
+                        CalendarEvent.dtstart < tomorrow,
+                        CalendarEvent.dtend > today,
+                    ),
+                ),
                 CalendarEvent.status != "cancelled",
             )
             if owner:
                 ev_q = owner_filter(ev_q, CalendarCal, owner, include_shared=_allow_null)
-            events = ev_q.order_by(CalendarEvent.dtstart).all()
+            events = ev_q.all()
+            events.sort(key=_daily_brief_local_start)
             # ----- Notes: pinned + non-archived todos with at least one undone item -----
             n_q = db.query(Note).filter(Note.archived == False)  # noqa: E712
             if owner:
@@ -2035,17 +2074,20 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
             logger.debug(f"daily_brief: email fetch failed: {ee}")
 
         # Pull active todo items from notes
+        from core.notes_markdown import effective_content, parse_task_lines
         todo_lines: list[str] = []
         for n in notes:
-            if n.note_type == "checklist" and n.items:
-                try:
-                    items = _json.loads(n.items)
-                    pending = [it.get("text", "") for it in items if not it.get("done")]
-                    for t in pending[:3]:
-                        if t:
-                            todo_lines.append(f"{n.title or 'Checklist'}: {t}")
-                except Exception:
-                    continue
+            # The calendar's own reminder notes repeat an event the Calendar
+            # section above already lists.
+            if _is_calendar_reminder_note(n):
+                continue
+            pending = [
+                t["text"] for t in parse_task_lines(effective_content(n.content, n.items, getattr(n, "image_url", None)))
+                if not t["done"] and t["text"]
+            ]
+            if pending:
+                for t in pending[:3]:
+                    todo_lines.append(f"{n.title or 'Checklist'}: {t}")
             elif n.pinned and n.title:
                 todo_lines.append(n.title)
 
@@ -2058,7 +2100,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         if events:
             plain.append("Calendar:")
             for e in events:
-                t = e.dtstart.strftime("%H:%M") if not e.all_day else "all day"
+                t = _daily_brief_local_start(e).strftime("%H:%M") if not e.all_day else "all day"
                 loc = f" @ {e.location}" if e.location else ""
                 plain.append(f"  {t}  {e.summary}{loc}")
             plain.append("")
@@ -2403,23 +2445,10 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         pass
                 # Compose + dispatch.
                 title = (n.title or "Reminder").strip() or "Reminder"
-                body_parts = []
-                if n.content:
-                    body_parts.append(n.content[:400])
-                # Items: list pending checklist entries inline.
-                if n.items:
-                    try:
-                        items = _json.loads(n.items)
-                        pending = [
-                            it.get("text", "")
-                            for it in items
-                            if not it.get("done") and not it.get("checked")
-                        ]
-                        if pending:
-                            body_parts.append("Pending:\n" + "\n".join(f"- {t}" for t in pending[:8]))
-                    except Exception:
-                        pass
-                body = "\n\n".join(p for p in body_parts if p) or title
+                # Same builder as the fire-reminder route: prose plus the open
+                # task lines from content.
+                from core.notes_markdown import effective_content, reminder_body
+                body = reminder_body(effective_content(n.content, n.items, getattr(n, "image_url", None))) or title
                 try:
                     from routes.note_routes import dispatch_reminder
                     result = await dispatch_reminder(

@@ -6440,6 +6440,12 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     if 'search_emails' in selected:
         selected.update({'read_email', 'download_attachment', 'list_email_accounts'})
     selected.update(canonical_tool(n) for n in always_available_tools)
+    # Offer only dynamic MCP operations already sealed by trusted request
+    # admission. Tool discovery and model routing never create these grants.
+    from src.agent_runtime.authority import active_request_authority
+    sealed_authority = active_request_authority()
+    if sealed_authority is not None:
+        selected.update(g.tool for g in sealed_authority.grants if g.tool.startswith("mcp__"))
     selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
     # Controls are neutral; enabling Web is permission, never a requested family.
     if selected:

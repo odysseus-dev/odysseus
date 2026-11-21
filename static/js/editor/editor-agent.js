@@ -21,6 +21,7 @@ export const EDITOR_AGENT_VERSION = '1.0';
 export const DEFAULT_AGENT_ENDPOINT = '/api/editor/agent';
 
 import { formatCropRect, isGenericIntent } from './nl-edit.js';
+import { waitForImagePreferences } from '../settings/imagePreferences.js';
 
 export function createEditorAgent({
   control,
@@ -28,6 +29,7 @@ export function createEditorAgent({
   fetchImpl = null,
   getSession = null,
   getModel = null,
+  getGenerationModel = null,
   getAgentModel = null,
   onStep = null,
 } = {}) {
@@ -145,6 +147,7 @@ export function createEditorAgent({
     activeStep = report;
     executed = [];
     running = true;
+    await waitForImagePreferences();
 
     // Honest before-image (captured before any client pre-step) for the
     // imperceptible-edit check, then the history mark scoping the undo group.
@@ -194,6 +197,8 @@ export function createEditorAgent({
         signal: signal || undefined,
         body: JSON.stringify({
           prompt, session, editor_session: session, state, screenshot,
+          _use_image_settings: true,
+          generation_model: getGenerationModel ? getGenerationModel() : '',
           model: (modelInfo && modelInfo.model) || '',
           endpoint: (modelInfo && modelInfo.endpoint) || '',
           model_label: (modelInfo && modelInfo.label) || '',

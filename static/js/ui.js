@@ -776,14 +776,16 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
 
     if (titleEl) titleEl.textContent = title || 'Confirm';
     msgEl.textContent = message;
+    // Labels sit in spans so CSS can nudge the text without moving the button.
+    const btnLabel = (text) => Object.assign(document.createElement('span'), { className: 'styled-confirm-btn-label', textContent: text });
     // Use the affirmative label consistently for generic confirmations.
-    okBtn.textContent = confirmText === 'OK' ? 'Yes' : confirmText;
+    okBtn.replaceChildren(btnLabel(confirmText === 'OK' ? 'Yes' : confirmText));
     cancelBtn.textContent = '';
     const cancelLabel = document.createElement('span');
     cancelLabel.className = 'styled-confirm-cancel-label';
     cancelLabel.textContent = cancelText;
     cancelBtn.appendChild(cancelLabel);
-    altBtn.textContent = alternateText || '';
+    altBtn.replaceChildren(btnLabel(alternateText || ''));
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
     altBtn.className = 'confirm-btn confirm-btn-secondary';

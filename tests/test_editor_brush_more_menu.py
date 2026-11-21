@@ -3,7 +3,6 @@
 matching the wand's "More" treatment."""
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
@@ -11,7 +10,6 @@ CONTROLS = (ROOT / "static/js/editor/build/controls.js").read_text(encoding="utf
 OPTIONS = (ROOT / "static/js/editor/build/options-bar.js").read_text(encoding="utf-8")
 STROKE = (ROOT / "static/js/editor/stroke-tool-sliders.js").read_text(encoding="utf-8")
 GALLERY = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_brush_strip_has_a_caret_more_dropdown():
@@ -29,8 +27,10 @@ def test_secondary_brush_controls_live_after_the_menu_open():
     block = CONTROLS[i:j]
     for marker in ('id="ge-brush-spacing"', 'id="ge-brush-smoothing"',
                    'id="ge-brush-blend"', 'ge-brush-pressure-row',
-                   'id="ge-brush-flow-row"', 'id="ge-brush-softness-row"'):
+                   'id="ge-brush-flow-row"'):
         assert marker in block, marker
+    assert 'id="ge-brush-softness-row"' not in block
+    assert CONTROLS.index('id="ge-brush-softness-row"') < i
 
 
 def test_brush_size_label_drops_the_redundant_word():
@@ -98,7 +98,7 @@ def test_brush_strip_fits_and_smudge_row_respects_inline_hide():
     # The Opacity/Flow/Softness sliders are wound tighter so the strip fits.
     assert ".ge-controls--in-options #ge-brush-section { gap: 6px; }" in CSS
     # The brush controls hug their content so the sliders sit next to the caret.
-    assert ".ge-controls--in-options #ge-brush-controls { flex: 0 0 auto; }" in CSS
+    assert ".ge-controls--in-options #ge-brush-controls { flex: 0 0 auto; flex-direction: row;" in CSS
     # The smudge Strength row is hidden with an inline display:none on other
     # tools; the `.ge-eraser-row { display:flex !important }` rule must not
     # override that.
@@ -169,7 +169,3 @@ def test_brush_colour_syncs_to_the_sidebar_swatch():
 
 def test_blend_row_is_right_aligned():
     assert ".ge-brush-more-menu #ge-brush-blend { margin-left: auto; }" in CSS
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

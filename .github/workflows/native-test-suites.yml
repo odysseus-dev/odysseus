@@ -14,8 +14,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  coverage-decision:
+    name: Coverage verification and selection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run_node: ${{ steps.decision.outputs.run_node }}
+      run_browser: ${{ steps.decision.outputs.run_browser }}
+      decision_reason: ${{ steps.decision.outputs.decision_reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Evaluate coverage policy and validate inventory fail-closed
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python3 .github/scripts/coverage_decision.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          else
+            python3 .github/scripts/coverage_decision.py --full
+          fi
+
   native-node:
     name: Native Node regressions
+    needs: [coverage-decision]
+    if: needs.coverage-decision.outputs.run_node == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -35,10 +71,10 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
-      - name: Validate exhaustive disjoint runner mapping and execute omitted suites
+      - name: Validate exhaustive disjoint runner mapping and execute native suites
         run: |
           node .github/scripts/run_native_tests.mjs
-          python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 43
+          python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 84
       - name: Verify and sanitize native test results fail-closed
         id: verify-native-results
         if: always()
@@ -55,6 +91,8 @@ jobs:
 
   browser:
     name: Chromium application regressions
+    needs: [coverage-decision]
+    if: needs.coverage-decision.outputs.run_browser == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -62,6 +100,7 @@ jobs:
       ODYSSEUS_TEST_PYTHON: python
       CHROMADB_HOST: 127.0.0.1
       CHROMADB_PORT: '1'
+      ODYSSEUS_DISABLE_MCP: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,13 +156,27 @@ jobs:
   authoritative-native-suites:
     name: Authoritative native suites
     if: always()
-    needs: [native-node, browser]
+    needs: [coverage-decision, native-node, browser]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require both complete suites to succeed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Require all selected suites to succeed and verify permitted skips
         env:
+          DECISION_RESULT: ${{ needs.coverage-decision.result }}
+          RUN_NODE: ${{ needs.coverage-decision.outputs.run_node }}
+          RUN_BROWSER: ${{ needs.coverage-decision.outputs.run_browser }}
           NODE_RESULT: ${{ needs.native-node.result }}
           BROWSER_RESULT: ${{ needs.browser.result }}
         run: |
-          test "$NODE_RESULT" = success
-          test "$BROWSER_RESULT" = success
+          python3 .github/scripts/coverage_decision.py --evaluate-gate \
+            --decision-result "$DECISION_RESULT" \
+            --run-node "$RUN_NODE" \
+            --run-browser "$RUN_BROWSER" \
+            --node-result "$NODE_RESULT" \
+            --browser-result "$BROWSER_RESULT"

@@ -5,7 +5,8 @@ import json
 import re
 import uuid
 from datetime import datetime, date, timedelta, timezone
-from typing import Optional, List
+from typing import Optional, List, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent, Note
+from core.notes_markdown import items_to_markdown
 from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 from src.upload_handler import reserve_upload_references
@@ -36,6 +38,19 @@ def _ics_naive_dtstart(dt):
     if isinstance(dt, date):
         return datetime(dt.year, dt.month, dt.day)
     return dt
+
+
+def _source_tzid(dt) -> str | None:
+    """IANA zone name of an imported tz-aware DTSTART, or None for naive/UTC values."""
+    tz = getattr(dt, "tzinfo", None) if isinstance(dt, datetime) else None
+    name = getattr(tz, "key", None) or getattr(tz, "zone", None)
+    if not name or name.upper() in {"UTC", "ETC/UTC"}:
+        return None
+    try:
+        ZoneInfo(name)
+    except Exception:
+        return None
+    return name
 
 
 def _ensure_positive_duration(start_dt, end_dt, all_day):
@@ -499,10 +514,13 @@ def _parse_dt_pair(s: str):
             return parsed.astimezone(_tz.utc).replace(tzinfo=None), True
         return parsed, False
     except ValueError:
-        return _parse_dt(s), False
+        parsed = _parse_dt(s, preserve_timezone=True)
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(_tz.utc).replace(tzinfo=None), True
+        return parsed, False
 
 
-def _parse_dt(s: str) -> datetime:
+def _parse_dt(s: str, *, preserve_timezone: bool = False) -> datetime:
     """Parse a date/datetime string.
 
     Strict ISO first (cheapest path; this is what most callers pass). On
@@ -515,7 +533,8 @@ def _parse_dt(s: str) -> datetime:
       - YYYY-MM-DD optionally followed by time
     Anything still unparsed falls to dateutil.parser, which handles most
     other absolute formats. Local-naive datetimes returned to match the
-    DB schema (CalendarEvent.dtstart is naive).
+    DB schema (CalendarEvent.dtstart is naive). ``preserve_timezone`` lets
+    _parse_dt_pair retain explicit offsets until it records UTC provenance.
     """
     import re as _re
     s = (s or "").strip()
@@ -529,7 +548,7 @@ def _parse_dt(s: str) -> datetime:
         parsed = datetime.fromisoformat(_s2)
         # Strip tz for the legacy callers — they expect naive. Real tz
         # handling lives in _parse_dt_pair.
-        if parsed.tzinfo is not None:
+        if parsed.tzinfo is not None and not preserve_timezone:
             from datetime import timezone as _tz
             return parsed.astimezone(_tz.utc).replace(tzinfo=None)
         return parsed
@@ -621,13 +640,13 @@ def _parse_dt(s: str) -> datetime:
     try:
         from dateutil import parser as _du
         parsed = _du.parse(s)
-        # Strip tz like every other return path above — this function's
-        # contract is naive datetimes (CalendarEvent.dtstart is naive). An
+        # By default strip tz like the ISO path above — legacy callers
+        # require naive datetimes (CalendarEvent.dtstart is naive). An
         # offset-bearing non-ISO input (e.g. RFC-2822 "Mon, 05 Jan 2026
         # 14:00:00 +0900") otherwise leaked tz-aware into the naive column and
         # crashed read-back comparisons in _expand_rrule with "can't compare
         # offset-naive and offset-aware datetimes".
-        if parsed.tzinfo is not None:
+        if parsed.tzinfo is not None and not preserve_timezone:
             from datetime import timezone as _tz
             return parsed.astimezone(_tz.utc).replace(tzinfo=None)
         return parsed
@@ -751,7 +770,7 @@ def _create_calendar_reminder_for_event(db, owner: str, ev: CalendarEvent, minut
         id=str(uuid.uuid4()),
         owner=owner,
         title=f"Calendar reminder: {summary}",
-        items=json.dumps([{"text": f"{summary}{loc} — {start_fmt}", "done": False, "checked": False}]),
+        content=items_to_markdown([{"text": f"{summary}{loc} — {start_fmt}", "done": False}]),
         note_type="todo",
         label="calendar",
         due_date=due_date,
@@ -832,6 +851,19 @@ def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
     return suffix[:16]
 
 
+def _source_zone(ev: CalendarEvent):
+    """Zone to expand a UTC-stored recurring event in, when its source TZID is known."""
+    tzid = getattr(ev, "tzid", None)
+    if not tzid or not getattr(ev, "is_utc", False) or ev.all_day:
+        return None
+    try:
+        zone = ZoneInfo(tzid)
+        rrulestr(ev.rrule, dtstart=ev.dtstart.replace(tzinfo=timezone.utc).astimezone(zone))
+    except Exception:
+        return None
+    return zone
+
+
 def _expand_rrule(
     ev: CalendarEvent, start: datetime, end: datetime, db=None, owner: str | None = None
 ) -> List[dict]:
@@ -858,8 +890,13 @@ def _expand_rrule(
         return [d]
 
     # Parse the rrule, applying it to the base dtstart.
+    source_zone = _source_zone(ev)
+    dtstart = (
+        ev.dtstart.replace(tzinfo=timezone.utc).astimezone(source_zone)
+        if source_zone else ev.dtstart
+    )
     rrule_str = ev.rrule
-    if ev.dtstart is not None and getattr(ev.dtstart, "tzinfo", None) is None:
+    if dtstart is not None and getattr(dtstart, "tzinfo", None) is None:
         # Events are stored with a naive (UTC) dtstart, but standard .ics
         # exporters (Google/Apple/Outlook/Fastmail) write the bound as an
         # absolute UTC value, e.g. UNTIL=20240105T090000Z. dateutil refuses to
@@ -872,7 +909,7 @@ def _expand_rrule(
             r"(UNTIL=\d{8}(?:T\d{6})?)Z", r"\1", rrule_str, flags=_re.IGNORECASE
         )
     try:
-        rule = rrulestr(rrule_str, dtstart=ev.dtstart)
+        rule = rrulestr(rrule_str, dtstart=dtstart)
     except Exception as ex:
         logger.warning(
             "Failed to parse rrule=%r for event %s: %s", ev.rrule, ev.uid, ex
@@ -898,7 +935,10 @@ def _expand_rrule(
     base = _event_to_dict(ev, db=db, owner=owner)
     exdates = set(_recurrence_exdates(ev))
 
-    for occ_start in rule.xafter(expand_start, inc=True):
+    xafter_start = expand_start.replace(tzinfo=timezone.utc) if source_zone else expand_start
+    for occ_start in rule.xafter(xafter_start, inc=True):
+        if source_zone:
+            occ_start = occ_start.astimezone(timezone.utc).replace(tzinfo=None)
         if occ_start >= end:
             break
 
@@ -965,16 +1005,25 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
 
     # ── CalDAV multi-account helpers ─────────────────────────────────────────
 
-    def _get_caldav_accounts(owner: str) -> list:
+    async def _get_caldav_accounts(owner: str) -> list:
+        from starlette.concurrency import run_in_threadpool
         from src.caldav_sync import _load_caldav_accounts
-        return _load_caldav_accounts(owner)
+        return await run_in_threadpool(_load_caldav_accounts, owner)
 
-    def _save_caldav_accounts(owner: str, accounts: list) -> None:
-        from routes.prefs_routes import _load_for_user, _save_for_user
-        prefs = _load_for_user(owner) or {}
-        prefs["caldav_accounts"] = accounts
-        prefs.pop("caldav", None)
-        _save_for_user(owner, prefs)
+    async def _mutate_caldav_accounts(owner: str, mutator) -> Any:
+        # Run the complete CalDAV read-modify-write sequence inside a single
+        # store transaction off the event-loop thread.
+        from routes.prefs_routes import _mutate_off_loop
+        from src.caldav_sync import _extract_caldav_accounts
+
+        def _transaction(user_prefs: dict) -> Any:
+            accounts = _extract_caldav_accounts(user_prefs)
+            result, new_accounts = mutator(accounts)
+            user_prefs["caldav_accounts"] = new_accounts
+            user_prefs.pop("caldav", None)
+            return result
+
+        return await _mutate_off_loop(owner, _transaction)
 
     # ── CalDAV config routes (backward-compat single-account API) ────────────
 
@@ -982,7 +1031,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def get_config(request: Request):
         """Legacy single-account endpoint — returns the first configured account."""
         owner = _require_user(request)
-        accounts = _get_caldav_accounts(owner)
+        accounts = await _get_caldav_accounts(owner)
         if not accounts:
             return {"url": "", "username": "", "password": "", "has_password": False, "local": True}
         first = accounts[0]
@@ -1007,28 +1056,39 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         """Legacy single-account endpoint — upserts the first account."""
         owner = _require_user(request)
         body = await _json_object_body(request)
-        accounts = _get_caldav_accounts(owner)
-        if not (body.get("url") or "").strip():
-            _save_caldav_accounts(owner, [])
-            return {"ok": True, "cleared": True}
+        raw_url = (body.get("url") or "").strip()
+        if not raw_url:
+            def _mutate_clear(accounts: list):
+                return {"ok": True, "cleared": True}, []
+
+            return await _mutate_caldav_accounts(owner, _mutate_clear)
+
         from src.caldav_sync import validate_caldav_url
         try:
-            validated_url = validate_caldav_url(body.get("url", ""))
+            validated_url = validate_caldav_url(raw_url)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        if accounts:
-            acc = dict(accounts[0])
-        else:
-            import uuid as _uuid
-            acc = {"id": str(_uuid.uuid4()), "label": "CalDAV"}
-        acc["url"] = validated_url
-        acc["username"] = (body.get("username") or "").strip()
+
+        username = (body.get("username") or "").strip()
+        encrypted_pw = None
         if body.get("password"):
             from src.secret_storage import encrypt
-            acc["password"] = encrypt(body["password"])
-        new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
-        _save_caldav_accounts(owner, new_accounts)
-        return {"ok": True}
+            encrypted_pw = encrypt(body["password"])
+
+        def _mutate_upsert(accounts: list):
+            import uuid as _uuid
+            if accounts:
+                acc = dict(accounts[0])
+            else:
+                acc = {"id": str(_uuid.uuid4()), "label": "CalDAV"}
+            acc["url"] = validated_url
+            acc["username"] = username
+            if encrypted_pw:
+                acc["password"] = encrypted_pw
+            new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
+            return {"ok": True}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_upsert)
 
     # ── CalDAV multi-account CRUD ─────────────────────────────────────────────
 
@@ -1036,7 +1096,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def list_caldav_accounts(request: Request):
         """Return all configured CalDAV accounts (passwords never returned)."""
         owner = _require_user(request)
-        accounts = _get_caldav_accounts(owner)
+        accounts = await _get_caldav_accounts(owner)
         safe = []
         for acc in accounts:
             pw = acc.get("password") or ""
@@ -1077,48 +1137,62 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             "username": (body.get("username") or "").strip(),
             "password": encrypt(body["password"]),
         }
-        accounts = _get_caldav_accounts(owner)
-        accounts.append(new_acc)
-        _save_caldav_accounts(owner, accounts)
-        return {"ok": True, "id": new_acc["id"]}
+
+        def _mutate_add(accounts: list):
+            new_accounts = list(accounts)
+            new_accounts.append(new_acc)
+            return {"ok": True, "id": new_acc["id"]}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_add)
 
     @router.put("/config/accounts/{account_id}")
     async def update_caldav_account(account_id: str, request: Request):
         """Update an existing CalDAV account by id."""
         owner = _require_user(request)
         body = await _json_object_body(request)
-        accounts = _get_caldav_accounts(owner)
-        idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
-        if idx is None:
-            raise HTTPException(404, "Account not found")
-        acc = dict(accounts[idx])
+        validated_url = None
         if body.get("url"):
             from src.caldav_sync import validate_caldav_url
             try:
-                acc["url"] = validate_caldav_url(body["url"])
+                validated_url = validate_caldav_url(body["url"])
             except ValueError as e:
                 raise HTTPException(400, str(e))
-        if body.get("label") is not None:
-            acc["label"] = (body.get("label") or "").strip() or "CalDAV"
-        if body.get("username") is not None:
-            acc["username"] = (body.get("username") or "").strip()
+        encrypted_pw = None
         if body.get("password"):
             from src.secret_storage import encrypt
-            acc["password"] = encrypt(body["password"])
-        accounts[idx] = acc
-        _save_caldav_accounts(owner, accounts)
-        return {"ok": True}
+            encrypted_pw = encrypt(body["password"])
+
+        def _mutate_update(accounts: list):
+            idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
+            if idx is None:
+                raise HTTPException(404, "Account not found")
+            new_accounts = list(accounts)
+            acc = dict(new_accounts[idx])
+            if validated_url:
+                acc["url"] = validated_url
+            if body.get("label") is not None:
+                acc["label"] = (body.get("label") or "").strip() or "CalDAV"
+            if body.get("username") is not None:
+                acc["username"] = (body.get("username") or "").strip()
+            if encrypted_pw:
+                acc["password"] = encrypted_pw
+            new_accounts[idx] = acc
+            return {"ok": True}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_update)
 
     @router.delete("/config/accounts/{account_id}")
     async def delete_caldav_account(account_id: str, request: Request):
         """Remove a CalDAV account by id."""
         owner = _require_user(request)
-        accounts = _get_caldav_accounts(owner)
-        new_accounts = [a for a in accounts if a.get("id") != account_id]
-        if len(new_accounts) == len(accounts):
-            raise HTTPException(404, "Account not found")
-        _save_caldav_accounts(owner, new_accounts)
-        return {"ok": True}
+
+        def _mutate_delete(accounts: list):
+            new_accounts = [a for a in accounts if a.get("id") != account_id]
+            if len(new_accounts) == len(accounts):
+                raise HTTPException(404, "Account not found")
+            return {"ok": True}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_delete)
 
     @router.post("/test")
     async def test_connection(request: Request):
@@ -1133,7 +1207,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         pw = body.get("password") or ""
         if not (url and user and pw):
             # Look up a saved account: by id if supplied, else first account.
-            accounts = _get_caldav_accounts(owner)
+            accounts = await _get_caldav_accounts(owner)
             acc = None
             if body.get("account_id"):
                 acc = next((a for a in accounts if a.get("id") == body["account_id"]), None)
@@ -1709,6 +1783,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     all_day=all_day,
                     is_utc=row_is_utc,
                     rrule=(comp.get("rrule").to_ical().decode() if comp.get("rrule") else ""),
+                    tzid=None if all_day else _source_tzid(dt_val),
                 )
                 db.add(ev)
                 event_uids.append(uid_val)

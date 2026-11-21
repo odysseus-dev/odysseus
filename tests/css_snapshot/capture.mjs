@@ -219,28 +219,117 @@ function stylesheetLinks(html) {
   return links.join('\n  ');
 }
 
+async function preparePageBaseHtml(parser, origin, page) {
+  let shippedStylesheets = null;
+  if (page.stylesheetsFrom) {
+    const source = await fetch(origin + page.stylesheetsFrom);
+    if (!source.ok) throw new Error(`${page.stylesheetsFrom} returned ${source.status}`);
+    shippedStylesheets = stylesheetLinks(await source.text());
+    if (!shippedStylesheets) throw new Error(`no stylesheet links found in ${page.stylesheetsFrom}`);
+  }
+
+  const docResponse = await fetch(origin + page.url);
+  if (!docResponse.ok) throw new Error(`${page.url} returned ${docResponse.status}`);
+  let html = await docResponse.text();
+
+  // Browser parsing handles HTML/SVG scripts and unusual end tags.
+  // The parsed document is inert; only the script-free shell is served.
+  html = await parser.evaluate(source => {
+    const doc = new DOMParser().parseFromString(source, 'text/html');
+    doc.querySelectorAll('script').forEach(script => script.remove());
+    const doctype = doc.doctype ? new XMLSerializer().serializeToString(doc.doctype) : '';
+    return doctype + doc.documentElement.outerHTML;
+  }, html);
+
+  // Focus states are outside this idle-state inventory. Autofocus can
+  // run after load, racing the measurement and changing outline-offset.
+  html = html.replace(/(<[^>]*?)\sautofocus(?=[\s=>])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi, '$1');
+  if (shippedStylesheets !== null) {
+    html = html.replace(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi, '');
+    html = html.replace(/<\/head>/i, `  ${shippedStylesheets}\n</head>`);
+  }
+
+  const headers = {};
+  for (const [k, v] of docResponse.headers.entries()) {
+    headers[k.toLowerCase()] = v;
+  }
+  const scriptPolicy = "script-src 'none'";
+  headers['content-security-policy'] = headers['content-security-policy']
+    ? `${headers['content-security-policy']}, ${scriptPolicy}` : scriptPolicy;
+  headers['content-type'] = 'text/html; charset=utf-8';
+
+  return { baseHtml: html, headers };
+}
+
+const DEFAULT_CONCURRENCY = 2;
+const MAX_CONCURRENCY = 4;
+
+function resolveConcurrency(jobValue, envValue) {
+  const raw = jobValue !== undefined && jobValue !== null ? jobValue : envValue;
+  if (raw === undefined || raw === null || raw === '') {
+    return DEFAULT_CONCURRENCY;
+  }
+  let num;
+  if (typeof raw === 'number') {
+    num = raw;
+  } else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new Error(`invalid concurrency: "${raw}" (expected integer between 1 and ${MAX_CONCURRENCY})`);
+    }
+    num = Number(trimmed);
+  } else {
+    throw new Error(`invalid concurrency: ${raw} (expected integer between 1 and ${MAX_CONCURRENCY})`);
+  }
+
+  if (!Number.isInteger(num) || num < 1) {
+    throw new Error(`invalid concurrency: ${num} (expected integer between 1 and ${MAX_CONCURRENCY})`);
+  }
+  if (num > MAX_CONCURRENCY) {
+    throw new Error(`concurrency ${num} exceeds maximum allowed (${MAX_CONCURRENCY})`);
+  }
+  return num;
+}
+
 async function main() {
   const job = JSON.parse(await readStdin());
+  const concurrency = resolveConcurrency(job.concurrency, process.env.CSS_SNAPSHOT_CONCURRENCY);
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--hide-scrollbars'] });
-  const snapshot = {};
-  const missing = {};
 
   try {
     // Keep parsing separate from the page whose navigation is intercepted.
     const parser = await browser.newPage();
     await parser.route('**/*', route => route.abort());
-    let swapped = 0;
+
+    // Prepare immutable base HTML once per page rather than per variant.
+    const preparedPages = new Map();
     for (const page of job.pages) {
-      snapshot[page.name] = {};
-      let shippedStylesheets = null;
-      if (page.stylesheetsFrom) {
-        const source = await fetch(job.origin + page.stylesheetsFrom);
-        if (!source.ok) throw new Error(`${page.stylesheetsFrom} returned ${source.status}`);
-        shippedStylesheets = stylesheetLinks(await source.text());
-        if (!shippedStylesheets) throw new Error(`no stylesheet links found in ${page.stylesheetsFrom}`);
-      }
+      preparedPages.set(page.name, await preparePageBaseHtml(parser, job.origin, page));
+    }
+    await parser.close();
+
+    const cssCache = new Map();
+    let swapped = 0;
+
+    const tasks = [];
+    for (const page of job.pages) {
       for (const variant of job.variants) {
+        tasks.push({ page, variant });
+      }
+    }
+
+    const results = new Array(tasks.length);
+    const recordedResponses = [];
+    let nextTaskIndex = 0;
+    const workerCount = Math.min(concurrency, tasks.length);
+
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const taskIndex = nextTaskIndex++;
+        if (taskIndex >= tasks.length) break;
+        const { page, variant } = tasks[taskIndex];
+
         const context = await browser.newContext({
           viewport: { width: variant.width, height: variant.height },
           deviceScaleFactor: 1,
@@ -251,88 +340,125 @@ async function main() {
           isMobile: false,
           javaScriptEnabled: true,
         });
-        const tab = await context.newPage();
-        const cdp = await context.newCDPSession(tab);
-        // Pin the UA standard font preference rather than overriding author
-        // CSS. macOS defaults to Times; Linux defaults to Times New Roman.
-        await cdp.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
 
-        // Registered first so the document/stylesheet handlers below win:
-        // Playwright matches the most recently registered route.
-        await tab.route('**/*', route => {
-          const type = route.request().resourceType();
-          if (type === 'image' || type === 'media' || type === 'font') return route.abort();
-          return route.continue();
-        });
-
-        if (job.swapRule) {
-          // The cascade is spread over several files, so find the one that
-          // actually holds two top-level blocks of the selector and rewrite
-          // only that one. Every other sheet passes through untouched.
-          await tab.route('**/static/**/*.css*', async route => {
-            const response = await route.fetch();
-            const original = await response.text();
-            const body = swapRuleOccurrences(original, job.swapRule);
-            if (body === null) return route.fulfill({ response, body: original });
-            swapped += 1;
-            await route.fulfill({ response, body, headers: { ...response.headers(), 'content-type': 'text/css; charset=utf-8' } });
-          });
-        }
-
-        const documentPath = page.url.split('?')[0];
-        await tab.route(`**${documentPath}`, async route => {
-          const response = await route.fetch();
-          let html = await response.text();
-          // Browser parsing handles HTML/SVG scripts and unusual end tags.
-          // The parsed document is inert; only the script-free shell is served.
-          html = await parser.evaluate(source => {
-            const doc = new DOMParser().parseFromString(source, 'text/html');
-            doc.querySelectorAll('script').forEach(script => script.remove());
-            const doctype = doc.doctype ? new XMLSerializer().serializeToString(doc.doctype) : '';
-            return doctype + doc.documentElement.outerHTML;
-          }, html);
-          // Focus states are outside this idle-state inventory. Autofocus can
-          // run after load, racing the measurement and changing outline-offset.
-          html = html.replace(/(<[^>]*?)\sautofocus(?=[\s=>])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi, '$1');
-          if (shippedStylesheets !== null) {
-            html = html.replace(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi, '');
-            html = html.replace(/<\/head>/i, `  ${shippedStylesheets}\n</head>`);
+        try {
+          const tab = await context.newPage();
+          if (job.recordResponses) {
+            tab.on('response', res => {
+              recordedResponses.push({ url: res.url(), status: res.status() });
+            });
           }
+          const cdp = await context.newCDPSession(tab);
+          // Pin the UA standard font preference rather than overriding author
+          // CSS. macOS defaults to Times; Linux defaults to Times New Roman.
+          await cdp.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
+
+          // Registered first so the document/stylesheet handlers below win:
+          // Playwright matches the most recently registered route.
+          await tab.route('**/*', route => {
+            const type = route.request().resourceType();
+            if (type === 'image' || type === 'media' || type === 'font') return route.abort();
+            return route.continue();
+          });
+
+          if (job.swapRule) {
+            // The cascade is spread over several files, so find the one that
+            // actually holds two top-level blocks of the selector and rewrite
+            // only that one. Every other sheet passes through untouched.
+            await tab.route('**/static/**/*.css*', async route => {
+              const url = route.request().url();
+              let pending = cssCache.get(url);
+              if (!pending) {
+                pending = (async () => {
+                  const response = await route.fetch();
+                  const status = response.status();
+                  const headers = response.headers();
+                  const original = await response.text();
+                  if (status < 200 || status >= 300) {
+                    return { status, body: original, headers, didSwap: false };
+                  }
+                  const body = swapRuleOccurrences(original, job.swapRule);
+                  if (body === null) {
+                    return { status, body: original, headers, didSwap: false };
+                  }
+                  return {
+                    status,
+                    body,
+                    headers: { ...headers, 'content-type': 'text/css; charset=utf-8' },
+                    didSwap: true,
+                  };
+                })().catch(err => {
+                  cssCache.delete(url);
+                  throw err;
+                });
+                cssCache.set(url, pending);
+              }
+              const entry = await pending;
+              if (entry.didSwap) swapped += 1;
+              await route.fulfill({ status: entry.status, body: entry.body, headers: entry.headers });
+            });
+          }
+
+          const { baseHtml, headers } = preparedPages.get(page.name);
           const classes = [variant.theme === 'light' ? 'light' : '', variant.density && variant.density !== 'comfortable' ? `density-${variant.density}` : '']
             .filter(Boolean).join(' ');
-          html = html.replace(/<html\b([^>]*)>/i, (match, attrs) => `<html${attrs.replace(/\sclass="[^"]*"/i, '')} class="${classes}">`);
-          const headers = response.headers();
-          // Also deny handlers or scripts exposed by serialization/re-parsing.
-          // Playwright evaluation still runs the CSS measurement functions.
-          const scriptPolicy = "script-src 'none'";
-          headers['content-security-policy'] = headers['content-security-policy']
-            ? `${headers['content-security-policy']}, ${scriptPolicy}` : scriptPolicy;
-          await route.fulfill({ response, body: html, headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } });
-        });
+          const variantHtml = baseHtml.replace(/<html\b([^>]*)>/i, (match, attrs) => `<html${attrs.replace(/\sclass="[^"]*"/i, '')} class="${classes}">`);
 
-        const response = await tab.goto(job.origin + page.url, { waitUntil: 'load' });
-        if (!response || !response.ok()) {
-          throw new Error(`${page.url} returned ${response ? response.status() : 'no response'}`);
+          const documentPath = page.url.split('?')[0];
+          await tab.route(`**${documentPath}`, async route => {
+            await route.fulfill({ body: variantHtml, headers });
+          });
+
+          const response = await tab.goto(job.origin + page.url, { waitUntil: 'load' });
+          if (!response || !response.ok()) {
+            throw new Error(`${page.url} returned ${response ? response.status() : 'no response'}`);
+          }
+          if (job.measurementDelayMs) await tab.waitForTimeout(job.measurementDelayMs);
+          const result = await tab.evaluate(pageMeasure, {
+            elements: page.elements || [],
+            bench: page.bench || [],
+            properties: job.properties,
+          });
+
+          results[taskIndex] = {
+            pageName: page.name,
+            variantName: variant.name,
+            measured: result.measured,
+            missing: result.missing,
+          };
+        } finally {
+          await context.close();
         }
-        if (job.measurementDelayMs) await tab.waitForTimeout(job.measurementDelayMs);
-        const result = await tab.evaluate(pageMeasure, {
-          elements: page.elements || [],
-          bench: page.bench || [],
-          properties: job.properties,
-        });
-        snapshot[page.name][variant.name] = result.measured;
-        if (result.missing.length) missing[`${page.name}/${variant.name}`] = result.missing;
-        await context.close();
       }
-    }
+    });
+
+    await Promise.all(workers);
+
     if (job.swapRule && swapped === 0) {
       throw new Error(`swap-rule: no stylesheet had two top-level blocks for "${job.swapRule}"`);
     }
+
+    const snapshot = {};
+    const missing = {};
+    for (const page of job.pages) {
+      snapshot[page.name] = {};
+    }
+    for (let i = 0; i < tasks.length; i += 1) {
+      const cap = results[i];
+      snapshot[cap.pageName][cap.variantName] = cap.measured;
+      if (cap.missing && cap.missing.length) {
+        missing[`${cap.pageName}/${cap.variantName}`] = cap.missing;
+      }
+    }
+
+    const payload = { snapshot, missing };
+    if (job.recordResponses) {
+      payload.responses = recordedResponses;
+    }
+    process.stdout.write(JSON.stringify(payload));
   } finally {
     await browser.close();
   }
-
-  process.stdout.write(JSON.stringify({ snapshot, missing }));
 }
 
 main().catch(err => {

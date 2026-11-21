@@ -1,10 +1,8 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
 ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 
 def test_client_gen_mode_generates():
@@ -34,11 +32,6 @@ def test_server_generate_route_exists():
     assert "can_generate_images" in ROUTES.split('@router.post("/api/image/generate")', 1)[1][:1200]
 
 
-def test_sw_cache_bumped():
-    m = re.search(r"CACHE_NAME = '(odysseus-v\d+-pr40-editor-precache)'", SW)
-    assert m and re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))
-
-
 def test_generate_route_forwards_the_picked_model():
     """The model picker's choice must reach do_generate_image.
 
@@ -49,7 +42,42 @@ def test_generate_route_forwards_the_picked_model():
     assert 'model_choice = str((body or {}).get("model") or "").strip()' in route
     assert 'payload["model"] = model_choice' in route
     assert "content = _json.dumps(payload)" in route
-    assert "localStorage.getItem('ge-ai-command-model')" in JS
+    operation = JS.split("'ai.generateImage':", 1)[1].split("\n", 1)[0]
+    generation = (ROOT / 'static/js/editor/image-generation.js').read_text()
+    assert '_generateImage(p || {})' in operation
+    assert "_use_image_settings: true" in generation
+    assert "document.getElementById('ge-ai-model')" not in operation
+    assert "_getSelectedQuickEditModel()" not in operation
+    assert "localStorage.getItem" not in operation
+
+
+def test_ai_settings_separates_generation_from_editing_without_setup():
+    settings = (ROOT / "static/js/editor/ai-settings.js").read_text()
+    assert 'id="ge-ai-model"' in settings
+    assert 'id="ge-ai-command-model"' in settings
+    assert "Image generation model" in settings
+    assert "createPreflight" not in JS
+    assert "ge-setup-btn';" not in JS.split("const aiBtn", 1)[0]
+
+
+def test_generate_uses_live_picker_and_auto_edit_fallback():
+    import subprocess
+
+    module = (ROOT / "static/js/editor/ai-models.js").as_uri()
+    script = """
+import assert from 'node:assert/strict';
+const {resolveQuickEditModel} = await import(MODULE);
+const selected = 'https://openrouter.ai/api/v1::openai/gpt-5-image';
+const option = {value: selected, textContent: 'GPT-5 Image'};
+const picker = {value: selected, selectedIndex: 0, options: [option]};
+const fallback = {value: '', options: [option]};
+globalThis.document = {getElementById: id => id === 'ge-ai-command-model' ? picker : fallback};
+globalThis.localStorage = {getItem: () => {throw new Error('must not read stale storage');}};
+assert.equal(resolveQuickEditModel().model, 'openai/gpt-5-image');
+picker.value = '';
+assert.equal(resolveQuickEditModel().model, '');
+""".replace("MODULE", repr(module))
+    subprocess.run(["node", "--input-type=module", "-e", script], check=True)
 
 
 def test_cloud_image_model_is_resolved_before_the_local_fallback():

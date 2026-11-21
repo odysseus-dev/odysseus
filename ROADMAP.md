@@ -1,87 +1,117 @@
 # Roadmap / Help Wanted
 
-Odysseus is on a voyage, but not home yet. It works great for me (lol), but this ship is moving fast and feedback/help would be appreciated! (I don't know what I'm doing, help).
+Odysseus is an evolving, self-hosted AI workspace. This roadmap highlights where improvements and contributions are most useful, from reliability and maintainability to product capabilities.
 
-If you see weird CSS, strange layout behavior, or a suspiciously murky corner of
-the codebase, you are probably right to stay away.
+> [!NOTE]
+> **Direction, not a release schedule.** This page is not a complete issue backlog or a promise to deliver every proposal. Implementation scope and priority are coordinated through existing issues, pull requests, and the project's [feature proposal process](docs/maintainers/product-and-features.md).
 
-## High Priority
+## At a glance
 
-- SQUASH BUGS
-- Fresh install smoke tests on Linux, macOS, and Windows. Docker, native Python,
-  and WSL all need coverage.
+| Area | Direction | Coordination |
+| --- | --- | --- |
+| **Stabilization** | Reliability, CI, fresh installs, security, and integrations | [Stabilization & Modularization milestone](https://github.com/odysseus-dev/odysseus/milestone/1) |
+| **Modularization** | Clearer module ownership, safer changes, and contributor onboarding | [Canonical tracker #4071](https://github.com/odysseus-dev/odysseus/issues/4071) |
+| **Agent runtime** | Active Harness V2 development, with a narrow temporary change freeze | [Coordination in #4071](https://github.com/odysseus-dev/odysseus/issues/4071) |
+| **Product improvements** | Local models, research, frontend experience, and operations | [Issues](https://github.com/odysseus-dev/odysseus/issues) and [feature proposals](docs/maintainers/product-and-features.md) |
 
-- Integration audit: do integrations even work? Confirm what works, what needs setup docs, and what should be removed or hidden. 
-- Cookbook reliability on other computers. This is probably the area most likely to need work across different machines, GPUs, drivers, shells, and Python environments.
-- Cookbook SGLang support across platforms. Make sure SGLang setup/serve works
-  predictably on Linux, Windows/WSL, macOS where possible, Docker, and common
-  NVIDIA/AMD hardware paths.
-- Deep Research model presets by hardware. Recommend approved model/parameter
-  profiles for small, medium, and large local setups so people with different
-  hardware can use Deep Research without guessing. Surface this either in Deep
-  Research settings or as a Cookbook scan/dropdown suggestion.
-- Cookbook model scan/download ranking. Prioritize newer architectures and
-  better hardware-fit models instead of scoring everything almost the same.
-  Ranking should account for architecture age, quant format, VRAM/RAM fit,
-  backend support, vision/mmproj requirements, and likely serve reliability.
-- Cookbook error feedback and logging. Failed downloads, dependency installs,
-  preflights, and serve jobs should show the actual command/output/error in the
-  UI, with copyable logs and clear next steps instead of just "crashed".
-- Agent prompt/context bloat. Agent mode is too heavy for smaller local models:
-  tool schemas, skills, memory, documents, and instructions can eat the context
-  before the user request really starts. We need slimmer prompts, better tool
-  selection, smaller default tool sets, and clearer guidance for models with
-  4k/8k/16k context windows.
-- Local model speculative decoding support. For Odysseus-tuned local models,
-  plan to ship or recommend a small same-tokenizer draft model when the serving
-  backend supports it. Early vLLM testing showed a generic `Qwen3-0.6B` draft
-  beside `Qwen3-8B` can materially reduce wall time, while an unsupported
-  DSpark conversion performed poorly. Treat this as a supported draft-model lane
-  first; keep MTP-specific packaging as future work only when the architecture
-  and runtime support are real. Judge this by time-to-success, tool correctness,
-  grammar, and unchanged target output, not tokens/sec alone.
-- Skill/tool prompt-injection audit. User-editable skills, notes, documents,
-  fetched pages, and memories should be treated as untrusted data. Keep testing
-  whether models follow malicious instructions from those surfaces.
-- Better degraded-state reporting for ChromaDB, SearXNG, email, ntfy, and provider probes.
-- Email performance audit. Fetching, searching, opening, deleting, and sending
-  email can feel slow, especially over IMAP/SMTP providers with high latency.
-  Need someone who knows mail performance to profile the current flow, identify
-  whether the bottleneck is IMAP folder select/fetch, cache invalidation,
-  attachment/body loading, SMTP handshakes, or frontend refresh behavior, then
-  propose safer caching/prefetch/batching without breaking multi-account state.
-- Provider setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
+**Jump to:** [Stabilization](#stabilization-and-reliability) · [Modularization](#modularization-and-maintainability) · [AI and local models](#ai-local-models-and-research) · [Frontend](#frontend-and-user-experience) · [Backend](#backend-and-operations) · [Contributing](#contributing)
 
-## Refactor Targets
-- CSS cleanup. `static/style.css` basically Calypso's island atm.
-- Tour core helper. The onboarding tours have too much copy-pasted scaffolding; promote a shared `tour-core.js` helper before adding more tours.
-- Modal/window positioning cleanup. Some window controls have improved, but the
-  underlying popup/dropdown/fixed-position behavior is still too fragile.
-- Mobile media override discoverability. A lot of "CSS did not move" bugs are mobile `@media` overrides of the same selector; comments or linting around desktop/mobile paired rules would help.
-- Dead code pass for old routes, stale feature flags, and unused UI states.
+---
 
-## Frontend
+## Stabilization and reliability
 
-- Expand the Editor for quicker, more robust everyday use. Better file/document
-  handling, smoother window behavior, clearer save/export flows, stronger image
-  editing affordances, and fewer brittle edge cases.
-- Better AI integration for Notes and Todos. Notes should be easier for the
-  agent to read, update, summarize, and turn into actions. Todos should be
-  assignable to an agent from the UI, possibly through a button, task action,
-  or dedicated skill/tool flow.
-- Mobile gallery/editor polish. Easier to launch/download inpaint model or any missing pieces.
-- Accessibility pass: keyboard navigation, focus states, contrast, reduced motion.
-- Improve empty states and error messages on fresh installs.
-- Tighten first-run setup, hints, and tours so they do not repeat or fight each other.
-- Vendor CDN assets eventually for a more fully self-hosted/offline mode.
+**Priority:** Make Odysseus dependable across installations, platforms, providers, and supported hardware.
 
-## Backend
+| Workstream | What needs improvement | Tracking |
+| --- | --- | --- |
+| **CI and validation** | Exact-revision validation, meaningful regression coverage, and release confidence | [#5932](https://github.com/odysseus-dev/odysseus/issues/5932), [#7109](https://github.com/odysseus-dev/odysseus/issues/7109) |
+| **Test quality** | Deterministic tests, isolation, focused execution, and maintainable test structure | [#2523](https://github.com/odysseus-dev/odysseus/issues/2523), [testing standard](tests/TESTING_STANDARD.md) |
+| **Fresh installations** | Smoke tests for Linux, macOS, Windows, WSL, and Docker; baseline startup and graceful degradation | [#3968](https://github.com/odysseus-dev/odysseus/issues/3968) |
+| **Email integration** | Remaining Google OAuth regressions, account isolation, and cross-provider reliability | [#5637](https://github.com/odysseus-dev/odysseus/issues/5637) |
+| **Storage integrity** | Upload payload growth, indexing, and attachment/file lifecycle | [#4889](https://github.com/odysseus-dev/odysseus/issues/4889) |
 
-- More tests around endpoint probing and provider setup.
-- Better task scheduler defaults and visibility.
-- Backup/restore guide and helper flow for `data/`.
-- Security hardening around admin-only tools and clear docs for their risk.
+Additional reliability priorities:
 
-## Not The Focus Right Now
+- **Cookbook:** Improve model installation, dependency management, hardware detection, and model serving across operating systems, GPUs, drivers, shells, Python environments, and supported backends.
+- **Security:** Keep strengthening authorization, administrative tools, agent tool execution, prompt-injection boundaries, filesystem access, and untrusted-content handling.
+- **Integrations and degraded states:** Audit supported providers and optional services, including ChromaDB, SearXNG, email, and ntfy. Make failures observable and nonessential outages predictable.
 
-I prob shouldnt add more themes.
+> [!TIP]
+> Start with an existing, reproducible issue. The [Stabilization & Modularization milestone](https://github.com/odysseus-dev/odysseus/milestone/1) is a curated work queue, not an invitation to implement every item in this roadmap without coordination.
+
+## Modularization and maintainability
+
+The goal is **clearer responsibility boundaries and safer development**, not smaller files for their own sake. Changes should preserve behavior, compatibility, and relevant runtime contracts.
+
+| Area | Current foundation | Remaining opportunities |
+| --- | --- | --- |
+| **CSS** | The former `static/style.css` has been split into ordered files under `static/css/` | Improve ownership while preserving the cascade, themes, and responsive layouts |
+| **Tools** | Substantial tool-domain extraction has landed | Clarify remaining ownership and preserve compatibility through the existing tool interfaces |
+| **Frontend** | Existing feature modules remain in use | Decompose large document, gallery, settings, calendar, and other UI modules around coherent behavior |
+| **Backend** | Domain-specific routes and services already exist | Identify safe boundaries in Cookbook routes, persistence, and other tightly coupled modules |
+| **Tests** | Taxonomy, focused execution, and structural improvements exist | Align fixtures, helpers, and regression coverage with implementation boundaries |
+| **UI infrastructure** | Targeted cleanup is underway | Consolidate tour scaffolding, modal/window positioning, responsive overrides, and obsolete paths |
+
+**Canonical coordination:** [Codebase modularization and contributor onboarding, #4071](https://github.com/odysseus-dev/odysseus/issues/4071).
+
+> [!IMPORTANT]
+> **Cohesive work is more important than a small line count.** A larger PR may be appropriate for one well-defined decomposition when several smaller PRs would create avoidable conflicts or integration overhead. Coordinate the boundary, avoid unrelated work, and supply regression and runtime evidence. See [CONTRIBUTING.md](CONTRIBUTING.md#structural-changes-and-modularization).
+
+### Agent runtime and Harness V2
+
+Harness V2 is under active development.
+
+> [!CAUTION]
+> **Temporary agent-runtime freeze.** Unrelated changes to `src/agent_loop.py` and closely related execution, orchestration, authorization, and context contracts must be coordinated with maintainers while Harness V2 is developed and validated.
+>
+> This does **not** freeze unrelated application modules. Urgent bug reports and security issues remain welcome. No release date is implied.
+
+## AI, local models, and research
+
+These are **areas of product interest**, not commitments to a specific implementation or delivery order. Follow normal issue triage and product-decision requirements.
+
+| Direction | Opportunity |
+| --- | --- |
+| **Smaller-model agents** | Reduce unnecessary prompt, tool-schema, skill, memory, and document context overhead; improve tool selection for constrained context windows |
+| **Cookbook and SGLang** | Improve installation and serving across relevant hardware, operating systems, and deployment methods |
+| **Model discovery** | Rank models by architecture, quantization, RAM/VRAM fit, backend support, multimodal requirements, and expected reliability |
+| **Deep Research presets** | Explore suitable model and parameter configurations for small, medium, and large local systems |
+| **Actionable diagnostics** | Expose command output, logs, and next steps for failed downloads, dependencies, preflights, and serving jobs |
+| **Speculative decoding** | Investigate compatible draft-model configurations and evaluate end-to-end correctness and time to success |
+| **Provider setup** | Improve endpoint discovery, capability checks, and setup for supported local and hosted providers |
+
+## Frontend and user experience
+
+- **Editors and files:** Improve document/file editing, window behavior, save/export flows, and image-editing reliability.
+- **Notes and Todos:** Expand agent-assisted reading, updates, summarization, and turning information into tasks.
+- **Mobile:** Improve gallery/editor usability, model setup, and responsive behavior.
+- **Accessibility:** Strengthen keyboard navigation, focus states, contrast, and reduced-motion support.
+- **First run:** Improve setup, hints, empty states, error messages, and onboarding tours without duplicate guidance.
+- **Self-hosting:** Reduce unnecessary external asset dependencies where practical for offline operation.
+
+## Backend and operations
+
+- **Email performance:** Measure fetching, searching, body and attachment loading, caching, sending, and frontend refresh behavior before optimizing.
+- **Provider reliability:** Expand regression coverage for setup, endpoint probing, and degraded-service behavior.
+- **Task scheduling:** Improve defaults, reliability, and operational visibility.
+- **Data recovery:** Improve backup and restore guidance and workflows for persistent data.
+- **Administrative security:** Review privileged capabilities and sensitive integrations against their authorization boundaries.
+
+## Not a current priority
+
+- Additional themes without a demonstrated product need.
+- Broad rewrites or framework migrations without clear, measurable value.
+- Changes undertaken solely to reduce file counts.
+- Uncoordinated changes to temporarily frozen agent-runtime contracts.
+
+---
+
+## Contributing
+
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md) and search [existing issues](https://github.com/odysseus-dev/odysseus/issues) and [PRs](https://github.com/odysseus-dev/odysseus/pulls).
+2. Coordinate modularization through [#4071](https://github.com/odysseus-dev/odysseus/issues/4071) and active stabilization work through the [milestone](https://github.com/odysseus-dev/odysseus/milestone/1).
+3. Use the repository's issue and PR templates and target **`dev`**.
+4. Include relevant tests, runtime evidence, and screenshots or recordings for visual changes.
+
+> [!NOTE]
+> Product-direction or difficult-to-reverse changes follow the [feature proposal process](docs/maintainers/product-and-features.md). Report security vulnerabilities privately through [SECURITY.md](SECURITY.md), never in a public issue.

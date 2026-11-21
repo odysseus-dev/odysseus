@@ -10,7 +10,7 @@ import unittest
 
 
 path = Path(__file__).resolve().parents[1] / "routes/chat_routes.py"
-tree = ast.parse(path.read_text())
+tree = ast.parse(path.read_text(encoding="utf-8"))
 node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "_AgentRenderState")
 namespace = {}
 exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)

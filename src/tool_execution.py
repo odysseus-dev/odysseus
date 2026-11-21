@@ -1917,10 +1917,17 @@ async def execute_tool_block(
             )
 
     if isinstance(security_context, ToolRunSecurityContext) and not approval_claimed:
-        decision = security_context.decision_for(
-            getattr(block, "tool_type", None),
-            getattr(block, "content", None),
-        )
+        if isinstance(authority, RequestAuthority):
+            with bind_request_authority(authority):
+                decision = security_context.decision_for(
+                    getattr(block, "tool_type", None),
+                    getattr(block, "content", None),
+                )
+        else:
+            decision = security_context.decision_for(
+                getattr(block, "tool_type", None),
+                getattr(block, "content", None),
+            )
         if not decision.allowed:
             logger.warning(
                 "External-context policy blocked tool=%r",
@@ -2555,6 +2562,16 @@ def _compact_binary_like_output(value: object) -> str:
 
 def format_tool_result(description: str, result: Dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
+    if (
+        description.startswith("manage_documents:")
+        and isinstance(result.get("document"), dict)
+        and "response" in result
+    ):
+        # Document reads already budget their complete page, anchor and
+        # next_offset notice. A heading or a second JSON copy of the content
+        # would exhaust that budget and obscure the continuation again.
+        return _truncate(result["response"])
+
     parts = [f"### {description}"]
 
     if "stdout" in result:
