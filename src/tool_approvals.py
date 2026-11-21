@@ -87,11 +87,38 @@ def _normalized_selected_tools(
         return ()
 
 
+_MAX_APPROVAL_SIBLING_CALLS = 16
+
+
 def _normalized_continuation_query(value: Any) -> str:
     # The query is server-derived from the interrupted run and already lives in
     # session history. Keep the pending copy bounded because approvals are held
     # in memory until consumed or expired.
     return str(value or "").strip()[:_MAX_APPROVAL_CONTINUATION_QUERY_CHARS]
+
+
+def _normalized_pending_sibling_calls(
+    pending_sibling_calls: Any,
+) -> tuple[tuple[str, str], ...]:
+    if not pending_sibling_calls or isinstance(pending_sibling_calls, (str, bytes)):
+        return ()
+    try:
+        normalized: list[tuple[str, str]] = []
+        for entry in pending_sibling_calls:
+            if isinstance(entry, (str, bytes)):
+                continue
+            pair = tuple(entry)
+            if len(pair) != 2:
+                continue
+            tool_name = str(pair[0] or "").strip()
+            if not tool_name or len(tool_name) > _MAX_APPROVAL_TOOL_NAME_CHARS:
+                continue
+            normalized.append((tool_name, str(pair[1] or "")))
+            if len(normalized) >= _MAX_APPROVAL_SIBLING_CALLS:
+                break
+        return tuple(normalized)
+    except TypeError:
+        return ()
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -123,6 +150,7 @@ def _binding_payload(
     external_untrusted_context_seen: bool,
     selected_tools: Any,
     continuation_query: Any,
+    pending_sibling_calls: Any = None,
     effects: tuple[str, ...],
     result_integrity: str,
     request_authority: RequestAuthority | None = None,
@@ -149,6 +177,12 @@ def _binding_payload(
             _normalized_selected_tools(selected_tools, required_tool=tool_name)
         ),
         "continuation_query": _normalized_continuation_query(continuation_query),
+        "pending_sibling_calls": [
+            [sibling_tool, sibling_content]
+            for sibling_tool, sibling_content in _normalized_pending_sibling_calls(
+                pending_sibling_calls
+            )
+        ],
         "effects": list(effects),
         "result_integrity": str(result_integrity),
         "request_authority": request_authority.to_dict() if request_authority is not None else None,
@@ -182,6 +216,7 @@ class PendingToolApproval:
     # exposed in the browser payload.
     selected_tools: tuple[str, ...] = ()
     continuation_query: str = ""
+    pending_sibling_calls: tuple[tuple[str, str], ...] = ()
     # The originating user request is internal continuation context only; it
     # is never displayed or treated as authorization for the sealed action.
     request_text: str = ""
@@ -298,6 +333,7 @@ class ExactToolApproval:
             ),
             selected_tools=self.pending.selected_tools,
             continuation_query=self.pending.continuation_query,
+            pending_sibling_calls=self.pending.pending_sibling_calls,
             effects=effects,
             result_integrity=result_integrity,
             request_authority=self.pending.request_authority,
@@ -386,6 +422,7 @@ class ToolApprovalStore:
         document_digest: Any = None,
         selected_tools: Any = None,
         continuation_query: Any = None,
+        pending_sibling_calls: Any = None,
         external_untrusted_context_seen: bool,
         capabilities: ToolCapabilities,
         request_text: Any = "",
@@ -485,6 +522,7 @@ class ToolApprovalStore:
             external_untrusted_context_seen=external_untrusted_context_seen,
             selected_tools=selected_tools,
             continuation_query=continuation_query,
+            pending_sibling_calls=pending_sibling_calls,
             effects=effects,
             result_integrity=result_integrity,
             request_authority=request_authority,
@@ -515,6 +553,9 @@ class ToolApprovalStore:
             expires_at=now + self._ttl_seconds,
             selected_tools=tuple(payload["selected_tools"]),
             continuation_query=payload["continuation_query"],
+            pending_sibling_calls=tuple(
+                (entry[0], entry[1]) for entry in payload["pending_sibling_calls"]
+            ),
             request_text=str(request_text or ""),
             request_authority=request_authority,
             resource_operation=resource_operation,

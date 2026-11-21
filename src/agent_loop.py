@@ -25523,6 +25523,7 @@ async def stream_agent_loop(
     _approved_result_injected = False
     _approved_effectful_completed = False
     _approved_read_completed = False
+    _pending_sibling_blocks: list[ToolBlock] = []
     round_reasoning = ""
     if exact_approval is not None:
         approved = exact_approval.pending
@@ -25991,8 +25992,17 @@ async def stream_agent_loop(
             ],
             allow_visual_evidence=_allow_visual_tool_evidence_for_model(model),
         )
+        if approval_matches:
+            _pending_sibling_blocks = [
+                ToolBlock(sibling_tool, sibling_content)
+                for sibling_tool, sibling_content in (
+                    getattr(approved, "pending_sibling_calls", ()) or ()
+                )
+                if sibling_tool
+            ]
         _approved_effectful = (
             tool_result_is_successful(approved_result)
+            and not _pending_sibling_blocks
             and (
                 (approved.tool_name == "manage_notes" and _approved_action in {"add", "create", "edit", "update", "delete", "remove"})
                 or (approved.tool_name == "manage_calendar" and _approved_action in {"create", "create_event", "update", "update_event", "delete", "delete_event"})
@@ -26045,7 +26055,7 @@ async def stream_agent_loop(
                 # above because their result is an intermediate locator for
                 # a following mutation.
                 _approved_terminal_summary = approved_output.strip()
-        if _approved_terminal_summary:
+        if _approved_terminal_summary and not _pending_sibling_blocks:
             full_response = _approved_terminal_summary
             # Replace the pending approval question with the authoritative
             # read result on the continuation stream.
@@ -26098,6361 +26108,6382 @@ async def stream_agent_loop(
         native_tool_calls = []  # populated if model uses function calling
         _qwen_live_visible_text = ""
         _qwen_round_streamed_live = False
-
-        if _artifact_mutation_only_mode:
-            _current_missing = EvidenceLedger.from_tool_events(
-                tool_events, _completion_requirements
-            ).evaluate().missing_artifacts
-            _local_media_derivation = bool(
-                workspace
-                and _native_local_media_inputs(_last_user, client_runtime_context)
-            )
-            _mutation_surface = _artifact_mutation_surface_for_missing(
-                _current_missing,
-                local_media_derivation=_local_media_derivation,
-                browser_render=_artifact_browser_render_required(
-                    _last_user, _html_artifact_paths,
-                ),
-                source_media_extraction=_source_media_extraction_requested,
-            )
-            _available_surface = set(_artifact_recovery_relevant_tools or ())
-            # Recovery is mutation-focused, but it must not erase the
-            # capability contract of the original task.  In particular, a
-            # failed write on a media -> HTML task still needs the native
-            # reader and browser verifier on the next round.  Narrowing to
-            # write/python/inspect alone turns a recoverable parse failure
-            # into an unoffered-tool loop (the model asks for read_file or
-            # private_browser, and the resolver drops it).  Keep these
-            # bounded follow-through capabilities available; the existing
-            # observation/recovery budgets still prevent open-ended reads.
-            _recovery_capability_floor = _artifact_recovery_capability_floor(
-                local_media_derivation=_local_media_derivation,
-                browser_render=_artifact_browser_render_required(
-                    _last_user, _html_artifact_paths,
-                ),
-            )
-            _selected_mutation_surface = _artifact_mutation_route_surface(
-                mutation_surface=_mutation_surface,
-                capability_floor=_recovery_capability_floor,
-                available_surface=_available_surface,
-                disabled_tools=set(disabled_tools or ()),
-                hard_blocked_tools=set(_hard_blocked_tools),
-                native_terminal_runtime=_native_terminal_runtime,
-            )
-            # Once a transformed local-media task has exhausted its bounded
-            # observation budget, inspection is no longer a valid recovery
-            # action. Keeping it in the schema lets a model repeatedly request
-            # the same read, which the post-redirect guard suppresses without
-            # ever reaching the required Bash mutation.
-            if (
-                _local_media_derivation
-                and not _source_media_extraction_requested
-                and _artifact_followthrough_media_inspections >= 2
-            ):
-                _selected_mutation_surface.difference_update({
-                    "inspect_media", "transcribe_media",
-                })
-            if not _selected_mutation_surface:
-                _selected_mutation_surface = {
-                    "bash", "host_shell", "python",
-                } & _available_surface
-            if _selected_mutation_surface:
-                _relevant_tools = _selected_mutation_surface
-        elif _artifact_acquisition_recovery_active:
-            _available_surface = set(_artifact_recovery_relevant_tools or _relevant_tools or ())
-            _selected_acquisition_surface = (
-                {"pdf_extract", "web_fetch", "web_search", "private_browser"}
-                & _available_surface
-            )
-            _acquisition_mutation_floor = (
-                {
-                    "python", "write_file", "read_file", "ls", "grep",
-                    "glob", "edit_file", "apply_patch", "bash",
-                }
-                & _available_surface
-            )
-            if _selected_acquisition_surface or _acquisition_mutation_floor:
-                # Keep the artifact writer surface alive while source
-                # acquisition is still in progress. Otherwise each next
-                # round overwrites the preserved floor with only web tools.
-                _relevant_tools = (
-                    _selected_acquisition_surface
-                    | _acquisition_mutation_floor
-                )
-
-        # A tool-heavy turn can grow past the context budget after the first
-        # round even when the original request fit comfortably.  The initial
-        # route is compacted during route construction, but subsequent rounds
-        # used to rely on trimming alone.  Prepare a deferred compaction for
-        # every later round so the active coding task survives large diffs,
-        # test logs, and host-shell output.  It is persisted only when the
-        # selected candidate emits a model event, just like initial fallback
-        # compaction.
-        _round_compaction_state: Dict = {}
-        if round_num > 1:
-            _round_compaction_options = (
-                {"deterministic": True} if _deterministic_compaction else {}
-            )
-            _compacted_messages, _round_context_length, _round_was_compacted = await maybe_compact(
-                None,
-                endpoint_url,
-                model,
-                messages,
-                headers,
-                owner=owner,
-                persist=False,
-                compaction_state=_round_compaction_state,
-                **_round_compaction_options,
-            )
-            if _round_was_compacted:
-                messages = _compacted_messages
-                logger.info(
-                    "[agent] deferred compaction prepared for round %s",
-                    round_num,
-                )
-
-        # A host bridge transport failure is terminal for this turn.  The
-        # tool event has already been emitted and appended below; avoid a
-        # second LLM round that can only paraphrase the same failure.
-        if _host_bridge_failed_turn:
-            _bridge_response = _host_bridge_failure_response()
-            round_response = _bridge_response
-            full_response += _bridge_response
-            round_texts.append(_bridge_response)
-            round_models.append(actual_model)
-            round_endpoint_ids.append(actual_endpoint_id)
-            round_endpoint_labels.append(actual_endpoint_label)
-            yield f'data: {json.dumps({"delta": _bridge_response})}\n\n'
-            break
-
-        if _web_fetch_needs_private_browser and "private_browser" not in disabled_tools:
-            if _relevant_tools is None:
-                from src.tool_index import ALWAYS_AVAILABLE
-                _relevant_tools = set(ALWAYS_AVAILABLE)
-            _relevant_tools.update({"web_search", "web_fetch", "private_browser"})
-        if _private_browser_needs_static_fallback:
-            if _relevant_tools is None:
-                _relevant_tools = set()
-            _relevant_tools.update({"web_search", "web_fetch"})
-            _relevant_tools.discard("private_browser")
-        if _pure_web_turn:
-            _relevant_tools = _web_only_route_tools(_last_user, disabled_tools)
-            if _private_browser_needs_static_fallback:
-                _relevant_tools.discard("private_browser")
-        if (
-            not guide_only
-            and not _explicit_no_web_lookup
-            and _map_browser_turn
-            and "private_browser" not in disabled_tools
-            and not _private_browser_needs_static_fallback
-        ):
-            if _relevant_tools is None:
-                from src.tool_index import ALWAYS_AVAILABLE
-                _relevant_tools = set(ALWAYS_AVAILABLE)
-            _relevant_tools.update({"web_search", "web_fetch", "private_browser"})
-        if normalized_external_tool_schemas and not guide_only:
-            if _relevant_tools is None:
-                _relevant_tools = set()
-            _relevant_tools.update(
-                schema["function"]["name"]
-                for schema in normalized_external_tool_schemas
-                if schema["function"]["name"] not in disabled_tools
-            )
-
-        _workspace_read_floor = _native_unattended_workspace_read_floor(
-            client_runtime_context,
-            workspace,
-            normalized_external_tool_schemas,
-            set(disabled_tools or ()),
-            set(_hard_blocked_tools),
-        )
-        if _workspace_read_floor:
-            if _relevant_tools is None:
-                _relevant_tools = set()
-            _relevant_tools.update(_workspace_read_floor)
-
-        if _source_media_extraction_requested and _relevant_tools is not None:
-            # Final provenance boundary: route construction, fallbacks, and
-            # environment-declared schemas can all rebuild the tool surface.
-            # Clamp immediately before schemas are materialized so no round
-            # can fabricate a requested source frame or clip.
-            _source_recovery_missing = (
-                EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate().missing_artifacts
-                if _artifact_mutation_only_mode
-                else ()
-            )
-            # Direct source-media tasks may also declare a textual companion
-            # (for example answer.txt or timestamp.txt).  Preserve its
-            # provenance-safe writer at the schema boundary from the initial
-            # route onward; previously this was enabled only after entering
-            # recovery, causing valid write_file calls to be dropped before
-            # recovery could even begin.
-            _source_companion_tools = _source_media_text_companion_recovery_tools(
-                _workspace_artifacts,
-                recovery_active=True,
-            )
-            if _artifact_mutation_only_mode:
-                _source_companion_tools.update(
-                    _source_media_text_companion_recovery_tools(
-                        _source_recovery_missing,
-                        recovery_active=True,
-                    )
-                )
-            _source_companion_tools -= _hard_blocked_tools | set(disabled_tools)
-            _relevant_tools.difference_update({
-                "python", "bash", "host_shell", "write_file", "edit_file",
-                "apply_patch", "generate_image", "edit_image",
-            } - _source_companion_tools)
-            _relevant_tools.update(_source_companion_tools)
-
-        _network_recovery_floor = (
-            _blocked_network_recovery_tools(tool_events)
-            - set(disabled_tools)
-            - set(_hard_blocked_tools)
-        )
-        if _network_recovery_floor:
-            if _relevant_tools is None:
-                _relevant_tools = set()
-            _relevant_tools.update(_network_recovery_floor)
-
-        _active_route_state = {
-            "messages": messages,
-            "mcp_schemas": mcp_schemas,
-            "relevant_tools": _relevant_tools,
-            "is_api_model": _is_api_model,
-            "is_ollama_native": _is_ollama_native,
-            "ollama_openai_compat": _ollama_openai_compat,
-            "tool_surface": _route_state.get("tool_surface", ""),
-            "spec_offered": _route_state.get("spec_offered"),
-            "spec_surface": _route_state.get("spec_surface"),
-            "ody_qwen_finetune_model": _ody_qwen_finetune_model,
-            "qwen38_tool_router": _qwen38_tool_router,
-            "ody_doc_finetune_mode": _ody_doc_finetune_mode,
-            "ody_notes_finetune_mode": _ody_notes_finetune_mode,
-            "ody_doc_stream_create_mode": _ody_doc_stream_create_mode,
-            "compaction_state": (
-                _route_state.get("compaction_state", {})
-                if round_num == 1
-                else _round_compaction_state
-            ),
-        }
-        if round_num == 1 and not _approved_result_injected:
-            _active_route_state["request_messages"] = _initial_route_request_messages
-        all_tool_schemas = _tool_schemas_for_route(_active_route_state)
-        if turn_contract is not None:
-            _relevant_tools = (
-                set(_route_state.get("spec_offered"))
-                if _route_state.get("spec_offered")
-                else set(turn_contract.offered)
-            )
-        agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
-
-        _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
-        if round_num == 1:
-            try:
-                logger.info("[spec-debug] prompt composition (chars): %s", [(m.get("role"), len(str(m.get("content") or ""))) for m in messages])
-            except Exception:
-                pass
-        logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent} relevant_tools={sorted(_relevant_tools)[:50] if _relevant_tools else 'ALL'}")
-        _routing_intentional_exclusions = set(disabled_tools)
-        if (
-            _native_artifact_runtime
-            and _artifact_creation_requested
-            and _normalize_model_tool_surface(
-                _active_route_state.get("tool_surface")
-            ) != "full"
-        ):
-            _selected_for_audit = set(_relevant_tools or set())
-            _artifact_allowed_for_audit = _compact_native_artifact_tools(
-                _selected_for_audit,
-                text=_last_user,
-                artifacts=_workspace_artifacts,
-                media_inputs=_local_media_files,
-            )
-            _routing_intentional_exclusions.update(
-                _selected_for_audit - _artifact_allowed_for_audit
-            )
-        _routing_audit = _tool_routing_audit_payload(
-            round_num=round_num,
-            retrieved_tools=_base_relevant_tools,
-            selected_tools=_relevant_tools,
-            offered_tools=_tool_names_sent,
-            declared_tools={
-                schema["function"]["name"]
-                for schema in normalized_external_tool_schemas
-            },
-            excluded_tools=_routing_intentional_exclusions,
-            offering_suppressed_reason=(
-                "forced_final_answer"
-                if _force_answer
-                else (
-                    "tool_surface_none"
-                    if _normalize_model_tool_surface(
-                        _active_route_state.get("tool_surface")
-                    ) == "none"
-                    else (
-                        "textual_tool_transport"
-                        if not all_tool_schemas and not _is_api_model
-                        else None
-                    )
-                )
-            ),
-            prompt_tokens=estimate_tokens(
-                _active_route_state.get("request_messages")
-                or _active_route_state.get("messages")
-                or []
-            ),
-            transport=(
-                "native_schema"
-                if all_tool_schemas
-                else ("textual" if not _is_api_model else "none")
-            ),
-            system_prompt_chars=sum(
-                len(str(message.get("content") or ""))
-                for message in (
-                    _active_route_state.get("request_messages")
-                    or _active_route_state.get("messages")
-                    or []
-                )
-                if message.get("role") == "system"
-            ),
-            tool_schema_chars=len(json.dumps(all_tool_schemas or [], sort_keys=True)),
-        )
-        logger.info("[agent-routing-audit] %s", json.dumps(_routing_audit, sort_keys=True))
-        yield f'data: {json.dumps(_routing_audit)}\n\n'
-
-        # Once a fallback produces substantive output, keep that exact route
-        # pinned for every later tool round instead of retrying the primary.
-        def _runtime_candidate(candidate):
-            candidate_url, candidate_model, candidate_headers = candidate
-            try:
-                from src.endpoint_resolver import _rewrite_docker_host_for_native_runtime
-
-                candidate_url = _rewrite_docker_host_for_native_runtime(candidate_url)
-            except Exception:
-                pass
-            return candidate_url, candidate_model, candidate_headers
-
-        if _pinned_fallback_candidate:
-            _raw_candidates = [_runtime_candidate(_pinned_fallback_candidate)]
-            _raw_route_descriptors = [_pinned_fallback_route or {}]
-        else:
-            _raw_candidates = [
-                _runtime_candidate((endpoint_url, model, headers))
-            ] + [_runtime_candidate(candidate) for candidate in (fallbacks or [])]
-            _raw_route_descriptors = route_descriptors
-        _candidates = dedupe_model_candidates(_raw_candidates)
-        _candidate_route_descriptors = []
-        for candidate in _candidates:
-            source_index = next(
-                (
-                    index
-                    for index, source in enumerate(_raw_candidates)
-                    if source == candidate
-                ),
-                0,
-            )
-            _candidate_route_descriptors.append(
-                _raw_route_descriptors[source_index]
-                if source_index < len(_raw_route_descriptors)
-                else {}
-            )
-        _candidate_request_states = {0: _active_route_state}
-
-        async def _candidate_request(index, candidate_url, candidate_model, candidate_headers):
-            nonlocal _last_route_request_messages, _last_route_context_length
-            if index == 0:
-                state = _active_route_state
-            else:
-                candidate_source_messages = (
-                    _initial_route_source_messages if round_num == 1 else messages
-                )
-                state = await _build_route_request_state(
-                    candidate_url,
-                    candidate_model,
-                    candidate_headers,
-                    candidate_source_messages,
-                    _candidate_route_descriptors[index]
-                    if index < len(_candidate_route_descriptors)
-                    else {},
-                )
-            request_messages = state.get("request_messages")
-            if request_messages is None:
-                request_messages = _trim_route_request_messages(
-                    candidate_url,
-                    candidate_model,
-                    state["messages"],
-                )
-            deepseek_visual_messages = None
-            if _is_deepseek_flash_vision_model(candidate_model):
-                deepseek_visual_messages = _deepseek_flash_visual_continuation(
-                    request_messages,
-                    _last_user,
-                )
-                if deepseek_visual_messages is not None:
-                    request_messages = deepseek_visual_messages
-                    logger.info(
-                        "[agent] flattened DeepSeek Flash post-tool visual "
-                        "continuation and suppressed redundant inspect_media"
-                    )
-            state["request_messages"] = request_messages
-            _last_route_request_messages = request_messages
-            state["context_length"] = _route_context_lengths.get(
-                (candidate_url, candidate_model),
-                context_length,
-            )
-            _last_route_context_length = state["context_length"]
-            run_security.observe_messages(request_messages)
-            candidate_tools = _tool_schemas_for_route(state)
-            if deepseek_visual_messages is not None:
-                candidate_tools = [
-                    schema
-                    for schema in candidate_tools or ()
-                    if schema.get("function", {}).get("name") != "inspect_media"
-                ]
-            state["tools"] = candidate_tools
-            from src.generation_budget import fit_output_token_budget
-
-            candidate_max_tokens = fit_output_token_budget(
-                max_tokens,
-                state["context_length"],
-                request_messages,
-                candidate_tools,
-            )
-            # Once a verified artifact has triggered the one-shot finish
-            # nudge, a normal final response can be short.  The first response
-            # after that nudge is also the only permitted evidence-based
-            # correction, however, and may need to rewrite a complete HTML or
-            # SVG artifact.  Do not cap that response at 2048 tokens: a large
-            # native write call would be truncated into invalid JSON and the
-            # model would loop on rejected retries.  Once the correction has
-            # itself been verified, the convergence response remains bounded.
-            if _artifact_finish_nudge_sent and _artifact_finish_correction_seen:
-                candidate_max_tokens = min(candidate_max_tokens, 2048)
-            state["max_tokens"] = candidate_max_tokens
-            if candidate_max_tokens != max_tokens:
-                logger.info(
-                    "[agent] bounded route output model=%s max_tokens=%s -> %s "
-                    "(context=%s)",
-                    candidate_model,
-                    max_tokens,
-                    candidate_max_tokens,
-                    state["context_length"],
-                )
-            _candidate_request_states[index] = state
-            return {
-                "messages": request_messages,
-                "kwargs": {
-                    "max_tokens": candidate_max_tokens,
-                    "tools": candidate_tools or None,
-                    "tool_choice_none": state["ody_doc_finetune_mode"],
-                    "temperature": (
-                        _ody_qwen_temperature_cap(_requested_temperature)
-                        if _is_odysseus_qwen_model(candidate_model)
-                        else _requested_temperature
-                    ),
-                    "thinking_mode": state.get("thinking_mode"),
-                    "reasoning_effort": reasoning_effort,
-                },
-            }
-
-        async def _candidate_capability_recovery(
-            index,
-            candidate_url,
-            candidate_model,
-            candidate_headers,
-            error_chunk,
-        ):
-            nonlocal messages, mcp_schemas, _relevant_tools, _is_api_model
-            nonlocal _is_ollama_native, _ollama_openai_compat, _route_state
-            nonlocal _active_route_state, _last_route_request_messages
-            nonlocal _last_route_context_length
-
-            _disable_native_tools_temporarily(candidate_url, candidate_model)
-            candidate_source_messages = (
-                _initial_route_source_messages if round_num == 1 else messages
-            )
-            state = await _build_route_request_state(
-                candidate_url,
-                candidate_model,
-                candidate_headers,
-                candidate_source_messages,
-                _candidate_route_descriptors[index]
-                if index < len(_candidate_route_descriptors)
-                else {},
-                force_textual_tools=True,
-            )
-            request_messages = _trim_route_request_messages(
-                candidate_url,
-                candidate_model,
-                state["messages"],
-            )
-            state["request_messages"] = request_messages
-            state["tools"] = []
-            state["context_length"] = _route_context_lengths.get(
-                (candidate_url, candidate_model),
-                context_length,
-            )
-            _candidate_request_states[index] = state
-            _last_route_request_messages = request_messages
-            _last_route_context_length = state["context_length"]
-
-            if index == 0:
-                _active_route_state = state
-                _route_state = state
-                messages = state["messages"]
-                mcp_schemas = state["mcp_schemas"]
-                _relevant_tools = state["relevant_tools"]
-                _is_api_model = False
-                _is_ollama_native = False
-                _ollama_openai_compat = False
-
-            from src.generation_budget import fit_output_token_budget
-
-            recovered_max_tokens = fit_output_token_budget(
-                max_tokens,
-                state["context_length"],
-                request_messages,
-                [],
-            )
-            return {
-                "messages": request_messages,
-                "kwargs": {
-                    "max_tokens": recovered_max_tokens,
-                    "tools": None,
-                    "tool_choice_none": state["ody_doc_finetune_mode"],
-                    "thinking_mode": state.get("thinking_mode"),
-                },
-            }
-
-        def _apply_candidate_compaction(index: int) -> bool:
-            state = _candidate_request_states.get(index) or {}
-            if history_session is not None:
-                return apply_compaction_state(
-                    history_session,
-                    state.get("compaction_state"),
-                )
-            return apply_compaction_state_for_session(
-                session_id,
-                state.get("compaction_state"),
-            )
-        # stream_llm enforces a per-read INACTIVITY timeout (httpx read=timeout),
-        # which kills a wedged/silent endpoint. This wall-clock deadline is the
-        # complementary cap for the rare stream that trickles bytes forever and
-        # so never trips the inactivity timeout. Generous — only catches runaway.
-        _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
-        _round_start = time.time()
-        _round_first_event_logged = False
-        _round_first_token_logged = False
-        _round_actual_model = model
+        _active_route_state = _route_state
+        _round_actual_model = actual_model
         _round_actual_endpoint_id = actual_endpoint_id
         _round_actual_endpoint_label = actual_endpoint_label
-        _round_real_input_tokens = 0
-        _round_real_output_tokens = 0
-        _round_has_real_usage = False
-        _round_usage_finalized = False
-        # Some API models (notably DeepSeek) stream DSML/XML tool calls as
-        # ordinary text instead of emitting structured tool-call events. Keep
-        # that markup out of the live transcript while retaining it in
-        # round_response for the parser below.
-        _streamed_tool_markup = ""
-        candidate_index = 0
-
-        def _finalize_round_usage(*, include_empty: bool = True):
-            nonlocal _round_usage_finalized
-            if _round_usage_finalized:
-                return
-            _round_usage_finalized = True
-            if (
-                not include_empty
-                and not _round_has_real_usage
-                and not round_response
-                and not round_reasoning
-                and not native_tool_calls
-            ):
-                return
-            if _round_has_real_usage:
-                round_input_tokens = _round_real_input_tokens
-                round_output_tokens = _round_real_output_tokens
-                usage_source = "real"
-            else:
-                round_input_tokens = estimate_tokens(_last_route_request_messages)
-                round_output_tokens = max(
-                    len(round_response + round_reasoning) // 4,
-                    0,
-                )
-                usage_source = "estimated"
-            usage_buckets.append(_usage_bucket(
-                round_num=round_num,
-                model=_round_actual_model,
-                endpoint_id=_round_actual_endpoint_id,
-                endpoint_label=_round_actual_endpoint_label,
-                endpoint_cost_tracked=actual_endpoint_cost_tracked,
-                input_tokens=round_input_tokens,
-                output_tokens=round_output_tokens,
-                usage_source=usage_source,
-            ))
-        if (
-            round_num == 1
-            and not guide_only
-            and not _approved_result_injected
-            and not _native_terminal_runtime
-            and not normalized_external_tool_schemas
-            and "manage_calendar" not in disabled_tools
-            and set(_intent_domains) <= {"calendar"}
-            and not _parse_qwen_explicit_chat_transcript_search(_last_user)
-        ):
-            _preemptive_calendar_ask = _parse_ambiguous_calendar_date_ask_user(_last_user)
-            if _preemptive_calendar_ask:
-                _ask_tool, _ask_content = _preemptive_calendar_ask
-                _ask_payload = {}
-                try:
-                    _ask_payload = json.loads(_ask_content or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    _ask_payload = {}
-                if _ask_tool == "ask_user" and isinstance(_ask_payload, dict):
-                    _ask_question = str(_ask_payload.get("question") or "").strip()
-                    if not _ask_question:
-                        _ask_question = "What exact date should I use?"
-                        _ask_payload["question"] = _ask_question
-                    yield (
-                        "data: "
-                        + json.dumps({"type": "final_response", "content": _ask_question})
-                        + "\n\n"
-                    )
-                    yield f"data: {json.dumps({'type': 'ask_user', 'data': _ask_payload})}\n\n"
-                    tool_events.append({
-                        "round": round_num,
-                        "model": _round_actual_model,
-                        "endpoint_id": _round_actual_endpoint_id,
-                        "endpoint_label": _round_actual_endpoint_label,
-                        "tool": "ask_user",
-                        "desc": "ask_user",
-                        "command": json.dumps(_ask_payload, ensure_ascii=False),
-                        "output": _ask_question,
-                        "exit_code": None,
-                        "ask_user": _ask_payload,
-                        "fallback": "preemptive_calendar_missing_date",
-                    })
-                    full_response = _ask_question
-                    round_response = full_response
-                    round_texts.append(full_response)
-                    round_models.append(_round_actual_model)
-                    round_endpoint_ids.append(_round_actual_endpoint_id)
-                    round_endpoint_labels.append(_round_actual_endpoint_label)
-                    _awaiting_user = True
-                    _finalize_round_usage()
-                    logger.info("[agent] completed preemptive calendar ask_user")
-                    break
-            _preemptive_calendar_request = _parse_simple_calendar_tool_request(
-                _last_user,
-                messages,
-                history_session,
-            )
-            _preemptive_calendar_action = ""
-            _preemptive_calendar_args = None
-            if _preemptive_calendar_request:
-                _preemptive_calendar_tool, _preemptive_calendar_content = _preemptive_calendar_request
-                try:
-                    _preemptive_calendar_args = json.loads(_preemptive_calendar_content or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    _preemptive_calendar_args = None
-                if isinstance(_preemptive_calendar_args, dict):
-                    _preemptive_calendar_action = str(
-                        _preemptive_calendar_args.get("action") or ""
-                    ).strip().lower()
-            if (
-                _preemptive_calendar_request
-                and _preemptive_calendar_tool == "manage_calendar"
-                and _preemptive_calendar_action in {"list", "list_events"}
-            ):
-                _preemptive_block = ToolBlock("manage_calendar", _preemptive_calendar_content)
-                yield (
-                    "data: "
-                    + json.dumps({
-                        "type": "tool_start",
-                        "tool": "manage_calendar",
-                        "command": _preemptive_calendar_content,
-                        "full_command": _preemptive_calendar_content,
-                        "round": round_num,
-                        "fallback": "preemptive_calendar_lookup",
-                    })
-                    + "\n\n"
-                )
-                try:
-                    _preemptive_desc, _preemptive_result = await execute_tool_block(
-                        _preemptive_block,
-                        session_id=session_id,
-                        disabled_tools=set(disabled_tools) | _caller_hard_denials,
-                        tool_policy=tool_policy,
-                        owner=owner,
-                        workspace=workspace,
-                        security_context=run_security,
-                        active_document_id=(
-                            getattr(active_document, "id", None)
-                            if active_document is not None
-                            else None
-                        ),
-                        client_runtime_context=client_runtime_context,
-                    )
-                except Exception as _preemptive_exc:
-                    logger.warning("Preemptive calendar lookup failed: %s", _preemptive_exc, exc_info=True)
-                    _preemptive_desc = "manage_calendar: ERROR"
-                    _preemptive_result = {
-                        "error": "The calendar lookup failed unexpectedly. Check the server log and retry.",
-                        "error_category": "tool_execution_error",
-                        "exit_code": 1,
-                        "output": "",
-                    }
-                _preemptive_output = ""
-                if isinstance(_preemptive_result, dict):
-                    _preemptive_output = str(
-                        _preemptive_result.get("output")
-                        or _preemptive_result.get("results")
-                        or _preemptive_result.get("response")
-                        or _preemptive_result.get("error")
-                        or ""
-                    )
-                _preemptive_tool_output = {
-                    "type": "tool_output",
-                    "tool": "manage_calendar",
-                    "command": _preemptive_calendar_content,
-                    "output": _truncate(_preemptive_output),
-                    "exit_code": (
-                        _preemptive_result.get("exit_code")
-                        if isinstance(_preemptive_result, dict)
-                        else None
-                    ),
-                    "fallback": "preemptive_calendar_lookup",
-                }
-                if isinstance(_preemptive_result, dict) and isinstance(_preemptive_result.get("events"), list):
-                    _preemptive_tool_output["events"] = _preemptive_result.get("events")
-                if isinstance(_preemptive_result, dict) and _preemptive_result.get("error_category") == "tool_execution_error":
-                    _preemptive_tool_output["error_category"] = "tool_execution_error"
-                yield f"data: {json.dumps(_preemptive_tool_output)}\n\n"
-                _preemptive_tool_event = {
-                    "round": round_num,
-                    "model": _round_actual_model,
-                    "endpoint_id": _round_actual_endpoint_id,
-                    "endpoint_label": _round_actual_endpoint_label,
-                    "tool": "manage_calendar",
-                    "desc": _preemptive_desc,
-                    "command": _preemptive_calendar_content,
-                    "output": _truncate(_preemptive_output),
-                    "exit_code": (
-                        _preemptive_result.get("exit_code")
-                        if isinstance(_preemptive_result, dict)
-                        else None
-                    ),
-                    "fallback": "preemptive_calendar_lookup",
-                }
-                if isinstance(_preemptive_result, dict) and isinstance(_preemptive_result.get("events"), list):
-                    _preemptive_tool_event["events"] = _preemptive_result.get("events")
-                tool_events.append(_preemptive_tool_event)
-                total_tool_calls += 1
-                run_security.observe_tool_result(
-                    "manage_calendar",
-                    _preemptive_result if isinstance(_preemptive_result, dict) else {},
-                    _preemptive_calendar_content,
-                )
-                _preemptive_summary = ""
-                if not (isinstance(_preemptive_result, dict) and _preemptive_result.get("error")):
-                    _preemptive_summary = _calendar_list_summary_from_tool_output(
-                        _preemptive_output,
-                        include_details=_calendar_detail_requested(_last_user),
-                        user_text=_last_user,
-                    )
-                full_response = _preemptive_summary or _preemptive_output.strip() or "No calendar events found."
-                round_response = full_response
-                round_texts.append(full_response)
-                round_models.append(_round_actual_model)
-                round_endpoint_ids.append(_round_actual_endpoint_id)
-                round_endpoint_labels.append(_round_actual_endpoint_label)
-                yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
-                _preemptive_calendar_final_emitted = True
-                _finalize_round_usage()
-                logger.info("[agent] completed preemptive calendar lookup")
-                break
-        if (
-            round_num == 1
-            and not guide_only
-            and not _approved_result_injected
-            and not _native_terminal_runtime
-            and not normalized_external_tool_schemas
-            # The explicit topic-bulk path below owns its search-then-bulk
-            # sequence. Other multi-tool requests need the agent's full route.
-            and (
-                len(_caller_relevant_tools or ()) <= 1
-                or (
-                    _caller_relevant_tools == {
-                        "mcp__email__search_emails", "mcp__email__bulk_email",
-                    }
-                    and _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
-                )
-            )
-            and not _request_has_compound_actions(_last_user)
-            # Sealed safe reads use the central required-operation path so
-            # execution and canonical rendering have the same owner.
-            and _required_safe_read_operation(turn_contract) is None
-        ):
-            _preemptive_topic_bulk_email_request = (
-                _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
-                if (
-                    "mcp__email__search_emails" not in disabled_tools
-                    and "mcp__email__bulk_email" not in disabled_tools
-                )
-                else None
-            )
-            _preemptive_explicit_request = (
-                _parse_qwen_explicit_session_action(_last_user, messages)
-                or _parse_qwen_explicit_session_create(_last_user)
-                or _parse_qwen_explicit_session_send(_last_user, messages)
-                or _parse_explicit_cookbook_task_action(_last_user, messages)
-                or _parse_explicit_email_uid_action(_last_user)
-                or (
-                    (
-                        "mcp__email__search_emails",
-                        json.dumps({
-                            "query": _preemptive_topic_bulk_email_request["query"],
-                            "folder": _preemptive_topic_bulk_email_request.get("folder", "INBOX"),
-                            "max_results": _preemptive_topic_bulk_email_request.get("max_results", 50),
-                        }),
-                    )
-                    if _preemptive_topic_bulk_email_request
-                    else None
-                )
-                or _parse_explicit_email_search_tool(_last_user)
-                or _parse_qwen_explicit_create_request(_last_user)
-                or _parse_qwen_explicit_chat_transcript_search(_last_user)
-                or _parse_qwen_explicit_session_find(_last_user)
-                or _parse_qwen_explicit_admin_request(_last_user)
-            )
-            if (
-                _preemptive_explicit_request
-                and _preemptive_explicit_request[0] in {
-                    "create_session",
-                    "list_sessions",
-                    "search_chats",
-                    "manage_session",
-                    "send_to_session",
-                    "manage_research",
-                    "create_document",
-                    "mcp__email__ai_draft_email_reply",
-                    "mcp__email__read_email",
-                    "mcp__email__search_emails",
-                    "mcp__email__mark_email_read",
-                    "mcp__email__archive_email",
-                    "mcp__email__manage_email_state",
-                    "mcp__email__reply_to_email",
-                    "manage_settings",
-                    "manage_endpoints",
-                    "manage_mcp",
-                    "manage_tokens",
-                    "manage_webhooks",
-                    "list_cached_models",
-                    "list_downloads",
-                    "list_cookbook_servers",
-                    "list_serve_presets",
-                    "list_served_models",
-                    "cancel_download",
-                    "stop_served_model",
-                    "tail_serve_output",
-                    "app_api",
-                }
-                and _preemptive_explicit_request[0] not in disabled_tools
-                and (
-                    _caller_relevant_tools is None
-                    or _preemptive_explicit_request[0] in _caller_relevant_tools
-                )
-            ):
-                _preemptive_tool, _preemptive_content = _preemptive_explicit_request
-                _preemptive_block = ToolBlock(_preemptive_tool, _preemptive_content)
-                yield (
-                    "data: "
-                    + json.dumps({
-                        "type": "tool_start",
-                        "tool": _preemptive_tool,
-                        "command": _preemptive_content,
-                        "full_command": _preemptive_content,
-                        "round": round_num,
-                        "fallback": "preemptive_explicit_admin_session",
-                    })
-                    + "\n\n"
-                )
-                try:
-                    _preemptive_desc, _preemptive_result = await execute_tool_block(
-                        _preemptive_block,
-                        session_id=session_id,
-                        disabled_tools=set(disabled_tools) | _caller_hard_denials,
-                        tool_policy=tool_policy,
-                        owner=owner,
-                        workspace=workspace,
-                        security_context=run_security,
-                        active_document_id=(
-                            getattr(active_document, "id", None)
-                            if active_document is not None
-                            else None
-                        ),
-                        client_runtime_context=client_runtime_context,
-                    )
-                except Exception as _preemptive_exc:
-                    logger.warning("Preemptive explicit tool failed: %s", _preemptive_exc, exc_info=True)
-                    _preemptive_desc = f"{_preemptive_tool}: ERROR"
-                    _preemptive_result = {
-                        "error": "The requested tool failed unexpectedly. Check the server log and retry.",
-                        "error_category": "tool_execution_error",
-                        "exit_code": 1,
-                        "output": "",
-                    }
-                _preemptive_output = ""
-                if isinstance(_preemptive_result, dict):
-                    _preemptive_output = str(
-                        _preemptive_result.get("output")
-                        or _preemptive_result.get("results")
-                        or _preemptive_result.get("response")
-                        or _preemptive_result.get("error")
-                        or ""
-                    )
-                _preemptive_tool_output = {
-                    "type": "tool_output",
-                    "tool": _preemptive_tool,
-                    "command": _preemptive_content,
-                    "output": _truncate(_preemptive_output),
-                    "exit_code": (
-                        _preemptive_result.get("exit_code")
-                        if isinstance(_preemptive_result, dict)
-                        else None
-                    ),
-                    "fallback": "preemptive_explicit_admin_session",
-                }
-                if isinstance(_preemptive_result, dict) and _preemptive_result.get("error_category") == "tool_execution_error":
-                    _preemptive_tool_output["error_category"] = "tool_execution_error"
-                yield f"data: {json.dumps(_preemptive_tool_output)}\n\n"
-                _preemptive_tool_event = {
-                    "round": round_num,
-                    "model": _round_actual_model,
-                    "endpoint_id": _round_actual_endpoint_id,
-                    "endpoint_label": _round_actual_endpoint_label,
-                    "tool": _preemptive_tool,
-                    "desc": _preemptive_desc,
-                    "command": _preemptive_content,
-                    "output": _truncate(_preemptive_output),
-                    "exit_code": (
-                        _preemptive_result.get("exit_code")
-                        if isinstance(_preemptive_result, dict)
-                        else None
-                    ),
-                    "fallback": "preemptive_explicit_admin_session",
-                }
-                tool_events.append(_preemptive_tool_event)
-                total_tool_calls += 1
-                run_security.observe_tool_result(
-                    _preemptive_tool,
-                    _preemptive_result if isinstance(_preemptive_result, dict) else {},
-                    _preemptive_content,
-                )
-                _topic_bulk_preemptive_request = (
-                    _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
-                    if (
-                        _preemptive_tool in {"search_emails", "mcp__email__search_emails"}
-                        and not (
-                            isinstance(_preemptive_result, dict)
-                            and _preemptive_result.get("error")
-                        )
-                    )
-                    else None
-                )
-                if _topic_bulk_preemptive_request:
-                    try:
-                        _preemptive_search_args = json.loads(_preemptive_content or "{}")
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        _preemptive_search_args = {}
-                    if not isinstance(_preemptive_search_args, dict):
-                        _preemptive_search_args = {}
-                    _topic_bulk_blocks = _email_bulk_blocks_from_search_output(
-                        _preemptive_output,
-                        action=str(_topic_bulk_preemptive_request.get("action") or ""),
-                        folder=str(
-                            _topic_bulk_preemptive_request.get("folder")
-                            or _preemptive_search_args.get("folder")
-                            or "INBOX"
-                        ),
-                        default_account=str(_preemptive_search_args.get("account") or ""),
-                    )
-                    _topic_bulk_summaries: list[str] = []
-                    if not _topic_bulk_blocks:
-                        full_response = (
-                            "No matching emails found for "
-                            f"`{_topic_bulk_preemptive_request.get('query')}`."
-                        )
-                    elif "mcp__email__bulk_email" in disabled_tools:
-                        full_response = "Matching emails were found, but the bulk email tool is disabled."
-                    else:
-                        for _topic_bulk_block in _topic_bulk_blocks:
-                            yield (
-                                "data: "
-                                + json.dumps({
-                                    "type": "tool_start",
-                                    "tool": _topic_bulk_block.tool_type,
-                                    "command": _topic_bulk_block.content,
-                                    "full_command": _topic_bulk_block.content,
-                                    "round": round_num,
-                                    "fallback": "preemptive_topic_bulk_email",
-                                })
-                                + "\n\n"
-                            )
-                            try:
-                                _topic_bulk_desc, _topic_bulk_result = await execute_tool_block(
-                                    _topic_bulk_block,
-                                    session_id=session_id,
-                                    disabled_tools=set(disabled_tools) | _caller_hard_denials,
-                                    tool_policy=tool_policy,
-                                    owner=owner,
-                                    workspace=workspace,
-                                    security_context=run_security,
-                                    active_document_id=(
-                                        getattr(active_document, "id", None)
-                                        if active_document is not None
-                                        else None
-                                    ),
-                                    client_runtime_context=client_runtime_context,
-                                )
-                            except Exception as _topic_bulk_exc:
-                                logger.warning("Preemptive topic bulk email failed: %s", _topic_bulk_exc)
-                                _topic_bulk_desc = f"{_topic_bulk_block.tool_type}: ERROR"
-                                _topic_bulk_result = {
-                                    "error": str(_topic_bulk_exc),
-                                    "exit_code": 1,
-                                    "output": "",
-                                }
-                            _topic_bulk_output = ""
-                            if isinstance(_topic_bulk_result, dict):
-                                _topic_bulk_output = str(
-                                    _topic_bulk_result.get("output")
-                                    or _topic_bulk_result.get("results")
-                                    or _topic_bulk_result.get("response")
-                                    or _topic_bulk_result.get("error")
-                                    or ""
-                                )
-                            yield (
-                                "data: "
-                                + json.dumps({
-                                    "type": "tool_output",
-                                    "tool": _topic_bulk_block.tool_type,
-                                    "command": _topic_bulk_block.content,
-                                    "output": _truncate(_topic_bulk_output),
-                                    "exit_code": (
-                                        _topic_bulk_result.get("exit_code")
-                                        if isinstance(_topic_bulk_result, dict)
-                                        else None
-                                    ),
-                                    "fallback": "preemptive_topic_bulk_email",
-                                })
-                                + "\n\n"
-                            )
-                            _topic_bulk_event = {
-                                "round": round_num,
-                                "model": _round_actual_model,
-                                "endpoint_id": _round_actual_endpoint_id,
-                                "endpoint_label": _round_actual_endpoint_label,
-                                "tool": _topic_bulk_block.tool_type,
-                                "desc": _topic_bulk_desc,
-                                "command": _topic_bulk_block.content,
-                                "output": _truncate(_topic_bulk_output),
-                                "exit_code": (
-                                    _topic_bulk_result.get("exit_code")
-                                    if isinstance(_topic_bulk_result, dict)
-                                    else None
-                                ),
-                                "fallback": "preemptive_topic_bulk_email",
-                            }
-                            tool_events.append(_topic_bulk_event)
-                            total_tool_calls += 1
-                            run_security.observe_tool_result(
-                                _topic_bulk_block.tool_type,
-                                _topic_bulk_result if isinstance(_topic_bulk_result, dict) else {},
-                                _topic_bulk_block.content,
-                            )
-                            _topic_bulk_summary = _ody_qwen_terminal_tool_summary(
-                                _topic_bulk_event,
-                                user_text=_last_user,
-                            )
-                            if _topic_bulk_summary:
-                                _topic_bulk_summaries.append(_topic_bulk_summary)
-                        full_response = "\n".join(dict.fromkeys(_topic_bulk_summaries)).strip()
-                        if not full_response:
-                            full_response = "Bulk email action completed."
-                    round_response = full_response
-                    round_texts.append(full_response)
-                    round_models.append(_round_actual_model)
-                    round_endpoint_ids.append(_round_actual_endpoint_id)
-                    round_endpoint_labels.append(_round_actual_endpoint_label)
-                    if full_response.strip():
-                        yield f"data: {json.dumps({'type': 'final_response', 'content': full_response})}\n\n"
-                    _finalize_round_usage()
-                    logger.info(
-                        "[agent] completed preemptive topic bulk email action=%s",
-                        _topic_bulk_preemptive_request.get("action"),
-                    )
-                    break
-                full_response = _summary_for_preemptive_admin_session_tool(
-                    _preemptive_tool,
-                    _preemptive_content,
-                    _preemptive_result,
-                    _preemptive_output,
-                )
-                round_response = full_response
-                round_texts.append(full_response)
-                round_models.append(_round_actual_model)
-                round_endpoint_ids.append(_round_actual_endpoint_id)
-                round_endpoint_labels.append(_round_actual_endpoint_label)
-                _finalize_round_usage()
-                logger.info("[agent] completed preemptive explicit %s", _preemptive_tool)
-                break
-        logger.info(
-            "[agent-timing] round_start round=%s model=%s endpoint=%s prompt_tokens=%s output_tokens=%s tools=%s native_tools=%s timeout=%s",
-            round_num,
-            model,
-            endpoint_url,
-            estimate_tokens(messages),
-            max_tokens,
-            len(_tool_names_sent),
-            bool(all_tool_schemas),
-            agent_stream_timeout,
-        )
-        if _model_request_capture_enabled():
-            _snapshot_messages = _active_route_state.get("request_messages")
-            if _snapshot_messages is None:
-                _snapshot_messages = _trim_route_request_messages(
-                    endpoint_url,
-                    model,
-                    _active_route_state["messages"],
-                )
-                _active_route_state["request_messages"] = _snapshot_messages
-                _last_route_request_messages = _snapshot_messages
-            yield "data: " + json.dumps({
-                "type": "model_request_snapshot",
-                **_model_request_snapshot(
-                    round_num=round_num,
-                    model=model,
-                    messages=_snapshot_messages,
-                    tools=all_tool_schemas or [],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    prompt_type=prompt_type if round_num == 1 else None,
-                    agent_prompt_mode=(
-                        "odysseus_doc" if _ody_doc_finetune_mode
-                        else "odysseus_notes" if _ody_notes_finetune_mode
-                        else "odysseus_general" if _ody_qwen_finetune_model
-                        else "agent"
-                    ),
-                ),
-            }) + "\n\n"
-        async for chunk in stream_llm_with_fallback(
-            _candidates,
-            messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            prompt_type=prompt_type if round_num == 1 else None,
-            tools=all_tool_schemas if all_tool_schemas else None,
-            tool_choice_none=_ody_doc_finetune_mode,
-            timeout=agent_stream_timeout,
-            session_id=session_id,
-            workload=workload,
-            thinking_mode=thinking_mode,
-            reasoning_effort=reasoning_effort,
-            fallback_statuses=fallback_statuses,
-            fallback_on_empty=fallback_on_empty,
-            candidate_request_factory=_candidate_request,
-            candidate_capability_recovery_factory=_candidate_capability_recovery,
-            candidate_route_descriptors=_candidate_route_descriptors,
-            retry_degenerate_stream_once=_terminal_completion_contract,
-        ):
-            if not _round_first_event_logged:
-                _round_first_event_logged = True
-                logger.info(
-                    "[agent-timing] first_event round=%s elapsed=%.3fs kind=%s",
-                    round_num,
-                    time.time() - _round_start,
-                    "error" if chunk.startswith("event: error") else "data",
-                )
-            if time.time() > _round_deadline:
-                logger.warning(
-                    "[agent-timing] round_deadline round=%s elapsed=%.3fs deadline_s=%s",
-                    round_num,
-                    time.time() - _round_start,
-                    max(agent_stream_timeout * 4, 1200),
-                )
-                break
-            # Forward error events from stream_llm to the frontend
-            if chunk.startswith("event: error"):
-                logger.warning(
-                    "[agent-timing] stream_error round=%s elapsed=%.3fs chunk=%r",
-                    round_num,
-                    time.time() - _round_start,
-                    chunk[:500],
-                )
-                if (
-                    _workspace_read_requires_mutation
-                    and _workspace_model_error_retries < 1
-                ):
-                    _workspace_model_error_retries += 1
-                    # Some local OpenAI-compatible servers advertise a large
-                    # context window but enforce a smaller runtime limit. A
-                    # read-before-edit round can therefore consume most of
-                    # the window and produce an empty completion when the
-                    # default output budget is added. Retry once with a
-                    # bounded coding response budget; tool arguments and a
-                    # focused edit fit comfortably within it.
-                    # A compact-router route may start with a tiny answer cap
-                    # (often 256), which is insufficient for a tool call after
-                    # a file read because the model may spend tokens in its
-                    # reasoning phase. Raise the retry to a bounded 1024-token
-                    # tool-turn budget while still staying below small local
-                    # server context limits.
-                    max_tokens = 1024
-                    logger.info(
-                        "[agent] retrying empty provider response after workspace read "
-                        "with max_tokens=%s",
-                        max_tokens,
-                    )
-                    # The existing no-tool/action nudge below will produce the
-                    # next model request. Do not expose a transient provider
-                    # error or terminate the turn before that retry.
-                    break
-                # Let the completion gate retain the original failure even
-                # when earlier tool evidence supplies useful fallback prose.
-                yield chunk
-                terminal_status = None
-                try:
-                    error_line = next(
-                        line[6:]
-                        for line in chunk.splitlines()
-                        if line.startswith("data: ")
-                    )
-                    error_data = json.loads(error_line)
-                    terminal_status = _normalize_http_status(
-                        error_data.get("status")
-                    )
-                except Exception:
-                    pass
-                terminal_error = {
-                    "message": (
-                        f"Model request failed (HTTP {terminal_status})"
-                        if terminal_status is not None
-                        else "Model request failed"
-                    ),
-                    "status": terminal_status,
-                }
-                _verified_artifact_on_provider_error = bool(
-                    _terminal_completion_contract
-                    and _artifact_creation_requested
-                    and _workspace_mutation_completion_authorized
-                    and _completion_requirements.required_artifacts
-                    and _artifact_has_current_inspection(
-                        tool_events,
-                        _completion_requirements.required_artifacts,
-                    )
-                    and EvidenceLedger.from_tool_events(
-                        tool_events,
-                        _completion_requirements,
-                    ).evaluate().can_complete
-                )
-                if _verified_artifact_on_provider_error:
-                    # The requested deliverable is already present and has
-                    # been inspected after its latest edit. A provider timeout
-                    # during the final prose-only convergence round must not
-                    # erase that completed, independently gradable work.
-                    _finalize_round_usage(include_empty=False)
-                    _artifact_labels = ", ".join(
-                        f"`{Path(path).name or path}`"
-                        for path in _completion_requirements.required_artifacts
-                    )
-                    full_response = (
-                        f"Done. Created and verified {_artifact_labels}."
-                    )
-                    logger.info(
-                        "[agent] recovered verified artifact completion after "
-                        "provider error: %s",
-                        _artifact_labels,
-                    )
-                    yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
-                    return
-                if _web_search_completed and _last_web_search_output:
-                    _finalize_round_usage(include_empty=False)
-                    full_response = _web_search_safety_touch_hygiene_postprocess(
-                        _web_search_user_text,
-                        _web_search_answer_from_evidence(
-                            _web_search_user_text,
-                            _last_web_search_output,
-                        ),
-                    )
-                    yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
-                    return
-                # A provider error is never authority for the harness to run a
-                # tool itself. The model owns query formulation and tool choice;
-                # surface the provider failure instead of silently substituting
-                # a raw user-text web search.
-                _provider_error_public_web_lookup = False
-                if _provider_error_public_web_lookup:
-                    _finalize_round_usage(include_empty=False)
-                    _fallback_block = _normalize_web_search_block_query(
-                        ToolBlock("web_search", _web_search_user_text or _last_user),
-                        _web_search_user_text or _last_user,
-                    )
-                    _fallback_command = _web_search_query_from_block(_fallback_block)
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "tool_start",
-                            "tool": "web_search",
-                            "command": _fallback_command,
-                            "full_command": _fallback_command,
-                            "round": round_num,
-                            "fallback": "provider_empty_public_web_lookup",
-                        })
-                        + "\n\n"
-                    )
-                    try:
-                        _fallback_desc, _fallback_result = await execute_tool_block(
-                            _fallback_block,
-                            session_id=session_id,
-                            disabled_tools=set(disabled_tools) | _caller_hard_denials,
-                            tool_policy=tool_policy,
-                            owner=owner,
-                            workspace=workspace,
-                            security_context=run_security,
-                            active_document_id=(
-                                getattr(active_document, "id", None)
-                                if active_document is not None
-                                else None
-                            ),
-                            client_runtime_context=client_runtime_context,
-                        )
-                    except Exception as _fallback_exc:
-                        logger.warning("[agent] provider-error web fallback failed: %s", _fallback_exc)
-                        _fallback_result = {
-                            "error": str(_fallback_exc),
-                            "exit_code": 1,
-                            "output": "",
-                        }
-                    _fallback_output = str(
-                        _fallback_result.get("output")
-                        or _fallback_result.get("results")
-                        or _fallback_result.get("stdout")
-                        or _fallback_result.get("error")
-                        or ""
-                    )
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "tool_output",
-                            "tool": "web_search",
-                            "command": _fallback_command,
-                            "output": _truncate(_fallback_output),
-                            "exit_code": _fallback_result.get("exit_code"),
-                        })
-                        + "\n\n"
-                    )
-                    if not _fallback_result.get("error") and _fallback_output:
-                        _combined_fallback_output = _fallback_output
-                        if (
-                            not _web_search_fuel_euro_conversion_answer(
-                                _web_search_user_text or _last_user,
-                                _combined_fallback_output,
-                            )
-                            and re.search(r"\b(?:euro|euros|eur)\b|€", _web_search_user_text or _last_user, re.IGNORECASE)
-                            and re.search(r"\b(?:gas|gasoline|petrol|fuel|diesel)\b", _web_search_user_text or _last_user, re.IGNORECASE)
-                            and re.search(r"\b(?:\$|USD|NOK|kr)\b", _fallback_output, re.IGNORECASE)
-                        ):
-                            _fx_terms = ["EUR exchange rate"]
-                            if re.search(r"\b(?:\$|USD)\b", _fallback_output, re.IGNORECASE):
-                                _fx_terms.append("USD EUR")
-                            if re.search(r"\b(?:NOK|kr)\b", _fallback_output, re.IGNORECASE):
-                                _fx_terms.append("NOK EUR")
-                            _fx_query = " ".join(dict.fromkeys(_fx_terms))
-                            _fx_block = ToolBlock("web_search", _fx_query)
-                            yield (
-                                "data: "
-                                + json.dumps({
-                                    "type": "tool_start",
-                                    "tool": "web_search",
-                                    "command": _fx_query,
-                                    "full_command": _fx_query,
-                                    "round": round_num,
-                                    "fallback": "provider_empty_public_web_lookup_fx_recovery",
-                                })
-                                + "\n\n"
-                            )
-                            try:
-                                _fx_desc, _fx_result = await execute_tool_block(
-                                    _fx_block,
-                                    session_id=session_id,
-                                    disabled_tools=set(disabled_tools) | _caller_hard_denials,
-                                    tool_policy=tool_policy,
-                                    owner=owner,
-                                    workspace=workspace,
-                                    security_context=run_security,
-                                    active_document_id=(
-                                        getattr(active_document, "id", None)
-                                        if active_document is not None
-                                        else None
-                                    ),
-                                    client_runtime_context=client_runtime_context,
-                                )
-                            except Exception as _fx_exc:
-                                logger.warning("[agent] provider-error web FX fallback failed: %s", _fx_exc)
-                                _fx_result = {
-                                    "error": str(_fx_exc),
-                                    "exit_code": 1,
-                                    "output": "",
-                                }
-                            _fx_output = str(
-                                _fx_result.get("output")
-                                or _fx_result.get("results")
-                                or _fx_result.get("stdout")
-                                or _fx_result.get("error")
-                                or ""
-                            )
-                            yield (
-                                "data: "
-                                + json.dumps({
-                                    "type": "tool_output",
-                                    "tool": "web_search",
-                                    "command": _fx_query,
-                                    "output": _truncate(_fx_output),
-                                    "exit_code": _fx_result.get("exit_code"),
-                                })
-                                + "\n\n"
-                            )
-                            if not _fx_result.get("error") and _fx_output:
-                                _combined_fallback_output = _fallback_output + "\n\n" + _fx_output
-                        full_response = _web_search_safety_touch_hygiene_postprocess(
-                            _web_search_user_text or _last_user,
-                            _web_search_answer_from_evidence(
-                                _web_search_user_text or _last_user,
-                                _combined_fallback_output,
-                            ),
-                        )
-                        full_response = _web_search_requested_unit_postprocess(
-                            _web_search_user_text or _last_user,
-                            full_response,
-                        )
-                        yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
-                        return
-                if full_response.strip() or round_reasoning.strip() or tool_events or round_texts:
-                    _finalize_round_usage(include_empty=False)
-                    partial_round = strip_tool_blocks(
-                        round_response,
-                        skip_fenced=(
-                            _is_api_model
-                            and not native_tool_calls
-                            and not guide_only
-                        ),
-                    ).strip()
-                    if _ody_qwen_finetune_model:
-                        partial_round = _strip_doc_model_artifacts(partial_round).strip()
-                    failure_note = f"[Agent stopped: {terminal_error['message']}]"
-                    terminal_round = (
-                        f"{partial_round}\n\n{failure_note}"
-                        if partial_round
-                        else failure_note
-                    )
-                    terminal_metadata = {
-                        "failed": True,
-                        "failure": terminal_error,
-                        "model": actual_model,
-                        "requested_model": requested_model,
-                        "endpoint_id": actual_endpoint_id,
-                        "endpoint_label": actual_endpoint_label,
-                        "requested_endpoint_id": requested_endpoint_id,
-                        "requested_endpoint_label": requested_endpoint_label,
-                        "tool_events": tool_events,
-                        "round_texts": [*round_texts, terminal_round],
-                        "round_models": [*round_models, _round_actual_model],
-                        "round_endpoint_ids": [*round_endpoint_ids, _round_actual_endpoint_id],
-                        "round_endpoint_labels": [*round_endpoint_labels, _round_actual_endpoint_label],
-                        **_usage_bucket_summary(usage_buckets),
-                    }
-                    if round_reasoning.strip():
-                        terminal_metadata["thinking"] = round_reasoning.strip()
-                    if isinstance(actual_endpoint_cost_tracked, bool):
-                        terminal_metadata["endpoint_cost_tracked"] = (
-                            actual_endpoint_cost_tracked
-                        )
-                    yield f'data: {json.dumps({"type": "agent_terminal", "data": terminal_metadata})}\n\n'
-                if not full_response.strip():
-                    # Some clients render terminal metadata as diagnostics only
-                    # and otherwise leave the assistant bubble blank. Always
-                    # provide a concise user-facing result for an upstream
-                    # failure, especially after a workspace read, so a failed
-                    # coding turn cannot look like a frozen or successful chat.
-                    _mutation_events = [
-                        event for event in tool_events
-                        if _resolved_tool_event_name(event)
-                        in {"write_file", "edit_file", "apply_patch"}
-                        and tool_result_is_successful(event)
-                    ]
-                    if _mutation_events:
-                        _failure_text = _tui_coding_failure_summary(tool_events)
-                    elif _web_search_completed and _last_web_search_output:
-                        _failure_text = _web_search_safety_touch_hygiene_postprocess(
-                            _web_search_user_text,
-                            _web_search_answer_from_evidence(
-                                _web_search_user_text,
-                                _last_web_search_output,
-                            ),
-                        )
-                    else:
-                        _failure_text = (
-                            "The model provider returned no usable output after inspecting "
-                            "the workspace. No file was changed. Retry the request; the "
-                            "workspace bridge is still connected."
-                            if _workspace_read_requires_mutation
-                            else "The model provider returned no usable output. No workspace change was made."
-                        )
-                    yield f'data: {json.dumps({"type": "final_response", "content": _failure_text})}\n\n'
-                # A terminal provider/request failure is not a completed Agent
-                # round.  Stop before empty-response synthesis, metrics,
-                # teacher escalation, post-processing, or a success [DONE].
-                return
-            if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
-                try:
-                    data = json.loads(chunk[6:])
-                    if _host_bridge_failed_turn and "delta" in data:
-                        # The transport failure is already the final result;
-                        # suppress the model's recovery prose so it cannot be
-                        # concatenated with the deterministic bridge message.
-                        continue
-                    # IMPORTANT: check type-based events BEFORE "delta" key,
-                    # because tool_call_delta also has an "arg_delta" field.
-                    if data.get("type") == "tool_call_delta":
-                        # Tool-call argument deltas are model proposals, not an
-                        # authorization decision.  Document UI events are built
-                        # from the parsed ToolBlock only after successful dispatch.
-                        continue
-                    elif data.get("type") == "tool_calls":
-                        if _apply_candidate_compaction(candidate_index):
-                            yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
-                        native_tool_calls = data.get("calls", [])
-                        logger.info(f"Agent round {round_num}: received {len(native_tool_calls)} native tool call(s)")
-                    elif data.get("type") == "usage":
-                        u = data.get("data", {})
-                        actual_model = u.get("model") or actual_model
-                        _round_actual_model = u.get("model") or _round_actual_model
-                        normalized_usage = _normalize_usage_counts(
-                            u.get("input_tokens", 0),
-                            u.get("output_tokens", 0),
-                        )
-                        if normalized_usage is None:
-                            logger.warning(
-                                "[agent] ignoring malformed usage event in round %s",
-                                round_num,
-                            )
-                            continue
-                        round_input = normalized_usage["input_tokens"]
-                        round_output = normalized_usage["output_tokens"]
-                        real_input_tokens += round_input
-                        real_output_tokens += round_output
-                        _round_real_input_tokens += round_input
-                        _round_real_output_tokens += round_output
-                        last_round_input_tokens = round_input
-                        has_real_usage = True
-                        _round_has_real_usage = True
-                        # Backend-reported TRUE generation speed (llama.cpp
-                        # timings.predicted_per_second) — pure decode, excludes
-                        # prefill/network. Preferred over tokens/wall-clock, which
-                        # reads low. Keep the last round's value (the gen phase).
-                        if u.get("gen_tps"):
-                            backend_gen_tps = u["gen_tps"]
-                        if u.get("prefill_tps"):
-                            backend_prefill_tps = u["prefill_tps"]
-                        # Provider-reported USD cost (OpenRouter usage.cost,
-                        # extracted by llm_core). Accumulated across rounds.
-                        try:
-                            real_cost_usd += float(u.get("cost_usd") or 0.0)
-                        except (TypeError, ValueError):
-                            pass
-                    elif data.get("type") == "fallback":
-                        # The selected model failed and another answered; surface
-                        # the notice so a misconfigured provider isn't masked.
-                        actual_model = data.get("answered_by") or actual_model
-                        actual_endpoint_id = data.get("answered_by_endpoint_id")
-                        actual_endpoint_label = (
-                            data.get("answered_by_endpoint_label") or actual_endpoint_label
-                        )
-                        if isinstance(data.get("answered_by_endpoint_cost_tracked"), bool):
-                            actual_endpoint_cost_tracked = data.get(
-                                "answered_by_endpoint_cost_tracked"
-                            )
-                        candidate_index = data.get("candidate_index")
-                        if (
-                            _pinned_fallback_candidate is None
-                            and isinstance(candidate_index, int)
-                            and 0 < candidate_index < len(_candidates)
-                        ):
-                            _pinned_fallback_candidate = _candidates[candidate_index]
-                            _pinned_fallback_route = (
-                                _candidate_route_descriptors[candidate_index]
-                                if candidate_index < len(_candidate_route_descriptors)
-                                else {}
-                            )
-                            endpoint_url, model, headers = _pinned_fallback_candidate
-                            answering_state = _candidate_request_states.get(candidate_index)
-                            if answering_state is None:
-                                answering_state = await _build_route_request_state(
-                                    endpoint_url,
-                                    model,
-                                    headers,
-                                    messages,
-                                    _pinned_fallback_route or {},
-                                )
-                                answering_state["request_messages"] = _trim_route_request_messages(
-                                    endpoint_url,
-                                    model,
-                                    answering_state["messages"],
-                                )
-                                answering_state["context_length"] = _route_context_lengths.get(
-                                    (endpoint_url, model),
-                                    context_length,
-                                )
-                            messages = answering_state["messages"]
-                            mcp_schemas = answering_state["mcp_schemas"]
-                            _relevant_tools = answering_state["relevant_tools"]
-                            _is_api_model = answering_state["is_api_model"]
-                            _is_ollama_native = answering_state["is_ollama_native"]
-                            _ollama_openai_compat = answering_state["ollama_openai_compat"]
-                            _ody_qwen_finetune_model = answering_state["ody_qwen_finetune_model"]
-                            _qwen38_tool_router = answering_state["qwen38_tool_router"]
-                            _ody_doc_finetune_mode = answering_state["ody_doc_finetune_mode"]
-                            _ody_notes_finetune_mode = answering_state["ody_notes_finetune_mode"]
-                            _ody_doc_stream_create_mode = answering_state["ody_doc_stream_create_mode"]
-                            if _ody_notes_finetune_mode:
-                                # Mirror the primary-route clamp: the answering
-                                # candidate's notes mode must re-enable the
-                                # personal managers in the shared execution
-                                # blocklist, or its tool calls are rejected.
-                                disabled_tools.difference_update({
-                                    "manage_notes", "manage_calendar", "manage_tasks",
-                                })
-                            elif _qwen38_tool_router and _relevant_tools is not None:
-                                _router_allowed_policy_names = set()
-                                for _tool in _relevant_tools:
-                                    _router_allowed_policy_names.update(email_tool_policy_names(_tool))
-                                disabled_tools.difference_update(_router_allowed_policy_names)
-                                if tool_policy and not tool_policy.block_all_tool_calls:
-                                    tool_policy = replace(
-                                        tool_policy,
-                                        disabled_tools=frozenset(
-                                            set(tool_policy.disabled_tools)
-                                            - _router_allowed_policy_names
-                                        ),
-                                        hidden_tools=frozenset(
-                                            set(tool_policy.hidden_tools)
-                                            - _router_allowed_policy_names
-                                        ),
-                                    )
-                            data["pinned_for_run"] = True
-                        if _apply_candidate_compaction(candidate_index):
-                            yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
-                        _round_actual_model = data.get("answered_by") or model
-                        _round_actual_endpoint_id = actual_endpoint_id
-                        _round_actual_endpoint_label = actual_endpoint_label
-                        data["round"] = round_num
-                        logger.warning(f"[agent] round {round_num} fell back: "
-                                       f"{data.get('selected_model')} -> {data.get('answered_by')}")
-                        yield f"data: {json.dumps(data)}\n\n"
-                    elif data.get("type") == "model_actual":
-                        if _apply_candidate_compaction(
-                            candidate_index if isinstance(candidate_index, int) else 0
-                        ):
-                            yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
-                        actual_model = data.get("model") or actual_model
-                        _round_actual_model = data.get("model") or _round_actual_model
-                        data["requested_model"] = requested_model
-                        data["requested_endpoint_id"] = requested_endpoint_id
-                        data["requested_endpoint_label"] = requested_endpoint_label
-                        data["endpoint_id"] = _round_actual_endpoint_id
-                        data["endpoint_label"] = _round_actual_endpoint_label
-                        data["round"] = round_num
-                        yield f"data: {json.dumps(data)}\n\n"
-                    elif data.get("type") == "model_response_ref":
-                        data["round"] = round_num
-                        yield f"data: {json.dumps(data)}\n\n"
-                    elif "delta" in data:
-                        if _apply_candidate_compaction(
-                            candidate_index if isinstance(candidate_index, int) else 0
-                        ):
-                            yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
-                        _suppress_unavailable_web_delta = bool(
-                            _web_search_unavailable_turn and not data.get("thinking")
-                        )
-                        # Keep a textual tool wrapper in round_response so it
-                        # can reach the policy executor, but do not show the
-                        # wrapper in the chat before the blocked result.
-                        if _compact_memory_list_turn and not data.get("thinking"):
-                            # A broad memory listing is rendered as a compact
-                            # count below; never stream the raw 200+ entry dump.
-                            continue
-                        if _compact_document_list_turn and not data.get("thinking"):
-                            # The document list is already rendered from the
-                            # tool result; suppress a repeated model wrapper.
-                            continue
-                        if not _suppress_unavailable_web_delta and not first_token_received:
-                            time_to_first_token = time.time() - total_start
-                            first_token_received = True
-                        if not _round_first_token_logged:
-                            _round_first_token_logged = True
-                            logger.info(
-                                "[agent-timing] first_visible_token round=%s elapsed=%.3fs total_elapsed=%.3fs thinking=%s",
-                                round_num,
-                                time.time() - _round_start,
-                                time.time() - total_start,
-                                bool(data.get("thinking")),
-                            )
-                        # Keep reasoning deltas in a separate accumulator so
-                        # we can echo them back via `reasoning_content` on the
-                        # next request (DeepSeek requires this; harmless for
-                        # other vendors). Regular content still flows into
-                        # round_response unchanged.
-                        if data.get("thinking"):
-                            # Even when Qwen's private reasoning is hidden from
-                            # the client, retain it for the assistant tool-call
-                            # message sent on the next model round. Dropping it
-                            # breaks Qwen 3.5 reasoning-parser continuation:
-                            # the follow-up can become reasoning-only or leak a
-                            # truncated closing-think fragment.
-                            round_reasoning += data["delta"]
-                            if _qwen38_tool_router:
-                                continue
-                        else:
-                            _qwen_text_cleanup = (
-                                _ody_qwen_finetune_model or _qwen38_tool_router
-                            )
-                            _delta_text = (
-                                _strip_doc_model_artifacts(data["delta"])
-                                if _qwen_text_cleanup
-                                else data["delta"]
-                            )
-                            # Never run word-level Qwen repairs on an
-                            # individual stream delta. Deltas are arbitrary
-                            # token fragments, so repairing ``nex`` before the
-                            # following ``t`` arrives corrupts valid output.
-                            # Normalize only after the complete round has been
-                            # assembled below.
-                            round_response += _delta_text
-                            data["delta"] = _delta_text
-                            if _is_api_model:
-                                if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
-                                    _streamed_tool_markup += _delta_text
-                                    if not _streamed_tool_markup_complete(_streamed_tool_markup):
-                                        if _streamed_tool_markup_starts(_streamed_tool_markup):
-                                            continue
-                                        # False alarm: a bare "<" (e.g. ``x < 2``) looked like
-                                        # a tag prefix, but the buffer can no longer become a
-                                        # tool tag. Release it as prose instead of holding the
-                                        # rest of the answer forever.
-                                        _delta_text = _streamed_tool_markup
-                                        _streamed_tool_markup = ""
-                                        data["delta"] = _delta_text
-                                    else:
-                                        _visible_markup_tail = strip_tool_blocks(
-                                            _streamed_tool_markup,
-                                            skip_fenced=True,
-                                        ).strip()
-                                        _streamed_tool_markup = ""
-                                        if not _visible_markup_tail:
-                                            continue
-                                        _delta_text = _visible_markup_tail
-                                        data["delta"] = _delta_text
-                            full_response += _delta_text
-                        if not _suppress_unavailable_web_delta:
-                            _qwen_buffered_route = bool(
-                                _ody_qwen_finetune_model or _qwen38_tool_router
-                            )
-                            if data.get("thinking") or not _qwen_buffered_route:
-                                data["round"] = round_num
-                                yield f"data: {json.dumps(data)}\n\n"
-                            elif _force_answer and _private_browser_catalog_ready:
-                                _qwen_round_streamed_live = True
-                                data["round"] = round_num
-                                yield f"data: {json.dumps(data)}\n\n"
-                            else:
-                                _next_qwen_visible = _incremental_qwen_visible_text(
-                                    round_response
-                                )
-                                if (
-                                    _next_qwen_visible
-                                    and _next_qwen_visible.startswith(
-                                        _qwen_live_visible_text
-                                    )
-                                ):
-                                    _live_delta = _next_qwen_visible[
-                                        len(_qwen_live_visible_text):
-                                    ]
-                                    if _live_delta:
-                                        _qwen_live_visible_text = _next_qwen_visible
-                                        _qwen_round_streamed_live = True
-                                        _live_data = dict(data)
-                                        _live_data["delta"] = _live_delta
-                                        _live_data["round"] = round_num
-                                        yield f"data: {json.dumps(_live_data)}\n\n"
-                    elif data.get("error"):
-                        err_msg = data.get("error", "unknown")
-                        logger.error(f"Agent round {round_num}: stream error: {err_msg}")
-                        yield f'data: {json.dumps({"delta": chr(10) + chr(10) + "*[Stream error: " + str(err_msg) + "]*"})}\n\n'
-                except json.JSONDecodeError:
-                    if round_num == 1:
-                        yield chunk
-            elif chunk.startswith("event: "):
-                # Forward error events to frontend as visible text
-                yield chunk
-            # Intercept [DONE] — don't forward until all rounds finish
-
-        logger.info(
-            "[agent-timing] round_stream_done round=%s elapsed=%.3fs text_chars=%s tool_calls=%s first_event=%s first_token=%s",
-            round_num,
-            time.time() - _round_start,
-            len(round_response),
-            len(native_tool_calls),
-            _round_first_event_logged,
-            _round_first_token_logged,
-        )
-        _finalize_round_usage()
-        _normalized_doc_round = (
-            _normalize_stream_document_fences(
-                round_response,
-                "create_document" if _ody_doc_stream_create_mode else "update_document",
-            )
-            if _ody_doc_finetune_mode
-            else round_response
-        )
-        _recover_unoffered_local_tools = None
-        if _tui_local_execution_turn or _tui_local_no_web_recovery_turn(
-            _last_user,
-            client_runtime_context=client_runtime_context,
-        ):
-            _recover_unoffered_local_tools = _tui_local_execution_allowlist(_last_user)
-            # These backend-oriented names are never executed on a TUI-local
-            # turn. Preserve them only long enough for the bounded host-shell
-            # recovery below to replace the stale read batch.
-            _recover_unoffered_local_tools.update({
-                "get_workspace", "ls", "read_file", "grep", "glob", "find",
-            })
-        tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
-            _normalized_doc_round,
-            native_tool_calls,
-            round_num,
-            is_api_model=(_is_api_model and not guide_only),
-            allow_fenced_for_api=(
-                _ody_doc_finetune_mode
-                or _terminal_completion_contract
-                or bool(normalized_external_tool_schemas and force_textual_tool_transport)
-            ),
-            active_document=active_document,
-            last_user=_last_user,
-            offered_tool_names=(
-                set(turn_contract.offered)
-                if turn_contract is not None and not _active_route_state.get("spec_offered")
-                else set(_tool_names_sent)
-            ),
-            recover_unoffered_tool_names=_recover_unoffered_local_tools,
-            passthrough_tool_names={
-                schema["function"]["name"]
-                for schema in normalized_external_tool_schemas
-            },
-            declared_tool_names={
-                schema["function"]["name"]
-                for schema in normalized_external_tool_schemas
-            },
-            declared_tool_schemas=normalized_external_tool_schemas,
-        )
-        _requested_tool_names = sorted({
-            str(call.get("name") or "")
-            for call in native_tool_calls
-            if str(call.get("name") or "").strip()
-        })
-        _accepted_tool_names = sorted({
-            str(block.tool_type)
-            for block in tool_blocks
-            if str(getattr(block, "tool_type", "") or "").strip()
-        })
-        _accepted_tool_name_set = set(_accepted_tool_names)
-        _resolution_audit = {
-            "type": "tool_resolution_audit",
-            "round": round_num,
-            "requested_tools": _requested_tool_names,
-            "accepted_tools": _accepted_tool_names,
-            "requested_not_accepted": sorted(
-                name
-                for name in _requested_tool_names
-                if not _native_tool_name_was_accepted(
-                    name, _accepted_tool_name_set
-                )
-            ),
-            "used_native": bool(used_native),
-        }
-        logger.info("[agent-routing-audit] %s", json.dumps(_resolution_audit, sort_keys=True))
-        _malformed_native_tool_names = set(
-            _resolution_audit["requested_not_accepted"]
-        )
-        yield f'data: {json.dumps(_resolution_audit)}\n\n'
-        if _unoffered_web_search_should_synthesize(
-            _resolution_audit["requested_not_accepted"],
-            accepted_tools=_accepted_tool_names,
-            tool_events=tool_events,
-        ):
-            _force_answer = True
-            messages.append({
-                "role": "system",
-                "content": (
-                    "Web search is not available in this round, but authoritative "
-                    "source evidence has already been retrieved. Stop using tools and "
-                    "answer the user's complete request from that evidence now. Cover "
-                    "every requested fact, comparison, and caveat, and cite the source "
-                    "URLs present in the retrieved evidence."
-                ),
-            })
-            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-            continue
-        _malformed_write_missing = (
-            tuple(
-                EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate().missing_artifacts
-            )
-            if _artifact_recovery_enabled
-            else ()
-        )
-        if _malformed_write_needs_body_handoff(
-            _malformed_native_tool_names,
-            _malformed_write_missing,
-            attempts=_malformed_write_body_handoff_attempts,
-        ):
-            _malformed_write_body_handoff_attempts += 1
-            _malformed_target = _malformed_write_missing[0]
-            _malformed_write_messages = _artifact_recovery_messages(
-                messages,
-                tool_events,
-                _malformed_write_missing,
-            )
-            _malformed_synthesis_messages = _artifact_synthesis_messages(
-                _malformed_write_messages,
-                _malformed_target,
-            )
-            _malformed_synthesis_messages.insert(1, {
-                "role": "system",
-                "content": (
-                    "The prior native write was truncated by its output budget. "
-                    "Keep this complete file under 3,500 tokens. Use CSS, loops, "
-                    "reusable functions, SVG symbols, or compact data arrays instead "
-                    "of repeated markup. Preserve the requested behavior."
-                ),
-            })
-            _malformed_body = ""
-            try:
-                from src.generation_budget import fit_output_token_budget
-                from src.llm_core import llm_call_async
-
-                _malformed_raw_body = await llm_call_async(
-                    url=endpoint_url,
-                    model=model,
-                    messages=_malformed_synthesis_messages,
-                    headers=headers,
-                    temperature=0.0,
-                    max_tokens=fit_output_token_budget(
-                        min(max_tokens, 4096),
-                        _last_route_context_length or context_length,
-                        _malformed_synthesis_messages,
-                        None,
-                    ),
-                    timeout=max(90, int(agent_stream_timeout or 90)),
-                    max_retries=1,
-                    thinking_mode="off",
-                )
-                _malformed_body = _artifact_body_from_synthesis(
-                    _malformed_raw_body or ""
-                )
-                usage_buckets.append(_usage_bucket(
-                    round_num=round_num,
-                    model=model,
-                    endpoint_id=_round_actual_endpoint_id,
-                    endpoint_label=_round_actual_endpoint_label,
-                    endpoint_cost_tracked=actual_endpoint_cost_tracked,
-                    input_tokens=estimate_tokens(_malformed_synthesis_messages),
-                    output_tokens=max(len(_malformed_raw_body or "") // 4, 0),
-                    usage_source="estimated",
-                ))
-            except Exception as _malformed_handoff_error:
-                logger.warning(
-                    "[agent] malformed write body handoff failed: %s",
-                    _malformed_handoff_error,
-                )
-            if _malformed_body and _artifact_body_matches_target(
-                _malformed_body,
-                _malformed_target,
-            ):
-                tool_blocks = [ToolBlock(
-                    "write_file",
-                    f"{_malformed_target}\n{_malformed_body}",
-                )]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-                round_response = ""
-                logger.info(
-                    "[agent] recovered malformed write through bounded body handoff "
-                    "path=%s chars=%d",
-                    _malformed_target,
-                    len(_malformed_body),
-                )
-                yield (
-                    "data: "
-                    + json.dumps({
-                        "type": "artifact_body_handoff",
-                        "reason": "malformed_write",
-                        "round": round_num,
-                        "path": _malformed_target,
-                    })
-                    + "\n\n"
-                )
-        _required_read = _required_safe_read_operation(turn_contract)
-        if (
-            _required_read is not None
-            and not guide_only
-            # Zero is the product setting for an unlimited tool budget.
-            and (max_tool_calls <= 0 or len(tool_events) < max_tool_calls)
-        ):
-            # An explicit immutable read operation is stronger than a family
-            # hint. Missing/malformed model arguments never become a new query
-            # or action; execute the sealed arguments through normal gates.
-            _required_block, _required_limit = _required_read
-            _required_call_id = _required_read_native_id(_required_block, native_tool_calls)
-            _required_call_id = _required_call_id or f"required-read-{round_num}"
-            yield f'data: {json.dumps({"type": "tool_start", "tool": _required_block.tool_type, "command": _required_block.content, "full_command": _required_block.content, "round": round_num, "call_id": _required_call_id})}\n\n'
-            _required_desc, _required_result, _required_answer = await _dispatch_required_safe_read(
-                _required_read,
-                session_id=session_id, disabled_tools=set(disabled_tools) | _caller_hard_denials,
-                tool_policy=tool_policy, owner=owner, workspace=workspace,
-                security_context=run_security,
-                active_document_id=getattr(active_document, "id", None),
-                client_runtime_context=client_runtime_context,
-            )
-            _required_output = next((_required_result.get(key) for key in
-                                     ("output", "response", "results", "content", "error")
-                                     if _required_result.get(key)), "")
-            if not isinstance(_required_output, str):
-                _required_output = json.dumps(_required_output, ensure_ascii=False, default=str)
-            tool_events.append({
-                "round": round_num, "model": model,
-                "endpoint_id": actual_endpoint_id, "endpoint_label": actual_endpoint_label,
-                "tool": _required_block.tool_type, "desc": _required_desc,
-                "command": _required_block.content, "output": _required_output,
-                "exit_code": _required_result.get("exit_code", 0 if _required_answer else 1),
-                "call_id": _required_call_id,
-            })
-            yield f'data: {json.dumps({"type": "tool_output", **tool_events[-1]})}\n\n'
-            # A rejected/failed read must not claim completion or fall back to
-            # another family. Surface it once, without a mutation-capable retry.
-            full_response = _required_answer or (
-                f"I couldn't complete the required read: {_required_result.get('error') or 'the tool failed'}."
-            )
-            round_texts.append(full_response)
-            yield f'data: {json.dumps({"type": "final_response", "content": full_response, "render_owner": "structured", "replacement_scope": "turn"})}\n\n'
-            _required_metrics = _compute_final_metrics(
-                _last_route_request_messages, full_response, time.time() - _t0,
-                time_to_first_token, _last_route_context_length,
-                real_input_tokens, real_output_tokens, has_real_usage,
-                tool_events, round_texts, model=model,
-                round_models=round_models, round_endpoint_ids=round_endpoint_ids,
-                round_endpoint_labels=round_endpoint_labels,
-            )
-            _required_metrics.update({
-                "requested_model": requested_model,
-                "endpoint_id": actual_endpoint_id, "endpoint_label": actual_endpoint_label,
-                "required_operation_succeeded": bool(_required_answer),
-                "render_owner": "structured", "replacement_scope": "turn",
-            })
-            yield f'data: {json.dumps({"type": "metrics", "data": _required_metrics})}\n\n'
-            yield 'data: [DONE]\n\n'
-            return
-        if _terminal_completion_contract:
-            _adjacent_write = _recover_adjacent_fenced_write_file(
-                round_response,
-                _completion_requirements.required_artifacts,
-            )
-            _fenced_media_shell = (
-                _recover_fenced_media_shell_command(
-                    round_response,
-                    _completion_requirements.required_artifacts,
-                )
-                if _artifact_mutation_only_mode and "bash" in set(_tool_names_sent)
-                else None
-            )
-            if (
-                _adjacent_write is not None
-                and not _binary_artifact_path(
-                    _adjacent_write.content.split("\n", 1)[0]
-                )
-            ):
-                tool_blocks = [_adjacent_write]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-                logger.info(
-                    "[agent] recovered adjacent fenced artifact write: %s",
-                    _adjacent_write.content.split("\n", 1)[0],
-                )
-            elif not tool_blocks and _fenced_media_shell is not None:
-                tool_blocks = [_fenced_media_shell]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-                round_response = ""
-                logger.info(
-                    "[agent] recovered fenced media artifact command: %s",
-                    _fenced_media_shell.content[:200],
-                )
-            elif not tool_blocks and _evidence_repair_rounds >= 2:
-                # After two explicit completion repairs, a weak model may
-                # provide the finished file body in chat instead of invoking
-                # write_file. Recover that body only for one declared missing
-                # artifact. Short completion claims remain ordinary prose and
-                # are rejected by the evidence ledger below.
-                _prose_evidence = EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate()
-                _prose_missing = tuple(_prose_evidence.missing_artifacts)
-                _prose_candidate = _strip_think_blocks(round_response).strip()
-                _prose_is_fenced_body = bool(re.fullmatch(
-                    r"```(?:[\w.+-]+)?\s*\n[\s\S]*?\n```",
-                    _prose_candidate,
-                ))
-                _prose_artifact_body = _artifact_body_from_synthesis(
-                    _prose_candidate
-                )
-                if (
-                    len(_prose_missing) == 1
-                    and not _binary_artifact_path(_prose_missing[0])
-                    and "write_file" in set(_relevant_tools or ())
-                    and _prose_artifact_body
-                    and _artifact_body_matches_target(
-                        _prose_artifact_body, _prose_missing[0]
-                    )
-                    and (_prose_is_fenced_body or len(_prose_artifact_body) >= 400)
-                ):
-                    _prose_target = _prose_missing[0]
-                    tool_blocks = [ToolBlock(
-                        "write_file",
-                        f"{_prose_target}\n{_prose_artifact_body}",
-                    )]
-                    converted_calls = []
-                    native_tool_calls = []
-                    used_native = False
-                    full_response = _drop_rejected_round_response(
-                        full_response,
-                        round_response,
-                    )
-                    round_response = ""
-                    logger.info(
-                        "[agent] recovered required artifact from completion body: %s",
-                        _prose_target,
-                    )
-        if (
-            _artifact_recovery_enabled
-            and _artifact_completion_nudges > 0
-            and native_tool_calls
-            and not tool_blocks
-            and not _force_answer
-        ):
-            _dropped_followthrough_evidence = EvidenceLedger.from_tool_events(
-                tool_events,
-                _completion_requirements,
-            ).evaluate()
-            _dropped_followthrough_missing = tuple(
-                _dropped_followthrough_evidence.missing_artifacts
-            )
-            if _dropped_followthrough_missing:
-                _artifact_followthrough_deferrals += 1
-                if not _artifact_mutation_only_mode:
-                    _artifact_recovery_relevant_tools = (
-                        None if _relevant_tools is None else set(_relevant_tools)
-                    )
-                _artifact_mutation_only_mode = True
-                messages = _artifact_recovery_messages(
-                    messages,
-                    tool_events,
-                    _dropped_followthrough_missing,
-                )
-                _missing = ", ".join(_dropped_followthrough_missing)
-                if _artifact_unoffered_recovery_exhausted(
-                    _artifact_followthrough_deferrals
-                ):
-                    _force_answer = True
-                    native_tool_calls = []
-                    converted_calls = []
-                    used_native = False
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "Artifact recovery repeatedly requested tools outside the "
-                            "available contract. Do not call more tools. Finish briefly "
-                            "and state plainly which required artifacts remain missing."
-                        ),
-                    })
-                    logger.warning(
-                        "[agent] unoffered artifact recovery exhausted after %d attempts; "
-                        "forcing concise finish missing=%s",
-                        _artifact_followthrough_deferrals,
-                        _missing,
-                    )
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "loop_breaker_triggered",
-                            "reason": "artifact_recovery_unoffered_tool",
-                            "round": round_num,
-                            "attempt": _artifact_followthrough_deferrals,
-                        })
-                        + "\n\n"
-                    )
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-                logger.warning(
-                    "[agent] suppressed unoffered post-recovery native tool call; "
-                    "continuing artifact recovery attempt=%d missing=%s",
-                    _artifact_followthrough_deferrals,
-                    _missing,
-                )
-                yield (
-                    "data: "
-                    + json.dumps({
-                        "type": "completion_blocked",
-                        "reason": "artifact_mutation_required",
-                        "round": round_num,
-                        "attempt": _artifact_followthrough_deferrals,
-                        "decision": _dropped_followthrough_evidence.to_dict(),
-                    })
-                    + "\n\n"
-                )
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-        if _terminal_completion_contract and tool_blocks:
-            _recovered_terminal_blocks = [
-                _recover_shell_wrapped_file_tool(block)
-                for block in tool_blocks
-            ]
-            if _recovered_terminal_blocks != tool_blocks:
-                logger.info(
-                    "[agent] recovered shell-wrapped terminal file tool(s): %s",
-                    [block.tool_type for block in _recovered_terminal_blocks],
-                )
-                tool_blocks = _recovered_terminal_blocks
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-            _normalized_artifact_path_blocks = _normalize_required_artifact_write_paths(
-                tool_blocks,
-                _completion_requirements.required_artifacts,
-                tool_events,
-            )
-            if _normalized_artifact_path_blocks != tool_blocks:
-                logger.info("[agent] normalized write_file path to declared artifact path")
-                tool_blocks = _normalized_artifact_path_blocks
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-        if _declared_verifier_force_command:
-            _forced_verifier_tool = (
-                "host_shell" if _tui_local_execution_turn else "bash"
-            )
-            _forced_verifier_content = (
-                json.dumps({"command": _declared_verifier_force_command})
-                if _forced_verifier_tool == "host_shell"
-                else _declared_verifier_force_command
-            )
-            tool_blocks = [ToolBlock(
-                _forced_verifier_tool,
-                _forced_verifier_content,
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            round_response = ""
-            logger.info(
-                "[agent] executing adapter-declared verifier: %s",
-                _declared_verifier_force_command,
-            )
-            _declared_verifier_force_command = ""
-        if _looks_like_web_retry_preamble(round_response):
-            _last_web_retry_round_response = round_response
-        if _pending_host_shell_poll_job_id:
-            tool_blocks = [ToolBlock(
-                "host_shell",
-                json.dumps({"job_id": _pending_host_shell_poll_job_id}),
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info(
-                "[agent] normalized detached host_shell continuation to poll job=%s",
-                _pending_host_shell_poll_job_id,
-            )
-        if _failed_edit_recovery_path and _edit_failure_recovery_sent:
-            # Replace a repeated malformed edit with an exact reread. The
-            # following model round can then construct old_string from data,
-            # rather than from the user's paraphrase.
-            tool_blocks = [ToolBlock(
-                "read_file",
-                _failed_edit_recovery_path,
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            _failed_edit_recovery_path = ""
-            logger.info("[agent] normalized repeated failed edit to read_file")
-        elif _inspection_read_forced and _inspection_file_edit and not _inspection_edit_completed:
-            # A weak router may emit unrelated shell probes instead of
-            # inspecting the explicitly named file. Preserve the user's
-            # requested read-before-edit sequence with one deterministic,
-            # bounded read; the successful result will unlock the exact edit
-            # normalization below on the following round.
-            tool_blocks = [ToolBlock(
-                "read_file",
-                json.dumps({"path": _inspection_file_edit["path"]}),
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            _inspection_read_forced = False
-            logger.info("[agent] normalized inspection follow-up to one read_file call")
-        elif _inspection_edit_nudge_sent and _inspection_file_edit and not _inspection_edit_completed:
-            # The read has already succeeded and the requested replacement is
-            # explicit. Do not let a stochastic model choose another read or a
-            # duplicate edit; execute the one authorized mutation through the
-            # normal security/executor path.
-            tool_blocks = [ToolBlock("edit_file", json.dumps(_inspection_file_edit))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info("[agent] normalized inspection follow-up to one edit_file call")
-        elif (
-            _artifact_readback_requested
-            and _post_effectful_mutation_done
-            and not _post_edit_verification_completed
-            and not _post_edit_verification_force_attempted
-            and _artifact_readback_target
-        ):
-            # The user explicitly asked to inspect the saved artifact. Once a
-            # write succeeds, normalize one bounded read-back rather than
-            # letting a weak router reopen source-media inspection forever.
-            # Chained onto the preceding branches: an already-normalized
-            # authorized edit must not be overwritten by this read.
-            tool_blocks = [ToolBlock(
-                "read_file",
-                json.dumps({"path": _artifact_readback_target}),
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            _post_edit_verification_force_attempted = True
-            logger.info(
-                "[agent] normalized post-edit artifact verification to read_file: %s",
-                _artifact_readback_target,
-            )
-        elif (
-            _post_edit_verification_nudge_sent
-            and (_post_effectful_mutation_done or _inspection_edit_completed or _file_creation_completed)
-            and not _post_edit_verification_completed
-            and _post_edit_verification_command
-            and not _post_edit_verification_force_attempted
-        ):
-            # The verification request is explicit, so do not leave its
-            # execution to a compact router that may repeat the mutation.
-            _post_edit_verifier_tool = (
-                "host_shell" if _tui_local_execution_turn else "bash"
-            )
-            _post_edit_verifier_content = (
-                json.dumps({"command": _post_edit_verification_command})
-                if _post_edit_verifier_tool == "host_shell"
-                else _post_edit_verification_command
-            )
-            tool_blocks = [ToolBlock(
-                _post_edit_verifier_tool,
-                _post_edit_verifier_content,
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info(
-                "[agent] normalized post-edit verification to %s: %s",
-                _post_edit_verifier_tool,
-                _post_edit_verification_command,
-            )
-            _post_edit_verification_force_attempted = True
-        if (
-            _explicit_file_creation
-            and not _file_creation_completed
-            and not _file_creation_attempted
-        ):
-            tool_blocks = [ToolBlock(
-                "write_file",
-                _explicit_file_creation["path"] + "\n" + _explicit_file_creation["content"],
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            _file_creation_attempted = True
-            logger.info(
-                "[agent] normalized explicit file creation to write_file: %s",
-                _explicit_file_creation["path"],
-            )
-        elif _file_creation_pending and _explicit_file_creation and not _file_creation_completed:
-            tool_blocks = [ToolBlock(
-                "write_file",
-                _explicit_file_creation["path"] + "\n" + _explicit_file_creation["content"],
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info(
-                "[agent] normalized missing-file recovery to write_file: %s",
-                _explicit_file_creation["path"],
-            )
-        if _failed_read_recovery_path and not _failed_read_recovery_sent:
-            tool_blocks = [ToolBlock(
-                "read_file",
-                _failed_read_recovery_path,
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            _failed_read_recovery_sent = True
-            logger.info(
-                "[agent] normalized stale missing read to requested file: %s",
-                _failed_read_recovery_path,
-            )
         _qwen_explicit_tool = None
         _qwen_explicit_args = ""
-        _explicit_open_panel_request = _parse_explicit_open_panel_request(_last_user)
-        _explicit_recurring_task_request = _parse_qwen_explicit_recurring_task_request(_last_user)
-        _explicit_task_state_request = _parse_explicit_task_state_request(_last_user)
-        _explicit_skill_request = _parse_explicit_skill_request(_last_user)
-        _explicit_memory_state_request = _parse_explicit_memory_state_request(
-            _last_user,
-            messages,
-            history_session,
-        )
-        _explicit_memory_lookup_request = _parse_explicit_memory_lookup_request(_last_user)
-        _explicit_memory_add_text = _extract_memory_add_text_from_user(_last_user)
-        _explicit_admin_request = _parse_qwen_explicit_admin_request(_last_user)
-        _explicit_session_create = _parse_qwen_explicit_session_create(_last_user)
-        _explicit_chat_transcript_search = _parse_qwen_explicit_chat_transcript_search(_last_user)
-        _explicit_session_find = _parse_qwen_explicit_session_find(_last_user)
-        _explicit_session_action = _parse_qwen_explicit_session_action(_last_user, messages)
-        _explicit_private_browser_inspection = _parse_explicit_private_browser_inspection(_last_user)
-        _explicit_teacher_request = _parse_explicit_teacher_request(_last_user)
-        _explicit_theme_change_request = _parse_explicit_theme_change_request(_last_user)
-        if (
-            _explicit_private_browser_inspection
-            and "private_browser" not in disabled_tools
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_private_browser_inspection
-        elif _explicit_teacher_request and "ask_teacher" not in disabled_tools:
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_teacher_request
-        elif (
-            _explicit_recurring_task_request
-            and "manage_tasks" not in disabled_tools
-            and not re.search(r"\b(?:calendar|events?|meeting|appointment|reservation)\b", _last_user, re.IGNORECASE)
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_recurring_task_request
-        elif (
-            _explicit_task_state_request
-            and "manage_tasks" not in disabled_tools
-            and re.search(r"\b(?:tasks?|reminders?|scheduled\s+tasks?)\b", _last_user, re.IGNORECASE)
-        ):
-            _qwen_explicit_tool = _explicit_task_state_request.tool_type
-            _qwen_explicit_args = _explicit_task_state_request.content
-        elif (
-            _explicit_memory_state_request
-            and "manage_memory" not in disabled_tools
-        ):
-            _qwen_explicit_tool = _explicit_memory_state_request.tool_type
-            _qwen_explicit_args = _explicit_memory_state_request.content
-        elif (
-            _explicit_memory_add_text
-            and "manage_memory" not in disabled_tools
-            and re.search(r"\b(?:remember\s+this|remember\s+that|save\s+this\s+as\s+(?:a\s+)?memory|add\s+to\s+memory)\b", _last_user, re.IGNORECASE)
-        ):
-            _qwen_explicit_tool = "manage_memory"
-            _qwen_explicit_args = "add\n" + _explicit_memory_add_text
-        elif (
-            _explicit_memory_lookup_request
-            and "manage_memory" not in disabled_tools
-        ):
-            _qwen_explicit_tool = _explicit_memory_lookup_request.tool_type
-            _qwen_explicit_args = _explicit_memory_lookup_request.content
-        elif (
-            _explicit_skill_request
-            and "manage_skills" not in disabled_tools
-            and re.search(r"\b(?:skills?)\b", _last_user, re.IGNORECASE)
-        ):
-            _qwen_explicit_tool = "manage_skills"
-            _qwen_explicit_args = json.dumps(_explicit_skill_request)
-        elif (
-            _is_email_account_identity_request(_last_user)
-            and "mcp__email__list_email_accounts" not in disabled_tools
-            and "list_email_accounts" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__list_email_accounts"
-            _qwen_explicit_args = "{}"
-        elif (
-            (_explicit_download_attachment_pre := _parse_qwen_explicit_download_attachment_request(_last_user))
-            and "mcp__email__download_attachment" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__download_attachment"
-            _qwen_explicit_args = json.dumps(_explicit_download_attachment_pre)
-        elif (
-            (_explicit_unsubscribe_email_pre := _parse_qwen_explicit_unsubscribe_email_request(_last_user))
-            and "mcp__email__unsubscribe_email" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__unsubscribe_email"
-            _qwen_explicit_args = json.dumps(_explicit_unsubscribe_email_pre)
-        elif (
-            (_explicit_unsubscribe_scan_pre := _parse_qwen_explicit_unsubscribe_scan_request(_last_user))
-            and "mcp__email__scan_email_unsubscribes" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__scan_email_unsubscribes"
-            _qwen_explicit_args = json.dumps(_explicit_unsubscribe_scan_pre)
-        elif (
-            (_explicit_spam_scan_pre := _parse_qwen_explicit_spam_scan_request(_last_user))
-            and "mcp__email__scan_spam" not in disabled_tools
-        ):
-            if re.search(r"\b(?:again|re-?scan|repeat)\b", _last_user, re.IGNORECASE):
-                _prior_spam_candidates = _recent_spam_candidates_from_tool_context(messages)
-                if _prior_spam_candidates:
-                    _explicit_spam_scan_pre["folder"] = str(
-                        _prior_spam_candidates[0].get("folder") or "INBOX"
-                    )
-            _qwen_explicit_tool = "mcp__email__scan_spam"
-            _qwen_explicit_args = json.dumps(_explicit_spam_scan_pre)
-        elif (
-            (_explicit_block_sender_pre := _parse_qwen_explicit_block_sender_request(_last_user))
-            and "mcp__email__block_sender" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__block_sender"
-            _qwen_explicit_args = json.dumps(_explicit_block_sender_pre)
-        elif (
-            (_explicit_bulk_email_pre := _parse_qwen_explicit_bulk_email_request(_last_user))
-            and "mcp__email__bulk_email" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__bulk_email"
-            _qwen_explicit_args = json.dumps(_explicit_bulk_email_pre)
-        elif (
-            (_explicit_topic_bulk_email_pre := _parse_qwen_explicit_email_topic_bulk_action_request(_last_user))
-            and "mcp__email__search_emails" not in disabled_tools
-        ):
-            _qwen_explicit_tool = "mcp__email__search_emails"
-            _qwen_explicit_args = json.dumps({
-                "query": _explicit_topic_bulk_email_pre["query"],
-                "folder": _explicit_topic_bulk_email_pre.get("folder", "INBOX"),
-                "max_results": _explicit_topic_bulk_email_pre.get("max_results", 50),
-            })
-        elif (
-            _explicit_session_action
-            and _explicit_session_action[0] not in disabled_tools
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_action
-        elif (
-            _explicit_session_create
-            and _explicit_session_create[0] not in disabled_tools
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_create
-        elif (
-            _explicit_chat_transcript_search
-            and _explicit_chat_transcript_search[0] not in disabled_tools
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_chat_transcript_search
-        elif (
-            _explicit_session_find
-            and _explicit_session_find[0] not in disabled_tools
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_find
-        elif (
-            _explicit_admin_request
-            and _explicit_admin_request[0] not in disabled_tools
-        ):
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_admin_request
-        if _qwen38_tool_router and not _qwen_explicit_tool:
-            _explicit_create_request = _parse_qwen_explicit_create_request(_last_user)
-            _explicit_document_request = _parse_qwen_explicit_document_request(_last_user)
-            _explicit_download_attachment_request = _parse_qwen_explicit_download_attachment_request(_last_user)
-            _explicit_unsubscribe_scan_request = _parse_qwen_explicit_unsubscribe_scan_request(_last_user)
-            _explicit_unsubscribe_email_request = _parse_qwen_explicit_unsubscribe_email_request(_last_user)
-            _explicit_spam_scan_request = _parse_qwen_explicit_spam_scan_request(_last_user)
-            _explicit_block_sender_request = _parse_qwen_explicit_block_sender_request(_last_user)
-            _explicit_bulk_email_request = _parse_qwen_explicit_bulk_email_request(_last_user)
-            _explicit_topic_bulk_email_request = _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
-            _explicit_blocked_sender_list_request = _parse_qwen_explicit_blocked_sender_list_request(_last_user)
-            _explicit_unblock_sender_request = _parse_qwen_explicit_unblock_sender_request(_last_user)
-            _explicit_email_search_request = _parse_qwen_explicit_email_search_request(_last_user)
-            _explicit_resolve_contact = _parse_qwen_explicit_resolve_contact(_last_user)
-            _explicit_contact_request = _parse_qwen_explicit_contact_request(_last_user)
-            _explicit_calendar_move = _parse_qwen_explicit_calendar_move(_last_user)
-            _explicit_calendar_request = _parse_simple_calendar_tool_request(
-                _last_user,
-                messages,
-                history_session,
-            )
-            _calendar_missing_date_ask = _parse_ambiguous_calendar_date_ask_user(_last_user)
-            _active_email_reply_text = (
-                _extract_followup_content_update(_last_user)
-                if _is_email_document_obj(active_document)
-                and re.search(
-                    r"\b(?:write|reply|respond|response|draft|compose|say|saying|tell them|tell her|tell him)\b",
-                    _last_user,
-                    re.IGNORECASE,
-                )
-                else ""
-            )
-            if _active_email_reply_text:
-                _qwen_explicit_tool = "update_document"
-                _qwen_explicit_args = json.dumps({
-                    "content": _build_active_email_draft_reply_content(
-                        getattr(active_document, "current_content", "") or "",
-                        _active_email_reply_text,
-                    )
-                })
-            elif (
-                active_email
-                and (_active_email_reader_body := _active_email_reader_reply_body(_last_user, active_email))
-            ):
-                _qwen_explicit_tool = "ui_control"
-                _qwen_explicit_args = (
-                    "open_email_reply "
-                    f"{active_email.get('uid')} "
-                    f"{active_email.get('folder') or 'INBOX'} "
-                    "reply\n"
-                    f"{_active_email_reader_body}"
-                )
-            elif _is_email_account_identity_request(_last_user):
-                _qwen_explicit_tool = "mcp__email__list_email_accounts"
-                _qwen_explicit_args = "{}"
-            elif _calendar_missing_date_ask:
-                _qwen_explicit_tool, _qwen_explicit_args = _calendar_missing_date_ask
-            elif _explicit_calendar_request:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_calendar_request
-            elif (
-                _explicit_recurring_task_request
-                and not re.search(r"\b(?:calendar|events?|meeting|appointment|reservation)\b", _last_user, re.IGNORECASE)
-            ):
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_recurring_task_request
-            elif _explicit_download_attachment_request:
-                _qwen_explicit_tool = "mcp__email__download_attachment"
-                _qwen_explicit_args = json.dumps(_explicit_download_attachment_request)
-            elif _explicit_unsubscribe_email_request:
-                _qwen_explicit_tool = "mcp__email__unsubscribe_email"
-                _qwen_explicit_args = json.dumps(_explicit_unsubscribe_email_request)
-            elif _explicit_unsubscribe_scan_request:
-                _qwen_explicit_tool = "mcp__email__scan_email_unsubscribes"
-                _qwen_explicit_args = json.dumps(_explicit_unsubscribe_scan_request)
-            elif _explicit_spam_scan_request:
-                _qwen_explicit_tool = "mcp__email__scan_spam"
-                _qwen_explicit_args = json.dumps(_explicit_spam_scan_request)
-            elif _explicit_block_sender_request:
-                _qwen_explicit_tool = "mcp__email__block_sender"
-                _qwen_explicit_args = json.dumps(_explicit_block_sender_request)
-            elif _explicit_bulk_email_request:
-                _qwen_explicit_tool = "mcp__email__bulk_email"
-                _qwen_explicit_args = json.dumps(_explicit_bulk_email_request)
-            elif _explicit_topic_bulk_email_request:
-                _qwen_explicit_tool = "mcp__email__search_emails"
-                _qwen_explicit_args = json.dumps({
-                    "query": _explicit_topic_bulk_email_request["query"],
-                    "folder": _explicit_topic_bulk_email_request.get("folder", "INBOX"),
-                    "max_results": _explicit_topic_bulk_email_request.get("max_results", 50),
-                })
-            elif _explicit_unblock_sender_request:
-                _qwen_explicit_tool = "mcp__email__manage_email_state"
-                _qwen_explicit_args = json.dumps({"action": "unblock_sender", **_explicit_unblock_sender_request})
-            elif _explicit_blocked_sender_list_request is not None:
-                _qwen_explicit_tool = "mcp__email__manage_email_state"
-                _qwen_explicit_args = json.dumps({"action": "list_blocked", **_explicit_blocked_sender_list_request})
-            elif _explicit_session_action:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_action
-            elif _explicit_session_create:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_create
-            elif _explicit_session_find:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_find
-            elif _explicit_admin_request:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_admin_request
-            elif _explicit_resolve_contact:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_resolve_contact
-            elif (_explicit_email_date_list_request := _parse_qwen_explicit_email_date_list_request(_last_user)):
-                _qwen_explicit_tool = "mcp__email__list_emails"
-                _qwen_explicit_args = json.dumps(_explicit_email_date_list_request)
-            elif _explicit_email_search_request:
-                _qwen_explicit_tool = "mcp__email__search_emails"
-                _qwen_explicit_args = json.dumps(_explicit_email_search_request)
-            elif _is_qwen_explicit_latest_email_request(_last_user):
-                _qwen_explicit_tool = "mcp__email__list_emails"
-                _qwen_explicit_args = json.dumps({
-                    "folder": "INBOX",
-                    "max_results": 1,
-                    "unread_only": False,
-                })
-            elif _is_qwen_explicit_endpoint_list_request(_last_user) and not _qwen_endpoint_list_completed:
-                _qwen_explicit_tool = "manage_endpoints"
-                _qwen_explicit_args = json.dumps({"action": "list"})
-            elif (
-                _is_qwen_explicit_model_list_request(_last_user)
-                and not _tui_local_workspace_turn(
-                    _last_user,
-                    workspace=workspace,
-                    client_runtime_context=client_runtime_context,
-                )
-            ):
-                _qwen_explicit_tool = "list_models"
-                _qwen_explicit_args = ""
-            elif _qwen_memory_delete_marker and _qwen_memory_delete_id:
-                _qwen_explicit_tool = "manage_memory"
-                _qwen_explicit_args = "delete\n" + _qwen_memory_delete_id
-            elif _qwen_memory_delete_marker:
-                _qwen_explicit_tool = "manage_memory"
-                _qwen_explicit_args = "search\n" + _qwen_memory_delete_marker
-            elif _qwen_explicit_memory_search and not _qwen_explicit_memory_search_completed:
-                _qwen_explicit_tool = "manage_memory"
-                _qwen_explicit_args = "search\n" + _qwen_explicit_memory_search
-            elif (
-                _is_explicit_local_network_request(_last_user)
-                and (
-                    "host_shell" in set(_relevant_tools or ())
-                    or "host_shell" in set(relevant_tools or ())
-                    or "bash" in set(relevant_tools or ())
-                )
-            ):
-                _qwen_explicit_tool = (
-                    "host_shell"
-                    if "host_shell" in set(_relevant_tools or ())
-                    or "host_shell" in set(relevant_tools or ())
-                    else "bash"
-                )
-                _qwen_explicit_args = (
-                    _tui_local_fallback_shell_command(_last_user)
-                    or "ip -o -4 addr show; ip route show default"
-                )
-            elif _qwen_calendar_absence_verify:
-                _qwen_explicit_tool = "manage_calendar"
-                _qwen_explicit_args = json.dumps(_qwen_calendar_absence_verify)
-            elif _explicit_calendar_move:
-                _qwen_explicit_tool = "manage_calendar"
-                _qwen_explicit_args = json.dumps(_explicit_calendar_move)
-            elif _qwen_calendar_delete_title:
-                _qwen_explicit_tool = "manage_calendar"
-                _qwen_explicit_args = json.dumps({
-                    "action": "delete_event", "summary": _qwen_calendar_delete_title,
-                })
-            elif _qwen_note_view_title and _qwen_note_view_id:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "view", "id": _qwen_note_view_id,
-                })
-            elif _qwen_note_view_title:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "search", "title": _qwen_note_view_title,
-                })
-            elif _qwen_note_search_title:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "search", "title": _qwen_note_search_title,
-                })
-            elif _qwen_note_delete_title and _qwen_note_delete_id:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "delete", "id": _qwen_note_delete_id,
-                })
-            elif _qwen_note_delete_title:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "delete", "title": _qwen_note_delete_title,
-                })
-            elif _qwen_note_update_title and _qwen_note_update_id:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "update",
-                    "id": _qwen_note_update_id,
-                    "content": _qwen_note_update_content,
-                })
-            elif _qwen_note_update_title:
-                _qwen_explicit_tool = "manage_notes"
-                _qwen_explicit_args = json.dumps({
-                    "action": "update",
-                    "title": _qwen_note_update_title,
-                    "content": _qwen_note_update_content,
-                })
-            elif _explicit_contact_request:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_contact_request
-            elif _explicit_document_request:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_document_request
-            elif _explicit_create_request:
-                _qwen_explicit_tool, _qwen_explicit_args = _explicit_create_request
-            elif _explicit_skill_request and not _qwen_skills_tool_completed:
-                _qwen_explicit_tool = "manage_skills"
-                _qwen_explicit_args = json.dumps(_explicit_skill_request)
-            elif (
-                not _qwen_skills_tool_completed
-                and re.search(r"\b(?:skill|skills|tdd|procedures?)\b", _last_user, re.IGNORECASE)
-                and re.search(r"\b(?:available|list|show|view)\b", _last_user, re.IGNORECASE)
-            ):
-                _qwen_explicit_tool = "manage_skills"
-                _qwen_explicit_args = '{"action":"list"}'
-            elif re.search(
-                r"\b(?:search|find)\b.{0,40}\b(?:prior|past|previous)\s+"
-                r"(?:chat|conversation|session)s?\b",
-                _last_user,
-                re.IGNORECASE,
-            ):
-                _qwen_explicit_tool = "search_chats"
-                _qwen_explicit_args = _last_user
-            elif (
-                not _web_search_unavailable_turn
-                and not _web_search_completed
-                and not _tui_local_workspace_turn(
-                    _last_user,
-                    workspace=workspace,
-                    client_runtime_context=client_runtime_context,
-                )
-                and _looks_like_explicit_web_search_request(
-                    _last_user,
-                    local_media_turn=_local_media_turn,
-                )
-            ):
-                _qwen_explicit_tool = "web_search"
-                _qwen_explicit_args = _last_user
-        if _explicit_theme_change_request:
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_theme_change_request
-        elif _explicit_open_panel_request:
-            _qwen_explicit_tool, _qwen_explicit_args = _explicit_open_panel_request
-        _spam_confirmation_blocks = []
-        if not guide_only and _contextual_email_followup:
-            _spam_confirmation_blocks = _contextual_spam_confirmation_blocks(
-                messages,
-                _last_user,
-                tool_events,
-                set(disabled_tools),
-            )
-        if _spam_confirmation_blocks:
-            # A short approval like "junk and block" should execute against the
-            # previously reviewed scan candidates once. Do not let the model
-            # re-scan or reinterpret the confirmation as a fresh email query.
-            tool_blocks = _spam_confirmation_blocks
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            logger.info(
-                "[agent-intent] normalized contextual spam confirmation to %s email action call(s)",
-                len(tool_blocks),
-            )
-        elif (
-            not guide_only
-            and (_reply_draft_confirmation_block := _reply_draft_confirmation_block_from_recent_context(messages, _last_user))
-            and "mcp__email__draft_email_reply" not in disabled_tools
-        ):
-            tool_blocks = [_reply_draft_confirmation_block]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            logger.info(
-                "[agent-intent] normalized reply-draft confirmation to draft_email_reply"
-            )
-        elif (
-            tool_blocks
-            and all(block.tool_type in {"scan_spam", "mcp__email__scan_spam"} for block in tool_blocks)
-            and any(
-                _resolved_tool_event_name(event) in {"scan_spam", "mcp__email__scan_spam"}
-                and not re.search(
-                    r"\b(?:failed|error|connection refused)\b",
-                    str(event.get("output") or ""),
-                    re.IGNORECASE,
-                )
-                and any(
-                    _tool_block_matches_event_args(block, event)
-                    for block in tool_blocks
-                )
-                for event in tool_events or []
-            )
-        ):
-            tool_blocks = []
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info("[agent-intent] suppressed repeated successful spam scan in the same turn")
-        elif (
-            not guide_only
-            and _contextual_email_followup
-            and (_completed_spam_action := _contextual_spam_confirmation_action(_last_user))
-            and _email_bulk_or_block_tool_succeeded(tool_events, _completed_spam_action)
-            and tool_blocks
-            and all(
-                block.tool_type in {
-                    "scan_spam",
-                    "mcp__email__scan_spam",
-                    "bulk_email",
-                    "mcp__email__bulk_email",
-                    "block_sender",
-                    "mcp__email__block_sender",
-                    "delete_email",
-                    "mcp__email__delete_email",
-                }
-                for block in tool_blocks
-            )
-        ):
-            tool_blocks = []
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = _spam_action_success_summary(tool_events, _completed_spam_action)
-            logger.info(
-                "[agent-intent] suppressed duplicate spam follow-up tool calls after successful %s",
-                _completed_spam_action,
-            )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and (_calendar_action_request := _contextual_calendar_action_request(_last_user))
-            and (_recent_calendar_refs := _recent_odysseus_anchor_refs(messages, history_session))
-            and _recent_calendar_refs.get("event_uid")
-            and "manage_calendar" not in disabled_tools
-        ):
-            _event_uid = _recent_calendar_refs["event_uid"]
-            tool_blocks = [ToolBlock(
-                "manage_calendar",
-                json.dumps({"action": _calendar_action_request, "uid": _event_uid}),
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            logger.info(
-                "[agent-intent] normalized contextual calendar %s request uid=%s",
-                _calendar_action_request,
-                _event_uid,
-            )
-        elif (
-            _qwen_explicit_tool
-            and not _has_accepted_contract_tool_call(turn_contract, tool_blocks)
-            and (
-                _caller_relevant_tools is None
-                or _qwen_explicit_tool in _caller_relevant_tools
-            )
-            and not (
-            _has_successful_tool_evidence(tool_events, _qwen_explicit_tool)
-            or (
-                _qwen_explicit_tool in {"scan_spam", "mcp__email__scan_spam"}
-                and _call_freq.get(
-                    f"{_qwen_explicit_tool}:{(_qwen_explicit_args or '').strip()[:120]}",
-                    0,
-                ) > 0
-            )
-            or (
-                _qwen_explicit_tool in {
-                    "manage_memory",
-                    "manage_tasks",
-                    "manage_skills",
-                    "manage_documents",
-                    "manage_research",
-                    "ui_control",
-                }
-                and _has_successful_state_manager_evidence(
-                    tool_events,
-                    _qwen_explicit_tool,
-                    {_tool_block_action(_qwen_explicit_args)},
-                )
-            )
-        )):
-            # Contract calls already accepted by the parser retain their actual
-            # arguments and native IDs. Recover intent only when none exists;
-            # subsequent security normalization and approval gates still apply.
-            tool_blocks = [ToolBlock(_qwen_explicit_tool, _qwen_explicit_args)]
-            if (
-                _qwen_explicit_tool == "ui_control"
-                and _tool_block_action(_qwen_explicit_args) == "open_panel"
-                and re.search(r"\bopen_panel\s+skills\b", _qwen_explicit_args, re.IGNORECASE)
-                and "manage_skills" not in disabled_tools
-            ):
-                tool_blocks.append(ToolBlock("manage_skills", json.dumps({"action": "list"})))
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            round_response = ""
-            logger.info("[agent-intent] normalized explicit qwen request to %s", _qwen_explicit_tool)
-        elif (
-            _contextual_email_followup
-            and _looks_like_other_email_attachment_followup(_last_user)
-            and (_alternate_attachment_blocks := _alternate_email_attachment_blocks_from_recent_context(messages))
-            and (
-                not tool_blocks
-                or all(
-                    block.tool_type in {"chat_with_model", "ask_teacher", "pipeline"}
-                    for block in tool_blocks
-                )
-            )
-        ):
-            tool_blocks = _alternate_attachment_blocks
+        _replaying_pending_siblings = bool(_pending_sibling_blocks)
+        if _replaying_pending_siblings:
+            tool_blocks = list(_pending_sibling_blocks)
+            _pending_sibling_blocks = []
             converted_calls = [{} for _ in tool_blocks]
-            native_tool_calls = []
             used_native = False
-            full_response = ""
+            cleaned_round = ""
+            actual_model = model
+            actual_endpoint_id = ""
+            actual_endpoint_label = ""
             logger.info(
-                "[agent-intent] normalized contextual other-email attachment follow-up to %s download_attachment call(s)",
+                "[agent] replaying %d pending sibling tool call(s) from approved round: %s",
                 len(tool_blocks),
+                [b.tool_type for b in tool_blocks],
             )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and _contextual_email_followup
-            and _email_reply_draft_requested(_last_user)
-            and (_recent_email_reply_ref := _latest_email_reference_from_recent_tool_context(messages))
-            and _recent_email_reply_ref.get("uid")
-            and "ui_control" not in disabled_tools
-        ):
-            _reply_uid = _recent_email_reply_ref.get("uid") or ""
-            _reply_folder = _recent_email_reply_ref.get("folder") or "INBOX"
-            _reply_body = _email_reply_body_from_request(_last_user)
-            tool_blocks = [ToolBlock(
-                "ui_control",
-                "open_email_reply "
-                f"{_reply_uid} "
-                f"{_reply_folder} "
-                "reply\n"
-                f"{_reply_body}",
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            logger.info(
-                "[agent-intent] normalized contextual email reply request to open_email_reply uid=%s",
-                _reply_uid,
-            )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and _contextual_email_followup
-            and (_email_action_request := _inherited_contextual_email_action_request(messages, _last_user))
-            and not _email_action_tool_succeeded(tool_events, _email_action_request)
-            and (_named_email_action_row := _named_email_row_from_recent_list_context(messages, _last_user))
-            and _named_email_action_row.get("uid")
-        ):
-            _action_uid = _named_email_action_row.get("uid") or ""
-            _action_folder = _named_email_action_row.get("folder") or "INBOX"
-            _action_account = _named_email_action_row.get("account") or ""
-            if _email_action_request == "delete" and "mcp__email__delete_email" not in disabled_tools:
-                _action_args = {"uid": _action_uid, "folder": _action_folder, "permanent": False}
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__delete_email", json.dumps(_action_args))]
-            elif _email_action_request == "archive" and "mcp__email__archive_email" not in disabled_tools:
-                _action_args = {"uid": _action_uid, "folder": _action_folder}
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__archive_email", json.dumps(_action_args))]
-            elif _email_action_request in {"mark_read", "mark_unread"} and "mcp__email__mark_email_read" not in disabled_tools:
-                _action_args = {
-                    "uid": _action_uid,
-                    "folder": _action_folder,
-                    "read": _email_action_request == "mark_read",
-                }
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__mark_email_read", json.dumps(_action_args))]
-            elif _email_action_request in {"favorite", "unfavorite", "unarchive", "mark_done", "mark_undone"} and "mcp__email__manage_email_state" not in disabled_tools:
-                _state_action = _email_action_request
-                _action_args = {
-                    "action": _state_action,
-                    "uid": _action_uid,
-                    "folder": "Archive" if _state_action == "unarchive" and _action_folder == "INBOX" else _action_folder,
-                }
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__manage_email_state", json.dumps(_action_args))]
-            if tool_blocks:
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-                full_response = ""
-                logger.info(
-                    "[agent-intent] inherited contextual email %s request uid=%s",
-                    _email_action_request,
-                    _action_uid,
-                )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and _contextual_email_followup
-            and (_email_action_request := _contextual_email_action_request(_last_user))
-            and not _email_action_tool_succeeded(tool_events, _email_action_request)
-            and (_recent_email_action_ref := _latest_email_reference_from_recent_tool_context(messages))
-            and _recent_email_action_ref.get("uid")
-        ):
-            _action_uid = _recent_email_action_ref.get("uid") or ""
-            _action_folder = _recent_email_action_ref.get("folder") or "INBOX"
-            _action_account = _recent_email_action_ref.get("account") or ""
-            if _email_action_request == "delete" and "mcp__email__delete_email" not in disabled_tools:
-                _action_args = {"uid": _action_uid, "folder": _action_folder, "permanent": False}
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__delete_email", json.dumps(_action_args))]
-            elif _email_action_request == "archive" and "mcp__email__archive_email" not in disabled_tools:
-                _action_args = {"uid": _action_uid, "folder": _action_folder}
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__archive_email", json.dumps(_action_args))]
-            elif _email_action_request in {"mark_read", "mark_unread"} and "mcp__email__mark_email_read" not in disabled_tools:
-                _action_args = {
-                    "uid": _action_uid,
-                    "folder": _action_folder,
-                    "read": _email_action_request == "mark_read",
-                }
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__mark_email_read", json.dumps(_action_args))]
-            elif _email_action_request in {"favorite", "unfavorite", "unarchive", "mark_done", "mark_undone"} and "mcp__email__manage_email_state" not in disabled_tools:
-                _state_action = _email_action_request
-                _action_args = {
-                    "action": _state_action,
-                    "uid": _action_uid,
-                    "folder": "Archive" if _state_action == "unarchive" and _action_folder == "INBOX" else _action_folder,
-                }
-                if _action_account:
-                    _action_args["account"] = _action_account
-                tool_blocks = [ToolBlock("mcp__email__manage_email_state", json.dumps(_action_args))]
-            if tool_blocks:
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-                full_response = ""
-                logger.info(
-                    "[agent-intent] normalized contextual email %s request uid=%s",
-                    _email_action_request,
-                    _action_uid,
-                )
-        elif (
-            not guide_only
-            and (
-                not tool_blocks
-                or all(block.tool_type in {"read_email", "mcp__email__read_email"} for block in tool_blocks)
-            )
-            and not _visible_response_text(full_response)
-            and _contextual_email_followup
-            and _looks_like_email_body_followup(_last_user)
-            and (_mentioned_email_ref := _recent_mentioned_email_reference(messages))
-            and _mentioned_email_ref.get("uid")
-            and "mcp__email__read_email" not in disabled_tools
-        ):
-            tool_blocks = [ToolBlock("mcp__email__read_email", json.dumps(_mentioned_email_ref))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            logger.info(
-                "[agent-intent] normalized mentioned email follow-up to read_email uid=%s",
-                _mentioned_email_ref.get("uid"),
-            )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and _contextual_email_followup
-            and (_named_email_row := _named_email_row_from_recent_list_context(messages, _last_user))
-            and _named_email_row.get("uid")
-            and "mcp__email__read_email" not in disabled_tools
-        ):
-            if _attachment_content_requested(_last_user) and str(_named_email_row.get("attachments") or "").strip():
-                tool_blocks = _email_read_and_attachment_blocks_from_row(_named_email_row, set(disabled_tools))
-            else:
-                _named_email_ref = _named_email_reference_from_recent_list_context(messages, _last_user)
-                tool_blocks = [ToolBlock("mcp__email__read_email", json.dumps(_named_email_ref))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            full_response = ""
-            logger.info(
-                "[agent-intent] normalized named email follow-up to %s tool call(s) uid=%s",
-                len(tool_blocks),
-                _named_email_row.get("uid"),
-            )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and _contextual_email_followup
-            and _looks_like_email_body_followup(_last_user)
-            and (_recent_email_ref := _latest_email_reference_from_recent_tool_context(messages))
-            and _recent_email_ref.get("uid")
-            and "mcp__email__read_email" not in disabled_tools
-        ):
-            tool_blocks = [ToolBlock("mcp__email__read_email", json.dumps(_recent_email_ref))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info(
-                "[agent-intent] normalized contextual email body follow-up to read_email uid=%s",
-                _recent_email_ref.get("uid"),
-            )
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and "email" in _intent_domains
-            and (_spam_scan_request := _parse_qwen_explicit_spam_scan_request(_last_user))
-            and "mcp__email__scan_spam" not in disabled_tools
-        ):
-            tool_blocks = [ToolBlock("mcp__email__scan_spam", json.dumps(_spam_scan_request))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info("[agent-intent] normalized explicit spam scan request to mcp__email__scan_spam")
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and "email" in _intent_domains
-            and (_email_date_list_request := _parse_qwen_explicit_email_date_list_request(_last_user))
-            and "mcp__email__list_emails" not in disabled_tools
-        ):
-            tool_blocks = [ToolBlock("mcp__email__list_emails", json.dumps(_email_date_list_request))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info("[agent-intent] normalized explicit email date-list request to mcp__email__list_emails")
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and "email" in _intent_domains
-            and (_email_search_request := _parse_qwen_explicit_email_search_request(_last_user))
-            and "mcp__email__search_emails" not in disabled_tools
-        ):
-            tool_blocks = [ToolBlock("mcp__email__search_emails", json.dumps(_email_search_request))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info("[agent-intent] normalized explicit email search/open request to mcp__email__search_emails")
-        elif (
-            not tool_blocks
-            and not guide_only
-            and not _visible_response_text(full_response)
-            and "email" in _intent_domains
-            and _is_explicit_latest_email_open_request(_last_user)
-            and "mcp__email__list_emails" not in disabled_tools
-        ):
-            tool_blocks = [ToolBlock("mcp__email__list_emails", json.dumps({
-                "folder": "INBOX",
-                "max_results": 1,
-                "unread_only": False,
-            }))]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            logger.info("[agent-intent] normalized explicit latest-email open request to mcp__email__list_emails")
-
-        # Text-only/compact models may emit a tool name they saw in stale
-        # context even though the current TUI route contains only host tools.
-        # Drop it before the executor and give the model one bounded chance to
-        # recover with the advertised host_shell action.
-        _tui_local_no_web_recovery_turn_active = _tui_local_no_web_recovery_turn(
-            _last_user,
-            client_runtime_context=client_runtime_context,
-        )
-        if (_tui_local_execution_turn or _tui_local_no_web_recovery_turn_active) and tool_blocks:
-            _tui_allowed_tools = _tui_local_execution_allowlist(_last_user)
-            _invalid_tui_blocks = [
-                block for block in tool_blocks
-                if block.tool_type not in _tui_allowed_tools
-            ]
-            if _invalid_tui_blocks:
-                logger.warning(
-                    "[agent-intent] dropped tools outside TUI local allowlist: %s",
-                    sorted({block.tool_type for block in _invalid_tui_blocks}),
-                )
-                _recovered_blocks, _recovered = _tui_recover_invalid_local_tools(
-                    tool_blocks,
-                    _last_user,
-                )
-                _fallback_command = (
-                    json.loads(_recovered_blocks[0].content).get("command")
-                    if _recovered
-                    and _recovered_blocks
-                    and _recovered_blocks[0].tool_type == "host_shell"
-                    else None
-                )
-                if _recovered:
-                    # The host bridge is authoritative for TUI-local work.
-                    # Recover in this round instead of allowing a compact
-                    # router to repeat get_workspace/ls against the backend
-                    # container and spiral through more model rounds.
-                    tool_blocks = _recovered_blocks
-                    converted_calls = []
-                    native_tool_calls = []
-                    used_native = False
-                    round_response = ""
-                    logger.warning(
-                        "[agent-intent] replaced invalid TUI-local tools with host_shell: %s",
-                        _fallback_command,
-                    )
-                else:
-                    tool_blocks = []
-                    converted_calls = []
-                    native_tool_calls = []
-                    used_native = False
-                    _tui_invalid_tool_nudges += 1
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "That tool is not available for this TUI-local request. "
-                            "Use `host_shell` for the user's workspace, LAN, DNS, SSH, "
-                            "and process facts. Do not use web, app, memory, research, "
-                            "or backend tools for this request."
-                        ),
-                    })
-                    if _tui_invalid_tool_nudges <= 2:
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                        continue
-                    _force_answer = True
-        if (
-            _tui_local_execution_turn
-            and native_tool_calls
-            and not tool_blocks
-            and exact_approval is None
-        ):
-            # Unknown native names cannot be executed safely, but a read-only
-            # local request still has a deterministic host capability. Convert
-            # the failed intent to one generic host_shell proposal instead of
-            # spending more rounds inventing increasingly specific APIs.
-            _fallback_command = _tui_local_fallback_shell_command(_last_user)
-            if _fallback_command:
-                logger.warning(
-                    "[agent-intent] converted unknown local tool to host_shell: %s",
-                    _fallback_command,
-                )
-                tool_blocks = [
-                    ToolBlock(
-                        "host_shell",
-                        json.dumps({"command": _fallback_command}),
-                    )
-                ]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-        if (
-            _tui_local_execution_turn
-            and not tool_blocks
-            and not native_tool_calls
-            and exact_approval is None
-            and _looks_like_malformed_tui_tool_call(round_response)
-        ):
-            # Some compact routers emit truncated function markup as prose
-            # (for example ``parameter=hos_shell``). Treat that as a failed
-            # local-tool intent and recover through the bounded bridge path.
-            _fallback_command = _tui_local_fallback_shell_command(_last_user)
-            if _fallback_command:
-                logger.warning(
-                    "[agent-intent] recovered malformed local tool markup with host_shell: %s",
-                    _fallback_command,
-                )
-                round_response = ""
-                tool_blocks = [
-                    ToolBlock(
-                        "host_shell",
-                        json.dumps({"command": _fallback_command}),
-                    )
-                ]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-        # An explicit read-only workspace request is an action, even when the
-        # compact router answers with a clarification. Route it once through
-        # the host bridge instead of asking the user to name a project that
-        # the active workspace already identifies.
-        if (
-            _tui_local_read_request
-            and not tool_events
-            and not tool_blocks
-            and not native_tool_calls
-            and not _force_answer
-            and exact_approval is None
-        ):
-            _fallback_command = _tui_local_fallback_shell_command(_last_user)
-            if _fallback_command:
-                logger.warning(
-                    "[agent-intent] enforced read-only workspace action after non-tool round: %s",
-                    _fallback_command,
-                )
-                round_response = ""
-                tool_blocks = [
-                    ToolBlock("host_shell", json.dumps({"command": _fallback_command}))
-                ]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-
-        # A compact router can also return a prose/blank round without a
-        # parsable tool call. For a read-only host-local request the bridge is
-        # the authoritative capability, so recover in this same round instead
-        # of spending another model round behaving like chat. Mutations stay
-        # model-led because the fallback helper deliberately returns None for
-        # them.
-        if (
-            _tui_local_execution_turn
-            and not tool_blocks
-            and not round_response.strip()
-            and not _force_answer
-            and exact_approval is None
-        ):
-            _fallback_command = _tui_local_fallback_shell_command(_last_user)
-            if _fallback_command:
-                logger.warning(
-                    "[agent-intent] recovered local request with host_shell: %s",
-                    _fallback_command,
-                )
-                tool_blocks = [
-                    ToolBlock(
-                        "host_shell",
-                        json.dumps({"command": _fallback_command}),
-                    )
-                ]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-
-        # If no safe read-only fallback exists, retry a bounded number of
-        # times with the same concrete capability reminder instead of
-        # surfacing the generic empty-response error.
-        if (
-            _tui_local_execution_turn
-            and not tool_blocks
-            and not round_response.strip()
-            and not _force_answer
-        ):
-            _tui_invalid_tool_nudges += 1
-            messages.append({
-                "role": "system",
-                "content": (
-                    "The last round was empty. Perform the user's local request "
-                    "now with exactly one `host_shell` call; do not answer with "
-                    "plain text before calling it."
-                ),
-            })
-            if _tui_invalid_tool_nudges <= 2:
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            _force_answer = True
-
-        # An explicit test request is a task invariant, not a suggestion. A
-        # compact router may inspect the workspace and then emit a confident
-        # prose claim without ever invoking a runner. Force the bounded,
-        # workspace-relative runner fallback until an actual test command has
-        # executed (or reported that no supported runner exists).
-        if (
-            _tui_test_request
-            and not _tui_test_completed
-            and not tool_blocks
-            and not native_tool_calls
-            and not _force_answer
-            and exact_approval is None
-        ):
-            _fallback_command = _tui_local_fallback_shell_command(_last_user)
-            if _fallback_command:
-                logger.warning(
-                    "[agent-intent] enforced test action after non-tool round: %s",
-                    _fallback_command,
-                )
-                round_response = ""
-                tool_blocks = [
-                    ToolBlock(
-                        "host_shell",
-                        json.dumps({"command": _fallback_command}),
-                    )
-                ]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-        # A request for a bash block is an explicit request to demonstrate
-        # the active workspace shell, not a request for conversational prose.
-        # Compact routers occasionally miss the tool call, so enforce one
-        # bounded, read-only diagnostic just as we do for explicit tests.
-        if (
-            _tui_bash_block_request
-            and not _tui_bash_block_completed
-            and not tool_blocks
-            and not native_tool_calls
-            and not _force_answer
-            and exact_approval is None
-        ):
-            _fallback_command = _tui_local_fallback_shell_command(_last_user)
-            if _fallback_command:
-                logger.warning(
-                    "[agent-intent] enforced bash-block action after non-tool round: %s",
-                    _fallback_command,
-                )
-                round_response = ""
-                tool_blocks = [
-                    ToolBlock(
-                        "host_shell",
-                        json.dumps({"command": _fallback_command}),
-                    )
-                ]
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-        _qwen_registry_list_tool = None
-        if _qwen38_tool_router and re.search(
-            r"\b(?:list|show|view)\b.{0,30}\b(?:chat\s+)?sessions?\b",
-            _last_user,
-            re.IGNORECASE,
-        ):
-            _qwen_registry_list_tool = "list_sessions"
-        elif _qwen38_tool_router and re.search(
-            r"\b(?:list|show|view)\b.{0,30}\b(?:my\s+)?contacts?\b",
-            _last_user,
-            re.IGNORECASE,
-        ):
-            _qwen_registry_list_tool = "manage_contact"
-        elif _qwen38_tool_router and re.search(
-            r"\b(?:list|show|view)\b.{0,30}\b(?:saved\s+)?(?:research|reports?)\b",
-            _last_user,
-            re.IGNORECASE,
-        ):
-            _qwen_registry_list_tool = "manage_research"
-        if _qwen_registry_list_tool and tool_blocks and not _qwen_explicit_tool:
-            # The small router occasionally emits search_chats with an empty
-            # query for a registry-list request. Normalize that known semantic
-            # confusion before execution; otherwise it returns "no chats" and
-            # the model may keep probing the wrong API.
-            _list_args = "" if _qwen_registry_list_tool == "list_sessions" else '{"action":"list"}'
-            tool_blocks = [ToolBlock(_qwen_registry_list_tool, _list_args)]
-            converted_calls = converted_calls[:1]
-            if used_native:
-                native_tool_calls = native_tool_calls[:1]
-        if _qwen38_tool_router and "memory" in _intent_domains and tool_blocks:
-            # A saved-memory request must not fall through to notes or other
-            # personal registries when the small router emits a mixed batch.
-            _memory_only_blocks = [b for b in tool_blocks if b.tool_type == "manage_memory"]
-            if _memory_only_blocks:
-                _unique_memory_blocks = []
-                _seen_memory_calls = set()
-                for _memory_block in _memory_only_blocks:
-                    _memory_key = (_memory_block.tool_type, _memory_block.content)
-                    if _memory_key in _seen_memory_calls:
-                        continue
-                    _seen_memory_calls.add(_memory_key)
-                    _unique_memory_blocks.append(_memory_block)
-                tool_blocks = _unique_memory_blocks
-                converted_calls = converted_calls[: len(tool_blocks)]
-                if used_native:
-                    native_tool_calls = native_tool_calls[: len(tool_blocks)]
-        if _ody_doc_stream_create_mode and tool_blocks:
-            create_idx = next(
-                (idx for idx, block in enumerate(tool_blocks) if block.tool_type == "create_document"),
-                None,
-            )
-            if create_idx is None:
-                logger.info(
-                    "[agent] odysseus doc stream-create discarded non-create tool call(s): %s",
-                    [block.tool_type for block in tool_blocks],
-                )
-                tool_blocks = []
-                converted_calls = []
-            else:
-                if len(tool_blocks) > 1 or create_idx != 0:
-                    logger.info(
-                        "[agent] odysseus doc stream-create keeping first create_document and dropping extras: %s",
-                        [block.tool_type for block in tool_blocks],
-                    )
-                tool_blocks = [tool_blocks[create_idx]]
-                converted_calls = (
-                    [converted_calls[create_idx]]
-                    if create_idx < len(converted_calls)
-                    else converted_calls[:1]
-                )
-
-        _prior_memory_search = _memory_search_precedes_unrequested_list(
-            tool_events,
-            _explicit_memory_list,
-        )
-        if (
-            (_memory_lookup_turn or _prior_memory_search)
-            and tool_blocks
-            and not _ody_qwen_finetune_model
-        ):
-            # Memory lookup is an evidence request, not permission to dump the
-            # entire store. Weak models often broaden a failed search into
-            # several synonyms and then call list; cap that escalation and
-            # make the model answer from the results already returned.
-            _memory_filtered_blocks = []
-            _memory_filtered_calls = []
-            _memory_dropped = False
-            for _idx, _block in enumerate(tool_blocks):
-                if _block.tool_type != "manage_memory":
-                    _memory_filtered_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _memory_filtered_calls.append(converted_calls[_idx])
-                    continue
-                _memory_action = ""
-                try:
-                    _memory_args = json.loads(_block.content or "{}")
-                    if isinstance(_memory_args, dict):
-                        _memory_action = str(_memory_args.get("action") or "").lower()
-                except Exception:
-                    pass
-                if not _memory_action:
-                    _memory_action = str(_block.content or "").strip().splitlines()[0].lower()
-                if _memory_action == "search" and _memory_search_calls < 2:
-                    _memory_search_calls += 1
-                    _memory_filtered_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _memory_filtered_calls.append(converted_calls[_idx])
-                elif _memory_action == "list" and _explicit_memory_list and _memory_search_calls == 0:
-                    _memory_filtered_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _memory_filtered_calls.append(converted_calls[_idx])
-                else:
-                    _memory_dropped = True
-            if _memory_dropped:
-                tool_blocks = _memory_filtered_blocks
-                converted_calls = _memory_filtered_calls
-                if used_native:
-                    native_tool_calls = _memory_filtered_calls
-                logger.info(
-                    "[agent-intent] bounded memory lookup dropped extra calls searches=%s",
-                    _memory_search_calls,
-                )
-                if not tool_blocks:
-                    _force_answer = True
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "Answer from the saved-memory search results already returned. "
-                            "Do not call manage_memory again and do not list all memories. "
-                            "State clearly when the requested item was not found."
-                        ),
-                    })
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-
-        if _compact_memory_list_turn and tool_blocks:
-            # Once a broad listing has been reduced to counts, do not let a
-            # model expand it again by listing each category separately.
-            # Keep unrelated calls intact, but force another memory-list call
-            # into the answer path without executing it.
-            _compact_filtered_blocks = []
-            _compact_filtered_calls = []
-            _compact_dropped = False
-            for _idx, _block in enumerate(tool_blocks):
-                if _block.tool_type != "manage_memory":
-                    _compact_filtered_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _compact_filtered_calls.append(converted_calls[_idx])
-                    continue
-                _compact_action = ""
-                try:
-                    _compact_args = json.loads(_block.content or "{}")
-                    if isinstance(_compact_args, dict):
-                        _compact_action = str(_compact_args.get("action") or "").lower()
-                except Exception:
-                    _compact_action = str(_block.content or "").strip().splitlines()[0].lower()
-                if _compact_action in {"list", "index"}:
-                    _compact_dropped = True
-                    continue
-                _compact_filtered_blocks.append(_block)
-                if _idx < len(converted_calls):
-                    _compact_filtered_calls.append(converted_calls[_idx])
-            if _compact_dropped:
-                tool_blocks = _compact_filtered_blocks
-                converted_calls = _compact_filtered_calls
-                if used_native:
-                    native_tool_calls = _compact_filtered_calls
-                _force_answer = True
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The saved-memory listing is already summarized above. "
-                        "Do not call manage_memory again; answer with the count/category summary."
-                    ),
-                })
-                logger.info("[agent-intent] compact memory listing blocked repeat list call")
-
-        if _compact_document_list_turn and tool_blocks:
-            _document_filtered_blocks = []
-            _document_filtered_calls = []
-            _document_dropped = False
-            for _idx, _block in enumerate(tool_blocks):
-                if _block.tool_type != "manage_documents":
-                    _document_filtered_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _document_filtered_calls.append(converted_calls[_idx])
-                    continue
-                _document_action = ""
-                try:
-                    _document_args = json.loads(_block.content or "{}")
-                    if isinstance(_document_args, dict):
-                        _document_action = str(_document_args.get("action") or "").lower()
-                except Exception:
-                    _document_action = str(_block.content or "").strip().splitlines()[0].lower()
-                if _document_action in {"list", "search", "find"}:
-                    _document_dropped = True
-                    continue
-                _document_filtered_blocks.append(_block)
-                if _idx < len(converted_calls):
-                    _document_filtered_calls.append(converted_calls[_idx])
-            if _document_dropped:
-                tool_blocks = _document_filtered_blocks
-                converted_calls = _document_filtered_calls
-                if used_native:
-                    native_tool_calls = _document_filtered_calls
-                _force_answer = True
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The document listing is already complete. Do not call "
-                        "manage_documents again; answer from the listed documents."
-                    ),
-                })
-                logger.info("[agent-intent] compact document listing blocked repeat list call")
-
-        if _ody_qwen_finetune_model and tool_blocks:
-            _allowed_memory_write_actions = {"add", "edit", "update", "delete", "delete_all"}
-            _explicit_memory_browse = bool(re.search(
-                r"\b(search|list|show|open|view)\b.{0,40}\b(memories|memory|brain)\b",
-                _last_user.lower(),
-            ))
-            _filtered_tool_blocks = []
-            _filtered_converted_calls = []
-            _dropped_memory_lookup = False
-            for _idx, _block in enumerate(tool_blocks):
-                if _block.tool_type != "manage_memory":
-                    _filtered_tool_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _filtered_converted_calls.append(converted_calls[_idx])
-                    continue
-                _action = ""
-                try:
-                    _args = json.loads(_block.content or "{}")
-                    if isinstance(_args, dict):
-                        _action = str(_args.get("action") or "").lower()
-                except Exception:
-                    _action = ""
-                if _action in {"list", "search", "view", "get", "read"} and not _explicit_memory_browse:
-                    _dropped_memory_lookup = True
-                elif _action in _allowed_memory_write_actions and re.search(
-                    r"\b(remember|forget|preference|prefer|save this about me|update memory|delete memory)\b",
-                    _last_user.lower(),
-                ):
-                    _filtered_tool_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _filtered_converted_calls.append(converted_calls[_idx])
-                else:
-                    _dropped_memory_lookup = True
-            if _dropped_memory_lookup:
-                logger.info(
-                    "[agent-intent] odysseus qwen dropped manage_memory lookup; answering from compact memory"
-                )
-                tool_blocks = _filtered_tool_blocks
-                converted_calls = _filtered_converted_calls
-                if used_native:
-                    native_tool_calls = _filtered_converted_calls
-                if not tool_blocks:
-                    _force_answer = True
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "Answer the user's identity/personal-memory question from the compact "
-                            "saved memory facts already provided. Do not call manage_memory or any tool."
-                        ),
-                    })
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-
-        # Search is a one-query lookup tool. Weak models sometimes issue a
-        # second, slightly reworded search after receiving usable results
-        # (for example, "latest Python release" followed by "Python 3.14
-        # release python.org latest version"). Keep distinct searches and
-        # concrete fetches, but discard near-duplicate searches within this
-        # turn so they do not add latency and duplicate noisy sources.
-        if tool_blocks:
-            _seen_web_queries = list(_web_search_queries)
-            _filtered_web_blocks = []
-            _filtered_web_calls = []
-            _dropped_duplicate_web_search = False
-            for _idx, _block in enumerate(tool_blocks):
-                if _block.tool_type != "web_search":
-                    _filtered_web_blocks.append(_block)
-                    if _idx < len(converted_calls):
-                        _filtered_web_calls.append(converted_calls[_idx])
-                    continue
-                _block = _normalize_web_search_block_query(
-                    _block,
-                    _web_search_user_text,
-                )
-                _query = _web_search_query_from_block(_block)
-                if any(_web_search_queries_overlap(_query, _old) for _old in _seen_web_queries):
-                    _dropped_duplicate_web_search = True
-                    logger.info(
-                        "[agent-intent] dropped near-duplicate web_search query=%r",
-                        _query[:160],
-                    )
-                    continue
-                _seen_web_queries.append(_query)
-                _filtered_web_blocks.append(_block)
-                if _idx < len(converted_calls):
-                    _filtered_web_calls.append(converted_calls[_idx])
-            if _dropped_duplicate_web_search:
-                tool_blocks = _filtered_web_blocks
-                converted_calls = _filtered_web_calls
-                if used_native:
-                    native_tool_calls = _filtered_web_calls
-                if not tool_blocks:
-                    if _force_answer:
-                        logger.info(
-                            "[agent-intent] force-answer already active; "
-                            "discarding duplicate web_search and finishing"
-                        )
-                    elif _artifact_acquisition_recovery_active:
-                        # During source acquisition, a duplicate search is not
-                        # evidence that the task can be answered. Keep the
-                        # native acquisition surface alive and redirect to a
-                        # direct PDF fetch/extraction instead of falling into
-                        # the no-tool retry path.
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "That web search query was already attempted and was not useful. "
-                                "Do not repeat it. Use `pdf_extract` on the direct paper PDF URL "
-                                "or use `web_fetch` on a different direct source URL now; do not "
-                                "answer or write artifacts until the requested source detail is loaded."
-                            ),
-                        })
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\\n\\n'
-                        continue
-                    else:
-                        _force_answer = True
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "A sufficiently similar web search already ran this turn. "
-                                "Answer from the returned search results and do not search again."
-                            ),
-                        })
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                        continue
-
-        # Detached host jobs are a hard continuation invariant. Apply this
-        # after every model-specific normalizer so memory/search/force-answer
-        # recovery cannot replace the required poll with another action.
-        if _pending_host_shell_poll_job_id:
-            tool_blocks = [ToolBlock(
-                "host_shell",
-                json.dumps({"job_id": _pending_host_shell_poll_job_id}),
-            )]
-            converted_calls = []
-            native_tool_calls = []
-            used_native = False
-            _force_answer = False
-            logger.info(
-                "[agent] enforced host_shell poll job=%s",
-                _pending_host_shell_poll_job_id,
-            )
-        elif _workspace_read_before_mutation_paths:
-            # A compact router may try to write a named existing file before
-            # seeing its current contents. Force one bounded read per named
-            # path; this prevents partial write_file payloads from discarding
-            # imports or unrelated code and applies uniformly to every repo.
-            _read_before_mutation_path = _workspace_read_before_mutation_paths[0]
-            tool_blocks = [ToolBlock("read_file", _read_before_mutation_path)]
-            if _qwen38_tool_router:
-                # This read is controller-forced rather than emitted by the
-                # model. Preserve a valid native assistant/tool message pair
-                # in history anyway; some OpenAI-compatible chat templates
-                # reject the older plain assistant + loose text continuation.
-                _forced_read_call = {
-                    "id": f"odysseus-forced-read-{round_num}",
-                    "name": "read_file",
-                    "arguments": json.dumps({"path": _read_before_mutation_path}),
-                }
-                converted_calls = [_forced_read_call]
-                native_tool_calls = [_forced_read_call]
-                used_native = True
-            else:
-                converted_calls = []
-                native_tool_calls = []
-                used_native = False
-            _force_answer = False
-            logger.info(
-                "[agent] enforced read-before-mutation path=%s",
-                _read_before_mutation_path,
-            )
-
-        # If the loop breaker fired while a required artifact is still
-        # missing, keep this round actionable. The prior implementation
-        # removed all schemas above and then discarded the model's valid
-        # follow-up call, producing the M005-M008 failures seen in benchmark
-        # traces. Only artifact recovery gets this exception; ordinary
-        # conversational/error turns retain tool-free finalization.
-        if _force_answer:
-            _force_answer_missing = (
-                EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate().missing_artifacts
-                if _artifact_recovery_enabled
-                else ()
-            )
-            if _force_answer_keeps_artifact_tools(
-                force_answer=_force_answer,
-                artifact_recovery_enabled=_artifact_recovery_enabled,
-                artifact_creation_requested=_artifact_creation_requested,
-                missing_artifacts=_force_answer_missing,
-                correction_available=(
-                    _artifact_finish_nudge_sent
-                    and not _artifact_finish_correction_seen
-                ),
-                post_correction_verification_available=(
-                    _post_correction_verification_available(
-                        correction_seen=_artifact_finish_correction_seen,
-                        tool_used=_artifact_finish_post_correction_tool_used,
-                        mutation_seen=_artifact_finish_post_correction_mutation_seen,
-                    )
-                ),
-                convergence_sent=_artifact_finish_convergence_sent,
-            ):
-                _correction_needed = bool(_force_answer_missing)
-                _correction_allowed = bool(
-                    _artifact_finish_nudge_sent
-                    and not _artifact_finish_correction_seen
-                )
-                _post_correction_verification_allowed = bool(
-                    _artifact_finish_correction_seen
-                    and not _artifact_finish_post_correction_tool_used
-                )
-                if native_tool_calls or (
-                    _correction_needed
-                    and _looks_like_unfinished_action_promise(
-                        _strip_think_blocks(strip_tool_blocks(round_response)).strip()
-                    )
-                ):
-                    _force_answer = False
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "The required artifact still needs a bounded correction. "
-                            "For files on disk use the available workspace mutation "
-                            "tool (write_file or edit_file), not editor-panel "
-                            "edit_document; use a verification tool when needed, "
-                            "then confirm the artifact before answering."
-                            if _correction_needed
-                            else "The inspection revealed a concrete artifact defect. "
-                            "Make at most one evidence-based correction, verify it, "
-                            "then finish."
-                        ),
-                    })
-                if not native_tool_calls and _correction_needed:
-                    # A prose-only promise is not completion and should not
-                    # enter the tool-free synthesis path. Give the model one
-                    # actionable recovery round with the preserved schemas.
-                    round_response = ""
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-                if native_tool_calls:
-                    # A mutation is the correction itself, not the bounded
-                    # verification that follows it.  Treating the mutation as
-                    # verification immediately forces a tool-free round and
-                    # drops the model's next evidence-based repair request.
-                    _native_calls_are_verification_only = (
-                        _artifact_calls_are_verification_only(tool_blocks)
-                    )
-                    if (
-                        _post_correction_verification_allowed
-                        and _native_calls_are_verification_only
-                    ):
-                        _artifact_finish_post_correction_tool_used = True
-                        logger.info(
-                            "[agent] allowed one bounded post-correction verification call"
-                        )
-                    logger.info(
-                        "[agent] kept artifact tools available after forced-finish trigger; "
-                        "missing=%s correction_available=%s",
-                        list(_force_answer_missing),
-                        _correction_allowed,
-                    )
-
-        # Force-answer round: we told the model to STOP calling tools and
-        # answer. If it ignored that and emitted a (possibly DSML) tool
-        # call anyway, discard it — don't execute, don't re-loop. Keep
-        # only the prose; if there's none, emit a graceful fallback.
-        if _force_answer and _workspace_read_requires_mutation and not _post_effectful_mutation_done:
-            # The read-before-mutation guard intentionally replaced an unsafe
-            # write proposal. Do not let the failed proposal's loop-breaker
-            # state turn the successful read into a dead end; give the model
-            # one bounded mutation round.
-            _force_answer = False
-            messages.append({
-                "role": "system",
-                "content": (
-                    "The named workspace file has been read successfully. "
-                    "Now make the requested change using edit_file or apply_patch; "
-                    "do not write a partial replacement and do not answer yet."
-                ),
-            })
-            logger.info("[agent] resumed mutation after enforced workspace read")
-
-        if _force_answer:
-            if tool_blocks:
-                logger.info(f"[agent] force-answer round {round_num}: discarding {len(tool_blocks)} ignored tool call(s)")
-            # A model can ignore the tool-free instruction and emit native
-            # calls anyway.  Those calls are intentionally not executed, but
-            # their accompanying planning prose is not a finished answer
-            # either.  Leaving that prose in ``round_response`` bypasses the
-            # grace-synthesis path below and can keep a weak model looping
-            # until the outer task deadline.  Treat the whole forced round as
-            # rejected so the bounded synthesis call gets the evidence.
-            if native_tool_calls:
-                logger.info(
-                    "[agent] force-answer round %s emitted %d native call(s); "
-                    "discarding unfinished tool-plan text before synthesis",
-                    round_num,
-                    len(native_tool_calls),
-                )
-                full_response = _drop_rejected_round_response(
-                    full_response,
-                    round_response,
-                )
-                round_response = ""
-                native_tool_calls = []
-                converted_calls = []
-                used_native = False
-            tool_blocks = []
-            if _web_search_unavailable_turn:
-                # A weak model may emit an empty textual tool wrapper even
-                # with schemas removed. Never persist that wrapper as the
-                # assistant's answer; the capability error is deterministic.
-                round_response = ""
-            if _host_bridge_failed_turn:
-                # The transport error is already authoritative. Do not spend
-                # another model call paraphrasing it or inventing recovery.
-                round_response = ""
-            _force_visible = _strip_think_blocks(strip_tool_blocks(round_response)).strip()
-            if (
-                _force_visible
-                and _looks_like_unfinished_action_promise(_force_visible)
-            ):
-                logger.info(
-                    "[agent] force-answer round produced another action promise; synthesizing final instead"
-                )
-                round_response = ""
-            if not _strip_think_blocks(strip_tool_blocks(round_response)).strip():
-                # The model burned its budget gathering data but never wrote a
-                # final answer (common with weaker models on multi-source
-                # briefings). Salvage it: one blunt non-streaming synthesis call
-                # over the full conversation (which already holds every tool
-                # result) before falling back to the canned apology.
-                _synth = ""
-                if _web_search_unavailable_turn:
-                    _synth = (
-                        "Web search is disabled for this turn. Enable web search "
-                        "and resend the request to look up the latest Qwen release."
-                    )
-                elif _host_bridge_failed_turn:
-                    _synth = _host_bridge_failure_response()
-                if not _synth:
-                    try:
-                        from src.generation_budget import fit_output_token_budget
-                        from src.llm_core import llm_call_async
-                        _synth_messages = list(messages) + [{
-                            "role": "user",
-                            "content": (
-                                "Using ONLY the information already gathered above, write "
-                                "the final answer for the user now. Do NOT call any tools, "
-                                "do NOT explain your reasoning — output the finished response "
-                                "directly. If some data couldn't be fetched, just work with "
-                                "what you have and note what's missing in one short line."
-                            ),
-                        }]
-                        _raw = await llm_call_async(
-                            url=endpoint_url, model=model, messages=_synth_messages,
-                            headers=headers,
-                            temperature=0.3,
-                            max_tokens=fit_output_token_budget(
-                                min(max_tokens, 4096),
-                                _last_route_context_length or context_length,
-                                _synth_messages,
-                                None,
-                            ),
-                            timeout=60,
-                        )
-                        _raw_text = _raw or ""
-                        _synth = _visible_response_text(_raw_text)
-                        if (
-                            _synth
-                            and (
-                                _looks_like_unfinished_action_promise(_synth)
-                                or _looks_like_agent_reasoning_preamble(_synth)
-                                or _looks_like_ody_qwen_leaked_tool_text(_synth)
-                            )
-                        ):
-                            _synth = ""
-                        usage_buckets.append(_usage_bucket(
-                            round_num=round_num,
-                            model=model,
-                            endpoint_id=_round_actual_endpoint_id,
-                            endpoint_label=_round_actual_endpoint_label,
-                            endpoint_cost_tracked=actual_endpoint_cost_tracked,
-                            input_tokens=estimate_tokens(_synth_messages),
-                            output_tokens=max(len(_raw_text) // 4, 0),
-                            usage_source="estimated",
-                        ))
-                    except Exception as _e:
-                        logger.warning(f"[agent] grace synthesis failed: {_e}")
-                if _synth:
-                    yield f'data: {json.dumps({"delta": _synth})}\n\n'
-                    round_response += _synth
-                    full_response += _synth
-                else:
-                    _fb = ("I gathered some search results but couldn't pull a clean "
-                           "answer together. Want me to try a more specific question, "
-                           "or summarize what I did find?")
-                    yield f'data: {json.dumps({"delta": _fb})}\n\n'
-                    round_response += _fb
-                    full_response += _fb
-
-        # A single giant SVG is source code, not a useful inline chat visual.
-        # Move it into the editor through the same document flow as other long
-        # code while leaving the skill's compact multi-part SVGs inline.
-        _has_document_tool = any(
-            block.tool_type in {"create_document", "update_document"}
-            for block in tool_blocks
-        ) or any(
-            call.get("name") in {"create_document", "update_document"}
-            for call in native_tool_calls
-        )
-        _oversized_svg = None
-        if (
-            not _has_document_tool
-            and session_id
-            and "create_document" not in (disabled_tools or set())
-        ):
-            _oversized_svg = _extract_oversized_svg(round_response)
-        if _oversized_svg:
-            _svg_title_content = first_tag_content(
-                _oversized_svg, "title", allow_attributes=True
-            )
-            _svg_title = strip_angle_tags(
-                _svg_title_content if _svg_title_content is not None else "Visual explanation",
-                allow_empty=True,
-            ).strip()[:100] or "Visual explanation"
-            full_response = _drop_rejected_round_response(full_response, round_response)
-            round_response = ""
-            tool_blocks.append(ToolBlock(
-                "create_document",
-                f"{_svg_title}\nsvg\n{_oversized_svg}",
-            ))
-            yield (
-                "data: "
-                + json.dumps({
-                    "type": "final_response",
-                    "content": "Opening the visual as a document...",
-                })
-                + "\n\n"
-            )
-            logger.info(
-                "[agent] promoted oversized SVG to document title=%r chars=%d lines=%d",
-                _svg_title,
-                len(_oversized_svg),
-                _oversized_svg.count("\n") + 1,
-            )
-
-        # Save cleaned round text for history persistence
-        # Keep <think> blocks so they render in the thinking section on reload
-        # Mirror the same fenced-pattern gate used to resolve tool_blocks above:
-        # an illustrative fence that wasn't executed (because this is a native
-        # model with no real native_tool_calls) must not be stripped from the
-        # persisted text either — otherwise it streams once and then disappears
-        # on reload (#3222 follow-up).
-        cleaned_round = strip_tool_blocks(
-            round_response,
-            skip_fenced=(_is_api_model and not used_native and not guide_only),
-            additional_tool_names={
-                schema["function"]["name"]
-                for schema in normalized_external_tool_schemas
-            },
-        ).strip()
-        if _ody_qwen_finetune_model or _qwen38_tool_router:
-            cleaned_round = _visible_response_text(cleaned_round)
-            cleaned_round = _normalize_ody_qwen_text_artifacts(cleaned_round)
-            if not tool_blocks and round_response and full_response.endswith(round_response):
-                full_response = full_response[:-len(round_response)] + cleaned_round
-        if not tool_blocks and tool_events and cleaned_round:
-            _answer_without_private_promise = _strip_trailing_answer_promise(
-                cleaned_round
-            )
-            if _answer_without_private_promise != cleaned_round:
-                full_response = _drop_rejected_round_response(
-                    full_response,
-                    cleaned_round,
-                )
-                cleaned_round = _answer_without_private_promise
-                round_response = cleaned_round
-                full_response = (
-                    full_response.rstrip()
-                    + ("\n\n" if full_response.strip() else "")
-                    + cleaned_round
-                )
-                logger.info(
-                    "[agent] removed trailing private answer promise after successful tool result"
-                )
-        if (
-            tool_blocks
-            and _contextual_weather_status_followup
-            and any(block.tool_type in WEB_TOOL_NAMES for block in tool_blocks)
-        ):
-            for _idx, _earlier_text in enumerate(round_texts):
-                if str(_earlier_text or "").rstrip().endswith("?"):
-                    full_response = _drop_rejected_round_response(full_response, _earlier_text)
-                    round_texts[_idx] = ""
-                    _dropped_tool_preamble_from_stream = True
-        if tool_blocks and (
-            _is_tool_preamble(cleaned_round)
-            or _looks_like_agent_reasoning_preamble(cleaned_round)
-            or (
-                _contextual_weather_status_followup
-                and cleaned_round.rstrip().endswith("?")
-                and any(block.tool_type in WEB_TOOL_NAMES for block in tool_blocks)
-            )
-        ):
-            # The model's "I'll fetch..." sentence is useful as internal
-            # progress but is not the answer. It has already streamed, so
-            # remove it from the final/history response before the next tool
-            # round contributes the actual result.
-            full_response = _drop_rejected_round_response(full_response, cleaned_round)
-            cleaned_round = ""
-            _dropped_tool_preamble_from_stream = True
-        round_texts.append(cleaned_round)
-        round_models.append(_round_actual_model)
-        round_endpoint_ids.append(_round_actual_endpoint_id)
-        round_endpoint_labels.append(_round_actual_endpoint_label)
-        if _should_emit_buffered_qwen_round(
-            odysseus_finetune=_ody_qwen_finetune_model,
-            tool_router=_qwen38_tool_router,
-            has_tools=bool(tool_blocks),
-            text=cleaned_round,
-            streamed_live=(
-                _qwen_round_streamed_live
-                or (_force_answer and _private_browser_catalog_ready)
-            ),
-        ):
-            yield f'data: {json.dumps({"delta": cleaned_round})}\n\n'
-
-        _forced_notes_request = _parse_simple_notes_tool_request(_last_user)
-        _has_notes_block = any(block.tool_type == "manage_notes" for block in tool_blocks)
-        _notes_definition_answer = _notes_general_definition_answer(_last_user)
-        if _notes_definition_answer and _has_notes_block and not guide_only:
-            if round_texts:
-                round_texts.pop()
-            if round_models:
-                round_models.pop()
-            if round_endpoint_ids:
-                round_endpoint_ids.pop()
-            if round_endpoint_labels:
-                round_endpoint_labels.pop()
-            full_response = _drop_rejected_round_response(full_response, cleaned_round)
-            cleaned_round = _notes_definition_answer
-            round_response = _notes_definition_answer
-            full_response = "\n".join(
-                part for part in [full_response.strip(), _notes_definition_answer] if part
-            ).strip()
-            round_texts.append(cleaned_round)
-            round_models.append(_round_actual_model)
-            round_endpoint_ids.append(_round_actual_endpoint_id)
-            round_endpoint_labels.append(_round_actual_endpoint_label)
-            tool_blocks = []
-            native_tool_calls = []
-            converted_calls = []
-            used_native = False
-            logger.info("[agent] suppressed manage_notes for general definition question")
-            yield f"data: {json.dumps({'type': 'final_response', 'content': full_response})}\n\n"
-        _only_notes_panel_open = (
-            bool(tool_blocks)
-            and not _has_notes_block
-            and all(
-                block.tool_type == "ui_control"
-                and re.search(r"\bopen_panel\s+notes\b", str(block.content or ""), re.IGNORECASE)
-                for block in tool_blocks
-            )
-        )
-        _only_empty_notes_block = (
-            bool(tool_blocks)
-            and all(
-                block.tool_type == "manage_notes"
-                and str(block.content or "").strip() in {"", "{}"}
-                for block in tool_blocks
-            )
-        )
-        _underfiltered_notes_block = False
-        _mismatched_notes_body_view = False
-        _wrong_notes_action_for_forced = False
-        if _forced_notes_request and _has_notes_block:
-            try:
-                _forced_notes_args = json.loads(_forced_notes_request[1] or "{}")
-            except (TypeError, ValueError, json.JSONDecodeError):
-                _forced_notes_args = {}
-            if isinstance(_forced_notes_args, dict):
-                _forced_action = str(_forced_notes_args.get("action") or "").strip().lower()
-                _current_notes_arg_list: list[dict[str, Any]] = []
-                for block in tool_blocks:
-                    if block.tool_type != "manage_notes":
-                        continue
-                    try:
-                        _current_notes_args = json.loads(str(block.content or "{}"))
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        _current_notes_args = {}
-                    if not isinstance(_current_notes_args, dict):
-                        _current_notes_args = {}
-                    _current_notes_arg_list.append(_current_notes_args)
-                _current_notes_actions = {
-                    str(args.get("action") or "").strip().lower()
-                    for args in _current_notes_arg_list
-                }
-                _expected_notes_actions = _notes_expected_actions(_last_user)
-                if _expected_notes_actions and not (
-                    _current_notes_actions & _expected_notes_actions
-                ):
-                    _wrong_notes_action_for_forced = True
-                _required_filters = {
-                    key: _forced_notes_args.get(key)
-                    for key in ("label", "pinned", "reminders", "archived")
-                    if key in _forced_notes_args
-                }
-                if _forced_action in {"list", "search", "find"} and _required_filters:
-                    _underfiltered_notes_block = bool(_current_notes_arg_list)
-                    for _current_notes_args in _current_notes_arg_list:
-                        _current_action = str(_current_notes_args.get("action") or "").strip().lower()
-                        if _current_action and _current_action not in {"list", "search", "find"}:
-                            _underfiltered_notes_block = False
-                            break
-                        if all(_current_notes_args.get(key) == value for key, value in _required_filters.items()):
-                            _underfiltered_notes_block = False
-                            break
-                if _forced_action in {"search", "find"} and _notes_body_requested(_last_user):
-                    _forced_query_terms = [
-                        term
-                        for term in re.findall(r"[a-z0-9]+", str(_forced_notes_args.get("query") or "").lower())
-                        if term not in {"the", "a", "an", "note", "notes", "checklist", "list", "todo", "todos"}
-                    ]
-                    _has_specific_locator_search = False
-                    for _current_notes_args in _current_notes_arg_list:
-                        _current_action = str(_current_notes_args.get("action") or "").strip().lower()
-                        if _current_action in {"search", "find"}:
-                            _current_query = str(_current_notes_args.get("query") or "").lower()
-                            if not _forced_query_terms or all(term in _current_query for term in _forced_query_terms):
-                                _has_specific_locator_search = True
-                        if str(_current_notes_args.get("action") or "").strip().lower() == "view":
-                            _mismatched_notes_body_view = True
-                    if not _has_specific_locator_search:
-                        _wrong_notes_action_for_forced = True
-        if (
-            _forced_notes_request
-            and (
-                not _has_notes_block
-                or _only_notes_panel_open
-                or _only_empty_notes_block
-                or _underfiltered_notes_block
-                or _mismatched_notes_body_view
-                or _wrong_notes_action_for_forced
-            )
-            and _notes_request_requires_fresh_tool(_last_user, _intent_domains, _relevant_tools)
-            and (
-                _only_notes_panel_open
-                or _only_empty_notes_block
-                or _underfiltered_notes_block
-                or _mismatched_notes_body_view
-                or _wrong_notes_action_for_forced
-                or not _has_successful_notes_action_evidence(
-                    tool_events,
-                    _notes_expected_actions(_last_user),
-                )
-            )
-            and not guide_only
-        ):
-            _tool_name, _tool_args = _forced_notes_request
-            if round_texts:
-                round_texts.pop()
-            if round_models:
-                round_models.pop()
-            if round_endpoint_ids:
-                round_endpoint_ids.pop()
-            if round_endpoint_labels:
-                round_endpoint_labels.pop()
-            full_response = _drop_rejected_round_response(full_response, cleaned_round)
-            cleaned_round = ""
-            round_response = ""
-            forced_notes_block = ToolBlock(_tool_name, _tool_args)
-            if _only_notes_panel_open:
-                tool_blocks = list(tool_blocks) + [forced_notes_block]
-            else:
-                tool_blocks = [forced_notes_block]
-            native_tool_calls = []
-            converted_calls = []
-            used_native = False
-            logger.info(
-                "[agent] forced manage_notes fallback for obvious notes request: %s",
-                _tool_args,
-            )
-
-        if tool_blocks:
-            _artifact_no_action_rounds = 0
-
-        _has_local_media_evidence = any(
-            str(event.get("tool") or "").lower()
-            in _LOCAL_MEDIA_EVIDENCE_TOOLS
-            and event.get("exit_code") in (0, None)
-            and not event.get("error")
-            for event in tool_events
-            if isinstance(event, dict)
-        )
-        _media_tool_block_present = any(
-            str(getattr(block, "tool_type", "") or "").lower()
-            in _LOCAL_MEDIA_EVIDENCE_TOOLS
-            for block in (tool_blocks or [])
-        )
-        if (
-            _local_media_turn
-            and not _force_answer
-            and not _local_media_source_nudge_sent
-            and not _has_local_media_evidence
-            and not _media_tool_block_present
-            and set(_relevant_tools or ())
-            & _LOCAL_MEDIA_EVIDENCE_TOOLS
-        ):
-            _local_media_source_nudge_sent = True
-            if round_texts:
-                round_texts.pop()
-            if round_models:
-                round_models.pop()
-            if round_endpoint_ids:
-                round_endpoint_ids.pop()
-            if round_endpoint_labels:
-                round_endpoint_labels.pop()
-            full_response = _drop_rejected_round_response(
-                full_response,
-                cleaned_round,
-            )
-            cleaned_round = ""
-            round_response = ""
-            messages.append({
-                "role": "system",
-                "content": (
-                    "No successful local-media observation exists yet. Call "
-                    "extract_text for OCR, inspect_media for general visible content, "
-                    "or transcribe_media for speech before answering. Do not infer source contents from "
-                    "the filename or directory listing."
-                ),
-            })
-            logger.info(
-                "[agent] blocked local-media answer without source evidence"
-            )
-            yield (
-                "data: "
-                + json.dumps({
-                    "type": "source_evidence_required",
-                    "reason": "local_media_not_observed",
-                    "round": round_num,
-                })
-                + "\n\n"
-            )
-            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-            continue
-
-        if not tool_blocks:
-            # A terminal model can keep emitting long prose after artifact
-            # recovery has explicitly narrowed the surface to a required
-            # mutation.  Those rounds add no evidence and, unlike repeated
-            # tool calls, evade the ordinary stall detector. Allow one
-            # recovery response to produce the mutation, then force a short
-            # truthful finish instead of spending the remaining round budget.
-            if _artifact_recovery_enabled and _artifact_mutation_only_mode and not _force_answer:
-                _no_action_evidence = EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate()
-                if _no_action_evidence.missing_artifacts:
-                    _artifact_no_action_rounds += 1
-                    if _artifact_no_action_rounds >= 2:
-                        _force_answer = True
-                        logger.warning(
-                            "[agent] artifact recovery produced no mutation for %d rounds; "
-                            "forcing concise finish missing=%s",
-                            _artifact_no_action_rounds,
-                            ", ".join(_no_action_evidence.missing_artifacts),
-                        )
-                        yield (
-                            "data: "
-                            + json.dumps({
-                                "type": "loop_breaker_triggered",
-                                "reason": "artifact_recovery_no_action",
-                                "message": (
-                                    "Artifact recovery did not produce the required "
-                                    "workspace mutation, so the agent is being asked "
-                                    "to finish briefly instead of looping."
-                                ),
-                                "round": round_num,
-                            })
-                            + "\n\n"
-                        )
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "Artifact recovery still lacks the required file(s), and "
-                                "you did not emit a workspace mutation. Do not call more "
-                                "tools. Finish briefly and state plainly that the artifact "
-                                "could not be completed if it is still missing."
-                            ),
-                        })
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                        continue
-                else:
-                    _artifact_no_action_rounds = 0
-            if (
-                cleaned_round
-                and _local_media_turn
-                and not _artifact_creation_requested
-                and not _local_media_detail_nudge_sent
-                and contains_detailed_sequence_request(_last_user, include_first=False)
-            ):
-                _successful_media_inspections = sum(
-                    1
-                    for event in tool_events
-                    if str(event.get("tool") or "").lower() == "inspect_media"
-                    and event.get("exit_code") in (0, None)
-                )
-                if _successful_media_inspections < 2:
-                    _local_media_detail_nudge_sent = True
-                    if round_texts:
-                        round_texts.pop()
-                    if round_models:
-                        round_models.pop()
-                    if round_endpoint_ids:
-                        round_endpoint_ids.pop()
-                    if round_endpoint_labels:
-                        round_endpoint_labels.pop()
-                    full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                    cleaned_round = ""
-                    round_response = ""
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "The requested answer depends on detailed temporal counting or exact video timing. "
-                            "One whole-video overview is insufficient evidence. Use inspect_media again with "
-                            "narrower start/end ranges or a segments list covering the candidate events, then "
-                            "answer only from those timestamped frames. Do not guess from sparse overview frames."
-                        ),
-                    })
-                    logger.info("[agent] required a second focused inspection for detailed local-video QA")
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-            if cleaned_round and _notes_definition_answer:
-                logger.info("[agent] completed notes definition answer without tool execution")
-                break
-            if (
-                cleaned_round
-                and _has_successful_calendar_list_evidence(tool_events)
-                and set(_intent_domains) <= {"calendar"}
-            ):
-                logger.info("[agent] completed calendar list synthesis after tool evidence")
-                break
-            if cleaned_round and any(
-                _has_successful_tool_evidence(tool_events, tool_name)
-                for tool_name in ("ask_teacher", "chat_with_model")
-            ):
-                logger.info("[agent] completed delegation synthesis after tool evidence")
-                break
-            if (
-                cleaned_round
-                and _notes_request_requires_fresh_tool(_last_user, _intent_domains, _relevant_tools)
-                and _has_successful_notes_action_evidence(
-                    tool_events,
-                    _notes_expected_actions(_last_user),
-                )
-            ):
-                logger.info("[agent] completed notes synthesis after matching tool evidence")
-                break
-            # Some local/no-schema models occasionally terminate a concrete
-            # workspace turn with an empty round. Give them one explicit
-            # opportunity to emit the action they were expected to take,
-            # rather than immediately surfacing a generic empty-response
-            # failure. The cap keeps unavailable or incompatible models from
-            # creating a retry loop.
-            if (
-                not cleaned_round
-                and _empty_action_nudge_count < _MAX_EMPTY_ACTION_NUDGES
-                and (
-                    _tui_local_execution_turn
-                    or _looks_like_workspace_coding_request(_last_user)
-                    or _local_media_turn
-                )
-                and _relevant_tools
-            ):
-                _empty_action_nudge_count += 1
-                logger.info(
-                    "[agent] empty actionable workspace round; nudging tool call"
-                )
-                # Recovery instructions must name only tools present in the
-                # schema for this round.  Compact/native routes often expose
-                # python/read_file/write_file instead of the host-shell aliases;
-                # suggesting an absent alias can turn one empty response into a
-                # second empty response or an unexecutable call.
-                _tool_hint = _empty_action_tool_hint(_tool_names_sent)
-                _empty_action_directive = (
-                    "Your previous response was empty. The user gave a concrete "
-                    "local workspace task. Emit one actual tool call now."
-                    + _tool_hint
-                    + " Do not name an unavailable tool, answer with prose, or ask "
-                    "the user to repeat the request."
-                )
-                if _local_media_turn:
-                    _empty_action_directive = (
-                        "Your previous response was empty after inspecting local media. "
-                        "Complete the requested deliverables now. Call inspect_media once "
-                        "with the best start/end boundaries already established, the user's "
-                        "requested output_path, and timestamp_path when requested. Do not "
-                        "inspect another range and do not answer before creating the files."
-                    )
-                messages.append({
-                    "role": "system",
-                    "content": _empty_action_directive,
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            # An explicit request such as "edit X, then run ..." is not
-            # complete merely because the mutation succeeded.  This bounded
-            # nudge runs before the normal completion paths so compact
-            # routers cannot terminate between the edit and its check.
-            if (
-                _post_edit_verification_required
-                and _effectful_used
-                and not _post_edit_verification_completed
-                and not _post_edit_verification_nudge_sent
-            and (_post_effectful_mutation_done or _inspection_edit_completed or _file_creation_completed)
-            ):
-                _post_edit_verification_nudge_sent = True
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The requested file edit succeeded, but the user also asked "
-                        "for verification. "
-                        + (
-                            "Read the saved output artifact now with read_file, then summarize. "
-                            if _artifact_readback_requested
-                            else "Do that now with one concrete tool call using the requested command (host_shell), then summarize. "
-                        )
-                        + "Do not stop after the edit."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            # ── Completion verifier (mechanism 3a) ────────────────────
-            # The model is finishing. If this was an effectful agentic turn,
-            # have a fresh-context verifier independently check the work
-            # before we accept "done". On FAIL, surface the issues and let
-            # the model fix them (capped, and it must do new effectful work
-            # to re-trigger). Skipped on force-answer rounds (no tools to
-            # fix with), pure Q&A, and when the toggle is off.
-            _claimed_done_text = _strip_think_blocks(cleaned_round).strip()
-            _unfinished_action_promise = _looks_like_unfinished_action_promise(
-                _claimed_done_text
-            )
-            _claimed_done = bool(_claimed_done_text) and not _unfinished_action_promise
-            if _terminal_completion_contract and _claimed_done and not _force_answer:
-                _round_evidence = EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                )
-                _round_decision = _round_evidence.evaluate()
-                # Missing evidence is an incomplete result, not a reason to
-                # manufacture additional provider rounds. Actual diagnostic
-                # failures can still enter the bounded recovery path.
-                if _round_decision.status.value == "failed" and _evidence_repair_rounds < 2:
-                    _evidence_repair_rounds += 1
-                    _missing = ", ".join(_round_decision.missing_artifacts)
-                    _declared_verifiers = _completion_requirements.verifier_commands
-                    _needs_current_verifier = (
-                        not _missing
-                        and _round_decision.status.value == "blocked"
-                        and (
-                            "no executable verifier result" in _round_decision.reason
-                            or "predates" in _round_decision.reason
-                        )
-                    )
-                    if _needs_current_verifier and _declared_verifiers:
-                        _declared_verifier_force_command = _declared_verifiers[0]
-                    _missing_binary_only = bool(
-                        _round_decision.missing_artifacts
-                        and workspace
-                        and _native_local_media_inputs(
-                            _last_user, client_runtime_context
-                        )
-                        and all(
-                            _binary_artifact_path(path)
-                            for path in _round_decision.missing_artifacts
-                        )
-                    )
-                    _repair_instruction = (
-                        f"Required binary media artifact evidence is still missing for: {_missing}. "
-                        "Call inspect_media with the source path, a suitable timestamp, and exactly "
-                        "that output_path. For a video concatenated from multiple ranges, pass "
-                        "segments=[{start, end}, ...] and the one output_path; exports is only for still images. "
-                        "Do not emit binary data as text."
-                        if _missing_binary_only
-                        else f"Required artifact evidence is still missing for: {_missing}. "
-                        "Create the requested artifact with a workspace tool, then verify it."
-                        if _missing
-                        else (
-                            "The latest executable verifier failed. Fix the reported problem "
-                            "and rerun a focused verifier; a different successful shell command "
-                            "does not supersede the failure."
-                            if _round_decision.status.value == "failed"
-                            else (
-                                "The latest verifier evidence predates the most recent artifact "
-                                "change. The harness will now rerun the advertised verifier "
-                                "against the current workspace."
-                                if "predates" in _round_decision.reason
-                                else (
-                                    "The request requires verification, but no executable verifier "
-                                    "result exists. The harness will now run the advertised focused "
-                                    "check through the task executor."
-                                )
-                            )
-                        )
-                    )
-                    if _missing_binary_only:
-                        if not _artifact_mutation_only_mode:
-                            _artifact_recovery_relevant_tools = (
-                                None if _relevant_tools is None else set(_relevant_tools)
-                            )
-                        _artifact_mutation_only_mode = True
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "completion_blocked",
-                            "round": round_num,
-                            "attempt": _evidence_repair_rounds,
-                            "decision": _round_decision.to_dict(),
-                        })
-                        + "\n\n"
-                    )
-                    messages.append({"role": "system", "content": _repair_instruction})
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-            if (_effectful_used and not _force_answer
-                    and _claimed_done
-                    and _verifier_rounds < _VERIFIER_MAX_ROUNDS
-                    # Default OFF: on weak local models the verifier can't judge
-                    # from the action-snapshot (no doc body), so it false-rejects
-                    # ("content not shown") and forces a costly extra round every
-                    # effectful turn. Opt-in via setting for strong models.
-                    and get_setting("agent_verifier_subagent", False)):
-                # Brief "working" indicator while the verifier runs.
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num})}\n\n'
-                _vfail = await _run_verifier_subagent(
-                    _verifier_instruction,
-                    _build_actions_snapshot(tool_events),
-                    endpoint_url=endpoint_url, model=model, headers=headers,
-                )
-                if _vfail:
-                    _verifier_rounds += 1
-                    logger.info(f"[agent] verifier flagged {len(_vfail)} issue(s) on round {round_num}: {_vfail}")
-                    _note = "\n\nAnd also...\n\n"
-                    yield f'data: {json.dumps({"delta": _note})}\n\n'
-                    full_response += _note
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "An independent verifier reviewed your work against the "
-                            "original request and found issues that must be fixed before "
-                            "this is actually done:\n- " + "\n- ".join(_vfail) +
-                            "\n\nFix these now using tools, then continue from the "
-                            "answer already shown. Your next visible response is an "
-                            "append-only correction: state only the corrected or newly "
-                            "discovered information. Do not add another introduction, "
-                            "repeat accurate parts, or restate the entire answer."
-                        ),
-                    })
-                    # Require fresh effectful work before verifying again, so we
-                    # never re-verify an unchanged state in a loop.
-                    _effectful_used = False
-                    continue
-            # ── Intent-without-action supervisor ─────────────────────
-            # Catch "Let me tail the output" / "I'll check the logs" /
-            # "Let me investigate" patterns where the model announces an
-            # action but emits no tool_call. The bug shows up most on
-            # smaller models trained to verbalize plans before acting.
-            # We inject one sharp nudge ("you said you would X — call the
-            # actual tool now") and loop again. Capped at
-            # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
-            # tool doesn't pin us in a forever loop.
-            _intent_text = _strip_think_blocks(cleaned_round).strip()
-            if (
-                _unattended_native_runtime
-                and _looks_like_unattended_clarification(_intent_text)
-                and not _unattended_final_nudge_sent
-            ):
-                _unattended_final_nudge_sent = True
-                _force_answer = True
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(
-                    full_response,
-                    cleaned_round,
-                )
-                _unattended_media_evidence_note = ""
-                if any(
-                    isinstance(event, dict)
-                    and bool(event.get("screenshot"))
-                    for event in tool_events
-                ):
-                    _unattended_media_evidence_note = (
-                        " Successful media observations above include actual visual "
-                        "contact sheets, not only timestamp metadata. Use those images "
-                        "and do not claim that the loaded media or frames are unavailable."
-                    )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "No user is available to answer follow-up questions in this "
-                        "unattended run. Do not ask for a choice and do not call tools. "
-                        "Give the best-supported concise answer to the original request "
-                        "from the evidence already collected, stating uncertainty briefly."
-                        + _unattended_media_evidence_note
-                    ),
-                })
-                logger.info(
-                    "[agent] unattended clarification replaced with final synthesis"
-                )
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            _false_missing_tool = _false_unavailable_tool_claim(_intent_text, _relevant_tools)
-            _state_tool, _state_actions = _state_manager_expected_action(
-                _last_user,
-                _intent_domains,
-                _relevant_tools,
-            )
-            if (
-                _state_tool == "manage_tasks"
-                and _calendar_context_owns_ambiguous_mutation(
-                    _last_user,
-                    messages,
-                    history_session,
-                )
-            ):
-                _state_tool, _state_actions = "", set()
-            if (
-                _active_document_mutation_turn
-                and not _has_successful_active_document_mutation(tool_events)
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-                and not guide_only
-            ):
-                _intent_nudge_count += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                logger.info(
-                    "[agent] active document mutation answered without editor tool evidence; nudging round %s",
-                    round_num,
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The user requested a change to the document currently open in "
-                        "the editor. Do not describe or invent a completed edit. Call "
-                        "`edit_document`, `update_document`, or `suggest_document` now. "
-                        "If the requested change is genuinely missing a necessary detail, "
-                        "call `ask_user` once instead."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if (
-                _false_missing_tool
-                and not _force_answer
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-                and not guide_only
-            ):
-                _intent_nudge_count += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                logger.info(
-                    "[agent] false-unavailable tool claim for selected tool %s; nudging round %s",
-                    _false_missing_tool,
-                    round_num,
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        f"You claimed `{_false_missing_tool}` or its domain was unavailable, "
-                        "but it is available in this turn's selected tool surface. "
-                        "Do not ask the user to resend. Emit the actual tool call now. "
-                        "For calendar event changes, use manage_calendar; if a required "
-                        "target or date is genuinely ambiguous, call ask_user once."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            _forced_state_block = None
-            if _state_tool == "manage_tasks":
-                _forced_state_block = _parse_explicit_task_state_request(_last_user)
-            elif _state_tool == "manage_memory":
-                _forced_state_block = _parse_explicit_memory_state_request(
-                    _last_user,
-                    messages,
-                    history_session,
-                )
-                if not _forced_state_block:
-                    _forced_state_block = _parse_explicit_memory_lookup_request(_last_user)
-                if not _forced_state_block and {"add", "create", "save"} & _state_actions:
-                    _memory_text_from_user = _extract_memory_add_text_from_user(_last_user)
-                    if _memory_text_from_user:
-                        _forced_state_block = ToolBlock(
-                            "manage_memory",
-                            "add\n" + _memory_text_from_user,
-                        )
-            elif _state_tool == "manage_skills":
-                _skill_request = _parse_explicit_skill_request(_last_user)
-                if _skill_request:
-                    _forced_state_block = ToolBlock(
-                        "manage_skills",
-                        json.dumps(_skill_request),
-                    )
-            if (
-                _forced_state_block
-                and not _has_successful_state_manager_evidence(
-                    tool_events,
-                    _forced_state_block.tool_type,
-                    _state_actions,
-                )
-                and not guide_only
-            ):
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                cleaned_round = ""
-                round_response = ""
-                tool_blocks = [_forced_state_block]
-                native_tool_calls = []
-                converted_calls = []
-                used_native = False
-                logger.info(
-                    "[agent] normalized explicit %s request to deterministic manager call",
-                    _forced_state_block.tool_type,
-                )
-                # Fall through to the normal tool execution path below.
-            elif (
-                _state_tool
-                and not _has_successful_state_manager_evidence(
-                    tool_events,
-                    _state_tool,
-                    _state_actions,
-                )
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-                and not guide_only
-            ):
-                _intent_nudge_count += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                logger.info(
-                    "[agent] explicit %s request answered without matching tool evidence; nudging round %s",
-                    _state_tool,
-                    round_num,
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        f"The user's request requires a fresh `{_state_tool}` call in "
-                        "this turn. Do not claim the item was listed, saved, edited, "
-                        "paused, resumed, opened, or deleted from chat context alone. "
-                        "Emit the matching tool call now, then answer from the tool "
-                        "result."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if (
-                _calendar_lookup_requires_fresh_tool(
-                    _last_user,
-                    _intent_domains,
-                    _relevant_tools,
-                    messages,
-                    history_session,
-                )
-                and not _has_successful_calendar_list_evidence(tool_events)
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-                and not guide_only
-            ):
-                _intent_nudge_count += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                logger.info(
-                    "[agent] calendar lookup answered without fresh manage_calendar list; nudging round %s",
-                    round_num,
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The user's request is a calendar lookup or availability question. "
-                        "Do not answer from prior chat context alone. Call `manage_calendar` "
-                        "with action `list_events` for the requested date/range now, then "
-                        "answer from that fresh tool result."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if (
-                _notes_request_requires_fresh_tool(_last_user, _intent_domains, _relevant_tools)
-                and not _has_successful_notes_action_evidence(
-                    tool_events,
-                    _notes_expected_actions(_last_user),
-                )
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-                and not guide_only
-            ):
-                _intent_nudge_count += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                logger.info(
-                    "[agent] notes request answered without matching manage_notes action; nudging round %s",
-                    round_num,
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The user's request is a notes/checklist/reminder lookup or "
-                        "mutation. Do not answer from prior chat context alone and "
-                        "do not invent `#note-...` links. Call `manage_notes` now "
-                        "with the matching action: list/search/view for reads, add "
-                        "for new notes/reminders, update/toggle_item for edits, and "
-                        "delete for removals. Then answer from the fresh tool result."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            # A weak model may treat a concrete task as a new conversation and
-            # answer with "what would you like me to do?". That is not a real
-            # clarification when the user already supplied an action and
-            # target. Give it one bounded chance to act before accepting the
-            # response as the final answer.
-            if (
-                _clarification_nudge_count < _MAX_CLARIFICATION_NUDGES
-                and _looks_like_actionable_user_request(_last_user)
-                and _CLARIFICATION_ONLY_RESPONSE_RE.search(_intent_text)
-            ):
-                _clarification_nudge_count += 1
-                logger.info(
-                    "[agent] actionable request received clarification-only response; nudging action"
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "The user already gave a concrete action and target. Do not ask "
-                        "what they want again. Perform the most useful next tool call "
-                        "now; if a required detail is genuinely missing, make one "
-                        "reasonable assumption and state it briefly."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if (
-                _fabricated_calendar_event_anchor_without_tool(_intent_text, _relevant_tools)
-                and not (
-                    not _calendar_expected_mutation_actions(_last_user)
-                    and _calendar_anchor_was_already_persisted(_intent_text, history_session)
-                )
-                and not _has_successful_calendar_action_evidence(
-                    tool_events,
-                    _calendar_expected_mutation_actions(_last_user),
-                )
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
-                and not guide_only
-            ):
-                _intent_nudge_count += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                logger.info(
-                    "[agent] rejected fabricated calendar event anchor without matching manage_calendar action; nudging round %s",
-                    round_num,
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "You wrote a calendar event link (`#event-...`) without "
-                        "creating, updating, deleting, or finding that event through "
-                        "`manage_calendar`. "
-                        "Those links must use real UIDs returned by the calendar tool. "
-                        "Call `manage_calendar` now to perform the user's exact calendar "
-                        "request; if the date depends on the previous event, use the "
-                        "recent calendar tool context to resolve it. A setup call such "
-                        "as `list_calendars` is not enough for add, move, or delete."
-                    ),
-                })
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if (
-                _artifact_recovery_enabled
-                and _completion_requirements.required_artifacts
-                and not _force_answer
-                and not tool_blocks
-                and _artifact_completion_nudges >= 3
-                and _artifact_final_response_recoveries < 2
-            ):
-                # Tool-preamble cleanup intentionally removes phrases such as
-                # "I wrote the script; now I need to run it" from the normal
-                # final response.  For artifact tasks, that phrase is still
-                # meaningful: it is a claim that completion is unfinished.
-                # Inspect the raw round text as well, otherwise the model can
-                # terminate with a missing artifact after the cleanup pass.
-                _final_candidate_text = (
-                    cleaned_round or _intent_text or round_response
-                ).strip()
-                if not _final_candidate_text:
-                    _final_candidate_text = str(full_response or "").strip()
-                _final_evidence = EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate()
-                _final_missing = tuple(_final_evidence.missing_artifacts)
-                if _final_missing and _final_candidate_text:
-                    _artifact_final_response_recoveries += 1
-                    if not _artifact_mutation_only_mode:
-                        _artifact_recovery_relevant_tools = (
-                            None if _relevant_tools is None else set(_relevant_tools)
-                        )
-                    _artifact_mutation_only_mode = True
-                    if round_texts:
-                        round_texts.pop()
-                    if round_models:
-                        round_models.pop()
-                    if round_endpoint_ids:
-                        round_endpoint_ids.pop()
-                    if round_endpoint_labels:
-                        round_endpoint_labels.pop()
-                    full_response = _drop_rejected_round_response(
-                        full_response,
-                        _final_candidate_text,
-                    )
-                    messages = _artifact_recovery_messages(
-                        messages,
-                        tool_events,
-                        _final_missing,
-                    )
-                    _missing = ", ".join(_final_missing)
-                    logger.warning(
-                        "[agent] final response left required artifacts missing; "
-                        "entering mutation recovery attempt=%d missing=%s",
-                        _artifact_final_response_recoveries,
-                        _missing,
-                    )
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "completion_blocked",
-                            "reason": "final_response_missing_artifacts",
-                            "round": round_num,
-                            "attempt": _artifact_final_response_recoveries,
-                            "decision": _final_evidence.to_dict(),
-                        })
-                        + "\n\n"
-                    )
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-            _artifact_outputs_complete = bool(
-                _completion_requirements.required_artifacts
-                and EvidenceLedger.from_tool_events(
-                    tool_events,
-                    _completion_requirements,
-                ).evaluate().can_complete
-            )
-            # Whole-response intent matching is redundant: the helper below
-            # keeps short responses below 400 characters and long responses
-            # to their final 600-character window. Avoid an unbounded scan of
-            # model text before applying that existing policy boundary.
-            _intent_match = None
-            # Inspect only the bounded tail of long answers. This catches
-            # substantial multimodal analyses that end in "let me inspect..."
-            # or a dangling answer lead-in while leaving completed answers
-            # with earlier planning language alone.
-            _looks_like_promise = (
-                not guide_only
-                and (
-                    not _artifact_outputs_complete
-                    or _artifact_finish_nudge_sent
-                )
-                and _looks_like_unfinished_action_promise(_intent_text)
-            )
-            if _looks_like_promise and _intent_nudge_count < _MAX_INTENT_NUDGES:
-                _intent_nudge_count += 1
-                _intent_match = _INTENT_RE.search(_intent_text[-600:])
-                _matched_phrase = (
-                    _intent_match.group(0).strip()
-                    if _intent_match is not None
-                    else _intent_text[-180:].strip()
-                )
-                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
-                _lower_phrase = _matched_phrase.lower()
-                _answer_promise = bool(re.search(
-                    r"\b(?:provide|give|state|report|answer|respond|summarize|conclude)\b",
-                    _lower_phrase,
-                ))
-                _cookbook_log_hint = ""
-                if any(_word in _lower_phrase for _word in ("log", "logs", "output", "tail", "status")):
-                    _cookbook_log_hint = (
-                        " If this is about a Cookbook/model serve, the concrete calls are: "
-                        "`list_served_models` first, then `tail_serve_output` with the "
-                        "session_id from the serve/list result. Never answer with "
-                        "\"check logs\" when those tools are available."
-                    )
-                _native_recovery_instruction = (
-                    _malformed_native_tool_recovery_instruction(
-                        _malformed_native_tool_names
-                    )
-                )
-                _intent_recovery_instruction = _native_recovery_instruction or (
-                    "Give the concise final answer now from the evidence already "
-                    "collected. Do not announce that you will answer, restate the "
-                    "plan, or ask whether to continue."
-                    if _answer_promise
-                    else (
-                        "Continue now. Either make one materially different, focused "
-                        "inspect_media or transcribe_media call using a workspace-local "
-                        "path, or give the concise final answer from the evidence already "
-                        "collected. Do not restate the plan and do not ask whether to continue."
-                        if _local_media_turn and not _artifact_creation_requested
-                        else (
-                            "DO IT NOW: emit the actual function call this turn. "
-                            f"{_cookbook_log_hint}"
-                            "If you decided not to do it after all, say so plainly in "
-                            "one sentence instead of restating the plan."
-                        )
-                    )
-                )
-                _omission_description = (
-                    "but ended the turn without giving that answer"
-                    if _answer_promise
-                    else "but ended the turn without making the actual tool call"
-                )
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        f"You just wrote: \"{_matched_phrase}\" — {_omission_description}. "
-                        "The user can "
-                        "see you announced the action but didn't run it, which "
-                        "is the most frustrating thing you can do. "
-                        + _intent_recovery_instruction
-                    ),
-                })
-                # Visible signal in the stream so the user knows we caught it.
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if _looks_like_promise:
-                _intent_match = _INTENT_RE.search(_intent_text[-600:])
-                _matched_phrase = (
-                    _intent_match.group(0).strip()
-                    if _intent_match is not None
-                    else _intent_text[-180:].strip()
-                )
-                _guard_message = (
-                    "The agent stopped because it repeatedly announced a tool "
-                    "action without making the tool call."
-                )
-                if _unattended_native_runtime and not _unattended_final_nudge_sent:
-                    _unattended_final_nudge_sent = True
-                    _force_answer = True
-                    if round_texts:
-                        round_texts.pop()
-                    if round_models:
-                        round_models.pop()
-                    if round_endpoint_ids:
-                        round_endpoint_ids.pop()
-                    if round_endpoint_labels:
-                        round_endpoint_labels.pop()
-                    full_response = _drop_rejected_round_response(
-                        full_response,
-                        cleaned_round,
-                    )
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "No user is available in this unattended run. You have "
-                            "already had bounded opportunities to continue. Do not call "
-                            "or describe more tools. Give the best-supported concise "
-                            "answer to the original request from the evidence already "
-                            "collected, stating uncertainty briefly."
-                        ),
-                    })
-                    logger.info(
-                        "[agent] unattended intent nudge cap forced final synthesis"
-                    )
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-                logger.warning(
-                    "[agent] intent-without-action guard exhausted on round %d after %d nudges: %r",
-                    round_num,
-                    _intent_nudge_count,
-                    _matched_phrase,
-                )
-                yield (
-                    "data: "
-                    + json.dumps({
-                        "type": "intent_nudge_exhausted",
-                        "reason": "intent_without_action_nudge_cap",
-                        "message": _guard_message,
-                        "round": round_num,
-                        "nudges": _intent_nudge_count,
-                        "matched": _matched_phrase,
-                    })
-                    + "\n\n"
-                )
-                break
-            if (
-                not tool_blocks
-                and _web_search_completed
-                and not _force_answer
-                and _web_model_reports_insufficient_evidence(cleaned_round)
-                and (_qwen38_tool_router or _full_inventory_mode)
-                and _web_evidence_recovery_rounds < 2
-            ):
-                _web_evidence_recovery_rounds += 1
-                if round_texts:
-                    round_texts.pop()
-                if round_models:
-                    round_models.pop()
-                if round_endpoint_ids:
-                    round_endpoint_ids.pop()
-                if round_endpoint_labels:
-                    round_endpoint_labels.pop()
-                full_response = _drop_rejected_round_response(full_response, cleaned_round)
-                cleaned_round = ""
-                round_response = ""
-                instruction = _web_execution_budget.instruction()
-                messages.append({"role": "system", "content": instruction})
-                logger.info("[agent] web evidence recovery stage=%d", _web_evidence_recovery_rounds)
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            if not tool_blocks:
-                break  # no tools — done
-
-        # ── Loop-breaker (Terminus-style stall detector) ──────────────
-        # Detailed video questions benefit from a second focused look, but
-        # unlimited distinct ranges are still a loop.  For answer-only local
-        # media tasks, stop after eight completed native inspections and ask
-        # the model to synthesize the evidence it already has.
-        _completed_media_inspections = sum(
-            1
-            for event in tool_events
-            if _resolved_tool_event_name(event) == "inspect_media"
-            and event.get("exit_code") == 0
-        )
-        _current_media_inspections = bool(tool_blocks) and all(
-            str(getattr(block, "tool_type", "") or "") == "inspect_media"
-            and not _workspace_mutation_tool_block(block)
-            for block in tool_blocks
-        )
-        _media_artifacts_complete = bool(
-            _completion_requirements.required_artifacts
-            and EvidenceLedger.from_tool_events(
-                tool_events,
-                _completion_requirements,
-            ).evaluate().can_complete
-        )
-        # Keep one round available for the tool-free synthesis turn. Without
-        # this reserve, a model that spends the final allowed round on its
-        # eighth (or later) inspection can be forced to answer after the loop
-        # has already exhausted, leaving only reasoning and no user answer.
-        _media_inspection_budget_exhausted = (
-            _completed_media_inspections >= 8
-            or (
-                _round_limit is not None
-                and round_num >= _round_limit - 1
-                and _completed_media_inspections >= 6
-            )
-        )
-        if (
-            (
-                not _completion_requirements.required_artifacts
-                or _media_artifacts_complete
-            )
-            and workspace
-            and _native_local_media_inputs(_last_user, client_runtime_context)
-            and _current_media_inspections
-            and _media_inspection_budget_exhausted
-        ):
-            logger.warning(
-                "[agent] local-media inspection budget exhausted after %d calls; "
-                "forcing evidence synthesis",
-                _completed_media_inspections,
-            )
-            _force_answer = True
-            messages.append({
-                "role": "system",
-                "content": (
-                    "You have enough visual samples. Stop inspecting the media and "
-                    "answer the user's question now from the evidence already gathered. "
-                    "If the requested artifact already exists, do not refine it again. "
-                    "State uncertainty briefly if a detail remains ambiguous."
-                ),
-            })
-            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-            continue
-
-        # Distinct searches/reads with short prose preambles can evade the
-        # ordinary repeat detector forever.  For terminal tasks with declared
-        # deliverables, six purely observational rounds are enough evidence:
-        # switch to the existing mutation-only recovery branch before the
-        # model burns the entire round budget without writing anything.
-        if _artifact_recovery_enabled and tool_blocks:
-            _observation_evidence = EvidenceLedger.from_tool_events(
-                tool_events,
-                _completion_requirements,
-            ).evaluate()
-            _observation_missing = tuple(
-                _observation_evidence.missing_artifacts
-            )
-            if not _observation_missing or any(
-                _workspace_mutation_tool_block(block)
-                for block in tool_blocks
-            ):
-                _artifact_observation_rounds = 0
-            else:
-                _artifact_observation_rounds += 1
-                if _artifact_observation_rounds >= 6:
-                    _available_acquisition_tools = set(
-                        _artifact_recovery_relevant_tools or _relevant_tools or ()
-                    )
-                    _native_acquisition_tools = (
-                        {"pdf_extract", "web_fetch", "web_search", "private_browser"}
-                        & _available_acquisition_tools
-                    )
-                    _source_lookup_requested = bool(
-                        _native_acquisition_tools
-                        and re.search(
-                            r"https?://|\b(?:pdf|paper|report|study|source|online)\b",
-                            _last_user,
-                            re.IGNORECASE,
-                        )
-                    )
-                    _source_evidence_ready = _artifact_source_evidence_ready(
-                        tool_events,
-                        _last_user,
-                    )
-                    if _source_lookup_requested and not _source_evidence_ready:
-                        # Keep the native acquisition path alive. The old
-                        # branch narrowed to write/edit/apply_patch here even
-                        # when all six observations were only failed or
-                        # irrelevant searches, so subsequent web/PDF calls
-                        # were silently dropped and the task could never
-                        # produce its artifacts.
-                        # Snapshot the full pre-recovery surface before
-                        # narrowing it. Otherwise a successful fetch restores
-                        # only the three acquisition tools and the model's
-                        # required write/read follow-through is dropped.
-                        if _relevant_tools is not None:
-                            _artifact_recovery_relevant_tools = set(_relevant_tools)
-                        _artifact_acquisition_recovery_active = True
-                        _artifact_mutation_only_mode = False
-                        _artifact_source_recovery_cycles += 1
-                        # Source acquisition is bounded evidence gathering,
-                        # not an open-ended replacement for artifact
-                        # production.  Repeated six-round acquisition cycles
-                        # can otherwise keep a model searching until the
-                        # global wall deadline while the declared output is
-                        # still absent.  Hand off to the normal mutation
-                        # recovery path after two complete cycles; the source
-                        # results remain in context for the model to use.
-                        if _artifact_source_recovery_cycles >= 2:
-                            _artifact_acquisition_recovery_active = False
-                            _artifact_mutation_only_mode = True
-                            _artifact_completion_nudges += 1
-                            messages = _artifact_recovery_messages(
-                                messages,
-                                tool_events,
-                                _observation_missing,
-                            )
-                            _artifact_observation_rounds = 0
-                            logger.warning(
-                                "[agent] source acquisition recovery budget exhausted; "
-                                "handing off to mutation recovery missing=%s",
-                                list(_observation_missing),
-                            )
-                            yield (
-                                "data: "
-                                + json.dumps({
-                                    "type": "completion_blocked",
-                                    "reason": "artifact_source_recovery_budget",
-                                    "round": round_num,
-                                    "attempt": _artifact_completion_nudges,
-                                    "decision": _observation_evidence.to_dict(),
-                                })
-                                + "\n\n"
-                            )
-                            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                            continue
-                        _artifact_mutation_tools = (
-                            {
-                                "python", "write_file", "read_file", "ls",
-                                "grep", "glob", "edit_file", "apply_patch",
-                                "bash",
-                            }
-                            & _available_acquisition_tools
-                        )
-                        # Source acquisition and artifact mutation are
-                        # sequential capabilities of the same turn. Keep
-                        # both surfaces available so a successful lookup can
-                        # be followed by writing the declared deliverable.
-                        _relevant_tools = (
-                            set(_native_acquisition_tools)
-                            | _artifact_mutation_tools
-                        )
-                        messages = _artifact_acquisition_recovery_messages(
-                            messages,
-                            tool_events,
-                            _observation_missing,
-                            user_text=_last_user,
-                        )
-                        _artifact_observation_rounds = 0
-                        logger.warning(
-                            "[agent] source evidence still missing after observation budget; "
-                            "preserving native acquisition tools=%s",
-                            sorted(_native_acquisition_tools),
-                        )
-                        yield (
-                            "data: "
-                            + json.dumps({
-                                "type": "completion_blocked",
-                                "reason": "artifact_source_evidence_missing",
-                                "round": round_num,
-                                "decision": _observation_evidence.to_dict(),
-                            })
-                            + "\n\n"
-                        )
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                        continue
-                    _artifact_completion_nudges += 1
-                    if not _artifact_mutation_only_mode:
-                        _artifact_recovery_relevant_tools = (
-                            None if _relevant_tools is None else set(_relevant_tools)
-                        )
-                    _artifact_mutation_only_mode = True
-                    messages = _artifact_recovery_messages(
-                        messages,
-                        tool_events,
-                        _observation_missing,
-                    )
-                    _artifact_observation_rounds = 0
-                    _missing = ", ".join(_observation_missing)
-                    logger.warning(
-                        "[agent] observation budget exhausted with required artifacts "
-                        "missing; entering mutation recovery missing=%s",
-                        _missing,
-                    )
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "completion_blocked",
-                            "reason": "artifact_observation_budget",
-                            "round": round_num,
-                            "attempt": _artifact_completion_nudges,
-                            "decision": _observation_evidence.to_dict(),
-                        })
-                        + "\n\n"
-                    )
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-
-        # Artifact tasks need a separate observation budget.  A model can make
-        # every media inspection look novel (and include prose) while never
-        # creating the requested file, which bypasses signature-based stall
-        # detection.  Once the required evidence exists, redirect this
-        # reusable pattern to the bounded mutation-recovery path.
-        if (
-            _artifact_recovery_enabled
-            and _artifact_creation_requested
-            and _completion_requirements.required_artifacts
-            and tool_blocks
-            and not _artifact_mutation_only_mode
-            and all(_workspace_inspection_tool_block(block) for block in tool_blocks)
-            and not any(_workspace_mutation_tool_block(block) for block in tool_blocks)
-        ):
-            _observation_evidence = EvidenceLedger.from_tool_events(
-                tool_events,
-                _completion_requirements,
-            ).evaluate()
-            if _observation_evidence.missing_artifacts:
-                _artifact_observation_only_rounds += 1
-                if _artifact_observation_only_rounds >= 4:
-                    _artifact_completion_nudges += 1
-                    _artifact_mutation_only_mode = True
-                    _artifact_recovery_relevant_tools = (
-                        None if _relevant_tools is None else set(_relevant_tools)
-                    )
-                    _missing = ", ".join(_observation_evidence.missing_artifacts)
-                    messages = _artifact_recovery_messages(
-                        messages,
-                        tool_events,
-                        _observation_evidence.missing_artifacts,
-                    )
-                    logger.warning(
-                        "[agent] artifact observation budget exhausted after %d rounds; "
-                        "entering mutation recovery missing=%s",
-                        _artifact_observation_only_rounds,
-                        _missing,
-                    )
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "completion_blocked",
-                            "reason": "artifact_observation_budget",
-                            "round": round_num,
-                            "attempt": _artifact_completion_nudges,
-                            "decision": _observation_evidence.to_dict(),
-                        })
-                        + "\n\n"
-                    )
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
-            else:
-                _artifact_observation_only_rounds = 0
-        elif any(_workspace_mutation_tool_block(block) for block in tool_blocks):
-            _artifact_observation_only_rounds = 0
-
-        # Once a requested calendar mutation has succeeded, unrelated read-only
-        # calls add no evidence. The state tool's successful result is already
-        # authoritative; weak routers otherwise fall back into repeated email
-        # or note reads from earlier turns. Give one tool-free finish round at
-        # the semantic completion boundary.
-        _calendar_expected_actions = _calendar_expected_mutation_actions(_last_user)
-        if (
-            not _calendar_completion_nudge_sent
-            and _calendar_expected_actions
-            and _has_successful_calendar_action_evidence(tool_events, _calendar_expected_actions)
-            and tool_blocks
-            and all(
-                _workspace_inspection_tool_block(block)
-                or _personal_read_only_tool_block(block)
-                for block in tool_blocks
-            )
-        ):
-            _calendar_completion_nudge_sent = True
-            _force_answer = True
-            full_response = _drop_rejected_round_response(full_response, cleaned_round)
-            if round_texts:
-                round_texts.pop()
-            if round_models:
-                round_models.pop()
-            if round_endpoint_ids:
-                round_endpoint_ids.pop()
-            if round_endpoint_labels:
-                round_endpoint_labels.pop()
-            messages.append({
-                "role": "system",
-                "content": (
-                    "The requested calendar mutation succeeded and its state was verified by a later "
-                    "calendar readback. Do not call more tools. Briefly confirm the completed change "
-                    "from the verified evidence now."
-                ),
-            })
-            logger.info("[agent] stopped post-calendar-completion read-only expansion")
-            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-            continue
-
-        # Stall detector for repeated no-progress tool loops.
-        # A round is "useless" ONLY when it re-issues a recent tool call AND
-        # writes no answer text — i.e. the model is going in circles.
-        # Genuine exploration (new, distinct calls) is never useless, so
-        # multi-step work (file hunts, multi-host ssh, build→test→fix) rides
-        # all the way to a real answer. We bail only on a streak of useless
-        # rounds, or a single tool fired an absurd number of times (hard
-        # runaway backstop). On bail we don't give up — we force one
-        # tool-free round so the model declares done or declares blocked.
-        _sig = "|".join(sorted(f"{b.tool_type}:{(b.content or '').strip()[:120]}" for b in tool_blocks))
-        _is_repeat = _sig in _recent_call_sigs
-        _recent_call_sigs.append(_sig)
-        for _b in tool_blocks:
-            _call_freq[f"{_b.tool_type}:{(_b.content or '').strip()[:120]}"] += 1
-        # "Real" answer text = round text minus <think> blocks. Empty-think
-        # rounds (just "<think>\n\n</think>" + a tool call) must not read as
-        # progress, so strip think before checking.
-        _real_text = _strip_think_blocks(cleaned_round).strip()
-        if _blocked_status_tool_round(tool_blocks, _real_text):
-            _blocked_status_rounds += 1
         else:
-            _blocked_status_rounds = 0
-        if _read_only_inspection_tool_round(tool_blocks) and not _real_text:
-            _read_only_inspection_rounds += 1
-        else:
-            _read_only_inspection_rounds = 0
-        # Circling = repeating a recent call with nothing written. Any
-        # progress (a NEW distinct call, or actual answer text) resets it.
-        if _is_repeat and not _real_text:
-            _stuck_rounds += 1
-        else:
-            _stuck_rounds = 0
-        # Runaway = the SAME exact call repeated an absurd number of times.
-        # Distinct calls to one tool (a real batch) are legitimate work, so we
-        # count identical call signatures, not raw per-tool-type totals.
-        _runaway = _detect_runaway_call(_call_freq)
-        if (
-            _stuck_rounds >= 4
-            or _runaway
-            or _blocked_status_rounds >= 2
-            or _read_only_inspection_rounds >= 6
-        ):
-            _stall_evidence = EvidenceLedger.from_tool_events(
-                tool_events,
-                _completion_requirements,
-            ).evaluate()
-            _stall_missing_artifacts = tuple(_stall_evidence.missing_artifacts)
-            if _artifact_recovery_enabled and _stall_missing_artifacts:
-                _artifact_completion_nudges += 1
-                if not _artifact_mutation_only_mode:
-                    _artifact_recovery_relevant_tools = (
-                        None if _relevant_tools is None else set(_relevant_tools)
-                    )
-                _artifact_mutation_only_mode = True
-                messages = _artifact_recovery_messages(
-                    messages,
-                    tool_events,
-                    _stall_missing_artifacts,
-                )
-                _stuck_rounds = 0
-                _blocked_status_rounds = 0
-                _read_only_inspection_rounds = 0
-                _unchanged_tool_result_rounds = 0
-                _missing = ", ".join(_stall_missing_artifacts)
-                logger.warning(
-                    "[agent] stalled with required artifacts missing; entering mutation recovery missing=%s",
-                    _missing,
-                )
-                yield (
-                    "data: "
-                    + json.dumps({
-                        "type": "completion_blocked",
-                        "reason": "artifact_mutation_required",
-                        "round": round_num,
-                        "attempt": _artifact_completion_nudges,
-                        "decision": _stall_evidence.to_dict(),
-                    })
-                    + "\n\n"
-                )
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
-            reason = (
-                "repeating blocked-task status commands without new progress"
-                if _blocked_status_rounds >= 2
-                else "repeated read-only inspections without a mutation or new answer"
-                if _read_only_inspection_rounds >= 6
-                else f"calling {_runaway} with identical arguments over and over"
-                if _runaway
-                else "repeating the same tool calls without new progress"
-            )
-            logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
-            yield (
-                "data: "
-                    + json.dumps({
-                    "type": "loop_breaker_triggered",
-                    "reason": "loop_breaker_stall",
-                    "message": (
-                        "The loop-breaker detected repeated tool calls without "
-                        "new progress, so the agent is being forced to stop "
-                        "using tools and give its best final answer."
-                    ),
-                    "round": round_num,
-                    "detail": reason,
-                })
-                + "\n\n"
-            )
-            if _loop_breaker_force_answer_used:
-                _exhausted_rounds = True
-                logger.warning(
-                    "[agent] loop-breaker force-answer attempt did not converge; "
-                    "ending the loop for bounded exhaustion synthesis"
-                )
-                break
-            _loop_breaker_force_answer_used = True
-            # The model has been executing tools, so its results are already
-            # in context. Force ONE tool-free round to converge: write the
-            # answer from what it has, or state plainly what's blocking it.
-            # The force-answer handler above salvages (grace synthesis) or
-            # apologizes honestly if it still writes nothing.
-            _off = [t for t in ("web_search", "bash")
-                    if disabled_tools and t in disabled_tools]
-            _off_note = (f" ({', '.join(_off)} is currently disabled — say so if "
-                         f"you needed it.)" if _off else "")
-            _force_answer = True
-            messages.append({
-                "role": "system",
-                "content": (
-                    "You're repeating tool calls without converging. STOP calling "
-                    "tools and end the turn one of two ways: (a) write your best "
-                    "final answer NOW from the information already gathered, or "
-                    "(b) if you're genuinely blocked, say plainly what's blocking "
-                    "you in a sentence or two." + _off_note
-                ),
-            })
-            full_response += "\n\n"
-            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-            continue
+          if _artifact_mutation_only_mode:
+              _current_missing = EvidenceLedger.from_tool_events(
+                  tool_events, _completion_requirements
+              ).evaluate().missing_artifacts
+              _local_media_derivation = bool(
+                  workspace
+                  and _native_local_media_inputs(_last_user, client_runtime_context)
+              )
+              _mutation_surface = _artifact_mutation_surface_for_missing(
+                  _current_missing,
+                  local_media_derivation=_local_media_derivation,
+                  browser_render=_artifact_browser_render_required(
+                      _last_user, _html_artifact_paths,
+                  ),
+                  source_media_extraction=_source_media_extraction_requested,
+              )
+              _available_surface = set(_artifact_recovery_relevant_tools or ())
+              # Recovery is mutation-focused, but it must not erase the
+              # capability contract of the original task.  In particular, a
+              # failed write on a media -> HTML task still needs the native
+              # reader and browser verifier on the next round.  Narrowing to
+              # write/python/inspect alone turns a recoverable parse failure
+              # into an unoffered-tool loop (the model asks for read_file or
+              # private_browser, and the resolver drops it).  Keep these
+              # bounded follow-through capabilities available; the existing
+              # observation/recovery budgets still prevent open-ended reads.
+              _recovery_capability_floor = _artifact_recovery_capability_floor(
+                  local_media_derivation=_local_media_derivation,
+                  browser_render=_artifact_browser_render_required(
+                      _last_user, _html_artifact_paths,
+                  ),
+              )
+              _selected_mutation_surface = _artifact_mutation_route_surface(
+                  mutation_surface=_mutation_surface,
+                  capability_floor=_recovery_capability_floor,
+                  available_surface=_available_surface,
+                  disabled_tools=set(disabled_tools or ()),
+                  hard_blocked_tools=set(_hard_blocked_tools),
+                  native_terminal_runtime=_native_terminal_runtime,
+              )
+              # Once a transformed local-media task has exhausted its bounded
+              # observation budget, inspection is no longer a valid recovery
+              # action. Keeping it in the schema lets a model repeatedly request
+              # the same read, which the post-redirect guard suppresses without
+              # ever reaching the required Bash mutation.
+              if (
+                  _local_media_derivation
+                  and not _source_media_extraction_requested
+                  and _artifact_followthrough_media_inspections >= 2
+              ):
+                  _selected_mutation_surface.difference_update({
+                      "inspect_media", "transcribe_media",
+                  })
+              if not _selected_mutation_surface:
+                  _selected_mutation_surface = {
+                      "bash", "host_shell", "python",
+                  } & _available_surface
+              if _selected_mutation_surface:
+                  _relevant_tools = _selected_mutation_surface
+          elif _artifact_acquisition_recovery_active:
+              _available_surface = set(_artifact_recovery_relevant_tools or _relevant_tools or ())
+              _selected_acquisition_surface = (
+                  {"pdf_extract", "web_fetch", "web_search", "private_browser"}
+                  & _available_surface
+              )
+              _acquisition_mutation_floor = (
+                  {
+                      "python", "write_file", "read_file", "ls", "grep",
+                      "glob", "edit_file", "apply_patch", "bash",
+                  }
+                  & _available_surface
+              )
+              if _selected_acquisition_surface or _acquisition_mutation_floor:
+                  # Keep the artifact writer surface alive while source
+                  # acquisition is still in progress. Otherwise each next
+                  # round overwrites the preserved floor with only web tools.
+                  _relevant_tools = (
+                      _selected_acquisition_surface
+                      | _acquisition_mutation_floor
+                  )
 
-        # Existing-file edits must make progress before verification. Compact
-        # routers often read correctly and then jump straight to pytest,
-        # leaving the requested change undone. Permit one baseline test/build
-        # check so the model can see the existing failure, then defer repeated
-        # read-only/verification calls until an edit or patch has succeeded.
-        # Keep only mutation blocks from a mixed batch so normal post-edit
-        # verification can run next.
-        if (
-            _workspace_read_requires_mutation
-            and not _post_effectful_mutation_done
-            and not _workspace_read_before_mutation_paths
-        ):
-            _baseline_verification = (
-                not _workspace_pre_mutation_verification_attempted
-                and bool(tool_blocks)
-                and all(
-                    _workspace_pre_mutation_verification_block(block)
-                    for block in tool_blocks
-                )
-            )
-            _mutation_blocks = [
-                block for block in tool_blocks
-                if block.tool_type in {"edit_file", "apply_patch", "write_file"}
-            ]
-            if _baseline_verification:
-                _workspace_pre_mutation_verification_attempted = True
-                logger.info(
-                    "[agent] allowing one baseline workspace verification before mutation"
-                )
-            elif _mutation_blocks:
-                tool_blocks = _mutation_blocks
-                converted_calls = []
-                native_tool_calls = []
-            elif tool_blocks:
-                _workspace_mutation_defer_count += 1
-                if _workspace_mutation_defer_count >= 3:
-                    _blocked = (
-                        "I could not safely apply the requested workspace change: "
-                        "the model kept trying to run verification before producing "
-                        "an edit or patch. No file was changed."
-                    )
-                    logger.warning("[agent] stopped repeated pre-mutation verification")
-                    yield f'data: {json.dumps({"type": "final_response", "content": _blocked})}\n\n'
-                    break
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "Do not run tests or another read-only command yet. The user asked "
-                        "for a file change and the existing file is already in context. "
-                        "Make the change now with edit_file or apply_patch; verify it only "
-                        "after the mutation succeeds."
-                    ),
-                })
-                logger.info("[agent] deferred verification until workspace mutation")
-                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                continue
+          # A tool-heavy turn can grow past the context budget after the first
+          # round even when the original request fit comfortably.  The initial
+          # route is compacted during route construction, but subsequent rounds
+          # used to rely on trimming alone.  Prepare a deferred compaction for
+          # every later round so the active coding task survives large diffs,
+          # test logs, and host-shell output.  It is persisted only when the
+          # selected candidate emits a model event, just like initial fallback
+          # compaction.
+          _round_compaction_state: Dict = {}
+          if round_num > 1:
+              _round_compaction_options = (
+                  {"deterministic": True} if _deterministic_compaction else {}
+              )
+              _compacted_messages, _round_context_length, _round_was_compacted = await maybe_compact(
+                  None,
+                  endpoint_url,
+                  model,
+                  messages,
+                  headers,
+                  owner=owner,
+                  persist=False,
+                  compaction_state=_round_compaction_state,
+                  **_round_compaction_options,
+              )
+              if _round_was_compacted:
+                  messages = _compacted_messages
+                  logger.info(
+                      "[agent] deferred compaction prepared for round %s",
+                      round_num,
+                  )
 
-        # Once the evidence ledger has explicitly redirected a terminal run to
-        # create a missing artifact, do not spend more environment time on
-        # varied read-only probes. A mixed batch keeps only mutation calls; a
-        # purely observational batch is suppressed and retried with a stricter
-        # generic instruction. This is contract-driven, not task/path-specific.
-        if (
-            _artifact_recovery_enabled
-            and _artifact_completion_nudges > 0
-            and not _artifact_acquisition_recovery_active
-            and tool_blocks
-        ):
-            _followthrough_evidence = EvidenceLedger.from_tool_events(
-                tool_events,
-                _completion_requirements,
-            ).evaluate()
-            _followthrough_missing = tuple(_followthrough_evidence.missing_artifacts)
-            if _followthrough_missing:
-                _mutation_blocks = [
-                    block for block in tool_blocks
-                    if _workspace_mutation_tool_block(block)
-                ]
-                _inspection_only = all(
-                    _workspace_inspection_tool_block(block)
-                    for block in tool_blocks
-                )
-                if not _mutation_blocks and _inspection_only:
-                    _generator_repair_reads = _failed_artifact_generator_repair_reads(
-                        tool_blocks,
-                        tool_events,
-                    )
-                    if _generator_repair_reads:
-                        tool_blocks = _generator_repair_reads
-                        converted_calls = []
-                        native_tool_calls = []
-                        used_native = False
-                        _inspection_only = False
-                        logger.info(
-                            "[agent] allowed one generated-script repair read after execution failure"
-                        )
-                if not _mutation_blocks and _inspection_only:
-                    _browser_recovery_blocks = _browser_render_recovery_blocks(
-                        _last_user,
-                        _followthrough_missing,
-                        set(_artifact_recovery_relevant_tools or _relevant_tools or ()),
-                        set(disabled_tools or ()),
-                        tool_events,
-                    )
-                    if _browser_recovery_blocks:
-                        tool_blocks = _browser_recovery_blocks
-                        converted_calls = []
-                        native_tool_calls = []
-                        used_native = False
-                        _mutation_blocks = list(_browser_recovery_blocks)
-                        _inspection_only = False
-                        logger.info(
-                            "[agent] completed HTML-to-image artifact recovery with native browser source=%s target=%s",
-                            _browser_recovery_blocks[0].content,
-                            _followthrough_missing[0],
-                        )
-                if not _mutation_blocks and _inspection_only:
-                    _svg_recovery_blocks = _svg_render_recovery_blocks(
-                        _followthrough_missing,
-                        set(_artifact_recovery_relevant_tools or _relevant_tools or ()),
-                        set(disabled_tools or ()),
-                        tool_events,
-                    )
-                    if _svg_recovery_blocks:
-                        tool_blocks = _svg_recovery_blocks
-                        converted_calls = []
-                        native_tool_calls = []
-                        used_native = False
-                        _mutation_blocks = list(_svg_recovery_blocks)
-                        _inspection_only = False
-                        logger.info(
-                            "[agent] completed SVG-to-raster artifact recovery source=%s target=%s",
-                            _svg_recovery_blocks[0].content,
-                            _followthrough_missing[0],
-                        )
-                if _mutation_blocks:
-                    # A host_shell/python block is classified as an
-                    # inspection tool by name so that read-only recovery
-                    # batches can be recognized.  Once its command is proven
-                    # to mutate state, it is no longer an inspection-only
-                    # batch—even when it is the only block in the batch.
-                    # Leaving this flag set caused the final suppression
-                    # branch below to discard the very write recovery had
-                    # requested.
-                    _inspection_only = False
-                    if len(_mutation_blocks) != len(tool_blocks):
-                        logger.info(
-                            "[agent] retained %d artifact mutation calls and deferred %d inspections",
-                            len(_mutation_blocks),
-                            len(tool_blocks) - len(_mutation_blocks),
-                        )
-                        tool_blocks = _mutation_blocks
-                        converted_calls = []
-                        native_tool_calls = []
-                elif _inspection_only:
-                    _failed_artifact_verifier = any(
-                        _resolved_tool_event_name(event) in {
-                            "private_browser", "builtin_browser",
-                        }
-                        and event.get("exit_code") not in (0, None)
-                        for event in tool_events
-                    )
-                    # Once an artifact verifier has failed, another native
-                    # media read cannot repair the missing deliverable. A
-                    # weak model commonly re-inspects the source, consumes
-                    # the follow-through budget, and then collides with the
-                    # exact-repeat guard instead of writing the declared path.
-                    # Mark the bounded read budget exhausted so the existing
-                    # mutation/body handoff path runs immediately. This is
-                    # contract-driven and applies to every artifact task.
-                    _inspection_budget_used = max(
-                        _artifact_followthrough_media_inspections,
-                        2 if _failed_artifact_verifier else 0,
-                    )
-                    _local_media_inspection_blocks, _local_media_inspection_count = (
-                        _bounded_local_media_inspection_blocks(
-                            tool_blocks,
-                            local_media_turn=bool(
-                                workspace
-                                and _native_local_media_inputs(
-                                    _last_user, client_runtime_context
-                                )
-                            ),
-                            already_used=_inspection_budget_used,
-                        )
-                    )
-                    if _local_media_inspection_blocks:
-                        _artifact_followthrough_media_inspections += (
-                            _local_media_inspection_count
-                        )
-                        tool_blocks = _local_media_inspection_blocks
-                        converted_calls = []
-                        native_tool_calls = []
-                        used_native = False
-                        _inspection_only = False
-                        logger.info(
-                            "[agent] allowed bounded native media inspection "
-                            "during artifact recovery used=%d/%d",
-                            _artifact_followthrough_media_inspections,
-                            2,
-                        )
-                if _inspection_only and any(
-                    (
-                        _prior_failure := _failed_call_history.get(
-                            _tool_call_signature(block.tool_type, block.content)
-                        )
-                    )
-                    and _prior_failure.get("mutation_epoch", -1)
-                    < _workspace_mutation_epoch
-                    for block in tool_blocks
-                ):
-                    # A successful workspace mutation can make an earlier
-                    # failed command valid. Permit that exact command once in
-                    # the new mutation epoch instead of treating it as another
-                    # read-only recovery loop.
-                    _inspection_only = False
-                if _inspection_only:
-                    _artifact_followthrough_deferrals += 1
-                    _missing = ", ".join(_followthrough_missing)
-                    if _artifact_unoffered_recovery_exhausted(
-                        _artifact_followthrough_deferrals
-                    ):
-                        _force_answer = True
-                        tool_blocks = []
-                        converted_calls = []
-                        native_tool_calls = []
-                        used_native = False
-                        messages = _artifact_recovery_messages(
-                            messages,
-                            tool_events,
-                            _followthrough_missing,
-                        )
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "Artifact recovery reached its bounded inspection limit. "
-                                "Do not inspect again. Finish briefly and state plainly "
-                                f"which required artifacts remain missing: {_missing}."
-                            ),
-                        })
-                        logger.warning(
-                            "[agent] exhausted post-redirect inspection recovery after %d attempts missing=%s",
-                            _artifact_followthrough_deferrals,
-                            _missing,
-                        )
-                        yield (
-                            "data: "
-                            + json.dumps({
-                                "type": "loop_breaker_triggered",
-                                "reason": "artifact_recovery_inspection_limit",
-                                "round": round_num,
-                                "attempt": _artifact_followthrough_deferrals,
-                            })
-                            + "\n\n"
-                        )
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                        continue
-                    logger.warning(
-                        "[agent] suppressed post-redirect inspection batch attempt=%d missing=%s",
-                        _artifact_followthrough_deferrals,
-                        _missing,
-                    )
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "completion_blocked",
-                            "reason": "artifact_mutation_required",
-                            "round": round_num,
-                            "attempt": _artifact_followthrough_deferrals,
-                            "decision": _followthrough_evidence.to_dict(),
-                        })
-                        + "\n\n"
-                    )
-                    _artifact_recovery_message_list = _artifact_recovery_messages(
-                        messages,
-                        tool_events,
-                        _followthrough_missing,
-                    )
-                    _artifact_body = ""
-                    _artifact_action_ready = False
-                    _generator_block = _artifact_generator_execution_block(
-                        tool_events,
-                        _followthrough_missing,
-                        set(_artifact_recovery_relevant_tools or _relevant_tools or ()),
-                    )
-                    if (
-                        _artifact_followthrough_deferrals >= 2
-                        and _generator_block is not None
-                    ):
-                        tool_blocks = [_generator_block]
-                        converted_calls = []
-                        native_tool_calls = []
-                        used_native = False
-                        round_response = ""
-                        _artifact_action_ready = True
-                        logger.info(
-                            "[agent] executing existing artifact generator before body handoff: %s",
-                            _generator_block.content.splitlines()[-1],
-                        )
-                    elif (
-                        _artifact_followthrough_deferrals >= 2
-                        and _artifact_body_handoff_attempts < 2
-                        and not _binary_artifact_path(_followthrough_missing[0])
-                        and "write_file" in set(
-                            _artifact_recovery_relevant_tools or _relevant_tools or ()
-                        )
-                    ):
-                        _artifact_body_handoff_attempts += 1
-                        _target = _followthrough_missing[0]
-                        _synthesis_messages = _artifact_synthesis_messages(
-                            _artifact_recovery_message_list,
-                            _target,
-                        )
-                        try:
-                            from src.generation_budget import fit_output_token_budget
-                            from src.llm_core import llm_call_async
+          # A host bridge transport failure is terminal for this turn.  The
+          # tool event has already been emitted and appended below; avoid a
+          # second LLM round that can only paraphrase the same failure.
+          if _host_bridge_failed_turn:
+              _bridge_response = _host_bridge_failure_response()
+              round_response = _bridge_response
+              full_response += _bridge_response
+              round_texts.append(_bridge_response)
+              round_models.append(actual_model)
+              round_endpoint_ids.append(actual_endpoint_id)
+              round_endpoint_labels.append(actual_endpoint_label)
+              yield f'data: {json.dumps({"delta": _bridge_response})}\n\n'
+              break
 
-                            _raw_artifact_body = await llm_call_async(
-                                url=endpoint_url,
-                                model=model,
-                                messages=_synthesis_messages,
-                                headers=headers,
-                                temperature=0.0,
-                                max_tokens=fit_output_token_budget(
-                                    min(max_tokens, 2048),
-                                    _last_route_context_length or context_length,
-                                    _synthesis_messages,
-                                    None,
-                                ),
-                                # Artifact-body synthesis is an LLM turn, not a
-                                # short tool call.  A fixed 90s timeout caused
-                                # slow local/9B endpoints to fail recovery even
-                                # though ordinary agent turns use the configured
-                                # stream timeout.  Keep the historical floor,
-                                # but follow the same runtime budget here.
-                                timeout=max(90, int(agent_stream_timeout or 90)),
-                                max_retries=1,
-                                thinking_mode="off",
-                            )
-                            _artifact_body = _artifact_body_from_synthesis(
-                                _raw_artifact_body or ""
-                            )
-                            usage_buckets.append(_usage_bucket(
-                                round_num=round_num,
-                                model=model,
-                                endpoint_id=_round_actual_endpoint_id,
-                                endpoint_label=_round_actual_endpoint_label,
-                                endpoint_cost_tracked=actual_endpoint_cost_tracked,
-                                input_tokens=estimate_tokens(_synthesis_messages),
-                                output_tokens=max(len(_raw_artifact_body or "") // 4, 0),
-                                usage_source="estimated",
-                            ))
-                        except Exception as _artifact_error:
-                            logger.warning(
-                                "[agent] artifact body handoff failed attempt=%d: %s",
-                                _artifact_body_handoff_attempts,
-                                _artifact_error,
-                            )
-                        if _artifact_body and _artifact_body_matches_target(
-                            _artifact_body, _target
-                        ):
-                            tool_blocks = [ToolBlock(
-                                "write_file",
-                                f"{_target}\n{_artifact_body}",
-                            )]
-                            converted_calls = []
-                            native_tool_calls = []
-                            used_native = False
-                            round_response = ""
-                            _artifact_action_ready = True
-                            logger.info(
-                                "[agent] synthesized required artifact body attempt=%d path=%s chars=%d",
-                                _artifact_body_handoff_attempts,
-                                _target,
-                                len(_artifact_body),
-                            )
-                            yield (
-                                "data: "
-                                + json.dumps({
-                                    "type": "artifact_body_handoff",
-                                    "round": round_num,
-                                    "attempt": _artifact_body_handoff_attempts,
-                                    "path": _target,
-                                })
-                                + "\n\n"
-                            )
-                        else:
-                            messages = _artifact_recovery_message_list
-                    else:
-                        if not _artifact_mutation_only_mode:
-                            _artifact_recovery_relevant_tools = (
-                                None if _relevant_tools is None else set(_relevant_tools)
-                            )
-                        _artifact_mutation_only_mode = True
-                        messages = _artifact_recovery_message_list
-                    # Suppressed calls did not execute and must not advance the
-                    # ordinary stall counters toward a forced prose answer.
-                    _read_only_inspection_rounds = 0
-                    _stuck_rounds = 0
-                    _blocked_status_rounds = 0
-                    if not _artifact_action_ready:
-                        yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                        continue
+          if _web_fetch_needs_private_browser and "private_browser" not in disabled_tools:
+              if _relevant_tools is None:
+                  from src.tool_index import ALWAYS_AVAILABLE
+                  _relevant_tools = set(ALWAYS_AVAILABLE)
+              _relevant_tools.update({"web_search", "web_fetch", "private_browser"})
+          if _private_browser_needs_static_fallback:
+              if _relevant_tools is None:
+                  _relevant_tools = set()
+              _relevant_tools.update({"web_search", "web_fetch"})
+              _relevant_tools.discard("private_browser")
+          if _pure_web_turn:
+              _relevant_tools = _web_only_route_tools(_last_user, disabled_tools)
+              if _private_browser_needs_static_fallback:
+                  _relevant_tools.discard("private_browser")
+          if (
+              not guide_only
+              and not _explicit_no_web_lookup
+              and _map_browser_turn
+              and "private_browser" not in disabled_tools
+              and not _private_browser_needs_static_fallback
+          ):
+              if _relevant_tools is None:
+                  from src.tool_index import ALWAYS_AVAILABLE
+                  _relevant_tools = set(ALWAYS_AVAILABLE)
+              _relevant_tools.update({"web_search", "web_fetch", "private_browser"})
+          if normalized_external_tool_schemas and not guide_only:
+              if _relevant_tools is None:
+                  _relevant_tools = set()
+              _relevant_tools.update(
+                  schema["function"]["name"]
+                  for schema in normalized_external_tool_schemas
+                  if schema["function"]["name"] not in disabled_tools
+              )
 
-        # Request-scoped environments own the complete tool contract. Keep a
-        # final fail-closed boundary because routing and recovery heuristics can
-        # rewrite calls after the initial parser filter.
-        if normalized_external_tool_schemas and tool_blocks:
-            _declared_names = _request_scoped_allowed_tool_names(
-                normalized_external_tool_schemas,
-                all_tool_schemas,
-                native_terminal_runtime=_native_terminal_runtime,
-            )
-            _scoped_blocks = []
-            _scoped_calls = []
-            _dropped_scoped_names = []
-            for _idx, _block in enumerate(tool_blocks):
-                if _block.tool_type not in _declared_names:
-                    _dropped_scoped_names.append(_block.tool_type)
-                    continue
-                _scoped_blocks.append(_block)
-                if _idx < len(converted_calls):
-                    _scoped_calls.append(converted_calls[_idx])
-            if _dropped_scoped_names:
-                logger.warning(
-                    "[agent] dropped post-routing undeclared tool call(s): %s",
-                    sorted(set(_dropped_scoped_names)),
-                )
-                tool_blocks = _scoped_blocks
-                converted_calls = _scoped_calls
-                native_tool_calls = _scoped_calls if used_native else []
-                if (
-                    not tool_blocks
-                    and _declared_contract_nudge_count < _MAX_DECLARED_CONTRACT_NUDGES
-                ):
-                    _declared_contract_nudge_count += 1
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "The previous action named a tool outside this request's "
-                            "environment contract. Call exactly one of the functions "
-                            "declared for this request now; do not inspect Odysseus "
-                            "settings, model registries, or personal tools."
-                        ),
-                    })
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
+          _workspace_read_floor = _native_unattended_workspace_read_floor(
+              client_runtime_context,
+              workspace,
+              normalized_external_tool_schemas,
+              set(disabled_tools or ()),
+              set(_hard_blocked_tools),
+          )
+          if _workspace_read_floor:
+              if _relevant_tools is None:
+                  _relevant_tools = set()
+              _relevant_tools.update(_workspace_read_floor)
 
-        # Explicit read-only email requests are a hard user boundary. Models
-        # sometimes solve the lookup and then invent a helpful draft; suppress
-        # that mutation before dispatch and converge to a truthful summary.
-        if tool_blocks:
-            _read_only_blocks = []
-            _read_only_calls = []
-            _blocked_email_mutations = []
-            for _idx, _block in enumerate(tool_blocks):
-                if _email_mutation_forbidden(_last_user, _block.tool_type):
-                    _blocked_email_mutations.append(_block.tool_type)
-                    continue
-                _read_only_blocks.append(_block)
-                if _idx < len(converted_calls):
-                    _read_only_calls.append(converted_calls[_idx])
-            if _blocked_email_mutations:
-                logger.warning(
-                    "[agent] blocked email mutation forbidden by explicit read-only request: %s",
-                    sorted(set(_blocked_email_mutations)),
-                )
-                tool_blocks = _read_only_blocks
-                converted_calls = _read_only_calls
-                native_tool_calls = _read_only_calls if used_native else []
-                if not tool_blocks:
-                    _force_answer = True
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            "The user explicitly required read-only email handling, so "
-                            "the proposed mutation was not executed. Do not call more "
-                            "tools. Finish with only the requested evidence and summary."
-                        ),
-                    })
-                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
-                    continue
+          if _source_media_extraction_requested and _relevant_tools is not None:
+              # Final provenance boundary: route construction, fallbacks, and
+              # environment-declared schemas can all rebuild the tool surface.
+              # Clamp immediately before schemas are materialized so no round
+              # can fabricate a requested source frame or clip.
+              _source_recovery_missing = (
+                  EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate().missing_artifacts
+                  if _artifact_mutation_only_mode
+                  else ()
+              )
+              # Direct source-media tasks may also declare a textual companion
+              # (for example answer.txt or timestamp.txt).  Preserve its
+              # provenance-safe writer at the schema boundary from the initial
+              # route onward; previously this was enabled only after entering
+              # recovery, causing valid write_file calls to be dropped before
+              # recovery could even begin.
+              _source_companion_tools = _source_media_text_companion_recovery_tools(
+                  _workspace_artifacts,
+                  recovery_active=True,
+              )
+              if _artifact_mutation_only_mode:
+                  _source_companion_tools.update(
+                      _source_media_text_companion_recovery_tools(
+                          _source_recovery_missing,
+                          recovery_active=True,
+                      )
+                  )
+              _source_companion_tools -= _hard_blocked_tools | set(disabled_tools)
+              _relevant_tools.difference_update({
+                  "python", "bash", "host_shell", "write_file", "edit_file",
+                  "apply_patch", "generate_image", "edit_image",
+              } - _source_companion_tools)
+              _relevant_tools.update(_source_companion_tools)
+
+          _network_recovery_floor = (
+              _blocked_network_recovery_tools(tool_events)
+              - set(disabled_tools)
+              - set(_hard_blocked_tools)
+          )
+          if _network_recovery_floor:
+              if _relevant_tools is None:
+                  _relevant_tools = set()
+              _relevant_tools.update(_network_recovery_floor)
+
+          _active_route_state = {
+              "messages": messages,
+              "mcp_schemas": mcp_schemas,
+              "relevant_tools": _relevant_tools,
+              "is_api_model": _is_api_model,
+              "is_ollama_native": _is_ollama_native,
+              "ollama_openai_compat": _ollama_openai_compat,
+              "tool_surface": _route_state.get("tool_surface", ""),
+              "spec_offered": _route_state.get("spec_offered"),
+              "spec_surface": _route_state.get("spec_surface"),
+              "ody_qwen_finetune_model": _ody_qwen_finetune_model,
+              "qwen38_tool_router": _qwen38_tool_router,
+              "ody_doc_finetune_mode": _ody_doc_finetune_mode,
+              "ody_notes_finetune_mode": _ody_notes_finetune_mode,
+              "ody_doc_stream_create_mode": _ody_doc_stream_create_mode,
+              "compaction_state": (
+                  _route_state.get("compaction_state", {})
+                  if round_num == 1
+                  else _round_compaction_state
+              ),
+          }
+          if round_num == 1 and not _approved_result_injected:
+              _active_route_state["request_messages"] = _initial_route_request_messages
+          all_tool_schemas = _tool_schemas_for_route(_active_route_state)
+          if turn_contract is not None:
+              _relevant_tools = (
+                  set(_route_state.get("spec_offered"))
+                  if _route_state.get("spec_offered")
+                  else set(turn_contract.offered)
+              )
+          agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+
+          _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
+          if round_num == 1:
+              try:
+                  logger.info("[spec-debug] prompt composition (chars): %s", [(m.get("role"), len(str(m.get("content") or ""))) for m in messages])
+              except Exception:
+                  pass
+          logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent} relevant_tools={sorted(_relevant_tools)[:50] if _relevant_tools else 'ALL'}")
+          _routing_intentional_exclusions = set(disabled_tools)
+          if (
+              _native_artifact_runtime
+              and _artifact_creation_requested
+              and _normalize_model_tool_surface(
+                  _active_route_state.get("tool_surface")
+              ) != "full"
+          ):
+              _selected_for_audit = set(_relevant_tools or set())
+              _artifact_allowed_for_audit = _compact_native_artifact_tools(
+                  _selected_for_audit,
+                  text=_last_user,
+                  artifacts=_workspace_artifacts,
+                  media_inputs=_local_media_files,
+              )
+              _routing_intentional_exclusions.update(
+                  _selected_for_audit - _artifact_allowed_for_audit
+              )
+          _routing_audit = _tool_routing_audit_payload(
+              round_num=round_num,
+              retrieved_tools=_base_relevant_tools,
+              selected_tools=_relevant_tools,
+              offered_tools=_tool_names_sent,
+              declared_tools={
+                  schema["function"]["name"]
+                  for schema in normalized_external_tool_schemas
+              },
+              excluded_tools=_routing_intentional_exclusions,
+              offering_suppressed_reason=(
+                  "forced_final_answer"
+                  if _force_answer
+                  else (
+                      "tool_surface_none"
+                      if _normalize_model_tool_surface(
+                          _active_route_state.get("tool_surface")
+                      ) == "none"
+                      else (
+                          "textual_tool_transport"
+                          if not all_tool_schemas and not _is_api_model
+                          else None
+                      )
+                  )
+              ),
+              prompt_tokens=estimate_tokens(
+                  _active_route_state.get("request_messages")
+                  or _active_route_state.get("messages")
+                  or []
+              ),
+              transport=(
+                  "native_schema"
+                  if all_tool_schemas
+                  else ("textual" if not _is_api_model else "none")
+              ),
+              system_prompt_chars=sum(
+                  len(str(message.get("content") or ""))
+                  for message in (
+                      _active_route_state.get("request_messages")
+                      or _active_route_state.get("messages")
+                      or []
+                  )
+                  if message.get("role") == "system"
+              ),
+              tool_schema_chars=len(json.dumps(all_tool_schemas or [], sort_keys=True)),
+          )
+          logger.info("[agent-routing-audit] %s", json.dumps(_routing_audit, sort_keys=True))
+          yield f'data: {json.dumps(_routing_audit)}\n\n'
+
+          # Once a fallback produces substantive output, keep that exact route
+          # pinned for every later tool round instead of retrying the primary.
+          def _runtime_candidate(candidate):
+              candidate_url, candidate_model, candidate_headers = candidate
+              try:
+                  from src.endpoint_resolver import _rewrite_docker_host_for_native_runtime
+
+                  candidate_url = _rewrite_docker_host_for_native_runtime(candidate_url)
+              except Exception:
+                  pass
+              return candidate_url, candidate_model, candidate_headers
+
+          if _pinned_fallback_candidate:
+              _raw_candidates = [_runtime_candidate(_pinned_fallback_candidate)]
+              _raw_route_descriptors = [_pinned_fallback_route or {}]
+          else:
+              _raw_candidates = [
+                  _runtime_candidate((endpoint_url, model, headers))
+              ] + [_runtime_candidate(candidate) for candidate in (fallbacks or [])]
+              _raw_route_descriptors = route_descriptors
+          _candidates = dedupe_model_candidates(_raw_candidates)
+          _candidate_route_descriptors = []
+          for candidate in _candidates:
+              source_index = next(
+                  (
+                      index
+                      for index, source in enumerate(_raw_candidates)
+                      if source == candidate
+                  ),
+                  0,
+              )
+              _candidate_route_descriptors.append(
+                  _raw_route_descriptors[source_index]
+                  if source_index < len(_raw_route_descriptors)
+                  else {}
+              )
+          _candidate_request_states = {0: _active_route_state}
+
+          async def _candidate_request(index, candidate_url, candidate_model, candidate_headers):
+              nonlocal _last_route_request_messages, _last_route_context_length
+              if index == 0:
+                  state = _active_route_state
+              else:
+                  candidate_source_messages = (
+                      _initial_route_source_messages if round_num == 1 else messages
+                  )
+                  state = await _build_route_request_state(
+                      candidate_url,
+                      candidate_model,
+                      candidate_headers,
+                      candidate_source_messages,
+                      _candidate_route_descriptors[index]
+                      if index < len(_candidate_route_descriptors)
+                      else {},
+                  )
+              request_messages = state.get("request_messages")
+              if request_messages is None:
+                  request_messages = _trim_route_request_messages(
+                      candidate_url,
+                      candidate_model,
+                      state["messages"],
+                  )
+              deepseek_visual_messages = None
+              if _is_deepseek_flash_vision_model(candidate_model):
+                  deepseek_visual_messages = _deepseek_flash_visual_continuation(
+                      request_messages,
+                      _last_user,
+                  )
+                  if deepseek_visual_messages is not None:
+                      request_messages = deepseek_visual_messages
+                      logger.info(
+                          "[agent] flattened DeepSeek Flash post-tool visual "
+                          "continuation and suppressed redundant inspect_media"
+                      )
+              state["request_messages"] = request_messages
+              _last_route_request_messages = request_messages
+              state["context_length"] = _route_context_lengths.get(
+                  (candidate_url, candidate_model),
+                  context_length,
+              )
+              _last_route_context_length = state["context_length"]
+              run_security.observe_messages(request_messages)
+              candidate_tools = _tool_schemas_for_route(state)
+              if deepseek_visual_messages is not None:
+                  candidate_tools = [
+                      schema
+                      for schema in candidate_tools or ()
+                      if schema.get("function", {}).get("name") != "inspect_media"
+                  ]
+              state["tools"] = candidate_tools
+              from src.generation_budget import fit_output_token_budget
+
+              candidate_max_tokens = fit_output_token_budget(
+                  max_tokens,
+                  state["context_length"],
+                  request_messages,
+                  candidate_tools,
+              )
+              # Once a verified artifact has triggered the one-shot finish
+              # nudge, a normal final response can be short.  The first response
+              # after that nudge is also the only permitted evidence-based
+              # correction, however, and may need to rewrite a complete HTML or
+              # SVG artifact.  Do not cap that response at 2048 tokens: a large
+              # native write call would be truncated into invalid JSON and the
+              # model would loop on rejected retries.  Once the correction has
+              # itself been verified, the convergence response remains bounded.
+              if _artifact_finish_nudge_sent and _artifact_finish_correction_seen:
+                  candidate_max_tokens = min(candidate_max_tokens, 2048)
+              state["max_tokens"] = candidate_max_tokens
+              if candidate_max_tokens != max_tokens:
+                  logger.info(
+                      "[agent] bounded route output model=%s max_tokens=%s -> %s "
+                      "(context=%s)",
+                      candidate_model,
+                      max_tokens,
+                      candidate_max_tokens,
+                      state["context_length"],
+                  )
+              _candidate_request_states[index] = state
+              return {
+                  "messages": request_messages,
+                  "kwargs": {
+                      "max_tokens": candidate_max_tokens,
+                      "tools": candidate_tools or None,
+                      "tool_choice_none": state["ody_doc_finetune_mode"],
+                      "temperature": (
+                          _ody_qwen_temperature_cap(_requested_temperature)
+                          if _is_odysseus_qwen_model(candidate_model)
+                          else _requested_temperature
+                      ),
+                      "thinking_mode": state.get("thinking_mode"),
+                      "reasoning_effort": reasoning_effort,
+                  },
+              }
+
+          async def _candidate_capability_recovery(
+              index,
+              candidate_url,
+              candidate_model,
+              candidate_headers,
+              error_chunk,
+          ):
+              nonlocal messages, mcp_schemas, _relevant_tools, _is_api_model
+              nonlocal _is_ollama_native, _ollama_openai_compat, _route_state
+              nonlocal _active_route_state, _last_route_request_messages
+              nonlocal _last_route_context_length
+
+              _disable_native_tools_temporarily(candidate_url, candidate_model)
+              candidate_source_messages = (
+                  _initial_route_source_messages if round_num == 1 else messages
+              )
+              state = await _build_route_request_state(
+                  candidate_url,
+                  candidate_model,
+                  candidate_headers,
+                  candidate_source_messages,
+                  _candidate_route_descriptors[index]
+                  if index < len(_candidate_route_descriptors)
+                  else {},
+                  force_textual_tools=True,
+              )
+              request_messages = _trim_route_request_messages(
+                  candidate_url,
+                  candidate_model,
+                  state["messages"],
+              )
+              state["request_messages"] = request_messages
+              state["tools"] = []
+              state["context_length"] = _route_context_lengths.get(
+                  (candidate_url, candidate_model),
+                  context_length,
+              )
+              _candidate_request_states[index] = state
+              _last_route_request_messages = request_messages
+              _last_route_context_length = state["context_length"]
+
+              if index == 0:
+                  _active_route_state = state
+                  _route_state = state
+                  messages = state["messages"]
+                  mcp_schemas = state["mcp_schemas"]
+                  _relevant_tools = state["relevant_tools"]
+                  _is_api_model = False
+                  _is_ollama_native = False
+                  _ollama_openai_compat = False
+
+              from src.generation_budget import fit_output_token_budget
+
+              recovered_max_tokens = fit_output_token_budget(
+                  max_tokens,
+                  state["context_length"],
+                  request_messages,
+                  [],
+              )
+              return {
+                  "messages": request_messages,
+                  "kwargs": {
+                      "max_tokens": recovered_max_tokens,
+                      "tools": None,
+                      "tool_choice_none": state["ody_doc_finetune_mode"],
+                      "thinking_mode": state.get("thinking_mode"),
+                  },
+              }
+
+          def _apply_candidate_compaction(index: int) -> bool:
+              state = _candidate_request_states.get(index) or {}
+              if history_session is not None:
+                  return apply_compaction_state(
+                      history_session,
+                      state.get("compaction_state"),
+                  )
+              return apply_compaction_state_for_session(
+                  session_id,
+                  state.get("compaction_state"),
+              )
+          # stream_llm enforces a per-read INACTIVITY timeout (httpx read=timeout),
+          # which kills a wedged/silent endpoint. This wall-clock deadline is the
+          # complementary cap for the rare stream that trickles bytes forever and
+          # so never trips the inactivity timeout. Generous — only catches runaway.
+          _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
+          _round_start = time.time()
+          _round_first_event_logged = False
+          _round_first_token_logged = False
+          _round_actual_model = model
+          _round_actual_endpoint_id = actual_endpoint_id
+          _round_actual_endpoint_label = actual_endpoint_label
+          _round_real_input_tokens = 0
+          _round_real_output_tokens = 0
+          _round_has_real_usage = False
+          _round_usage_finalized = False
+          # Some API models (notably DeepSeek) stream DSML/XML tool calls as
+          # ordinary text instead of emitting structured tool-call events. Keep
+          # that markup out of the live transcript while retaining it in
+          # round_response for the parser below.
+          _streamed_tool_markup = ""
+          candidate_index = 0
+
+          def _finalize_round_usage(*, include_empty: bool = True):
+              nonlocal _round_usage_finalized
+              if _round_usage_finalized:
+                  return
+              _round_usage_finalized = True
+              if (
+                  not include_empty
+                  and not _round_has_real_usage
+                  and not round_response
+                  and not round_reasoning
+                  and not native_tool_calls
+              ):
+                  return
+              if _round_has_real_usage:
+                  round_input_tokens = _round_real_input_tokens
+                  round_output_tokens = _round_real_output_tokens
+                  usage_source = "real"
+              else:
+                  round_input_tokens = estimate_tokens(_last_route_request_messages)
+                  round_output_tokens = max(
+                      len(round_response + round_reasoning) // 4,
+                      0,
+                  )
+                  usage_source = "estimated"
+              usage_buckets.append(_usage_bucket(
+                  round_num=round_num,
+                  model=_round_actual_model,
+                  endpoint_id=_round_actual_endpoint_id,
+                  endpoint_label=_round_actual_endpoint_label,
+                  endpoint_cost_tracked=actual_endpoint_cost_tracked,
+                  input_tokens=round_input_tokens,
+                  output_tokens=round_output_tokens,
+                  usage_source=usage_source,
+              ))
+          if (
+              round_num == 1
+              and not guide_only
+              and not _approved_result_injected
+              and not _native_terminal_runtime
+              and not normalized_external_tool_schemas
+              and "manage_calendar" not in disabled_tools
+              and set(_intent_domains) <= {"calendar"}
+              and not _parse_qwen_explicit_chat_transcript_search(_last_user)
+          ):
+              _preemptive_calendar_ask = _parse_ambiguous_calendar_date_ask_user(_last_user)
+              if _preemptive_calendar_ask:
+                  _ask_tool, _ask_content = _preemptive_calendar_ask
+                  _ask_payload = {}
+                  try:
+                      _ask_payload = json.loads(_ask_content or "{}")
+                  except (TypeError, ValueError, json.JSONDecodeError):
+                      _ask_payload = {}
+                  if _ask_tool == "ask_user" and isinstance(_ask_payload, dict):
+                      _ask_question = str(_ask_payload.get("question") or "").strip()
+                      if not _ask_question:
+                          _ask_question = "What exact date should I use?"
+                          _ask_payload["question"] = _ask_question
+                      yield (
+                          "data: "
+                          + json.dumps({"type": "final_response", "content": _ask_question})
+                          + "\n\n"
+                      )
+                      yield f"data: {json.dumps({'type': 'ask_user', 'data': _ask_payload})}\n\n"
+                      tool_events.append({
+                          "round": round_num,
+                          "model": _round_actual_model,
+                          "endpoint_id": _round_actual_endpoint_id,
+                          "endpoint_label": _round_actual_endpoint_label,
+                          "tool": "ask_user",
+                          "desc": "ask_user",
+                          "command": json.dumps(_ask_payload, ensure_ascii=False),
+                          "output": _ask_question,
+                          "exit_code": None,
+                          "ask_user": _ask_payload,
+                          "fallback": "preemptive_calendar_missing_date",
+                      })
+                      full_response = _ask_question
+                      round_response = full_response
+                      round_texts.append(full_response)
+                      round_models.append(_round_actual_model)
+                      round_endpoint_ids.append(_round_actual_endpoint_id)
+                      round_endpoint_labels.append(_round_actual_endpoint_label)
+                      _awaiting_user = True
+                      _finalize_round_usage()
+                      logger.info("[agent] completed preemptive calendar ask_user")
+                      break
+              _preemptive_calendar_request = _parse_simple_calendar_tool_request(
+                  _last_user,
+                  messages,
+                  history_session,
+              )
+              _preemptive_calendar_action = ""
+              _preemptive_calendar_args = None
+              if _preemptive_calendar_request:
+                  _preemptive_calendar_tool, _preemptive_calendar_content = _preemptive_calendar_request
+                  try:
+                      _preemptive_calendar_args = json.loads(_preemptive_calendar_content or "{}")
+                  except (TypeError, ValueError, json.JSONDecodeError):
+                      _preemptive_calendar_args = None
+                  if isinstance(_preemptive_calendar_args, dict):
+                      _preemptive_calendar_action = str(
+                          _preemptive_calendar_args.get("action") or ""
+                      ).strip().lower()
+              if (
+                  _preemptive_calendar_request
+                  and _preemptive_calendar_tool == "manage_calendar"
+                  and _preemptive_calendar_action in {"list", "list_events"}
+              ):
+                  _preemptive_block = ToolBlock("manage_calendar", _preemptive_calendar_content)
+                  yield (
+                      "data: "
+                      + json.dumps({
+                          "type": "tool_start",
+                          "tool": "manage_calendar",
+                          "command": _preemptive_calendar_content,
+                          "full_command": _preemptive_calendar_content,
+                          "round": round_num,
+                          "fallback": "preemptive_calendar_lookup",
+                      })
+                      + "\n\n"
+                  )
+                  try:
+                      _preemptive_desc, _preemptive_result = await execute_tool_block(
+                          _preemptive_block,
+                          session_id=session_id,
+                          disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                          tool_policy=tool_policy,
+                          owner=owner,
+                          workspace=workspace,
+                          security_context=run_security,
+                          active_document_id=(
+                              getattr(active_document, "id", None)
+                              if active_document is not None
+                              else None
+                          ),
+                          client_runtime_context=client_runtime_context,
+                      )
+                  except Exception as _preemptive_exc:
+                      logger.warning("Preemptive calendar lookup failed: %s", _preemptive_exc, exc_info=True)
+                      _preemptive_desc = "manage_calendar: ERROR"
+                      _preemptive_result = {
+                          "error": "The calendar lookup failed unexpectedly. Check the server log and retry.",
+                          "error_category": "tool_execution_error",
+                          "exit_code": 1,
+                          "output": "",
+                      }
+                  _preemptive_output = ""
+                  if isinstance(_preemptive_result, dict):
+                      _preemptive_output = str(
+                          _preemptive_result.get("output")
+                          or _preemptive_result.get("results")
+                          or _preemptive_result.get("response")
+                          or _preemptive_result.get("error")
+                          or ""
+                      )
+                  _preemptive_tool_output = {
+                      "type": "tool_output",
+                      "tool": "manage_calendar",
+                      "command": _preemptive_calendar_content,
+                      "output": _truncate(_preemptive_output),
+                      "exit_code": (
+                          _preemptive_result.get("exit_code")
+                          if isinstance(_preemptive_result, dict)
+                          else None
+                      ),
+                      "fallback": "preemptive_calendar_lookup",
+                  }
+                  if isinstance(_preemptive_result, dict) and isinstance(_preemptive_result.get("events"), list):
+                      _preemptive_tool_output["events"] = _preemptive_result.get("events")
+                  if isinstance(_preemptive_result, dict) and _preemptive_result.get("error_category") == "tool_execution_error":
+                      _preemptive_tool_output["error_category"] = "tool_execution_error"
+                  yield f"data: {json.dumps(_preemptive_tool_output)}\n\n"
+                  _preemptive_tool_event = {
+                      "round": round_num,
+                      "model": _round_actual_model,
+                      "endpoint_id": _round_actual_endpoint_id,
+                      "endpoint_label": _round_actual_endpoint_label,
+                      "tool": "manage_calendar",
+                      "desc": _preemptive_desc,
+                      "command": _preemptive_calendar_content,
+                      "output": _truncate(_preemptive_output),
+                      "exit_code": (
+                          _preemptive_result.get("exit_code")
+                          if isinstance(_preemptive_result, dict)
+                          else None
+                      ),
+                      "fallback": "preemptive_calendar_lookup",
+                  }
+                  if isinstance(_preemptive_result, dict) and isinstance(_preemptive_result.get("events"), list):
+                      _preemptive_tool_event["events"] = _preemptive_result.get("events")
+                  tool_events.append(_preemptive_tool_event)
+                  total_tool_calls += 1
+                  run_security.observe_tool_result(
+                      "manage_calendar",
+                      _preemptive_result if isinstance(_preemptive_result, dict) else {},
+                      _preemptive_calendar_content,
+                  )
+                  _preemptive_summary = ""
+                  if not (isinstance(_preemptive_result, dict) and _preemptive_result.get("error")):
+                      _preemptive_summary = _calendar_list_summary_from_tool_output(
+                          _preemptive_output,
+                          include_details=_calendar_detail_requested(_last_user),
+                          user_text=_last_user,
+                      )
+                  full_response = _preemptive_summary or _preemptive_output.strip() or "No calendar events found."
+                  round_response = full_response
+                  round_texts.append(full_response)
+                  round_models.append(_round_actual_model)
+                  round_endpoint_ids.append(_round_actual_endpoint_id)
+                  round_endpoint_labels.append(_round_actual_endpoint_label)
+                  yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
+                  _preemptive_calendar_final_emitted = True
+                  _finalize_round_usage()
+                  logger.info("[agent] completed preemptive calendar lookup")
+                  break
+          if (
+              round_num == 1
+              and not guide_only
+              and not _approved_result_injected
+              and not _native_terminal_runtime
+              and not normalized_external_tool_schemas
+              # The explicit topic-bulk path below owns its search-then-bulk
+              # sequence. Other multi-tool requests need the agent's full route.
+              and (
+                  len(_caller_relevant_tools or ()) <= 1
+                  or (
+                      _caller_relevant_tools == {
+                          "mcp__email__search_emails", "mcp__email__bulk_email",
+                      }
+                      and _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
+                  )
+              )
+              and not _request_has_compound_actions(_last_user)
+              # Sealed safe reads use the central required-operation path so
+              # execution and canonical rendering have the same owner.
+              and _required_safe_read_operation(turn_contract) is None
+          ):
+              _preemptive_topic_bulk_email_request = (
+                  _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
+                  if (
+                      "mcp__email__search_emails" not in disabled_tools
+                      and "mcp__email__bulk_email" not in disabled_tools
+                  )
+                  else None
+              )
+              _preemptive_explicit_request = (
+                  _parse_qwen_explicit_session_action(_last_user, messages)
+                  or _parse_qwen_explicit_session_create(_last_user)
+                  or _parse_qwen_explicit_session_send(_last_user, messages)
+                  or _parse_explicit_cookbook_task_action(_last_user, messages)
+                  or _parse_explicit_email_uid_action(_last_user)
+                  or (
+                      (
+                          "mcp__email__search_emails",
+                          json.dumps({
+                              "query": _preemptive_topic_bulk_email_request["query"],
+                              "folder": _preemptive_topic_bulk_email_request.get("folder", "INBOX"),
+                              "max_results": _preemptive_topic_bulk_email_request.get("max_results", 50),
+                          }),
+                      )
+                      if _preemptive_topic_bulk_email_request
+                      else None
+                  )
+                  or _parse_explicit_email_search_tool(_last_user)
+                  or _parse_qwen_explicit_create_request(_last_user)
+                  or _parse_qwen_explicit_chat_transcript_search(_last_user)
+                  or _parse_qwen_explicit_session_find(_last_user)
+                  or _parse_qwen_explicit_admin_request(_last_user)
+              )
+              if (
+                  _preemptive_explicit_request
+                  and _preemptive_explicit_request[0] in {
+                      "create_session",
+                      "list_sessions",
+                      "search_chats",
+                      "manage_session",
+                      "send_to_session",
+                      "manage_research",
+                      "create_document",
+                      "mcp__email__ai_draft_email_reply",
+                      "mcp__email__read_email",
+                      "mcp__email__search_emails",
+                      "mcp__email__mark_email_read",
+                      "mcp__email__archive_email",
+                      "mcp__email__manage_email_state",
+                      "mcp__email__reply_to_email",
+                      "manage_settings",
+                      "manage_endpoints",
+                      "manage_mcp",
+                      "manage_tokens",
+                      "manage_webhooks",
+                      "list_cached_models",
+                      "list_downloads",
+                      "list_cookbook_servers",
+                      "list_serve_presets",
+                      "list_served_models",
+                      "cancel_download",
+                      "stop_served_model",
+                      "tail_serve_output",
+                      "app_api",
+                  }
+                  and _preemptive_explicit_request[0] not in disabled_tools
+                  and (
+                      _caller_relevant_tools is None
+                      or _preemptive_explicit_request[0] in _caller_relevant_tools
+                  )
+              ):
+                  _preemptive_tool, _preemptive_content = _preemptive_explicit_request
+                  _preemptive_block = ToolBlock(_preemptive_tool, _preemptive_content)
+                  yield (
+                      "data: "
+                      + json.dumps({
+                          "type": "tool_start",
+                          "tool": _preemptive_tool,
+                          "command": _preemptive_content,
+                          "full_command": _preemptive_content,
+                          "round": round_num,
+                          "fallback": "preemptive_explicit_admin_session",
+                      })
+                      + "\n\n"
+                  )
+                  try:
+                      _preemptive_desc, _preemptive_result = await execute_tool_block(
+                          _preemptive_block,
+                          session_id=session_id,
+                          disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                          tool_policy=tool_policy,
+                          owner=owner,
+                          workspace=workspace,
+                          security_context=run_security,
+                          active_document_id=(
+                              getattr(active_document, "id", None)
+                              if active_document is not None
+                              else None
+                          ),
+                          client_runtime_context=client_runtime_context,
+                      )
+                  except Exception as _preemptive_exc:
+                      logger.warning("Preemptive explicit tool failed: %s", _preemptive_exc, exc_info=True)
+                      _preemptive_desc = f"{_preemptive_tool}: ERROR"
+                      _preemptive_result = {
+                          "error": "The requested tool failed unexpectedly. Check the server log and retry.",
+                          "error_category": "tool_execution_error",
+                          "exit_code": 1,
+                          "output": "",
+                      }
+                  _preemptive_output = ""
+                  if isinstance(_preemptive_result, dict):
+                      _preemptive_output = str(
+                          _preemptive_result.get("output")
+                          or _preemptive_result.get("results")
+                          or _preemptive_result.get("response")
+                          or _preemptive_result.get("error")
+                          or ""
+                      )
+                  _preemptive_tool_output = {
+                      "type": "tool_output",
+                      "tool": _preemptive_tool,
+                      "command": _preemptive_content,
+                      "output": _truncate(_preemptive_output),
+                      "exit_code": (
+                          _preemptive_result.get("exit_code")
+                          if isinstance(_preemptive_result, dict)
+                          else None
+                      ),
+                      "fallback": "preemptive_explicit_admin_session",
+                  }
+                  if isinstance(_preemptive_result, dict) and _preemptive_result.get("error_category") == "tool_execution_error":
+                      _preemptive_tool_output["error_category"] = "tool_execution_error"
+                  yield f"data: {json.dumps(_preemptive_tool_output)}\n\n"
+                  _preemptive_tool_event = {
+                      "round": round_num,
+                      "model": _round_actual_model,
+                      "endpoint_id": _round_actual_endpoint_id,
+                      "endpoint_label": _round_actual_endpoint_label,
+                      "tool": _preemptive_tool,
+                      "desc": _preemptive_desc,
+                      "command": _preemptive_content,
+                      "output": _truncate(_preemptive_output),
+                      "exit_code": (
+                          _preemptive_result.get("exit_code")
+                          if isinstance(_preemptive_result, dict)
+                          else None
+                      ),
+                      "fallback": "preemptive_explicit_admin_session",
+                  }
+                  tool_events.append(_preemptive_tool_event)
+                  total_tool_calls += 1
+                  run_security.observe_tool_result(
+                      _preemptive_tool,
+                      _preemptive_result if isinstance(_preemptive_result, dict) else {},
+                      _preemptive_content,
+                  )
+                  _topic_bulk_preemptive_request = (
+                      _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
+                      if (
+                          _preemptive_tool in {"search_emails", "mcp__email__search_emails"}
+                          and not (
+                              isinstance(_preemptive_result, dict)
+                              and _preemptive_result.get("error")
+                          )
+                      )
+                      else None
+                  )
+                  if _topic_bulk_preemptive_request:
+                      try:
+                          _preemptive_search_args = json.loads(_preemptive_content or "{}")
+                      except (TypeError, ValueError, json.JSONDecodeError):
+                          _preemptive_search_args = {}
+                      if not isinstance(_preemptive_search_args, dict):
+                          _preemptive_search_args = {}
+                      _topic_bulk_blocks = _email_bulk_blocks_from_search_output(
+                          _preemptive_output,
+                          action=str(_topic_bulk_preemptive_request.get("action") or ""),
+                          folder=str(
+                              _topic_bulk_preemptive_request.get("folder")
+                              or _preemptive_search_args.get("folder")
+                              or "INBOX"
+                          ),
+                          default_account=str(_preemptive_search_args.get("account") or ""),
+                      )
+                      _topic_bulk_summaries: list[str] = []
+                      if not _topic_bulk_blocks:
+                          full_response = (
+                              "No matching emails found for "
+                              f"`{_topic_bulk_preemptive_request.get('query')}`."
+                          )
+                      elif "mcp__email__bulk_email" in disabled_tools:
+                          full_response = "Matching emails were found, but the bulk email tool is disabled."
+                      else:
+                          for _topic_bulk_block in _topic_bulk_blocks:
+                              yield (
+                                  "data: "
+                                  + json.dumps({
+                                      "type": "tool_start",
+                                      "tool": _topic_bulk_block.tool_type,
+                                      "command": _topic_bulk_block.content,
+                                      "full_command": _topic_bulk_block.content,
+                                      "round": round_num,
+                                      "fallback": "preemptive_topic_bulk_email",
+                                  })
+                                  + "\n\n"
+                              )
+                              try:
+                                  _topic_bulk_desc, _topic_bulk_result = await execute_tool_block(
+                                      _topic_bulk_block,
+                                      session_id=session_id,
+                                      disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                                      tool_policy=tool_policy,
+                                      owner=owner,
+                                      workspace=workspace,
+                                      security_context=run_security,
+                                      active_document_id=(
+                                          getattr(active_document, "id", None)
+                                          if active_document is not None
+                                          else None
+                                      ),
+                                      client_runtime_context=client_runtime_context,
+                                  )
+                              except Exception as _topic_bulk_exc:
+                                  logger.warning("Preemptive topic bulk email failed: %s", _topic_bulk_exc)
+                                  _topic_bulk_desc = f"{_topic_bulk_block.tool_type}: ERROR"
+                                  _topic_bulk_result = {
+                                      "error": str(_topic_bulk_exc),
+                                      "exit_code": 1,
+                                      "output": "",
+                                  }
+                              _topic_bulk_output = ""
+                              if isinstance(_topic_bulk_result, dict):
+                                  _topic_bulk_output = str(
+                                      _topic_bulk_result.get("output")
+                                      or _topic_bulk_result.get("results")
+                                      or _topic_bulk_result.get("response")
+                                      or _topic_bulk_result.get("error")
+                                      or ""
+                                  )
+                              yield (
+                                  "data: "
+                                  + json.dumps({
+                                      "type": "tool_output",
+                                      "tool": _topic_bulk_block.tool_type,
+                                      "command": _topic_bulk_block.content,
+                                      "output": _truncate(_topic_bulk_output),
+                                      "exit_code": (
+                                          _topic_bulk_result.get("exit_code")
+                                          if isinstance(_topic_bulk_result, dict)
+                                          else None
+                                      ),
+                                      "fallback": "preemptive_topic_bulk_email",
+                                  })
+                                  + "\n\n"
+                              )
+                              _topic_bulk_event = {
+                                  "round": round_num,
+                                  "model": _round_actual_model,
+                                  "endpoint_id": _round_actual_endpoint_id,
+                                  "endpoint_label": _round_actual_endpoint_label,
+                                  "tool": _topic_bulk_block.tool_type,
+                                  "desc": _topic_bulk_desc,
+                                  "command": _topic_bulk_block.content,
+                                  "output": _truncate(_topic_bulk_output),
+                                  "exit_code": (
+                                      _topic_bulk_result.get("exit_code")
+                                      if isinstance(_topic_bulk_result, dict)
+                                      else None
+                                  ),
+                                  "fallback": "preemptive_topic_bulk_email",
+                              }
+                              tool_events.append(_topic_bulk_event)
+                              total_tool_calls += 1
+                              run_security.observe_tool_result(
+                                  _topic_bulk_block.tool_type,
+                                  _topic_bulk_result if isinstance(_topic_bulk_result, dict) else {},
+                                  _topic_bulk_block.content,
+                              )
+                              _topic_bulk_summary = _ody_qwen_terminal_tool_summary(
+                                  _topic_bulk_event,
+                                  user_text=_last_user,
+                              )
+                              if _topic_bulk_summary:
+                                  _topic_bulk_summaries.append(_topic_bulk_summary)
+                          full_response = "\n".join(dict.fromkeys(_topic_bulk_summaries)).strip()
+                          if not full_response:
+                              full_response = "Bulk email action completed."
+                      round_response = full_response
+                      round_texts.append(full_response)
+                      round_models.append(_round_actual_model)
+                      round_endpoint_ids.append(_round_actual_endpoint_id)
+                      round_endpoint_labels.append(_round_actual_endpoint_label)
+                      if full_response.strip():
+                          yield f"data: {json.dumps({'type': 'final_response', 'content': full_response})}\n\n"
+                      _finalize_round_usage()
+                      logger.info(
+                          "[agent] completed preemptive topic bulk email action=%s",
+                          _topic_bulk_preemptive_request.get("action"),
+                      )
+                      break
+                  full_response = _summary_for_preemptive_admin_session_tool(
+                      _preemptive_tool,
+                      _preemptive_content,
+                      _preemptive_result,
+                      _preemptive_output,
+                  )
+                  round_response = full_response
+                  round_texts.append(full_response)
+                  round_models.append(_round_actual_model)
+                  round_endpoint_ids.append(_round_actual_endpoint_id)
+                  round_endpoint_labels.append(_round_actual_endpoint_label)
+                  _finalize_round_usage()
+                  logger.info("[agent] completed preemptive explicit %s", _preemptive_tool)
+                  break
+          logger.info(
+              "[agent-timing] round_start round=%s model=%s endpoint=%s prompt_tokens=%s output_tokens=%s tools=%s native_tools=%s timeout=%s",
+              round_num,
+              model,
+              endpoint_url,
+              estimate_tokens(messages),
+              max_tokens,
+              len(_tool_names_sent),
+              bool(all_tool_schemas),
+              agent_stream_timeout,
+          )
+          if _model_request_capture_enabled():
+              _snapshot_messages = _active_route_state.get("request_messages")
+              if _snapshot_messages is None:
+                  _snapshot_messages = _trim_route_request_messages(
+                      endpoint_url,
+                      model,
+                      _active_route_state["messages"],
+                  )
+                  _active_route_state["request_messages"] = _snapshot_messages
+                  _last_route_request_messages = _snapshot_messages
+              yield "data: " + json.dumps({
+                  "type": "model_request_snapshot",
+                  **_model_request_snapshot(
+                      round_num=round_num,
+                      model=model,
+                      messages=_snapshot_messages,
+                      tools=all_tool_schemas or [],
+                      temperature=temperature,
+                      max_tokens=max_tokens,
+                      prompt_type=prompt_type if round_num == 1 else None,
+                      agent_prompt_mode=(
+                          "odysseus_doc" if _ody_doc_finetune_mode
+                          else "odysseus_notes" if _ody_notes_finetune_mode
+                          else "odysseus_general" if _ody_qwen_finetune_model
+                          else "agent"
+                      ),
+                  ),
+              }) + "\n\n"
+          async for chunk in stream_llm_with_fallback(
+              _candidates,
+              messages,
+              temperature=temperature,
+              max_tokens=max_tokens,
+              prompt_type=prompt_type if round_num == 1 else None,
+              tools=all_tool_schemas if all_tool_schemas else None,
+              tool_choice_none=_ody_doc_finetune_mode,
+              timeout=agent_stream_timeout,
+              session_id=session_id,
+              workload=workload,
+              thinking_mode=thinking_mode,
+              reasoning_effort=reasoning_effort,
+              fallback_statuses=fallback_statuses,
+              fallback_on_empty=fallback_on_empty,
+              candidate_request_factory=_candidate_request,
+              candidate_capability_recovery_factory=_candidate_capability_recovery,
+              candidate_route_descriptors=_candidate_route_descriptors,
+              retry_degenerate_stream_once=_terminal_completion_contract,
+          ):
+              if not _round_first_event_logged:
+                  _round_first_event_logged = True
+                  logger.info(
+                      "[agent-timing] first_event round=%s elapsed=%.3fs kind=%s",
+                      round_num,
+                      time.time() - _round_start,
+                      "error" if chunk.startswith("event: error") else "data",
+                  )
+              if time.time() > _round_deadline:
+                  logger.warning(
+                      "[agent-timing] round_deadline round=%s elapsed=%.3fs deadline_s=%s",
+                      round_num,
+                      time.time() - _round_start,
+                      max(agent_stream_timeout * 4, 1200),
+                  )
+                  break
+              # Forward error events from stream_llm to the frontend
+              if chunk.startswith("event: error"):
+                  logger.warning(
+                      "[agent-timing] stream_error round=%s elapsed=%.3fs chunk=%r",
+                      round_num,
+                      time.time() - _round_start,
+                      chunk[:500],
+                  )
+                  if (
+                      _workspace_read_requires_mutation
+                      and _workspace_model_error_retries < 1
+                  ):
+                      _workspace_model_error_retries += 1
+                      # Some local OpenAI-compatible servers advertise a large
+                      # context window but enforce a smaller runtime limit. A
+                      # read-before-edit round can therefore consume most of
+                      # the window and produce an empty completion when the
+                      # default output budget is added. Retry once with a
+                      # bounded coding response budget; tool arguments and a
+                      # focused edit fit comfortably within it.
+                      # A compact-router route may start with a tiny answer cap
+                      # (often 256), which is insufficient for a tool call after
+                      # a file read because the model may spend tokens in its
+                      # reasoning phase. Raise the retry to a bounded 1024-token
+                      # tool-turn budget while still staying below small local
+                      # server context limits.
+                      max_tokens = 1024
+                      logger.info(
+                          "[agent] retrying empty provider response after workspace read "
+                          "with max_tokens=%s",
+                          max_tokens,
+                      )
+                      # The existing no-tool/action nudge below will produce the
+                      # next model request. Do not expose a transient provider
+                      # error or terminate the turn before that retry.
+                      break
+                  # Let the completion gate retain the original failure even
+                  # when earlier tool evidence supplies useful fallback prose.
+                  yield chunk
+                  terminal_status = None
+                  try:
+                      error_line = next(
+                          line[6:]
+                          for line in chunk.splitlines()
+                          if line.startswith("data: ")
+                      )
+                      error_data = json.loads(error_line)
+                      terminal_status = _normalize_http_status(
+                          error_data.get("status")
+                      )
+                  except Exception:
+                      pass
+                  terminal_error = {
+                      "message": (
+                          f"Model request failed (HTTP {terminal_status})"
+                          if terminal_status is not None
+                          else "Model request failed"
+                      ),
+                      "status": terminal_status,
+                  }
+                  _verified_artifact_on_provider_error = bool(
+                      _terminal_completion_contract
+                      and _artifact_creation_requested
+                      and _workspace_mutation_completion_authorized
+                      and _completion_requirements.required_artifacts
+                      and _artifact_has_current_inspection(
+                          tool_events,
+                          _completion_requirements.required_artifacts,
+                      )
+                      and EvidenceLedger.from_tool_events(
+                          tool_events,
+                          _completion_requirements,
+                      ).evaluate().can_complete
+                  )
+                  if _verified_artifact_on_provider_error:
+                      # The requested deliverable is already present and has
+                      # been inspected after its latest edit. A provider timeout
+                      # during the final prose-only convergence round must not
+                      # erase that completed, independently gradable work.
+                      _finalize_round_usage(include_empty=False)
+                      _artifact_labels = ", ".join(
+                          f"`{Path(path).name or path}`"
+                          for path in _completion_requirements.required_artifacts
+                      )
+                      full_response = (
+                          f"Done. Created and verified {_artifact_labels}."
+                      )
+                      logger.info(
+                          "[agent] recovered verified artifact completion after "
+                          "provider error: %s",
+                          _artifact_labels,
+                      )
+                      yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
+                      return
+                  if _web_search_completed and _last_web_search_output:
+                      _finalize_round_usage(include_empty=False)
+                      full_response = _web_search_safety_touch_hygiene_postprocess(
+                          _web_search_user_text,
+                          _web_search_answer_from_evidence(
+                              _web_search_user_text,
+                              _last_web_search_output,
+                          ),
+                      )
+                      yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
+                      return
+                  # A provider error is never authority for the harness to run a
+                  # tool itself. The model owns query formulation and tool choice;
+                  # surface the provider failure instead of silently substituting
+                  # a raw user-text web search.
+                  _provider_error_public_web_lookup = False
+                  if _provider_error_public_web_lookup:
+                      _finalize_round_usage(include_empty=False)
+                      _fallback_block = _normalize_web_search_block_query(
+                          ToolBlock("web_search", _web_search_user_text or _last_user),
+                          _web_search_user_text or _last_user,
+                      )
+                      _fallback_command = _web_search_query_from_block(_fallback_block)
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "tool_start",
+                              "tool": "web_search",
+                              "command": _fallback_command,
+                              "full_command": _fallback_command,
+                              "round": round_num,
+                              "fallback": "provider_empty_public_web_lookup",
+                          })
+                          + "\n\n"
+                      )
+                      try:
+                          _fallback_desc, _fallback_result = await execute_tool_block(
+                              _fallback_block,
+                              session_id=session_id,
+                              disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                              tool_policy=tool_policy,
+                              owner=owner,
+                              workspace=workspace,
+                              security_context=run_security,
+                              active_document_id=(
+                                  getattr(active_document, "id", None)
+                                  if active_document is not None
+                                  else None
+                              ),
+                              client_runtime_context=client_runtime_context,
+                          )
+                      except Exception as _fallback_exc:
+                          logger.warning("[agent] provider-error web fallback failed: %s", _fallback_exc)
+                          _fallback_result = {
+                              "error": str(_fallback_exc),
+                              "exit_code": 1,
+                              "output": "",
+                          }
+                      _fallback_output = str(
+                          _fallback_result.get("output")
+                          or _fallback_result.get("results")
+                          or _fallback_result.get("stdout")
+                          or _fallback_result.get("error")
+                          or ""
+                      )
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "tool_output",
+                              "tool": "web_search",
+                              "command": _fallback_command,
+                              "output": _truncate(_fallback_output),
+                              "exit_code": _fallback_result.get("exit_code"),
+                          })
+                          + "\n\n"
+                      )
+                      if not _fallback_result.get("error") and _fallback_output:
+                          _combined_fallback_output = _fallback_output
+                          if (
+                              not _web_search_fuel_euro_conversion_answer(
+                                  _web_search_user_text or _last_user,
+                                  _combined_fallback_output,
+                              )
+                              and re.search(r"\b(?:euro|euros|eur)\b|€", _web_search_user_text or _last_user, re.IGNORECASE)
+                              and re.search(r"\b(?:gas|gasoline|petrol|fuel|diesel)\b", _web_search_user_text or _last_user, re.IGNORECASE)
+                              and re.search(r"\b(?:\$|USD|NOK|kr)\b", _fallback_output, re.IGNORECASE)
+                          ):
+                              _fx_terms = ["EUR exchange rate"]
+                              if re.search(r"\b(?:\$|USD)\b", _fallback_output, re.IGNORECASE):
+                                  _fx_terms.append("USD EUR")
+                              if re.search(r"\b(?:NOK|kr)\b", _fallback_output, re.IGNORECASE):
+                                  _fx_terms.append("NOK EUR")
+                              _fx_query = " ".join(dict.fromkeys(_fx_terms))
+                              _fx_block = ToolBlock("web_search", _fx_query)
+                              yield (
+                                  "data: "
+                                  + json.dumps({
+                                      "type": "tool_start",
+                                      "tool": "web_search",
+                                      "command": _fx_query,
+                                      "full_command": _fx_query,
+                                      "round": round_num,
+                                      "fallback": "provider_empty_public_web_lookup_fx_recovery",
+                                  })
+                                  + "\n\n"
+                              )
+                              try:
+                                  _fx_desc, _fx_result = await execute_tool_block(
+                                      _fx_block,
+                                      session_id=session_id,
+                                      disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                                      tool_policy=tool_policy,
+                                      owner=owner,
+                                      workspace=workspace,
+                                      security_context=run_security,
+                                      active_document_id=(
+                                          getattr(active_document, "id", None)
+                                          if active_document is not None
+                                          else None
+                                      ),
+                                      client_runtime_context=client_runtime_context,
+                                  )
+                              except Exception as _fx_exc:
+                                  logger.warning("[agent] provider-error web FX fallback failed: %s", _fx_exc)
+                                  _fx_result = {
+                                      "error": str(_fx_exc),
+                                      "exit_code": 1,
+                                      "output": "",
+                                  }
+                              _fx_output = str(
+                                  _fx_result.get("output")
+                                  or _fx_result.get("results")
+                                  or _fx_result.get("stdout")
+                                  or _fx_result.get("error")
+                                  or ""
+                              )
+                              yield (
+                                  "data: "
+                                  + json.dumps({
+                                      "type": "tool_output",
+                                      "tool": "web_search",
+                                      "command": _fx_query,
+                                      "output": _truncate(_fx_output),
+                                      "exit_code": _fx_result.get("exit_code"),
+                                  })
+                                  + "\n\n"
+                              )
+                              if not _fx_result.get("error") and _fx_output:
+                                  _combined_fallback_output = _fallback_output + "\n\n" + _fx_output
+                          full_response = _web_search_safety_touch_hygiene_postprocess(
+                              _web_search_user_text or _last_user,
+                              _web_search_answer_from_evidence(
+                                  _web_search_user_text or _last_user,
+                                  _combined_fallback_output,
+                              ),
+                          )
+                          full_response = _web_search_requested_unit_postprocess(
+                              _web_search_user_text or _last_user,
+                              full_response,
+                          )
+                          yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
+                          return
+                  if full_response.strip() or round_reasoning.strip() or tool_events or round_texts:
+                      _finalize_round_usage(include_empty=False)
+                      partial_round = strip_tool_blocks(
+                          round_response,
+                          skip_fenced=(
+                              _is_api_model
+                              and not native_tool_calls
+                              and not guide_only
+                          ),
+                      ).strip()
+                      if _ody_qwen_finetune_model:
+                          partial_round = _strip_doc_model_artifacts(partial_round).strip()
+                      failure_note = f"[Agent stopped: {terminal_error['message']}]"
+                      terminal_round = (
+                          f"{partial_round}\n\n{failure_note}"
+                          if partial_round
+                          else failure_note
+                      )
+                      terminal_metadata = {
+                          "failed": True,
+                          "failure": terminal_error,
+                          "model": actual_model,
+                          "requested_model": requested_model,
+                          "endpoint_id": actual_endpoint_id,
+                          "endpoint_label": actual_endpoint_label,
+                          "requested_endpoint_id": requested_endpoint_id,
+                          "requested_endpoint_label": requested_endpoint_label,
+                          "tool_events": tool_events,
+                          "round_texts": [*round_texts, terminal_round],
+                          "round_models": [*round_models, _round_actual_model],
+                          "round_endpoint_ids": [*round_endpoint_ids, _round_actual_endpoint_id],
+                          "round_endpoint_labels": [*round_endpoint_labels, _round_actual_endpoint_label],
+                          **_usage_bucket_summary(usage_buckets),
+                      }
+                      if round_reasoning.strip():
+                          terminal_metadata["thinking"] = round_reasoning.strip()
+                      if isinstance(actual_endpoint_cost_tracked, bool):
+                          terminal_metadata["endpoint_cost_tracked"] = (
+                              actual_endpoint_cost_tracked
+                          )
+                      yield f'data: {json.dumps({"type": "agent_terminal", "data": terminal_metadata})}\n\n'
+                  if not full_response.strip():
+                      # Some clients render terminal metadata as diagnostics only
+                      # and otherwise leave the assistant bubble blank. Always
+                      # provide a concise user-facing result for an upstream
+                      # failure, especially after a workspace read, so a failed
+                      # coding turn cannot look like a frozen or successful chat.
+                      _mutation_events = [
+                          event for event in tool_events
+                          if _resolved_tool_event_name(event)
+                          in {"write_file", "edit_file", "apply_patch"}
+                          and tool_result_is_successful(event)
+                      ]
+                      if _mutation_events:
+                          _failure_text = _tui_coding_failure_summary(tool_events)
+                      elif _web_search_completed and _last_web_search_output:
+                          _failure_text = _web_search_safety_touch_hygiene_postprocess(
+                              _web_search_user_text,
+                              _web_search_answer_from_evidence(
+                                  _web_search_user_text,
+                                  _last_web_search_output,
+                              ),
+                          )
+                      else:
+                          _failure_text = (
+                              "The model provider returned no usable output after inspecting "
+                              "the workspace. No file was changed. Retry the request; the "
+                              "workspace bridge is still connected."
+                              if _workspace_read_requires_mutation
+                              else "The model provider returned no usable output. No workspace change was made."
+                          )
+                      yield f'data: {json.dumps({"type": "final_response", "content": _failure_text})}\n\n'
+                  # A terminal provider/request failure is not a completed Agent
+                  # round.  Stop before empty-response synthesis, metrics,
+                  # teacher escalation, post-processing, or a success [DONE].
+                  return
+              if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                  try:
+                      data = json.loads(chunk[6:])
+                      if _host_bridge_failed_turn and "delta" in data:
+                          # The transport failure is already the final result;
+                          # suppress the model's recovery prose so it cannot be
+                          # concatenated with the deterministic bridge message.
+                          continue
+                      # IMPORTANT: check type-based events BEFORE "delta" key,
+                      # because tool_call_delta also has an "arg_delta" field.
+                      if data.get("type") == "tool_call_delta":
+                          # Tool-call argument deltas are model proposals, not an
+                          # authorization decision.  Document UI events are built
+                          # from the parsed ToolBlock only after successful dispatch.
+                          continue
+                      elif data.get("type") == "tool_calls":
+                          if _apply_candidate_compaction(candidate_index):
+                              yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
+                          native_tool_calls = data.get("calls", [])
+                          logger.info(f"Agent round {round_num}: received {len(native_tool_calls)} native tool call(s)")
+                      elif data.get("type") == "usage":
+                          u = data.get("data", {})
+                          actual_model = u.get("model") or actual_model
+                          _round_actual_model = u.get("model") or _round_actual_model
+                          normalized_usage = _normalize_usage_counts(
+                              u.get("input_tokens", 0),
+                              u.get("output_tokens", 0),
+                          )
+                          if normalized_usage is None:
+                              logger.warning(
+                                  "[agent] ignoring malformed usage event in round %s",
+                                  round_num,
+                              )
+                              continue
+                          round_input = normalized_usage["input_tokens"]
+                          round_output = normalized_usage["output_tokens"]
+                          real_input_tokens += round_input
+                          real_output_tokens += round_output
+                          _round_real_input_tokens += round_input
+                          _round_real_output_tokens += round_output
+                          last_round_input_tokens = round_input
+                          has_real_usage = True
+                          _round_has_real_usage = True
+                          # Backend-reported TRUE generation speed (llama.cpp
+                          # timings.predicted_per_second) — pure decode, excludes
+                          # prefill/network. Preferred over tokens/wall-clock, which
+                          # reads low. Keep the last round's value (the gen phase).
+                          if u.get("gen_tps"):
+                              backend_gen_tps = u["gen_tps"]
+                          if u.get("prefill_tps"):
+                              backend_prefill_tps = u["prefill_tps"]
+                          # Provider-reported USD cost (OpenRouter usage.cost,
+                          # extracted by llm_core). Accumulated across rounds.
+                          try:
+                              real_cost_usd += float(u.get("cost_usd") or 0.0)
+                          except (TypeError, ValueError):
+                              pass
+                      elif data.get("type") == "fallback":
+                          # The selected model failed and another answered; surface
+                          # the notice so a misconfigured provider isn't masked.
+                          actual_model = data.get("answered_by") or actual_model
+                          actual_endpoint_id = data.get("answered_by_endpoint_id")
+                          actual_endpoint_label = (
+                              data.get("answered_by_endpoint_label") or actual_endpoint_label
+                          )
+                          if isinstance(data.get("answered_by_endpoint_cost_tracked"), bool):
+                              actual_endpoint_cost_tracked = data.get(
+                                  "answered_by_endpoint_cost_tracked"
+                              )
+                          candidate_index = data.get("candidate_index")
+                          if (
+                              _pinned_fallback_candidate is None
+                              and isinstance(candidate_index, int)
+                              and 0 < candidate_index < len(_candidates)
+                          ):
+                              _pinned_fallback_candidate = _candidates[candidate_index]
+                              _pinned_fallback_route = (
+                                  _candidate_route_descriptors[candidate_index]
+                                  if candidate_index < len(_candidate_route_descriptors)
+                                  else {}
+                              )
+                              endpoint_url, model, headers = _pinned_fallback_candidate
+                              answering_state = _candidate_request_states.get(candidate_index)
+                              if answering_state is None:
+                                  answering_state = await _build_route_request_state(
+                                      endpoint_url,
+                                      model,
+                                      headers,
+                                      messages,
+                                      _pinned_fallback_route or {},
+                                  )
+                                  answering_state["request_messages"] = _trim_route_request_messages(
+                                      endpoint_url,
+                                      model,
+                                      answering_state["messages"],
+                                  )
+                                  answering_state["context_length"] = _route_context_lengths.get(
+                                      (endpoint_url, model),
+                                      context_length,
+                                  )
+                              messages = answering_state["messages"]
+                              mcp_schemas = answering_state["mcp_schemas"]
+                              _relevant_tools = answering_state["relevant_tools"]
+                              _is_api_model = answering_state["is_api_model"]
+                              _is_ollama_native = answering_state["is_ollama_native"]
+                              _ollama_openai_compat = answering_state["ollama_openai_compat"]
+                              _ody_qwen_finetune_model = answering_state["ody_qwen_finetune_model"]
+                              _qwen38_tool_router = answering_state["qwen38_tool_router"]
+                              _ody_doc_finetune_mode = answering_state["ody_doc_finetune_mode"]
+                              _ody_notes_finetune_mode = answering_state["ody_notes_finetune_mode"]
+                              _ody_doc_stream_create_mode = answering_state["ody_doc_stream_create_mode"]
+                              if _ody_notes_finetune_mode:
+                                  # Mirror the primary-route clamp: the answering
+                                  # candidate's notes mode must re-enable the
+                                  # personal managers in the shared execution
+                                  # blocklist, or its tool calls are rejected.
+                                  disabled_tools.difference_update({
+                                      "manage_notes", "manage_calendar", "manage_tasks",
+                                  })
+                              elif _qwen38_tool_router and _relevant_tools is not None:
+                                  _router_allowed_policy_names = set()
+                                  for _tool in _relevant_tools:
+                                      _router_allowed_policy_names.update(email_tool_policy_names(_tool))
+                                  disabled_tools.difference_update(_router_allowed_policy_names)
+                                  if tool_policy and not tool_policy.block_all_tool_calls:
+                                      tool_policy = replace(
+                                          tool_policy,
+                                          disabled_tools=frozenset(
+                                              set(tool_policy.disabled_tools)
+                                              - _router_allowed_policy_names
+                                          ),
+                                          hidden_tools=frozenset(
+                                              set(tool_policy.hidden_tools)
+                                              - _router_allowed_policy_names
+                                          ),
+                                      )
+                              data["pinned_for_run"] = True
+                          if _apply_candidate_compaction(candidate_index):
+                              yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
+                          _round_actual_model = data.get("answered_by") or model
+                          _round_actual_endpoint_id = actual_endpoint_id
+                          _round_actual_endpoint_label = actual_endpoint_label
+                          data["round"] = round_num
+                          logger.warning(f"[agent] round {round_num} fell back: "
+                                         f"{data.get('selected_model')} -> {data.get('answered_by')}")
+                          yield f"data: {json.dumps(data)}\n\n"
+                      elif data.get("type") == "model_actual":
+                          if _apply_candidate_compaction(
+                              candidate_index if isinstance(candidate_index, int) else 0
+                          ):
+                              yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
+                          actual_model = data.get("model") or actual_model
+                          _round_actual_model = data.get("model") or _round_actual_model
+                          data["requested_model"] = requested_model
+                          data["requested_endpoint_id"] = requested_endpoint_id
+                          data["requested_endpoint_label"] = requested_endpoint_label
+                          data["endpoint_id"] = _round_actual_endpoint_id
+                          data["endpoint_label"] = _round_actual_endpoint_label
+                          data["round"] = round_num
+                          yield f"data: {json.dumps(data)}\n\n"
+                      elif data.get("type") == "model_response_ref":
+                          data["round"] = round_num
+                          yield f"data: {json.dumps(data)}\n\n"
+                      elif "delta" in data:
+                          if _apply_candidate_compaction(
+                              candidate_index if isinstance(candidate_index, int) else 0
+                          ):
+                              yield f'data: {json.dumps({"type": "compacted", "context_length": _last_route_context_length})}\n\n'
+                          _suppress_unavailable_web_delta = bool(
+                              _web_search_unavailable_turn and not data.get("thinking")
+                          )
+                          # Keep a textual tool wrapper in round_response so it
+                          # can reach the policy executor, but do not show the
+                          # wrapper in the chat before the blocked result.
+                          if _compact_memory_list_turn and not data.get("thinking"):
+                              # A broad memory listing is rendered as a compact
+                              # count below; never stream the raw 200+ entry dump.
+                              continue
+                          if _compact_document_list_turn and not data.get("thinking"):
+                              # The document list is already rendered from the
+                              # tool result; suppress a repeated model wrapper.
+                              continue
+                          if not _suppress_unavailable_web_delta and not first_token_received:
+                              time_to_first_token = time.time() - total_start
+                              first_token_received = True
+                          if not _round_first_token_logged:
+                              _round_first_token_logged = True
+                              logger.info(
+                                  "[agent-timing] first_visible_token round=%s elapsed=%.3fs total_elapsed=%.3fs thinking=%s",
+                                  round_num,
+                                  time.time() - _round_start,
+                                  time.time() - total_start,
+                                  bool(data.get("thinking")),
+                              )
+                          # Keep reasoning deltas in a separate accumulator so
+                          # we can echo them back via `reasoning_content` on the
+                          # next request (DeepSeek requires this; harmless for
+                          # other vendors). Regular content still flows into
+                          # round_response unchanged.
+                          if data.get("thinking"):
+                              # Even when Qwen's private reasoning is hidden from
+                              # the client, retain it for the assistant tool-call
+                              # message sent on the next model round. Dropping it
+                              # breaks Qwen 3.5 reasoning-parser continuation:
+                              # the follow-up can become reasoning-only or leak a
+                              # truncated closing-think fragment.
+                              round_reasoning += data["delta"]
+                              if _qwen38_tool_router:
+                                  continue
+                          else:
+                              _qwen_text_cleanup = (
+                                  _ody_qwen_finetune_model or _qwen38_tool_router
+                              )
+                              _delta_text = (
+                                  _strip_doc_model_artifacts(data["delta"])
+                                  if _qwen_text_cleanup
+                                  else data["delta"]
+                              )
+                              # Never run word-level Qwen repairs on an
+                              # individual stream delta. Deltas are arbitrary
+                              # token fragments, so repairing ``nex`` before the
+                              # following ``t`` arrives corrupts valid output.
+                              # Normalize only after the complete round has been
+                              # assembled below.
+                              round_response += _delta_text
+                              data["delta"] = _delta_text
+                              if _is_api_model:
+                                  if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
+                                      _streamed_tool_markup += _delta_text
+                                      if not _streamed_tool_markup_complete(_streamed_tool_markup):
+                                          if _streamed_tool_markup_starts(_streamed_tool_markup):
+                                              continue
+                                          # False alarm: a bare "<" (e.g. ``x < 2``) looked like
+                                          # a tag prefix, but the buffer can no longer become a
+                                          # tool tag. Release it as prose instead of holding the
+                                          # rest of the answer forever.
+                                          _delta_text = _streamed_tool_markup
+                                          _streamed_tool_markup = ""
+                                          data["delta"] = _delta_text
+                                      else:
+                                          _visible_markup_tail = strip_tool_blocks(
+                                              _streamed_tool_markup,
+                                              skip_fenced=True,
+                                          ).strip()
+                                          _streamed_tool_markup = ""
+                                          if not _visible_markup_tail:
+                                              continue
+                                          _delta_text = _visible_markup_tail
+                                          data["delta"] = _delta_text
+                              full_response += _delta_text
+                          if not _suppress_unavailable_web_delta:
+                              _qwen_buffered_route = bool(
+                                  _ody_qwen_finetune_model or _qwen38_tool_router
+                              )
+                              if data.get("thinking") or not _qwen_buffered_route:
+                                  data["round"] = round_num
+                                  yield f"data: {json.dumps(data)}\n\n"
+                              elif _force_answer and _private_browser_catalog_ready:
+                                  _qwen_round_streamed_live = True
+                                  data["round"] = round_num
+                                  yield f"data: {json.dumps(data)}\n\n"
+                              else:
+                                  _next_qwen_visible = _incremental_qwen_visible_text(
+                                      round_response
+                                  )
+                                  if (
+                                      _next_qwen_visible
+                                      and _next_qwen_visible.startswith(
+                                          _qwen_live_visible_text
+                                      )
+                                  ):
+                                      _live_delta = _next_qwen_visible[
+                                          len(_qwen_live_visible_text):
+                                      ]
+                                      if _live_delta:
+                                          _qwen_live_visible_text = _next_qwen_visible
+                                          _qwen_round_streamed_live = True
+                                          _live_data = dict(data)
+                                          _live_data["delta"] = _live_delta
+                                          _live_data["round"] = round_num
+                                          yield f"data: {json.dumps(_live_data)}\n\n"
+                      elif data.get("error"):
+                          err_msg = data.get("error", "unknown")
+                          logger.error(f"Agent round {round_num}: stream error: {err_msg}")
+                          yield f'data: {json.dumps({"delta": chr(10) + chr(10) + "*[Stream error: " + str(err_msg) + "]*"})}\n\n'
+                  except json.JSONDecodeError:
+                      if round_num == 1:
+                          yield chunk
+              elif chunk.startswith("event: "):
+                  # Forward error events to frontend as visible text
+                  yield chunk
+              # Intercept [DONE] — don't forward until all rounds finish
+
+          logger.info(
+              "[agent-timing] round_stream_done round=%s elapsed=%.3fs text_chars=%s tool_calls=%s first_event=%s first_token=%s",
+              round_num,
+              time.time() - _round_start,
+              len(round_response),
+              len(native_tool_calls),
+              _round_first_event_logged,
+              _round_first_token_logged,
+          )
+          _finalize_round_usage()
+          _normalized_doc_round = (
+              _normalize_stream_document_fences(
+                  round_response,
+                  "create_document" if _ody_doc_stream_create_mode else "update_document",
+              )
+              if _ody_doc_finetune_mode
+              else round_response
+          )
+          _recover_unoffered_local_tools = None
+          if _tui_local_execution_turn or _tui_local_no_web_recovery_turn(
+              _last_user,
+              client_runtime_context=client_runtime_context,
+          ):
+              _recover_unoffered_local_tools = _tui_local_execution_allowlist(_last_user)
+              # These backend-oriented names are never executed on a TUI-local
+              # turn. Preserve them only long enough for the bounded host-shell
+              # recovery below to replace the stale read batch.
+              _recover_unoffered_local_tools.update({
+                  "get_workspace", "ls", "read_file", "grep", "glob", "find",
+              })
+          tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
+              _normalized_doc_round,
+              native_tool_calls,
+              round_num,
+              is_api_model=(_is_api_model and not guide_only),
+              allow_fenced_for_api=(
+                  _ody_doc_finetune_mode
+                  or _terminal_completion_contract
+                  or bool(normalized_external_tool_schemas and force_textual_tool_transport)
+              ),
+              active_document=active_document,
+              last_user=_last_user,
+              offered_tool_names=(
+                  set(turn_contract.offered)
+                  if turn_contract is not None and not _active_route_state.get("spec_offered")
+                  else set(_tool_names_sent)
+              ),
+              recover_unoffered_tool_names=_recover_unoffered_local_tools,
+              passthrough_tool_names={
+                  schema["function"]["name"]
+                  for schema in normalized_external_tool_schemas
+              },
+              declared_tool_names={
+                  schema["function"]["name"]
+                  for schema in normalized_external_tool_schemas
+              },
+              declared_tool_schemas=normalized_external_tool_schemas,
+          )
+          _requested_tool_names = sorted({
+              str(call.get("name") or "")
+              for call in native_tool_calls
+              if str(call.get("name") or "").strip()
+          })
+          _accepted_tool_names = sorted({
+              str(block.tool_type)
+              for block in tool_blocks
+              if str(getattr(block, "tool_type", "") or "").strip()
+          })
+          _accepted_tool_name_set = set(_accepted_tool_names)
+          _resolution_audit = {
+              "type": "tool_resolution_audit",
+              "round": round_num,
+              "requested_tools": _requested_tool_names,
+              "accepted_tools": _accepted_tool_names,
+              "requested_not_accepted": sorted(
+                  name
+                  for name in _requested_tool_names
+                  if not _native_tool_name_was_accepted(
+                      name, _accepted_tool_name_set
+                  )
+              ),
+              "used_native": bool(used_native),
+          }
+          logger.info("[agent-routing-audit] %s", json.dumps(_resolution_audit, sort_keys=True))
+          _malformed_native_tool_names = set(
+              _resolution_audit["requested_not_accepted"]
+          )
+          yield f'data: {json.dumps(_resolution_audit)}\n\n'
+          if _unoffered_web_search_should_synthesize(
+              _resolution_audit["requested_not_accepted"],
+              accepted_tools=_accepted_tool_names,
+              tool_events=tool_events,
+          ):
+              _force_answer = True
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "Web search is not available in this round, but authoritative "
+                      "source evidence has already been retrieved. Stop using tools and "
+                      "answer the user's complete request from that evidence now. Cover "
+                      "every requested fact, comparison, and caveat, and cite the source "
+                      "URLs present in the retrieved evidence."
+                  ),
+              })
+              yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+              continue
+          _malformed_write_missing = (
+              tuple(
+                  EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate().missing_artifacts
+              )
+              if _artifact_recovery_enabled
+              else ()
+          )
+          if _malformed_write_needs_body_handoff(
+              _malformed_native_tool_names,
+              _malformed_write_missing,
+              attempts=_malformed_write_body_handoff_attempts,
+          ):
+              _malformed_write_body_handoff_attempts += 1
+              _malformed_target = _malformed_write_missing[0]
+              _malformed_write_messages = _artifact_recovery_messages(
+                  messages,
+                  tool_events,
+                  _malformed_write_missing,
+              )
+              _malformed_synthesis_messages = _artifact_synthesis_messages(
+                  _malformed_write_messages,
+                  _malformed_target,
+              )
+              _malformed_synthesis_messages.insert(1, {
+                  "role": "system",
+                  "content": (
+                      "The prior native write was truncated by its output budget. "
+                      "Keep this complete file under 3,500 tokens. Use CSS, loops, "
+                      "reusable functions, SVG symbols, or compact data arrays instead "
+                      "of repeated markup. Preserve the requested behavior."
+                  ),
+              })
+              _malformed_body = ""
+              try:
+                  from src.generation_budget import fit_output_token_budget
+                  from src.llm_core import llm_call_async
+
+                  _malformed_raw_body = await llm_call_async(
+                      url=endpoint_url,
+                      model=model,
+                      messages=_malformed_synthesis_messages,
+                      headers=headers,
+                      temperature=0.0,
+                      max_tokens=fit_output_token_budget(
+                          min(max_tokens, 4096),
+                          _last_route_context_length or context_length,
+                          _malformed_synthesis_messages,
+                          None,
+                      ),
+                      timeout=max(90, int(agent_stream_timeout or 90)),
+                      max_retries=1,
+                      thinking_mode="off",
+                  )
+                  _malformed_body = _artifact_body_from_synthesis(
+                      _malformed_raw_body or ""
+                  )
+                  usage_buckets.append(_usage_bucket(
+                      round_num=round_num,
+                      model=model,
+                      endpoint_id=_round_actual_endpoint_id,
+                      endpoint_label=_round_actual_endpoint_label,
+                      endpoint_cost_tracked=actual_endpoint_cost_tracked,
+                      input_tokens=estimate_tokens(_malformed_synthesis_messages),
+                      output_tokens=max(len(_malformed_raw_body or "") // 4, 0),
+                      usage_source="estimated",
+                  ))
+              except Exception as _malformed_handoff_error:
+                  logger.warning(
+                      "[agent] malformed write body handoff failed: %s",
+                      _malformed_handoff_error,
+                  )
+              if _malformed_body and _artifact_body_matches_target(
+                  _malformed_body,
+                  _malformed_target,
+              ):
+                  tool_blocks = [ToolBlock(
+                      "write_file",
+                      f"{_malformed_target}\n{_malformed_body}",
+                  )]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+                  round_response = ""
+                  logger.info(
+                      "[agent] recovered malformed write through bounded body handoff "
+                      "path=%s chars=%d",
+                      _malformed_target,
+                      len(_malformed_body),
+                  )
+                  yield (
+                      "data: "
+                      + json.dumps({
+                          "type": "artifact_body_handoff",
+                          "reason": "malformed_write",
+                          "round": round_num,
+                          "path": _malformed_target,
+                      })
+                      + "\n\n"
+                  )
+          _required_read = _required_safe_read_operation(turn_contract)
+          if (
+              _required_read is not None
+              and not guide_only
+              # Zero is the product setting for an unlimited tool budget.
+              and (max_tool_calls <= 0 or len(tool_events) < max_tool_calls)
+          ):
+              # An explicit immutable read operation is stronger than a family
+              # hint. Missing/malformed model arguments never become a new query
+              # or action; execute the sealed arguments through normal gates.
+              _required_block, _required_limit = _required_read
+              _required_call_id = _required_read_native_id(_required_block, native_tool_calls)
+              _required_call_id = _required_call_id or f"required-read-{round_num}"
+              yield f'data: {json.dumps({"type": "tool_start", "tool": _required_block.tool_type, "command": _required_block.content, "full_command": _required_block.content, "round": round_num, "call_id": _required_call_id})}\n\n'
+              _required_desc, _required_result, _required_answer = await _dispatch_required_safe_read(
+                  _required_read,
+                  session_id=session_id, disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                  tool_policy=tool_policy, owner=owner, workspace=workspace,
+                  security_context=run_security,
+                  active_document_id=getattr(active_document, "id", None),
+                  client_runtime_context=client_runtime_context,
+              )
+              _required_output = next((_required_result.get(key) for key in
+                                       ("output", "response", "results", "content", "error")
+                                       if _required_result.get(key)), "")
+              if not isinstance(_required_output, str):
+                  _required_output = json.dumps(_required_output, ensure_ascii=False, default=str)
+              tool_events.append({
+                  "round": round_num, "model": model,
+                  "endpoint_id": actual_endpoint_id, "endpoint_label": actual_endpoint_label,
+                  "tool": _required_block.tool_type, "desc": _required_desc,
+                  "command": _required_block.content, "output": _required_output,
+                  "exit_code": _required_result.get("exit_code", 0 if _required_answer else 1),
+                  "call_id": _required_call_id,
+              })
+              yield f'data: {json.dumps({"type": "tool_output", **tool_events[-1]})}\n\n'
+              # A rejected/failed read must not claim completion or fall back to
+              # another family. Surface it once, without a mutation-capable retry.
+              full_response = _required_answer or (
+                  f"I couldn't complete the required read: {_required_result.get('error') or 'the tool failed'}."
+              )
+              round_texts.append(full_response)
+              yield f'data: {json.dumps({"type": "final_response", "content": full_response, "render_owner": "structured", "replacement_scope": "turn"})}\n\n'
+              _required_metrics = _compute_final_metrics(
+                  _last_route_request_messages, full_response, time.time() - _t0,
+                  time_to_first_token, _last_route_context_length,
+                  real_input_tokens, real_output_tokens, has_real_usage,
+                  tool_events, round_texts, model=model,
+                  round_models=round_models, round_endpoint_ids=round_endpoint_ids,
+                  round_endpoint_labels=round_endpoint_labels,
+              )
+              _required_metrics.update({
+                  "requested_model": requested_model,
+                  "endpoint_id": actual_endpoint_id, "endpoint_label": actual_endpoint_label,
+                  "required_operation_succeeded": bool(_required_answer),
+                  "render_owner": "structured", "replacement_scope": "turn",
+              })
+              yield f'data: {json.dumps({"type": "metrics", "data": _required_metrics})}\n\n'
+              yield 'data: [DONE]\n\n'
+              return
+          if _terminal_completion_contract:
+              _adjacent_write = _recover_adjacent_fenced_write_file(
+                  round_response,
+                  _completion_requirements.required_artifacts,
+              )
+              _fenced_media_shell = (
+                  _recover_fenced_media_shell_command(
+                      round_response,
+                      _completion_requirements.required_artifacts,
+                  )
+                  if _artifact_mutation_only_mode and "bash" in set(_tool_names_sent)
+                  else None
+              )
+              if (
+                  _adjacent_write is not None
+                  and not _binary_artifact_path(
+                      _adjacent_write.content.split("\n", 1)[0]
+                  )
+              ):
+                  tool_blocks = [_adjacent_write]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+                  logger.info(
+                      "[agent] recovered adjacent fenced artifact write: %s",
+                      _adjacent_write.content.split("\n", 1)[0],
+                  )
+              elif not tool_blocks and _fenced_media_shell is not None:
+                  tool_blocks = [_fenced_media_shell]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+                  round_response = ""
+                  logger.info(
+                      "[agent] recovered fenced media artifact command: %s",
+                      _fenced_media_shell.content[:200],
+                  )
+              elif not tool_blocks and _evidence_repair_rounds >= 2:
+                  # After two explicit completion repairs, a weak model may
+                  # provide the finished file body in chat instead of invoking
+                  # write_file. Recover that body only for one declared missing
+                  # artifact. Short completion claims remain ordinary prose and
+                  # are rejected by the evidence ledger below.
+                  _prose_evidence = EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate()
+                  _prose_missing = tuple(_prose_evidence.missing_artifacts)
+                  _prose_candidate = _strip_think_blocks(round_response).strip()
+                  _prose_is_fenced_body = bool(re.fullmatch(
+                      r"```(?:[\w.+-]+)?\s*\n[\s\S]*?\n```",
+                      _prose_candidate,
+                  ))
+                  _prose_artifact_body = _artifact_body_from_synthesis(
+                      _prose_candidate
+                  )
+                  if (
+                      len(_prose_missing) == 1
+                      and not _binary_artifact_path(_prose_missing[0])
+                      and "write_file" in set(_relevant_tools or ())
+                      and _prose_artifact_body
+                      and _artifact_body_matches_target(
+                          _prose_artifact_body, _prose_missing[0]
+                      )
+                      and (_prose_is_fenced_body or len(_prose_artifact_body) >= 400)
+                  ):
+                      _prose_target = _prose_missing[0]
+                      tool_blocks = [ToolBlock(
+                          "write_file",
+                          f"{_prose_target}\n{_prose_artifact_body}",
+                      )]
+                      converted_calls = []
+                      native_tool_calls = []
+                      used_native = False
+                      full_response = _drop_rejected_round_response(
+                          full_response,
+                          round_response,
+                      )
+                      round_response = ""
+                      logger.info(
+                          "[agent] recovered required artifact from completion body: %s",
+                          _prose_target,
+                      )
+          if (
+              _artifact_recovery_enabled
+              and _artifact_completion_nudges > 0
+              and native_tool_calls
+              and not tool_blocks
+              and not _force_answer
+          ):
+              _dropped_followthrough_evidence = EvidenceLedger.from_tool_events(
+                  tool_events,
+                  _completion_requirements,
+              ).evaluate()
+              _dropped_followthrough_missing = tuple(
+                  _dropped_followthrough_evidence.missing_artifacts
+              )
+              if _dropped_followthrough_missing:
+                  _artifact_followthrough_deferrals += 1
+                  if not _artifact_mutation_only_mode:
+                      _artifact_recovery_relevant_tools = (
+                          None if _relevant_tools is None else set(_relevant_tools)
+                      )
+                  _artifact_mutation_only_mode = True
+                  messages = _artifact_recovery_messages(
+                      messages,
+                      tool_events,
+                      _dropped_followthrough_missing,
+                  )
+                  _missing = ", ".join(_dropped_followthrough_missing)
+                  if _artifact_unoffered_recovery_exhausted(
+                      _artifact_followthrough_deferrals
+                  ):
+                      _force_answer = True
+                      native_tool_calls = []
+                      converted_calls = []
+                      used_native = False
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "Artifact recovery repeatedly requested tools outside the "
+                              "available contract. Do not call more tools. Finish briefly "
+                              "and state plainly which required artifacts remain missing."
+                          ),
+                      })
+                      logger.warning(
+                          "[agent] unoffered artifact recovery exhausted after %d attempts; "
+                          "forcing concise finish missing=%s",
+                          _artifact_followthrough_deferrals,
+                          _missing,
+                      )
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "loop_breaker_triggered",
+                              "reason": "artifact_recovery_unoffered_tool",
+                              "round": round_num,
+                              "attempt": _artifact_followthrough_deferrals,
+                          })
+                          + "\n\n"
+                      )
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+                  logger.warning(
+                      "[agent] suppressed unoffered post-recovery native tool call; "
+                      "continuing artifact recovery attempt=%d missing=%s",
+                      _artifact_followthrough_deferrals,
+                      _missing,
+                  )
+                  yield (
+                      "data: "
+                      + json.dumps({
+                          "type": "completion_blocked",
+                          "reason": "artifact_mutation_required",
+                          "round": round_num,
+                          "attempt": _artifact_followthrough_deferrals,
+                          "decision": _dropped_followthrough_evidence.to_dict(),
+                      })
+                      + "\n\n"
+                  )
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+          if _terminal_completion_contract and tool_blocks:
+              _recovered_terminal_blocks = [
+                  _recover_shell_wrapped_file_tool(block)
+                  for block in tool_blocks
+              ]
+              if _recovered_terminal_blocks != tool_blocks:
+                  logger.info(
+                      "[agent] recovered shell-wrapped terminal file tool(s): %s",
+                      [block.tool_type for block in _recovered_terminal_blocks],
+                  )
+                  tool_blocks = _recovered_terminal_blocks
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+              _normalized_artifact_path_blocks = _normalize_required_artifact_write_paths(
+                  tool_blocks,
+                  _completion_requirements.required_artifacts,
+                  tool_events,
+              )
+              if _normalized_artifact_path_blocks != tool_blocks:
+                  logger.info("[agent] normalized write_file path to declared artifact path")
+                  tool_blocks = _normalized_artifact_path_blocks
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+          if _declared_verifier_force_command:
+              _forced_verifier_tool = (
+                  "host_shell" if _tui_local_execution_turn else "bash"
+              )
+              _forced_verifier_content = (
+                  json.dumps({"command": _declared_verifier_force_command})
+                  if _forced_verifier_tool == "host_shell"
+                  else _declared_verifier_force_command
+              )
+              tool_blocks = [ToolBlock(
+                  _forced_verifier_tool,
+                  _forced_verifier_content,
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              round_response = ""
+              logger.info(
+                  "[agent] executing adapter-declared verifier: %s",
+                  _declared_verifier_force_command,
+              )
+              _declared_verifier_force_command = ""
+          if _looks_like_web_retry_preamble(round_response):
+              _last_web_retry_round_response = round_response
+          if _pending_host_shell_poll_job_id:
+              tool_blocks = [ToolBlock(
+                  "host_shell",
+                  json.dumps({"job_id": _pending_host_shell_poll_job_id}),
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info(
+                  "[agent] normalized detached host_shell continuation to poll job=%s",
+                  _pending_host_shell_poll_job_id,
+              )
+          if _failed_edit_recovery_path and _edit_failure_recovery_sent:
+              # Replace a repeated malformed edit with an exact reread. The
+              # following model round can then construct old_string from data,
+              # rather than from the user's paraphrase.
+              tool_blocks = [ToolBlock(
+                  "read_file",
+                  _failed_edit_recovery_path,
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              _failed_edit_recovery_path = ""
+              logger.info("[agent] normalized repeated failed edit to read_file")
+          elif _inspection_read_forced and _inspection_file_edit and not _inspection_edit_completed:
+              # A weak router may emit unrelated shell probes instead of
+              # inspecting the explicitly named file. Preserve the user's
+              # requested read-before-edit sequence with one deterministic,
+              # bounded read; the successful result will unlock the exact edit
+              # normalization below on the following round.
+              tool_blocks = [ToolBlock(
+                  "read_file",
+                  json.dumps({"path": _inspection_file_edit["path"]}),
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              _inspection_read_forced = False
+              logger.info("[agent] normalized inspection follow-up to one read_file call")
+          elif _inspection_edit_nudge_sent and _inspection_file_edit and not _inspection_edit_completed:
+              # The read has already succeeded and the requested replacement is
+              # explicit. Do not let a stochastic model choose another read or a
+              # duplicate edit; execute the one authorized mutation through the
+              # normal security/executor path.
+              tool_blocks = [ToolBlock("edit_file", json.dumps(_inspection_file_edit))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info("[agent] normalized inspection follow-up to one edit_file call")
+          elif (
+              _artifact_readback_requested
+              and _post_effectful_mutation_done
+              and not _post_edit_verification_completed
+              and not _post_edit_verification_force_attempted
+              and _artifact_readback_target
+          ):
+              # The user explicitly asked to inspect the saved artifact. Once a
+              # write succeeds, normalize one bounded read-back rather than
+              # letting a weak router reopen source-media inspection forever.
+              # Chained onto the preceding branches: an already-normalized
+              # authorized edit must not be overwritten by this read.
+              tool_blocks = [ToolBlock(
+                  "read_file",
+                  json.dumps({"path": _artifact_readback_target}),
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              _post_edit_verification_force_attempted = True
+              logger.info(
+                  "[agent] normalized post-edit artifact verification to read_file: %s",
+                  _artifact_readback_target,
+              )
+          elif (
+              _post_edit_verification_nudge_sent
+              and (_post_effectful_mutation_done or _inspection_edit_completed or _file_creation_completed)
+              and not _post_edit_verification_completed
+              and _post_edit_verification_command
+              and not _post_edit_verification_force_attempted
+          ):
+              # The verification request is explicit, so do not leave its
+              # execution to a compact router that may repeat the mutation.
+              _post_edit_verifier_tool = (
+                  "host_shell" if _tui_local_execution_turn else "bash"
+              )
+              _post_edit_verifier_content = (
+                  json.dumps({"command": _post_edit_verification_command})
+                  if _post_edit_verifier_tool == "host_shell"
+                  else _post_edit_verification_command
+              )
+              tool_blocks = [ToolBlock(
+                  _post_edit_verifier_tool,
+                  _post_edit_verifier_content,
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info(
+                  "[agent] normalized post-edit verification to %s: %s",
+                  _post_edit_verifier_tool,
+                  _post_edit_verification_command,
+              )
+              _post_edit_verification_force_attempted = True
+          if (
+              _explicit_file_creation
+              and not _file_creation_completed
+              and not _file_creation_attempted
+          ):
+              tool_blocks = [ToolBlock(
+                  "write_file",
+                  _explicit_file_creation["path"] + "\n" + _explicit_file_creation["content"],
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              _file_creation_attempted = True
+              logger.info(
+                  "[agent] normalized explicit file creation to write_file: %s",
+                  _explicit_file_creation["path"],
+              )
+          elif _file_creation_pending and _explicit_file_creation and not _file_creation_completed:
+              tool_blocks = [ToolBlock(
+                  "write_file",
+                  _explicit_file_creation["path"] + "\n" + _explicit_file_creation["content"],
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info(
+                  "[agent] normalized missing-file recovery to write_file: %s",
+                  _explicit_file_creation["path"],
+              )
+          if _failed_read_recovery_path and not _failed_read_recovery_sent:
+              tool_blocks = [ToolBlock(
+                  "read_file",
+                  _failed_read_recovery_path,
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              _failed_read_recovery_sent = True
+              logger.info(
+                  "[agent] normalized stale missing read to requested file: %s",
+                  _failed_read_recovery_path,
+              )
+          _qwen_explicit_tool = None
+          _qwen_explicit_args = ""
+          _explicit_open_panel_request = _parse_explicit_open_panel_request(_last_user)
+          _explicit_recurring_task_request = _parse_qwen_explicit_recurring_task_request(_last_user)
+          _explicit_task_state_request = _parse_explicit_task_state_request(_last_user)
+          _explicit_skill_request = _parse_explicit_skill_request(_last_user)
+          _explicit_memory_state_request = _parse_explicit_memory_state_request(
+              _last_user,
+              messages,
+              history_session,
+          )
+          _explicit_memory_lookup_request = _parse_explicit_memory_lookup_request(_last_user)
+          _explicit_memory_add_text = _extract_memory_add_text_from_user(_last_user)
+          _explicit_admin_request = _parse_qwen_explicit_admin_request(_last_user)
+          _explicit_session_create = _parse_qwen_explicit_session_create(_last_user)
+          _explicit_chat_transcript_search = _parse_qwen_explicit_chat_transcript_search(_last_user)
+          _explicit_session_find = _parse_qwen_explicit_session_find(_last_user)
+          _explicit_session_action = _parse_qwen_explicit_session_action(_last_user, messages)
+          _explicit_private_browser_inspection = _parse_explicit_private_browser_inspection(_last_user)
+          _explicit_teacher_request = _parse_explicit_teacher_request(_last_user)
+          _explicit_theme_change_request = _parse_explicit_theme_change_request(_last_user)
+          if (
+              _explicit_private_browser_inspection
+              and "private_browser" not in disabled_tools
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_private_browser_inspection
+          elif _explicit_teacher_request and "ask_teacher" not in disabled_tools:
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_teacher_request
+          elif (
+              _explicit_recurring_task_request
+              and "manage_tasks" not in disabled_tools
+              and not re.search(r"\b(?:calendar|events?|meeting|appointment|reservation)\b", _last_user, re.IGNORECASE)
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_recurring_task_request
+          elif (
+              _explicit_task_state_request
+              and "manage_tasks" not in disabled_tools
+              and re.search(r"\b(?:tasks?|reminders?|scheduled\s+tasks?)\b", _last_user, re.IGNORECASE)
+          ):
+              _qwen_explicit_tool = _explicit_task_state_request.tool_type
+              _qwen_explicit_args = _explicit_task_state_request.content
+          elif (
+              _explicit_memory_state_request
+              and "manage_memory" not in disabled_tools
+          ):
+              _qwen_explicit_tool = _explicit_memory_state_request.tool_type
+              _qwen_explicit_args = _explicit_memory_state_request.content
+          elif (
+              _explicit_memory_add_text
+              and "manage_memory" not in disabled_tools
+              and re.search(r"\b(?:remember\s+this|remember\s+that|save\s+this\s+as\s+(?:a\s+)?memory|add\s+to\s+memory)\b", _last_user, re.IGNORECASE)
+          ):
+              _qwen_explicit_tool = "manage_memory"
+              _qwen_explicit_args = "add\n" + _explicit_memory_add_text
+          elif (
+              _explicit_memory_lookup_request
+              and "manage_memory" not in disabled_tools
+          ):
+              _qwen_explicit_tool = _explicit_memory_lookup_request.tool_type
+              _qwen_explicit_args = _explicit_memory_lookup_request.content
+          elif (
+              _explicit_skill_request
+              and "manage_skills" not in disabled_tools
+              and re.search(r"\b(?:skills?)\b", _last_user, re.IGNORECASE)
+          ):
+              _qwen_explicit_tool = "manage_skills"
+              _qwen_explicit_args = json.dumps(_explicit_skill_request)
+          elif (
+              _is_email_account_identity_request(_last_user)
+              and "mcp__email__list_email_accounts" not in disabled_tools
+              and "list_email_accounts" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__list_email_accounts"
+              _qwen_explicit_args = "{}"
+          elif (
+              (_explicit_download_attachment_pre := _parse_qwen_explicit_download_attachment_request(_last_user))
+              and "mcp__email__download_attachment" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__download_attachment"
+              _qwen_explicit_args = json.dumps(_explicit_download_attachment_pre)
+          elif (
+              (_explicit_unsubscribe_email_pre := _parse_qwen_explicit_unsubscribe_email_request(_last_user))
+              and "mcp__email__unsubscribe_email" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__unsubscribe_email"
+              _qwen_explicit_args = json.dumps(_explicit_unsubscribe_email_pre)
+          elif (
+              (_explicit_unsubscribe_scan_pre := _parse_qwen_explicit_unsubscribe_scan_request(_last_user))
+              and "mcp__email__scan_email_unsubscribes" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__scan_email_unsubscribes"
+              _qwen_explicit_args = json.dumps(_explicit_unsubscribe_scan_pre)
+          elif (
+              (_explicit_spam_scan_pre := _parse_qwen_explicit_spam_scan_request(_last_user))
+              and "mcp__email__scan_spam" not in disabled_tools
+          ):
+              if re.search(r"\b(?:again|re-?scan|repeat)\b", _last_user, re.IGNORECASE):
+                  _prior_spam_candidates = _recent_spam_candidates_from_tool_context(messages)
+                  if _prior_spam_candidates:
+                      _explicit_spam_scan_pre["folder"] = str(
+                          _prior_spam_candidates[0].get("folder") or "INBOX"
+                      )
+              _qwen_explicit_tool = "mcp__email__scan_spam"
+              _qwen_explicit_args = json.dumps(_explicit_spam_scan_pre)
+          elif (
+              (_explicit_block_sender_pre := _parse_qwen_explicit_block_sender_request(_last_user))
+              and "mcp__email__block_sender" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__block_sender"
+              _qwen_explicit_args = json.dumps(_explicit_block_sender_pre)
+          elif (
+              (_explicit_bulk_email_pre := _parse_qwen_explicit_bulk_email_request(_last_user))
+              and "mcp__email__bulk_email" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__bulk_email"
+              _qwen_explicit_args = json.dumps(_explicit_bulk_email_pre)
+          elif (
+              (_explicit_topic_bulk_email_pre := _parse_qwen_explicit_email_topic_bulk_action_request(_last_user))
+              and "mcp__email__search_emails" not in disabled_tools
+          ):
+              _qwen_explicit_tool = "mcp__email__search_emails"
+              _qwen_explicit_args = json.dumps({
+                  "query": _explicit_topic_bulk_email_pre["query"],
+                  "folder": _explicit_topic_bulk_email_pre.get("folder", "INBOX"),
+                  "max_results": _explicit_topic_bulk_email_pre.get("max_results", 50),
+              })
+          elif (
+              _explicit_session_action
+              and _explicit_session_action[0] not in disabled_tools
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_action
+          elif (
+              _explicit_session_create
+              and _explicit_session_create[0] not in disabled_tools
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_create
+          elif (
+              _explicit_chat_transcript_search
+              and _explicit_chat_transcript_search[0] not in disabled_tools
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_chat_transcript_search
+          elif (
+              _explicit_session_find
+              and _explicit_session_find[0] not in disabled_tools
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_find
+          elif (
+              _explicit_admin_request
+              and _explicit_admin_request[0] not in disabled_tools
+          ):
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_admin_request
+          if _qwen38_tool_router and not _qwen_explicit_tool:
+              _explicit_create_request = _parse_qwen_explicit_create_request(_last_user)
+              _explicit_document_request = _parse_qwen_explicit_document_request(_last_user)
+              _explicit_download_attachment_request = _parse_qwen_explicit_download_attachment_request(_last_user)
+              _explicit_unsubscribe_scan_request = _parse_qwen_explicit_unsubscribe_scan_request(_last_user)
+              _explicit_unsubscribe_email_request = _parse_qwen_explicit_unsubscribe_email_request(_last_user)
+              _explicit_spam_scan_request = _parse_qwen_explicit_spam_scan_request(_last_user)
+              _explicit_block_sender_request = _parse_qwen_explicit_block_sender_request(_last_user)
+              _explicit_bulk_email_request = _parse_qwen_explicit_bulk_email_request(_last_user)
+              _explicit_topic_bulk_email_request = _parse_qwen_explicit_email_topic_bulk_action_request(_last_user)
+              _explicit_blocked_sender_list_request = _parse_qwen_explicit_blocked_sender_list_request(_last_user)
+              _explicit_unblock_sender_request = _parse_qwen_explicit_unblock_sender_request(_last_user)
+              _explicit_email_search_request = _parse_qwen_explicit_email_search_request(_last_user)
+              _explicit_resolve_contact = _parse_qwen_explicit_resolve_contact(_last_user)
+              _explicit_contact_request = _parse_qwen_explicit_contact_request(_last_user)
+              _explicit_calendar_move = _parse_qwen_explicit_calendar_move(_last_user)
+              _explicit_calendar_request = _parse_simple_calendar_tool_request(
+                  _last_user,
+                  messages,
+                  history_session,
+              )
+              _calendar_missing_date_ask = _parse_ambiguous_calendar_date_ask_user(_last_user)
+              _active_email_reply_text = (
+                  _extract_followup_content_update(_last_user)
+                  if _is_email_document_obj(active_document)
+                  and re.search(
+                      r"\b(?:write|reply|respond|response|draft|compose|say|saying|tell them|tell her|tell him)\b",
+                      _last_user,
+                      re.IGNORECASE,
+                  )
+                  else ""
+              )
+              if _active_email_reply_text:
+                  _qwen_explicit_tool = "update_document"
+                  _qwen_explicit_args = json.dumps({
+                      "content": _build_active_email_draft_reply_content(
+                          getattr(active_document, "current_content", "") or "",
+                          _active_email_reply_text,
+                      )
+                  })
+              elif (
+                  active_email
+                  and (_active_email_reader_body := _active_email_reader_reply_body(_last_user, active_email))
+              ):
+                  _qwen_explicit_tool = "ui_control"
+                  _qwen_explicit_args = (
+                      "open_email_reply "
+                      f"{active_email.get('uid')} "
+                      f"{active_email.get('folder') or 'INBOX'} "
+                      "reply\n"
+                      f"{_active_email_reader_body}"
+                  )
+              elif _is_email_account_identity_request(_last_user):
+                  _qwen_explicit_tool = "mcp__email__list_email_accounts"
+                  _qwen_explicit_args = "{}"
+              elif _calendar_missing_date_ask:
+                  _qwen_explicit_tool, _qwen_explicit_args = _calendar_missing_date_ask
+              elif _explicit_calendar_request:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_calendar_request
+              elif (
+                  _explicit_recurring_task_request
+                  and not re.search(r"\b(?:calendar|events?|meeting|appointment|reservation)\b", _last_user, re.IGNORECASE)
+              ):
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_recurring_task_request
+              elif _explicit_download_attachment_request:
+                  _qwen_explicit_tool = "mcp__email__download_attachment"
+                  _qwen_explicit_args = json.dumps(_explicit_download_attachment_request)
+              elif _explicit_unsubscribe_email_request:
+                  _qwen_explicit_tool = "mcp__email__unsubscribe_email"
+                  _qwen_explicit_args = json.dumps(_explicit_unsubscribe_email_request)
+              elif _explicit_unsubscribe_scan_request:
+                  _qwen_explicit_tool = "mcp__email__scan_email_unsubscribes"
+                  _qwen_explicit_args = json.dumps(_explicit_unsubscribe_scan_request)
+              elif _explicit_spam_scan_request:
+                  _qwen_explicit_tool = "mcp__email__scan_spam"
+                  _qwen_explicit_args = json.dumps(_explicit_spam_scan_request)
+              elif _explicit_block_sender_request:
+                  _qwen_explicit_tool = "mcp__email__block_sender"
+                  _qwen_explicit_args = json.dumps(_explicit_block_sender_request)
+              elif _explicit_bulk_email_request:
+                  _qwen_explicit_tool = "mcp__email__bulk_email"
+                  _qwen_explicit_args = json.dumps(_explicit_bulk_email_request)
+              elif _explicit_topic_bulk_email_request:
+                  _qwen_explicit_tool = "mcp__email__search_emails"
+                  _qwen_explicit_args = json.dumps({
+                      "query": _explicit_topic_bulk_email_request["query"],
+                      "folder": _explicit_topic_bulk_email_request.get("folder", "INBOX"),
+                      "max_results": _explicit_topic_bulk_email_request.get("max_results", 50),
+                  })
+              elif _explicit_unblock_sender_request:
+                  _qwen_explicit_tool = "mcp__email__manage_email_state"
+                  _qwen_explicit_args = json.dumps({"action": "unblock_sender", **_explicit_unblock_sender_request})
+              elif _explicit_blocked_sender_list_request is not None:
+                  _qwen_explicit_tool = "mcp__email__manage_email_state"
+                  _qwen_explicit_args = json.dumps({"action": "list_blocked", **_explicit_blocked_sender_list_request})
+              elif _explicit_session_action:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_action
+              elif _explicit_session_create:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_create
+              elif _explicit_session_find:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_session_find
+              elif _explicit_admin_request:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_admin_request
+              elif _explicit_resolve_contact:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_resolve_contact
+              elif (_explicit_email_date_list_request := _parse_qwen_explicit_email_date_list_request(_last_user)):
+                  _qwen_explicit_tool = "mcp__email__list_emails"
+                  _qwen_explicit_args = json.dumps(_explicit_email_date_list_request)
+              elif _explicit_email_search_request:
+                  _qwen_explicit_tool = "mcp__email__search_emails"
+                  _qwen_explicit_args = json.dumps(_explicit_email_search_request)
+              elif _is_qwen_explicit_latest_email_request(_last_user):
+                  _qwen_explicit_tool = "mcp__email__list_emails"
+                  _qwen_explicit_args = json.dumps({
+                      "folder": "INBOX",
+                      "max_results": 1,
+                      "unread_only": False,
+                  })
+              elif _is_qwen_explicit_endpoint_list_request(_last_user) and not _qwen_endpoint_list_completed:
+                  _qwen_explicit_tool = "manage_endpoints"
+                  _qwen_explicit_args = json.dumps({"action": "list"})
+              elif (
+                  _is_qwen_explicit_model_list_request(_last_user)
+                  and not _tui_local_workspace_turn(
+                      _last_user,
+                      workspace=workspace,
+                      client_runtime_context=client_runtime_context,
+                  )
+              ):
+                  _qwen_explicit_tool = "list_models"
+                  _qwen_explicit_args = ""
+              elif _qwen_memory_delete_marker and _qwen_memory_delete_id:
+                  _qwen_explicit_tool = "manage_memory"
+                  _qwen_explicit_args = "delete\n" + _qwen_memory_delete_id
+              elif _qwen_memory_delete_marker:
+                  _qwen_explicit_tool = "manage_memory"
+                  _qwen_explicit_args = "search\n" + _qwen_memory_delete_marker
+              elif _qwen_explicit_memory_search and not _qwen_explicit_memory_search_completed:
+                  _qwen_explicit_tool = "manage_memory"
+                  _qwen_explicit_args = "search\n" + _qwen_explicit_memory_search
+              elif (
+                  _is_explicit_local_network_request(_last_user)
+                  and (
+                      "host_shell" in set(_relevant_tools or ())
+                      or "host_shell" in set(relevant_tools or ())
+                      or "bash" in set(relevant_tools or ())
+                  )
+              ):
+                  _qwen_explicit_tool = (
+                      "host_shell"
+                      if "host_shell" in set(_relevant_tools or ())
+                      or "host_shell" in set(relevant_tools or ())
+                      else "bash"
+                  )
+                  _qwen_explicit_args = (
+                      _tui_local_fallback_shell_command(_last_user)
+                      or "ip -o -4 addr show; ip route show default"
+                  )
+              elif _qwen_calendar_absence_verify:
+                  _qwen_explicit_tool = "manage_calendar"
+                  _qwen_explicit_args = json.dumps(_qwen_calendar_absence_verify)
+              elif _explicit_calendar_move:
+                  _qwen_explicit_tool = "manage_calendar"
+                  _qwen_explicit_args = json.dumps(_explicit_calendar_move)
+              elif _qwen_calendar_delete_title:
+                  _qwen_explicit_tool = "manage_calendar"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "delete_event", "summary": _qwen_calendar_delete_title,
+                  })
+              elif _qwen_note_view_title and _qwen_note_view_id:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "view", "id": _qwen_note_view_id,
+                  })
+              elif _qwen_note_view_title:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "search", "title": _qwen_note_view_title,
+                  })
+              elif _qwen_note_search_title:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "search", "title": _qwen_note_search_title,
+                  })
+              elif _qwen_note_delete_title and _qwen_note_delete_id:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "delete", "id": _qwen_note_delete_id,
+                  })
+              elif _qwen_note_delete_title:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "delete", "title": _qwen_note_delete_title,
+                  })
+              elif _qwen_note_update_title and _qwen_note_update_id:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "update",
+                      "id": _qwen_note_update_id,
+                      "content": _qwen_note_update_content,
+                  })
+              elif _qwen_note_update_title:
+                  _qwen_explicit_tool = "manage_notes"
+                  _qwen_explicit_args = json.dumps({
+                      "action": "update",
+                      "title": _qwen_note_update_title,
+                      "content": _qwen_note_update_content,
+                  })
+              elif _explicit_contact_request:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_contact_request
+              elif _explicit_document_request:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_document_request
+              elif _explicit_create_request:
+                  _qwen_explicit_tool, _qwen_explicit_args = _explicit_create_request
+              elif _explicit_skill_request and not _qwen_skills_tool_completed:
+                  _qwen_explicit_tool = "manage_skills"
+                  _qwen_explicit_args = json.dumps(_explicit_skill_request)
+              elif (
+                  not _qwen_skills_tool_completed
+                  and re.search(r"\b(?:skill|skills|tdd|procedures?)\b", _last_user, re.IGNORECASE)
+                  and re.search(r"\b(?:available|list|show|view)\b", _last_user, re.IGNORECASE)
+              ):
+                  _qwen_explicit_tool = "manage_skills"
+                  _qwen_explicit_args = '{"action":"list"}'
+              elif re.search(
+                  r"\b(?:search|find)\b.{0,40}\b(?:prior|past|previous)\s+"
+                  r"(?:chat|conversation|session)s?\b",
+                  _last_user,
+                  re.IGNORECASE,
+              ):
+                  _qwen_explicit_tool = "search_chats"
+                  _qwen_explicit_args = _last_user
+              elif (
+                  not _web_search_unavailable_turn
+                  and not _web_search_completed
+                  and not _tui_local_workspace_turn(
+                      _last_user,
+                      workspace=workspace,
+                      client_runtime_context=client_runtime_context,
+                  )
+                  and _looks_like_explicit_web_search_request(
+                      _last_user,
+                      local_media_turn=_local_media_turn,
+                  )
+              ):
+                  _qwen_explicit_tool = "web_search"
+                  _qwen_explicit_args = _last_user
+          if _explicit_theme_change_request:
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_theme_change_request
+          elif _explicit_open_panel_request:
+              _qwen_explicit_tool, _qwen_explicit_args = _explicit_open_panel_request
+          _spam_confirmation_blocks = []
+          if not guide_only and _contextual_email_followup:
+              _spam_confirmation_blocks = _contextual_spam_confirmation_blocks(
+                  messages,
+                  _last_user,
+                  tool_events,
+                  set(disabled_tools),
+              )
+          if _spam_confirmation_blocks:
+              # A short approval like "junk and block" should execute against the
+              # previously reviewed scan candidates once. Do not let the model
+              # re-scan or reinterpret the confirmation as a fresh email query.
+              tool_blocks = _spam_confirmation_blocks
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized contextual spam confirmation to %s email action call(s)",
+                  len(tool_blocks),
+              )
+          elif (
+              not guide_only
+              and (_reply_draft_confirmation_block := _reply_draft_confirmation_block_from_recent_context(messages, _last_user))
+              and "mcp__email__draft_email_reply" not in disabled_tools
+          ):
+              tool_blocks = [_reply_draft_confirmation_block]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized reply-draft confirmation to draft_email_reply"
+              )
+          elif (
+              tool_blocks
+              and all(block.tool_type in {"scan_spam", "mcp__email__scan_spam"} for block in tool_blocks)
+              and any(
+                  _resolved_tool_event_name(event) in {"scan_spam", "mcp__email__scan_spam"}
+                  and not re.search(
+                      r"\b(?:failed|error|connection refused)\b",
+                      str(event.get("output") or ""),
+                      re.IGNORECASE,
+                  )
+                  and any(
+                      _tool_block_matches_event_args(block, event)
+                      for block in tool_blocks
+                  )
+                  for event in tool_events or []
+              )
+          ):
+              tool_blocks = []
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info("[agent-intent] suppressed repeated successful spam scan in the same turn")
+          elif (
+              not guide_only
+              and _contextual_email_followup
+              and (_completed_spam_action := _contextual_spam_confirmation_action(_last_user))
+              and _email_bulk_or_block_tool_succeeded(tool_events, _completed_spam_action)
+              and tool_blocks
+              and all(
+                  block.tool_type in {
+                      "scan_spam",
+                      "mcp__email__scan_spam",
+                      "bulk_email",
+                      "mcp__email__bulk_email",
+                      "block_sender",
+                      "mcp__email__block_sender",
+                      "delete_email",
+                      "mcp__email__delete_email",
+                  }
+                  for block in tool_blocks
+              )
+          ):
+              tool_blocks = []
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = _spam_action_success_summary(tool_events, _completed_spam_action)
+              logger.info(
+                  "[agent-intent] suppressed duplicate spam follow-up tool calls after successful %s",
+                  _completed_spam_action,
+              )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and (_calendar_action_request := _contextual_calendar_action_request(_last_user))
+              and (_recent_calendar_refs := _recent_odysseus_anchor_refs(messages, history_session))
+              and _recent_calendar_refs.get("event_uid")
+              and "manage_calendar" not in disabled_tools
+          ):
+              _event_uid = _recent_calendar_refs["event_uid"]
+              tool_blocks = [ToolBlock(
+                  "manage_calendar",
+                  json.dumps({"action": _calendar_action_request, "uid": _event_uid}),
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized contextual calendar %s request uid=%s",
+                  _calendar_action_request,
+                  _event_uid,
+              )
+          elif (
+              _qwen_explicit_tool
+              and not _has_accepted_contract_tool_call(turn_contract, tool_blocks)
+              and (
+                  _caller_relevant_tools is None
+                  or _qwen_explicit_tool in _caller_relevant_tools
+              )
+              and not (
+              _has_successful_tool_evidence(tool_events, _qwen_explicit_tool)
+              or (
+                  _qwen_explicit_tool in {"scan_spam", "mcp__email__scan_spam"}
+                  and _call_freq.get(
+                      f"{_qwen_explicit_tool}:{(_qwen_explicit_args or '').strip()[:120]}",
+                      0,
+                  ) > 0
+              )
+              or (
+                  _qwen_explicit_tool in {
+                      "manage_memory",
+                      "manage_tasks",
+                      "manage_skills",
+                      "manage_documents",
+                      "manage_research",
+                      "ui_control",
+                  }
+                  and _has_successful_state_manager_evidence(
+                      tool_events,
+                      _qwen_explicit_tool,
+                      {_tool_block_action(_qwen_explicit_args)},
+                  )
+              )
+          )):
+              # Contract calls already accepted by the parser retain their actual
+              # arguments and native IDs. Recover intent only when none exists;
+              # subsequent security normalization and approval gates still apply.
+              tool_blocks = [ToolBlock(_qwen_explicit_tool, _qwen_explicit_args)]
+              if (
+                  _qwen_explicit_tool == "ui_control"
+                  and _tool_block_action(_qwen_explicit_args) == "open_panel"
+                  and re.search(r"\bopen_panel\s+skills\b", _qwen_explicit_args, re.IGNORECASE)
+                  and "manage_skills" not in disabled_tools
+              ):
+                  tool_blocks.append(ToolBlock("manage_skills", json.dumps({"action": "list"})))
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              round_response = ""
+              logger.info("[agent-intent] normalized explicit qwen request to %s", _qwen_explicit_tool)
+          elif (
+              _contextual_email_followup
+              and _looks_like_other_email_attachment_followup(_last_user)
+              and (_alternate_attachment_blocks := _alternate_email_attachment_blocks_from_recent_context(messages))
+              and (
+                  not tool_blocks
+                  or all(
+                      block.tool_type in {"chat_with_model", "ask_teacher", "pipeline"}
+                      for block in tool_blocks
+                  )
+              )
+          ):
+              tool_blocks = _alternate_attachment_blocks
+              converted_calls = [{} for _ in tool_blocks]
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized contextual other-email attachment follow-up to %s download_attachment call(s)",
+                  len(tool_blocks),
+              )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and _contextual_email_followup
+              and _email_reply_draft_requested(_last_user)
+              and (_recent_email_reply_ref := _latest_email_reference_from_recent_tool_context(messages))
+              and _recent_email_reply_ref.get("uid")
+              and "ui_control" not in disabled_tools
+          ):
+              _reply_uid = _recent_email_reply_ref.get("uid") or ""
+              _reply_folder = _recent_email_reply_ref.get("folder") or "INBOX"
+              _reply_body = _email_reply_body_from_request(_last_user)
+              tool_blocks = [ToolBlock(
+                  "ui_control",
+                  "open_email_reply "
+                  f"{_reply_uid} "
+                  f"{_reply_folder} "
+                  "reply\n"
+                  f"{_reply_body}",
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized contextual email reply request to open_email_reply uid=%s",
+                  _reply_uid,
+              )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and _contextual_email_followup
+              and (_email_action_request := _inherited_contextual_email_action_request(messages, _last_user))
+              and not _email_action_tool_succeeded(tool_events, _email_action_request)
+              and (_named_email_action_row := _named_email_row_from_recent_list_context(messages, _last_user))
+              and _named_email_action_row.get("uid")
+          ):
+              _action_uid = _named_email_action_row.get("uid") or ""
+              _action_folder = _named_email_action_row.get("folder") or "INBOX"
+              _action_account = _named_email_action_row.get("account") or ""
+              if _email_action_request == "delete" and "mcp__email__delete_email" not in disabled_tools:
+                  _action_args = {"uid": _action_uid, "folder": _action_folder, "permanent": False}
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__delete_email", json.dumps(_action_args))]
+              elif _email_action_request == "archive" and "mcp__email__archive_email" not in disabled_tools:
+                  _action_args = {"uid": _action_uid, "folder": _action_folder}
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__archive_email", json.dumps(_action_args))]
+              elif _email_action_request in {"mark_read", "mark_unread"} and "mcp__email__mark_email_read" not in disabled_tools:
+                  _action_args = {
+                      "uid": _action_uid,
+                      "folder": _action_folder,
+                      "read": _email_action_request == "mark_read",
+                  }
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__mark_email_read", json.dumps(_action_args))]
+              elif _email_action_request in {"favorite", "unfavorite", "unarchive", "mark_done", "mark_undone"} and "mcp__email__manage_email_state" not in disabled_tools:
+                  _state_action = _email_action_request
+                  _action_args = {
+                      "action": _state_action,
+                      "uid": _action_uid,
+                      "folder": "Archive" if _state_action == "unarchive" and _action_folder == "INBOX" else _action_folder,
+                  }
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__manage_email_state", json.dumps(_action_args))]
+              if tool_blocks:
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+                  full_response = ""
+                  logger.info(
+                      "[agent-intent] inherited contextual email %s request uid=%s",
+                      _email_action_request,
+                      _action_uid,
+                  )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and _contextual_email_followup
+              and (_email_action_request := _contextual_email_action_request(_last_user))
+              and not _email_action_tool_succeeded(tool_events, _email_action_request)
+              and (_recent_email_action_ref := _latest_email_reference_from_recent_tool_context(messages))
+              and _recent_email_action_ref.get("uid")
+          ):
+              _action_uid = _recent_email_action_ref.get("uid") or ""
+              _action_folder = _recent_email_action_ref.get("folder") or "INBOX"
+              _action_account = _recent_email_action_ref.get("account") or ""
+              if _email_action_request == "delete" and "mcp__email__delete_email" not in disabled_tools:
+                  _action_args = {"uid": _action_uid, "folder": _action_folder, "permanent": False}
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__delete_email", json.dumps(_action_args))]
+              elif _email_action_request == "archive" and "mcp__email__archive_email" not in disabled_tools:
+                  _action_args = {"uid": _action_uid, "folder": _action_folder}
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__archive_email", json.dumps(_action_args))]
+              elif _email_action_request in {"mark_read", "mark_unread"} and "mcp__email__mark_email_read" not in disabled_tools:
+                  _action_args = {
+                      "uid": _action_uid,
+                      "folder": _action_folder,
+                      "read": _email_action_request == "mark_read",
+                  }
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__mark_email_read", json.dumps(_action_args))]
+              elif _email_action_request in {"favorite", "unfavorite", "unarchive", "mark_done", "mark_undone"} and "mcp__email__manage_email_state" not in disabled_tools:
+                  _state_action = _email_action_request
+                  _action_args = {
+                      "action": _state_action,
+                      "uid": _action_uid,
+                      "folder": "Archive" if _state_action == "unarchive" and _action_folder == "INBOX" else _action_folder,
+                  }
+                  if _action_account:
+                      _action_args["account"] = _action_account
+                  tool_blocks = [ToolBlock("mcp__email__manage_email_state", json.dumps(_action_args))]
+              if tool_blocks:
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+                  full_response = ""
+                  logger.info(
+                      "[agent-intent] normalized contextual email %s request uid=%s",
+                      _email_action_request,
+                      _action_uid,
+                  )
+          elif (
+              not guide_only
+              and (
+                  not tool_blocks
+                  or all(block.tool_type in {"read_email", "mcp__email__read_email"} for block in tool_blocks)
+              )
+              and not _visible_response_text(full_response)
+              and _contextual_email_followup
+              and _looks_like_email_body_followup(_last_user)
+              and (_mentioned_email_ref := _recent_mentioned_email_reference(messages))
+              and _mentioned_email_ref.get("uid")
+              and "mcp__email__read_email" not in disabled_tools
+          ):
+              tool_blocks = [ToolBlock("mcp__email__read_email", json.dumps(_mentioned_email_ref))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized mentioned email follow-up to read_email uid=%s",
+                  _mentioned_email_ref.get("uid"),
+              )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and _contextual_email_followup
+              and (_named_email_row := _named_email_row_from_recent_list_context(messages, _last_user))
+              and _named_email_row.get("uid")
+              and "mcp__email__read_email" not in disabled_tools
+          ):
+              if _attachment_content_requested(_last_user) and str(_named_email_row.get("attachments") or "").strip():
+                  tool_blocks = _email_read_and_attachment_blocks_from_row(_named_email_row, set(disabled_tools))
+              else:
+                  _named_email_ref = _named_email_reference_from_recent_list_context(messages, _last_user)
+                  tool_blocks = [ToolBlock("mcp__email__read_email", json.dumps(_named_email_ref))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              full_response = ""
+              logger.info(
+                  "[agent-intent] normalized named email follow-up to %s tool call(s) uid=%s",
+                  len(tool_blocks),
+                  _named_email_row.get("uid"),
+              )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and _contextual_email_followup
+              and _looks_like_email_body_followup(_last_user)
+              and (_recent_email_ref := _latest_email_reference_from_recent_tool_context(messages))
+              and _recent_email_ref.get("uid")
+              and "mcp__email__read_email" not in disabled_tools
+          ):
+              tool_blocks = [ToolBlock("mcp__email__read_email", json.dumps(_recent_email_ref))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info(
+                  "[agent-intent] normalized contextual email body follow-up to read_email uid=%s",
+                  _recent_email_ref.get("uid"),
+              )
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and "email" in _intent_domains
+              and (_spam_scan_request := _parse_qwen_explicit_spam_scan_request(_last_user))
+              and "mcp__email__scan_spam" not in disabled_tools
+          ):
+              tool_blocks = [ToolBlock("mcp__email__scan_spam", json.dumps(_spam_scan_request))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info("[agent-intent] normalized explicit spam scan request to mcp__email__scan_spam")
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and "email" in _intent_domains
+              and (_email_date_list_request := _parse_qwen_explicit_email_date_list_request(_last_user))
+              and "mcp__email__list_emails" not in disabled_tools
+          ):
+              tool_blocks = [ToolBlock("mcp__email__list_emails", json.dumps(_email_date_list_request))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info("[agent-intent] normalized explicit email date-list request to mcp__email__list_emails")
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and "email" in _intent_domains
+              and (_email_search_request := _parse_qwen_explicit_email_search_request(_last_user))
+              and "mcp__email__search_emails" not in disabled_tools
+          ):
+              tool_blocks = [ToolBlock("mcp__email__search_emails", json.dumps(_email_search_request))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info("[agent-intent] normalized explicit email search/open request to mcp__email__search_emails")
+          elif (
+              not tool_blocks
+              and not guide_only
+              and not _visible_response_text(full_response)
+              and "email" in _intent_domains
+              and _is_explicit_latest_email_open_request(_last_user)
+              and "mcp__email__list_emails" not in disabled_tools
+          ):
+              tool_blocks = [ToolBlock("mcp__email__list_emails", json.dumps({
+                  "folder": "INBOX",
+                  "max_results": 1,
+                  "unread_only": False,
+              }))]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              logger.info("[agent-intent] normalized explicit latest-email open request to mcp__email__list_emails")
+
+          # Text-only/compact models may emit a tool name they saw in stale
+          # context even though the current TUI route contains only host tools.
+          # Drop it before the executor and give the model one bounded chance to
+          # recover with the advertised host_shell action.
+          _tui_local_no_web_recovery_turn_active = _tui_local_no_web_recovery_turn(
+              _last_user,
+              client_runtime_context=client_runtime_context,
+          )
+          if (_tui_local_execution_turn or _tui_local_no_web_recovery_turn_active) and tool_blocks:
+              _tui_allowed_tools = _tui_local_execution_allowlist(_last_user)
+              _invalid_tui_blocks = [
+                  block for block in tool_blocks
+                  if block.tool_type not in _tui_allowed_tools
+              ]
+              if _invalid_tui_blocks:
+                  logger.warning(
+                      "[agent-intent] dropped tools outside TUI local allowlist: %s",
+                      sorted({block.tool_type for block in _invalid_tui_blocks}),
+                  )
+                  _recovered_blocks, _recovered = _tui_recover_invalid_local_tools(
+                      tool_blocks,
+                      _last_user,
+                  )
+                  _fallback_command = (
+                      json.loads(_recovered_blocks[0].content).get("command")
+                      if _recovered
+                      and _recovered_blocks
+                      and _recovered_blocks[0].tool_type == "host_shell"
+                      else None
+                  )
+                  if _recovered:
+                      # The host bridge is authoritative for TUI-local work.
+                      # Recover in this round instead of allowing a compact
+                      # router to repeat get_workspace/ls against the backend
+                      # container and spiral through more model rounds.
+                      tool_blocks = _recovered_blocks
+                      converted_calls = []
+                      native_tool_calls = []
+                      used_native = False
+                      round_response = ""
+                      logger.warning(
+                          "[agent-intent] replaced invalid TUI-local tools with host_shell: %s",
+                          _fallback_command,
+                      )
+                  else:
+                      tool_blocks = []
+                      converted_calls = []
+                      native_tool_calls = []
+                      used_native = False
+                      _tui_invalid_tool_nudges += 1
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "That tool is not available for this TUI-local request. "
+                              "Use `host_shell` for the user's workspace, LAN, DNS, SSH, "
+                              "and process facts. Do not use web, app, memory, research, "
+                              "or backend tools for this request."
+                          ),
+                      })
+                      if _tui_invalid_tool_nudges <= 2:
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                          continue
+                      _force_answer = True
+          if (
+              _tui_local_execution_turn
+              and native_tool_calls
+              and not tool_blocks
+              and exact_approval is None
+          ):
+              # Unknown native names cannot be executed safely, but a read-only
+              # local request still has a deterministic host capability. Convert
+              # the failed intent to one generic host_shell proposal instead of
+              # spending more rounds inventing increasingly specific APIs.
+              _fallback_command = _tui_local_fallback_shell_command(_last_user)
+              if _fallback_command:
+                  logger.warning(
+                      "[agent-intent] converted unknown local tool to host_shell: %s",
+                      _fallback_command,
+                  )
+                  tool_blocks = [
+                      ToolBlock(
+                          "host_shell",
+                          json.dumps({"command": _fallback_command}),
+                      )
+                  ]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+          if (
+              _tui_local_execution_turn
+              and not tool_blocks
+              and not native_tool_calls
+              and exact_approval is None
+              and _looks_like_malformed_tui_tool_call(round_response)
+          ):
+              # Some compact routers emit truncated function markup as prose
+              # (for example ``parameter=hos_shell``). Treat that as a failed
+              # local-tool intent and recover through the bounded bridge path.
+              _fallback_command = _tui_local_fallback_shell_command(_last_user)
+              if _fallback_command:
+                  logger.warning(
+                      "[agent-intent] recovered malformed local tool markup with host_shell: %s",
+                      _fallback_command,
+                  )
+                  round_response = ""
+                  tool_blocks = [
+                      ToolBlock(
+                          "host_shell",
+                          json.dumps({"command": _fallback_command}),
+                      )
+                  ]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+          # An explicit read-only workspace request is an action, even when the
+          # compact router answers with a clarification. Route it once through
+          # the host bridge instead of asking the user to name a project that
+          # the active workspace already identifies.
+          if (
+              _tui_local_read_request
+              and not tool_events
+              and not tool_blocks
+              and not native_tool_calls
+              and not _force_answer
+              and exact_approval is None
+          ):
+              _fallback_command = _tui_local_fallback_shell_command(_last_user)
+              if _fallback_command:
+                  logger.warning(
+                      "[agent-intent] enforced read-only workspace action after non-tool round: %s",
+                      _fallback_command,
+                  )
+                  round_response = ""
+                  tool_blocks = [
+                      ToolBlock("host_shell", json.dumps({"command": _fallback_command}))
+                  ]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+
+          # A compact router can also return a prose/blank round without a
+          # parsable tool call. For a read-only host-local request the bridge is
+          # the authoritative capability, so recover in this same round instead
+          # of spending another model round behaving like chat. Mutations stay
+          # model-led because the fallback helper deliberately returns None for
+          # them.
+          if (
+              _tui_local_execution_turn
+              and not tool_blocks
+              and not round_response.strip()
+              and not _force_answer
+              and exact_approval is None
+          ):
+              _fallback_command = _tui_local_fallback_shell_command(_last_user)
+              if _fallback_command:
+                  logger.warning(
+                      "[agent-intent] recovered local request with host_shell: %s",
+                      _fallback_command,
+                  )
+                  tool_blocks = [
+                      ToolBlock(
+                          "host_shell",
+                          json.dumps({"command": _fallback_command}),
+                      )
+                  ]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+
+          # If no safe read-only fallback exists, retry a bounded number of
+          # times with the same concrete capability reminder instead of
+          # surfacing the generic empty-response error.
+          if (
+              _tui_local_execution_turn
+              and not tool_blocks
+              and not round_response.strip()
+              and not _force_answer
+          ):
+              _tui_invalid_tool_nudges += 1
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "The last round was empty. Perform the user's local request "
+                      "now with exactly one `host_shell` call; do not answer with "
+                      "plain text before calling it."
+                  ),
+              })
+              if _tui_invalid_tool_nudges <= 2:
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              _force_answer = True
+
+          # An explicit test request is a task invariant, not a suggestion. A
+          # compact router may inspect the workspace and then emit a confident
+          # prose claim without ever invoking a runner. Force the bounded,
+          # workspace-relative runner fallback until an actual test command has
+          # executed (or reported that no supported runner exists).
+          if (
+              _tui_test_request
+              and not _tui_test_completed
+              and not tool_blocks
+              and not native_tool_calls
+              and not _force_answer
+              and exact_approval is None
+          ):
+              _fallback_command = _tui_local_fallback_shell_command(_last_user)
+              if _fallback_command:
+                  logger.warning(
+                      "[agent-intent] enforced test action after non-tool round: %s",
+                      _fallback_command,
+                  )
+                  round_response = ""
+                  tool_blocks = [
+                      ToolBlock(
+                          "host_shell",
+                          json.dumps({"command": _fallback_command}),
+                      )
+                  ]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+          # A request for a bash block is an explicit request to demonstrate
+          # the active workspace shell, not a request for conversational prose.
+          # Compact routers occasionally miss the tool call, so enforce one
+          # bounded, read-only diagnostic just as we do for explicit tests.
+          if (
+              _tui_bash_block_request
+              and not _tui_bash_block_completed
+              and not tool_blocks
+              and not native_tool_calls
+              and not _force_answer
+              and exact_approval is None
+          ):
+              _fallback_command = _tui_local_fallback_shell_command(_last_user)
+              if _fallback_command:
+                  logger.warning(
+                      "[agent-intent] enforced bash-block action after non-tool round: %s",
+                      _fallback_command,
+                  )
+                  round_response = ""
+                  tool_blocks = [
+                      ToolBlock(
+                          "host_shell",
+                          json.dumps({"command": _fallback_command}),
+                      )
+                  ]
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+          _qwen_registry_list_tool = None
+          if _qwen38_tool_router and re.search(
+              r"\b(?:list|show|view)\b.{0,30}\b(?:chat\s+)?sessions?\b",
+              _last_user,
+              re.IGNORECASE,
+          ):
+              _qwen_registry_list_tool = "list_sessions"
+          elif _qwen38_tool_router and re.search(
+              r"\b(?:list|show|view)\b.{0,30}\b(?:my\s+)?contacts?\b",
+              _last_user,
+              re.IGNORECASE,
+          ):
+              _qwen_registry_list_tool = "manage_contact"
+          elif _qwen38_tool_router and re.search(
+              r"\b(?:list|show|view)\b.{0,30}\b(?:saved\s+)?(?:research|reports?)\b",
+              _last_user,
+              re.IGNORECASE,
+          ):
+              _qwen_registry_list_tool = "manage_research"
+          if _qwen_registry_list_tool and tool_blocks and not _qwen_explicit_tool:
+              # The small router occasionally emits search_chats with an empty
+              # query for a registry-list request. Normalize that known semantic
+              # confusion before execution; otherwise it returns "no chats" and
+              # the model may keep probing the wrong API.
+              _list_args = "" if _qwen_registry_list_tool == "list_sessions" else '{"action":"list"}'
+              tool_blocks = [ToolBlock(_qwen_registry_list_tool, _list_args)]
+              converted_calls = converted_calls[:1]
+              if used_native:
+                  native_tool_calls = native_tool_calls[:1]
+          if _qwen38_tool_router and "memory" in _intent_domains and tool_blocks:
+              # A saved-memory request must not fall through to notes or other
+              # personal registries when the small router emits a mixed batch.
+              _memory_only_blocks = [b for b in tool_blocks if b.tool_type == "manage_memory"]
+              if _memory_only_blocks:
+                  _unique_memory_blocks = []
+                  _seen_memory_calls = set()
+                  for _memory_block in _memory_only_blocks:
+                      _memory_key = (_memory_block.tool_type, _memory_block.content)
+                      if _memory_key in _seen_memory_calls:
+                          continue
+                      _seen_memory_calls.add(_memory_key)
+                      _unique_memory_blocks.append(_memory_block)
+                  tool_blocks = _unique_memory_blocks
+                  converted_calls = converted_calls[: len(tool_blocks)]
+                  if used_native:
+                      native_tool_calls = native_tool_calls[: len(tool_blocks)]
+          if _ody_doc_stream_create_mode and tool_blocks:
+              create_idx = next(
+                  (idx for idx, block in enumerate(tool_blocks) if block.tool_type == "create_document"),
+                  None,
+              )
+              if create_idx is None:
+                  logger.info(
+                      "[agent] odysseus doc stream-create discarded non-create tool call(s): %s",
+                      [block.tool_type for block in tool_blocks],
+                  )
+                  tool_blocks = []
+                  converted_calls = []
+              else:
+                  if len(tool_blocks) > 1 or create_idx != 0:
+                      logger.info(
+                          "[agent] odysseus doc stream-create keeping first create_document and dropping extras: %s",
+                          [block.tool_type for block in tool_blocks],
+                      )
+                  tool_blocks = [tool_blocks[create_idx]]
+                  converted_calls = (
+                      [converted_calls[create_idx]]
+                      if create_idx < len(converted_calls)
+                      else converted_calls[:1]
+                  )
+
+          _prior_memory_search = _memory_search_precedes_unrequested_list(
+              tool_events,
+              _explicit_memory_list,
+          )
+          if (
+              (_memory_lookup_turn or _prior_memory_search)
+              and tool_blocks
+              and not _ody_qwen_finetune_model
+          ):
+              # Memory lookup is an evidence request, not permission to dump the
+              # entire store. Weak models often broaden a failed search into
+              # several synonyms and then call list; cap that escalation and
+              # make the model answer from the results already returned.
+              _memory_filtered_blocks = []
+              _memory_filtered_calls = []
+              _memory_dropped = False
+              for _idx, _block in enumerate(tool_blocks):
+                  if _block.tool_type != "manage_memory":
+                      _memory_filtered_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _memory_filtered_calls.append(converted_calls[_idx])
+                      continue
+                  _memory_action = ""
+                  try:
+                      _memory_args = json.loads(_block.content or "{}")
+                      if isinstance(_memory_args, dict):
+                          _memory_action = str(_memory_args.get("action") or "").lower()
+                  except Exception:
+                      pass
+                  if not _memory_action:
+                      _memory_action = str(_block.content or "").strip().splitlines()[0].lower()
+                  if _memory_action == "search" and _memory_search_calls < 2:
+                      _memory_search_calls += 1
+                      _memory_filtered_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _memory_filtered_calls.append(converted_calls[_idx])
+                  elif _memory_action == "list" and _explicit_memory_list and _memory_search_calls == 0:
+                      _memory_filtered_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _memory_filtered_calls.append(converted_calls[_idx])
+                  else:
+                      _memory_dropped = True
+              if _memory_dropped:
+                  tool_blocks = _memory_filtered_blocks
+                  converted_calls = _memory_filtered_calls
+                  if used_native:
+                      native_tool_calls = _memory_filtered_calls
+                  logger.info(
+                      "[agent-intent] bounded memory lookup dropped extra calls searches=%s",
+                      _memory_search_calls,
+                  )
+                  if not tool_blocks:
+                      _force_answer = True
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "Answer from the saved-memory search results already returned. "
+                              "Do not call manage_memory again and do not list all memories. "
+                              "State clearly when the requested item was not found."
+                          ),
+                      })
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+
+          if _compact_memory_list_turn and tool_blocks:
+              # Once a broad listing has been reduced to counts, do not let a
+              # model expand it again by listing each category separately.
+              # Keep unrelated calls intact, but force another memory-list call
+              # into the answer path without executing it.
+              _compact_filtered_blocks = []
+              _compact_filtered_calls = []
+              _compact_dropped = False
+              for _idx, _block in enumerate(tool_blocks):
+                  if _block.tool_type != "manage_memory":
+                      _compact_filtered_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _compact_filtered_calls.append(converted_calls[_idx])
+                      continue
+                  _compact_action = ""
+                  try:
+                      _compact_args = json.loads(_block.content or "{}")
+                      if isinstance(_compact_args, dict):
+                          _compact_action = str(_compact_args.get("action") or "").lower()
+                  except Exception:
+                      _compact_action = str(_block.content or "").strip().splitlines()[0].lower()
+                  if _compact_action in {"list", "index"}:
+                      _compact_dropped = True
+                      continue
+                  _compact_filtered_blocks.append(_block)
+                  if _idx < len(converted_calls):
+                      _compact_filtered_calls.append(converted_calls[_idx])
+              if _compact_dropped:
+                  tool_blocks = _compact_filtered_blocks
+                  converted_calls = _compact_filtered_calls
+                  if used_native:
+                      native_tool_calls = _compact_filtered_calls
+                  _force_answer = True
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The saved-memory listing is already summarized above. "
+                          "Do not call manage_memory again; answer with the count/category summary."
+                      ),
+                  })
+                  logger.info("[agent-intent] compact memory listing blocked repeat list call")
+
+          if _compact_document_list_turn and tool_blocks:
+              _document_filtered_blocks = []
+              _document_filtered_calls = []
+              _document_dropped = False
+              for _idx, _block in enumerate(tool_blocks):
+                  if _block.tool_type != "manage_documents":
+                      _document_filtered_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _document_filtered_calls.append(converted_calls[_idx])
+                      continue
+                  _document_action = ""
+                  try:
+                      _document_args = json.loads(_block.content or "{}")
+                      if isinstance(_document_args, dict):
+                          _document_action = str(_document_args.get("action") or "").lower()
+                  except Exception:
+                      _document_action = str(_block.content or "").strip().splitlines()[0].lower()
+                  if _document_action in {"list", "search", "find"}:
+                      _document_dropped = True
+                      continue
+                  _document_filtered_blocks.append(_block)
+                  if _idx < len(converted_calls):
+                      _document_filtered_calls.append(converted_calls[_idx])
+              if _document_dropped:
+                  tool_blocks = _document_filtered_blocks
+                  converted_calls = _document_filtered_calls
+                  if used_native:
+                      native_tool_calls = _document_filtered_calls
+                  _force_answer = True
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The document listing is already complete. Do not call "
+                          "manage_documents again; answer from the listed documents."
+                      ),
+                  })
+                  logger.info("[agent-intent] compact document listing blocked repeat list call")
+
+          if _ody_qwen_finetune_model and tool_blocks:
+              _allowed_memory_write_actions = {"add", "edit", "update", "delete", "delete_all"}
+              _explicit_memory_browse = bool(re.search(
+                  r"\b(search|list|show|open|view)\b.{0,40}\b(memories|memory|brain)\b",
+                  _last_user.lower(),
+              ))
+              _filtered_tool_blocks = []
+              _filtered_converted_calls = []
+              _dropped_memory_lookup = False
+              for _idx, _block in enumerate(tool_blocks):
+                  if _block.tool_type != "manage_memory":
+                      _filtered_tool_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _filtered_converted_calls.append(converted_calls[_idx])
+                      continue
+                  _action = ""
+                  try:
+                      _args = json.loads(_block.content or "{}")
+                      if isinstance(_args, dict):
+                          _action = str(_args.get("action") or "").lower()
+                  except Exception:
+                      _action = ""
+                  if _action in {"list", "search", "view", "get", "read"} and not _explicit_memory_browse:
+                      _dropped_memory_lookup = True
+                  elif _action in _allowed_memory_write_actions and re.search(
+                      r"\b(remember|forget|preference|prefer|save this about me|update memory|delete memory)\b",
+                      _last_user.lower(),
+                  ):
+                      _filtered_tool_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _filtered_converted_calls.append(converted_calls[_idx])
+                  else:
+                      _dropped_memory_lookup = True
+              if _dropped_memory_lookup:
+                  logger.info(
+                      "[agent-intent] odysseus qwen dropped manage_memory lookup; answering from compact memory"
+                  )
+                  tool_blocks = _filtered_tool_blocks
+                  converted_calls = _filtered_converted_calls
+                  if used_native:
+                      native_tool_calls = _filtered_converted_calls
+                  if not tool_blocks:
+                      _force_answer = True
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "Answer the user's identity/personal-memory question from the compact "
+                              "saved memory facts already provided. Do not call manage_memory or any tool."
+                          ),
+                      })
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+
+          # Search is a one-query lookup tool. Weak models sometimes issue a
+          # second, slightly reworded search after receiving usable results
+          # (for example, "latest Python release" followed by "Python 3.14
+          # release python.org latest version"). Keep distinct searches and
+          # concrete fetches, but discard near-duplicate searches within this
+          # turn so they do not add latency and duplicate noisy sources.
+          if tool_blocks:
+              _seen_web_queries = list(_web_search_queries)
+              _filtered_web_blocks = []
+              _filtered_web_calls = []
+              _dropped_duplicate_web_search = False
+              for _idx, _block in enumerate(tool_blocks):
+                  if _block.tool_type != "web_search":
+                      _filtered_web_blocks.append(_block)
+                      if _idx < len(converted_calls):
+                          _filtered_web_calls.append(converted_calls[_idx])
+                      continue
+                  _block = _normalize_web_search_block_query(
+                      _block,
+                      _web_search_user_text,
+                  )
+                  _query = _web_search_query_from_block(_block)
+                  if any(_web_search_queries_overlap(_query, _old) for _old in _seen_web_queries):
+                      _dropped_duplicate_web_search = True
+                      logger.info(
+                          "[agent-intent] dropped near-duplicate web_search query=%r",
+                          _query[:160],
+                      )
+                      continue
+                  _seen_web_queries.append(_query)
+                  _filtered_web_blocks.append(_block)
+                  if _idx < len(converted_calls):
+                      _filtered_web_calls.append(converted_calls[_idx])
+              if _dropped_duplicate_web_search:
+                  tool_blocks = _filtered_web_blocks
+                  converted_calls = _filtered_web_calls
+                  if used_native:
+                      native_tool_calls = _filtered_web_calls
+                  if not tool_blocks:
+                      if _force_answer:
+                          logger.info(
+                              "[agent-intent] force-answer already active; "
+                              "discarding duplicate web_search and finishing"
+                          )
+                      elif _artifact_acquisition_recovery_active:
+                          # During source acquisition, a duplicate search is not
+                          # evidence that the task can be answered. Keep the
+                          # native acquisition surface alive and redirect to a
+                          # direct PDF fetch/extraction instead of falling into
+                          # the no-tool retry path.
+                          messages.append({
+                              "role": "system",
+                              "content": (
+                                  "That web search query was already attempted and was not useful. "
+                                  "Do not repeat it. Use `pdf_extract` on the direct paper PDF URL "
+                                  "or use `web_fetch` on a different direct source URL now; do not "
+                                  "answer or write artifacts until the requested source detail is loaded."
+                              ),
+                          })
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\\n\\n'
+                          continue
+                      else:
+                          _force_answer = True
+                          messages.append({
+                              "role": "system",
+                              "content": (
+                                  "A sufficiently similar web search already ran this turn. "
+                                  "Answer from the returned search results and do not search again."
+                              ),
+                          })
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                          continue
+
+          # Detached host jobs are a hard continuation invariant. Apply this
+          # after every model-specific normalizer so memory/search/force-answer
+          # recovery cannot replace the required poll with another action.
+          if _pending_host_shell_poll_job_id:
+              tool_blocks = [ToolBlock(
+                  "host_shell",
+                  json.dumps({"job_id": _pending_host_shell_poll_job_id}),
+              )]
+              converted_calls = []
+              native_tool_calls = []
+              used_native = False
+              _force_answer = False
+              logger.info(
+                  "[agent] enforced host_shell poll job=%s",
+                  _pending_host_shell_poll_job_id,
+              )
+          elif _workspace_read_before_mutation_paths:
+              # A compact router may try to write a named existing file before
+              # seeing its current contents. Force one bounded read per named
+              # path; this prevents partial write_file payloads from discarding
+              # imports or unrelated code and applies uniformly to every repo.
+              _read_before_mutation_path = _workspace_read_before_mutation_paths[0]
+              tool_blocks = [ToolBlock("read_file", _read_before_mutation_path)]
+              if _qwen38_tool_router:
+                  # This read is controller-forced rather than emitted by the
+                  # model. Preserve a valid native assistant/tool message pair
+                  # in history anyway; some OpenAI-compatible chat templates
+                  # reject the older plain assistant + loose text continuation.
+                  _forced_read_call = {
+                      "id": f"odysseus-forced-read-{round_num}",
+                      "name": "read_file",
+                      "arguments": json.dumps({"path": _read_before_mutation_path}),
+                  }
+                  converted_calls = [_forced_read_call]
+                  native_tool_calls = [_forced_read_call]
+                  used_native = True
+              else:
+                  converted_calls = []
+                  native_tool_calls = []
+                  used_native = False
+              _force_answer = False
+              logger.info(
+                  "[agent] enforced read-before-mutation path=%s",
+                  _read_before_mutation_path,
+              )
+
+          # If the loop breaker fired while a required artifact is still
+          # missing, keep this round actionable. The prior implementation
+          # removed all schemas above and then discarded the model's valid
+          # follow-up call, producing the M005-M008 failures seen in benchmark
+          # traces. Only artifact recovery gets this exception; ordinary
+          # conversational/error turns retain tool-free finalization.
+          if _force_answer:
+              _force_answer_missing = (
+                  EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate().missing_artifacts
+                  if _artifact_recovery_enabled
+                  else ()
+              )
+              if _force_answer_keeps_artifact_tools(
+                  force_answer=_force_answer,
+                  artifact_recovery_enabled=_artifact_recovery_enabled,
+                  artifact_creation_requested=_artifact_creation_requested,
+                  missing_artifacts=_force_answer_missing,
+                  correction_available=(
+                      _artifact_finish_nudge_sent
+                      and not _artifact_finish_correction_seen
+                  ),
+                  post_correction_verification_available=(
+                      _post_correction_verification_available(
+                          correction_seen=_artifact_finish_correction_seen,
+                          tool_used=_artifact_finish_post_correction_tool_used,
+                          mutation_seen=_artifact_finish_post_correction_mutation_seen,
+                      )
+                  ),
+                  convergence_sent=_artifact_finish_convergence_sent,
+              ):
+                  _correction_needed = bool(_force_answer_missing)
+                  _correction_allowed = bool(
+                      _artifact_finish_nudge_sent
+                      and not _artifact_finish_correction_seen
+                  )
+                  _post_correction_verification_allowed = bool(
+                      _artifact_finish_correction_seen
+                      and not _artifact_finish_post_correction_tool_used
+                  )
+                  if native_tool_calls or (
+                      _correction_needed
+                      and _looks_like_unfinished_action_promise(
+                          _strip_think_blocks(strip_tool_blocks(round_response)).strip()
+                      )
+                  ):
+                      _force_answer = False
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "The required artifact still needs a bounded correction. "
+                              "For files on disk use the available workspace mutation "
+                              "tool (write_file or edit_file), not editor-panel "
+                              "edit_document; use a verification tool when needed, "
+                              "then confirm the artifact before answering."
+                              if _correction_needed
+                              else "The inspection revealed a concrete artifact defect. "
+                              "Make at most one evidence-based correction, verify it, "
+                              "then finish."
+                          ),
+                      })
+                  if not native_tool_calls and _correction_needed:
+                      # A prose-only promise is not completion and should not
+                      # enter the tool-free synthesis path. Give the model one
+                      # actionable recovery round with the preserved schemas.
+                      round_response = ""
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+                  if native_tool_calls:
+                      # A mutation is the correction itself, not the bounded
+                      # verification that follows it.  Treating the mutation as
+                      # verification immediately forces a tool-free round and
+                      # drops the model's next evidence-based repair request.
+                      _native_calls_are_verification_only = (
+                          _artifact_calls_are_verification_only(tool_blocks)
+                      )
+                      if (
+                          _post_correction_verification_allowed
+                          and _native_calls_are_verification_only
+                      ):
+                          _artifact_finish_post_correction_tool_used = True
+                          logger.info(
+                              "[agent] allowed one bounded post-correction verification call"
+                          )
+                      logger.info(
+                          "[agent] kept artifact tools available after forced-finish trigger; "
+                          "missing=%s correction_available=%s",
+                          list(_force_answer_missing),
+                          _correction_allowed,
+                      )
+
+          # Force-answer round: we told the model to STOP calling tools and
+          # answer. If it ignored that and emitted a (possibly DSML) tool
+          # call anyway, discard it — don't execute, don't re-loop. Keep
+          # only the prose; if there's none, emit a graceful fallback.
+          if _force_answer and _workspace_read_requires_mutation and not _post_effectful_mutation_done:
+              # The read-before-mutation guard intentionally replaced an unsafe
+              # write proposal. Do not let the failed proposal's loop-breaker
+              # state turn the successful read into a dead end; give the model
+              # one bounded mutation round.
+              _force_answer = False
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "The named workspace file has been read successfully. "
+                      "Now make the requested change using edit_file or apply_patch; "
+                      "do not write a partial replacement and do not answer yet."
+                  ),
+              })
+              logger.info("[agent] resumed mutation after enforced workspace read")
+
+          if _force_answer:
+              if tool_blocks:
+                  logger.info(f"[agent] force-answer round {round_num}: discarding {len(tool_blocks)} ignored tool call(s)")
+              # A model can ignore the tool-free instruction and emit native
+              # calls anyway.  Those calls are intentionally not executed, but
+              # their accompanying planning prose is not a finished answer
+              # either.  Leaving that prose in ``round_response`` bypasses the
+              # grace-synthesis path below and can keep a weak model looping
+              # until the outer task deadline.  Treat the whole forced round as
+              # rejected so the bounded synthesis call gets the evidence.
+              if native_tool_calls:
+                  logger.info(
+                      "[agent] force-answer round %s emitted %d native call(s); "
+                      "discarding unfinished tool-plan text before synthesis",
+                      round_num,
+                      len(native_tool_calls),
+                  )
+                  full_response = _drop_rejected_round_response(
+                      full_response,
+                      round_response,
+                  )
+                  round_response = ""
+                  native_tool_calls = []
+                  converted_calls = []
+                  used_native = False
+              tool_blocks = []
+              if _web_search_unavailable_turn:
+                  # A weak model may emit an empty textual tool wrapper even
+                  # with schemas removed. Never persist that wrapper as the
+                  # assistant's answer; the capability error is deterministic.
+                  round_response = ""
+              if _host_bridge_failed_turn:
+                  # The transport error is already authoritative. Do not spend
+                  # another model call paraphrasing it or inventing recovery.
+                  round_response = ""
+              _force_visible = _strip_think_blocks(strip_tool_blocks(round_response)).strip()
+              if (
+                  _force_visible
+                  and _looks_like_unfinished_action_promise(_force_visible)
+              ):
+                  logger.info(
+                      "[agent] force-answer round produced another action promise; synthesizing final instead"
+                  )
+                  round_response = ""
+              if not _strip_think_blocks(strip_tool_blocks(round_response)).strip():
+                  # The model burned its budget gathering data but never wrote a
+                  # final answer (common with weaker models on multi-source
+                  # briefings). Salvage it: one blunt non-streaming synthesis call
+                  # over the full conversation (which already holds every tool
+                  # result) before falling back to the canned apology.
+                  _synth = ""
+                  if _web_search_unavailable_turn:
+                      _synth = (
+                          "Web search is disabled for this turn. Enable web search "
+                          "and resend the request to look up the latest Qwen release."
+                      )
+                  elif _host_bridge_failed_turn:
+                      _synth = _host_bridge_failure_response()
+                  if not _synth:
+                      try:
+                          from src.generation_budget import fit_output_token_budget
+                          from src.llm_core import llm_call_async
+                          _synth_messages = list(messages) + [{
+                              "role": "user",
+                              "content": (
+                                  "Using ONLY the information already gathered above, write "
+                                  "the final answer for the user now. Do NOT call any tools, "
+                                  "do NOT explain your reasoning — output the finished response "
+                                  "directly. If some data couldn't be fetched, just work with "
+                                  "what you have and note what's missing in one short line."
+                              ),
+                          }]
+                          _raw = await llm_call_async(
+                              url=endpoint_url, model=model, messages=_synth_messages,
+                              headers=headers,
+                              temperature=0.3,
+                              max_tokens=fit_output_token_budget(
+                                  min(max_tokens, 4096),
+                                  _last_route_context_length or context_length,
+                                  _synth_messages,
+                                  None,
+                              ),
+                              timeout=60,
+                          )
+                          _raw_text = _raw or ""
+                          _synth = _visible_response_text(_raw_text)
+                          if (
+                              _synth
+                              and (
+                                  _looks_like_unfinished_action_promise(_synth)
+                                  or _looks_like_agent_reasoning_preamble(_synth)
+                                  or _looks_like_ody_qwen_leaked_tool_text(_synth)
+                              )
+                          ):
+                              _synth = ""
+                          usage_buckets.append(_usage_bucket(
+                              round_num=round_num,
+                              model=model,
+                              endpoint_id=_round_actual_endpoint_id,
+                              endpoint_label=_round_actual_endpoint_label,
+                              endpoint_cost_tracked=actual_endpoint_cost_tracked,
+                              input_tokens=estimate_tokens(_synth_messages),
+                              output_tokens=max(len(_raw_text) // 4, 0),
+                              usage_source="estimated",
+                          ))
+                      except Exception as _e:
+                          logger.warning(f"[agent] grace synthesis failed: {_e}")
+                  if _synth:
+                      yield f'data: {json.dumps({"delta": _synth})}\n\n'
+                      round_response += _synth
+                      full_response += _synth
+                  else:
+                      _fb = ("I gathered some search results but couldn't pull a clean "
+                             "answer together. Want me to try a more specific question, "
+                             "or summarize what I did find?")
+                      yield f'data: {json.dumps({"delta": _fb})}\n\n'
+                      round_response += _fb
+                      full_response += _fb
+
+          # A single giant SVG is source code, not a useful inline chat visual.
+          # Move it into the editor through the same document flow as other long
+          # code while leaving the skill's compact multi-part SVGs inline.
+          _has_document_tool = any(
+              block.tool_type in {"create_document", "update_document"}
+              for block in tool_blocks
+          ) or any(
+              call.get("name") in {"create_document", "update_document"}
+              for call in native_tool_calls
+          )
+          _oversized_svg = None
+          if (
+              not _has_document_tool
+              and session_id
+              and "create_document" not in (disabled_tools or set())
+          ):
+              _oversized_svg = _extract_oversized_svg(round_response)
+          if _oversized_svg:
+              _svg_title_content = first_tag_content(
+                  _oversized_svg, "title", allow_attributes=True
+              )
+              _svg_title = strip_angle_tags(
+                  _svg_title_content if _svg_title_content is not None else "Visual explanation",
+                  allow_empty=True,
+              ).strip()[:100] or "Visual explanation"
+              full_response = _drop_rejected_round_response(full_response, round_response)
+              round_response = ""
+              tool_blocks.append(ToolBlock(
+                  "create_document",
+                  f"{_svg_title}\nsvg\n{_oversized_svg}",
+              ))
+              yield (
+                  "data: "
+                  + json.dumps({
+                      "type": "final_response",
+                      "content": "Opening the visual as a document...",
+                  })
+                  + "\n\n"
+              )
+              logger.info(
+                  "[agent] promoted oversized SVG to document title=%r chars=%d lines=%d",
+                  _svg_title,
+                  len(_oversized_svg),
+                  _oversized_svg.count("\n") + 1,
+              )
+
+          # Save cleaned round text for history persistence
+          # Keep <think> blocks so they render in the thinking section on reload
+          # Mirror the same fenced-pattern gate used to resolve tool_blocks above:
+          # an illustrative fence that wasn't executed (because this is a native
+          # model with no real native_tool_calls) must not be stripped from the
+          # persisted text either — otherwise it streams once and then disappears
+          # on reload (#3222 follow-up).
+          cleaned_round = strip_tool_blocks(
+              round_response,
+              skip_fenced=(_is_api_model and not used_native and not guide_only),
+              additional_tool_names={
+                  schema["function"]["name"]
+                  for schema in normalized_external_tool_schemas
+              },
+          ).strip()
+          if _ody_qwen_finetune_model or _qwen38_tool_router:
+              cleaned_round = _visible_response_text(cleaned_round)
+              cleaned_round = _normalize_ody_qwen_text_artifacts(cleaned_round)
+              if not tool_blocks and round_response and full_response.endswith(round_response):
+                  full_response = full_response[:-len(round_response)] + cleaned_round
+          if not tool_blocks and tool_events and cleaned_round:
+              _answer_without_private_promise = _strip_trailing_answer_promise(
+                  cleaned_round
+              )
+              if _answer_without_private_promise != cleaned_round:
+                  full_response = _drop_rejected_round_response(
+                      full_response,
+                      cleaned_round,
+                  )
+                  cleaned_round = _answer_without_private_promise
+                  round_response = cleaned_round
+                  full_response = (
+                      full_response.rstrip()
+                      + ("\n\n" if full_response.strip() else "")
+                      + cleaned_round
+                  )
+                  logger.info(
+                      "[agent] removed trailing private answer promise after successful tool result"
+                  )
+          if (
+              tool_blocks
+              and _contextual_weather_status_followup
+              and any(block.tool_type in WEB_TOOL_NAMES for block in tool_blocks)
+          ):
+              for _idx, _earlier_text in enumerate(round_texts):
+                  if str(_earlier_text or "").rstrip().endswith("?"):
+                      full_response = _drop_rejected_round_response(full_response, _earlier_text)
+                      round_texts[_idx] = ""
+                      _dropped_tool_preamble_from_stream = True
+          if tool_blocks and (
+              _is_tool_preamble(cleaned_round)
+              or _looks_like_agent_reasoning_preamble(cleaned_round)
+              or (
+                  _contextual_weather_status_followup
+                  and cleaned_round.rstrip().endswith("?")
+                  and any(block.tool_type in WEB_TOOL_NAMES for block in tool_blocks)
+              )
+          ):
+              # The model's "I'll fetch..." sentence is useful as internal
+              # progress but is not the answer. It has already streamed, so
+              # remove it from the final/history response before the next tool
+              # round contributes the actual result.
+              full_response = _drop_rejected_round_response(full_response, cleaned_round)
+              cleaned_round = ""
+              _dropped_tool_preamble_from_stream = True
+          round_texts.append(cleaned_round)
+          round_models.append(_round_actual_model)
+          round_endpoint_ids.append(_round_actual_endpoint_id)
+          round_endpoint_labels.append(_round_actual_endpoint_label)
+          if _should_emit_buffered_qwen_round(
+              odysseus_finetune=_ody_qwen_finetune_model,
+              tool_router=_qwen38_tool_router,
+              has_tools=bool(tool_blocks),
+              text=cleaned_round,
+              streamed_live=(
+                  _qwen_round_streamed_live
+                  or (_force_answer and _private_browser_catalog_ready)
+              ),
+          ):
+              yield f'data: {json.dumps({"delta": cleaned_round})}\n\n'
+
+          _forced_notes_request = _parse_simple_notes_tool_request(_last_user)
+          _has_notes_block = any(block.tool_type == "manage_notes" for block in tool_blocks)
+          _notes_definition_answer = _notes_general_definition_answer(_last_user)
+          if _notes_definition_answer and _has_notes_block and not guide_only:
+              if round_texts:
+                  round_texts.pop()
+              if round_models:
+                  round_models.pop()
+              if round_endpoint_ids:
+                  round_endpoint_ids.pop()
+              if round_endpoint_labels:
+                  round_endpoint_labels.pop()
+              full_response = _drop_rejected_round_response(full_response, cleaned_round)
+              cleaned_round = _notes_definition_answer
+              round_response = _notes_definition_answer
+              full_response = "\n".join(
+                  part for part in [full_response.strip(), _notes_definition_answer] if part
+              ).strip()
+              round_texts.append(cleaned_round)
+              round_models.append(_round_actual_model)
+              round_endpoint_ids.append(_round_actual_endpoint_id)
+              round_endpoint_labels.append(_round_actual_endpoint_label)
+              tool_blocks = []
+              native_tool_calls = []
+              converted_calls = []
+              used_native = False
+              logger.info("[agent] suppressed manage_notes for general definition question")
+              yield f"data: {json.dumps({'type': 'final_response', 'content': full_response})}\n\n"
+          _only_notes_panel_open = (
+              bool(tool_blocks)
+              and not _has_notes_block
+              and all(
+                  block.tool_type == "ui_control"
+                  and re.search(r"\bopen_panel\s+notes\b", str(block.content or ""), re.IGNORECASE)
+                  for block in tool_blocks
+              )
+          )
+          _only_empty_notes_block = (
+              bool(tool_blocks)
+              and all(
+                  block.tool_type == "manage_notes"
+                  and str(block.content or "").strip() in {"", "{}"}
+                  for block in tool_blocks
+              )
+          )
+          _underfiltered_notes_block = False
+          _mismatched_notes_body_view = False
+          _wrong_notes_action_for_forced = False
+          if _forced_notes_request and _has_notes_block:
+              try:
+                  _forced_notes_args = json.loads(_forced_notes_request[1] or "{}")
+              except (TypeError, ValueError, json.JSONDecodeError):
+                  _forced_notes_args = {}
+              if isinstance(_forced_notes_args, dict):
+                  _forced_action = str(_forced_notes_args.get("action") or "").strip().lower()
+                  _current_notes_arg_list: list[dict[str, Any]] = []
+                  for block in tool_blocks:
+                      if block.tool_type != "manage_notes":
+                          continue
+                      try:
+                          _current_notes_args = json.loads(str(block.content or "{}"))
+                      except (TypeError, ValueError, json.JSONDecodeError):
+                          _current_notes_args = {}
+                      if not isinstance(_current_notes_args, dict):
+                          _current_notes_args = {}
+                      _current_notes_arg_list.append(_current_notes_args)
+                  _current_notes_actions = {
+                      str(args.get("action") or "").strip().lower()
+                      for args in _current_notes_arg_list
+                  }
+                  _expected_notes_actions = _notes_expected_actions(_last_user)
+                  if _expected_notes_actions and not (
+                      _current_notes_actions & _expected_notes_actions
+                  ):
+                      _wrong_notes_action_for_forced = True
+                  _required_filters = {
+                      key: _forced_notes_args.get(key)
+                      for key in ("label", "pinned", "reminders", "archived")
+                      if key in _forced_notes_args
+                  }
+                  if _forced_action in {"list", "search", "find"} and _required_filters:
+                      _underfiltered_notes_block = bool(_current_notes_arg_list)
+                      for _current_notes_args in _current_notes_arg_list:
+                          _current_action = str(_current_notes_args.get("action") or "").strip().lower()
+                          if _current_action and _current_action not in {"list", "search", "find"}:
+                              _underfiltered_notes_block = False
+                              break
+                          if all(_current_notes_args.get(key) == value for key, value in _required_filters.items()):
+                              _underfiltered_notes_block = False
+                              break
+                  if _forced_action in {"search", "find"} and _notes_body_requested(_last_user):
+                      _forced_query_terms = [
+                          term
+                          for term in re.findall(r"[a-z0-9]+", str(_forced_notes_args.get("query") or "").lower())
+                          if term not in {"the", "a", "an", "note", "notes", "checklist", "list", "todo", "todos"}
+                      ]
+                      _has_specific_locator_search = False
+                      for _current_notes_args in _current_notes_arg_list:
+                          _current_action = str(_current_notes_args.get("action") or "").strip().lower()
+                          if _current_action in {"search", "find"}:
+                              _current_query = str(_current_notes_args.get("query") or "").lower()
+                              if not _forced_query_terms or all(term in _current_query for term in _forced_query_terms):
+                                  _has_specific_locator_search = True
+                          if str(_current_notes_args.get("action") or "").strip().lower() == "view":
+                              _mismatched_notes_body_view = True
+                      if not _has_specific_locator_search:
+                          _wrong_notes_action_for_forced = True
+          if (
+              _forced_notes_request
+              and (
+                  not _has_notes_block
+                  or _only_notes_panel_open
+                  or _only_empty_notes_block
+                  or _underfiltered_notes_block
+                  or _mismatched_notes_body_view
+                  or _wrong_notes_action_for_forced
+              )
+              and _notes_request_requires_fresh_tool(_last_user, _intent_domains, _relevant_tools)
+              and (
+                  _only_notes_panel_open
+                  or _only_empty_notes_block
+                  or _underfiltered_notes_block
+                  or _mismatched_notes_body_view
+                  or _wrong_notes_action_for_forced
+                  or not _has_successful_notes_action_evidence(
+                      tool_events,
+                      _notes_expected_actions(_last_user),
+                  )
+              )
+              and not guide_only
+          ):
+              _tool_name, _tool_args = _forced_notes_request
+              if round_texts:
+                  round_texts.pop()
+              if round_models:
+                  round_models.pop()
+              if round_endpoint_ids:
+                  round_endpoint_ids.pop()
+              if round_endpoint_labels:
+                  round_endpoint_labels.pop()
+              full_response = _drop_rejected_round_response(full_response, cleaned_round)
+              cleaned_round = ""
+              round_response = ""
+              forced_notes_block = ToolBlock(_tool_name, _tool_args)
+              if _only_notes_panel_open:
+                  tool_blocks = list(tool_blocks) + [forced_notes_block]
+              else:
+                  tool_blocks = [forced_notes_block]
+              native_tool_calls = []
+              converted_calls = []
+              used_native = False
+              logger.info(
+                  "[agent] forced manage_notes fallback for obvious notes request: %s",
+                  _tool_args,
+              )
+
+          if tool_blocks:
+              _artifact_no_action_rounds = 0
+
+          _has_local_media_evidence = any(
+              str(event.get("tool") or "").lower()
+              in _LOCAL_MEDIA_EVIDENCE_TOOLS
+              and event.get("exit_code") in (0, None)
+              and not event.get("error")
+              for event in tool_events
+              if isinstance(event, dict)
+          )
+          _media_tool_block_present = any(
+              str(getattr(block, "tool_type", "") or "").lower()
+              in _LOCAL_MEDIA_EVIDENCE_TOOLS
+              for block in (tool_blocks or [])
+          )
+          if (
+              _local_media_turn
+              and not _force_answer
+              and not _local_media_source_nudge_sent
+              and not _has_local_media_evidence
+              and not _media_tool_block_present
+              and set(_relevant_tools or ())
+              & _LOCAL_MEDIA_EVIDENCE_TOOLS
+          ):
+              _local_media_source_nudge_sent = True
+              if round_texts:
+                  round_texts.pop()
+              if round_models:
+                  round_models.pop()
+              if round_endpoint_ids:
+                  round_endpoint_ids.pop()
+              if round_endpoint_labels:
+                  round_endpoint_labels.pop()
+              full_response = _drop_rejected_round_response(
+                  full_response,
+                  cleaned_round,
+              )
+              cleaned_round = ""
+              round_response = ""
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "No successful local-media observation exists yet. Call "
+                      "extract_text for OCR, inspect_media for general visible content, "
+                      "or transcribe_media for speech before answering. Do not infer source contents from "
+                      "the filename or directory listing."
+                  ),
+              })
+              logger.info(
+                  "[agent] blocked local-media answer without source evidence"
+              )
+              yield (
+                  "data: "
+                  + json.dumps({
+                      "type": "source_evidence_required",
+                      "reason": "local_media_not_observed",
+                      "round": round_num,
+                  })
+                  + "\n\n"
+              )
+              yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+              continue
+
+          if not tool_blocks:
+              # A terminal model can keep emitting long prose after artifact
+              # recovery has explicitly narrowed the surface to a required
+              # mutation.  Those rounds add no evidence and, unlike repeated
+              # tool calls, evade the ordinary stall detector. Allow one
+              # recovery response to produce the mutation, then force a short
+              # truthful finish instead of spending the remaining round budget.
+              if _artifact_recovery_enabled and _artifact_mutation_only_mode and not _force_answer:
+                  _no_action_evidence = EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate()
+                  if _no_action_evidence.missing_artifacts:
+                      _artifact_no_action_rounds += 1
+                      if _artifact_no_action_rounds >= 2:
+                          _force_answer = True
+                          logger.warning(
+                              "[agent] artifact recovery produced no mutation for %d rounds; "
+                              "forcing concise finish missing=%s",
+                              _artifact_no_action_rounds,
+                              ", ".join(_no_action_evidence.missing_artifacts),
+                          )
+                          yield (
+                              "data: "
+                              + json.dumps({
+                                  "type": "loop_breaker_triggered",
+                                  "reason": "artifact_recovery_no_action",
+                                  "message": (
+                                      "Artifact recovery did not produce the required "
+                                      "workspace mutation, so the agent is being asked "
+                                      "to finish briefly instead of looping."
+                                  ),
+                                  "round": round_num,
+                              })
+                              + "\n\n"
+                          )
+                          messages.append({
+                              "role": "system",
+                              "content": (
+                                  "Artifact recovery still lacks the required file(s), and "
+                                  "you did not emit a workspace mutation. Do not call more "
+                                  "tools. Finish briefly and state plainly that the artifact "
+                                  "could not be completed if it is still missing."
+                              ),
+                          })
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                          continue
+                  else:
+                      _artifact_no_action_rounds = 0
+              if (
+                  cleaned_round
+                  and _local_media_turn
+                  and not _artifact_creation_requested
+                  and not _local_media_detail_nudge_sent
+                  and contains_detailed_sequence_request(_last_user, include_first=False)
+              ):
+                  _successful_media_inspections = sum(
+                      1
+                      for event in tool_events
+                      if str(event.get("tool") or "").lower() == "inspect_media"
+                      and event.get("exit_code") in (0, None)
+                  )
+                  if _successful_media_inspections < 2:
+                      _local_media_detail_nudge_sent = True
+                      if round_texts:
+                          round_texts.pop()
+                      if round_models:
+                          round_models.pop()
+                      if round_endpoint_ids:
+                          round_endpoint_ids.pop()
+                      if round_endpoint_labels:
+                          round_endpoint_labels.pop()
+                      full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                      cleaned_round = ""
+                      round_response = ""
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "The requested answer depends on detailed temporal counting or exact video timing. "
+                              "One whole-video overview is insufficient evidence. Use inspect_media again with "
+                              "narrower start/end ranges or a segments list covering the candidate events, then "
+                              "answer only from those timestamped frames. Do not guess from sparse overview frames."
+                          ),
+                      })
+                      logger.info("[agent] required a second focused inspection for detailed local-video QA")
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+              if cleaned_round and _notes_definition_answer:
+                  logger.info("[agent] completed notes definition answer without tool execution")
+                  break
+              if (
+                  cleaned_round
+                  and _has_successful_calendar_list_evidence(tool_events)
+                  and set(_intent_domains) <= {"calendar"}
+              ):
+                  logger.info("[agent] completed calendar list synthesis after tool evidence")
+                  break
+              if cleaned_round and any(
+                  _has_successful_tool_evidence(tool_events, tool_name)
+                  for tool_name in ("ask_teacher", "chat_with_model")
+              ):
+                  logger.info("[agent] completed delegation synthesis after tool evidence")
+                  break
+              if (
+                  cleaned_round
+                  and _notes_request_requires_fresh_tool(_last_user, _intent_domains, _relevant_tools)
+                  and _has_successful_notes_action_evidence(
+                      tool_events,
+                      _notes_expected_actions(_last_user),
+                  )
+              ):
+                  logger.info("[agent] completed notes synthesis after matching tool evidence")
+                  break
+              # Some local/no-schema models occasionally terminate a concrete
+              # workspace turn with an empty round. Give them one explicit
+              # opportunity to emit the action they were expected to take,
+              # rather than immediately surfacing a generic empty-response
+              # failure. The cap keeps unavailable or incompatible models from
+              # creating a retry loop.
+              if (
+                  not cleaned_round
+                  and _empty_action_nudge_count < _MAX_EMPTY_ACTION_NUDGES
+                  and (
+                      _tui_local_execution_turn
+                      or _looks_like_workspace_coding_request(_last_user)
+                      or _local_media_turn
+                  )
+                  and _relevant_tools
+              ):
+                  _empty_action_nudge_count += 1
+                  logger.info(
+                      "[agent] empty actionable workspace round; nudging tool call"
+                  )
+                  # Recovery instructions must name only tools present in the
+                  # schema for this round.  Compact/native routes often expose
+                  # python/read_file/write_file instead of the host-shell aliases;
+                  # suggesting an absent alias can turn one empty response into a
+                  # second empty response or an unexecutable call.
+                  _tool_hint = _empty_action_tool_hint(_tool_names_sent)
+                  _empty_action_directive = (
+                      "Your previous response was empty. The user gave a concrete "
+                      "local workspace task. Emit one actual tool call now."
+                      + _tool_hint
+                      + " Do not name an unavailable tool, answer with prose, or ask "
+                      "the user to repeat the request."
+                  )
+                  if _local_media_turn:
+                      _empty_action_directive = (
+                          "Your previous response was empty after inspecting local media. "
+                          "Complete the requested deliverables now. Call inspect_media once "
+                          "with the best start/end boundaries already established, the user's "
+                          "requested output_path, and timestamp_path when requested. Do not "
+                          "inspect another range and do not answer before creating the files."
+                      )
+                  messages.append({
+                      "role": "system",
+                      "content": _empty_action_directive,
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              # An explicit request such as "edit X, then run ..." is not
+              # complete merely because the mutation succeeded.  This bounded
+              # nudge runs before the normal completion paths so compact
+              # routers cannot terminate between the edit and its check.
+              if (
+                  _post_edit_verification_required
+                  and _effectful_used
+                  and not _post_edit_verification_completed
+                  and not _post_edit_verification_nudge_sent
+              and (_post_effectful_mutation_done or _inspection_edit_completed or _file_creation_completed)
+              ):
+                  _post_edit_verification_nudge_sent = True
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The requested file edit succeeded, but the user also asked "
+                          "for verification. "
+                          + (
+                              "Read the saved output artifact now with read_file, then summarize. "
+                              if _artifact_readback_requested
+                              else "Do that now with one concrete tool call using the requested command (host_shell), then summarize. "
+                          )
+                          + "Do not stop after the edit."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              # ── Completion verifier (mechanism 3a) ────────────────────
+              # The model is finishing. If this was an effectful agentic turn,
+              # have a fresh-context verifier independently check the work
+              # before we accept "done". On FAIL, surface the issues and let
+              # the model fix them (capped, and it must do new effectful work
+              # to re-trigger). Skipped on force-answer rounds (no tools to
+              # fix with), pure Q&A, and when the toggle is off.
+              _claimed_done_text = _strip_think_blocks(cleaned_round).strip()
+              _unfinished_action_promise = _looks_like_unfinished_action_promise(
+                  _claimed_done_text
+              )
+              _claimed_done = bool(_claimed_done_text) and not _unfinished_action_promise
+              if _terminal_completion_contract and _claimed_done and not _force_answer:
+                  _round_evidence = EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  )
+                  _round_decision = _round_evidence.evaluate()
+                  # Missing evidence is an incomplete result, not a reason to
+                  # manufacture additional provider rounds. Actual diagnostic
+                  # failures can still enter the bounded recovery path.
+                  if _round_decision.status.value == "failed" and _evidence_repair_rounds < 2:
+                      _evidence_repair_rounds += 1
+                      _missing = ", ".join(_round_decision.missing_artifacts)
+                      _declared_verifiers = _completion_requirements.verifier_commands
+                      _needs_current_verifier = (
+                          not _missing
+                          and _round_decision.status.value == "blocked"
+                          and (
+                              "no executable verifier result" in _round_decision.reason
+                              or "predates" in _round_decision.reason
+                          )
+                      )
+                      if _needs_current_verifier and _declared_verifiers:
+                          _declared_verifier_force_command = _declared_verifiers[0]
+                      _missing_binary_only = bool(
+                          _round_decision.missing_artifacts
+                          and workspace
+                          and _native_local_media_inputs(
+                              _last_user, client_runtime_context
+                          )
+                          and all(
+                              _binary_artifact_path(path)
+                              for path in _round_decision.missing_artifacts
+                          )
+                      )
+                      _repair_instruction = (
+                          f"Required binary media artifact evidence is still missing for: {_missing}. "
+                          "Call inspect_media with the source path, a suitable timestamp, and exactly "
+                          "that output_path. For a video concatenated from multiple ranges, pass "
+                          "segments=[{start, end}, ...] and the one output_path; exports is only for still images. "
+                          "Do not emit binary data as text."
+                          if _missing_binary_only
+                          else f"Required artifact evidence is still missing for: {_missing}. "
+                          "Create the requested artifact with a workspace tool, then verify it."
+                          if _missing
+                          else (
+                              "The latest executable verifier failed. Fix the reported problem "
+                              "and rerun a focused verifier; a different successful shell command "
+                              "does not supersede the failure."
+                              if _round_decision.status.value == "failed"
+                              else (
+                                  "The latest verifier evidence predates the most recent artifact "
+                                  "change. The harness will now rerun the advertised verifier "
+                                  "against the current workspace."
+                                  if "predates" in _round_decision.reason
+                                  else (
+                                      "The request requires verification, but no executable verifier "
+                                      "result exists. The harness will now run the advertised focused "
+                                      "check through the task executor."
+                                  )
+                              )
+                          )
+                      )
+                      if _missing_binary_only:
+                          if not _artifact_mutation_only_mode:
+                              _artifact_recovery_relevant_tools = (
+                                  None if _relevant_tools is None else set(_relevant_tools)
+                              )
+                          _artifact_mutation_only_mode = True
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "completion_blocked",
+                              "round": round_num,
+                              "attempt": _evidence_repair_rounds,
+                              "decision": _round_decision.to_dict(),
+                          })
+                          + "\n\n"
+                      )
+                      messages.append({"role": "system", "content": _repair_instruction})
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+              if (_effectful_used and not _force_answer
+                      and _claimed_done
+                      and _verifier_rounds < _VERIFIER_MAX_ROUNDS
+                      # Default OFF: on weak local models the verifier can't judge
+                      # from the action-snapshot (no doc body), so it false-rejects
+                      # ("content not shown") and forces a costly extra round every
+                      # effectful turn. Opt-in via setting for strong models.
+                      and get_setting("agent_verifier_subagent", False)):
+                  # Brief "working" indicator while the verifier runs.
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num})}\n\n'
+                  _vfail = await _run_verifier_subagent(
+                      _verifier_instruction,
+                      _build_actions_snapshot(tool_events),
+                      endpoint_url=endpoint_url, model=model, headers=headers,
+                  )
+                  if _vfail:
+                      _verifier_rounds += 1
+                      logger.info(f"[agent] verifier flagged {len(_vfail)} issue(s) on round {round_num}: {_vfail}")
+                      _note = "\n\nAnd also...\n\n"
+                      yield f'data: {json.dumps({"delta": _note})}\n\n'
+                      full_response += _note
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "An independent verifier reviewed your work against the "
+                              "original request and found issues that must be fixed before "
+                              "this is actually done:\n- " + "\n- ".join(_vfail) +
+                              "\n\nFix these now using tools, then continue from the "
+                              "answer already shown. Your next visible response is an "
+                              "append-only correction: state only the corrected or newly "
+                              "discovered information. Do not add another introduction, "
+                              "repeat accurate parts, or restate the entire answer."
+                          ),
+                      })
+                      # Require fresh effectful work before verifying again, so we
+                      # never re-verify an unchanged state in a loop.
+                      _effectful_used = False
+                      continue
+              # ── Intent-without-action supervisor ─────────────────────
+              # Catch "Let me tail the output" / "I'll check the logs" /
+              # "Let me investigate" patterns where the model announces an
+              # action but emits no tool_call. The bug shows up most on
+              # smaller models trained to verbalize plans before acting.
+              # We inject one sharp nudge ("you said you would X — call the
+              # actual tool now") and loop again. Capped at
+              # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
+              # tool doesn't pin us in a forever loop.
+              _intent_text = _strip_think_blocks(cleaned_round).strip()
+              if (
+                  _unattended_native_runtime
+                  and _looks_like_unattended_clarification(_intent_text)
+                  and not _unattended_final_nudge_sent
+              ):
+                  _unattended_final_nudge_sent = True
+                  _force_answer = True
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(
+                      full_response,
+                      cleaned_round,
+                  )
+                  _unattended_media_evidence_note = ""
+                  if any(
+                      isinstance(event, dict)
+                      and bool(event.get("screenshot"))
+                      for event in tool_events
+                  ):
+                      _unattended_media_evidence_note = (
+                          " Successful media observations above include actual visual "
+                          "contact sheets, not only timestamp metadata. Use those images "
+                          "and do not claim that the loaded media or frames are unavailable."
+                      )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "No user is available to answer follow-up questions in this "
+                          "unattended run. Do not ask for a choice and do not call tools. "
+                          "Give the best-supported concise answer to the original request "
+                          "from the evidence already collected, stating uncertainty briefly."
+                          + _unattended_media_evidence_note
+                      ),
+                  })
+                  logger.info(
+                      "[agent] unattended clarification replaced with final synthesis"
+                  )
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              _false_missing_tool = _false_unavailable_tool_claim(_intent_text, _relevant_tools)
+              _state_tool, _state_actions = _state_manager_expected_action(
+                  _last_user,
+                  _intent_domains,
+                  _relevant_tools,
+              )
+              if (
+                  _state_tool == "manage_tasks"
+                  and _calendar_context_owns_ambiguous_mutation(
+                      _last_user,
+                      messages,
+                      history_session,
+                  )
+              ):
+                  _state_tool, _state_actions = "", set()
+              if (
+                  _active_document_mutation_turn
+                  and not _has_successful_active_document_mutation(tool_events)
+                  and _intent_nudge_count < _MAX_INTENT_NUDGES
+                  and not guide_only
+              ):
+                  _intent_nudge_count += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  logger.info(
+                      "[agent] active document mutation answered without editor tool evidence; nudging round %s",
+                      round_num,
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The user requested a change to the document currently open in "
+                          "the editor. Do not describe or invent a completed edit. Call "
+                          "`edit_document`, `update_document`, or `suggest_document` now. "
+                          "If the requested change is genuinely missing a necessary detail, "
+                          "call `ask_user` once instead."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if (
+                  _false_missing_tool
+                  and not _force_answer
+                  and _intent_nudge_count < _MAX_INTENT_NUDGES
+                  and not guide_only
+              ):
+                  _intent_nudge_count += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  logger.info(
+                      "[agent] false-unavailable tool claim for selected tool %s; nudging round %s",
+                      _false_missing_tool,
+                      round_num,
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          f"You claimed `{_false_missing_tool}` or its domain was unavailable, "
+                          "but it is available in this turn's selected tool surface. "
+                          "Do not ask the user to resend. Emit the actual tool call now. "
+                          "For calendar event changes, use manage_calendar; if a required "
+                          "target or date is genuinely ambiguous, call ask_user once."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              _forced_state_block = None
+              if _state_tool == "manage_tasks":
+                  _forced_state_block = _parse_explicit_task_state_request(_last_user)
+              elif _state_tool == "manage_memory":
+                  _forced_state_block = _parse_explicit_memory_state_request(
+                      _last_user,
+                      messages,
+                      history_session,
+                  )
+                  if not _forced_state_block:
+                      _forced_state_block = _parse_explicit_memory_lookup_request(_last_user)
+                  if not _forced_state_block and {"add", "create", "save"} & _state_actions:
+                      _memory_text_from_user = _extract_memory_add_text_from_user(_last_user)
+                      if _memory_text_from_user:
+                          _forced_state_block = ToolBlock(
+                              "manage_memory",
+                              "add\n" + _memory_text_from_user,
+                          )
+              elif _state_tool == "manage_skills":
+                  _skill_request = _parse_explicit_skill_request(_last_user)
+                  if _skill_request:
+                      _forced_state_block = ToolBlock(
+                          "manage_skills",
+                          json.dumps(_skill_request),
+                      )
+              if (
+                  _forced_state_block
+                  and not _has_successful_state_manager_evidence(
+                      tool_events,
+                      _forced_state_block.tool_type,
+                      _state_actions,
+                  )
+                  and not guide_only
+              ):
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  cleaned_round = ""
+                  round_response = ""
+                  tool_blocks = [_forced_state_block]
+                  native_tool_calls = []
+                  converted_calls = []
+                  used_native = False
+                  logger.info(
+                      "[agent] normalized explicit %s request to deterministic manager call",
+                      _forced_state_block.tool_type,
+                  )
+                  # Fall through to the normal tool execution path below.
+              elif (
+                  _state_tool
+                  and not _has_successful_state_manager_evidence(
+                      tool_events,
+                      _state_tool,
+                      _state_actions,
+                  )
+                  and _intent_nudge_count < _MAX_INTENT_NUDGES
+                  and not guide_only
+              ):
+                  _intent_nudge_count += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  logger.info(
+                      "[agent] explicit %s request answered without matching tool evidence; nudging round %s",
+                      _state_tool,
+                      round_num,
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          f"The user's request requires a fresh `{_state_tool}` call in "
+                          "this turn. Do not claim the item was listed, saved, edited, "
+                          "paused, resumed, opened, or deleted from chat context alone. "
+                          "Emit the matching tool call now, then answer from the tool "
+                          "result."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if (
+                  _calendar_lookup_requires_fresh_tool(
+                      _last_user,
+                      _intent_domains,
+                      _relevant_tools,
+                      messages,
+                      history_session,
+                  )
+                  and not _has_successful_calendar_list_evidence(tool_events)
+                  and _intent_nudge_count < _MAX_INTENT_NUDGES
+                  and not guide_only
+              ):
+                  _intent_nudge_count += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  logger.info(
+                      "[agent] calendar lookup answered without fresh manage_calendar list; nudging round %s",
+                      round_num,
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The user's request is a calendar lookup or availability question. "
+                          "Do not answer from prior chat context alone. Call `manage_calendar` "
+                          "with action `list_events` for the requested date/range now, then "
+                          "answer from that fresh tool result."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if (
+                  _notes_request_requires_fresh_tool(_last_user, _intent_domains, _relevant_tools)
+                  and not _has_successful_notes_action_evidence(
+                      tool_events,
+                      _notes_expected_actions(_last_user),
+                  )
+                  and _intent_nudge_count < _MAX_INTENT_NUDGES
+                  and not guide_only
+              ):
+                  _intent_nudge_count += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  logger.info(
+                      "[agent] notes request answered without matching manage_notes action; nudging round %s",
+                      round_num,
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The user's request is a notes/checklist/reminder lookup or "
+                          "mutation. Do not answer from prior chat context alone and "
+                          "do not invent `#note-...` links. Call `manage_notes` now "
+                          "with the matching action: list/search/view for reads, add "
+                          "for new notes/reminders, update/toggle_item for edits, and "
+                          "delete for removals. Then answer from the fresh tool result."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              # A weak model may treat a concrete task as a new conversation and
+              # answer with "what would you like me to do?". That is not a real
+              # clarification when the user already supplied an action and
+              # target. Give it one bounded chance to act before accepting the
+              # response as the final answer.
+              if (
+                  _clarification_nudge_count < _MAX_CLARIFICATION_NUDGES
+                  and _looks_like_actionable_user_request(_last_user)
+                  and _CLARIFICATION_ONLY_RESPONSE_RE.search(_intent_text)
+              ):
+                  _clarification_nudge_count += 1
+                  logger.info(
+                      "[agent] actionable request received clarification-only response; nudging action"
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "The user already gave a concrete action and target. Do not ask "
+                          "what they want again. Perform the most useful next tool call "
+                          "now; if a required detail is genuinely missing, make one "
+                          "reasonable assumption and state it briefly."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if (
+                  _fabricated_calendar_event_anchor_without_tool(_intent_text, _relevant_tools)
+                  and not (
+                      not _calendar_expected_mutation_actions(_last_user)
+                      and _calendar_anchor_was_already_persisted(_intent_text, history_session)
+                  )
+                  and not _has_successful_calendar_action_evidence(
+                      tool_events,
+                      _calendar_expected_mutation_actions(_last_user),
+                  )
+                  and _intent_nudge_count < _MAX_INTENT_NUDGES
+                  and not guide_only
+              ):
+                  _intent_nudge_count += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  logger.info(
+                      "[agent] rejected fabricated calendar event anchor without matching manage_calendar action; nudging round %s",
+                      round_num,
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "You wrote a calendar event link (`#event-...`) without "
+                          "creating, updating, deleting, or finding that event through "
+                          "`manage_calendar`. "
+                          "Those links must use real UIDs returned by the calendar tool. "
+                          "Call `manage_calendar` now to perform the user's exact calendar "
+                          "request; if the date depends on the previous event, use the "
+                          "recent calendar tool context to resolve it. A setup call such "
+                          "as `list_calendars` is not enough for add, move, or delete."
+                      ),
+                  })
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if (
+                  _artifact_recovery_enabled
+                  and _completion_requirements.required_artifacts
+                  and not _force_answer
+                  and not tool_blocks
+                  and _artifact_completion_nudges >= 3
+                  and _artifact_final_response_recoveries < 2
+              ):
+                  # Tool-preamble cleanup intentionally removes phrases such as
+                  # "I wrote the script; now I need to run it" from the normal
+                  # final response.  For artifact tasks, that phrase is still
+                  # meaningful: it is a claim that completion is unfinished.
+                  # Inspect the raw round text as well, otherwise the model can
+                  # terminate with a missing artifact after the cleanup pass.
+                  _final_candidate_text = (
+                      cleaned_round or _intent_text or round_response
+                  ).strip()
+                  if not _final_candidate_text:
+                      _final_candidate_text = str(full_response or "").strip()
+                  _final_evidence = EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate()
+                  _final_missing = tuple(_final_evidence.missing_artifacts)
+                  if _final_missing and _final_candidate_text:
+                      _artifact_final_response_recoveries += 1
+                      if not _artifact_mutation_only_mode:
+                          _artifact_recovery_relevant_tools = (
+                              None if _relevant_tools is None else set(_relevant_tools)
+                          )
+                      _artifact_mutation_only_mode = True
+                      if round_texts:
+                          round_texts.pop()
+                      if round_models:
+                          round_models.pop()
+                      if round_endpoint_ids:
+                          round_endpoint_ids.pop()
+                      if round_endpoint_labels:
+                          round_endpoint_labels.pop()
+                      full_response = _drop_rejected_round_response(
+                          full_response,
+                          _final_candidate_text,
+                      )
+                      messages = _artifact_recovery_messages(
+                          messages,
+                          tool_events,
+                          _final_missing,
+                      )
+                      _missing = ", ".join(_final_missing)
+                      logger.warning(
+                          "[agent] final response left required artifacts missing; "
+                          "entering mutation recovery attempt=%d missing=%s",
+                          _artifact_final_response_recoveries,
+                          _missing,
+                      )
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "completion_blocked",
+                              "reason": "final_response_missing_artifacts",
+                              "round": round_num,
+                              "attempt": _artifact_final_response_recoveries,
+                              "decision": _final_evidence.to_dict(),
+                          })
+                          + "\n\n"
+                      )
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+              _artifact_outputs_complete = bool(
+                  _completion_requirements.required_artifacts
+                  and EvidenceLedger.from_tool_events(
+                      tool_events,
+                      _completion_requirements,
+                  ).evaluate().can_complete
+              )
+              # Whole-response intent matching is redundant: the helper below
+              # keeps short responses below 400 characters and long responses
+              # to their final 600-character window. Avoid an unbounded scan of
+              # model text before applying that existing policy boundary.
+              _intent_match = None
+              # Inspect only the bounded tail of long answers. This catches
+              # substantial multimodal analyses that end in "let me inspect..."
+              # or a dangling answer lead-in while leaving completed answers
+              # with earlier planning language alone.
+              _looks_like_promise = (
+                  not guide_only
+                  and (
+                      not _artifact_outputs_complete
+                      or _artifact_finish_nudge_sent
+                  )
+                  and _looks_like_unfinished_action_promise(_intent_text)
+              )
+              if _looks_like_promise and _intent_nudge_count < _MAX_INTENT_NUDGES:
+                  _intent_nudge_count += 1
+                  _intent_match = _INTENT_RE.search(_intent_text[-600:])
+                  _matched_phrase = (
+                      _intent_match.group(0).strip()
+                      if _intent_match is not None
+                      else _intent_text[-180:].strip()
+                  )
+                  logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                  _lower_phrase = _matched_phrase.lower()
+                  _answer_promise = bool(re.search(
+                      r"\b(?:provide|give|state|report|answer|respond|summarize|conclude)\b",
+                      _lower_phrase,
+                  ))
+                  _cookbook_log_hint = ""
+                  if any(_word in _lower_phrase for _word in ("log", "logs", "output", "tail", "status")):
+                      _cookbook_log_hint = (
+                          " If this is about a Cookbook/model serve, the concrete calls are: "
+                          "`list_served_models` first, then `tail_serve_output` with the "
+                          "session_id from the serve/list result. Never answer with "
+                          "\"check logs\" when those tools are available."
+                      )
+                  _native_recovery_instruction = (
+                      _malformed_native_tool_recovery_instruction(
+                          _malformed_native_tool_names
+                      )
+                  )
+                  _intent_recovery_instruction = _native_recovery_instruction or (
+                      "Give the concise final answer now from the evidence already "
+                      "collected. Do not announce that you will answer, restate the "
+                      "plan, or ask whether to continue."
+                      if _answer_promise
+                      else (
+                          "Continue now. Either make one materially different, focused "
+                          "inspect_media or transcribe_media call using a workspace-local "
+                          "path, or give the concise final answer from the evidence already "
+                          "collected. Do not restate the plan and do not ask whether to continue."
+                          if _local_media_turn and not _artifact_creation_requested
+                          else (
+                              "DO IT NOW: emit the actual function call this turn. "
+                              f"{_cookbook_log_hint}"
+                              "If you decided not to do it after all, say so plainly in "
+                              "one sentence instead of restating the plan."
+                          )
+                      )
+                  )
+                  _omission_description = (
+                      "but ended the turn without giving that answer"
+                      if _answer_promise
+                      else "but ended the turn without making the actual tool call"
+                  )
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          f"You just wrote: \"{_matched_phrase}\" — {_omission_description}. "
+                          "The user can "
+                          "see you announced the action but didn't run it, which "
+                          "is the most frustrating thing you can do. "
+                          + _intent_recovery_instruction
+                      ),
+                  })
+                  # Visible signal in the stream so the user knows we caught it.
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if _looks_like_promise:
+                  _intent_match = _INTENT_RE.search(_intent_text[-600:])
+                  _matched_phrase = (
+                      _intent_match.group(0).strip()
+                      if _intent_match is not None
+                      else _intent_text[-180:].strip()
+                  )
+                  _guard_message = (
+                      "The agent stopped because it repeatedly announced a tool "
+                      "action without making the tool call."
+                  )
+                  if _unattended_native_runtime and not _unattended_final_nudge_sent:
+                      _unattended_final_nudge_sent = True
+                      _force_answer = True
+                      if round_texts:
+                          round_texts.pop()
+                      if round_models:
+                          round_models.pop()
+                      if round_endpoint_ids:
+                          round_endpoint_ids.pop()
+                      if round_endpoint_labels:
+                          round_endpoint_labels.pop()
+                      full_response = _drop_rejected_round_response(
+                          full_response,
+                          cleaned_round,
+                      )
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "No user is available in this unattended run. You have "
+                              "already had bounded opportunities to continue. Do not call "
+                              "or describe more tools. Give the best-supported concise "
+                              "answer to the original request from the evidence already "
+                              "collected, stating uncertainty briefly."
+                          ),
+                      })
+                      logger.info(
+                          "[agent] unattended intent nudge cap forced final synthesis"
+                      )
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+                  logger.warning(
+                      "[agent] intent-without-action guard exhausted on round %d after %d nudges: %r",
+                      round_num,
+                      _intent_nudge_count,
+                      _matched_phrase,
+                  )
+                  yield (
+                      "data: "
+                      + json.dumps({
+                          "type": "intent_nudge_exhausted",
+                          "reason": "intent_without_action_nudge_cap",
+                          "message": _guard_message,
+                          "round": round_num,
+                          "nudges": _intent_nudge_count,
+                          "matched": _matched_phrase,
+                      })
+                      + "\n\n"
+                  )
+                  break
+              if (
+                  not tool_blocks
+                  and _web_search_completed
+                  and not _force_answer
+                  and _web_model_reports_insufficient_evidence(cleaned_round)
+                  and (_qwen38_tool_router or _full_inventory_mode)
+                  and _web_evidence_recovery_rounds < 2
+              ):
+                  _web_evidence_recovery_rounds += 1
+                  if round_texts:
+                      round_texts.pop()
+                  if round_models:
+                      round_models.pop()
+                  if round_endpoint_ids:
+                      round_endpoint_ids.pop()
+                  if round_endpoint_labels:
+                      round_endpoint_labels.pop()
+                  full_response = _drop_rejected_round_response(full_response, cleaned_round)
+                  cleaned_round = ""
+                  round_response = ""
+                  instruction = _web_execution_budget.instruction()
+                  messages.append({"role": "system", "content": instruction})
+                  logger.info("[agent] web evidence recovery stage=%d", _web_evidence_recovery_rounds)
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              if not tool_blocks:
+                  break  # no tools — done
+
+          # ── Loop-breaker (Terminus-style stall detector) ──────────────
+          # Detailed video questions benefit from a second focused look, but
+          # unlimited distinct ranges are still a loop.  For answer-only local
+          # media tasks, stop after eight completed native inspections and ask
+          # the model to synthesize the evidence it already has.
+          _completed_media_inspections = sum(
+              1
+              for event in tool_events
+              if _resolved_tool_event_name(event) == "inspect_media"
+              and event.get("exit_code") == 0
+          )
+          _current_media_inspections = bool(tool_blocks) and all(
+              str(getattr(block, "tool_type", "") or "") == "inspect_media"
+              and not _workspace_mutation_tool_block(block)
+              for block in tool_blocks
+          )
+          _media_artifacts_complete = bool(
+              _completion_requirements.required_artifacts
+              and EvidenceLedger.from_tool_events(
+                  tool_events,
+                  _completion_requirements,
+              ).evaluate().can_complete
+          )
+          # Keep one round available for the tool-free synthesis turn. Without
+          # this reserve, a model that spends the final allowed round on its
+          # eighth (or later) inspection can be forced to answer after the loop
+          # has already exhausted, leaving only reasoning and no user answer.
+          _media_inspection_budget_exhausted = (
+              _completed_media_inspections >= 8
+              or (
+                  _round_limit is not None
+                  and round_num >= _round_limit - 1
+                  and _completed_media_inspections >= 6
+              )
+          )
+          if (
+              (
+                  not _completion_requirements.required_artifacts
+                  or _media_artifacts_complete
+              )
+              and workspace
+              and _native_local_media_inputs(_last_user, client_runtime_context)
+              and _current_media_inspections
+              and _media_inspection_budget_exhausted
+          ):
+              logger.warning(
+                  "[agent] local-media inspection budget exhausted after %d calls; "
+                  "forcing evidence synthesis",
+                  _completed_media_inspections,
+              )
+              _force_answer = True
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "You have enough visual samples. Stop inspecting the media and "
+                      "answer the user's question now from the evidence already gathered. "
+                      "If the requested artifact already exists, do not refine it again. "
+                      "State uncertainty briefly if a detail remains ambiguous."
+                  ),
+              })
+              yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+              continue
+
+          # Distinct searches/reads with short prose preambles can evade the
+          # ordinary repeat detector forever.  For terminal tasks with declared
+          # deliverables, six purely observational rounds are enough evidence:
+          # switch to the existing mutation-only recovery branch before the
+          # model burns the entire round budget without writing anything.
+          if _artifact_recovery_enabled and tool_blocks:
+              _observation_evidence = EvidenceLedger.from_tool_events(
+                  tool_events,
+                  _completion_requirements,
+              ).evaluate()
+              _observation_missing = tuple(
+                  _observation_evidence.missing_artifacts
+              )
+              if not _observation_missing or any(
+                  _workspace_mutation_tool_block(block)
+                  for block in tool_blocks
+              ):
+                  _artifact_observation_rounds = 0
+              else:
+                  _artifact_observation_rounds += 1
+                  if _artifact_observation_rounds >= 6:
+                      _available_acquisition_tools = set(
+                          _artifact_recovery_relevant_tools or _relevant_tools or ()
+                      )
+                      _native_acquisition_tools = (
+                          {"pdf_extract", "web_fetch", "web_search", "private_browser"}
+                          & _available_acquisition_tools
+                      )
+                      _source_lookup_requested = bool(
+                          _native_acquisition_tools
+                          and re.search(
+                              r"https?://|\b(?:pdf|paper|report|study|source|online)\b",
+                              _last_user,
+                              re.IGNORECASE,
+                          )
+                      )
+                      _source_evidence_ready = _artifact_source_evidence_ready(
+                          tool_events,
+                          _last_user,
+                      )
+                      if _source_lookup_requested and not _source_evidence_ready:
+                          # Keep the native acquisition path alive. The old
+                          # branch narrowed to write/edit/apply_patch here even
+                          # when all six observations were only failed or
+                          # irrelevant searches, so subsequent web/PDF calls
+                          # were silently dropped and the task could never
+                          # produce its artifacts.
+                          # Snapshot the full pre-recovery surface before
+                          # narrowing it. Otherwise a successful fetch restores
+                          # only the three acquisition tools and the model's
+                          # required write/read follow-through is dropped.
+                          if _relevant_tools is not None:
+                              _artifact_recovery_relevant_tools = set(_relevant_tools)
+                          _artifact_acquisition_recovery_active = True
+                          _artifact_mutation_only_mode = False
+                          _artifact_source_recovery_cycles += 1
+                          # Source acquisition is bounded evidence gathering,
+                          # not an open-ended replacement for artifact
+                          # production.  Repeated six-round acquisition cycles
+                          # can otherwise keep a model searching until the
+                          # global wall deadline while the declared output is
+                          # still absent.  Hand off to the normal mutation
+                          # recovery path after two complete cycles; the source
+                          # results remain in context for the model to use.
+                          if _artifact_source_recovery_cycles >= 2:
+                              _artifact_acquisition_recovery_active = False
+                              _artifact_mutation_only_mode = True
+                              _artifact_completion_nudges += 1
+                              messages = _artifact_recovery_messages(
+                                  messages,
+                                  tool_events,
+                                  _observation_missing,
+                              )
+                              _artifact_observation_rounds = 0
+                              logger.warning(
+                                  "[agent] source acquisition recovery budget exhausted; "
+                                  "handing off to mutation recovery missing=%s",
+                                  list(_observation_missing),
+                              )
+                              yield (
+                                  "data: "
+                                  + json.dumps({
+                                      "type": "completion_blocked",
+                                      "reason": "artifact_source_recovery_budget",
+                                      "round": round_num,
+                                      "attempt": _artifact_completion_nudges,
+                                      "decision": _observation_evidence.to_dict(),
+                                  })
+                                  + "\n\n"
+                              )
+                              yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                              continue
+                          _artifact_mutation_tools = (
+                              {
+                                  "python", "write_file", "read_file", "ls",
+                                  "grep", "glob", "edit_file", "apply_patch",
+                                  "bash",
+                              }
+                              & _available_acquisition_tools
+                          )
+                          # Source acquisition and artifact mutation are
+                          # sequential capabilities of the same turn. Keep
+                          # both surfaces available so a successful lookup can
+                          # be followed by writing the declared deliverable.
+                          _relevant_tools = (
+                              set(_native_acquisition_tools)
+                              | _artifact_mutation_tools
+                          )
+                          messages = _artifact_acquisition_recovery_messages(
+                              messages,
+                              tool_events,
+                              _observation_missing,
+                              user_text=_last_user,
+                          )
+                          _artifact_observation_rounds = 0
+                          logger.warning(
+                              "[agent] source evidence still missing after observation budget; "
+                              "preserving native acquisition tools=%s",
+                              sorted(_native_acquisition_tools),
+                          )
+                          yield (
+                              "data: "
+                              + json.dumps({
+                                  "type": "completion_blocked",
+                                  "reason": "artifact_source_evidence_missing",
+                                  "round": round_num,
+                                  "decision": _observation_evidence.to_dict(),
+                              })
+                              + "\n\n"
+                          )
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                          continue
+                      _artifact_completion_nudges += 1
+                      if not _artifact_mutation_only_mode:
+                          _artifact_recovery_relevant_tools = (
+                              None if _relevant_tools is None else set(_relevant_tools)
+                          )
+                      _artifact_mutation_only_mode = True
+                      messages = _artifact_recovery_messages(
+                          messages,
+                          tool_events,
+                          _observation_missing,
+                      )
+                      _artifact_observation_rounds = 0
+                      _missing = ", ".join(_observation_missing)
+                      logger.warning(
+                          "[agent] observation budget exhausted with required artifacts "
+                          "missing; entering mutation recovery missing=%s",
+                          _missing,
+                      )
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "completion_blocked",
+                              "reason": "artifact_observation_budget",
+                              "round": round_num,
+                              "attempt": _artifact_completion_nudges,
+                              "decision": _observation_evidence.to_dict(),
+                          })
+                          + "\n\n"
+                      )
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+
+          # Artifact tasks need a separate observation budget.  A model can make
+          # every media inspection look novel (and include prose) while never
+          # creating the requested file, which bypasses signature-based stall
+          # detection.  Once the required evidence exists, redirect this
+          # reusable pattern to the bounded mutation-recovery path.
+          if (
+              _artifact_recovery_enabled
+              and _artifact_creation_requested
+              and _completion_requirements.required_artifacts
+              and tool_blocks
+              and not _artifact_mutation_only_mode
+              and all(_workspace_inspection_tool_block(block) for block in tool_blocks)
+              and not any(_workspace_mutation_tool_block(block) for block in tool_blocks)
+          ):
+              _observation_evidence = EvidenceLedger.from_tool_events(
+                  tool_events,
+                  _completion_requirements,
+              ).evaluate()
+              if _observation_evidence.missing_artifacts:
+                  _artifact_observation_only_rounds += 1
+                  if _artifact_observation_only_rounds >= 4:
+                      _artifact_completion_nudges += 1
+                      _artifact_mutation_only_mode = True
+                      _artifact_recovery_relevant_tools = (
+                          None if _relevant_tools is None else set(_relevant_tools)
+                      )
+                      _missing = ", ".join(_observation_evidence.missing_artifacts)
+                      messages = _artifact_recovery_messages(
+                          messages,
+                          tool_events,
+                          _observation_evidence.missing_artifacts,
+                      )
+                      logger.warning(
+                          "[agent] artifact observation budget exhausted after %d rounds; "
+                          "entering mutation recovery missing=%s",
+                          _artifact_observation_only_rounds,
+                          _missing,
+                      )
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "completion_blocked",
+                              "reason": "artifact_observation_budget",
+                              "round": round_num,
+                              "attempt": _artifact_completion_nudges,
+                              "decision": _observation_evidence.to_dict(),
+                          })
+                          + "\n\n"
+                      )
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+              else:
+                  _artifact_observation_only_rounds = 0
+          elif any(_workspace_mutation_tool_block(block) for block in tool_blocks):
+              _artifact_observation_only_rounds = 0
+
+          # Once a requested calendar mutation has succeeded, unrelated read-only
+          # calls add no evidence. The state tool's successful result is already
+          # authoritative; weak routers otherwise fall back into repeated email
+          # or note reads from earlier turns. Give one tool-free finish round at
+          # the semantic completion boundary.
+          _calendar_expected_actions = _calendar_expected_mutation_actions(_last_user)
+          if (
+              not _calendar_completion_nudge_sent
+              and _calendar_expected_actions
+              and _has_successful_calendar_action_evidence(tool_events, _calendar_expected_actions)
+              and tool_blocks
+              and all(
+                  _workspace_inspection_tool_block(block)
+                  or _personal_read_only_tool_block(block)
+                  for block in tool_blocks
+              )
+          ):
+              _calendar_completion_nudge_sent = True
+              _force_answer = True
+              full_response = _drop_rejected_round_response(full_response, cleaned_round)
+              if round_texts:
+                  round_texts.pop()
+              if round_models:
+                  round_models.pop()
+              if round_endpoint_ids:
+                  round_endpoint_ids.pop()
+              if round_endpoint_labels:
+                  round_endpoint_labels.pop()
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "The requested calendar mutation succeeded and its state was verified by a later "
+                      "calendar readback. Do not call more tools. Briefly confirm the completed change "
+                      "from the verified evidence now."
+                  ),
+              })
+              logger.info("[agent] stopped post-calendar-completion read-only expansion")
+              yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+              continue
+
+          # Stall detector for repeated no-progress tool loops.
+          # A round is "useless" ONLY when it re-issues a recent tool call AND
+          # writes no answer text — i.e. the model is going in circles.
+          # Genuine exploration (new, distinct calls) is never useless, so
+          # multi-step work (file hunts, multi-host ssh, build→test→fix) rides
+          # all the way to a real answer. We bail only on a streak of useless
+          # rounds, or a single tool fired an absurd number of times (hard
+          # runaway backstop). On bail we don't give up — we force one
+          # tool-free round so the model declares done or declares blocked.
+          _sig = "|".join(sorted(f"{b.tool_type}:{(b.content or '').strip()[:120]}" for b in tool_blocks))
+          _is_repeat = _sig in _recent_call_sigs
+          _recent_call_sigs.append(_sig)
+          for _b in tool_blocks:
+              _call_freq[f"{_b.tool_type}:{(_b.content or '').strip()[:120]}"] += 1
+          # "Real" answer text = round text minus <think> blocks. Empty-think
+          # rounds (just "<think>\n\n</think>" + a tool call) must not read as
+          # progress, so strip think before checking.
+          _real_text = _strip_think_blocks(cleaned_round).strip()
+          if _blocked_status_tool_round(tool_blocks, _real_text):
+              _blocked_status_rounds += 1
+          else:
+              _blocked_status_rounds = 0
+          if _read_only_inspection_tool_round(tool_blocks) and not _real_text:
+              _read_only_inspection_rounds += 1
+          else:
+              _read_only_inspection_rounds = 0
+          # Circling = repeating a recent call with nothing written. Any
+          # progress (a NEW distinct call, or actual answer text) resets it.
+          if _is_repeat and not _real_text:
+              _stuck_rounds += 1
+          else:
+              _stuck_rounds = 0
+          # Runaway = the SAME exact call repeated an absurd number of times.
+          # Distinct calls to one tool (a real batch) are legitimate work, so we
+          # count identical call signatures, not raw per-tool-type totals.
+          _runaway = _detect_runaway_call(_call_freq)
+          if (
+              _stuck_rounds >= 4
+              or _runaway
+              or _blocked_status_rounds >= 2
+              or _read_only_inspection_rounds >= 6
+          ):
+              _stall_evidence = EvidenceLedger.from_tool_events(
+                  tool_events,
+                  _completion_requirements,
+              ).evaluate()
+              _stall_missing_artifacts = tuple(_stall_evidence.missing_artifacts)
+              if _artifact_recovery_enabled and _stall_missing_artifacts:
+                  _artifact_completion_nudges += 1
+                  if not _artifact_mutation_only_mode:
+                      _artifact_recovery_relevant_tools = (
+                          None if _relevant_tools is None else set(_relevant_tools)
+                      )
+                  _artifact_mutation_only_mode = True
+                  messages = _artifact_recovery_messages(
+                      messages,
+                      tool_events,
+                      _stall_missing_artifacts,
+                  )
+                  _stuck_rounds = 0
+                  _blocked_status_rounds = 0
+                  _read_only_inspection_rounds = 0
+                  _unchanged_tool_result_rounds = 0
+                  _missing = ", ".join(_stall_missing_artifacts)
+                  logger.warning(
+                      "[agent] stalled with required artifacts missing; entering mutation recovery missing=%s",
+                      _missing,
+                  )
+                  yield (
+                      "data: "
+                      + json.dumps({
+                          "type": "completion_blocked",
+                          "reason": "artifact_mutation_required",
+                          "round": round_num,
+                          "attempt": _artifact_completion_nudges,
+                          "decision": _stall_evidence.to_dict(),
+                      })
+                      + "\n\n"
+                  )
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+              reason = (
+                  "repeating blocked-task status commands without new progress"
+                  if _blocked_status_rounds >= 2
+                  else "repeated read-only inspections without a mutation or new answer"
+                  if _read_only_inspection_rounds >= 6
+                  else f"calling {_runaway} with identical arguments over and over"
+                  if _runaway
+                  else "repeating the same tool calls without new progress"
+              )
+              logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
+              yield (
+                  "data: "
+                      + json.dumps({
+                      "type": "loop_breaker_triggered",
+                      "reason": "loop_breaker_stall",
+                      "message": (
+                          "The loop-breaker detected repeated tool calls without "
+                          "new progress, so the agent is being forced to stop "
+                          "using tools and give its best final answer."
+                      ),
+                      "round": round_num,
+                      "detail": reason,
+                  })
+                  + "\n\n"
+              )
+              if _loop_breaker_force_answer_used:
+                  _exhausted_rounds = True
+                  logger.warning(
+                      "[agent] loop-breaker force-answer attempt did not converge; "
+                      "ending the loop for bounded exhaustion synthesis"
+                  )
+                  break
+              _loop_breaker_force_answer_used = True
+              # The model has been executing tools, so its results are already
+              # in context. Force ONE tool-free round to converge: write the
+              # answer from what it has, or state plainly what's blocking it.
+              # The force-answer handler above salvages (grace synthesis) or
+              # apologizes honestly if it still writes nothing.
+              _off = [t for t in ("web_search", "bash")
+                      if disabled_tools and t in disabled_tools]
+              _off_note = (f" ({', '.join(_off)} is currently disabled — say so if "
+                           f"you needed it.)" if _off else "")
+              _force_answer = True
+              messages.append({
+                  "role": "system",
+                  "content": (
+                      "You're repeating tool calls without converging. STOP calling "
+                      "tools and end the turn one of two ways: (a) write your best "
+                      "final answer NOW from the information already gathered, or "
+                      "(b) if you're genuinely blocked, say plainly what's blocking "
+                      "you in a sentence or two." + _off_note
+                  ),
+              })
+              full_response += "\n\n"
+              yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+              continue
+
+          # Existing-file edits must make progress before verification. Compact
+          # routers often read correctly and then jump straight to pytest,
+          # leaving the requested change undone. Permit one baseline test/build
+          # check so the model can see the existing failure, then defer repeated
+          # read-only/verification calls until an edit or patch has succeeded.
+          # Keep only mutation blocks from a mixed batch so normal post-edit
+          # verification can run next.
+          if (
+              _workspace_read_requires_mutation
+              and not _post_effectful_mutation_done
+              and not _workspace_read_before_mutation_paths
+          ):
+              _baseline_verification = (
+                  not _workspace_pre_mutation_verification_attempted
+                  and bool(tool_blocks)
+                  and all(
+                      _workspace_pre_mutation_verification_block(block)
+                      for block in tool_blocks
+                  )
+              )
+              _mutation_blocks = [
+                  block for block in tool_blocks
+                  if block.tool_type in {"edit_file", "apply_patch", "write_file"}
+              ]
+              if _baseline_verification:
+                  _workspace_pre_mutation_verification_attempted = True
+                  logger.info(
+                      "[agent] allowing one baseline workspace verification before mutation"
+                  )
+              elif _mutation_blocks:
+                  tool_blocks = _mutation_blocks
+                  converted_calls = []
+                  native_tool_calls = []
+              elif tool_blocks:
+                  _workspace_mutation_defer_count += 1
+                  if _workspace_mutation_defer_count >= 3:
+                      _blocked = (
+                          "I could not safely apply the requested workspace change: "
+                          "the model kept trying to run verification before producing "
+                          "an edit or patch. No file was changed."
+                      )
+                      logger.warning("[agent] stopped repeated pre-mutation verification")
+                      yield f'data: {json.dumps({"type": "final_response", "content": _blocked})}\n\n'
+                      break
+                  messages.append({
+                      "role": "system",
+                      "content": (
+                          "Do not run tests or another read-only command yet. The user asked "
+                          "for a file change and the existing file is already in context. "
+                          "Make the change now with edit_file or apply_patch; verify it only "
+                          "after the mutation succeeds."
+                      ),
+                  })
+                  logger.info("[agent] deferred verification until workspace mutation")
+                  yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                  continue
+
+          # Once the evidence ledger has explicitly redirected a terminal run to
+          # create a missing artifact, do not spend more environment time on
+          # varied read-only probes. A mixed batch keeps only mutation calls; a
+          # purely observational batch is suppressed and retried with a stricter
+          # generic instruction. This is contract-driven, not task/path-specific.
+          if (
+              _artifact_recovery_enabled
+              and _artifact_completion_nudges > 0
+              and not _artifact_acquisition_recovery_active
+              and tool_blocks
+          ):
+              _followthrough_evidence = EvidenceLedger.from_tool_events(
+                  tool_events,
+                  _completion_requirements,
+              ).evaluate()
+              _followthrough_missing = tuple(_followthrough_evidence.missing_artifacts)
+              if _followthrough_missing:
+                  _mutation_blocks = [
+                      block for block in tool_blocks
+                      if _workspace_mutation_tool_block(block)
+                  ]
+                  _inspection_only = all(
+                      _workspace_inspection_tool_block(block)
+                      for block in tool_blocks
+                  )
+                  if not _mutation_blocks and _inspection_only:
+                      _generator_repair_reads = _failed_artifact_generator_repair_reads(
+                          tool_blocks,
+                          tool_events,
+                      )
+                      if _generator_repair_reads:
+                          tool_blocks = _generator_repair_reads
+                          converted_calls = []
+                          native_tool_calls = []
+                          used_native = False
+                          _inspection_only = False
+                          logger.info(
+                              "[agent] allowed one generated-script repair read after execution failure"
+                          )
+                  if not _mutation_blocks and _inspection_only:
+                      _browser_recovery_blocks = _browser_render_recovery_blocks(
+                          _last_user,
+                          _followthrough_missing,
+                          set(_artifact_recovery_relevant_tools or _relevant_tools or ()),
+                          set(disabled_tools or ()),
+                          tool_events,
+                      )
+                      if _browser_recovery_blocks:
+                          tool_blocks = _browser_recovery_blocks
+                          converted_calls = []
+                          native_tool_calls = []
+                          used_native = False
+                          _mutation_blocks = list(_browser_recovery_blocks)
+                          _inspection_only = False
+                          logger.info(
+                              "[agent] completed HTML-to-image artifact recovery with native browser source=%s target=%s",
+                              _browser_recovery_blocks[0].content,
+                              _followthrough_missing[0],
+                          )
+                  if not _mutation_blocks and _inspection_only:
+                      _svg_recovery_blocks = _svg_render_recovery_blocks(
+                          _followthrough_missing,
+                          set(_artifact_recovery_relevant_tools or _relevant_tools or ()),
+                          set(disabled_tools or ()),
+                          tool_events,
+                      )
+                      if _svg_recovery_blocks:
+                          tool_blocks = _svg_recovery_blocks
+                          converted_calls = []
+                          native_tool_calls = []
+                          used_native = False
+                          _mutation_blocks = list(_svg_recovery_blocks)
+                          _inspection_only = False
+                          logger.info(
+                              "[agent] completed SVG-to-raster artifact recovery source=%s target=%s",
+                              _svg_recovery_blocks[0].content,
+                              _followthrough_missing[0],
+                          )
+                  if _mutation_blocks:
+                      # A host_shell/python block is classified as an
+                      # inspection tool by name so that read-only recovery
+                      # batches can be recognized.  Once its command is proven
+                      # to mutate state, it is no longer an inspection-only
+                      # batch—even when it is the only block in the batch.
+                      # Leaving this flag set caused the final suppression
+                      # branch below to discard the very write recovery had
+                      # requested.
+                      _inspection_only = False
+                      if len(_mutation_blocks) != len(tool_blocks):
+                          logger.info(
+                              "[agent] retained %d artifact mutation calls and deferred %d inspections",
+                              len(_mutation_blocks),
+                              len(tool_blocks) - len(_mutation_blocks),
+                          )
+                          tool_blocks = _mutation_blocks
+                          converted_calls = []
+                          native_tool_calls = []
+                  elif _inspection_only:
+                      _failed_artifact_verifier = any(
+                          _resolved_tool_event_name(event) in {
+                              "private_browser", "builtin_browser",
+                          }
+                          and event.get("exit_code") not in (0, None)
+                          for event in tool_events
+                      )
+                      # Once an artifact verifier has failed, another native
+                      # media read cannot repair the missing deliverable. A
+                      # weak model commonly re-inspects the source, consumes
+                      # the follow-through budget, and then collides with the
+                      # exact-repeat guard instead of writing the declared path.
+                      # Mark the bounded read budget exhausted so the existing
+                      # mutation/body handoff path runs immediately. This is
+                      # contract-driven and applies to every artifact task.
+                      _inspection_budget_used = max(
+                          _artifact_followthrough_media_inspections,
+                          2 if _failed_artifact_verifier else 0,
+                      )
+                      _local_media_inspection_blocks, _local_media_inspection_count = (
+                          _bounded_local_media_inspection_blocks(
+                              tool_blocks,
+                              local_media_turn=bool(
+                                  workspace
+                                  and _native_local_media_inputs(
+                                      _last_user, client_runtime_context
+                                  )
+                              ),
+                              already_used=_inspection_budget_used,
+                          )
+                      )
+                      if _local_media_inspection_blocks:
+                          _artifact_followthrough_media_inspections += (
+                              _local_media_inspection_count
+                          )
+                          tool_blocks = _local_media_inspection_blocks
+                          converted_calls = []
+                          native_tool_calls = []
+                          used_native = False
+                          _inspection_only = False
+                          logger.info(
+                              "[agent] allowed bounded native media inspection "
+                              "during artifact recovery used=%d/%d",
+                              _artifact_followthrough_media_inspections,
+                              2,
+                          )
+                  if _inspection_only and any(
+                      (
+                          _prior_failure := _failed_call_history.get(
+                              _tool_call_signature(block.tool_type, block.content)
+                          )
+                      )
+                      and _prior_failure.get("mutation_epoch", -1)
+                      < _workspace_mutation_epoch
+                      for block in tool_blocks
+                  ):
+                      # A successful workspace mutation can make an earlier
+                      # failed command valid. Permit that exact command once in
+                      # the new mutation epoch instead of treating it as another
+                      # read-only recovery loop.
+                      _inspection_only = False
+                  if _inspection_only:
+                      _artifact_followthrough_deferrals += 1
+                      _missing = ", ".join(_followthrough_missing)
+                      if _artifact_unoffered_recovery_exhausted(
+                          _artifact_followthrough_deferrals
+                      ):
+                          _force_answer = True
+                          tool_blocks = []
+                          converted_calls = []
+                          native_tool_calls = []
+                          used_native = False
+                          messages = _artifact_recovery_messages(
+                              messages,
+                              tool_events,
+                              _followthrough_missing,
+                          )
+                          messages.append({
+                              "role": "system",
+                              "content": (
+                                  "Artifact recovery reached its bounded inspection limit. "
+                                  "Do not inspect again. Finish briefly and state plainly "
+                                  f"which required artifacts remain missing: {_missing}."
+                              ),
+                          })
+                          logger.warning(
+                              "[agent] exhausted post-redirect inspection recovery after %d attempts missing=%s",
+                              _artifact_followthrough_deferrals,
+                              _missing,
+                          )
+                          yield (
+                              "data: "
+                              + json.dumps({
+                                  "type": "loop_breaker_triggered",
+                                  "reason": "artifact_recovery_inspection_limit",
+                                  "round": round_num,
+                                  "attempt": _artifact_followthrough_deferrals,
+                              })
+                              + "\n\n"
+                          )
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                          continue
+                      logger.warning(
+                          "[agent] suppressed post-redirect inspection batch attempt=%d missing=%s",
+                          _artifact_followthrough_deferrals,
+                          _missing,
+                      )
+                      yield (
+                          "data: "
+                          + json.dumps({
+                              "type": "completion_blocked",
+                              "reason": "artifact_mutation_required",
+                              "round": round_num,
+                              "attempt": _artifact_followthrough_deferrals,
+                              "decision": _followthrough_evidence.to_dict(),
+                          })
+                          + "\n\n"
+                      )
+                      _artifact_recovery_message_list = _artifact_recovery_messages(
+                          messages,
+                          tool_events,
+                          _followthrough_missing,
+                      )
+                      _artifact_body = ""
+                      _artifact_action_ready = False
+                      _generator_block = _artifact_generator_execution_block(
+                          tool_events,
+                          _followthrough_missing,
+                          set(_artifact_recovery_relevant_tools or _relevant_tools or ()),
+                      )
+                      if (
+                          _artifact_followthrough_deferrals >= 2
+                          and _generator_block is not None
+                      ):
+                          tool_blocks = [_generator_block]
+                          converted_calls = []
+                          native_tool_calls = []
+                          used_native = False
+                          round_response = ""
+                          _artifact_action_ready = True
+                          logger.info(
+                              "[agent] executing existing artifact generator before body handoff: %s",
+                              _generator_block.content.splitlines()[-1],
+                          )
+                      elif (
+                          _artifact_followthrough_deferrals >= 2
+                          and _artifact_body_handoff_attempts < 2
+                          and not _binary_artifact_path(_followthrough_missing[0])
+                          and "write_file" in set(
+                              _artifact_recovery_relevant_tools or _relevant_tools or ()
+                          )
+                      ):
+                          _artifact_body_handoff_attempts += 1
+                          _target = _followthrough_missing[0]
+                          _synthesis_messages = _artifact_synthesis_messages(
+                              _artifact_recovery_message_list,
+                              _target,
+                          )
+                          try:
+                              from src.generation_budget import fit_output_token_budget
+                              from src.llm_core import llm_call_async
+
+                              _raw_artifact_body = await llm_call_async(
+                                  url=endpoint_url,
+                                  model=model,
+                                  messages=_synthesis_messages,
+                                  headers=headers,
+                                  temperature=0.0,
+                                  max_tokens=fit_output_token_budget(
+                                      min(max_tokens, 2048),
+                                      _last_route_context_length or context_length,
+                                      _synthesis_messages,
+                                      None,
+                                  ),
+                                  # Artifact-body synthesis is an LLM turn, not a
+                                  # short tool call.  A fixed 90s timeout caused
+                                  # slow local/9B endpoints to fail recovery even
+                                  # though ordinary agent turns use the configured
+                                  # stream timeout.  Keep the historical floor,
+                                  # but follow the same runtime budget here.
+                                  timeout=max(90, int(agent_stream_timeout or 90)),
+                                  max_retries=1,
+                                  thinking_mode="off",
+                              )
+                              _artifact_body = _artifact_body_from_synthesis(
+                                  _raw_artifact_body or ""
+                              )
+                              usage_buckets.append(_usage_bucket(
+                                  round_num=round_num,
+                                  model=model,
+                                  endpoint_id=_round_actual_endpoint_id,
+                                  endpoint_label=_round_actual_endpoint_label,
+                                  endpoint_cost_tracked=actual_endpoint_cost_tracked,
+                                  input_tokens=estimate_tokens(_synthesis_messages),
+                                  output_tokens=max(len(_raw_artifact_body or "") // 4, 0),
+                                  usage_source="estimated",
+                              ))
+                          except Exception as _artifact_error:
+                              logger.warning(
+                                  "[agent] artifact body handoff failed attempt=%d: %s",
+                                  _artifact_body_handoff_attempts,
+                                  _artifact_error,
+                              )
+                          if _artifact_body and _artifact_body_matches_target(
+                              _artifact_body, _target
+                          ):
+                              tool_blocks = [ToolBlock(
+                                  "write_file",
+                                  f"{_target}\n{_artifact_body}",
+                              )]
+                              converted_calls = []
+                              native_tool_calls = []
+                              used_native = False
+                              round_response = ""
+                              _artifact_action_ready = True
+                              logger.info(
+                                  "[agent] synthesized required artifact body attempt=%d path=%s chars=%d",
+                                  _artifact_body_handoff_attempts,
+                                  _target,
+                                  len(_artifact_body),
+                              )
+                              yield (
+                                  "data: "
+                                  + json.dumps({
+                                      "type": "artifact_body_handoff",
+                                      "round": round_num,
+                                      "attempt": _artifact_body_handoff_attempts,
+                                      "path": _target,
+                                  })
+                                  + "\n\n"
+                              )
+                          else:
+                              messages = _artifact_recovery_message_list
+                      else:
+                          if not _artifact_mutation_only_mode:
+                              _artifact_recovery_relevant_tools = (
+                                  None if _relevant_tools is None else set(_relevant_tools)
+                              )
+                          _artifact_mutation_only_mode = True
+                          messages = _artifact_recovery_message_list
+                      # Suppressed calls did not execute and must not advance the
+                      # ordinary stall counters toward a forced prose answer.
+                      _read_only_inspection_rounds = 0
+                      _stuck_rounds = 0
+                      _blocked_status_rounds = 0
+                      if not _artifact_action_ready:
+                          yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                          continue
+
+          # Request-scoped environments own the complete tool contract. Keep a
+          # final fail-closed boundary because routing and recovery heuristics can
+          # rewrite calls after the initial parser filter.
+          if normalized_external_tool_schemas and tool_blocks:
+              _declared_names = _request_scoped_allowed_tool_names(
+                  normalized_external_tool_schemas,
+                  all_tool_schemas,
+                  native_terminal_runtime=_native_terminal_runtime,
+              )
+              _scoped_blocks = []
+              _scoped_calls = []
+              _dropped_scoped_names = []
+              for _idx, _block in enumerate(tool_blocks):
+                  if _block.tool_type not in _declared_names:
+                      _dropped_scoped_names.append(_block.tool_type)
+                      continue
+                  _scoped_blocks.append(_block)
+                  if _idx < len(converted_calls):
+                      _scoped_calls.append(converted_calls[_idx])
+              if _dropped_scoped_names:
+                  logger.warning(
+                      "[agent] dropped post-routing undeclared tool call(s): %s",
+                      sorted(set(_dropped_scoped_names)),
+                  )
+                  tool_blocks = _scoped_blocks
+                  converted_calls = _scoped_calls
+                  native_tool_calls = _scoped_calls if used_native else []
+                  if (
+                      not tool_blocks
+                      and _declared_contract_nudge_count < _MAX_DECLARED_CONTRACT_NUDGES
+                  ):
+                      _declared_contract_nudge_count += 1
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "The previous action named a tool outside this request's "
+                              "environment contract. Call exactly one of the functions "
+                              "declared for this request now; do not inspect Odysseus "
+                              "settings, model registries, or personal tools."
+                          ),
+                      })
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
+
+          # Explicit read-only email requests are a hard user boundary. Models
+          # sometimes solve the lookup and then invent a helpful draft; suppress
+          # that mutation before dispatch and converge to a truthful summary.
+          if tool_blocks:
+              _read_only_blocks = []
+              _read_only_calls = []
+              _blocked_email_mutations = []
+              for _idx, _block in enumerate(tool_blocks):
+                  if _email_mutation_forbidden(_last_user, _block.tool_type):
+                      _blocked_email_mutations.append(_block.tool_type)
+                      continue
+                  _read_only_blocks.append(_block)
+                  if _idx < len(converted_calls):
+                      _read_only_calls.append(converted_calls[_idx])
+              if _blocked_email_mutations:
+                  logger.warning(
+                      "[agent] blocked email mutation forbidden by explicit read-only request: %s",
+                      sorted(set(_blocked_email_mutations)),
+                  )
+                  tool_blocks = _read_only_blocks
+                  converted_calls = _read_only_calls
+                  native_tool_calls = _read_only_calls if used_native else []
+                  if not tool_blocks:
+                      _force_answer = True
+                      messages.append({
+                          "role": "system",
+                          "content": (
+                              "The user explicitly required read-only email handling, so "
+                              "the proposed mutation was not executed. Do not call more "
+                              "tools. Finish with only the requested evidence and summary."
+                          ),
+                      })
+                      yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                      continue
 
         # Execute each tool block
         tool_results = []
@@ -33760,11 +33791,19 @@ async def stream_agent_loop(
                     # actual server-selected candidates now so that continuation
                     # does not lose memory, skills, MCP, documents, or other
                     # ToolIndex/RAG-selected tools by classifying that synthetic text.
+                    _remaining_sibling_blocks = [
+                        (sibling.tool_type, sibling.content)
+                        for sibling in tool_blocks[i + 1 :]
+                        if getattr(sibling, "tool_type", None)
+                    ]
                     approval_selected_tools = set(_relevant_tools or ())
                     approval_selected_tools.update(
                         name for name in _tool_names_sent if name
                     )
                     approval_selected_tools.add(block.tool_type)
+                    approval_selected_tools.update(
+                        sibling_tool for sibling_tool, _ in _remaining_sibling_blocks
+                    )
                     approval_selected_tools.difference_update(disabled_tools)
                     pending_approval = tool_approval_store.create(
                         owner=owner,
@@ -33787,6 +33826,7 @@ async def stream_agent_loop(
                         ),
                         selected_tools=approval_selected_tools,
                         continuation_query=_retrieval_query or _last_user,
+                        pending_sibling_calls=_remaining_sibling_blocks,
                         capabilities=capabilities_for_action(
                             block.tool_type, block.content
                         ),
