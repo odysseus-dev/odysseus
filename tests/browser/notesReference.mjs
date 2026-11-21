@@ -108,29 +108,39 @@ try {
     }
     if (mobile) await page.locator('[data-note-id="plain"] .note-card-title').tap();
     else await page.locator('[data-note-id="plain"] .note-card-title').click();
-    if (mobile) await page.locator('.note-form-content-reader').tap({ position: { x: 5, y: 5 } });
-    await page.locator('.note-form-content').fill('Recovered draft');
+    // The note window is the editor on every device. Opening it writes nothing.
+    const body = page.locator('#note-window-modal .note-window-body');
+    await body.waitFor();
+    assert.equal(await body.textContent(), 'Visit https://example.org and keep this draft.');
+    assert.equal(requests.some(r => r.method === 'PUT'), false, 'opening a note never writes');
+    await body.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('Recovered draft');
+    // Every edit is backed up at once, before the autosave.
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('odysseus-note-draft-plain')).content), 'Recovered draft');
     await page.waitForFunction(() => !localStorage.getItem('odysseus-note-draft-plain'));
     assert.ok(requests.some(r => r.method === 'PUT' && JSON.parse(r.body).content === 'Recovered draft'));
-    await page.locator('.note-form-type-pill[data-type="draw"]').click();
-    const canvas = page.locator('.note-form-canvas');
+    await page.locator('#note-window-modal [data-md="sketch"]').click();
+    const canvas = page.locator('#note-window-modal .note-form-canvas');
     const box = await canvas.boundingBox();
     assert.ok(box);
     await page.mouse.move(box.x + 25, box.y + 25);
     await page.mouse.down();
     await page.mouse.move(box.x + 55, box.y + 55, { steps: 5 });
     await page.mouse.up();
-    await page.locator('.note-form-draw-undo').waitFor();
-    assert.equal(await page.locator('.note-form-draw-undo').isDisabled(), false);
-    await page.locator('.note-form-draw-undo').click();
-    assert.equal(await page.locator('.note-form-draw-undo').isDisabled(), true);
-    await page.locator('.note-form-type-pill[data-type="note"]').click();
+    await page.locator('#note-window-modal .note-form-draw-undo').waitFor();
+    assert.equal(await page.locator('#note-window-modal .note-form-draw-undo').isDisabled(), false);
+    await page.locator('#note-window-modal .note-form-draw-undo').click();
+    assert.equal(await page.locator('#note-window-modal .note-form-draw-undo').isDisabled(), true);
+    await page.locator('#note-window-modal .note-window-sketch [data-act="cancel"]').click();
     if (!baseline) await page.waitForFunction(() => window.referenceMouseups.size === 0);
-    await page.locator('.note-form-remind-btn').click();
+    await page.locator('#note-window-modal .note-window-remind').click();
     await page.locator('.note-reminder-menu').waitFor();
     await page.evaluate(() => window.referenceNotes.closePanel());
     await page.locator('#notes-pane').waitFor({ state: 'detached' });
+    // Phones hide the X (swipe dismisses), so call its handler directly.
+    await page.evaluate(() => document.querySelector('#note-window-modal .modal-close').click());
+    await page.locator('#note-window-modal').waitFor({ state: 'detached' });
     if (!baseline) {
       assert.equal(await page.locator('.note-reminder-menu').count(), 0);
       assert.equal(await page.evaluate(() => window.referenceIntervals.filter(t => t.ms === 30000).length), 1);

@@ -7,10 +7,9 @@ export function createCardInteractions({
   _customColorStyle,
   _dotBg,
   _dotIsActive,
-  _editNote,
   _isBgImage,
   _isNotesMobileMode,
-  _openMobileFullscreenEdit,
+  _openNoteWindow,
   _openNoteCornerMenu,
   _pickCustomBgImage,
   _renderNotes,
@@ -47,12 +46,9 @@ export function createCardInteractions({
           cb.checked = !cb.checked;
           cb.dispatchEvent(new Event('change'));
         }
-      } else if (_isNotesMobileMode()) {
-        // Mobile: open the per-note fullscreen edit overlay instead of the
-        // in-place form. Tiles on mobile are read-only previews.
-        _openMobileFullscreenEdit(id, cardEl);
       } else {
-        _editNote(id);
+        // The note window is the only editor, on desktop and on mobile.
+        _openNoteWindow(id);
       }
     };
     // Mobile: long-press anywhere on a note card → enter Select mode and
@@ -69,6 +65,13 @@ export function createCardInteractions({
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         _smoothScrollToNoteCard(el.closest('.note-card'));
+        tapToEditOrSelect(el.closest('.note-card'));
+      });
+      // The title is the card's keyboard handle: Enter or Space opens the note.
+      el.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
         tapToEditOrSelect(el.closest('.note-card'));
       });
     });
@@ -174,14 +177,14 @@ export function createCardInteractions({
         _applyCardColor(card, id, dot.dataset.color);
       });
     });
-    // Plain pencil corner → open editor. The unarchive corner shares the
-    // .note-card-edit-corner class for styling, so :not() keeps the edit
+    // Plain pencil corner → open the note window. The unarchive corner shares
+    // the .note-card-edit-corner class for styling, so :not() keeps the edit
     // handler off it.
     body.querySelectorAll('.note-card-edit-corner:not(.note-card-unarchive-corner)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
-        if (id) _editNote(id);
+        if (id) _openNoteWindow(id);
       });
     });
     // Copy corner : bottom-right, just left of the Done check. Shared with

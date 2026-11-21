@@ -11,8 +11,9 @@ export function createPanel({
   NOTES_FIRST_OPEN_HINT_KEY,
   REMINDER_DISMISSED_AT_KEY,
   _clearViewedReminderGlows,
-  _closeMobileFullscreenEdit,
-  _commitOpenInPlaceEditor,
+  _flushNoteWindow,
+  _isNoteWindowShowing = () => false,
+  _openNoteWindow,
   _copyNote,
   _enterSelectMode,
   _exitSelectMode,
@@ -33,8 +34,7 @@ export function createPanel({
   function _forceCloseNotesPanel() {
     app.setOpen(false);
     app.setEditingId(null);
-    try { _commitOpenInPlaceEditor(); } catch {}
-    try { _closeMobileFullscreenEdit({ save: true }); } catch {}
+    try { _flushNoteWindow(); } catch {}
     try { _clearViewedReminderGlows(); } catch {}
     if (_notesKeydownHandler) {
       document.removeEventListener('keydown', _notesKeydownHandler);
@@ -134,8 +134,8 @@ export function createPanel({
       document.body.classList.add('sidebar-collapsed');
     }
     // Mobile mode: tiles become read-only previews (no inline checkbox /
-    // edit / archive / etc.), tap opens a fullscreen edit overlay,
-    // long-press enters drag-to-reorder mode. See _bindCardEvents +
+    // edit / archive / etc.), tap opens the note window as a full-height
+    // sheet, long-press enters drag-to-reorder mode. See _bindCardEvents +
     // .notes-mobile-mode CSS rules.
     if (_isNotesMobileMode()) document.body.classList.add('notes-mobile-mode');
 
@@ -223,7 +223,11 @@ export function createPanel({
     _wireNotesSwipeDismiss(pane.querySelector('.notes-pane-header'), pane);
 
     pane.addEventListener('pointerdown', () => _bringNotesToFront(pane), true);
-    pane.addEventListener('focusin', () => _bringNotesToFront(pane), true);
+    // Focus alone never lifts the panel over an open note window. On a phone
+    // the window is a full-height sheet over the panel, and iOS Safari can
+    // focus the tapped card title after the tap has opened the window, which
+    // used to put the panel back on top. A tap on the panel still raises it.
+    pane.addEventListener('focusin', () => { if (!_isNoteWindowShowing()) _bringNotesToFront(pane); }, true);
 
     const minBtn = document.getElementById('notes-minimize-btn');
     if (minBtn) minBtn.addEventListener('click', (e) => {
@@ -345,11 +349,9 @@ export function createPanel({
     document.body.classList.remove('notes-view');
     document.body.classList.remove('notes-mobile-mode');
     document.body.classList.remove('notes-drag-mode');
-    // Closing the panel should PRESERVE in-progress edits, not drop them.
-    // Commit any open in-place editor, and close the mobile fullscreen
-    // overlay with save=true so the note is persisted.
-    try { _commitOpenInPlaceEditor(); } catch {}
-    _closeMobileFullscreenEdit({ save: true });
+    // Closing the panel keeps in-progress edits: the note window is its own
+    // window and stays open, with any pending save flushed now.
+    try { _flushNoteWindow(); } catch {}
     // /notes route may have collapsed the wide sidebar to a rail; restore.
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
 
@@ -403,23 +405,12 @@ export function createPanel({
       await _fetchNotes();
       _renderNotes();
     }
-    // openPanel() kicks off _fetchNotes() asynchronously, so the cards for
-    // newly-created notes may not be in the DOM yet. Poll until the card exists.
+    // openPanel() kicks off _fetchNotes() asynchronously, so a newly created
+    // note may not be loaded yet. Poll until it is, then open its window.
     if (!noteId) return;
     let tries = 0;
-    const findAndFlash = () => {
-      const card = document.querySelector(`.note-card[data-note-id="${noteId}"]`)
-        || document.querySelector(`.note-card[data-note-id^="${noteId.slice(0, 8)}"]`);
-      if (card) {
-        _smoothScrollToNoteCard(card);
-        card.classList.add('note-card-flash');
-        setTimeout(() => card.classList.remove('note-card-flash'), 1600);
-        return true;
-      }
-      return false;
-    };
     const tryNext = () => {
-      if (findAndFlash()) return;
+      if (_openNoteWindow(noteId)) return;
       if (++tries < 20) setTimeout(tryNext, 200);
     };
     setTimeout(tryNext, 120);
