@@ -1358,7 +1358,8 @@ async function _deleteSkill(name, card = null) {
       .find(c => { const n = c.querySelector('.skill-card-name'); return n && n.textContent === name; }) || null;
   }
   try {
-    await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     _mdCache.delete(name);
     if (card) {
       if (card._testPoll) { clearInterval(card._testPoll); card._testPoll = null; }
@@ -1374,14 +1375,19 @@ async function _deleteSkill(name, card = null) {
 
 async function _setSkillStatus(name, status) {
   try {
-    await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     await loadSkills();
     uiModule.showToast(status === 'published' ? 'Skill approved' : 'Skill moved to draft');
-  } catch (e) { uiModule.showError('Update failed: ' + e.message); }
+    return true;
+  } catch (e) {
+    uiModule.showError('Update failed: ' + e.message);
+    return false;
+  }
 }
 
 // ---- Test a skill (sandbox agent run + AI eval) ----
@@ -1665,7 +1671,7 @@ function _renderTestVerdict(el, v, card, name) {
   el.querySelector('[data-act="approve"]')?.addEventListener('click', async (e) => {
     e.stopPropagation();
     const nowPub = card.dataset.skillStatus === 'published';
-    await _setSkillStatus(name, nowPub ? 'draft' : 'published');
+    if (!(await _setSkillStatus(name, nowPub ? 'draft' : 'published'))) return;
     // _setSkillStatus reloads the list, but if this card survives, relabel it.
     card.dataset.skillStatus = nowPub ? 'draft' : 'published';
     const btn = el.querySelector('[data-act="approve"]');
