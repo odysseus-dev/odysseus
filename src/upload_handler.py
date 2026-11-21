@@ -1396,12 +1396,31 @@ class UploadHandler:
         upload_dir = self.get_upload_dir()
         file_path = os.path.join(upload_dir, file_id)
         
-        # Save the file
+        # Save the file with restrictive permissions at creation time.
+        fd = None
+        file_created = False
         try:
-            with open(file_path, "wb") as f:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            fd = os.open(file_path, flags, 0o600)
+            file_created = True
+            upload_stream = os.fdopen(fd, "wb")
+            fd = None
+            with upload_stream as f:
                 while chunk := file_obj.read(8192):
                     f.write(chunk)
         except Exception as e:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if file_created:
+                try:
+                    os.unlink(file_path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.exception("Failed to remove incomplete upload: %s", file_path)
             raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
         
         # Create file metadata
