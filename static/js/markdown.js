@@ -7,6 +7,8 @@
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { splitTableRow } from './markdown/tableRow.js';
 import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
+import { escapeHtmlText } from './shared/domain/html.js';
+import { compactUrlSchemeValue } from './shared/domain/urlSchemes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -388,12 +390,8 @@ const _ALLOWED_HTML_URL_ATTRS = new Set([
   'href', 'src', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'poster',
 ]);
 
-function _compactUrlSchemeValue(value) {
-  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
-}
-
 function _isDangerousUrl(value) {
-  return /^(javascript|vbscript|data):/.test(_compactUrlSchemeValue(value));
+  return /^(javascript|vbscript|data):/.test(compactUrlSchemeValue(value));
 }
 
 function _isDangerousSrcset(value) {
@@ -424,7 +422,7 @@ function _cleanAllowedHtmlOnce(htmlString, noteFetches) {
         continue;
       }
       if (name === 'style') {
-        const value = _compactUrlSchemeValue(attr.value);
+        const value = compactUrlSchemeValue(attr.value);
         if (/javascript:|vbscript:|data:|expression\(/.test(value)) {
           el.removeAttribute(attr.name);
         }
@@ -1304,7 +1302,7 @@ export function mdToHtml(src, opts) {
   s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, preserveAllowedHtml);
 
   // Now escape everything else
-  s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  s = escapeHtmlText(s);
 
   s = s.replace(/\n{3,}/g, '\n\n');
 

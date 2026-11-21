@@ -12,6 +12,7 @@ import {
   resolveQuickEditAgentModel,
   getAIModelsStatus,
 } from './ai-models.js';
+import { escapeHtmlDoubleQuoted } from '../shared/domain/html.js';
 
 const DISMISS_KEY = 'ge-preflight-dismissed';
 const OVERRIDE_KEY = 'ge-preflight-done';
@@ -53,9 +54,7 @@ export const PREFLIGHT_STEPS = [
 ];
 
 function esc(value) {
-  return String(value == null ? '' : value)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return escapeHtmlDoubleQuoted(String(value ?? ''));
 }
 
 function readOverride() {

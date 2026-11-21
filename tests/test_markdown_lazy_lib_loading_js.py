@@ -103,6 +103,8 @@ globalThis.document = {
 globalThis.MutationObserver = class { observe() {} };
 
 let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
+source = source.replace(/from '(\.\/shared\/domain\/[^']+)'/g, (_match, specifier) =>
+  `from '${new URL(specifier, import.meta.resolve('./static/js/')).href}'`);
 source = source.replace(/import uiModule from ['"]\.\/ui\.js(?:[?#][^'"]*)?['"];?/, '');
 source = source.replace(
   /import \{ splitTableRow \} from ['"]\.\/markdown\/tableRow\.js['"];/,
