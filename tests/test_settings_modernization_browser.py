@@ -8,16 +8,20 @@ refresh, member/administrator isolation, the personal model-default label and
 the integration forms. Node browser tests are not discovered by pytest on
 their own, so this wrapper is what CI runs.
 """
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_settings_browser_suite_passes():
+    env = dict(os.environ)
+    env.setdefault("PYTHON", sys.executable)
     result = subprocess.run(
         ["node", "tests/browser/test_settings_modernization.mjs"], cwd=ROOT,
-        capture_output=True, text=True, timeout=900,
+        capture_output=True, text=True, timeout=900, env=env,
     )
     failed = [line for line in result.stdout.splitlines() if line.startswith("FAIL ")]
     assert result.returncode == 0, "\n".join(failed) + "\n" + result.stdout[-3000:] + result.stderr[-1500:]
