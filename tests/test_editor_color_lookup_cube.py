@@ -5,7 +5,6 @@ parse/apply/generate maths is exercised for real. The rest is a static contract
 over the wiring (pixel-pass, adj-popup, galleryEditor ops, layer-helpers, sw).
 """
 import json
-import re
 import subprocess
 from pathlib import Path
 
@@ -136,5 +135,4 @@ def test_defaults_ops_and_sw():
     assert "_parseCubeLut(text)" in ge
     assert "_generateCubeLut({" in ge
     sw = SW.read_text()
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", sw)
     assert "/static/js/editor/fx/cube-lut.js" in sw

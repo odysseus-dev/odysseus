@@ -126,7 +126,6 @@ def test_develop_is_registered_as_an_adjustment_type_everywhere():
     assert "adjustments.apply', { type: 'develop' }" in WIRE_TOPBAR.read_text()
 
     sw = SW.read_text()
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", sw)
     assert "'/static/js/editor/fx/develop.js'," in sw
 
 

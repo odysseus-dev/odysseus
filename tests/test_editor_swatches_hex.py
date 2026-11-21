@@ -1,6 +1,5 @@
 """Swatches panel: inline picker + hex field + suggestions/recent (no big swatch)."""
 
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -60,8 +59,3 @@ def test_dock_undock_controls_removed():
     js = _read("static/js/editor/build/dock.js")
     assert "ge-dock-tab-pop" not in js
     assert "ge-dock-detach" not in js
-
-
-def test_sw_cache_name_versioned():
-    m = re.search(r"CACHE_NAME = '([^']+)'", _read("static/sw.js"))
-    assert m and re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

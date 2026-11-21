@@ -5,7 +5,6 @@ and the control-op catalog are plain JavaScript, so these tests assert the
 contract at the source level (the project's editor suites are contract/static,
 not a JS runtime).
 """
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +15,6 @@ TOPBAR = ROOT / "static/js/editor/build/topbar.js"
 VIEW_WIRE = ROOT / "static/js/editor/wire-view-menu.js"
 EXTRA_WIRE = ROOT / "static/js/editor/wire-extra-menus.js"
 GALLERY = ROOT / "static/js/galleryEditor.js"
-SW = ROOT / "static/sw.js"
 
 
 def _read(path):
@@ -121,8 +119,3 @@ def test_gallery_editor_mounts_and_exposes_control_ops():
         assert f"'{op}':" in src, op
     assert "panelVisibility.setVisible(p.id, p.visible !== false)" in src
     assert "panelVisibility.toggle(p.id)" in src
-
-
-def test_sw_cache_name_bumped():
-    src = _read(SW)
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", src)

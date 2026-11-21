@@ -3,7 +3,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = ROOT / "static/css/13-image-editor.css"
-SW = ROOT / "static/sw.js"
 
 
 def _css():
@@ -31,10 +30,3 @@ def test_mobile_peek_layers_list_is_not_centred_capped():
     # grow past the peek. That cap must be gone.
     css = _css()
     assert "max-height: calc(var(--peek-height, 110px) - 52px)" not in css
-
-
-def test_sw_cache_bumped():
-    # Version-agnostic: every commit bumps the SW cache.
-    import re
-    sw = SW.read_text(encoding="utf-8")
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", sw)

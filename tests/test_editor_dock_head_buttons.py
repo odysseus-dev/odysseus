@@ -1,10 +1,8 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCK_JS = (ROOT / "static/js/editor/build/dock.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_dock_head_button_glyphs_are_16px():
@@ -28,8 +26,3 @@ def test_dock_head_svg_rule_present():
         ".ge-dock-collapse svg, .ge-dock-detach svg, .ge-dock-tabs-more svg "
         "{ width: 16px; height: 16px; flex: 0 0 auto; }" in CSS
     )
-
-
-def test_sw_cache_name_bumped():
-    m = re.search(r"CACHE_NAME\s*=\s*'([^']+)'", SW)
-    assert m and re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

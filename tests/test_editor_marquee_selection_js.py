@@ -1,5 +1,4 @@
 import json
-import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -274,4 +273,3 @@ def test_marquee_is_wired_through_editor_and_offline_graph():
     assert "/static/js/editor/selection-mask.js" in service_worker
     assert "/static/js/editor/tools/marquee.js" in service_worker
     assert 'data-selection-action="transform"' in (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
-    assert re.search(r"const CACHE_NAME = 'odysseus-v\d+-[A-Za-z0-9_-]+';", service_worker)

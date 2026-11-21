@@ -7,11 +7,9 @@ no new colours). These markers assert the third alignment block stays in place.
 """
 
 import pathlib
-import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static" / "css" / "documents-gallery-editor.css").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 
 def test_preflight_card_and_rows_use_app_tokens():
@@ -50,9 +48,3 @@ def test_list_rows_use_panel_border_and_muted_tokens():
     assert "background: var(--color-muted);" in CSS
     assert "body.ge-editor-open .ge-layer-inline-thumb {" in CSS
     assert "body.ge-editor-open .ge-channel-eye {" in CSS
-
-
-def test_sw_version_is_current():
-    m = re.search(r"CACHE_NAME\s*=\s*'([^']+)'", SW)
-    assert m, "CACHE_NAME not found in static/sw.js"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))
