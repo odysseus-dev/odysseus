@@ -7,6 +7,7 @@
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
+import { includeToRegExp } from './cookbookGgufInclude.js';
 import { modelColor } from './chatRenderer.js?v=20260914metricssummary1';
 import {
   bindMenuDismiss,
@@ -1485,10 +1486,11 @@ function _rerenderCachedModels() {
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
-      const _preferredGgufInclude = String(sv('_preferredGgufInclude', '') || '').replace(/\*/g, '').toLowerCase();
-      const _preferredGguf = _preferredGgufInclude
-        ? (_ggufChoices.find(f => String(f.rel_path || '').toLowerCase().includes(_preferredGgufInclude))
-          || _ggufChoices.find(f => String(f.name || '').toLowerCase().includes(_preferredGgufInclude)))
+      const _preferredGgufInclude = String(sv('_preferredGgufInclude', '') || '');
+      const _preferredGgufRe = _preferredGgufInclude ? includeToRegExp(_preferredGgufInclude) : null;
+      const _preferredGguf = _preferredGgufRe
+        ? (_ggufChoices.find(f => _preferredGgufRe.test(String(f.rel_path || '')))
+          || _ggufChoices.find(f => _preferredGgufRe.test(String(f.name || ''))))
         : null;
       const _defaultGguf = _ggufChoices.some(f => f.rel_path === _savedGguf)
         ? _savedGguf
