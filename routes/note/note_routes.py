@@ -342,6 +342,7 @@ async def dispatch_reminder(
             from routes.email_routes import _get_email_config, _smtp_ready
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
+            from email.utils import make_msgid as _make_msgid
             from datetime import datetime as _dt
             # `reminder_email_account_id` lets the user pick WHICH email
             # account to send reminders from (when they have several
@@ -405,6 +406,10 @@ async def dispatch_reminder(
                 _t = _t[len('Reminder:'):].strip() if _t.lower().startswith('reminder:') else _t
                 msg["Subject"] = f"Reminder (Odysseus): {_t}"
                 msg["Date"] = _dt.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                # From-domain Message-ID — bare make_msgid() would use the
+                # container's non-resolvable fqdn, which receivers discard.
+                _from_domain = (from_addr or "").rsplit("@", 1)[-1].strip()
+                msg["Message-ID"] = _make_msgid(domain=_from_domain or None)
                 msg["X-Odysseus-Origin"] = "odysseus-ui"
                 msg["X-Odysseus-Kind"] = "reminder"
                 msg["X-Odysseus-Ref"] = str(note_id)

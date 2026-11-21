@@ -3352,7 +3352,10 @@ def setup_email_routes():
             msg_out["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
             msg_out["To"] = target
             msg_out["Subject"] = subject
-            msg_out["Message-ID"] = email.utils.make_msgid(domain="odysseus.local")
+            # From-domain Message-ID — the hardcoded local-only domain gets
+            # mail silently discarded by receiving providers.
+            from_domain = (cfg.get("from_address") or "").rsplit("@", 1)[-1].strip()
+            msg_out["Message-ID"] = email.utils.make_msgid(domain=from_domain or None)
             _apply_odysseus_headers(msg_out, "unsubscribe", uid)
             _send_smtp_message(cfg, cfg["from_address"], [target], msg_out.as_string())
             moved = False
