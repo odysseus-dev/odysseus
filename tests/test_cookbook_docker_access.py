@@ -1,3 +1,5 @@
+import subprocess
+
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
@@ -342,3 +344,46 @@ def test_local_ollama_download_probe_keeps_docker_fallback_when_allowed():
     assert "docker ps" in rendered
     assert "docker exec ${ODYSSEUS_OLLAMA_CONTAINER}" in rendered
     assert "ODYSSEUS_OLLAMA_PULL_CMD" in rendered
+
+
+def test_local_ollama_download_reports_missing_cli_before_blocked_fallback(tmp_path):
+    lines = []
+    cookbook_routes._append_local_ollama_download_command_lines(
+        lines,
+        "ollama pull llama3:latest",
+        docker_fallback_available=False,
+        docker_fallback_blocked=True,
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", "\n".join(lines)],
+        env={"PATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 127
+    assert "Ollama not found" in result.stdout
+    assert HOST_DOCKER_ACCESS_HINT in result.stdout
+
+
+def test_local_ollama_download_keeps_native_cli_when_fallback_blocked(tmp_path):
+    ollama = tmp_path / "ollama"
+    ollama.write_text("#!/bin/sh\nexit 0\n")
+    ollama.chmod(0o755)
+    lines = []
+    cookbook_routes._append_local_ollama_download_command_lines(
+        lines,
+        "ollama pull llama3:latest",
+        docker_fallback_available=False,
+        docker_fallback_blocked=True,
+    )
+    lines.append('printf "%s\\n" "$ODYSSEUS_OLLAMA_PULL_CMD"')
+    result = subprocess.run(
+        ["/bin/bash", "-c", "\n".join(lines)],
+        env={"PATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "ollama pull llama3:latest"
