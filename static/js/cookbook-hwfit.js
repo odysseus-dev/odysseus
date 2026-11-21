@@ -1391,6 +1391,19 @@ function _sortHwfitRows(models) {
   return rows;
 }
 
+function _renderHwfitFromCache() {
+  // Re-render the current HW Fit results from memory for sort-only changes.
+  // Avoids re-probing hardware and re-ranking models when the dataset is unchanged.
+  const list = document.getElementById('hwfit-list');
+  
+  if (!list || !_hwfitCache || !Array.isArray(_hwfitCache.models)) {
+    return false;
+  }
+
+  _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
+  return true;
+}
+
 export function _hwfitRenderList(el, models) {
   if (!el) return;
   models = _sortHwfitRows(models);
@@ -1584,7 +1597,9 @@ export function _hwfitRenderList(el, models) {
         // buries qwen/gemma-sized rows below absurd impossible footprints.
         sel.dataset.reverse = sortKey === 'vram' ? '1' : '0';
       }
-      _hwfitFetch();
+      if (!_renderHwfitFromCache()) {
+        _hwfitFetch();
+      }
     });
   });
 }
@@ -2270,7 +2285,11 @@ export function _hwfitInit() {
   }
   if (sort && !sort.dataset.hwfitScanBound) {
     sort.dataset.hwfitScanBound = '1';
-    sort.addEventListener('change', () => _hwfitFetch());
+    sort.addEventListener('change', () => {
+      if (!_renderHwfitFromCache()) {
+        _hwfitFetch();
+      }
+    });
   }
   if (qpref && !qpref.dataset.hwfitScanBound) {
     qpref.dataset.hwfitScanBound = '1';
