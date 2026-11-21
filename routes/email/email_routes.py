@@ -43,6 +43,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
+from src.email_perf import EMAIL_PERF, record_email_perf
 from src import shutdown as _shutdown
 from src.path_confinement import confine
 
@@ -2884,6 +2885,20 @@ def setup_email_routes():
             logger.debug(f"related thread attachment lookup failed uid={current_uid}: {e}")
         return related
 
+    @router.get("/metrics")
+    async def get_email_metrics(request: Request):
+        """Return bounded latency (p50/p95/avg/max) and cache hit-rate metrics for email flows."""
+        from core.middleware import require_admin
+        require_admin(request)
+        return EMAIL_PERF.snapshot()
+
+    @router.post("/metrics/reset")
+    async def reset_email_metrics(request: Request):
+        """Reset in-memory email performance counters and sliding latency windows."""
+        from core.middleware import require_admin
+        require_admin(request)
+        return EMAIL_PERF.reset()
+
     @router.get("/list")
     async def list_emails(
         folder: str = Query("INBOX"),
@@ -2911,16 +2926,24 @@ def setup_email_routes():
                     raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
         if date_from and date_to and date_from > date_to:
             raise HTTPException(status_code=400, detail="date_from must not be after date_to")
+        manual_refresh = bool(refresh)
+        def _record_list(cache_st: str, ok: bool = True) -> None:
+            elapsed = (time.monotonic() - started_at) * 1000.0
+            record_email_perf("list", elapsed, cache_status=cache_st, ok=ok)
+            if manual_refresh:
+                record_email_perf("refresh", elapsed, cache_status="bypass", ok=ok)
+
         fixture_result = _fixture_email_list(folder, limit, offset, filter, from_addr, owner, bool(has_attachments))
         if fixture_result is not None:
+            _record_list("hit", ok=not bool(fixture_result.get("error")))
             return fixture_result
-        manual_refresh = bool(refresh)
         if cached_only and not from_addr:
             indexed_emails, indexed_total, indexed_at = _email_index_list(
                 owner, account_id, folder, filter, limit, offset, bool(has_attachments),
             )
             if indexed_total:
                 _hide_unlinked_calendar_tags(indexed_emails)
+                _record_list("hit", ok=True)
                 return {
                     "emails": indexed_emails,
                     "total": indexed_total,
@@ -2933,6 +2956,7 @@ def setup_email_routes():
                         "cached_only": True,
                     },
                 }
+            _record_list("miss", ok=True)
             return {
                 "emails": [],
                 "total": 0,
@@ -3552,9 +3576,11 @@ def setup_email_routes():
         folder (Gmail does), we transparently swap to All Mail so the
         search surfaces archived / labelled emails too. Plain IMAP
         accounts fall back to whatever folder the caller specified."""
+        _search_started = time.monotonic()
         with _LIST_CACHE_LOCK:
             index_generation = _LIST_CACHE_GENERATION[0]
         if not q or len(q) < 2:
+            record_email_perf("search", (time.monotonic() - _search_started) * 1000.0, cache_status="hit", ok=True)
             return {"emails": [], "total": 0, "query": q}
         # CRLF in q would terminate the IMAP command early — reject defensively.
         if "\r" in q or "\n" in q:
@@ -3993,6 +4019,7 @@ def setup_email_routes():
         """Read email body. Cached for 30m, sync IMAP work runs in a thread."""
         mark_seen = True if mark_seen is True or str(mark_seen).lower() == "true" else False
         full = True if full is True or str(full).lower() == "true" else False
+        _read_started = time.monotonic()
         fixture_result = _fixture_email_read(uid, folder, owner)
         if fixture_result is not None:
             # require_owner validated the selected account. Fixture row labels
@@ -4000,6 +4027,12 @@ def setup_email_routes():
             # and other subsequent account-scoped operations.
             if account_id and not fixture_result.get("error"):
                 fixture_result = {**fixture_result, "account_id": account_id}
+            record_email_perf(
+                "read_body",
+                (time.monotonic() - _read_started) * 1000.0,
+                cache_status="hit",
+                ok=not bool(fixture_result.get("error")),
+            )
             return fixture_result
         ck = _read_cache_key(account_id, folder, uid, owner=owner) + (int(bool(full)),)
         cached = _read_cache_get(ck)
@@ -4093,8 +4126,10 @@ def setup_email_routes():
     @router.get("/attachments/{uid}")
     async def list_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """List attachments for an email."""
+        _att_started = time.monotonic()
         fixture = _fixture_email_read(uid, folder, owner)
         if fixture is not None and not fixture.get("error"):
+            record_email_perf("attachments_list", (time.monotonic() - _att_started) * 1000.0, cache_status="hit", ok=True)
             return {"attachments": fixture.get("attachments") or [], "uid": uid, "sync": {"source": "local"}}
         cached = _email_attachment_meta_cache_get(owner, account_id, folder, uid)
         if cached is not None:
@@ -4102,26 +4137,33 @@ def setup_email_routes():
             # indexing. Re-saving the metadata repairs stale card icons and
             # warms filename search without another IMAP download.
             _email_attachment_meta_cache_put(owner, account_id, folder, uid, "", cached)
+            record_email_perf("attachments_list", (time.monotonic() - _att_started) * 1000.0, cache_status="hit", ok=True)
             return {"attachments": cached, "uid": uid, "sync": {"source": "attachment_metadata_cache"}}
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
+                record_email_perf("attachments_list", (time.monotonic() - _att_started) * 1000.0, cache_status="miss", ok=False)
                 return {"attachments": [], "error": "Email not found"}
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
             attachments = _list_attachments_from_msg(msg)
             _email_attachment_meta_cache_put(owner, account_id, folder, uid, msg.get("Message-ID", ""), attachments)
+            record_email_perf("attachments_list", (time.monotonic() - _att_started) * 1000.0, cache_status="miss", ok=True)
             return {"attachments": attachments, "uid": uid}
         except Exception as e:
             logger.error(f"Failed to list attachments for {uid}: {e}")
+            record_email_perf("attachments_list", (time.monotonic() - _att_started) * 1000.0, cache_status="miss", ok=False)
             return {"attachments": [], "error": "Mail operation failed"}
 
     @router.get("/attachment/{uid}/{index}")
     async def download_attachment(uid: str, index: int, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Download a specific attachment by email UID and attachment index. Saves to local disk and returns the file."""
+        _dl_started = time.monotonic()
         fixture_att = _fixture_attachment_source(uid, index, owner, folder)
+        if fixture_att is not None:
+            record_email_perf("attachment_download", (time.monotonic() - _dl_started) * 1000.0, cache_status="hit", ok=True)
         if fixture_att is not None:
             _row, att = fixture_att
             filename = str(att.get("filename") or f"attachment-{index}.txt")
@@ -6158,10 +6200,12 @@ def setup_email_routes():
         if req.account_id:
             _assert_owns_account(req.account_id, owner)
 
+        _send_started = time.monotonic()
         try:
             cfg = _resolve_send_config(req.account_id, owner=owner)
         except Exception as e:
             logger.warning(f"No SMTP-capable account resolved: {e}")
+            record_email_perf("send", (time.monotonic() - _send_started) * 1000.0, ok=False)
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
@@ -6374,11 +6418,17 @@ def setup_email_routes():
 
         if req.wait_for_delivery:
             result = await asyncio.to_thread(_deliver)
+            record_email_perf(
+                "send",
+                (time.monotonic() - _send_started) * 1000.0,
+                ok=bool(result.get("success")),
+            )
             if result.get("success"):
                 return {"success": True, "queued": False, "message": f"Email sent to {req.to}", **result}
             return result
 
         background_tasks.add_task(_deliver)
+        record_email_perf("send", (time.monotonic() - _send_started) * 1000.0, ok=True)
         return {
             "success": True,
             "queued": True,
