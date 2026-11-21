@@ -19,6 +19,8 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
+const STATIC_DIR = path.resolve(ROOT, 'static');
+const REAL_STATIC_DIR = fs.realpathSync(STATIC_DIR);
 const CHROME_PATH = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.CHROME_PATH;
 
 // In-memory documents store for mock API
@@ -102,15 +104,11 @@ function startServer() {
       return;
     }
 
-    // Static file serving from repo root
-    
     if (pathname.startsWith('/api/')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{}');
       return;
     }
-    let filePath = path.join(ROOT, pathname);
-    console.log("SERVE FILE:", filePath, fs.existsSync(filePath));
 
     if (pathname === '/' || pathname === '/index.html') {
       // Deliver minimal test harness host
@@ -122,36 +120,81 @@ function startServer() {
   <title>Document Library Test Host</title>
   <link rel="stylesheet" href="/static/css/00-tokens.css">
   <link rel="stylesheet" href="/static/css/05-documents.css">
-<link rel="icon" href="data:,">
+  <link rel="icon" href="data:,">
 </head>
 <body>
   <div id="app">
     <button id="tool-doclib-btn" type="button">Doclib</button>
-  <div id="toast" class="toast"></div>
+    <div id="toast" class="toast"></div>
   </div>
 </body>
 </html>`);
       return;
     }
 
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      const ext = path.extname(filePath);
-      const mimeTypes = {
-        '.js': 'application/javascript',
-        '.mjs': 'application/javascript',
-        '.css': 'text/css',
-        '.html': 'text/html',
-        '.json': 'application/json',
-        '.svg': 'image/svg+xml',
-        '.png': 'image/png'
-      };
-      res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
-      res.end(fs.readFileSync(filePath));
+    // Secure static asset serving: confine strictly to /static/ directory
+    if (!pathname.startsWith('/static/')) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden: outside static directory');
       return;
     }
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found: ' + pathname);
+    let relPath;
+    try {
+      relPath = decodeURIComponent(pathname.slice('/static/'.length));
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad Request');
+      return;
+    }
+
+    const filePath = path.resolve(STATIC_DIR, relPath);
+    if (!filePath.startsWith(STATIC_DIR + path.sep)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden: directory traversal');
+      return;
+    }
+
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found: ' + pathname);
+      return;
+    }
+
+    let realFilePath;
+    try {
+      realFilePath = fs.realpathSync(filePath);
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found: ' + pathname);
+      return;
+    }
+
+    if (!realFilePath.startsWith(REAL_STATIC_DIR + path.sep)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden: symlink escape');
+      return;
+    }
+
+    const stat = fs.statSync(realFilePath);
+    if (!stat.isFile()) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden: not a regular file');
+      return;
+    }
+
+    const ext = path.extname(realFilePath);
+    const mimeTypes = {
+      '.js': 'application/javascript',
+      '.mjs': 'application/javascript',
+      '.css': 'text/css',
+      '.html': 'text/html',
+      '.json': 'application/json',
+      '.svg': 'image/svg+xml',
+      '.png': 'image/png'
+    };
+    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
+    res.end(fs.readFileSync(realFilePath));
   });
 
   return new Promise((resolve) => {
@@ -193,6 +236,27 @@ async function runValidation() {
   });
 
   try {
+    // 0. Test server security and path containment
+    console.log('0. Testing test HTTP server path containment and security...');
+    const forbiddenProbes = [
+      '/package.json',
+      '/.env',
+      '/.git/config',
+      '/static/../package.json',
+      '/static/%2e%2e/package.json',
+      '/static/..%2fpackage.json',
+      '/static/%2e%2e%2fpackage.json',
+    ];
+    for (const probe of forbiddenProbes) {
+      const probeRes = await fetch(origin + probe);
+      assert.equal(
+        probeRes.status,
+        403,
+        `Expected 403 Forbidden for path containment probe ${probe}, got ${probeRes.status}`
+      );
+    }
+    console.log('✓ Path containment verified: repository-root files and traversals are rejected with 403');
+
     await page.goto(origin + '/');
 
     // 1. Initialize and open Document Library

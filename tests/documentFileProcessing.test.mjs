@@ -611,3 +611,175 @@ describe('readFileContent', () => {
     assert.equal(result, 'key=value');
   });
 });
+
+describe('importFromDevice submission regression', () => {
+  const importDevicePath = path.join(ROOT, 'frontend', 'src', 'features', 'documents', 'ui', 'importFromDevice.js');
+  const importDeviceSource = fs.readFileSync(importDevicePath, 'utf8');
+
+  async function loadImportFromDeviceModule(globals = {}) {
+    const ctx = createContext({
+      window: globals.window || {},
+      document: globals.document || {},
+      FileReader: globals.FileReader || class {},
+      FormData: globals.FormData || globalThis.FormData,
+      fetch: globals.fetch || (async () => ({ ok: true, json: async () => ({}) })),
+      requestAnimationFrame: globals.requestAnimationFrame || (fn => setTimeout(fn, 0)),
+      setTimeout,
+      clearTimeout,
+      URL: globalThis.URL,
+      Promise,
+      Array,
+      Object,
+      Error,
+      TextEncoder,
+      console,
+    });
+
+    const fpUrl = pathToFileURL(SOURCE).href;
+    const fpMod = new SourceTextModule(sourceText, { identifier: fpUrl, context: ctx });
+    await fpMod.link(() => { throw new Error('No static imports in fileProcessing.js'); });
+    await fpMod.evaluate();
+
+    const devUrl = pathToFileURL(importDevicePath).href;
+    const devMod = new SourceTextModule(importDeviceSource, { identifier: devUrl, context: ctx });
+    await devMod.link((specifier) => {
+      if (specifier === './fileProcessing.js') {
+        return fpMod;
+      }
+      throw new Error(`Unexpected import specifier: ${specifier}`);
+    });
+    await devMod.evaluate();
+    return devMod.namespace;
+  }
+
+  function createDomEnvironment() {
+    let createdInput = null;
+    const doc = {
+      body: {
+        appendChild(child) {},
+      },
+      createElement(tag) {
+        if (tag === 'input') {
+          const listeners = {};
+          const el = {
+            type: '',
+            style: {},
+            files: [],
+            value: '',
+            remove() {},
+            addEventListener(event, fn) {
+              listeners[event] = fn;
+            },
+            click() {},
+            async triggerChange() {
+              if (listeners.change) {
+                await listeners.change();
+              }
+            },
+          };
+          createdInput = el;
+          return el;
+        }
+        return {};
+      },
+    };
+    return {
+      doc,
+      getInput: () => createdInput,
+    };
+  }
+
+  const MockFileReader = class {
+    readAsText(file) {
+      this.result = file._content !== undefined ? file._content : '';
+      Promise.resolve().then(() => {
+        if (this.onload) this.onload();
+      });
+    }
+  };
+
+  it('sends language: null to /api/document for unclassified extensions (.cfg, .conf, .env, .vue)', async () => {
+    const capturedRequests = [];
+    const mockFetch = async (url, opts = {}) => {
+      if (opts.method === 'POST' && url.includes('/api/document')) {
+        capturedRequests.push({ url, body: JSON.parse(opts.body) });
+        return { ok: true, json: async () => ({ id: 'doc-cfg-1', doc_id: 'doc-cfg-1' }) };
+      }
+      if (url.includes('/api/document/')) {
+        return { ok: true, json: async () => ({ id: 'doc-cfg-1', title: 'config', session_id: 'sess-1' }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    };
+
+    const domEnv = createDomEnvironment();
+    const mod = await loadImportFromDeviceModule({
+      document: domEnv.doc,
+      FileReader: MockFileReader,
+      fetch: mockFetch,
+    });
+
+    mod.initImportFromDevice({
+      getApiBase: () => '',
+      getSessionModule: () => ({ getCurrentSessionId: () => 'sess-test' }),
+    });
+
+    // Test .cfg
+    mod._importFromDevice();
+    const inputEl = domEnv.getInput();
+    assert.ok(inputEl, 'File input element should have been created');
+    inputEl.files = [{ name: 'settings.cfg', _content: 'param=true' }];
+    await inputEl.triggerChange();
+
+    assert.equal(capturedRequests.length, 1);
+    assert.equal(capturedRequests[0].body.title, 'settings');
+    assert.equal(capturedRequests[0].body.language, null, 'Unclassified .cfg must send language: null');
+    assert.equal(capturedRequests[0].body.content, 'param=true');
+    assert.equal(capturedRequests[0].body.session_id, 'sess-test');
+
+    // Test .conf and .env
+    inputEl.files = [{ name: 'nginx.conf', _content: 'server {}' }];
+    await inputEl.triggerChange();
+    assert.equal(capturedRequests.length, 2);
+    assert.equal(capturedRequests[1].body.language, null, 'Unclassified .conf must send language: null');
+
+    inputEl.files = [{ name: 'vars.env', _content: 'FOO=bar' }];
+    await inputEl.triggerChange();
+    assert.equal(capturedRequests.length, 3);
+    assert.equal(capturedRequests[2].body.language, null, 'Unclassified .env must send language: null');
+  });
+
+  it('sends mapped language for recognized extensions (.py -> python, .js -> javascript)', async () => {
+    const capturedRequests = [];
+    const mockFetch = async (url, opts = {}) => {
+      if (opts.method === 'POST' && url.includes('/api/document')) {
+        capturedRequests.push({ url, body: JSON.parse(opts.body) });
+        return { ok: true, json: async () => ({ id: 'doc-py-1', doc_id: 'doc-py-1' }) };
+      }
+      if (url.includes('/api/document/')) {
+        return { ok: true, json: async () => ({ id: 'doc-py-1', title: 'main', session_id: 'sess-1' }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    };
+
+    const domEnv = createDomEnvironment();
+    const mod = await loadImportFromDeviceModule({
+      document: domEnv.doc,
+      FileReader: MockFileReader,
+      fetch: mockFetch,
+    });
+
+    mod.initImportFromDevice({
+      getApiBase: () => '',
+      getSessionModule: () => ({ getCurrentSessionId: () => 'sess-test' }),
+    });
+
+    mod._importFromDevice();
+    const inputEl = domEnv.getInput();
+    inputEl.files = [{ name: 'main.py', _content: 'print("hello")' }];
+    await inputEl.triggerChange();
+
+    assert.equal(capturedRequests.length, 1);
+    assert.equal(capturedRequests[0].body.title, 'main');
+    assert.equal(capturedRequests[0].body.language, 'python', 'Recognized .py must send language: python');
+  });
+});
