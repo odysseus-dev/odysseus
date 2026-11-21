@@ -79,10 +79,25 @@ export function createAiSettings({ container }) {
       if (!(key in settings)) continue;
       const select = el.querySelector(`#${id}`);
       const model = settings[key] || '';
-      let option = [...select.options].find(option => {
-        const value = option.value;
-        return model ? value.slice(value.indexOf('::') + 2) === model : value === '';
-      });
+      const current = select.value;
+      const currentModel = current ? (current.includes('::') ? current.slice(current.indexOf('::') + 2) : current) : '';
+      let option = null;
+      if (model && currentModel === model && select.selectedIndex >= 0) {
+        option = select.options[select.selectedIndex];
+      } else if (model && id === 'ge-ai-command-model') {
+        try {
+          const saved = localStorage.getItem('ge-ai-command-model');
+          if (saved && (saved === model || (saved.includes('::') && saved.slice(saved.indexOf('::') + 2) === model))) {
+            option = [...select.options].find(opt => opt.value === saved);
+          }
+        } catch (_) {}
+      }
+      if (!option) {
+        option = [...select.options].find(opt => {
+          const value = opt.value;
+          return model ? (value.includes('::') ? value.slice(value.indexOf('::') + 2) === model : value === model) : value === '';
+        });
+      }
       if (!option && model && select.options.length) {
         option = document.createElement('option');
         option.value = `::${model}`;
@@ -90,9 +105,20 @@ export function createAiSettings({ container }) {
         option.disabled = true;
         select.append(option);
       }
-      if (option) select.value = option.value;
+      if (option) {
+        select.value = option.value;
+        select._previousValue = option.value;
+      }
     }
     updateFooterEditModel();
+    const cmdSelect = el.querySelector('#ge-ai-command-model');
+    if (cmdSelect && 'image_edit_model' in settings) {
+      try {
+        if (cmdSelect.value) localStorage.setItem('ge-ai-command-model', cmdSelect.value);
+        else localStorage.removeItem('ge-ai-command-model');
+      } catch (_) {}
+      globalThis.window?.dispatchEvent?.(new CustomEvent('ge-ai-command-model-change', { detail: { value: cmdSelect.value } }));
+    }
   }
   async function syncModels() {
     try { applyModels(await readImagePreferences()); }
@@ -102,12 +128,28 @@ export function createAiSettings({ container }) {
     el.querySelector(`#${id}`).addEventListener('change', async (event) => {
       const raw = event.target.value;
       if (raw === '__serve_cookbook__') return;
+      const previousValue = event.target._previousValue || '';
       const model = raw.includes('::') ? raw.slice(raw.indexOf('::') + 2) : '';
       try {
         status.textContent = 'Saving…';
         await saveImagePreferences({ [key]: model });
         status.textContent = 'Saved';
+        event.target._previousValue = raw;
+        if (key === 'image_edit_model') {
+          try {
+            if (raw) localStorage.setItem('ge-ai-command-model', raw);
+            else localStorage.removeItem('ge-ai-command-model');
+          } catch (_) {}
+        }
       } catch (error) {
+        event.target.value = previousValue;
+        if (key === 'image_edit_model') {
+          try {
+            if (previousValue) localStorage.setItem('ge-ai-command-model', previousValue);
+            else localStorage.removeItem('ge-ai-command-model');
+          } catch (_) {}
+          globalThis.window?.dispatchEvent?.(new CustomEvent('ge-ai-command-model-change', { detail: { value: previousValue } }));
+        }
         await syncModels();
         status.textContent = error.message;
       }

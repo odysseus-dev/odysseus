@@ -352,10 +352,6 @@ export function wireAIModelSelectors({ container, apiBase = '', openCookbookForI
             if (aiCommandSelect.value === '__serve_cookbook__') return;
             const val = scrubModelUrl(aiCommandSelect.value) || '';
             updateFooterEditModel();
-            try {
-              if (val) localStorage.setItem('ge-ai-command-model', val);
-              else localStorage.removeItem('ge-ai-command-model');
-            } catch (_) {}
             globalThis.window?.dispatchEvent?.(new CustomEvent('ge-ai-command-model-change', { detail: { value: val } }));
           });
         }

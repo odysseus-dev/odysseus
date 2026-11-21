@@ -266,3 +266,235 @@ test('picker reconstruction owns listeners and clears invalid persisted identiti
     }
   } finally { await browser.close(); }
 });
+
+test('Quick Edit preference update with Gallery closed, cross-tab broadcast, and backend failure recovery', async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    let backendSavedModel = '';
+    let shouldFailBackendSave = false;
+
+    const mockModels = [
+      { id: 'sdxl', label: 'SDXL Primary', kind: 'edit', provider: 'Cluster A', endpoint_id: 101 },
+      { id: 'sdxl', label: 'SDXL Secondary', kind: 'edit', provider: 'Cluster B', endpoint_id: 202 },
+      { id: 'qwen-image', label: 'Qwen Image', kind: 'edit', provider: 'Seneca', endpoint_id: 303 },
+    ];
+
+    await context.route('http://preference-recovery.local/**', async (route) => {
+      const url = new URL(route.request().url());
+      const path = url.pathname;
+
+      if (path === '/') {
+        return route.fulfill({
+          contentType: 'text/html',
+          body: `<!DOCTYPE html>
+          <html>
+            <body>
+              <div id="gallery-settings-container"></div>
+              <div id="editor-container">
+                <div id="ge-status-model"></div>
+              </div>
+            </body>
+          </html>`,
+        });
+      }
+
+      if (path === '/api/auth/settings') {
+        if (route.request().method() === 'POST') {
+          if (shouldFailBackendSave) {
+            return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Backend save simulated failure' }) });
+          }
+          const body = JSON.parse(route.request().postData() || '{}');
+          if ('image_edit_model' in body) backendSavedModel = body.image_edit_model || '';
+          return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ image_model: '', image_edit_model: backendSavedModel }) });
+        }
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ image_model: '', image_edit_model: backendSavedModel }) });
+      }
+
+      if (path.startsWith('/api/prefs')) {
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ image_edit_model: backendSavedModel }) });
+      }
+
+      if (path === '/api/editor/image-models') {
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ models: mockModels }) });
+      }
+
+      if (path === '/api/editor/agent-models') {
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ models: [] }) });
+      }
+
+      try {
+        const source = await readFile(new URL('..' + path, import.meta.url), 'utf8');
+        return route.fulfill({ contentType: 'text/javascript', body: source });
+      } catch (err) {
+        return route.abort();
+      }
+    });
+
+    const page1 = await context.newPage();
+    await page1.goto('http://preference-recovery.local/');
+
+    // Initialize editor and AI Settings with Gallery CLOSED (no gallery-image-model in DOM)
+    await page1.evaluate(async () => {
+      const { createAiSettings } = await import('/static/js/editor/ai-settings.js');
+      const { wireAIModelSelectors } = await import('/static/js/editor/ai-models.js');
+      window.aiSettings = createAiSettings({ container: document.getElementById('editor-container') });
+      wireAIModelSelectors({ container: document.getElementById('editor-container'), apiBase: '' });
+      await new Promise(r => setTimeout(r, 60));
+    });
+
+    // 1. Select a model in Quick Edit while Gallery is closed
+    const syncResult1 = await page1.evaluate(async () => {
+      const qeSelect = document.getElementById('ge-ai-command-model');
+      qeSelect.value = '101::sdxl';
+      qeSelect.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 60));
+      return {
+        qeValue: qeSelect.value,
+        savedKey: localStorage.getItem('ge-ai-command-model'),
+        galleryPresent: Boolean(document.getElementById('gallery-image-model')),
+      };
+    });
+
+    assert.equal(syncResult1.galleryPresent, false, 'Gallery must not be in DOM initially');
+    assert.equal(syncResult1.qeValue, '101::sdxl', 'Quick Edit selector adopted new model');
+    assert.equal(syncResult1.savedKey, '101::sdxl', 'Storage key synchronized while Gallery was closed');
+    assert.equal(backendSavedModel, 'sdxl', 'Backend preference store received persisted model');
+
+    // 1b. Backend failure recovery while Gallery is closed:
+    // Attempt change with backend returning HTTP 500, verify rollback in Quick Edit and storage,
+    // and verify that the unpersisted selection does NOT leak into Gallery when opened later.
+    shouldFailBackendSave = true;
+    const failureResultClosed = await page1.evaluate(async () => {
+      const qeSelect = document.getElementById('ge-ai-command-model');
+      const statusEl = document.getElementById('ge-ai-settings-save-status');
+
+      qeSelect.value = '303::qwen-image';
+      qeSelect.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 120));
+
+      return {
+        qeValue: qeSelect.value,
+        savedKey: localStorage.getItem('ge-ai-command-model'),
+        statusText: statusEl ? statusEl.textContent : '',
+        galleryPresent: Boolean(document.getElementById('gallery-image-model')),
+      };
+    });
+
+    assert.equal(failureResultClosed.galleryPresent, false, 'Gallery remains closed');
+    assert.match(failureResultClosed.statusText, /Backend save simulated failure|Could not save/i, 'Reports failure');
+    assert.equal(failureResultClosed.qeValue, '101::sdxl', 'Quick Edit rolled back to 101::sdxl with Gallery closed');
+    assert.equal(failureResultClosed.savedKey, '101::sdxl', 'Storage key rolled back to 101::sdxl with Gallery closed');
+    assert.notEqual(failureResultClosed.qeValue, '303::qwen-image', 'Negative control: rejected model not in Quick Edit');
+    assert.notEqual(failureResultClosed.savedKey, '303::qwen-image', 'Negative control: rejected model not in localStorage');
+    assert.equal(backendSavedModel, 'sdxl', 'Backend model remains unchanged');
+    shouldFailBackendSave = false;
+
+    // 2. Open Gallery afterward and verify correct selection was restored from storage
+    const galleryResult = await page1.evaluate(async () => {
+      const { openGallery } = await import('/static/js/gallery.js');
+      openGallery();
+      await new Promise(r => setTimeout(r, 80));
+      const gallerySelect = document.getElementById('gallery-image-model');
+      return {
+        galleryValue: gallerySelect ? gallerySelect.value : '',
+      };
+    });
+    assert.equal(galleryResult.galleryValue, '101::sdxl', 'Opening Gallery after change reflects synced model');
+    assert.notEqual(galleryResult.galleryValue, '303::qwen-image', 'Negative control: Gallery does not adopt failed selection');
+
+    // 3. Select a different model with Gallery already open
+    const syncResult2 = await page1.evaluate(async () => {
+      const qeSelect = document.getElementById('ge-ai-command-model');
+      qeSelect.value = '202::sdxl';
+      qeSelect.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 60));
+      const gallerySelect = document.getElementById('gallery-image-model');
+      return {
+        qeValue: qeSelect.value,
+        galleryValue: gallerySelect.value,
+        savedKey: localStorage.getItem('ge-ai-command-model'),
+      };
+    });
+    assert.equal(syncResult2.qeValue, '202::sdxl', 'Quick edit updated to 202::sdxl');
+    assert.equal(syncResult2.galleryValue, '202::sdxl', 'Gallery updated synchronously in same tab');
+    assert.equal(syncResult2.savedKey, '202::sdxl', 'Storage key updated');
+    assert.equal(backendSavedModel, 'sdxl', 'Backend saved model updated');
+
+    // 4. Cross-tab synchronization: open page2 and verify selection
+    const page2 = await context.newPage();
+    await page2.goto('http://preference-recovery.local/');
+    await page2.evaluate(async () => {
+      const { createAiSettings } = await import('/static/js/editor/ai-settings.js');
+      const { wireAIModelSelectors } = await import('/static/js/editor/ai-models.js');
+      const { openGallery } = await import('/static/js/gallery.js');
+      window.aiSettings = createAiSettings({ container: document.getElementById('editor-container') });
+      wireAIModelSelectors({ container: document.getElementById('editor-container'), apiBase: '' });
+      openGallery();
+      await new Promise(r => setTimeout(r, 80));
+    });
+
+    const page2Model = await page2.locator('#gallery-image-model').inputValue();
+    assert.equal(page2Model, '202::sdxl', 'Cross-tab page picked up synchronized storage key');
+
+    // 5. Backend failure recovery: inject 500 error
+    shouldFailBackendSave = true;
+    const failureResult = await page1.evaluate(async () => {
+      const qeSelect = document.getElementById('ge-ai-command-model');
+      const statusEl = document.getElementById('ge-ai-settings-save-status');
+
+      // Attempt to switch to Seneca Qwen model
+      qeSelect.value = '303::qwen-image';
+      qeSelect.dispatchEvent(new Event('change'));
+
+      // Wait for async save failure and rollback
+      await new Promise(r => setTimeout(r, 120));
+
+      const gallerySelect = document.getElementById('gallery-image-model');
+      return {
+        qeValue: qeSelect.value,
+        galleryValue: gallerySelect.value,
+        savedKey: localStorage.getItem('ge-ai-command-model'),
+        statusText: statusEl ? statusEl.textContent : '',
+      };
+    });
+
+    // Verification of failure recovery:
+    assert.match(failureResult.statusText, /Backend save simulated failure|Could not save/i, 'UI reports the save failure');
+    assert.equal(failureResult.qeValue, '202::sdxl', 'Quick Edit rolled back to previously persisted selection');
+    assert.equal(failureResult.galleryValue, '202::sdxl', 'Gallery rolled back to previously persisted selection');
+    assert.equal(failureResult.savedKey, '202::sdxl', 'Storage rolled back, preventing dirty state');
+
+    // Negative control: explicit check that rejected model was NOT retained
+    assert.notEqual(failureResult.qeValue, '303::qwen-image', 'Negative control: Quick Edit must not retain rejected model');
+    assert.notEqual(failureResult.galleryValue, '303::qwen-image', 'Negative control: Gallery must not retain rejected model');
+    assert.notEqual(failureResult.savedKey, '303::qwen-image', 'Negative control: Storage must not retain rejected model');
+
+    // 6. Subsequent successful save recovery
+    shouldFailBackendSave = false;
+    const recoveryResult = await page1.evaluate(async () => {
+      const qeSelect = document.getElementById('ge-ai-command-model');
+      const statusEl = document.getElementById('ge-ai-settings-save-status');
+
+      qeSelect.value = '303::qwen-image';
+      qeSelect.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 80));
+
+      const gallerySelect = document.getElementById('gallery-image-model');
+      return {
+        qeValue: qeSelect.value,
+        galleryValue: gallerySelect.value,
+        savedKey: localStorage.getItem('ge-ai-command-model'),
+        statusText: statusEl ? statusEl.textContent : '',
+      };
+    });
+
+    assert.equal(recoveryResult.statusText, 'Saved', 'Subsequent save reports Saved');
+    assert.equal(recoveryResult.qeValue, '303::qwen-image', 'Quick Edit accepted valid save');
+    assert.equal(recoveryResult.galleryValue, '303::qwen-image', 'Gallery updated after successful save');
+    assert.equal(recoveryResult.savedKey, '303::qwen-image', 'Storage updated after successful save');
+    assert.equal(backendSavedModel, 'qwen-image', 'Backend received final accepted model');
+  } finally {
+    await browser.close();
+  }
+});
