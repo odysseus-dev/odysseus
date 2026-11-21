@@ -1517,7 +1517,7 @@ function _setupResearchPickers(pane) {
       menu.hidden = false;
       picker.classList.add('open');
       button.setAttribute('aria-expanded', 'true');
-      unregister = bindMenuDismiss(menu, close, e => picker.contains(e.target));
+      unregister = bindMenuDismiss(menu, close, e => !picker.contains(e.target));
       menu.querySelector('.active')?.focus();
     };
     const selectValue = (value) => {
