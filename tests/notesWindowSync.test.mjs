@@ -506,13 +506,20 @@ test('Browser Scenario C: In-flight save is protected and completes cleanly with
 
 test('Browser Scenario D: Genuine concurrent edit triggers HTTP 409 conflict and preserves local edits', async () => {
   const serverVersion = { id: 'note-scen-d', title: 'Server Note', content: 'Server edit', body_revision: 'r2' };
+  let patchCalls = 0;
+  let keepMineBody = null;
   const h = setupWindowTest({
     note: { id: 'note-scen-d', title: 'Conflict Note', content: 'Initial content', body_revision: 'r1' },
     apiOverrides: {
-      patchNote: async () => {
-        const err = new Error('conflict');
-        err.status = 409;
-        throw err;
+      patchNote: async (id, body) => {
+        patchCalls++;
+        if (patchCalls === 1) {
+          const err = new Error('conflict');
+          err.status = 409;
+          throw err;
+        }
+        keepMineBody = body;
+        return { id, ...body, body_revision: 'r3' };
       },
       getNote: async () => serverVersion,
     },
@@ -528,13 +535,13 @@ test('Browser Scenario D: Genuine concurrent edit triggers HTTP 409 conflict and
     assert.equal(session.conflict.local.content, 'Local conflict edit');
 
     // Resolving conflict with Keep mine writes local text over server revision
-    let keepMineBody = null;
-    h.note.api = {
-      patchNote: async (id, body) => {
-        keepMineBody = body;
-        return { id, ...body, body_revision: 'r3' };
-      },
-    };
+    await session.resolveConflict('keep');
+    assert.equal(session.conflict, null);
+    assert.equal(session.base, 'r3');
+    assert.equal(session.saved.content, 'Local conflict edit');
+    assert.equal(keepMineBody?.body_revision, 'r2');
+    assert.equal(keepMineBody?.content, 'Local conflict edit');
+    assert.equal(keepMineBody?.replace_content, true);
   } finally {
     h.cleanup();
   }

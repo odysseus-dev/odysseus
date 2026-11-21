@@ -660,3 +660,302 @@ test('MAJOR on a phone a swipe-down saves the edit like the close button', async
   await expect(page.locator('#note-window-modal .note-window-body')).toHaveText('Line swiped');
   await context.close();
 });
+
+test('Focus-Deferred Synchronization: focus on editor or modal defers sync and reconciles on authentic focusout', async ({ browser }) => {
+  const id = await makeNote(owner, 'QA Focus Sync Note', '- [ ] Task 1\n- [ ] Task 2');
+  const { context, page, body } = await openNote(browser, owner, id);
+  try {
+    // 1-4. Edit the content and allow autosave to complete
+    await body.locator('li .md-task-text').first().click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' edited');
+    await expect.poll(async () => (await read(owner, id)).content, { timeout: 5000 }).toContain('- [ ] Task 1 edited');
+
+    // 5. Keep focus inside the modal on an actual editor element
+    const titleInput = page.locator('#note-window-modal .note-window-title');
+    await titleInput.focus();
+    const isFocusedInModal = await page.evaluate(() => {
+      const active = document.activeElement;
+      return !!active && document.querySelector('#note-window-modal')?.contains(active);
+    });
+    expect(isFocusedInModal).toBe(true);
+
+    // 6-7. Trigger a newer note revision through the application flow without moving focus
+    await page.evaluate(noteId => {
+      const dot = document.querySelectorAll(`.note-card[data-note-id="${noteId}"] .note-checkbox`)[1];
+      dot?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }, id);
+
+    // Wait for the server to have recorded the toggled item
+    await expect.poll(async () => (await read(owner, id)).items?.[1]?.done, { timeout: 5000 }).toBe(true);
+
+    // 8. Verify synchronization did not destructively replace the active editor while focused
+    const taskDoneInModalBeforeBlur = await body.locator('.md-task-box[aria-checked="true"]').count();
+    expect(taskDoneInModalBeforeBlur).toBe(0);
+
+    // 9. Move focus outside the modal using actual browser interaction
+    await page.locator('#notes-search').focus();
+
+    // 10. Verify the real focusout handler reconciles the updated content
+    await expect.poll(async () => body.locator('.md-task-box[aria-checked="true"]').count(), { timeout: 5000 }).toBe(1);
+    await expect(body).toContainText('Task 1 edited');
+  } finally {
+    await context?.close();
+  }
+});
+
+test('Minimized Window: updating checklist on card synchronizes into restored window', async ({ browser }) => {
+  const id = await makeNote(owner, 'QA Minimized Window Note', '- [ ] Item Alpha\n- [ ] Item Beta');
+  const { context, page, body } = await openNote(browser, owner, id);
+  try {
+    // 2-3. Edit and successfully autosave
+    await body.locator('li .md-task-text').first().click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' saved');
+    await expect.poll(async () => (await read(owner, id)).content, { timeout: 5000 }).toContain('- [ ] Item Alpha saved');
+
+    // 4. Minimize its window
+    const minimizeBtn = page.locator('#note-window-modal .modal-minimize-btn');
+    await minimizeBtn.click();
+    await expect(page.locator('#note-window-modal')).toHaveClass(/minimized/);
+
+    // 5. Update a checklist item through the note card
+    const cardItemBox = page.locator(`#notes-pane .note-card[data-note-id="${id}"] .note-checkbox`).nth(1);
+    await cardItemBox.click();
+    await expect.poll(async () => (await read(owner, id)).items?.[1]?.done, { timeout: 5000 }).toBe(true);
+
+    // 6. Restore the window via the dock chip
+    const dockChip = page.locator('.minimized-dock-chip[data-modal-id="note-window-modal"]');
+    await dockChip.click();
+    await expect(page.locator('#note-window-modal')).not.toHaveClass(/minimized/);
+
+    // 7. Verify the new checklist state appears in the restored window
+    await expect(body.locator('.md-task-box[aria-checked="true"]')).toHaveCount(1);
+    await expect(body).toContainText('Item Alpha saved');
+
+    // 8. Verify no unintended content overwrite or duplicate request occurred
+    const serverNote = await read(owner, id);
+    expect(serverNote.content).toContain('- [ ] Item Alpha saved');
+    expect(serverNote.items?.[1]?.done).toBe(true);
+  } finally {
+    await context?.close();
+  }
+});
+
+test('In-Flight Save: competing revision during in-flight save prevents silent overwrite and enters conflict', async ({ browser }) => {
+  const id = await makeNote(owner, 'QA In-Flight Note', 'Initial text');
+  let releaseSave;
+  let saveStarted = false;
+  const saveGate = new Promise(resolve => { releaseSave = resolve; });
+
+  const { context, page, body } = await openNote(browser, owner, id, async ctx => {
+    await ctx.route(`**/api/notes/${id}`, async route => {
+      if (route.request().method() === 'PUT' || route.request().method() === 'PATCH') {
+        saveStarted = true;
+        await saveGate;
+      }
+      await route.continue();
+    });
+  });
+
+  try {
+    // 1-2. Begin an autosave by typing
+    await body.locator('p').first().click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' and in-flight local edit');
+
+    // Wait until the autosave request is in flight
+    await expect.poll(() => saveStarted, { timeout: 5000 }).toBe(true);
+
+    // 3. While save is held in flight, introduce a competing revision on the server
+    const currentRev = (await read(owner, id)).body_revision;
+    const updateRes = await owner.put(`/api/notes/${id}`, {
+      data: {
+        title: 'Competing Title',
+        content: 'Remote competing server content',
+        body_revision: currentRev,
+        replace_content: true,
+      },
+    });
+    expect(updateRes.ok()).toBe(true);
+
+    // 4. Verify the editor does not silently adopt incompatible content while in-flight
+    await expect(body).toContainText('in-flight local edit');
+    expect(await page.locator('#note-window-modal .note-window-title').inputValue()).not.toBe('Competing Title');
+
+    // 5. Release the in-flight request
+    releaseSave();
+
+    // 6. The in-flight save met 409 on the server; noteWindow enters conflict banner
+    const banner = page.locator('#note-window-modal .note-window-banner:not(.hidden)');
+    await expect(banner).toBeVisible({ timeout: 5000 });
+    await expect(banner).toContainText('changed elsewhere');
+    await expect(banner.getByRole('button', { name: 'Reload' })).toBeVisible();
+    await expect(banner.getByRole('button', { name: 'Keep mine' })).toBeVisible();
+
+    // Verify local edits are preserved in editor
+    await expect(body).toContainText('in-flight local edit');
+  } finally {
+    releaseSave?.();
+    await context?.close();
+  }
+});
+
+test('Failed Save: network failure followed by newer server revision preserves unsaved content for recovery', async ({ browser }) => {
+  const id = await makeNote(owner, 'QA Failed Save Note', 'Initial offline baseline');
+  let failSave = true;
+
+  const { context, page, body } = await openNote(browser, owner, id, async ctx => {
+    await ctx.route(`**/api/notes/${id}`, async route => {
+      const m = route.request().method();
+      if (failSave && (m === 'PUT' || m === 'PATCH')) {
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+  });
+
+  try {
+    // 1-2. Type local edits and let autosave fail
+    await body.locator('p').first().click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' with offline uncommitted typing');
+
+    // Wait for the failure to occur and verify draft was backed up in local storage
+    await expect.poll(async () => {
+      return page.evaluate(noteId => {
+        const raw = localStorage.getItem(`odysseus-note-draft-${noteId}`);
+        return raw ? JSON.parse(raw)?.content : null;
+      }, id);
+    }, { timeout: 5000 }).toContain('with offline uncommitted typing');
+
+    // Stop failing saves so other API calls can function
+    failSave = false;
+
+    // 3. Competing revision is created on server
+    const currentRev = (await read(owner, id)).body_revision;
+    const putRes = await owner.put(`/api/notes/${id}`, {
+      data: {
+        title: 'Server Updated While Offline',
+        content: 'Server revision content created while offline',
+        body_revision: currentRev,
+        replace_content: true,
+      },
+    });
+    expect(putRes.ok()).toBe(true);
+
+    // 4. Trigger card render in notes pane
+    await page.evaluate(() => {
+      window.notesModule.openPanel?.();
+    });
+
+    // 5. Verify local edits remain intact in the active editor
+    await expect(body).toContainText('with offline uncommitted typing');
+    expect(await body.textContent()).not.toContain('Server revision content created while offline');
+
+    // 6. Verify unsaved content remains available in storage for recovery
+    const draftInStorage = await page.evaluate(noteId => {
+      const raw = localStorage.getItem(`odysseus-note-draft-${noteId}`);
+      return raw ? JSON.parse(raw)?.content : null;
+    }, id);
+    expect(draftInStorage).toContain('with offline uncommitted typing');
+  } finally {
+    await context?.close();
+  }
+});
+
+test('Conflict Recovery: Reload adopts server content and Keep mine writes local text over server revision', async ({ browser }) => {
+  // Part 1: Keep mine workflow
+  const idKeep = await makeNote(owner, 'QA Conflict Keep Note', 'Baseline Keep text');
+  let patchCountKeep = 0;
+
+  const { context: ctxKeep, page: pageKeep, body: bodyKeep } = await openNote(browser, owner, idKeep, async ctx => {
+    await ctx.route(`**/api/notes/${idKeep}`, async route => {
+      const m = route.request().method();
+      if (m === 'PUT' || m === 'PATCH') {
+        patchCountKeep++;
+        if (patchCountKeep === 1) {
+          await route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'conflict' }),
+          });
+          return;
+        }
+      }
+      await route.continue();
+    });
+  });
+
+  try {
+    await bodyKeep.locator('p').first().click();
+    await pageKeep.keyboard.press('End');
+    await pageKeep.keyboard.type(' - local keep edits');
+
+    const bannerKeep = pageKeep.locator('#note-window-modal .note-window-banner:not(.hidden)');
+    await expect(bannerKeep).toBeVisible({ timeout: 5000 });
+    await expect(bannerKeep).toContainText('changed elsewhere');
+
+    // Click 'Keep mine'
+    await bannerKeep.getByRole('button', { name: 'Keep mine' }).click();
+
+    // Verify banner is dismissed
+    await expect(bannerKeep).toHaveCount(0);
+
+    // Verify server has received the local text overwritten
+    await expect.poll(async () => (await read(owner, idKeep)).content, { timeout: 5000 }).toContain('Baseline Keep text - local keep edits');
+  } finally {
+    await ctxKeep?.close();
+  }
+
+  // Part 2: Reload workflow
+  const idReload = await makeNote(owner, 'QA Conflict Reload Note', 'Baseline Reload text');
+  let patchCountReload = 0;
+
+  const { context: ctxReload, page: pageReload, body: bodyReload } = await openNote(browser, owner, idReload, async ctx => {
+    await ctx.route(`**/api/notes/${idReload}`, async route => {
+      const m = route.request().method();
+      if (m === 'PUT' || m === 'PATCH') {
+        patchCountReload++;
+        if (patchCountReload === 1) {
+          const rev = (await read(owner, idReload)).body_revision;
+          const reloadPut = await owner.put(`/api/notes/${idReload}`, {
+            data: {
+              content: 'Server authoritative update for reload test',
+              body_revision: rev,
+              replace_content: true,
+            },
+          });
+          expect(reloadPut.ok()).toBe(true);
+          await route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'conflict' }),
+          });
+          return;
+        }
+      }
+      await route.continue();
+    });
+  });
+
+  try {
+    await bodyReload.locator('p').first().click();
+    await pageReload.keyboard.press('End');
+    await pageReload.keyboard.type(' - typing to discard on reload');
+
+    const bannerReload = pageReload.locator('#note-window-modal .note-window-banner:not(.hidden)');
+    await expect(bannerReload).toBeVisible({ timeout: 5000 });
+
+    // Click 'Reload'
+    await bannerReload.getByRole('button', { name: 'Reload' }).click();
+
+    // Verify banner is dismissed and editor shows the authoritative server content
+    await expect(bannerReload).toHaveCount(0);
+    await expect(bodyReload).toContainText('Server authoritative update for reload test');
+    expect(await bodyReload.textContent()).not.toContain('typing to discard on reload');
+  } finally {
+    await ctxReload?.close();
+  }
+});
