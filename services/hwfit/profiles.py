@@ -20,6 +20,7 @@ from services.hwfit.models import (
     params_b,
     _active_params_b,
     is_prequantized,
+    kv_gb_per_token,
 )
 
 # GGUF KV-cache cost per token, in bytes-per-active-billion-param, by cache type.
@@ -43,8 +44,7 @@ def _weights_gb(model, quant, fixed_gb=None):
 
 def _kv_gb(model, ctx, kv_type):
     """KV-cache VRAM at a context length and cache type."""
-    kv_params = _active_params_b(model)
-    return 0.000008 * kv_params * ctx * _KV_FACTOR.get(kv_type, 1.0)
+    return kv_gb_per_token(model, cache_type=kv_type or "q8_0") * ctx
 
 
 def _n_layers(model):
