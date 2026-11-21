@@ -1070,14 +1070,13 @@ async function testAdminLoadFailure(instance, cookies) {
       ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
       : route.continue()
   ));
-  const initialRefreshPromise = admin.page.waitForResponse(
-    r => r.url().includes('foreground_fallback=true'),
-    { timeout: 15000 }
-  );
   await openSettings(admin.page, 'ai');
   await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
-  await initialRefreshPromise;
-  await admin.page.evaluate(() => new Promise(r => setTimeout(r, 50)));
+  await admin.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    const settings = await import(src);
+    await settings.refreshAiModelEndpoints();
+  });
   const priorOption = await admin.page.$('#set-defaultEpSelect option');
   // Leave and return: the AI panel refreshes its endpoint lists on entry.
   await admin.page.click('[data-settings-tab="search"]');
