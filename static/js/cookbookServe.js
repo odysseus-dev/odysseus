@@ -3904,6 +3904,9 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
   } else {
     target = `~/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}`;
   }
+  // HF inventory paths start at <revision>/<file>, relative to snapshots.
+  // Custom model directories report paths relative to the model itself.
+  const filesTarget = m?.is_local_dir ? target : `${target}/snapshots`;
   let deleteChoice = { mode: 'repo' };
   const ggufFiles = _ggufFilesForModel(m);
   if (!skipConfirm) {
@@ -3921,11 +3924,14 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
     const winTarget = target.startsWith('~')
       ? target.replace(/^~/, '$env:USERPROFILE').replace(/\//g, '\\')
       : target.replace(/\//g, '\\');
+    const winFilesTarget = filesTarget.startsWith('~')
+      ? filesTarget.replace(/^~/, '$env:USERPROFILE').replace(/\//g, '\\')
+      : filesTarget.replace(/\//g, '\\');
     if (deleteChoice.mode === 'files') {
       const targets = deleteChoice.files
         .map(f => _safeGgufRelPath(f.rel_path))
         .filter(Boolean)
-        .map(rel => `${winTarget}\\${rel.replace(/\//g, '\\')}`);
+        .map(rel => `${winFilesTarget}\\${rel.replace(/\//g, '\\')}`);
       if (!targets.length) return;
       cmd = targets.map(p => `Remove-Item -Force ${_psSingleQuote(p)} -ErrorAction SilentlyContinue`).join('; ');
     } else {
@@ -3943,7 +3949,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
       const targets = deleteChoice.files
         .map(f => _safeGgufRelPath(f.rel_path))
         .filter(Boolean)
-        .map(rel => `${target.replace(/\/+$/, '')}/${rel}`);
+        .map(rel => `${filesTarget.replace(/\/+$/, '')}/${rel}`);
       if (!targets.length) return;
       cmd = `rm -f ${targets.map(p => _shellPathExpr(p)).join(' ')} && find ${_shellPathExpr(target)} -type d -empty -delete`;
     } else {
@@ -3978,7 +3984,9 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
         const removed = new Set(deleteChoice.files.map(f => _safeGgufRelPath(f.rel_path)));
         m.gguf_files = m.gguf_files.filter(f => !removed.has(_safeGgufRelPath(f.rel_path)));
       }
-      await _fetchCachedModels(false);
+      // Rescan the filesystem after removal; a cached inventory still lists
+      // the deleted file and would immediately restore it in the picker.
+      await _fetchCachedModels(true);
     } else if (itemEl) {
       itemEl.querySelector('.cookbook-delete-overlay')?.remove();
       itemEl.style.transition = 'opacity 0.24s ease, transform 0.24s ease, max-height 0.28s ease, padding 0.28s ease, margin 0.28s ease';
