@@ -2145,9 +2145,20 @@ async def _execute_tool_block_impl(
     # semantic contract of write_file.  Keep text writes from corrupting a
     # rendered image/PDF even when the bridge handles the physical write.
     if tool == "write_file":
-        rejected = _text_write_to_binary_artifact_result(content)
-        if rejected is not None:
-            return rejected
+        try:
+            write_args = json.loads(content) if content.lstrip().startswith("{") else {}
+        except (TypeError, ValueError):
+            write_args = {}
+        pdf_requested = isinstance(write_args, dict) and write_args.get("format") == "pdf"
+        if pdf_requested and bridge_owns_tool:
+            return "write_file: unsupported", {
+                "error": "PDF rendering is unavailable on this workspace bridge.",
+                "exit_code": 1,
+            }
+        if not pdf_requested:
+            rejected = _text_write_to_binary_artifact_result(content)
+            if rejected is not None:
+                return rejected
 
     mark_authorized()
     if bridge_owns_tool:

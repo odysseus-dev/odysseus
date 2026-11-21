@@ -77,6 +77,21 @@ def test_inference_ignores_negated_edits_and_callable_names():
     )
 
 
+def test_inference_skips_numeric_versions_but_keeps_actual_filenames():
+    assert infer_completion_requirements(
+        'Create a PDF about model 3.5 named report.pdf'
+    ).required_artifacts == ('report.pdf',)
+    assert infer_completion_requirements(
+        'Create a PDF about model 3.5.2'
+    ).required_artifacts == ()
+    assert infer_completion_requirements(
+        'Create release-v3.5.pdf'
+    ).required_artifacts == ('release-v3.5.pdf',)
+    assert infer_completion_requirements(
+        'Create a file named 3.5'
+    ).required_artifacts == ('3.5',)
+
+
 def test_inference_ignores_prose_abbreviations_that_look_like_paths():
     requirements = infer_completion_requirements(
         "Generate statistics, e.g. token counts and timing totals."
