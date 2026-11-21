@@ -74,78 +74,40 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     action = arguments.get("action", "")
 
     if action == "list":
-        if not _personal_docs_manager:
-            return [TextContent(type="text", text="Personal docs manager not available. RAG may not be configured.")]
-        try:
-            files = getattr(_personal_docs_manager, 'index', None) or []
-            dirs = []
-            if hasattr(_personal_docs_manager, 'get_indexed_directories'):
-                dirs = _personal_docs_manager.get_indexed_directories()
-
-            lines = []
-            if dirs:
-                lines.append(f"**Indexed directories ({len(dirs)}):**")
-                for d in dirs:
-                    lines.append(f"  - `{d}`")
-            if files:
-                lines.append(f"\n**Indexed files ({len(files)}):**")
-                for f in files[:50]:
-                    fname = f.get("name", str(f)) if isinstance(f, dict) else str(f)
-                    lines.append(f"  - {fname}")
-                if len(files) > 50:
-                    lines.append(f"  ... and {len(files) - 50} more")
-            if not lines:
-                return [TextContent(type="text", text="No files or directories indexed in RAG.")]
-            return [TextContent(type="text", text="\n".join(lines))]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error: {e}")]
+        return [
+            TextContent(
+                type="text",
+                text="Error: MCP RAG listing is disabled until authenticated owner-scoped listing is available.",
+            )
+        ]
 
     elif action == "add_directory":
         _dir = arguments.get("directory")
         directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: add_directory needs a directory path")]
-        # Store an absolute path so indexed `source` metadata is absolute and
-        # remove_directory (which abspath-normalizes) can match it later (#1660).
-        directory = os.path.abspath(os.path.expanduser(directory))
-        if not os.path.isdir(directory):
-            return [TextContent(type="text", text=f"Error: Directory not found: {directory}")]
-        if not _rag_manager:
-            return [TextContent(type="text", text="Error: RAG manager not available")]
-        try:
-            result = _rag_manager.index_personal_documents(directory)
-            indexed = result.get("indexed_count", 0) if isinstance(result, dict) else 0
-            # Record the directory so `list` and `remove_directory` can see it.
-            # Indexing was just done above, so pass index=False to avoid a second
-            # (ownerless) pass. Without this the directory was indexed but never
-            # tracked in indexed_directories, so it was invisible/unremovable.
-            if _personal_docs_manager and hasattr(_personal_docs_manager, "add_directory"):
-                try:
-                    _personal_docs_manager.add_directory(directory, index=False)
-                except Exception:
-                    pass
-            return [TextContent(type="text", text=f"Directory '{directory}' added to RAG index ({indexed} chunks indexed)")]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error: Failed to index directory: {e}")]
+        return [
+            TextContent(
+                type="text",
+                text="Error: MCP directory indexing is disabled until authenticated owner-scoped indexing is available.",
+            )
+        ]
 
     elif action == "remove_directory":
         _dir = arguments.get("directory")
         directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
-        # Expand ~ to match add_directory, which indexes the expanded path.
-        # Without this, removing "~/docs" never matches the stored absolute path.
-        directory = os.path.expanduser(directory)
-        if not _personal_docs_manager:
-            return [TextContent(type="text", text="Error: Personal docs manager not available")]
-        try:
-            if hasattr(_personal_docs_manager, 'remove_directory'):
-                _personal_docs_manager.remove_directory(directory)
-            if _rag_manager and hasattr(_rag_manager, 'remove_directory'):
-                _rag_manager.remove_directory(directory)
-            return [TextContent(type="text", text=f"Directory '{directory}' removed from RAG index")]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error: Failed to remove directory: {e}")]
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    "Error: MCP directory removal is disabled until "
+                    "authenticated owner-scoped deletion is available. "
+                    "Use the authorized application deletion workflow."
+                ),
+            )
+        ]
 
     else:
         return [TextContent(type="text", text=f"Error: Unknown action '{action}'. Use: list, add_directory, remove_directory")]
