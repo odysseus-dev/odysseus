@@ -109,7 +109,7 @@ async def test_write_file_keeps_workspace_results_on_the_stable_virtual_path(tmp
     assert result["exit_code"] == 0
     assert "/workspace/results/report.txt" in result["output"]
     assert str(tmp_path) not in result["output"]
-    assert (tmp_path / "results" / "report.txt").read_text() == "done"
+    assert (tmp_path / "results" / "report.txt").read_text(encoding="utf-8") == "done"
 
 
 @pytest.mark.asyncio

@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_calendar_tool_cards_link_to_events_in_live_and_saved_renderers():
-    live_src = (ROOT / "static/js/chat.js").read_text()
-    renderer_src = (ROOT / "static/js/chatRenderer.js").read_text()
+    live_src = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
+    renderer_src = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
 
     assert "renderToolIcon(json.tool, cmd, json)" in live_src
     assert "_calendarEventUidFromToolData" in renderer_src
@@ -21,18 +21,18 @@ def test_calendar_tool_cards_link_to_events_in_live_and_saved_renderers():
 
 def test_successful_calendar_tool_output_is_suppressed_in_live_and_saved_renderers():
     for rel in ("static/js/chat.js", "static/js/chatRenderer.js"):
-        src = (ROOT / rel).read_text()
+        src = (ROOT / rel).read_text(encoding="utf-8")
         assert "manage_calendar" in src
         assert "return true;" in src
 
 
 def test_calendar_chat_event_links_fetch_uid_and_show_title_time():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
-    routes_src = (ROOT / "routes/calendar_routes.py").read_text()
-    app_src = (ROOT / "static/app.js").read_text()
-    renderer_src = (ROOT / "static/js/chatRenderer.js").read_text()
-    inbox_src = (ROOT / "static/js/emailInbox.js").read_text()
+    routes_src = (ROOT / "routes/calendar_routes.py").read_text(encoding="utf-8")
+    app_src = (ROOT / "static/app.js").read_text(encoding="utf-8")
+    renderer_src = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+    inbox_src = (ROOT / "static/js/emailInbox.js").read_text(encoding="utf-8")
     library_src = email_library_source()
 
     assert '@router.get("/events/{uid}")' in routes_src
@@ -58,8 +58,8 @@ def test_calendar_chat_event_links_fetch_uid_and_show_title_time():
 
 
 def test_recurring_occurrence_delete_does_not_fall_back_to_series_delete():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    routes_src = (ROOT / "routes/calendar_routes.py").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
+    routes_src = (ROOT / "routes/calendar_routes.py").read_text(encoding="utf-8")
 
     assert "const deleteOccurrenceOnly = scope === 'occurrence';" in calendar_src
     assert "const scopeParam = scope === 'occurrence' ? '?scope=occurrence' : '';" in calendar_src
@@ -67,7 +67,7 @@ def test_recurring_occurrence_delete_does_not_fall_back_to_series_delete():
 
 
 def test_memory_used_pill_reuses_sidebar_brain_icon():
-    renderer_src = (ROOT / "static/js/chatRenderer.js").read_text()
+    renderer_src = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
 
     assert "memory-used-pill-text" in renderer_src
     assert "M12 5a3 3 0 1 0-5.997.125" in renderer_src

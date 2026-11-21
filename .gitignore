@@ -126,5 +126,10 @@ compound.config.json
 _scratch/
 /odysseus/
 
+# OPS-V3-203/204 Trust Registry local secrets & runtime ledger
+data/trust/keys/
+data/trust/ledger.jsonl
+data/trust/*.lock
+
 # Real-application browser validation reports (scripts/run_real_playwright_validation.py)
 /artifacts/

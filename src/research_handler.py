@@ -272,6 +272,7 @@ class ResearchHandler:
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         owner: str = "",
+        enable_domain_verifiers: bool = False,
     ) -> dict:
         """Start research as a background task. Returns task info dict.
 
@@ -321,6 +322,7 @@ class ResearchHandler:
             "mode": "research",
             # SECURITY: track ownership so all reads / saves can filter by user.
             "owner": owner or "",
+            "enable_domain_verifiers": bool(enable_domain_verifiers),
         }
         self._active_tasks[session_id] = entry
 
@@ -357,6 +359,7 @@ class ResearchHandler:
                         session_id=session_id,
                         extraction_timeout=extraction_timeout,
                         extraction_concurrency=extraction_concurrency,
+                        enable_domain_verifiers=bool(enable_domain_verifiers),
                     ),
                     timeout=hard_timeout,
                 )
@@ -635,6 +638,45 @@ class ResearchHandler:
         return []
 
     @staticmethod
+    def _extract_domain_verification_telemetry(verification_summary: Optional[dict]) -> Optional[dict]:
+        """Extract structured domain verifier telemetry when domain verifiers were active."""
+        if not isinstance(verification_summary, dict):
+            return None
+        claim_assessments = verification_summary.get("claim_assessments")
+        if claim_assessments is None:
+            return None
+        return {
+            "claim_assessments": list(claim_assessments) if isinstance(claim_assessments, list) else [],
+            "conflict_records": list(verification_summary.get("conflict_records") or []),
+            "missing_domain_plugin": bool(verification_summary.get("missing_domain_plugin", False)),
+            "missing_domain_domains": list(verification_summary.get("missing_domain_domains") or []),
+            "plugin_errors": list(verification_summary.get("plugin_errors") or []),
+            "routed_claims": list(verification_summary.get("routed_claims") or []),
+        }
+
+    def get_verification_summary(self, session_id: str) -> Optional[dict]:
+        """Get structured verification summary from in-memory or persisted session state."""
+        if session_id in self._active_tasks:
+            entry = self._active_tasks[session_id]
+            if isinstance(entry.get("verification_summary"), dict):
+                return entry["verification_summary"]
+            researcher = entry.get("researcher")
+            if researcher is not None:
+                vs = getattr(researcher, "verification_summary", None)
+                if isinstance(vs, dict):
+                    return vs
+        data = self._get_session_json(session_id)
+        if isinstance(data, dict):
+            vs = data.get("verification_summary")
+            if isinstance(vs, dict):
+                return vs
+        return None
+
+    def get_domain_verification_telemetry(self, session_id: str) -> Optional[dict]:
+        """Get domain verifier telemetry (claim_assessments, conflict_records, missing_domain_domains, plugin_errors)."""
+        return self._extract_domain_verification_telemetry(self.get_verification_summary(session_id))
+
+    @staticmethod
     def _source_metadata(f: dict) -> dict:
         meta = {}
         for key in ("retrieval", "source_kind", "source_reason"):
@@ -762,16 +804,26 @@ class ResearchHandler:
                     source_state = ""
                     source_coverage = {}
 
+            _stats = entry.get("stats") if isinstance(entry.get("stats"), dict) else {}
+            _report_body = str(entry.get("raw_report") or entry.get("result") or "")
+            _model_name = entry.get("model") or _stats.get("Model")
+            _rounds_done = entry.get("rounds") if entry.get("rounds") is not None else _stats.get("Rounds")
             data = {
                 "query": entry["query"],
                 "status": entry["status"],
+                "report": _report_body,
                 "result": entry["result"],
                 "raw_report": entry.get("raw_report", ""),
+                "model": _model_name,
+                "rounds": _rounds_done,
+                "rounds_completed": _rounds_done,
                 "sources": sources,
                 "raw_findings": raw_findings,
                 "analyzed_urls": analyzed_urls,
                 "source_state": source_state,
                 "source_coverage": source_coverage,
+                "verification_summary": entry.get("verification_summary") if isinstance(entry.get("verification_summary"), dict) else (getattr(researcher, "verification_summary", None) if researcher else None),
+                "enable_domain_verifiers": bool(entry.get("enable_domain_verifiers", False)),
                 "navigation_trace": navigation_trace,
                 "action_trace": action_trace,
                 "stats": entry.get("stats"),
@@ -958,6 +1010,48 @@ class ResearchHandler:
             logger.error(f"Probe failed for {model}: {e}")
             raise RuntimeError(_format_probe_failure(model, e)) from e
 
+    @staticmethod
+    async def _probe_search_provider(search_provider: str = None):
+        """Quick pre-flight health check for the configured search engine before research."""
+        import os
+        import httpx
+        from src.settings import get_setting
+
+        provider = (search_provider or get_setting("search_provider", "searxng") or "searxng").strip().lower()
+        if provider != "searxng":
+            return
+
+        base_url = (
+            os.getenv("SEARXNG_INSTANCE")
+            or get_setting("searxng_url", "")
+            or "http://127.0.0.1:8080"
+        ).strip().rstrip("/")
+        # Translate container-internal hostname when running natively on Windows host
+        if "://searxng:" in base_url and not Path("/.dockerenv").exists():
+            base_url = base_url.replace("://searxng:", "://127.0.0.1:")
+
+        health_url = f"{base_url}/healthz"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(health_url)
+                if resp.status_code == 404:
+                    resp = await client.get(f"{base_url}/")
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"SearXNG search engine at {base_url} returned HTTP {resp.status_code}. "
+                        "Verify the searxng-core container is healthy before starting Deep Research."
+                    )
+            logger.info(f"Search provider probe OK: searxng ({base_url})")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.error(f"Search provider probe failed ({base_url}): {e}")
+            raise RuntimeError(
+                f"Cannot reach SearXNG search engine at {base_url} ? {e}. "
+                "Start or verify searxng-core (127.0.0.1:8080) before running Deep Research."
+            ) from e
+
+
     async def call_research_service(
         self,
         query: str,
@@ -976,6 +1070,7 @@ class ResearchHandler:
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         session_id: str = "",
+        enable_domain_verifiers: bool = False,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -1011,6 +1106,7 @@ class ResearchHandler:
         if progress_callback:
             progress_callback({"phase": "probing", "model": llm_model})
         await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
+        await self._probe_search_provider(search_provider)
 
         try:
             from src.deep_research import DeepResearcher
@@ -1058,6 +1154,7 @@ class ResearchHandler:
                 search_provider=search_provider,
                 category=category,
                 session_id=session_id,
+                enable_domain_verifiers=bool(enable_domain_verifiers),
             )
             if _task_entry is not None:
                 _task_entry["researcher"] = researcher
@@ -1083,6 +1180,7 @@ class ResearchHandler:
                 # Auto classification happens inside DeepResearcher. Keep the
                 # resolved format on the task so it survives every UI path.
                 _task_entry["category"] = researcher.category or category
+                _task_entry["verification_summary"] = getattr(researcher, "verification_summary", None)
 
             return self._format_research_report(query, report, stats, elapsed)
 

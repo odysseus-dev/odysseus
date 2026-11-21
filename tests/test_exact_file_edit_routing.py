@@ -173,7 +173,7 @@ def test_exact_edit_is_dispatched_without_calling_model(monkeypatch, tmp_path):
     ]
 
     assert calls == []
-    assert path.read_text() == "status=new\n"
+    assert path.read_text(encoding="utf-8") == "status=new\n"
     assert [event.get("tool") for event in events if event.get("type") == "tool_start"] == ["edit_file"]
     assert any(event.get("delta") == "Done." for event in events)
     assert any(event.get("data", {}).get("direct_exact_file_edit") for event in events)
@@ -194,7 +194,7 @@ def test_exact_edit_failure_stops_without_model_or_shell(monkeypatch, tmp_path):
     output = "".join(chunks)
 
     assert calls == []
-    assert path.read_text() == "status=other\n"
+    assert path.read_text(encoding="utf-8") == "status=other\n"
     assert "not found" in output
     assert "clarify which occurrence" in output
 
@@ -207,7 +207,7 @@ def test_inspect_first_control_still_reaches_model(monkeypatch, tmp_path):
     calls, _chunks = _run_agent(monkeypatch, message=message, workspace=str(tmp_path))
 
     assert len(calls) == 1
-    assert path.read_text() == "status=old\n"
+    assert path.read_text(encoding="utf-8") == "status=old\n"
 
 
 def test_edit_file_counts_as_effectful_work():

@@ -53,7 +53,7 @@ def test_is_openai_api_base_rejects_malformed():
 # ---------------------------------------------------------------------------
 
 def test_gallery_does_not_use_openai_substring_check():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     assert '"api.openai.com" in base' not in src, (
         "Substring OpenAI check still present — use _is_openai_api_base instead"
     )
@@ -89,7 +89,7 @@ def test_join_checked_rejects_unknown_path():
 # ---------------------------------------------------------------------------
 
 def test_no_raw_exception_string_in_client_responses():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     # Patterns that indicate exception internals flowing into client-visible values.
     # We allow them only in logger calls (checked separately below).
     bad_patterns = [
@@ -118,7 +118,7 @@ def _function_source(src_text: str, func_name: str) -> str:
 
 
 def test_harmonize_validates_endpoint_before_fetch():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "harmonize_image")
     assert "check_outbound_url" in body, (
         "harmonize_image must validate _endpoint via check_outbound_url before outbound requests"
@@ -130,7 +130,7 @@ def test_harmonize_validates_endpoint_before_fetch():
 # ---------------------------------------------------------------------------
 
 def test_harmonize_uses_join_checked_for_target_construction():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "harmonize_image")
     assert "_join_checked_gallery_endpoint" in body, (
         "harmonize_image must use _join_checked_gallery_endpoint to build target URLs"
@@ -146,7 +146,7 @@ def test_harmonize_uses_join_checked_for_target_construction():
 
 def test_gallery_endpoint_paths_allowlist_covers_all_harmonize_candidates():
     # Every path in the candidates list must be in the pre-approved allowlist.
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "harmonize_image")
     # Extract string literals that look like route paths from candidates
     candidate_paths = re.findall(r'"/(?:images|sdapi)/[^"]*"', body)
@@ -188,7 +188,7 @@ def _extract_httpexception_call(src: str, pos: int) -> str:
 
 def test_no_upstream_data_in_client_responses():
     """No raise HTTPException or return {"error": ...} may expose upstream body data."""
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     forbidden = [
         "r.text",
         "body[:",
@@ -222,7 +222,7 @@ def test_no_upstream_data_in_client_responses():
 # ---------------------------------------------------------------------------
 
 def test_inpaint_uses_join_checked_endpoint():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "inpaint_proxy")
     assert 'f"{base}/images/edits"' not in body, (
         "inpaint_proxy must not build /images/edits via raw f-string"
@@ -243,7 +243,7 @@ def test_inpaint_uses_join_checked_endpoint():
 # ---------------------------------------------------------------------------
 
 def test_harmonize_final_502_omits_base_and_last_err():
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "harmonize_image")
     # Collect all HTTPException raises in harmonize and check the last one (final 502)
     raises = list(re.finditer(r"\braise\s+HTTPException\s*\(", body))
@@ -262,7 +262,7 @@ def test_harmonize_final_502_omits_base_and_last_err():
 def test_inpaint_endpoint_resolved_via_db_not_raw_input():
     """inpaint_proxy must not use the raw request-body value as the outbound base.
     The user-supplied value is stored as requested_base; outbound base comes from DB."""
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "inpaint_proxy")
     # requested_base holds the user input; base is only set from ep.base_url
     assert "requested_base" in body, (
@@ -281,7 +281,7 @@ def test_inpaint_endpoint_resolved_via_db_not_raw_input():
 def test_inpaint_outbound_base_not_from_request_body():
     """Confirm _join_checked_gallery_endpoint is never called with the raw
     request-body variable (requested_base) — only with the DB-derived base."""
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "inpaint_proxy")
     assert "_join_checked_gallery_endpoint(requested_base," not in body, (
         "inpaint_proxy must not pass requested_base to _join_checked_gallery_endpoint"
@@ -290,7 +290,7 @@ def test_inpaint_outbound_base_not_from_request_body():
 
 def test_harmonize_endpoint_resolved_via_db_not_raw_input():
     """harmonize_image must not use the raw request-body value as the outbound base."""
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "harmonize_image")
     assert "requested_base" in body, (
         "harmonize_image must use 'requested_base' for the user-supplied value"
@@ -305,7 +305,7 @@ def test_harmonize_endpoint_resolved_via_db_not_raw_input():
 
 def test_harmonize_outbound_base_not_from_request_body():
     """Confirm _join_checked_gallery_endpoint is never called with requested_base."""
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     body = _function_source(src, "harmonize_image")
     assert "_join_checked_gallery_endpoint(requested_base," not in body, (
         "harmonize_image must not pass requested_base to _join_checked_gallery_endpoint"
@@ -315,7 +315,7 @@ def test_harmonize_outbound_base_not_from_request_body():
 def test_inpaint_and_harmonize_no_base_equals_endpoint():
     """Neither function should assign `base = endpoint` or `base = requested_base`
     — the outbound base must come exclusively from DB (ep.base_url)."""
-    src = SRC.read_text()
+    src = SRC.read_text(encoding="utf-8")
     for func_name in ("inpaint_proxy", "harmonize_image"):
         body = _function_source(src, func_name)
         assert "base = endpoint" not in body, (

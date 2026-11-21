@@ -17,7 +17,7 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures/hwfit_publication_models.json"
 
 
 def authored_rows():
-    return json.loads(FIXTURE_PATH.read_text())
+    return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
 @pytest.fixture

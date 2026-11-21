@@ -2,11 +2,11 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CANVAS_EVENTS = (ROOT / 'static/js/editor/canvas-events.js').read_text()
-GALLERY_EDITOR = (ROOT / 'static/js/galleryEditor.js').read_text()
-POPUPS = (ROOT / 'static/js/editor/build/popups.js').read_text()
-SHORTCUTS_POPOVER = (ROOT / 'static/js/editor/shortcuts-popover.js').read_text()
-SW = (ROOT / 'static/sw.js').read_text()
+CANVAS_EVENTS = (ROOT / 'static/js/editor/canvas-events.js').read_text(encoding="utf-8")
+GALLERY_EDITOR = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
+POPUPS = (ROOT / 'static/js/editor/build/popups.js').read_text(encoding="utf-8")
+SHORTCUTS_POPOVER = (ROOT / 'static/js/editor/shortcuts-popover.js').read_text(encoding="utf-8")
+SW = (ROOT / 'static/sw.js').read_text(encoding="utf-8")
 
 
 def test_gesture_callbacks_are_wired_into_canvas_events():

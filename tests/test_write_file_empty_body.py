@@ -48,10 +48,10 @@ async def test_bound_dispatch_preserves_original_write_intent(tmp_path, monkeypa
         assert "content" in result["error"] or "empty body" in result["error"]
         assert target.exists() == (before is not None)
         if before is not None:
-            assert target.read_text() == before
+            assert target.read_text(encoding="utf-8") == before
     else:
         expected = "" if shape == "text" and not body.strip() and before == "" else body
-        assert target.read_text() == expected
+        assert target.read_text(encoding="utf-8") == expected
 
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ async def test_fenced_json_normalizing_empty_is_not_an_explicit_clear(tmp_path):
     target.write_text("preserve source")
     result = await WriteFileTool().execute(json.dumps({"path": str(target), "content": "```python\n\n```"}), {})
     assert result["exit_code"] == 1
-    assert target.read_text() == "preserve source"
+    assert target.read_text(encoding="utf-8") == "preserve source"
 
 
 @pytest.mark.asyncio
@@ -505,7 +505,7 @@ async def test_legacy_command_nonempty_write_still_works(tmp_path, monkeypatch):
         security_context=te.NO_TOOL_SECURITY_CONTEXT,
     )
     assert result["exit_code"] == 0, result
-    assert target.read_text() == "hello world"
+    assert target.read_text(encoding="utf-8") == "hello world"
 
 
 @pytest.mark.asyncio
@@ -525,7 +525,7 @@ async def test_legacy_command_indented_code_preserves_indentation(tmp_path, monk
         security_context=te.NO_TOOL_SECURITY_CONTEXT,
     )
     assert result["exit_code"] == 0, result
-    assert target.read_text() == code
+    assert target.read_text(encoding="utf-8") == code
 
 
 @pytest.mark.asyncio

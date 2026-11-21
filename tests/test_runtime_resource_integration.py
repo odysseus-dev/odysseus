@@ -96,7 +96,7 @@ async def test_attachment_failure_after_execution_does_not_claim_no_execution(wo
         raise OSError("attachment publication failed")
     monkeypatch.setattr(resources, "attach_containment_processes", failure)
     _, result = await dispatch(authority(workspace), "bash", "printf occurred > effect")
-    assert (workspace / "effect").read_text() == "occurred"
+    assert (workspace / "effect").read_text(encoding="utf-8") == "occurred"
     assert result["exit_code"] == 1 and result["failure_kind"] == "resource_linkage_unavailable"
     assert result["containment"]["executed"] is True and result["teardown"]["dead"] is True
 
@@ -233,8 +233,8 @@ def test_detached_release_observes_complete_durable_linkage(workspace, monkeypat
                 return original.close()
             def write(self, content):
                 payload = json.loads(content)
-                published = json.loads(Path(payload["launch_path"]).read_text())
-                sidecar = json.loads(Path(payload["authority_path"]).read_text())
+                published = json.loads(Path(payload["launch_path"]).read_text(encoding="utf-8"))
+                sidecar = json.loads(Path(payload["authority_path"]).read_text(encoding="utf-8"))
                 rec = bg_jobs.peek(payload["job_id"])
                 assert rec["resource_identity"] == published["job"] == sidecar["job"]
                 assert sidecar["authority"] == published["authority"]
@@ -386,7 +386,7 @@ def test_direct_containment_attachment_skips_unobservable_token(workspace, monke
 
     # Publication remains valid
     pub_path = resources.launch_path(launch.generation)
-    published = json.loads(pub_path.read_text())
+    published = json.loads(pub_path.read_text(encoding="utf-8"))
     assert published["launch"] == launch.to_dict()
     assert published["containment_id"] == containment_id
     assert published["processes"] == []
@@ -411,7 +411,7 @@ def test_direct_containment_attachment_skips_unobservable_token(workspace, monke
     })
 
     resources.attach_containment_processes(launch_valid, cid_valid)
-    published_valid = json.loads(resources.launch_path(launch_valid.generation).read_text())
+    published_valid = json.loads(resources.launch_path(launch_valid.generation).read_text(encoding="utf-8"))
     assert len(published_valid["processes"]) == 1
     leader_res = ProcessResource.from_dict(published_valid["processes"][0])
     assert leader_res.role == "leader"
@@ -438,7 +438,7 @@ async def test_end_to_end_fast_exit_preserves_command_result(workspace, monkeypa
     attach = resources.attach_containment_processes
     def observe_attachment(launch, containment_id):
         attach(launch, containment_id)
-        published.append(json.loads(resources.launch_path(launch.generation).read_text()))
+        published.append(json.loads(resources.launch_path(launch.generation).read_text(encoding="utf-8")))
     monkeypatch.setattr(resources, "attach_containment_processes", observe_attachment)
 
     auth = authority(workspace, tool=tool)
@@ -498,7 +498,7 @@ def test_missing_start_token_security_negative(workspace, monkeypatch):
     assert not any(pid == 77777 for pid, token, pgid in created_identities)
 
     # 2. No process authority published
-    published = json.loads(resources.launch_path(launch.generation).read_text())
+    published = json.loads(resources.launch_path(launch.generation).read_text(encoding="utf-8"))
     assert published["processes"] == []
 
     # 3. No signal authority

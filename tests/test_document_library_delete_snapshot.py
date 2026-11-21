@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is required")
 
 
 def run_batch(mutation, stage="request", accepted=True, failure=False, selected=True):
-    source = (ROOT / "static/js/documentLibrary.js").read_text()
+    source = (ROOT / "static/js/documentLibrary.js").read_text(encoding="utf-8")
     function = source[source.index("  async function libraryBulkDelete() {"):
                       source.index("  async function libraryBulkArchive() {")]
     setup = json.dumps(dict(mutation=mutation, stage=stage, accepted=accepted,
@@ -60,7 +60,7 @@ FUNCTION
   process.stdout.write(JSON.stringify({calls, notices, confirmation, exits, refreshes}));
 })().catch(error => { process.stderr.write(String(error)); process.exitCode = 1; });
 """.replace("OPTIONS", setup).replace("FUNCTION", function)
-    result = subprocess.run([NODE], input=script, text=True, capture_output=True,
+    result = subprocess.run([NODE], input=script, text=True, encoding="utf-8", capture_output=True,
                             cwd=ROOT, timeout=15)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)

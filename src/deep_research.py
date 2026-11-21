@@ -17,6 +17,7 @@ from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
 from src.research_navigator import ResearchAction, ResearchNavigator, ResearchPage, assess_source, parse_research_actions
+from src.research_verifier import verify_report_evidence
 
 from src.goal_based_extractor import EXTRACTOR_SYSTEM
 from src.prompt_security import untrusted_context_message
@@ -363,6 +364,7 @@ class DeepResearcher:
         search_provider: Optional[str] = None,
         category: Optional[str] = None,
         session_id: str = "",
+        enable_domain_verifiers: bool = False,
     ):
         self.llm_endpoint = llm_endpoint
         self.llm_model = llm_model
@@ -399,11 +401,17 @@ class DeepResearcher:
         self.research_plan: str = ""
         self.action_trace: List[Dict[str, object]] = []
         self.navigation_trace: List[Dict[str, object]] = []
+        self.warmup_large_model: bool = False
+        self.warmup_timeout: int = 20
+        self.verification_status: str = "not_run"
+        self.verification_summary: Optional[Dict] = None
+        self.verification_error: Optional[str] = None
         self.navigator = ResearchNavigator(
             progress_callback=progress_callback,
             search_provider=search_provider,
             session_id=session_id,
         )
+        self.enable_domain_verifiers = bool(enable_domain_verifiers)
 
     def cancel(self):
         """Request cooperative cancellation of the research loop."""
@@ -451,6 +459,11 @@ class DeepResearcher:
             prior_urls: URLs already visited (won't be re-fetched).
         """
         self._start_time = time.time()
+        self.verification_status = "not_run"
+        self.verification_summary = None
+        self.verification_error = None
+        if getattr(self, "warmup_large_model", False):
+            await self._maybe_warmup_large_local_model()
         self.fast_fact_mode = (
             self.simple_research_mode and self._looks_like_simple_fact_question(question)
         )
@@ -513,6 +526,14 @@ class DeepResearcher:
             # THINK: choose bounded navigation actions, falling back to the
             # legacy query-array path for weak/non-JSON model replies.
             actions = await self._plan_research_actions(question, report, round_num)
+            _verify_qs = list(getattr(self, "_pending_verification_queries", []) or [])
+            if _verify_qs:
+                self._pending_verification_queries = []
+                actions = self._merge_seed_actions(
+                    [ResearchAction("web_search", {"query": q}) for q in _verify_qs[:2]],
+                    actions,
+                    max_actions=4,
+                )
             if round_num == 1:
                 actions = self._merge_seed_actions(
                     self._explicit_url_actions(question),
@@ -574,6 +595,24 @@ class DeepResearcher:
 
             # DECIDE
             if round_num >= self.min_rounds:
+                self._pending_verification_queries = []
+                if round_num < self.max_rounds and not self._time_exceeded():
+                    try:
+                        _mid_vr = verify_report_evidence(report, findings, analyzed_urls=self.urls_fetched, enable_domain_verifiers=self.enable_domain_verifiers, category=getattr(self, "category", "general"))
+                        if _mid_vr.followup_queries:
+                            self._pending_verification_queries = list(_mid_vr.followup_queries)
+                            logger.info("Continuing research for evidence verification: %s", _mid_vr.followup_queries)
+                            self._emit(phase="analyzing", round=round_num,
+                                       message=f"Verifying specs: {', '.join(_mid_vr.followup_queries[:2])}",
+                                       total_sources=len(self.urls_fetched),
+                                       total_findings=len(findings),
+                                       source_state=self._source_state_summary())
+                            continue
+                    except Exception as _mid_ver_err:
+                        _safe_err = f"{type(_mid_ver_err).__name__}: {str(_mid_ver_err)[:160]}"
+                        self.verification_status = "error"
+                        self.verification_error = _safe_err
+                        logger.warning("Mid-loop evidence verification failed safely (%s)", _safe_err)
                 depth_reason = self._needs_more_evidence_before_stop(round_num)
                 if depth_reason:
                     logger.info("Continuing research before stop decision: %s", depth_reason)
@@ -613,7 +652,44 @@ class DeepResearcher:
             logger.info("Research complete via fast factual report")
             return report
         final = await self._final_report(question, report)
-        elapsed = time.time() - self._start_time
+        try:
+            _vr = verify_report_evidence(final, findings, analyzed_urls=self.urls_fetched, enable_domain_verifiers=self.enable_domain_verifiers, category=getattr(self, "category", "general"))
+            _v_status = "completed_with_gaps" if _vr.has_gaps() else "verified"
+            self.verification_status = _v_status
+            _v_dict = _vr.to_dict()
+            _v_dict["verification_status"] = _v_status
+            self.verification_summary = _v_dict
+            _has_domain_telemetry = bool(
+                _vr.claim_assessments
+                or _vr.conflict_records
+                or _vr.missing_domain_plugin
+                or _vr.missing_domain_domains
+                or _vr.plugin_errors
+            )
+            if (_vr.verified_facts or _vr.conflicting_evidence or _vr.unsupported_claims or _vr.unverified_citations or _has_domain_telemetry) and "## Evidence Verification Summary" not in final:
+                final = final.rstrip() + "\n\n" + _vr.to_markdown()
+        except Exception as _final_ver_err:
+            _err_type = type(_final_ver_err).__name__
+            _safe_err = f"{_err_type}: {str(_final_ver_err)[:160]}"
+            self.verification_status = "error"
+            self.verification_error = _safe_err
+            self.verification_summary = {
+                "verification_status": "error",
+                "error": _safe_err,
+                "verified_facts": [],
+                "conflicting_evidence": [],
+                "unsupported_claims": [],
+                "unverified_citations": [],
+                "followup_queries": [],
+            }
+            logger.warning("Post-synthesis evidence verification failed safely (%s)", _safe_err)
+            if "## Evidence Verification Summary" not in final:
+                final = (
+                    final.rstrip()
+                    + "\n\n## Evidence Verification Summary\n"
+                    + f"- **Verification Status:** `error` ? Automated post-synthesis verification encountered an internal error (`{_err_type}`); claims and citations in this report were not automatically verified."
+                )
+        elapsed = (time.time() - getattr(self, "_start_time", 0.0) if getattr(self, "_start_time", 0.0) else 0.0)
         logger.info(
             f"Research complete: {self.round_count} rounds, "
             f"{len(findings)} findings, {len(self.urls_fetched)} URLs, "
@@ -624,11 +700,70 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # LLM helper
     # ------------------------------------------------------------------
+    def _step_timeout(self, requested_cap: int, *, reserve_seconds: int = 15) -> int:
+        """Bound an individual LLM step timeout so it never exceeds remaining wall-clock budget."""
+        cap = max(15, int(requested_cap))
+        start_ts = getattr(self, "_start_time", 0.0) or getattr(self, "start_time", None)
+        budget = getattr(self, "max_time", None)
+        if start_ts is not None and budget:
+            elapsed = max(0.0, time.time() - float(start_ts))
+            remaining = int(float(budget) - elapsed - reserve_seconds)
+            return max(15, min(cap, remaining))
+        return cap
+
+    def _remaining_budget(self) -> Optional[float]:
+        if not getattr(self, "_start_time", 0.0):
+            return None
+        return max(0.0, float(getattr(self, "max_time", 300)) - ((time.time() - getattr(self, "_start_time", 0.0) if getattr(self, "_start_time", 0.0) else 0.0)))
+
+    async def _maybe_warmup_large_local_model(self) -> bool:
+        """Optional bounded warm-up for 30B+ local Ollama models (disabled by default)."""
+        endpoint = str(self.llm_endpoint or "").lower()
+        if "127.0.0.1:11434" not in endpoint and "localhost:11434" not in endpoint:
+            return False
+        m = re.search(r"(?<![\w.])(\d+(?:\.\d+)?)\s*b(?!\w)", str(self.llm_model or "").lower())
+        if not m or float(m.group(1)) < 30.0:
+            return False
+        rem = self._remaining_budget()
+        if rem is not None and rem < 15.0:
+            return False
+        budget_cap = min(float(getattr(self, "warmup_timeout", 20)), (rem * 0.25) if rem else 20.0)
+        if budget_cap < 5.0:
+            return False
+        try:
+            import httpx
+            base = self.llm_endpoint.split("/v1")[0].rstrip("/")
+            async with httpx.AsyncClient(timeout=budget_cap) as client:
+                resp = await client.post(
+                    f"{base}/api/generate",
+                    json={"model": self.llm_model, "prompt": "", "stream": False, "keep_alive": "5m"},
+                )
+                return resp.status_code == 200
+        except Exception as exc:
+            logger.info("Optional Ollama warm-up skipped/bounded (%s)", type(exc).__name__)
+            return False
+
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60,
                    thinking_mode: Optional[str] = None) -> str:
-        """Call the LLM asynchronously and strip thinking tags."""
+        """Call the LLM asynchronously with wall-clock budget guard and strip thinking tags."""
+        if self._time_exceeded():
+            raise TimeoutError("Research wall-clock budget exceeded before LLM call")
         from src.llm_core import llm_call_async
+        from src.settings import get_setting
+        resolved_thinking = thinking_mode
+        if resolved_thinking is None:
+            cfg_thinking = str(get_setting("research_thinking_mode", "low") or "").strip()
+            resolved_thinking = cfg_thinking or None
+        rem = self._remaining_budget()
+        effective_timeout = int(timeout)
+        effective_retries = 1 if effective_timeout >= 60 else 2
+        if rem is not None:
+            if rem <= 2.0:
+                raise TimeoutError("Research wall-clock budget exhausted")
+            effective_timeout = max(5, min(effective_timeout, int(rem)))
+            if rem < effective_timeout * 2.0:
+                effective_retries = 1
         response = await llm_call_async(
             url=self.llm_endpoint,
             model=self.llm_model,
@@ -636,8 +771,9 @@ class DeepResearcher:
             temperature=temperature,
             max_tokens=max_tokens,
             headers=self.llm_headers,
-            timeout=timeout,
-            thinking_mode=thinking_mode,
+            timeout=effective_timeout,
+            max_retries=effective_retries,
+            thinking_mode=resolved_thinking,
         )
         return strip_thinking(response)
 
@@ -1726,7 +1862,7 @@ class DeepResearcher:
                 # (which gets 180s); a slow local model (e.g. a 20B served from
                 # LM Studio) routinely needs >60s for it. The old 60s cap timed
                 # out mid-stream and discarded the round's findings (#1551).
-                timeout=180,
+                timeout=self._step_timeout(180),
             )
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
@@ -1788,11 +1924,11 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                timeout=180,
+                timeout=self._step_timeout(180),
             )
 
             # If report is too short, ask the LLM to expand it
-            if len(result.split()) < 400:
+            if len(result.split()) < 400 and self._step_timeout(180) >= 60:
                 logger.info(f"Final report too short ({len(result.split())} words), requesting expansion")
                 self._emit(phase="writing", message="Expanding report...")
                 expanded = await self._llm(
@@ -1811,7 +1947,7 @@ class DeepResearcher:
                     ],
                     temperature=0.4,
                     max_tokens=self.max_report_tokens,
-                    timeout=180,
+                    timeout=self._step_timeout(180),
                 )
                 if len(expanded.split()) > len(result.split()):
                     return expanded
@@ -1833,7 +1969,7 @@ class DeepResearcher:
                 pass
 
     def _time_exceeded(self) -> bool:
-        return (time.time() - self._start_time) > self.max_time
+        return ((time.time() - getattr(self, "_start_time", 0.0) if getattr(self, "_start_time", 0.0) else 0.0)) > getattr(self, "max_time", 300)
 
     # _strip_think_tags removed — use research_utils.strip_thinking()
 
@@ -1964,7 +2100,7 @@ class DeepResearcher:
 
     def get_stats(self) -> Dict:
         """Return research statistics."""
-        elapsed = time.time() - self._start_time if self._start_time else 0
+        elapsed = (time.time() - getattr(self, "_start_time", 0.0) if getattr(self, "_start_time", 0.0) else 0.0) if getattr(self, "_start_time", 0.0) else 0
         stats = {
             "Duration": f"{elapsed:.1f}s",
             "Rounds": self.round_count,

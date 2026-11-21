@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import secrets
+from collections import deque
 import threading
 import time
 from dataclasses import dataclass, field
@@ -361,6 +362,7 @@ class ToolApprovalStore:
         self._ttl_seconds = max(1, int(ttl_seconds))
         self._max_pending = max(1, int(max_pending))
         self._pending: dict[str, PendingToolApproval] = {}
+        self._decision_history: deque[dict[str, Any]] = deque(maxlen=200)
         self._lock = threading.Lock()
 
     def _purge_expired_locked(self, now: float) -> None:
@@ -585,11 +587,26 @@ class ToolApprovalStore:
                 # a leaked/guessed opaque id cannot be used to invalidate
                 # another owner's pending action.
                 return None
+            normalized_decision = str(decision or "").strip().lower()
+            if normalized_decision == 'deny':
+                self._pending.pop(approval_key, None)
+                self._decision_history.append({'approval_id': pending.approval_id, 'session_id': pending.session_id, 'tool_name': pending.tool_name, 'digest': pending.digest[:16], 'decision': 'deny'})
+                return None
+            scope = scope_for_decision(normalized_decision)
+            if scope is None:
+                return None
             self._pending.pop(approval_key, None)
-        normalized_decision = str(decision or "").strip().lower()
-        scope = scope_for_decision(normalized_decision)
-        if scope is None:
-            return None
+            self._decision_history.append(
+                {
+                    "approval_id": pending.approval_id,
+                    "session_id": pending.session_id,
+                    "tool_name": pending.tool_name,
+                    "digest": pending.digest[:16],
+                    "decision": normalized_decision,
+                    "owner": pending.owner,
+                    "resolved_at": now,
+                }
+            )
         if not allow_continuation:
             return ExactToolApproval(
                 pending,
@@ -602,11 +619,104 @@ class ToolApprovalStore:
             allow_remaining_actions=True,
         )
 
+    def deny(self, approval_id: Any, *, owner: Any, session_id: Any) -> bool:
+        """Atomically deny and remove a pending approval, recording the decision."""
+        now = time.time()
+        with self._lock:
+            self._purge_expired_locked(now)
+            approval_key = str(approval_id or "")
+            pending = self._pending.get(approval_key)
+            if pending is None:
+                return False
+            if (
+                pending.owner != _normalized_owner(owner)
+                or pending.session_id != str(session_id or "")
+            ):
+                return False
+            self._pending.pop(approval_key, None)
+            self._decision_history.append(
+                {
+                    "approval_id": pending.approval_id,
+                    "session_id": pending.session_id,
+                    "tool_name": pending.tool_name,
+                    "digest": pending.digest[:16],
+                    "decision": "deny",
+                    "owner": pending.owner,
+                    "resolved_at": now,
+                }
+            )
+            return True
+
+    def list_recent_decisions(
+        self,
+        *,
+        owner: Any,
+        limit: int = 20,
+        tool_name: Any = None,
+        decision: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Return bounded owner-scoped recent approval resolution decisions."""
+        normalized_owner = _normalized_owner(owner)
+        bounded_limit = max(1, min(int(limit), 200))
+        tool_filter = str(tool_name or "").strip().casefold()
+        decision_filter = str(decision or "").strip().casefold()
+        if decision_filter in {"approve", "approved"}:
+            decision_filter = "approve_task"
+        elif decision_filter == "denied":
+            decision_filter = "deny"
+        with self._lock:
+            entries = [
+                {
+                    "approval_id": entry["approval_id"],
+                    "session_id": entry["session_id"],
+                    "tool_name": entry["tool_name"],
+                    "digest": entry["digest"],
+                    "decision": entry["decision"],
+                    "resolved_at": entry["resolved_at"],
+                }
+                for entry in reversed(self._decision_history)
+                if entry.get("owner") == normalized_owner
+                and (not tool_filter or str(entry.get("tool_name") or "").strip().casefold() == tool_filter)
+                and (not decision_filter or str(entry.get("decision") or "").strip().casefold() == decision_filter)
+            ]
+        return entries[:bounded_limit]
+
     def peek(self, approval_id: Any) -> PendingToolApproval | None:
         now = time.time()
         with self._lock:
             self._purge_expired_locked(now)
             return self._pending.get(str(approval_id or ""))
+
+    def list_pending(self, *, owner: Any) -> list[dict[str, Any]]:
+        """Return non-authoritative display summaries for an owner's pending approvals."""
+        normalized_owner = _normalized_owner(owner)
+        now = time.time()
+        with self._lock:
+            self._purge_expired_locked(now)
+            items = [
+                pending
+                for pending in self._pending.values()
+                if pending.owner == normalized_owner
+            ]
+        items.sort(key=lambda item: item.created_at, reverse=True)
+        return [
+            {
+                "approval_id": item.approval_id,
+                "session_id": item.session_id,
+                "origin_run_id": item.origin_run_id,
+                "tool_name": item.tool_name,
+                "content_preview": item.content[:400],
+                "digest": item.digest[:16],
+                "effects": list(item.effects),
+                "workspace": item.workspace or None,
+                "document_id": item.document_id or None,
+                "document_version": item.document_version,
+                "external_untrusted_context_seen": item.external_untrusted_context_seen,
+                "created_at": item.created_at,
+                "expires_at": item.expires_at,
+            }
+            for item in items
+        ]
 
     def retire_for_session(self, *, owner: Any, session_id: Any) -> bool:
         """Discard pending actions superseded by an ordinary user turn.

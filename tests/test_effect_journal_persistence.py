@@ -28,7 +28,7 @@ def claim(log, target, effect_id="e1", action_id="act-1"):
 
 
 def records(path):
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_claim_is_fsynced_to_disk_before_returning(tmp_path, target, monkeypatch):
@@ -209,7 +209,7 @@ def test_torn_tail_from_a_crashed_writer_is_repaired_before_the_next_append(tmp_
     claim(survivor, target, "e2", "a2")
     reloaded = EffectLog.load(RUN, directory=directory)
     assert [c.effect_id for c in reloaded.history().claims] == ["e1", "e2"]
-    assert all(line.startswith("{") for line in (directory / f"{RUN}.jsonl").read_text().splitlines())
+    assert all(line.startswith("{") for line in (directory / f"{RUN}.jsonl").read_text(encoding="utf-8").splitlines())
 
 
 # -- concurrent writers --------------------------------------------------------

@@ -86,7 +86,7 @@ console.log(JSON.stringify(out));
 
 
 def _run():
-    js = _HARNESS.format(clock=_CLOCK.as_posix())
+    js = _HARNESS.format(clock=_CLOCK.as_uri())
     proc = subprocess.run(
         ["node", "--input-type=module"],
         input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,

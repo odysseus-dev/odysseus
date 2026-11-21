@@ -155,7 +155,7 @@ def test_cut_placed_image_rasterizes_once_without_confirmation(page):
 
 def test_drop_shadow_dialog_inside_and_direction_apply(page):
     page.route('http://editor.test/api/**', lambda route: route.fulfill(json={}))
-    page.add_style_tag(content=(ROOT/'static/css/13-image-editor.css').read_text())
+    page.add_style_tag(content=(ROOT/'static/css/13-image-editor.css').read_text(encoding="utf-8"))
     page.add_style_tag(content=':root{--panel:#242426;--bg:#171719;--fg:#eee;--border:#454549;--red:#d47965;}body{background:var(--bg);color:var(--fg);font-family:Arial,sans-serif;}')
     page.evaluate("""async () => {
       document.body.innerHTML='<div id="toast"></div><div id="gallery-editor-container" style="height:680px"></div>';
@@ -317,14 +317,14 @@ def test_quick_edit_planner_uses_background_tool(prompt):
 
 
 def test_quick_edit_background_removal_precedes_creative_routing():
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     local = source.split('const _executeQuickEditLocal = async (prompt) => {', 1)[1]
     assert local.index('if (_looksBackgroundRemoval(p))') < local.index('if (_looksRecolor(p))')
 
 
 @pytest.mark.parametrize('run', [False, True])
 def test_background_tool_suggestion_prepares_command_and_enter_submits(page, run):
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     picker = 'const pickSuggestion = ' + source.split('const pickSuggestion = ', 1)[1].split("  wrap.addEventListener('pointerdown'", 1)[0]
     assert "runPrompt: id === 'rembg' ? 'remove background' : null" in source
     result = page.evaluate("""({picker, run}) => {
@@ -372,7 +372,7 @@ def test_retouch_invalidates_adjustment_preview_and_stops_before_undo(page, tool
 
 
 def test_undo_finishes_active_stroke_before_restoring_history():
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     undo = source.split('function undo() {', 1)[1].split('function redo()', 1)[0]
     assert undo.index('if (state.drawing) _strokeTool.tryEnd();') < undo.index('state.undoStack.pop()')
 
@@ -380,7 +380,7 @@ def test_undo_finishes_active_stroke_before_restoring_history():
 @pytest.mark.parametrize('width,height', [(1000,700), (390,844)])
 def test_filter_submenu_rows_have_equal_heights_with_and_without_icons(page, width, height):
     page.set_viewport_size({'width':width,'height':height})
-    page.add_style_tag(content=(ROOT / 'static/css/13-image-editor.css').read_text())
+    page.add_style_tag(content=(ROOT / 'static/css/13-image-editor.css').read_text(encoding="utf-8"))
     page.evaluate("""() => {
       document.body.innerHTML = '<div class="ge-submenu" style="display:block;left:8px;top:8px;">'
         + '<button class="dropdown-item-compact"><span>Plain</span></button>'
@@ -651,7 +651,7 @@ def test_generation_provider_error_is_not_retried_and_next_request_can_succeed(p
 
 
 def test_late_progress_response_cannot_restore_working_after_completion(page):
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     functions = source.split('function _startAiProgress(requestId) {',1)[1].split('function _setAiCommandStatus(',1)[0]
     functions = 'function _startAiProgress(requestId) {' + functions
     result = page.evaluate("""async functions => {
@@ -672,7 +672,7 @@ def test_late_progress_response_cannot_restore_working_after_completion(page):
 
 @pytest.mark.parametrize('success', [True,False])
 def test_quick_edit_queue_clears_working_on_completion(page, success):
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     pump = 'const pumpQuickEdit = ' + source.split('const pumpQuickEdit = ',1)[1].split('  const enqueueQuickEditJob',1)[0]
     result = page.evaluate("""async ({pump,success}) => {
       const {finishQuickEditJob} = await import('/static/js/editor/quick-edit-job.js');
@@ -695,7 +695,7 @@ def test_quick_edit_queue_clears_working_on_completion(page, success):
 @pytest.mark.parametrize('instruction', [False,True])
 @pytest.mark.parametrize('matching_ratio', [False,True])
 def test_generated_layer_can_keep_pixels_outside_document_bounds(page, bridge, instruction, matching_ratio):
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     placement = 'const _placeResultLayer = ' + source.split('const _placeResultLayer = ',1)[1].split('  const _generateImage',1)[0]
     bridge_line = next(line for line in source.splitlines() if "'layers.placeImage':" in line)
     result = page.evaluate("""async ({placement,bridgeLine,bridge,instruction,matchingRatio}) => {
@@ -727,7 +727,7 @@ def test_generated_layer_can_keep_pixels_outside_document_bounds(page, bridge, i
 
 
 def test_whole_image_edit_does_not_clip_native_result_to_select_all(page):
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     operation = 'const _aiInpaintSelection = ' + source.split('const _aiInpaintSelection = ',1)[1].split('  // Replace the background/scene',1)[0]
     result = page.evaluate("""async operation => {
       const mask = document.createElement('canvas'); mask.width=40;mask.height=40;
@@ -743,7 +743,7 @@ def test_whole_image_edit_does_not_clip_native_result_to_select_all(page):
 
 @pytest.mark.parametrize('matching_ratio', [False,True])
 def test_inpaint_panel_preserves_native_whole_edit_dimensions(page, matching_ratio):
-    source = (ROOT / 'static/js/editor/ai-inpaint.js').read_text()
+    source = (ROOT / 'static/js/editor/ai-inpaint.js').read_text(encoding="utf-8")
     body = 'const fullFrame = ' + source.split('const fullFrame = ',1)[1].split('          // Snapshot the AI result',1)[0]
     result = page.evaluate("""async ({body,matchingRatio}) => {
       const {imageResultGeometry} = await import('/static/js/editor/image-result-geometry.js');
@@ -762,7 +762,7 @@ def test_inpaint_panel_preserves_native_whole_edit_dimensions(page, matching_rat
 
 
 def test_brush_softness_is_in_main_bar_and_saves_extended_value(page):
-    page.add_style_tag(content=(ROOT / 'static/css/13-image-editor.css').read_text())
+    page.add_style_tag(content=(ROOT / 'static/css/13-image-editor.css').read_text(encoding="utf-8"))
     result = page.evaluate("""async () => {
       const {controlsHTML} = await import('/static/js/editor/build/controls.js');
       const {wireStrokeToolSliders} = await import('/static/js/editor/stroke-tool-sliders.js');
@@ -811,7 +811,7 @@ def test_extended_softness_produces_softer_pixels_not_just_larger_slider_values(
 def test_brush_numbers_do_not_overlap_after_real_panel_normalization(page,width):
     page.set_viewport_size({'width':width,'height':700})
     for stylesheet in ['static/css/13-image-editor.css','static/css/documents-gallery-editor.css']:
-        page.add_style_tag(content=(ROOT / stylesheet).read_text())
+        page.add_style_tag(content=(ROOT / stylesheet).read_text(encoding="utf-8"))
     page.add_style_tag(content=':root{--bg:#171719;--panel:#242426;--fg:#eee;--red:#d47965;--border:#454549;}body{background:var(--bg);}')
     result = page.evaluate("""async () => {
       const {state}=await import('/static/js/editor/state.js');
@@ -897,7 +897,7 @@ def test_new_project_create_initializes_canvas(page, fail_once):
 
 
 def test_undo_clears_rembg_live_layer_and_edge_tuner_cannot_corrupt(page):
-    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    source = (ROOT / 'static/js/galleryEditor.js').read_text(encoding="utf-8")
     restore_fn = source.split('function _restoreState(snap) {', 1)[1].split('function undo() {', 1)[0]
     assert 'state.rembgLiveLayer = null;' in restore_fn
     assert 'state.rembgLiveSnap = null;' in restore_fn

@@ -114,7 +114,7 @@ async def test_actual_namespace_hides_host_pid_tree_and_sibling(namespaces):
     lines = result["output"].splitlines()
     assert lines[0] != host_namespace
     assert lines[1] == "False"
-    assert sibling.read_text() == "original"
+    assert sibling.read_text(encoding="utf-8") == "original"
     assert result["containment"]["contained"] is True
     assert result["teardown"]["dead"] is True
 
@@ -268,7 +268,7 @@ async def test_execution_environment_cannot_replace_probed_bwrap(namespaces, mon
         # Reproduce the old mismatch: availability probed the host binary,
         # while launch resolved a different binary through the child's PATH.
         assert "containment unavailable" in result["error"]
-        assert outside.read_text() == "escaped"
+        assert outside.read_text(encoding="utf-8") == "escaped"
     else:
         _assert_sandboxed_shell_output(result, "contained")
         assert not outside.exists()
@@ -327,9 +327,9 @@ async def test_setsid_daemon_cannot_survive_namespace_death(namespaces, exit_par
     assert heartbeat.exists(), result.stderr
     assert result.timed_out is (not exit_parent)
     assert result.release.dead is True
-    last = heartbeat.read_text()
+    last = heartbeat.read_text(encoding="utf-8")
     await asyncio.sleep(.15)
-    assert heartbeat.read_text() == last
+    assert heartbeat.read_text(encoding="utf-8") == last
     assert containment.active_grants() == []
 
 

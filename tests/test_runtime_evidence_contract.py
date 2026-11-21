@@ -390,7 +390,7 @@ async def test_shell_writing_same_basename_elsewhere_is_not_required_mutation(tm
         _, result = await execute_tool_block(ToolBlock('bash', 'mkdir nested && printf changed > nested/app.py'),
             workspace=str(tmp_path), security_context=NO_TOOL_SECURITY_CONTEXT)
     assert result['exit_code'] == 0
-    assert (tmp_path / 'nested' / 'app.py').read_text() == 'changed'
+    assert (tmp_path / 'nested' / 'app.py').read_text(encoding="utf-8") == 'changed'
     assert journal.actions[0].artifact_changes == []
     ledger = EvidenceLedger.from_tool_events(journal.evidence_events(),
         CompletionRequirements(required_artifacts=('app.py',), workspace_root=str(tmp_path)))

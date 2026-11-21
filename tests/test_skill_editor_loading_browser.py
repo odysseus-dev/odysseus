@@ -15,7 +15,7 @@ def test_skill_editor_waits_for_source(tmp_path, width, mode):
     if not shutil.which("node"):
         pytest.skip("node not installed")
     repo = Path(__file__).resolve().parents[1]
-    index = BeautifulSoup((repo / "static/index.html").read_text(), "html.parser")
+    index = BeautifulSoup((repo / "static/index.html").read_text(encoding="utf-8"), "html.parser")
     modal = index.select_one("#memory-modal")
     modal["class"] = [value for value in modal.get("class", []) if value != "hidden"]
     for panel in modal.select("[data-memory-panel]"):

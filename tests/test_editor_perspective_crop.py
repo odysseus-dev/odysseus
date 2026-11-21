@@ -60,7 +60,7 @@ def test_warp_identity_and_quad_scale_numeric():
 
 
 def test_engine_exports_and_forward_homography():
-    src = CROP.read_text()
+    src = CROP.read_text(encoding="utf-8")
     assert "export function perspectiveCropSize(" in src
     assert "export function normalizeCropCorners(" in src
     assert "export function perspectiveCropCanvas(" in src
@@ -70,7 +70,7 @@ def test_engine_exports_and_forward_homography():
     assert "solveSquareToQuad" in src
     assert "import { solveSquareToQuad } from './perspective-warp.js';" in src
     assert "warpRgba(" not in src
-    assert "export function solveSquareToQuad(" in (ROOT / "static/js/editor/perspective-warp.js").read_text()
+    assert "export function solveSquareToQuad(" in (ROOT / "static/js/editor/perspective-warp.js").read_text(encoding="utf-8")
 
 
 def test_forward_map_sends_output_corners_to_the_quad_numeric():
@@ -97,7 +97,7 @@ def test_forward_map_sends_output_corners_to_the_quad_numeric():
 
 
 def test_tool_overlay_module():
-    src = TOOL.read_text()
+    src = TOOL.read_text(encoding="utf-8")
     assert "export function createPerspectiveCropTool(" in src
     assert "ge-pcrop-overlay" in src
     assert 'data-pcrop="apply"' in src
@@ -107,7 +107,7 @@ def test_tool_overlay_module():
 
 
 def test_gallery_editor_wiring():
-    src = GE.read_text()
+    src = GE.read_text(encoding="utf-8")
     assert "import { createPerspectiveCropTool } from './editor/tools/perspective-crop.js';" in src
     assert "import { perspectiveCropSize as _perspectiveCropSize, perspectiveCropCanvas as _perspectiveCropCanvas }" in src
     assert "const _perspectiveCropTool = createPerspectiveCropTool(" in src
@@ -118,12 +118,12 @@ def test_gallery_editor_wiring():
 
 
 def test_menu_and_handler_and_css_and_sw():
-    assert 'data-image-action="perspective-crop"' in TOPBAR.read_text()
-    wire = WIRE.read_text()
+    assert 'data-image-action="perspective-crop"' in TOPBAR.read_text(encoding="utf-8")
+    wire = WIRE.read_text(encoding="utf-8")
     assert "openPerspectiveCrop" in wire
     assert "else if (action === 'perspective-crop') openPerspectiveCrop?.();" in wire
-    assert ".ge-pcrop-overlay" in CSS.read_text()
-    sw = SW.read_text()
+    assert ".ge-pcrop-overlay" in CSS.read_text(encoding="utf-8")
+    sw = SW.read_text(encoding="utf-8")
     import re
     assert re.search(r"odysseus-v\d+-pr40-editor-precache", sw)
     assert "/static/js/editor/perspective-crop.js" in sw

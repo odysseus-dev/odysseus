@@ -717,6 +717,202 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         return {"ok": True, "action": action, "cleared": cleared, "files": removed_files}
 
+    @router.get("/approvals/pending")
+    async def list_pending_approvals(request: Request):
+        """List owner-scoped pending tool approvals awaiting human sign-off."""
+        user = _owner(request)
+        from src.tool_approvals import tool_approval_store
+        approvals = tool_approval_store.list_pending(owner=user)
+        return {"approvals": approvals, "count": len(approvals)}
+
+    @router.post("/approvals/{approval_id}/resolve")
+    async def resolve_pending_approval(request: Request, approval_id: str):
+        """Resolve a pending tool approval (single-action or deny) with owner verification."""
+        from src.agent_runtime.authority import require_user_approval_request
+        from src.tool_approvals import tool_approval_store
+        from src.tool_approval_scopes import DENY_APPROVAL_DECISION, TASK_APPROVAL_DECISION
+
+        require_user_approval_request(request)
+        user = _owner(request)
+        body = await request.json()
+        decision = str((body or {}).get("decision") or "").strip().lower()
+        if decision == "approve":
+            decision = TASK_APPROVAL_DECISION
+        elif decision == "deny":
+            decision = DENY_APPROVAL_DECISION
+        if decision not in {TASK_APPROVAL_DECISION, DENY_APPROVAL_DECISION}:
+            raise HTTPException(400, "Invalid approval decision")
+        pending = tool_approval_store.peek(approval_id)
+        normalized_owner = str(user or "").strip().casefold()
+        if pending is None or pending.owner != normalized_owner:
+            raise HTTPException(404, "Pending approval not found or expired")
+        if decision == DENY_APPROVAL_DECISION:
+            ok = tool_approval_store.deny(
+                approval_id,
+                owner=user,
+                session_id=pending.session_id,
+            )
+            if not ok:
+                raise HTTPException(409, "Pending approval could not be resolved")
+        else:
+            resolved = tool_approval_store.consume(
+                approval_id,
+                decision=decision,
+                owner=user,
+                session_id=pending.session_id,
+                allow_continuation=False,
+            )
+            if resolved is None:
+                raise HTTPException(409, "Pending approval could not be resolved")
+        return {
+            "ok": True,
+            "approval_id": approval_id,
+            "decision": decision,
+            "tool_name": pending.tool_name,
+            "session_id": pending.session_id,
+        }
+
+    @router.get("/approvals/history")
+    async def list_approval_history(
+        request: Request,
+        limit: int = 20,
+        tool_name: str | None = None,
+        decision: str | None = None,
+    ):
+        """Return bounded owner-scoped recent approval decisions with optional filters."""
+        user = _owner(request)
+        from src.tool_approvals import tool_approval_store
+        decisions = tool_approval_store.list_recent_decisions(
+            owner=user,
+            limit=limit,
+            tool_name=tool_name,
+            decision=decision,
+        )
+        return {"decisions": decisions, "count": len(decisions)}
+
+    @router.get("/approvals/history/export")
+    async def export_approval_history(
+        request: Request,
+        format: str = "json",
+        limit: int = 200,
+        tool_name: str | None = None,
+        decision: str | None = None,
+    ):
+        """Export owner-scoped approval decision audit history as JSON or CSV."""
+        import csv
+        import io
+        import json as _json
+        from fastapi.responses import Response
+        from src.tool_approvals import tool_approval_store
+
+        user = _owner(request)
+        fmt = str(format or "json").strip().lower()
+        if fmt not in {"json", "csv"}:
+            raise HTTPException(400, "format must be 'json' or 'csv'")
+        decisions = tool_approval_store.list_recent_decisions(
+            owner=user,
+            limit=limit,
+            tool_name=tool_name,
+            decision=decision,
+        )
+        if fmt == "csv":
+            buf = io.StringIO()
+            writer = csv.DictWriter(
+                buf,
+                fieldnames=["approval_id", "session_id", "tool_name", "digest", "decision", "resolved_at"],
+            )
+            writer.writeheader()
+            for row in decisions:
+                writer.writerow(row)
+            return Response(
+                content=buf.getvalue(),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": 'attachment; filename="approval-audit-history.csv"'},
+            )
+        return Response(
+            content=_json.dumps({"decisions": decisions, "count": len(decisions)}, indent=2),
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="approval-audit-history.json"'},
+        )
+
+    @router.post("/approvals/resolve-bulk")
+    async def resolve_pending_approvals_bulk(request: Request):
+        """Resolve multiple owner-scoped pending tool approvals atomically per item."""
+        from src.agent_runtime.authority import require_user_approval_request
+        from src.tool_approvals import tool_approval_store
+        from src.tool_approval_scopes import DENY_APPROVAL_DECISION, TASK_APPROVAL_DECISION
+
+        require_user_approval_request(request)
+        user = _owner(request)
+        body = await request.json()
+        decision = str((body or {}).get("decision") or "").strip().lower()
+        if decision == "approve":
+            decision = TASK_APPROVAL_DECISION
+        elif decision == "deny":
+            decision = DENY_APPROVAL_DECISION
+        if decision not in {TASK_APPROVAL_DECISION, DENY_APPROVAL_DECISION}:
+            raise HTTPException(400, "Invalid approval decision")
+        raw_ids = (body or {}).get("approval_ids")
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise HTTPException(400, "approval_ids must be a non-empty list")
+        if len(raw_ids) > 50:
+            raise HTTPException(400, "approval_ids cannot exceed 50 items")
+        skip_external_untrusted = bool((body or {}).get("skip_external_untrusted"))
+
+        normalized_owner = str(user or "").strip().casefold()
+        seen: set[str] = set()
+        resolved: list[dict[str, Any]] = []
+        failed: list[dict[str, str]] = []
+
+        for raw_id in raw_ids:
+            approval_id = str(raw_id or "").strip()
+            if not approval_id or approval_id in seen:
+                continue
+            seen.add(approval_id)
+            pending = tool_approval_store.peek(approval_id)
+            if pending is None or pending.owner != normalized_owner:
+                failed.append({"approval_id": approval_id, "reason": "not_found_or_expired"})
+                continue
+            if skip_external_untrusted and decision == TASK_APPROVAL_DECISION and pending.external_untrusted_context_seen:
+                failed.append({"approval_id": approval_id, "reason": "external_untrusted_context"})
+                continue
+            if decision == DENY_APPROVAL_DECISION:
+                ok = tool_approval_store.deny(
+                    approval_id,
+                    owner=user,
+                    session_id=pending.session_id,
+                )
+                if not ok:
+                    failed.append({"approval_id": approval_id, "reason": "conflict"})
+                    continue
+            else:
+                grant = tool_approval_store.consume(
+                    approval_id,
+                    decision=decision,
+                    owner=user,
+                    session_id=pending.session_id,
+                    allow_continuation=False,
+                )
+                if grant is None:
+                    failed.append({"approval_id": approval_id, "reason": "conflict"})
+                    continue
+            resolved.append(
+                {
+                    "approval_id": approval_id,
+                    "decision": decision,
+                    "tool_name": pending.tool_name,
+                    "session_id": pending.session_id,
+                }
+            )
+
+        return {
+            "ok": True,
+            "decision": decision,
+            "resolved": resolved,
+            "resolved_count": len(resolved),
+            "failed": failed,
+        }
+
     @router.get("/{task_id}")
     async def get_task(request: Request, task_id: str):
         user = _owner(request)

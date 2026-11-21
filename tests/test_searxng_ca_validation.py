@@ -13,7 +13,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INCIDENT = json.loads((ROOT / "tests/fixtures/ca-trust/incident.json").read_text())
+INCIDENT = json.loads((ROOT / "tests/fixtures/ca-trust/incident.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture

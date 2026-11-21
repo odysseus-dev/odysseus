@@ -2,9 +2,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-JS = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
-ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
+JS = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
+ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
+SW = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 
 def test_client_gen_mode_generates():
@@ -50,7 +50,7 @@ def test_generate_route_forwards_the_picked_model():
     assert 'payload["model"] = model_choice' in route
     assert "content = _json.dumps(payload)" in route
     operation = JS.split("'ai.generateImage':", 1)[1].split("\n", 1)[0]
-    generation = (ROOT / 'static/js/editor/image-generation.js').read_text()
+    generation = (ROOT / 'static/js/editor/image-generation.js').read_text(encoding="utf-8")
     assert '_generateImage(p || {})' in operation
     assert "_use_image_settings: true" in generation
     assert "document.getElementById('ge-ai-model')" not in operation
@@ -59,7 +59,7 @@ def test_generate_route_forwards_the_picked_model():
 
 
 def test_ai_settings_separates_generation_from_editing_without_setup():
-    settings = (ROOT / "static/js/editor/ai-settings.js").read_text()
+    settings = (ROOT / "static/js/editor/ai-settings.js").read_text(encoding="utf-8")
     assert 'id="ge-ai-model"' in settings
     assert 'id="ge-ai-command-model"' in settings
     assert "Image generation model" in settings
@@ -89,7 +89,7 @@ assert.equal(resolveQuickEditModel().model, '');
 
 def test_cloud_image_model_is_resolved_before_the_local_fallback():
     """A gateway model must not be hijacked onto the local image endpoint."""
-    ai = (ROOT / "src" / "ai_interaction.py").read_text()
+    ai = (ROOT / "src" / "ai_interaction.py").read_text(encoding="utf-8")
     block = ai.split("async def _resolve_image_model(model_name: str):", 1)[1][:900]
     plain = block.index("_resolve_model(model_name, owner=owner)")
     typed = block.index('model_type="image"')

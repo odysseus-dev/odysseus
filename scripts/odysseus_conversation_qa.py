@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+    import msvcrt
 import json
 import os
 import re
@@ -1382,6 +1386,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     return parser.parse_args()
+
+
+def _try_lock_nonblocking(lock_handle) -> None:
+    if fcntl is not None:
+        _try_lock_nonblocking(lock_handle)
+        return
+    try:
+        msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        raise BlockingIOError(str(exc)) from exc
 
 
 def main() -> int:

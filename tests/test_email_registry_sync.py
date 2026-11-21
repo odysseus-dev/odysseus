@@ -23,7 +23,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def test_email_server_tools_match_builtin_set():
     """BUILTIN_EMAIL_TOOLS must equal exactly what the email server exposes."""
-    source = (_REPO_ROOT / "mcp_servers" / "email_server.py").read_text()
+    source = (_REPO_ROOT / "mcp_servers" / "email_server.py").read_text(encoding="utf-8")
     served = set(re.findall(r'Tool\(\s*name="(\w+)"', source))
     assert served == set(BUILTIN_EMAIL_TOOLS), (
         f"email_server tools != BUILTIN_EMAIL_TOOLS; "

@@ -20,6 +20,8 @@ semantics. Neither is claimed where the platform does not provide it.
 """
 from __future__ import annotations
 
+from src.agent_runtime.effects import ProducerFacts
+
 from contextlib import contextmanager
 import json
 import os
@@ -37,7 +39,8 @@ except ImportError:  # pragma: no cover - non-POSIX hosts
 
 from src.constants import DATA_DIR
 from src.agent_runtime.effects import (
-    EffectAssessment, EffectClaim, EffectHistory, EffectOutcome, ExecutionOutcome, Observation, assess_all,
+    ProducerFacts,
+    EffectAssessment, EffectClaim, EffectHistory, EffectOutcome, ExecutionOutcome, Impact, Observation, assess_all,
     replay_interrupted,
 )
 from src.agent_runtime.resources import ResourceIdentityError
@@ -510,3 +513,253 @@ class EffectLog:
                 if record is not None:
                     appended.append(record)
             return tuple(appended)
+
+
+def list_recent_effect_runs(
+    *,
+    limit: int = 50,
+    unsettled_only: bool = False,
+    directory: str | os.PathLike | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only summary of recent durable effect logs for audit inspection."""
+    bounded_limit = max(1, min(int(limit), 200))
+    base_dir = Path(directory) if directory is not None else effects_dir()
+    if not base_dir.is_dir():
+        return []
+    candidates: list[tuple[float, Path]] = []
+    for entry in base_dir.iterdir():
+        if entry.suffix == ".jsonl" and _RUN_ID.fullmatch(entry.stem) and entry.is_file():
+            try:
+                candidates.append((entry.stat().st_mtime, entry))
+            except OSError:
+                continue
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    runs: list[dict[str, Any]] = []
+    for mtime, path in candidates:
+        if len(runs) >= bounded_limit:
+            break
+        claims = 0
+        outcomes = 0
+        observations = 0
+        claimed_ids: set[str] = set()
+        settled_ids: set[str] = set()
+        tools: list[str] = []
+        external_count = 0
+        mutation_attempted = False
+        corrupt = False
+        try:
+            raw = path.read_bytes()
+            complete = raw[: raw.rfind(b"\n") + 1]
+            for line in complete.splitlines():
+                kind, record = _parse(line)
+                if kind == "claim":
+                    claims += 1
+                    eid = str(getattr(record, "effect_id", ""))
+                    if eid:
+                        claimed_ids.add(eid)
+                    tool_name = getattr(getattr(record, "operation", None), "tool", "")
+                    if tool_name and tool_name not in tools:
+                        tools.append(tool_name)
+                    if getattr(record, "external", False):
+                        external_count += 1
+                elif kind == "outcome":
+                    outcomes += 1
+                    eid = str(getattr(record, "effect_id", ""))
+                    if eid:
+                        settled_ids.add(eid)
+                    if getattr(getattr(record, "facts", None), "mutation_attempted", False):
+                        mutation_attempted = True
+                elif kind == "observation":
+                    observations += 1
+        except Exception:
+            corrupt = True
+        unsettled_count = len(claimed_ids - settled_ids)
+        if unsettled_only and unsettled_count == 0:
+            continue
+        runs.append(
+            {
+                "run_id": path.stem,
+                "updated_at": mtime,
+                "claims": claims,
+                "outcomes": outcomes,
+                "observations": observations,
+                "unsettled_claims": unsettled_count,
+                "tools": tools,
+                "external_claims": external_count,
+                "mutation_attempted": mutation_attempted,
+                "corrupt": corrupt,
+            }
+        )
+    return runs
+
+
+def get_effect_run_detail(
+    run_id: str,
+    *,
+    directory: str | os.PathLike | None = None,
+) -> dict[str, Any] | None:
+    """Read-only per-run inspection of durable Wave 4 effect records and reconciliation flags."""
+    normalized_run_id = str(run_id or "").strip()
+    if not _RUN_ID.fullmatch(normalized_run_id):
+        raise ValueError("Invalid effect run identifier")
+
+    base_dir = Path(directory) if directory is not None else effects_dir()
+    path = base_dir / f"{normalized_run_id}.jsonl"
+    if not path.is_file():
+        return None
+
+    records: list[dict[str, Any]] = []
+    claimed_ids: set[str] = set()
+    settled_ids: set[str] = set()
+    interrupted_ids: list[str] = []
+    corrupt = False
+
+    try:
+        raw = path.read_bytes()
+        last_nl = raw.rfind(b"\n")
+        if last_nl < 0 and raw.strip():
+            corrupt = True
+        elif last_nl >= 0 and raw[last_nl + 1 :].strip():
+            corrupt = True
+
+        complete = raw[: last_nl + 1] if last_nl >= 0 else b""
+        for line in complete.splitlines():
+            if not line.strip():
+                continue
+            kind, record = _parse(line)
+            if kind == "claim":
+                effect_id = str(getattr(record, "effect_id", ""))
+                claimed_ids.add(effect_id)
+                op = getattr(record, "operation", None)
+                scope = getattr(record, "impact_scope", ()) or ()
+                records.append(
+                    {
+                        "kind": "claim",
+                        "sequence": getattr(record, "sequence", 0),
+                        "effect_id": effect_id,
+                        "action_id": str(getattr(record, "action_id", "")),
+                        "tool": str(getattr(op, "tool", "")),
+                        "subcommand": str(getattr(op, "subcommand", "")),
+                        "external": bool(getattr(record, "external", False)),
+                        "targets": [
+                            {
+                                "kind": str(getattr(getattr(t, "kind", None), "value", getattr(t, "kind", ""))),
+                                "role": str(getattr(t, "role", "")),
+                                "location": list(getattr(t, "location", ()) or ()),
+                            }
+                            for t in scope
+                        ],
+                    }
+                )
+            elif kind == "outcome":
+                effect_id = str(getattr(record, "effect_id", ""))
+                settled_ids.add(effect_id)
+                execution = getattr(record, "execution", None)
+                exec_val = str(getattr(execution, "value", execution or ""))
+                if execution is ExecutionOutcome.INTERRUPTED or exec_val == ExecutionOutcome.INTERRUPTED.value:
+                    if effect_id and effect_id not in interrupted_ids:
+                        interrupted_ids.append(effect_id)
+                impact = getattr(record, "impact", None)
+                facts = getattr(record, "facts", None)
+                records.append(
+                    {
+                        "kind": "outcome",
+                        "sequence": getattr(record, "sequence", 0),
+                        "effect_id": effect_id,
+                        "execution_id": str(getattr(record, "execution_id", "")),
+                        "execution": exec_val,
+                        "impact": str(getattr(impact, "value", impact or "")),
+                        "mutation_attempted": bool(getattr(facts, "mutation_attempted", False)),
+                        "replayed": bool(getattr(record, "replayed", False)),
+                    }
+                )
+            elif kind == "observation":
+                records.append(
+                    {
+                        "kind": "observation",
+                        "sequence": getattr(record, "sequence", 0),
+                        "effect_id": str(getattr(record, "effect_id", "")),
+                    }
+                )
+    except Exception:
+        corrupt = True
+
+    unsettled_ids = sorted(claimed_ids - settled_ids)
+    return {
+        "run_id": normalized_run_id,
+        "updated_at": path.stat().st_mtime,
+        "records": records,
+        "counts": {
+            "claims": sum(1 for r in records if r["kind"] == "claim"),
+            "outcomes": sum(1 for r in records if r["kind"] == "outcome"),
+            "observations": sum(1 for r in records if r["kind"] == "observation"),
+        },
+        "reconciliation": {
+            "interrupted_claims": interrupted_ids,
+            "unsettled_claims": unsettled_ids,
+            "needs_attention": bool(corrupt or interrupted_ids or unsettled_ids),
+        },
+        "corrupt": corrupt,
+    }
+
+
+def reconcile_effect_run(
+    run_id: str,
+    *,
+    action: str = "interrupted",
+    note: str = "",
+    actor: str = "admin",
+    directory: str | os.PathLike | None = None,
+) -> dict[str, Any] | None:
+    """Append auditable operator reconciliation outcomes for unsettled claims in a run."""
+    detail = get_effect_run_detail(run_id, directory=directory)
+    if detail is None:
+        return None
+
+    normalized_action = str(action or "interrupted").strip().lower()
+    if normalized_action not in ("interrupted", "cancelled"):
+        raise ValueError("Invalid reconciliation action; expected 'interrupted' or 'cancelled'")
+
+    unsettled = list(detail.get("reconciliation", {}).get("unsettled_claims") or [])
+    if not unsettled:
+        return {
+            "run_id": detail["run_id"],
+            "reconciled_effect_ids": [],
+            "reconciled_count": 0,
+            "action": normalized_action,
+            "reconciliation": detail["reconciliation"],
+        }
+
+    base_dir = Path(directory) if directory is not None else effects_dir()
+    log = EffectLog(detail["run_id"], directory=base_dir)
+    exec_outcome = (
+        ExecutionOutcome.CANCELLED
+        if normalized_action == "cancelled"
+        else ExecutionOutcome.INTERRUPTED
+    )
+    impact = Impact.POSSIBLE
+    clean_actor = "".join(ch for ch in str(actor or "admin") if ch.isalnum() or ch in ("-", "_", "."))[:48] or "admin"
+    clean_note = str(note or "").strip()[:240]
+
+    reconciled_ids: list[str] = []
+    for effect_id in unsettled:
+        exec_id = f"reconcile:{clean_actor}:{effect_id}"
+        if clean_note:
+            exec_id = f"{exec_id}:{clean_note}"
+        log.outcome(
+            effect_id=effect_id,
+            execution_id=exec_id[:160],
+            execution=exec_outcome,
+            impact=impact,
+            facts=ProducerFacts(mutation_attempted=False),
+        )
+        reconciled_ids.append(effect_id)
+
+    updated = get_effect_run_detail(detail["run_id"], directory=base_dir) or detail
+    return {
+        "run_id": detail["run_id"],
+        "reconciled_effect_ids": reconciled_ids,
+        "reconciled_count": len(reconciled_ids),
+        "action": normalized_action,
+        "reconciliation": updated["reconciliation"],
+    }

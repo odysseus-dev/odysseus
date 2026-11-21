@@ -73,11 +73,11 @@ async def test_delegated_adjacent_tools_cannot_read_workspace(tmp_path, monkeypa
         return {"lines": [{"t": Path(path).read_bytes().hex()}]}
 
     def pdf(path, query):
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     class Whisper:
         def transcribe(self, path, **kwargs):
-            text = Path(path).read_text()
+            text = Path(path).read_text(encoding="utf-8")
             return iter([SimpleNamespace(start=0, end=1, text=text)]), SimpleNamespace(language="en")
 
     monkeypatch.setattr(ocr_engine, "extract_image_text", ocr)

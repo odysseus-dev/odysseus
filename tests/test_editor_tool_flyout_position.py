@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLBAR = (ROOT / "static/js/editor/build/toolbar.js").read_text()
+TOOLBAR = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
 
 
 def test_tool_flyout_is_positioned_relative_to_its_containing_block():

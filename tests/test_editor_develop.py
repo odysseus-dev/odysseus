@@ -99,39 +99,39 @@ def test_vibrance_boosts_muted_more_than_saturated():
 
 
 def test_develop_is_registered_as_an_adjustment_type_everywhere():
-    pixel = PIXEL_PASS.read_text()
+    pixel = PIXEL_PASS.read_text(encoding="utf-8")
     assert "import { developImageData } from './develop.js';" in pixel
     assert "if (adj.type === 'develop') {" in pixel
     assert "developImageData(d, w, h, p);" in pixel
 
-    helpers = LAYER_HELPERS.read_text()
+    helpers = LAYER_HELPERS.read_text(encoding="utf-8")
     assert "case 'develop':" in helpers
     assert "'develop': 'Develop'," in helpers
     assert re.search(r"'develop': '<svg", helpers)
 
-    assert "'develop'," in ADJUSTMENT_LAYER.read_text()
+    assert "'develop'," in ADJUSTMENT_LAYER.read_text(encoding="utf-8")
 
-    popup = ADJ_POPUP.read_text()
+    popup = ADJ_POPUP.read_text(encoding="utf-8")
     assert "} else if (type === 'develop') {" in popup
     for key in ["temperature", "tint", "exposure", "contrast", "highlights",
                 "shadows", "whites", "blacks", "clarity", "vibrance", "saturation"]:
         assert f"sliderRow('{key}'" in popup, key
     assert "p.exposure = raw / 100;" in popup
 
-    panels = STUDIO_PANELS.read_text()
+    panels = STUDIO_PANELS.read_text(encoding="utf-8")
     assert "['develop', 'Develop']," in panels
     assert re.search(r"develop:\s*'<path", panels)
 
-    assert 'data-image-action="adj-develop"' in TOPBAR.read_text()
-    assert "adjustments.apply', { type: 'develop' }" in WIRE_TOPBAR.read_text()
+    assert 'data-image-action="adj-develop"' in TOPBAR.read_text(encoding="utf-8")
+    assert "adjustments.apply', { type: 'develop' }" in WIRE_TOPBAR.read_text(encoding="utf-8")
 
-    sw = SW.read_text()
+    sw = SW.read_text(encoding="utf-8")
     assert re.search(r"odysseus-v\d+-pr40-editor-precache", sw)
     assert "'/static/js/editor/fx/develop.js'," in sw
 
 
 def test_develop_panel_polish_groups_and_reset_affordance():
-    popup = ADJ_POPUP.read_text()
+    popup = ADJ_POPUP.read_text(encoding="utf-8")
     # Slider rows can carry a default so the reset arrow only shows when changed.
     assert 'data-default="${defaultValue}"' in popup
     assert 'row.classList.toggle(\'is-modified\'' in popup
@@ -143,7 +143,7 @@ def test_develop_panel_polish_groups_and_reset_affordance():
                 "shadows", "whites", "blacks", "clarity", "vibrance", "saturation"]:
         assert f"sliderRow('{key}'" in popup and "0)" in popup
 
-    css = CSS.read_text()
+    css = CSS.read_text(encoding="utf-8")
     assert ".ge-adj-develop .ge-adj-value {" in css
     assert "font-size: 12px;" in css
     assert ".ge-adj-group-label {" in css

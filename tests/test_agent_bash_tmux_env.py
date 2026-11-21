@@ -24,7 +24,7 @@ def test_workspace_namespace_preserves_literal_paths_inside_scripts(tmp_path):
     if command is None:
         return
     subprocess.run(command, shell=True, check=True)
-    assert (Path(tmp_path) / "result.txt").read_text() == "ok"
+    assert (Path(tmp_path) / "result.txt").read_text(encoding="utf-8") == "ok"
 
 
 def test_direct_bash_subprocess_has_closed_stdin(monkeypatch, tmp_path):

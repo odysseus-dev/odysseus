@@ -3980,8 +3980,271 @@ function renderLogs(isAutoPoll = false) {
   }
 }
 
+let _opsUnsettledOnly = false;
+let _opsRunStatusFilter = '';
+let _opsRunSearch = '';
+
+function _filterOpsEffectRuns(runs) {
+  let list = Array.isArray(runs) ? runs : [];
+  const needle = String(_opsRunSearch || '').trim().toLowerCase();
+  if (needle) {
+    list = list.filter(r => r && String(r.run_id || '').toLowerCase().includes(needle));
+  }
+  if (_opsRunStatusFilter === 'attention') {
+    return list.filter(r => r && (Number(r.unsettled_claims || 0) > 0 || Boolean(r.corrupt)));
+  }
+  if (_opsRunStatusFilter === 'settled') {
+    return list.filter(r => r && Number(r.unsettled_claims || 0) === 0 && !r.corrupt);
+  }
+  return list;
+}
+
+function _escOps(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function _opsBadgeColor(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'ok' || s === 'healthy') return '#34d399';
+  if (s === 'degraded' || s === 'warning') return '#fbbf24';
+  if (s === 'down' || s === 'error') return 'var(--red, #f87171)';
+  return 'var(--text-muted, #9ca3af)';
+}
+
+async function reconcileEffectRun(runId, action = 'interrupted', note = '') {
+  const statusEl = el('admin-ops-reconcile-status');
+  if (statusEl) {
+    statusEl.style.color = 'var(--text-muted, #9ca3af)';
+    statusEl.textContent = `Reconciling as ${action}...`;
+  }
+  try {
+    const res = await fetch(`/api/diagnostics/effects/${encodeURIComponent(runId)}/reconcile`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, note }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errBody = await res.json();
+        if (errBody && errBody.detail) detail = String(errBody.detail);
+      } catch (_) {}
+      if (statusEl) {
+        statusEl.style.color = 'var(--red, #f87171)';
+        statusEl.textContent = `Reconcile failed: ${detail}`;
+      }
+      return null;
+    }
+    const result = await res.json();
+    await loadAdminOpsPanel();
+    await inspectEffectRun(runId);
+    return result;
+  } catch (err) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--red, #f87171)';
+      statusEl.textContent = `Reconcile error: ${err.message}`;
+    }
+    return null;
+  }
+}
+
+async function inspectEffectRun(runId) {
+  const drawer = el('admin-ops-effect-drawer');
+  if (!drawer) return;
+  drawer.style.display = 'block';
+  drawer.innerHTML = `<div style="opacity:0.7;">Loading effect run ${_escOps(runId)}...</div>`;
+  try {
+    const res = await fetch(`/api/diagnostics/effects/${encodeURIComponent(runId)}`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      drawer.innerHTML = `<div style="color:var(--red);">Failed to load run ${_escOps(runId)} (HTTP ${res.status})</div>`;
+      return;
+    }
+    const data = await res.json();
+    const rec = data.reconciliation || {};
+    const unsettled = Array.isArray(rec.unsettled_claims) ? rec.unsettled_claims : [];
+    const records = Array.isArray(data.records) ? data.records : [];
+    drawer.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+        <div style="font-weight:600;font-family:monospace;">Run ${_escOps(data.run_id)}</div>
+        <button type="button" id="admin-ops-drawer-close" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Close</button>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px;opacity:0.85;">
+        <span>Claims: <strong>${Number(data.counts?.claims || 0)}</strong></span>
+        <span>Outcomes: <strong>${Number(data.counts?.outcomes || 0)}</strong></span>
+        <span>Observations: <strong>${Number(data.counts?.observations || 0)}</strong></span>
+        <span>Interrupted: <strong>${(rec.interrupted_claims || []).length}</strong></span>
+        <span>Unsettled: <strong style="color:${unsettled.length ? '#fbbf24' : 'inherit'};">${unsettled.length}</strong></span>
+        ${data.corrupt ? '<span style="color:var(--red);font-weight:600;">Corrupt tail detected</span>' : ''}
+      </div>
+      ${unsettled.length ? `
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;padding:6px;border-radius:4px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);">
+          <input type="text" id="admin-ops-reconcile-note" maxlength="240" placeholder="Operator triage note (optional)" style="flex:1;min-width:160px;padding:3px 6px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);" />
+          <button type="button" data-reconcile-action="interrupted" class="memory-toolbar-btn" style="padding:2px 8px;font-size:10px;">Mark Interrupted</button>
+          <button type="button" data-reconcile-action="cancelled" class="memory-toolbar-btn" style="padding:2px 8px;font-size:10px;">Mark Cancelled</button>
+          <span id="admin-ops-reconcile-status" style="font-size:10px;"></span>
+        </div>
+      ` : ''}
+      <div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
+        ${records.length ? records.map(r => `
+          <div style="padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.22);font-family:monospace;font-size:10px;">
+            <strong>#${Number(r.sequence || 0)} [${_escOps(r.kind)}]</strong>
+            ${_escOps(r.effect_id || '')}
+            ${r.tool ? ` ? ${_escOps(r.tool)}${r.subcommand ? ':' + _escOps(r.subcommand) : ''}` : ''}
+            ${r.execution ? ` ? ${_escOps(r.execution)} (${_escOps(r.impact || '')})` : ''}
+            ${r.external ? ' ? <span style="color:#fbbf24;">external</span>' : ''}
+          </div>
+        `).join('') : '<div style="opacity:0.65;">No complete records in log.</div>'}
+      </div>
+    `;
+    const closeBtn = el('admin-ops-drawer-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        drawer.style.display = 'none';
+        drawer.innerHTML = '';
+      });
+    }
+    drawer.querySelectorAll('button[data-reconcile-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const noteInput = el('admin-ops-reconcile-note');
+        const noteVal = noteInput ? noteInput.value : '';
+        reconcileEffectRun(runId, btn.dataset.reconcileAction || 'interrupted', noteVal);
+      });
+    });
+  } catch (err) {
+    drawer.innerHTML = `<div style="color:var(--red);">Error loading effect run: ${_escOps(err.message)}</div>`;
+  }
+}
+
+async function loadAdminOpsPanel() {
+  const panel = el('admin-ops-runtime-panel');
+  if (!panel) return;
+  try {
+    const effectsUrl = _opsUnsettledOnly
+      ? '/api/diagnostics/effects?limit=8&unsettled_only=true'
+      : '/api/diagnostics/effects?limit=8';
+    const [summaryRes, effectsRes] = await Promise.all([
+      fetch('/api/diagnostics/ops-summary', { credentials: 'same-origin' }),
+      fetch(effectsUrl, { credentials: 'same-origin' }),
+    ]);
+    if (!summaryRes.ok) {
+      panel.style.display = 'none';
+      return;
+    }
+    const summary = await summaryRes.json();
+    const effectsData = effectsRes.ok ? await effectsRes.json() : { runs: [] };
+    const services = summary.services || {};
+    const ops = summary.ops || {};
+    const tasks = ops.tasks || {};
+    const approvals = ops.approvals || {};
+    const effects = ops.effects || {};
+    const runs = Array.isArray(effectsData.runs) ? effectsData.runs : [];
+
+    panel.style.display = 'flex';
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-weight:700;letter-spacing:0.02em;">OPS RUNTIME</span>
+          <span style="padding:1px 6px;border-radius:4px;font-weight:600;text-transform:uppercase;font-size:10px;border:1px solid ${_opsBadgeColor(summary.overall)};color:${_opsBadgeColor(summary.overall)};">
+            ${_escOps(summary.overall || 'unknown')}
+          </span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;opacity:0.85;">
+          <span>Tasks: <strong>${Number(tasks.active || 0)}</strong> active / ${Number(tasks.paused || 0)} paused</span>
+          <span>Pending Approvals: <strong style="color:${Number(approvals.pending_total || 0) > 0 ? '#fbbf24' : 'inherit'};">${Number(approvals.pending_total || 0)}</strong>${Number(approvals.external_untrusted_count || 0) > 0 ? ` (${Number(approvals.external_untrusted_count)} ext)` : ''}${Number(approvals.pending_total || 0) > 0 ? ` <button type="button" id="admin-ops-open-approvals" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;margin-left:3px;" onclick="document.querySelector('[data-tab=&quot;tasks&quot;]')?.click()">Open Queue</button>` : ''}</span>
+          <span>Effect Runs: <strong>${Number(effects.recent_runs || 0)}</strong> (${Number(effects.external_claim_runs || 0)} ext)${Number(effects.unsettled_runs || 0) > 0 ? ` · <strong style="color:#fbbf24;">${Number(effects.unsettled_runs)} unsettled</strong> <button type="button" id="admin-ops-jump-unsettled" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;margin-left:3px;" onclick="const cb=document.getElementById('admin-ops-unsettled-only');if(cb){if(!cb.checked){cb.click();}cb.scrollIntoView({behavior:'smooth',block:'nearest'});}">Triage Unsettled</button>` : ''}</span>
+          <button type="button" id="admin-ops-refresh-btn" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${Object.entries(services).map(([name, info]) => {
+          const st = (info && info.status) || 'disabled';
+          return `<span style="padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:10px;">
+            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${_opsBadgeColor(st)};margin-right:4px;"></span>
+            <strong>${_escOps(name)}</strong>: ${_escOps(st)}
+          </span>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <span style="font-weight:600;opacity:0.75;font-size:10px;text-transform:uppercase;">Recent Effect Runs (Click to inspect)</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="search" id="admin-ops-run-search" aria-label="Search effect runs by run ID" placeholder="Run ID…" value="${_escOps(_opsRunSearch)}" style="padding:1px 5px;font-size:10px;width:96px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
+            <select id="admin-ops-run-status-filter" aria-label="Filter effect runs by status" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+              <option value="">All runs</option>
+              <option value="attention"${_opsRunStatusFilter === 'attention' ? ' selected' : ''}>Needs attention</option>
+              <option value="settled"${_opsRunStatusFilter === 'settled' ? ' selected' : ''}>Settled only</option>
+            </select>
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:10px;opacity:0.85;cursor:pointer;">
+              <input type="checkbox" id="admin-ops-unsettled-only" ${_opsUnsettledOnly ? 'checked' : ''} />
+              <span>Unsettled only</span>
+            </label>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${_filterOpsEffectRuns(runs).length ? _filterOpsEffectRuns(runs).map(r => {
+            const unsettledCount = Number(r.unsettled_claims || 0);
+            return `
+              <button type="button" class="memory-toolbar-btn" data-inspect-run-id="${_escOps(r.run_id)}" style="font-family:monospace;font-size:10px;padding:2px 6px;${unsettledCount > 0 ? 'border-color:rgba(251,191,36,0.55);color:#fbbf24;' : ''}">
+                ${_escOps(String(r.run_id || '').slice(0, 10))}? (${Number(r.claims || 0)}c/${Number(r.outcomes || 0)}o${unsettledCount > 0 ? ` ? ${unsettledCount} unsettled` : ''}${r.corrupt ? ' !' : ''})
+              </button>
+            `;
+          }).join('') : `<span style="opacity:0.65;font-size:10px;">${_opsUnsettledOnly ? 'No unsettled effect runs.' : 'No recent effect runs.'}</span>`}
+        </div>
+      </div>
+      <div id="admin-ops-effect-drawer" style="display:none;padding:8px;border-radius:5px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);"></div>
+    `;
+
+    const refreshBtn = el('admin-ops-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => loadAdminOpsPanel());
+    }
+    const runSearchInput = el('admin-ops-run-search');
+    if (runSearchInput) {
+      runSearchInput.addEventListener('input', () => {
+        _opsRunSearch = runSearchInput.value || '';
+        loadAdminOpsPanel().then(() => {
+          const restored = el('admin-ops-run-search');
+          if (restored && typeof restored.focus === 'function') {
+            restored.focus();
+          }
+        });
+      });
+    }
+    const runStatusSelect = el('admin-ops-run-status-filter');
+    if (runStatusSelect) {
+      runStatusSelect.addEventListener('change', () => {
+        _opsRunStatusFilter = runStatusSelect.value || '';
+        loadAdminOpsPanel();
+      });
+    }
+    const unsettledToggle = el('admin-ops-unsettled-only');
+    if (unsettledToggle) {
+      unsettledToggle.addEventListener('change', (e) => {
+        _opsUnsettledOnly = Boolean(e.target.checked);
+        loadAdminOpsPanel();
+      });
+    }
+    panel.querySelectorAll('button[data-inspect-run-id]').forEach(btn => {
+      btn.addEventListener('click', () => inspectEffectRun(btn.dataset.inspectRunId));
+    });
+  } catch (_) {
+    // Keep logs viewer resilient if ops panel fails
+  }
+}
+
 async function loadLogs(isAutoPoll = false) {
   const consoleContainer = el('log-console-container');
+  if (!isAutoPoll) {
+    loadAdminOpsPanel();
+  }
   const limitSelect = el('log-limit-select');
 
   if (!consoleContainer) return;

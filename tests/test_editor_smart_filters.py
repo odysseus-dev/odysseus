@@ -2,12 +2,12 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EFFECTS = (ROOT / "static" / "js" / "editor" / "effects.js").read_text()
-WORKER = (ROOT / "static" / "js" / "editor" / "effects-worker.js").read_text()
-TOPBAR = (ROOT / "static" / "js" / "editor" / "build" / "topbar.js").read_text()
-WIRE = (ROOT / "static" / "js" / "editor" / "wire-topbar-menus.js").read_text()
-GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
+EFFECTS = (ROOT / "static" / "js" / "editor" / "effects.js").read_text(encoding="utf-8")
+WORKER = (ROOT / "static" / "js" / "editor" / "effects-worker.js").read_text(encoding="utf-8")
+TOPBAR = (ROOT / "static" / "js" / "editor" / "build" / "topbar.js").read_text(encoding="utf-8")
+WIRE = (ROOT / "static" / "js" / "editor" / "wire-topbar-menus.js").read_text(encoding="utf-8")
+GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
+SW = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 
 def test_effect_types_include_the_new_smart_filters():

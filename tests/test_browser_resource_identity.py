@@ -230,7 +230,7 @@ async def test_environment_config_and_cwd_are_server_owned(producer, monkeypatch
     record = await observed(producer)
     assert record.env == browser.owned_environment(record.cwd, record.key)
     assert record.cwd.is_relative_to(browser.STATE_ROOT)
-    assert record.config.read_text() == "{}"
+    assert record.config.read_text(encoding="utf-8") == "{}"
     record.config.write_text('{"cdp":"remote"}')
     with pytest.raises(ValueError): record.validate_config()
 

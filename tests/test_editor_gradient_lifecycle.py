@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_gradient_stops_reset_when_editor_opens_and_closes():
-    source = (ROOT / "static/js/galleryEditor.js").read_text()
+    source = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     open_reset = source.index("state.gradientActive = false;", source.index("export function openEditor"))
     close_reset = source.index("state.gradientActive = false;", source.index("export function closeEditor"))
 
@@ -16,7 +16,7 @@ def test_gradient_stops_reset_when_editor_opens_and_closes():
 
 
 def test_gradient_history_is_deferred_until_a_real_drag():
-    source = (ROOT / "static/js/editor/tools/gradient.js").read_text()
+    source = (ROOT / "static/js/editor/tools/gradient.js").read_text(encoding="utf-8")
 
     begin = source.index("begin(e) {")
     drag = source.index("drag(e) {")

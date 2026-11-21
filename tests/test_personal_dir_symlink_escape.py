@@ -41,7 +41,7 @@ def test_confinement_does_not_rely_on_abspath():
     pinning at the source level is the negative: this closure must not grow its
     own abspath-based check again.
     """
-    body = _function_source(SRC.read_text(), "_resolve_allowed_personal_dir")
+    body = _function_source(SRC.read_text(encoding="utf-8"), "_resolve_allowed_personal_dir")
     assert "os.path.abspath" not in body, (
         "os.path.abspath does not resolve symlinks; the confinement check must "
         "not rely on it"

@@ -130,8 +130,8 @@ def test_shadows_highlights_preserves_black_point_and_contrast():
 
 
 def test_adjustment_worker_reuses_shared_pixel_pass_and_returns_transferable_bitmap():
-    worker = ADJUSTMENT_WORKER.read_text()
-    adjustment = (ROOT / "static/js/editor/adjustment-layer.js").read_text()
+    worker = ADJUSTMENT_WORKER.read_text(encoding="utf-8")
+    adjustment = (ROOT / "static/js/editor/adjustment-layer.js").read_text(encoding="utf-8")
     assert "await import('./fx/pixel-pass.js')" in worker
     assert "self.document = { createElement:" in worker
     assert "transferToImageBitmap()" in worker

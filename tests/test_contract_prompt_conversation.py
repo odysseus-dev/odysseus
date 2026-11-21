@@ -128,7 +128,7 @@ def test_unbounded_execution_request_does_not_invent_retry_limit():
 def test_tool_success_flags_do_not_terminate_compound_turn():
     import ast
     from pathlib import Path
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "src/agent_loop.py").read_text())
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "src/agent_loop.py").read_text(encoding="utf-8"))
     flags = {"_qwen_explicit_effectful_completed", "_native_document_tool_completed",
              "_ody_doc_tool_completed", "_doc_stream_create_completed"}
     seen = set()

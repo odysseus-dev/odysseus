@@ -61,7 +61,7 @@ def _untracked_create_task_calls(tree: ast.AST) -> list[tuple[int, str]]:
 
 
 def test_no_untracked_create_task_in_chat_helpers():
-    tree = ast.parse(CHAT_HELPERS.read_text(), filename=str(CHAT_HELPERS))
+    tree = ast.parse(CHAT_HELPERS.read_text(encoding="utf-8"), filename=str(CHAT_HELPERS))
     offenders = _untracked_create_task_calls(tree)
     assert not offenders, (
         "Background tasks scheduled from routes/chat_helpers.py must go through "

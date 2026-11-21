@@ -25,7 +25,7 @@ def test_searxng_image_is_pinned_not_latest():
 
 
 def test_all_standalone_compose_files_select_the_same_searxng_image():
-    expected = yaml.safe_load(COMPOSE.read_text())["services"]["searxng"]["image"]
+    expected = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]["searxng"]["image"]
     for name in ("docker-compose.gpu-amd.yml", "docker-compose.gpu-nvidia.yml"):
-        actual = yaml.safe_load((ROOT / name).read_text())["services"]["searxng"]["image"]
+        actual = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"]["searxng"]["image"]
         assert actual == expected, f"{name} selects a different SearXNG image"

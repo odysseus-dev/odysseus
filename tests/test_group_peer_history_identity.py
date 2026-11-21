@@ -20,7 +20,7 @@ def _node(script, *args):
 @pytest.mark.skipif(not shutil.which('node'), reason='node not installed')
 @pytest.mark.parametrize('mode', ['parallel', 'round-robin'])
 def test_peer_sync_persists_explicit_identity(mode):
-    source = (ROOT / 'static/js/group.js').read_text()
+    source = (ROOT / 'static/js/group.js').read_text(encoding="utf-8")
     functions = '\n'.join(js_function_source(name, source) for name in ['_syncAllResponses', '_sendRoundRobin'])
     data = _node(r'''
 const source=JSON.parse(process.argv[1]),mode=JSON.parse(process.argv[2]);
@@ -55,7 +55,7 @@ await globalThis.runSync();console.log(JSON.stringify(sent));
     ('user', '[Persona A]: Human text', {'group_peer': False, 'group_model': 'Persona A'}, 'user', '[Persona A]: Human text'),
 ])
 def test_history_uses_explicit_peer_identity_only(role, content, meta, expected_role, expected_content):
-    source = js_function_source('_renderHistoryMessage', (ROOT / 'static/js/sessions.js').read_text())
+    source = js_function_source('_renderHistoryMessage', (ROOT / 'static/js/sessions.js').read_text(encoding="utf-8"))
     result = _node(r'''
 const source=JSON.parse(process.argv[1]),message=JSON.parse(process.argv[2]);
 function _displayHistoryContent(text){return text;}function _stripUserVisionBlocks(text){return text;}

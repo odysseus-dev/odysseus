@@ -22,11 +22,11 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
-WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text()
-EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
-EFFECTS = (ROOT / "static/js/editor/filters/effects.js").read_text()
-SW = (ROOT / "static/sw.js").read_text()
+TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
+WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text(encoding="utf-8")
+EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
+EFFECTS = (ROOT / "static/js/editor/filters/effects.js").read_text(encoding="utf-8")
+SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 IDS = (
     "sharpen-more",

@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _editor():
-    return (ROOT / "static/js/galleryEditor.js").read_text()
+    return (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 
 
 def _slice(source, start, end):
@@ -80,7 +80,7 @@ def test_open_editor_resumes_a_draft_by_server_id_with_a_liveness_guard():
 
 
 def test_gallery_restores_the_active_edit_after_refresh():
-    gallery = (ROOT / "static/js/gallery.js").read_text()
+    gallery = (ROOT / "static/js/gallery.js").read_text(encoding="utf-8")
     restore = _slice(gallery, "async function _restoreActiveEditorAfterRefresh", "if (document.readyState")
     assert "const saved = _readActiveEditorSession();" in restore
     assert "if (!saved) return;" in restore

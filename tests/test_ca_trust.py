@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("check_ca_trust", ROOT / "scripts/check_ca_trust.py")
 checker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(checker)
-INCIDENT = json.loads((ROOT / "tests/fixtures/ca-trust/incident.json").read_text())
+INCIDENT = json.loads((ROOT / "tests/fixtures/ca-trust/incident.json").read_text(encoding="utf-8"))
 
 
 class CATrustTests(unittest.TestCase):
@@ -131,7 +131,7 @@ class CATrustTests(unittest.TestCase):
             clean = self.fixtures / "emsign-g1.pem"
             custom = directory / "custom.pem"
             fingerprint = next(iter(INCIDENT["intermediates"]))
-            custom.write_text(clean.read_text() + INCIDENT["certificates"][fingerprint])
+            custom.write_text(clean.read_text(encoding="utf-8") + INCIDENT["certificates"][fingerprint])
             self.assertEqual(len(INCIDENT["chains"]), 14)
             custom_accepted = []
             for hostname, chain in INCIDENT["chains"].items():

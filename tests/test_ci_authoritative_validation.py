@@ -20,7 +20,7 @@ def _indented_block(text: str, heading: str, indent: int) -> str:
 
 
 def test_ci_runs_on_integrated_dev_pushes():
-    workflow = _WORKFLOW.read_text()
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
     push = _indented_block(workflow, "push", 2)
 
     assert re.search(r"(?m)^    branches:\s*\[main,\s*dev\]\s*$", push)
@@ -28,7 +28,7 @@ def test_ci_runs_on_integrated_dev_pushes():
 
 
 def test_python_tests_are_authoritative():
-    workflow = _WORKFLOW.read_text()
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
     python_tests = _indented_block(workflow, "python-tests", 2)
 
     assert "python -m pytest -q" in python_tests
@@ -36,7 +36,7 @@ def test_python_tests_are_authoritative():
 
 
 def test_ci_checks_system_trust_before_project_installation():
-    python_tests = _indented_block(_WORKFLOW.read_text(), "python-tests", 2)
+    python_tests = _indented_block(_WORKFLOW.read_text(encoding="utf-8"), "python-tests", 2)
     system_check = python_tests.index("python scripts/check_ca_trust.py --system\n")
     system_update = python_tests.index("sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap ca-certificates")
     bootstrap = python_tests.index("uv pip install --system --require-hashes")

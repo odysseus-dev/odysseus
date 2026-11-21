@@ -13,14 +13,14 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
-WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text()
-EXTRA = (ROOT / "static/js/editor/wire-extra-menus.js").read_text()
-VIEW = (ROOT / "static/js/editor/wire-view-menu.js").read_text()
-MERGE = (ROOT / "static/js/editor/wire-merge-buttons.js").read_text()
-GUIDES = (ROOT / "static/js/editor/precision-guides.js").read_text()
-EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
-SW = (ROOT / "static/sw.js").read_text()
+TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
+WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text(encoding="utf-8")
+EXTRA = (ROOT / "static/js/editor/wire-extra-menus.js").read_text(encoding="utf-8")
+VIEW = (ROOT / "static/js/editor/wire-view-menu.js").read_text(encoding="utf-8")
+MERGE = (ROOT / "static/js/editor/wire-merge-buttons.js").read_text(encoding="utf-8")
+GUIDES = (ROOT / "static/js/editor/precision-guides.js").read_text(encoding="utf-8")
+EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
+SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_edit_copy_merged_menu_item_present():

@@ -9,8 +9,8 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CSS = (ROOT / "static" / "css" / "documents-gallery-editor.css").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
+CSS = (ROOT / "static" / "css" / "documents-gallery-editor.css").read_text(encoding="utf-8")
+SW = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 
 def test_checkbox_and_radio_use_the_app_dot():

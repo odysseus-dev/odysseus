@@ -318,6 +318,8 @@ function _makeJob(query, settings) {
     result: null, sources: null, findings: null,
     category: settings?.category || '',
     mode: 'research',
+    enable_domain_verifiers: Boolean(settings?.enable_domain_verifiers),
+    domain_verification: null,
     errorMsg: null, avgDuration: null,
     modelName: null, endpointName: null,
     _es: null, _timerInterval: null,
@@ -409,6 +411,8 @@ async function _pollFallback(job) {
     if (d.category) job.category = d.category;
     if (d.mode) job.mode = d.mode;
     if (d.avg_duration) job.avgDuration = d.avg_duration;
+    if (d.verification_status) job.verification_status = d.verification_status;
+    if (d.domain_verification) job.domain_verification = d.domain_verification;
     if (d.status !== 'running') {
       _finishJob(job, d.status === 'done' ? 'done' : 'error');
       if (d.status === 'done') _fetchResult(job);
@@ -453,6 +457,8 @@ async function _fetchResult(job) {
     job.action_trace = Array.isArray(d.action_trace) ? d.action_trace : [];
     if (d.category) job.category = d.category;
     if (d.mode) job.mode = d.mode;
+    if (d.verification_status) job.verification_status = d.verification_status;
+    if (d.domain_verification) job.domain_verification = d.domain_verification;
     _notify();
   } catch {}
 }

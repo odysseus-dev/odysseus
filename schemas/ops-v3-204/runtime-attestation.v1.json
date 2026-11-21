@@ -1,0 +1,219 @@
+{
+  "": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OPS-V3-204 Runtime Attestation",
+  "type": "object",
+  "required": [
+    "envelope_version",
+    "payload_type",
+    "canonical_payload_b64",
+    "payload",
+    "signature"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "envelope_version": {
+      "const": "1.0.0"
+    },
+    "payload_type": {
+      "const": "application/vnd.odyai.runtime-attestation+json"
+    },
+    "canonical_payload_b64": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "report_id",
+        "timestamp_utc",
+        "certification_id",
+        "workload_identity",
+        "epoch_attestation",
+        "certified_binding",
+        "observed_measurements",
+        "evaluation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "report_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "certification_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "workload_identity": {
+          "type": "object",
+          "required": [
+            "spiffe_id",
+            "node_id",
+            "enclave_type",
+            "hardware_quote_sha256"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "spiffe_id": {
+              "type": "string"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "enclave_type": {
+              "enum": [
+                "TPM_2_0",
+                "INTEL_TDX",
+                "AMD_SEV_SNP",
+                "AWS_NITRO"
+              ]
+            },
+            "hardware_quote_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        },
+        "epoch_attestation": {
+          "type": "object",
+          "required": [
+            "epoch_sequence",
+            "epoch_nonce",
+            "interval_seconds"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "epoch_sequence": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "epoch_nonce": {
+              "type": "string",
+              "minLength": 32
+            },
+            "interval_seconds": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 300
+            }
+          }
+        },
+        "certified_binding": {
+          "type": "object",
+          "required": [
+            "artifact_sha256",
+            "sbom_sha256",
+            "environment_baseline_sha256",
+            "ops_v3_202_challenge_nonce"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "artifact_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "sbom_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "environment_baseline_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "ops_v3_202_challenge_nonce": {
+              "type": "string",
+              "minLength": 32
+            }
+          }
+        },
+        "observed_measurements": {
+          "type": "object",
+          "required": [
+            "artifact_sha256",
+            "sbom_sha256",
+            "environment_baseline_sha256"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "artifact_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "sbom_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "environment_baseline_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        },
+        "evaluation": {
+          "type": "object",
+          "required": [
+            "status",
+            "mismatched_fields",
+            "recommended_trigger_class"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "HEALTHY",
+                "DRIFT_DETECTED",
+                "TAMPER_DETECTED"
+              ]
+            },
+            "mismatched_fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "recommended_trigger_class": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "ENVIRONMENT_DRIFT",
+                "TAMPER_OR_REPLAY",
+                null
+              ]
+            }
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": [
+        "attester_id",
+        "key_id",
+        "algorithm",
+        "signature_b64"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "attester_id": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "algorithm": {
+          "enum": [
+            "ECDSA-P256-SHA256",
+            "ED25519"
+          ]
+        },
+        "signature_b64": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

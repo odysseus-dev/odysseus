@@ -9,7 +9,7 @@ markers assert the second alignment block stays in place.
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CSS = (ROOT / "static" / "css" / "documents-gallery-editor.css").read_text()
+CSS = (ROOT / "static" / "css" / "documents-gallery-editor.css").read_text(encoding="utf-8")
 
 
 def test_muted_aliases_map_to_app_tokens():

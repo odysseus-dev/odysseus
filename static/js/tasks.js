@@ -30,6 +30,772 @@ let _taskFailurePending = false;
 let _taskCompletionPending = false;
 let _taskBulkDeleting = false;
 let _pendingFocusAction = null;
+let _pendingApprovals = [];
+let _selectedApprovalIds = new Set();
+let _knownPendingApprovalIds = new Set();
+let _approvalDecisionHistory = [];
+let _approvalHistoryFilter = 'all';
+let _approvalHistoryToolFilter = '';
+let _knownApprovalHistoryTools = new Set();
+let _approvalsPollTimer = null;
+let _approvalsTickTimer = null;
+let _approvalsVisibilityBound = false;
+
+function _syncSelectedApprovalIds() {
+  const activeIds = new Set(_pendingApprovals.map(item => item.approval_id).filter(Boolean));
+  for (const id of [..._selectedApprovalIds]) {
+    if (!activeIds.has(id)) _selectedApprovalIds.delete(id);
+  }
+  for (const id of [..._knownPendingApprovalIds]) {
+    if (!activeIds.has(id)) _knownPendingApprovalIds.delete(id);
+  }
+  for (const id of activeIds) {
+    if (!_knownPendingApprovalIds.has(id)) {
+      _knownPendingApprovalIds.add(id);
+      _selectedApprovalIds.add(id);
+    }
+  }
+}
+
+let _pendingApprovalsToolFilter = '';
+let _pendingApprovalsRiskFilter = '';
+let _approvalsPollingPaused = false;
+let _approvalHistorySearch = '';
+let _approvalHistoryRiskFilter = '';
+let _pendingApprovalsSort = '';
+let _approvalHistoryEscapeBound = false;
+
+let _pendingApprovalsSearch = '';
+let _pendingApprovalsShortcutsBound = false;
+
+function _hasActivePendingFilter() {
+  return Boolean(
+    _pendingApprovalsToolFilter ||
+    _pendingApprovalsRiskFilter ||
+    String(_pendingApprovalsSearch || '').trim()
+  );
+}
+
+function _getFilteredPendingApprovals() {
+  const needle = String(_pendingApprovalsSearch || '').trim().toLowerCase();
+  return _pendingApprovals.filter(item => {
+    if (!item) return false;
+    if (_pendingApprovalsToolFilter && String(item.tool_name || '') !== _pendingApprovalsToolFilter) {
+      return false;
+    }
+    if (_pendingApprovalsRiskFilter === 'safe' && item.external_untrusted_context_seen) {
+      return false;
+    }
+    if (_pendingApprovalsRiskFilter === 'external' && !item.external_untrusted_context_seen) {
+      return false;
+    }
+    if (needle) {
+      const previewStr = String(item.content_preview || '').toLowerCase();
+      const digestStr = String(item.digest || '').toLowerCase();
+      if (!previewStr.includes(needle) && !digestStr.includes(needle)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function _ensurePendingApprovalsShortcuts() {
+  if (_pendingApprovalsShortcutsBound || typeof document === 'undefined') return;
+  _pendingApprovalsShortcutsBound = true;
+  document.addEventListener('keydown', ev => {
+    if (!ev || !ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    const host = document.getElementById('tasks-pending-approvals');
+    if (!host || host.style.display === 'none' || !_pendingApprovals.length) return;
+    const target = ev.target || {};
+    const tag = String(target.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+    const key = String(ev.key || '').toLowerCase();
+    if (key === 'a') {
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      const visible = _getFilteredPendingApprovals();
+      const visibleSelectedCount = visible.filter(item => item && _selectedApprovalIds.has(item.approval_id)).length;
+      const allSelected = visible.length > 0 && visibleSelectedCount === visible.length;
+      _selectAllPendingApprovals(!allSelected);
+    } else if (key === 's') {
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      _selectSafePendingApprovals();
+    }
+  });
+}
+
+function _selectAllPendingApprovals(checked) {
+  for (const item of _pendingApprovals) {
+    if (item && item.approval_id) _knownPendingApprovalIds.add(item.approval_id);
+  }
+  const visible = _getFilteredPendingApprovals();
+  const hasFilter = _hasActivePendingFilter();
+  if (checked) {
+    if (hasFilter) _selectedApprovalIds.clear();
+    for (const item of visible) {
+      if (item && item.approval_id) _selectedApprovalIds.add(item.approval_id);
+    }
+  } else if (hasFilter) {
+    for (const item of visible) {
+      if (item && item.approval_id) _selectedApprovalIds.delete(item.approval_id);
+    }
+  } else {
+    _selectedApprovalIds.clear();
+  }
+  _renderPendingApprovals();
+}
+
+function _selectSafePendingApprovals() {
+  for (const item of _pendingApprovals) {
+    if (item && item.approval_id) _knownPendingApprovalIds.add(item.approval_id);
+  }
+  const visible = _getFilteredPendingApprovals();
+  if (_hasActivePendingFilter()) {
+    for (const item of visible) {
+      if (item && item.approval_id) _selectedApprovalIds.delete(item.approval_id);
+    }
+  } else {
+    _selectedApprovalIds.clear();
+  }
+  for (const item of visible) {
+    if (item && item.approval_id && !item.external_untrusted_context_seen) {
+      _selectedApprovalIds.add(item.approval_id);
+    }
+  }
+  _renderPendingApprovals();
+}
+
+function _formatDecisionAge(resolvedAt) {
+  const ts = Number(resolvedAt || 0);
+  if (!ts) return '';
+  const delta = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (delta < 60) return `${delta}s ago`;
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  return `${Math.floor(delta / 3600)}h ago`;
+}
+
+function _isApprovalExpiringSoon(expiresAt) {
+  const exp = Number(expiresAt || 0);
+  if (!exp) return false;
+  const remaining = Math.ceil(exp - Date.now() / 1000);
+  return remaining > 0 && remaining <= 60;
+}
+
+function _formatApprovalTtl(expiresAt) {
+  const exp = Number(expiresAt || 0);
+  if (!exp) return '';
+  const remaining = Math.max(0, Math.ceil(exp - Date.now() / 1000));
+  if (remaining <= 0) return 'Expired';
+  if (remaining <= 60) return `Expiring soon · ${remaining}s left`;
+  const mins = Math.floor(remaining / 60);
+  const secs = remaining % 60;
+  return `${mins}m ${secs}s left`;
+}
+
+function _pruneExpiredApprovals() {
+  const nowSec = Date.now() / 1000;
+  const before = _pendingApprovals.length;
+  _pendingApprovals = _pendingApprovals.filter(item => !item.expires_at || Number(item.expires_at) > nowSec);
+  return _pendingApprovals.length !== before;
+}
+
+function _stopApprovalsPolling() {
+  if (_approvalsPollTimer) {
+    clearInterval(_approvalsPollTimer);
+    _approvalsPollTimer = null;
+  }
+  if (_approvalsTickTimer) {
+    clearInterval(_approvalsTickTimer);
+    _approvalsTickTimer = null;
+  }
+}
+
+function _startApprovalsPolling() {
+  if (!_approvalsVisibilityBound && typeof document !== 'undefined') {
+    _approvalsVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      const host = document.getElementById('tasks-pending-approvals');
+      if (!host) {
+        _stopApprovalsPolling();
+        return;
+      }
+      if (!document.hidden && !_approvalsPollingPaused) {
+        _fetchPendingApprovals();
+      }
+    });
+  }
+  if (!_approvalsPollTimer) {
+    _approvalsPollTimer = setInterval(() => {
+      const host = document.getElementById('tasks-pending-approvals');
+      if (!host) {
+        _stopApprovalsPolling();
+        return;
+      }
+      if (_approvalsPollingPaused) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      _fetchPendingApprovals();
+    }, 10000);
+  }
+  if (!_approvalsTickTimer) {
+    _approvalsTickTimer = setInterval(() => {
+      const host = document.getElementById('tasks-pending-approvals');
+      if (!host) {
+        _stopApprovalsPolling();
+        return;
+      }
+      if (!_pendingApprovals.length) return;
+      if (_pruneExpiredApprovals()) {
+        _renderPendingApprovals();
+        return;
+      }
+      host.querySelectorAll('[data-approval-ttl]').forEach(el => {
+        el.textContent = _formatApprovalTtl(el.dataset.approvalTtl);
+      });
+    }, 1000);
+  }
+}
+
+function _approvalHistoryQueryParams(limit) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
+    params.set('decision', _approvalHistoryFilter);
+  }
+  if (_approvalHistoryToolFilter) {
+    params.set('tool_name', _approvalHistoryToolFilter);
+  }
+  return params.toString();
+}
+
+function _exportApprovalHistoryCsv() {
+  const params = new URLSearchParams({ format: 'csv', limit: '200' });
+  if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
+    params.set('decision', _approvalHistoryFilter);
+  }
+  if (_approvalHistoryToolFilter) {
+    params.set('tool_name', _approvalHistoryToolFilter);
+  }
+  const url = `${API_BASE}/api/tasks/approvals/history/export?${params.toString()}`;
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(url, '_blank', 'noopener');
+  }
+  return url;
+}
+
+async function _fetchApprovalHistory() {
+  try {
+    const qs = _approvalHistoryQueryParams(8);
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/history?${qs}`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    _approvalDecisionHistory = Array.isArray(data.decisions) ? data.decisions : [];
+    for (const entry of _approvalDecisionHistory) {
+      if (entry && entry.tool_name) _knownApprovalHistoryTools.add(String(entry.tool_name));
+    }
+  } catch (_) {
+    // Non-fatal: keep last known history
+  }
+  _renderApprovalHistory();
+}
+
+async function _fetchPendingApprovals() {
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/pending`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    _pendingApprovals = Array.isArray(data.approvals) ? data.approvals : [];
+    _pruneExpiredApprovals();
+  } catch (_) {
+    // Non-fatal: keep last known list
+  }
+  _renderPendingApprovals();
+  await _fetchApprovalHistory();
+}
+
+async function _resolvePendingApproval(approvalId, decision) {
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    });
+    if (!res.ok) {
+      let msg = `Failed to resolve approval (${res.status})`;
+      try {
+        const err = await res.json();
+        if (err && err.detail) msg = err.detail;
+      } catch (_) {}
+      if (uiModule) uiModule.showError(msg);
+    } else if (uiModule) {
+      uiModule.showToast(decision === 'deny' ? 'Action denied' : 'Action approved once', { duration: 3500 });
+    }
+  } catch (e) {
+    if (uiModule) uiModule.showError('Network error resolving approval');
+  }
+  await _fetchPendingApprovals();
+}
+
+async function _resolveAllPendingApprovals(decision) {
+  _syncSelectedApprovalIds();
+  const targetItems = _pendingApprovals.filter(
+    item => item && item.approval_id && _selectedApprovalIds.has(item.approval_id)
+  );
+  const approvalIds = targetItems.map(item => item.approval_id);
+  if (!approvalIds.length) {
+    if (uiModule) uiModule.showError('Select at least one pending approval');
+    return;
+  }
+  let skipExternalUntrusted = false;
+  if (decision !== 'deny') {
+    const externalCount = targetItems.filter(item => Boolean(item.external_untrusted_context_seen)).length;
+    if (externalCount > 0 && typeof confirm === 'function') {
+      const includeExternal = confirm(
+        `${externalCount} selected action(s) involve external untrusted context. Click OK to approve all, or Cancel to skip external-context actions.`
+      );
+      if (!includeExternal) {
+        skipExternalUntrusted = true;
+      }
+    }
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/approvals/resolve-bulk`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approval_ids: approvalIds,
+        decision,
+        skip_external_untrusted: skipExternalUntrusted,
+      }),
+    });
+    if (!res.ok) {
+      let msg = `Failed bulk approval action (${res.status})`;
+      try {
+        const err = await res.json();
+        if (err && err.detail) msg = err.detail;
+      } catch (_) {}
+      if (uiModule) uiModule.showError(msg);
+    } else if (uiModule) {
+      const data = await res.json();
+      const count = Number(data.resolved_count || 0);
+      const skippedExternal = Array.isArray(data.failed)
+        ? data.failed.filter(f => f && f.reason === 'external_untrusted_context').length
+        : 0;
+      const verb = decision === 'deny' ? 'Denied' : 'Approved';
+      const suffix = skippedExternal > 0 ? ` (${skippedExternal} external skipped)` : '';
+      uiModule.showToast(`${verb} ${count} pending action${count === 1 ? '' : 's'}${suffix}`, { duration: 3500 });
+    }
+  } catch (e) {
+    if (uiModule) uiModule.showError('Network error during bulk approval');
+  }
+  await _fetchPendingApprovals();
+}
+
+let _selectedApprovalHistoryId = '';
+
+function _toggleApprovalHistoryDetail(approvalId) {
+  const target = String(approvalId || '');
+  _selectedApprovalHistoryId = (_selectedApprovalHistoryId === target) ? '' : target;
+  _renderApprovalHistory();
+}
+
+async function _copyApprovalHistoryId(approvalId) {
+  const idStr = String(approvalId || '');
+  if (!idStr) return false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    await navigator.clipboard.writeText(idStr);
+    if (uiModule && typeof uiModule.showToast === 'function') {
+      uiModule.showToast('Copied approval ID', 'info');
+    }
+    return true;
+  }
+  return false;
+}
+
+function _exportApprovalHistory(format = 'csv') {
+  const fmt = format === 'json' ? 'json' : 'csv';
+  const params = new URLSearchParams({ format: fmt, limit: '200' });
+  if (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') {
+    params.set('decision', _approvalHistoryFilter);
+  }
+  if (_approvalHistoryToolFilter) {
+    params.set('tool_name', _approvalHistoryToolFilter);
+  }
+  const url = `/api/tasks/approvals/history/export?${params.toString()}`;
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(url, '_blank', 'noopener');
+  }
+  return url;
+}
+
+function _renderApprovalHistory() {
+  const host = document.getElementById('tasks-approval-history');
+  if (!host) return;
+  const searchNeedle = String(_approvalHistorySearch || '').trim().toLowerCase();
+  if (!_approvalDecisionHistory.length && _approvalHistoryFilter === 'all' && !_approvalHistoryToolFilter && !_approvalHistoryRiskFilter && !searchNeedle) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  host.style.display = 'flex';
+  const filters = [
+    { key: 'all', label: 'All' },
+    { key: 'approve', label: 'Approved' },
+    { key: 'deny', label: 'Denied' },
+  ];
+  const visibleDecisions = _approvalDecisionHistory.filter(item => {
+    if (!item) return false;
+    if (_approvalHistoryRiskFilter === 'external' && !item.external_untrusted_context_seen) return false;
+    if (_approvalHistoryRiskFilter === 'safe' && item.external_untrusted_context_seen) return false;
+    if (searchNeedle) {
+      const idStr = String(item.approval_id || '').toLowerCase();
+      const digestStr = String(item.digest || '').toLowerCase();
+      if (!idStr.includes(searchNeedle) && !digestStr.includes(searchNeedle)) return false;
+    }
+    return true;
+  });
+  const toolOptions = [..._knownApprovalHistoryTools].sort();
+  const approvedCount = visibleDecisions.filter(item => item && item.decision !== 'deny').length;
+  const deniedCount = visibleDecisions.filter(item => item && item.decision === 'deny').length;
+  const hasActiveHistoryFilters = (_approvalHistoryFilter && _approvalHistoryFilter !== 'all') || Boolean(_approvalHistoryToolFilter) || Boolean(_approvalHistoryRiskFilter) || Boolean(searchNeedle);
+  const selectedDetail = visibleDecisions.find(item => item && String(item.approval_id) === _selectedApprovalHistoryId) || null;
+  if (!selectedDetail && _selectedApprovalHistoryId) {
+    _selectedApprovalHistoryId = '';
+  }
+  host.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;opacity:0.85;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-weight:600;">Recent Decisions (${visibleDecisions.length})</span>
+        ${visibleDecisions.length ? `<span style="opacity:0.7;">Approved: ${approvedCount} · Denied: ${deniedCount}</span>` : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        <input type="search" id="tasks-approval-history-search" aria-label="Search decisions by ID or digest" placeholder="ID or digest…" value="${_esc(_approvalHistorySearch)}" style="padding:1px 5px;font-size:9px;width:96px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
+        <select id="tasks-approval-history-risk" aria-label="Filter decisions by context risk" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+          <option value="">All contexts</option>
+          <option value="safe"${_approvalHistoryRiskFilter === 'safe' ? ' selected' : ''}>Safe only</option>
+          <option value="external"${_approvalHistoryRiskFilter === 'external' ? ' selected' : ''}>External untrusted</option>
+        </select>
+        ${toolOptions.length ? `
+          <select id="tasks-approval-history-tool" aria-label="Filter decisions by tool" style="padding:1px 4px;font-size:9px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">All tools</option>
+            ${toolOptions.map(t => `<option value="${_esc(t)}"${_approvalHistoryToolFilter === t ? ' selected' : ''}>${_esc(t)}</option>`).join('')}
+          </select>
+        ` : ''}
+        ${filters.map(f => `
+          <button type="button" class="memory-toolbar-btn" data-history-filter="${f.key}" style="padding:1px 5px;font-size:9px;${_approvalHistoryFilter === f.key ? 'border-color:var(--accent,var(--red));font-weight:600;' : 'opacity:0.75;'}">${f.label}</button>
+        `).join('')}
+        ${hasActiveHistoryFilters ? `
+          <button type="button" id="tasks-approval-history-reset" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Reset Filters</button>
+        ` : ''}
+        <button type="button" id="tasks-approval-history-export" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Export CSV</button>
+        <button type="button" id="tasks-approval-history-export-json" class="memory-toolbar-btn" style="padding:1px 5px;font-size:9px;">Export JSON</button>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+      ${visibleDecisions.length ? visibleDecisions.map(item => {
+        const isDenied = item.decision === 'deny';
+        const isSelected = Boolean(selectedDetail && String(item.approval_id) === String(selectedDetail.approval_id));
+        const pillColor = isDenied ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)';
+        const textColor = isDenied ? '#fca5a5' : '#6ee7b7';
+        const label = isDenied ? 'Denied' : 'Approved';
+        const borderStyle = isSelected ? '1px solid currentColor' : '1px solid transparent';
+        return `
+          <span class="task-approval-history-pill" role="button" tabindex="0" data-approval-id="${_esc(item.approval_id)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;border:${borderStyle};background:${pillColor};color:${textColor};font-size:10px;cursor:pointer;">
+            <strong>${_esc(item.tool_name || 'tool')}</strong>
+            <span>${label}</span>
+            ${item.digest ? `<span style="opacity:0.7;font-family:monospace;">#${_esc(item.digest)}</span>` : ''}
+            ${item.resolved_at ? `<span style="opacity:0.7;">${_esc(_formatDecisionAge(item.resolved_at))}</span>` : ''}
+          </span>
+        `;
+      }).join('') : '<span style="font-size:10px;opacity:0.65;">No matching decisions</span>'}
+    </div>
+    ${selectedDetail ? `
+      <div id="tasks-approval-history-detail" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);font-size:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span><strong>ID:</strong> <code style="font-family:monospace;">${_esc(selectedDetail.approval_id)}</code></span>
+          <span><strong>Tool:</strong> ${_esc(selectedDetail.tool_name || 'tool')}</span>
+          <span><strong>Decision:</strong> ${_esc(selectedDetail.decision || '')}</span>
+          ${selectedDetail.digest ? `<span><strong>Digest:</strong> <code style="font-family:monospace;">${_esc(selectedDetail.digest)}</code></span>` : ''}
+          ${selectedDetail.resolved_at ? `<span><strong>Resolved:</strong> ${_esc(String(selectedDetail.resolved_at))}</span>` : ''}
+          ${selectedDetail.external_untrusted_context_seen ? '<span style="color:#fbbf24;font-weight:600;">External Untrusted Context</span>' : ''}
+        </div>
+        <button type="button" id="tasks-approval-history-copy-id" data-copy-approval-id="${_esc(selectedDetail.approval_id)}" class="memory-toolbar-btn" style="padding:1px 6px;font-size:9px;">Copy ID</button>
+      </div>
+    ` : ''}
+  `;
+  const historySearchInput = host.querySelector('#tasks-approval-history-search');
+  if (historySearchInput) {
+    historySearchInput.addEventListener('input', () => {
+      _approvalHistorySearch = historySearchInput.value || '';
+      _renderApprovalHistory();
+      const restored = host.querySelector('#tasks-approval-history-search');
+      if (restored && typeof restored.focus === 'function') {
+        restored.focus();
+      }
+    });
+  }
+  const historyRiskSelect = host.querySelector('#tasks-approval-history-risk');
+  if (historyRiskSelect) {
+    historyRiskSelect.addEventListener('change', () => {
+      _approvalHistoryRiskFilter = historyRiskSelect.value || '';
+      _renderApprovalHistory();
+    });
+  }
+  const toolSelect = host.querySelector('#tasks-approval-history-tool');
+  if (toolSelect) {
+    toolSelect.addEventListener('change', async () => {
+      _approvalHistoryToolFilter = toolSelect.value || '';
+      await _fetchApprovalHistory();
+    });
+  }
+  host.querySelectorAll('button[data-history-filter]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      _approvalHistoryFilter = btn.dataset.historyFilter || 'all';
+      await _fetchApprovalHistory();
+    });
+  });
+  host.querySelectorAll('.task-approval-history-pill[data-approval-id]').forEach(pill => {
+    pill.addEventListener('click', () => _toggleApprovalHistoryDetail(pill.dataset.approvalId));
+    pill.addEventListener('keydown', (ev) => {
+      if (ev && (ev.key === 'Enter' || ev.key === ' ')) {
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        _toggleApprovalHistoryDetail(pill.dataset.approvalId);
+      }
+    });
+  });
+  if (!_approvalHistoryEscapeBound && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    _approvalHistoryEscapeBound = true;
+    document.addEventListener('keydown', (ev) => {
+      if (ev && ev.key === 'Escape' && _selectedApprovalHistoryId) {
+        _selectedApprovalHistoryId = '';
+        _renderApprovalHistory();
+      }
+    });
+  }
+  const copyIdBtn = host.querySelector('#tasks-approval-history-copy-id');
+  if (copyIdBtn) {
+    copyIdBtn.addEventListener('click', () => _copyApprovalHistoryId(copyIdBtn.dataset.copyApprovalId));
+  }
+  const resetBtn = host.querySelector('#tasks-approval-history-reset');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      _approvalHistoryFilter = 'all';
+      _approvalHistoryToolFilter = '';
+      _approvalHistorySearch = '';
+      _approvalHistoryRiskFilter = '';
+      await _fetchApprovalHistory();
+    });
+  }
+  const exportBtn = host.querySelector('#tasks-approval-history-export');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => _exportApprovalHistory('csv'));
+  }
+  const exportJsonBtn = host.querySelector('#tasks-approval-history-export-json');
+  if (exportJsonBtn) {
+    exportJsonBtn.addEventListener('click', () => _exportApprovalHistory('json'));
+  }
+}
+
+function _renderPendingApprovals() {
+  const host = document.getElementById('tasks-pending-approvals');
+  if (!host) {
+    _stopApprovalsPolling();
+    return;
+  }
+  _startApprovalsPolling();
+  _ensurePendingApprovalsShortcuts();
+  _pruneExpiredApprovals();
+  _syncSelectedApprovalIds();
+  if (!_pendingApprovals.length) {
+    _pendingApprovalsToolFilter = '';
+    _pendingApprovalsRiskFilter = '';
+    _pendingApprovalsSearch = '';
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  const pendingTools = [...new Set(_pendingApprovals.map(item => String((item && item.tool_name) || '')).filter(Boolean))].sort();
+  if (_pendingApprovalsToolFilter && !pendingTools.includes(_pendingApprovalsToolFilter)) {
+    _pendingApprovalsToolFilter = '';
+  }
+  const anyExternalUntrusted = _pendingApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
+  if (_pendingApprovalsRiskFilter && !anyExternalUntrusted) {
+    _pendingApprovalsRiskFilter = '';
+  }
+  const filteredApprovals = _getFilteredPendingApprovals();
+  const visibleApprovals = _pendingApprovalsSort === 'expiring'
+    ? [...filteredApprovals].sort((a, b) => {
+        const ea = Number((a && a.expires_at) || 0) || Number.POSITIVE_INFINITY;
+        const eb = Number((b && b.expires_at) || 0) || Number.POSITIVE_INFINITY;
+        return ea - eb;
+      })
+    : filteredApprovals;
+  host.style.display = 'flex';
+  const showBulkActions = visibleApprovals.length >= 2;
+  const visibleSelectedCount = visibleApprovals.filter(item => item && _selectedApprovalIds.has(item.approval_id)).length;
+  const selectedCount = _selectedApprovalIds.size;
+  const allSelected = visibleApprovals.length > 0 && visibleSelectedCount === visibleApprovals.length;
+  const hasPendingFilter = _hasActivePendingFilter();
+  const isPartialSelection = Boolean((visibleSelectedCount > 0 && !allSelected) || (hasPendingFilter && selectedCount > 0));
+  const hasExternalUntrusted = visibleApprovals.some(item => Boolean(item && item.external_untrusted_context_seen));
+  const approveBulkLabel = isPartialSelection ? `Approve Selected (${selectedCount})` : 'Approve All';
+  const denyBulkLabel = isPartialSelection ? `Deny Selected (${selectedCount})` : 'Deny All';
+  const countLabel = hasPendingFilter ? `${visibleApprovals.length}/${_pendingApprovals.length}` : `${_pendingApprovals.length}`;
+  host.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;font-weight:600;color:var(--accent,var(--red));flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${showBulkActions ? `<input type="checkbox" id="tasks-approvals-select-all" aria-label="Select all pending approvals"${allSelected ? ' checked' : ''} />` : ''}
+        <span>Pending Approvals (${countLabel})</span>
+        <span style="opacity:0.65;font-weight:400;">Single-action human sign-off required</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        ${(_pendingApprovals.length >= 2 || String(_pendingApprovalsSearch || '').trim()) ? `
+          <input type="search" id="tasks-approvals-search" aria-label="Search pending approvals by preview or digest" placeholder="Preview or digest…" value="${_esc(_pendingApprovalsSearch)}" style="padding:1px 5px;font-size:10px;width:108px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);" />
+        ` : ''}
+        ${pendingTools.length >= 2 ? `
+          <select id="tasks-approvals-tool-filter" aria-label="Filter pending approvals by tool" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">All tools</option>
+            ${pendingTools.map(t => `<option value="${_esc(t)}"${_pendingApprovalsToolFilter === t ? ' selected' : ''}>${_esc(t)}</option>`).join('')}
+          </select>
+        ` : ''}
+        ${anyExternalUntrusted ? `
+          <select id="tasks-approvals-risk-filter" aria-label="Filter pending approvals by context risk" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">All contexts</option>
+            <option value="safe"${_pendingApprovalsRiskFilter === 'safe' ? ' selected' : ''}>Safe only</option>
+            <option value="external"${_pendingApprovalsRiskFilter === 'external' ? ' selected' : ''}>External untrusted</option>
+          </select>
+        ` : ''}
+        ${hasPendingFilter ? `
+          <button type="button" id="tasks-approvals-clear-filters" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Clear Filters</button>
+        ` : ''}
+        ${showBulkActions && hasExternalUntrusted ? `
+          <button type="button" id="tasks-approvals-select-safe" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Select Safe Only</button>
+        ` : ''}
+        ${showBulkActions ? `
+          <button type="button" id="tasks-approvals-approve-all" class="memory-toolbar-btn" data-bulk-approval-action="approve_task" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${approveBulkLabel}</button>
+          <button type="button" id="tasks-approvals-deny-all" class="memory-toolbar-btn danger" data-bulk-approval-action="deny" style="padding:2px 6px;font-size:10px;"${selectedCount === 0 ? ' disabled' : ''}>${denyBulkLabel}</button>
+        ` : ''}
+        ${(visibleApprovals.length >= 2 || _pendingApprovalsSort === 'expiring') ? `
+          <select id="tasks-approvals-sort" aria-label="Sort pending approvals" style="padding:1px 4px;font-size:10px;border-radius:4px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.14);">
+            <option value="">Queue order</option>
+            <option value="expiring"${_pendingApprovalsSort === 'expiring' ? ' selected' : ''}>Expiring soonest</option>
+          </select>
+        ` : ''}
+        <button type="button" id="tasks-approvals-pause-toggle" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;${_approvalsPollingPaused ? 'border-color:var(--accent,var(--red));font-weight:600;' : ''}">${_approvalsPollingPaused ? 'Resume Poll' : 'Pause Poll'}</button>
+        <button type="button" id="tasks-approvals-refresh" class="memory-toolbar-btn" style="padding:2px 6px;font-size:10px;">Refresh</button>
+      </div>
+    </div>
+    ${visibleApprovals.map(item => {
+      const checkedAttr = _selectedApprovalIds.has(item.approval_id) ? ' checked' : '';
+      const expiringSoon = _isApprovalExpiringSoon(item.expires_at);
+      const rowBorder = expiringSoon ? '1px solid rgba(245,158,11,0.48)' : '1px solid rgba(255,255,255,0.08)';
+      const ttlStyle = expiringSoon
+        ? 'color:#fbbf24;font-weight:600;font-size:10px;'
+        : 'opacity:0.65;font-weight:400;font-size:10px;';
+      return `
+      <div class="task-approval-row" data-approval-id="${_esc(item.approval_id)}"${expiringSoon ? ' data-approval-expiring="true"' : ''} style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03);border:${rowBorder};font-size:11px;">
+        ${showBulkActions ? `<input type="checkbox" class="task-approval-select" data-approval-id="${_esc(item.approval_id)}" aria-label="Select approval ${_esc(item.tool_name || 'tool')}"${checkedAttr} />` : ''}
+        <div style="min-width:0;flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;font-weight:600;">
+            <span>${_esc(item.tool_name || 'tool')}</span>
+            <span style="opacity:0.55;font-family:monospace;font-size:10px;">#${_esc(item.digest || '')}</span>
+            ${item.external_untrusted_context_seen ? '<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.16);color:#fbbf24;">External context</span>' : ''}
+            ${item.expires_at ? `<span data-approval-ttl="${_esc(String(item.expires_at))}" style="${ttlStyle}">${_esc(_formatApprovalTtl(item.expires_at))}</span>` : ''}
+          </div>
+          <div style="opacity:0.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${_esc(item.content_preview || '')}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button type="button" class="memory-toolbar-btn" data-approval-action="approve_task" data-approval-id="${_esc(item.approval_id)}">Approve</button>
+          <button type="button" class="memory-toolbar-btn danger" data-approval-action="deny" data-approval-id="${_esc(item.approval_id)}">Deny</button>
+        </div>
+      </div>
+    `;
+    }).join('')}
+  `;
+  const selectAllCb = host.querySelector('#tasks-approvals-select-all');
+  if (selectAllCb) {
+    selectAllCb.indeterminate = isPartialSelection;
+    selectAllCb.addEventListener('change', () => _selectAllPendingApprovals(Boolean(selectAllCb.checked)));
+  }
+  const pendingToolSelect = host.querySelector('#tasks-approvals-tool-filter');
+  if (pendingToolSelect) {
+    pendingToolSelect.addEventListener('change', () => {
+      _pendingApprovalsToolFilter = pendingToolSelect.value || '';
+      _renderPendingApprovals();
+    });
+  }
+  const pendingSearchInput = host.querySelector('#tasks-approvals-search');
+  if (pendingSearchInput) {
+    pendingSearchInput.addEventListener('input', () => {
+      _pendingApprovalsSearch = pendingSearchInput.value || '';
+      _renderPendingApprovals();
+      const restored = host.querySelector('#tasks-approvals-search');
+      if (restored && typeof restored.focus === 'function') {
+        restored.focus();
+      }
+    });
+  }
+  const pendingRiskSelect = host.querySelector('#tasks-approvals-risk-filter');
+  if (pendingRiskSelect) {
+    pendingRiskSelect.addEventListener('change', () => {
+      _pendingApprovalsRiskFilter = pendingRiskSelect.value || '';
+      _renderPendingApprovals();
+    });
+  }
+  const clearFiltersBtn = host.querySelector('#tasks-approvals-clear-filters');
+  if (clearFiltersBtn) {
+    clearFiltersBtn.addEventListener('click', () => {
+      _pendingApprovalsToolFilter = '';
+      _pendingApprovalsRiskFilter = '';
+      _pendingApprovalsSearch = '';
+      _renderPendingApprovals();
+    });
+  }
+  const pendingSortSelect = host.querySelector('#tasks-approvals-sort');
+  if (pendingSortSelect) {
+    pendingSortSelect.addEventListener('change', () => {
+      _pendingApprovalsSort = pendingSortSelect.value || '';
+      _renderPendingApprovals();
+    });
+  }
+  const pauseToggleBtn = host.querySelector('#tasks-approvals-pause-toggle');
+  if (pauseToggleBtn) {
+    pauseToggleBtn.addEventListener('click', () => {
+      _approvalsPollingPaused = !_approvalsPollingPaused;
+      _renderPendingApprovals();
+    });
+  }
+  const selectSafeBtn = host.querySelector('#tasks-approvals-select-safe');
+  if (selectSafeBtn) {
+    selectSafeBtn.addEventListener('click', () => _selectSafePendingApprovals());
+  }
+  const refreshBtn = host.querySelector('#tasks-approvals-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => _fetchPendingApprovals());
+  }
+  host.querySelectorAll('input.task-approval-select').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.approvalId;
+      if (!id) return;
+      if (cb.checked) _selectedApprovalIds.add(id);
+      else _selectedApprovalIds.delete(id);
+      _renderPendingApprovals();
+    });
+  });
+  host.querySelectorAll('button[data-bulk-approval-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      await _resolveAllPendingApprovals(btn.dataset.bulkApprovalAction);
+    });
+  });
+  host.querySelectorAll('button[data-approval-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      await _resolvePendingApproval(btn.dataset.approvalId, btn.dataset.approvalAction);
+    });
+  });
+}
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -3103,6 +3869,8 @@ function _renderMainView() {
         <button id="tasks-bulk-delete" class="memory-toolbar-btn danger" style="position:relative;top:-2px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
         <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
+      <div id="tasks-pending-approvals" style="display:none;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+      <div id="tasks-approval-history" style="display:none;flex-direction:column;gap:4px;margin-bottom:8px;"></div>
       <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:0;"></div>
       <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:4px;"></div>
     </div>

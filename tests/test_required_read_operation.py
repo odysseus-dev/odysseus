@@ -125,7 +125,7 @@ def test_central_dispatcher_denial_never_owns_success_output(monkeypatch):
 def run_terminal_branch(monkeypatch, native_calls, result, operation=None, *, max_tool_calls=3):
     """Execute the actual async branch after parsing, without a provider call."""
     source = Path(al.__file__)
-    tree = ast.parse(source.read_text())
+    tree = ast.parse(source.read_text(encoding="utf-8"))
     branch = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
                   and "_required_read" in {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)})
     executor = AsyncMock(return_value=("manage_notes: list", result))

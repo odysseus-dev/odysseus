@@ -941,7 +941,7 @@ def test_native_runtime_context_accepts_only_loopback_execution_bridge():
 
 
 def test_chat_stream_restores_persisted_workspace_for_resumed_sessions():
-    source = Path(chat_routes.__file__).read_text()
+    source = Path(chat_routes.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     chat_stream = next(
         node for node in ast.walk(tree)

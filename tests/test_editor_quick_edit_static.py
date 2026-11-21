@@ -341,8 +341,8 @@ def test_ai_work_glows_the_canvas():
 
 
 def test_footer_shows_active_edit_model():
-    topbar = (ROOT / "static/js/editor/build/topbar.js").read_text()
-    models = (ROOT / "static/js/editor/ai-models.js").read_text()
+    topbar = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
+    models = (ROOT / "static/js/editor/ai-models.js").read_text(encoding="utf-8")
     assert 'id="ge-status-model"' in topbar
     assert "class=\"ge-status-model\"" in topbar
     assert ".ge-status-model" in STYLE
@@ -357,7 +357,7 @@ def test_footer_shows_active_edit_model():
 
 
 def test_quick_edit_has_a_model_picker():
-    models = (ROOT / "static/js/editor/ai-models.js").read_text()
+    models = (ROOT / "static/js/editor/ai-models.js").read_text(encoding="utf-8")
     # The picker lives in the AI settings dialog, opened from the editor
     # footer (the Quick Edit box itself holds no model UI).
     assert 'id="ge-ai-command-model"' in AI_SETTINGS
@@ -383,8 +383,8 @@ def test_quick_edit_has_a_model_picker():
 
 
 def test_quick_edit_has_an_agent_model_picker():
-    models = (ROOT / "static/js/editor/ai-models.js").read_text()
-    agent = (ROOT / "static/js/editor/editor-agent.js").read_text()
+    models = (ROOT / "static/js/editor/ai-models.js").read_text(encoding="utf-8")
+    agent = (ROOT / "static/js/editor/editor-agent.js").read_text(encoding="utf-8")
     # The agent (planner) picker sits in the AI settings dialog.
     assert 'id="ge-ai-command-agent-model"' in AI_SETTINGS
     assert "Recommended, not required" in AI_SETTINGS
@@ -449,11 +449,11 @@ def test_quick_edit_hybrid_fast_path_handles_deterministic_intents_without_ai():
 
 
 def test_align_does_not_swallow_add_text_requests():
-    editor = (ROOT / "static/js/galleryEditor.js").read_text()
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
     # "add a subtitle ... and align it" must add the text, not just align.
     assert "const alignWantsText = " in editor
     assert "if (/\\balign\\b/.test(p) && alignM && !alignWantsText) {" in editor
-    nl = (ROOT / "static/js/editor/nl-edit.js").read_text()
+    nl = (ROOT / "static/js/editor/nl-edit.js").read_text(encoding="utf-8")
     # add-text wins over effect/align words; only real text-edit attributes exclude it.
     assert "const existingText = " in nl
     assert "if (wantsAddText && !existingText && !/\\b(font|bigger|smaller|larger|colour|color)\\b/.test(p)) {" in nl

@@ -10,7 +10,7 @@ from src.agent_loop import ToolBlock, _has_accepted_contract_tool_call
 
 def run_fallback(blocks, contract):
     source = Path(__file__).resolve().parents[1] / "src" / "agent_loop.py"
-    tree = ast.parse(source.read_text())
+    tree = ast.parse(source.read_text(encoding="utf-8"))
     branch = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
                   and any(isinstance(n, ast.Name) and n.id == "_has_accepted_contract_tool_call"
                           for n in ast.walk(node.test)))

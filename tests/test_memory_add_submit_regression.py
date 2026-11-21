@@ -22,7 +22,7 @@ def _add_memory_row(html):
 
 
 def test_add_memory_form_renders_a_submit_button():
-    html = INDEX_HTML.read_text()
+    html = INDEX_HTML.read_text(encoding="utf-8")
     row = _add_memory_row(html)
 
     assert 'id="new-memory-category"' in row, "button must sit in the same row as the form fields"
@@ -38,14 +38,14 @@ def _new_memory_wiring_block(source):
 
 
 def test_submit_button_is_wired_to_add_new_memory():
-    block = _new_memory_wiring_block(APP_JS.read_text())
+    block = _new_memory_wiring_block(APP_JS.read_text(encoding="utf-8"))
 
     assert "el('new-memory-add-btn')" in block
     assert "addEventListener('click', () => memoryModule.addNewMemory())" in block
 
 
 def test_enter_uses_keydown_with_prevent_default():
-    block = _new_memory_wiring_block(APP_JS.read_text())
+    block = _new_memory_wiring_block(APP_JS.read_text(encoding="utf-8"))
 
     assert "addEventListener('keydown'" in block
     assert "addEventListener('keypress'" not in block, "keypress is deprecated and unreliable for Enter"

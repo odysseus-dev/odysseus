@@ -42,7 +42,6 @@ def _null_owner_stubs(monkeypatch):
             m = types.ModuleType(_stub)
             for _name in _attrs:
                 setattr(m, _name, MagicMock())
-            sys.modules[_stub] = m
         else:
             m = sys.modules[_stub]
             for _name in _attrs:
@@ -56,7 +55,6 @@ def _null_owner_stubs(monkeypatch):
         wm.WebhookManager = MagicMock()
         wm.validate_webhook_url = MagicMock()
         wm.validate_events = MagicMock()
-        sys.modules["src.webhook_manager"] = wm
         monkeypatch.setitem(sys.modules, "src.webhook_manager", wm)
 
 from fastapi import HTTPException

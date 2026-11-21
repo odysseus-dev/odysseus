@@ -10,8 +10,8 @@ pytestmark = pytest.mark.skipif(not shutil.which('node'), reason='node unavailab
 
 
 def test_tutorial_hints_dismiss_one_at_a_time_and_release_every_close_path():
-    stack = (ROOT / 'static/js/escMenuStack.js').read_text()
-    helper = (ROOT / 'static/js/tourHintDismiss.js').read_text().split('\n', 1)[1]
+    stack = (ROOT / 'static/js/escMenuStack.js').read_text(encoding="utf-8")
+    helper = (ROOT / 'static/js/tourHintDismiss.js').read_text(encoding="utf-8").split('\n', 1)[1]
     script = stack + '\n' + helper + r'''
 import assert from 'node:assert/strict';
 const timers = new Map();
