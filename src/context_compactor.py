@@ -471,22 +471,52 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
 
     logger.info(f"Trimming messages: {used} tokens > {budget} budget (ctx={context_length})")
 
-    # Separate system messages from conversation.
-    # Messages marked _protected (e.g. active document) are never trimmed.
+    # Keep protected context interleaved with the conversation. Hoisting it
+    # before history separates documents from their questions and can orphan
+    # protected tool results before their assistant call.
     system_msgs = []
-    protected_msgs = []
     convo_msgs = []
     for msg in messages:
-        if msg.get("_protected"):
-            protected_msgs.append(msg)
-        elif msg.get("role") == "system":
+        if msg.get("role") == "system" and not msg.get("_protected"):
             system_msgs.append(msg)
         else:
             convo_msgs.append(msg)
+    original_convo = list(convo_msgs)
 
-    # Protected messages count toward budget but are never dropped
-    protected_tokens = estimate_tokens(protected_msgs)
-    budget -= protected_tokens
+    def _is_direct_user_message(message: Dict) -> bool:
+        # Runtime envelopes and external tool/document context must not
+        # replace the real request as the current tail's anchor.
+        if (message.get("role") != "user" or message.get("_harness_control")
+                or message.get("_protected")):
+            return False
+        metadata = message.get("metadata") or {}
+        return not (metadata.get("trusted") is False and bool(metadata.get("source")))
+
+    priority_ids = {id(m) for m in convo_msgs if m.get("_protected")}
+    # A protected native tool message also needs its request/call/result turn.
+    # Retain that turn as a unit so protocol sanitization cannot discard the
+    # protected evidence after its call or user predecessor was trimmed.
+    for index, msg in enumerate(convo_msgs):
+        if not msg.get("_protected") or not (
+            msg.get("role") == "tool" or msg.get("tool_calls")
+        ):
+            continue
+        start, end = index, index + 1
+        while start > 0 and not _is_direct_user_message(convo_msgs[start]):
+            start -= 1
+        while end < len(convo_msgs) and not _is_direct_user_message(convo_msgs[end]):
+            end += 1
+        priority_ids.update(id(m) for m in convo_msgs[start:end])
+
+    def _priority(message):
+        return id(message) in priority_ids
+
+    def _drop_oldest_optional(items):
+        for index, message in enumerate(items):
+            if not _priority(message):
+                items.pop(index)
+                return True
+        return False
 
     # Priority: keep first system msg (preset prompt), drop others (memory, RAG, memo).
     # Exception: a research-spinoff primer (the seeded report that grounds a
@@ -530,7 +560,7 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
                 result.append(msg)
             else:
                 break
-        return _sanitize_tool_messages(result + protected_msgs + convo_msgs)
+        return _sanitize_tool_messages(result + convo_msgs)
 
     # Still too big — truncate the first system message (but keep more than 500 chars)
     if essential_system:
@@ -541,7 +571,7 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
             essential_system[0] = truncated_system
             trimmed = essential_system + convo_msgs
             if estimate_tokens(trimmed) <= budget:
-                return _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
+                return _sanitize_tool_messages(essential_system + convo_msgs)
 
     # Still too big — drop older conversation turns BUT always keep the latest
     # user turn. After a tool round the final message is usually an assistant
@@ -549,20 +579,6 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     # message as "current" drops the real question and lets the model answer
     # stale context on the follow-up round.
     PROTECT_RECENT = 10
-    def _is_direct_user_message(message: Dict) -> bool:
-        # Qwen transports runtime corrections as user-role messages. Their
-        # server-owned provenance must not make them replace the real request
-        # as the protected tail's anchor. Never infer this from prompt wording.
-        if message.get("role") != "user" or message.get("_harness_control"):
-            return False
-        metadata = message.get("metadata") or {}
-        # Textual tool transports intentionally wrap external results as user
-        # messages. They are context for the request, not a new request.
-        return not (
-            metadata.get("trusted") is False
-            and bool(metadata.get("source"))
-        )
-
     latest_user_idx = -1
     for idx in range(len(convo_msgs) - 1, -1, -1):
         if _is_direct_user_message(convo_msgs[idx]):
@@ -587,40 +603,52 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
         old_msgs = prior_convo[:-recent_prior_count] if recent_prior_count else prior_convo[:]
         recent_msgs = (prior_convo[-recent_prior_count:] if recent_prior_count else []) + current_tail
         while old_msgs and estimate_tokens(essential_system + old_msgs + recent_msgs) > budget:
-            old_msgs.pop(0)
+            if not _drop_oldest_optional(old_msgs):
+                break
         convo_msgs = old_msgs + recent_msgs
     else:
         while prior_convo and estimate_tokens(essential_system + prior_convo + current_tail) > budget:
-            prior_convo.pop(0)
+            if not _drop_oldest_optional(prior_convo):
+                break
         convo_msgs = prior_convo + current_tail
 
     # If the current request + tool tail is still too large, shrink that tail
     # instead of dropping the latest user turn. Native tool responses can be
     # huge (web search/fetch), and preserving a truncated source block is better
     # than sending the model a prompt with no active user request.
-    if current_tail and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
+    if current_tail and estimate_tokens(essential_system + convo_msgs) > budget:
         tail_start = len(convo_msgs) - len(current_tail)
-        prefix = essential_system + protected_msgs + convo_msgs[:tail_start]
-        available_for_tail = max(64 * len(current_tail), budget - estimate_tokens(prefix))
-        per_tail_msg = max(64, available_for_tail // max(1, len(current_tail)))
+        prefix = essential_system + convo_msgs[:tail_start]
+        optional_tail = [msg for msg in current_tail if not _priority(msg)]
+        priority_tail = [msg for msg in current_tail if _priority(msg)]
+        available_for_tail = max(
+            64 * len(optional_tail),
+            budget - estimate_tokens(prefix + priority_tail),
+        )
+        per_tail_msg = max(64, available_for_tail // max(1, len(optional_tail)))
         convo_msgs[tail_start:] = [
-            _truncate_message_to_token_budget(msg, per_tail_msg)
+            msg if _priority(msg) else _truncate_message_to_token_budget(msg, per_tail_msg)
             for msg in current_tail
         ]
 
-    # Last ditch: if the tool tail still cannot fit, keep only the latest user
-    # message (truncated if needed). Losing source output is bad; losing the user
-    # request is worse and caused visibly crossed answers.
-    if current_tail and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
+    # Last ditch: keep the latest user request plus mandatory context in
+    # their original order. Optional source output can be dropped, but not
+    # the direct request or evidence explicitly marked for retention.
+    if current_tail and estimate_tokens(essential_system + convo_msgs) > budget:
         latest_user = next(
             (m for m in current_tail if _is_direct_user_message(m)),
             next((m for m in current_tail if m.get("role") == "user"), current_tail[0]),
         )
-        prefix = essential_system + protected_msgs
+        prefix = essential_system + [msg for msg in original_convo if _priority(msg)]
         available_for_current = max(64, budget - estimate_tokens(prefix))
-        convo_msgs = [_truncate_message_to_token_budget(latest_user, available_for_current)]
+        current = (latest_user if _priority(latest_user) else
+                   _truncate_message_to_token_budget(latest_user, available_for_current))
+        convo_msgs = [
+            current if msg is latest_user else msg
+            for msg in original_convo if msg is latest_user or _priority(msg)
+        ]
 
-    result = _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
+    result = _sanitize_tool_messages(essential_system + convo_msgs)
     logger.info(f"Trimmed to {estimate_tokens(result)} tokens ({len(result)} messages)")
     return result
 
