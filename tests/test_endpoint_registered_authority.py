@@ -1,11 +1,15 @@
 """Caller model URLs cannot exceed enabled, owner-visible registration."""
 
+import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlparse
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 import core.database as database
 import routes.assistant_routes as assistant_routes
@@ -13,7 +17,6 @@ import routes.model_routes as model_routes
 import routes.skills_routes as skills_routes
 import routes.task.task_routes as task_routes
 import src.endpoint_resolver as resolver
-from tests.helpers.database import disposable_database
 
 
 LOCAL = "http://localhost:1234/v1"
@@ -71,12 +74,34 @@ def _route(router, method, path):
     return next(r.endpoint for r in router.routes if r.path == path and method in r.methods)
 
 
-@pytest.fixture
-def registered_db(tmp_path, monkeypatch):
-    with disposable_database(tmp_path) as factory:
-        for module in (database, task_routes, assistant_routes, model_routes, resolver):
-            monkeypatch.setattr(module, "SessionLocal", factory)
-        monkeypatch.setattr(resolver, "resolve_url", lambda url: url)
+@pytest.fixture(scope="module")
+def _empty_db_template(tmp_path_factory):
+    template_dir = tmp_path_factory.mktemp("endpoint_authority_empty_db")
+    template_path = template_dir / "empty.db"
+    engine = create_engine(
+        f"sqlite:///{template_path}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    try:
+        database.Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+    return template_path
+
+
+@pytest.fixture(scope="module")
+def _registered_db_template(_empty_db_template, tmp_path_factory):
+    template_dir = tmp_path_factory.mktemp("endpoint_authority_registered_db")
+    template_path = template_dir / "registered.db"
+    shutil.copyfile(_empty_db_template, template_path)
+    engine = create_engine(
+        f"sqlite:///{template_path}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    try:
+        factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
         with factory() as db:
             for endpoint_id, owner, url, enabled in [
                 ("local", "alice", LOCAL + "/", True),
@@ -102,7 +127,28 @@ def registered_db(tmp_path, monkeypatch):
                 is_default_assistant=True, endpoint_url=LOCAL,
             ))
             db.commit()
+    finally:
+        engine.dispose()
+    return template_path
+
+
+@pytest.fixture
+def registered_db(_registered_db_template, tmp_path, monkeypatch):
+    test_db = tmp_path / "test.db"
+    shutil.copyfile(_registered_db_template, test_db)
+    engine = create_engine(
+        f"sqlite:///{test_db}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    try:
+        factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        for module in (database, task_routes, assistant_routes, model_routes, resolver):
+            monkeypatch.setattr(module, "SessionLocal", factory)
+        monkeypatch.setattr(resolver, "resolve_url", lambda url: url)
         yield factory
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("endpoint_id, base, chat_url", PROVIDER_CASES)
@@ -170,15 +216,26 @@ def test_registered_provider_chat_url_requires_enabled_owner_visibility(register
     ("https://ollama.com", "https://ollama.com/api/chat"),
     ("http://192.168.1.5:11434/v1", "http://192.168.1.5:11434/v1/chat/completions"),
 ])
-def test_registered_provider_alternate_base_shapes(tmp_path, monkeypatch, base, chat_url):
+def test_registered_provider_alternate_base_shapes(_empty_db_template, tmp_path, monkeypatch, base, chat_url):
     monkeypatch.setattr(resolver, "resolve_url", lambda url: url)
-    with disposable_database(tmp_path) as factory, factory() as db:
-        db.add(database.ModelEndpoint(id="provider", name="Provider", owner="alice",
-                                      base_url=base, is_enabled=True, api_key="server-secret"))
-        db.commit()
-        assert resolver.build_chat_url(base) == chat_url
-        for url in (base, chat_url):
-            assert resolver.resolve_owner_registered_endpoint_url(db, url, "alice") == base
+    test_db = tmp_path / "test.db"
+    shutil.copyfile(_empty_db_template, test_db)
+    engine = create_engine(
+        f"sqlite:///{test_db}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    try:
+        factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        with factory() as db:
+            db.add(database.ModelEndpoint(id="provider", name="Provider", owner="alice",
+                                          base_url=base, is_enabled=True, api_key="server-secret"))
+            db.commit()
+            assert resolver.build_chat_url(base) == chat_url
+            for url in (base, chat_url):
+                assert resolver.resolve_owner_registered_endpoint_url(db, url, "alice") == base
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("url", REJECTED + ["", None, 42])
