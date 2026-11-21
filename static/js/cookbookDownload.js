@@ -88,6 +88,7 @@ function _ggufDownloadSource(model, backend) {
 }
 
 function _ggufIncludePattern(model, source) {
+  if (source?.include) return source.include;
   if (source?.file) return source.file;
   if (model?.quant) return `*${model.quant}*`;
   return '*.gguf';

@@ -88,6 +88,7 @@ def test_cold_catalog_and_refresh_use_mutable_data(monkeypatch, tmp_path):
     assert models.get_models() == []
     row = {'name': 'test/runtime', 'parameter_count': '3B', 'quantization': 'F16'}
     monkeypatch.setattr(discovery, 'fetch_collection_models', lambda source: [dict(row, name='mlx-community/test' if source['mlx_only'] else row['name'])] if source.get('mlx_only') else [row])
+    monkeypatch.setattr(discovery, 'fetch_gguf_models', lambda source: [])
     assert models.refresh_dynamic_catalogs(force=True) == {'mlx_community': 1, 'hf_collections': 1}
     assert {r['name'] for r in models.get_models()} == {'test/runtime', 'mlx-community/test'}
     cached = json.loads(discovery.HF_COLLECTION_MODELS_CACHE.read_text())
