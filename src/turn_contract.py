@@ -280,12 +280,17 @@ def _is_pure_action_prohibition(text: str) -> bool:
 _RETURN_TO_ACTION = re.compile(r"^\s*" + _REQUEST_PREFIX + r"return\s+to\b", re.I)
 _PANEL_NAVIGATION = re.compile(
     r"^\s*" + _REQUEST_PREFIX
-    + r"(?:(?:go\s+back\s+(?:and\s+)?)?open(?:\s+up)?|return\s+to)\s+"
+    + r"(?:(?:(?:go\s+back\s+(?:and\s+)?)?(?:open(?:\s+up)?|bring\s+up)|return\s+to)\s+"
       r"(?:me\s+)?(?:my\s+|the\s+)?"
       r"(?:calendar|schedule|documents?|docs?|library|gallery|images?|emails?|inbox|mail|"
       r"sessions?|chats?|history|notes?|brain|memor(?:y|ies)|skills?|settings|preferences|"
       r"themes?|appearance|cookbook|models?|serv(?:e|ing))"
       r"(?:\s+(?:panel|sidebar|tab|view))?"
+      r"|show\s+(?:me\s+)?(?:my\s+|the\s+)?"
+      r"(?:calendar|schedule|documents?|docs?|library|gallery|images?|emails?|inbox|mail|"
+      r"sessions?|chats?|history|notes?|brain|memor(?:y|ies)|skills?|settings|preferences|"
+      r"themes?|appearance|cookbook|models?|serv(?:e|ing))"
+      r"\s+(?:panel|sidebar|tab|view))"
       r"(?:\s+(?:again|now|instead))?[.!?]*\s*$",
     re.I,
 )

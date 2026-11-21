@@ -1589,7 +1589,7 @@ def _parse_explicit_open_panel_request(text: str) -> Optional[tuple[str, str]]:
         "december": "12", "dec": "12",
     }
     match = re.match(
-        r"^(?:please\s+)?(open(?:\s+up)?|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?"
+        r"^(?:please\s+)?((?:pop\s+)?open(?:\s+up)?|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?"
         r"(calendar|schedule|documents?|docs?|library|gallery|images?|emails?|inbox|mail|"
         r"sessions?|chats?|history|notes?|brain|memor(?:y|ies)|skills?|settings|preferences|"
         r"themes?|appearance|cookbook|models?|serv(?:e|ing))(?:\s+(day|week|month|year|agenda)(?:\s+view)?)?(?:\s+(?:for\s+|to\s+)?(.+?))?\s*$",
@@ -1623,7 +1623,7 @@ def _parse_explicit_open_panel_request(text: str) -> Optional[tuple[str, str]]:
         "serving": "cookbook",
     }
     target = aliases.get(panel, panel)
-    if verb == "show" and target in {"documents", "notes", "brain", "skills"} and not re.search(r"\bpanel\b", value):
+    if verb == "show" and target in {"calendar", "documents", "notes", "brain", "skills"} and not re.search(r"\b(?:panel|view|sidebar|tab|screen)\b", value):
         return None
     view = (match.group(3) or "").strip()
     target_date = ""
