@@ -1,4 +1,4 @@
-"""Notes Markdown sanitization and mounted card/editor interactions in Chromium."""
+"""Notes Markdown sanitization and mounted card / note window interactions in Chromium."""
 import base64
 import os
 from pathlib import Path
@@ -148,19 +148,39 @@ def test_notes_cards_mount_images_locally_and_editor_sends_full_document(page):
     assert page.locator('.note-card[data-note-id="draw"] img').count() == 0
     assert page.foreign_requests == []
 
+    # The note window saves the whole document, against the revision it saw.
     card.locator('.note-card-title').click()
-    page.locator('.note-form-content').fill("Replacement without images")
-    page.locator('.note-form-save').click()
-    page.locator('.note-form').wait_for(state="detached")
+    _window_body(page).wait_for()
+    page.locator('#note-window-modal .note-window-toolbar [data-md="source"]').click()
+    page.locator('#note-window-modal .note-window-source').fill("Replacement without images")
+    page.wait_for_function("() => document.querySelector('.note-card[data-note-id=\"plain\"]') && !document.querySelector('.note-card[data-note-id=\"plain\"] img')")
     assert len(writes) == 1
     assert writes[0]["body_revision"] == "r1"
     assert writes[0]["replace_content"] is True
     assert writes[0]["content"] == "Replacement without images"
-    assert card.locator('img').count() == 0
-    canvas_card = page.locator('.note-card[data-note-id="canvas"]')
-    canvas_card.locator('.note-card-image').click()
-    page.locator('.note-form-canvas').wait_for()
+    _close_window(page)
+    # A drawing opens in the window with its image; nothing loads from elsewhere.
+    page.locator('.note-card[data-note-id="canvas"] .note-card-title').click()
+    page.locator('#note-window-modal .note-window-body img.md-note-image').wait_for(state="attached")
     assert page.foreign_requests == []
+
+
+def _window_body(page):
+    return page.locator('#note-window-modal .note-window-body')
+
+
+def _replace_body(page, text):
+    """Select the whole body and type `text` over it, as a user would."""
+    body = _window_body(page)
+    body.wait_for()
+    body.click()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.type(text)
+
+
+def _close_window(page):
+    page.evaluate("() => document.querySelector('#note-window-modal .modal-close').click()")
+    page.locator('#note-window-modal').wait_for(state="detached")
 
 
 @pytest.mark.parametrize("mobile", [False, True], ids=["desktop", "mobile"])
@@ -183,36 +203,26 @@ def test_edit_typed_during_save_restores_with_new_revision(page, mobile):
 
     page.route(f"{ORIGIN}/api/notes**", note_api)
     _mount_notes(page)
-    title = page.locator('.note-card[data-note-id="draft"] .note-card-title')
-    title.click()
-    editor = page.locator('.note-form-content')
-    if mobile:
-        page.locator('.note-form-content-reader').click()
-    editor.fill("Submitted text")
+    page.locator('.note-card[data-note-id="draft"] .note-card-title').click()
+    # The autosave of the first text is held at the server while more is typed.
     with page.expect_request(lambda request: request.method == "PUT"):
-        page.locator('.note-form-save').click()
-    editor.fill("Later edit")
+        _replace_body(page, "Submitted text")
+    page.keyboard.press("End")
+    page.keyboard.type(", then a later edit")
     assert len(pending) == 1
     payload = pending[0].request.post_data_json
     assert payload["content"] == "Submitted text" and payload["body_revision"] == "r1"
-    note.update(content=payload["content"], body_revision="r2")
-    pending.pop().fulfill(json=note)
-    editor.wait_for(state="detached")
-
-    title.click()
-    if mobile:
-        reader = page.locator('.note-form-content-reader')
-        assert reader.inner_text() == "Later edit"
-        reader.click()
-    assert editor.input_value() == "Later edit"
-    if mobile:
-        # Use the editor shortcut so the untouched mobile form does not archive.
-        editor.fill("Later edit!")
+    assert payload["replace_content"] is True
+    draft = page.evaluate("() => JSON.parse(localStorage.getItem('odysseus-note-draft-draft'))")
+    assert draft["content"] == "Submitted text, then a later edit"
+    # The first save lands at r2: the later text goes next, against r2.
     with page.expect_request(lambda request: request.method == "PUT") as saved:
-        page.locator('.note-form-save').click()
-    assert saved.value.post_data_json["content"] == ("Later edit!" if mobile else "Later edit")
+        note.update(content=payload["content"], body_revision="r2")
+        pending.pop().fulfill(json=note)
+    assert saved.value.post_data_json["content"] == "Submitted text, then a later edit"
     assert saved.value.post_data_json["body_revision"] == "r2"
-    editor.wait_for(state="detached")
+    page.wait_for_function("() => !localStorage.getItem('odysseus-note-draft-draft')")
+    _close_window(page)
 
 
 def test_stale_drafts_are_copyable_without_being_applied(page):
@@ -232,25 +242,34 @@ def test_stale_drafts_are_copyable_without_being_applied(page):
     page.evaluate("""() => localStorage.setItem('odysseus-note-draft-draft',
       JSON.stringify({content: 'Stale edit', body_revision: 'r1'}))""")
     _mount_notes(page)
+    # This test page is not a secure context: give it a clipboard to read back.
+    page.evaluate("""() => Object.defineProperty(navigator, 'clipboard', {
+      configurable: true, value: { writeText: async text => { window.copiedDraft = text; } } })""")
     title = page.locator('.note-card[data-note-id="draft"] .note-card-title')
     title.click()
-    editor = page.locator('.note-form-content')
-    assert editor.input_value() == "Server text"
-    page.get_by_text("Recover unsaved draft").click()
-    recovery = page.get_by_role("textbox", name="Unsaved draft")
-    assert recovery.input_value() == "Stale edit"
-    assert recovery.get_attribute("readonly") is not None
+    body = _window_body(page)
+    body.wait_for()
+    assert body.inner_text() == "Server text", "a stale draft is never laid over the newer note"
+    banner = page.locator('#note-window-modal .note-window-banner')
+    banner.get_by_role("button", name="Copy draft").click()
+    page.wait_for_function("() => window.copiedDraft !== undefined")
+    assert "Stale edit" in page.evaluate("() => window.copiedDraft")
+    assert banner.get_by_role("button", name="Restore").count() == 0
     assert writes == []
 
-    editor.fill("Chosen edit on current revision")
-    page.locator('.note-form-save').click()
-    editor.wait_for(state="detached")
+    # Typing on the current revision saves against it, and the stale draft is
+    # still there to copy from the next time the note opens.
+    _replace_body(page, "Chosen edit on current revision")
+    page.wait_for_function("() => !localStorage.getItem('odysseus-note-draft-draft')")
     assert writes[0]["body_revision"] == "r2"
     assert writes[-1]["content"] == "Chosen edit on current revision"
+    _close_window(page)
     title.click()
-    assert editor.input_value() == "Chosen edit on current revision"
-    page.get_by_text("Recover unsaved draft").click()
-    assert recovery.input_value() == "Stale edit"
+    assert body.inner_text() == "Chosen edit on current revision"
+    page.evaluate("() => { window.copiedDraft = undefined; }")
+    banner.get_by_role("button", name="Copy draft").click()
+    page.wait_for_function("() => window.copiedDraft !== undefined")
+    assert "Stale edit" in page.evaluate("() => window.copiedDraft")
 
 
 def test_task_link_navigates_and_checkbox_still_toggles(page):

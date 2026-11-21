@@ -4,8 +4,8 @@ import { createToolbar } from './ui/toolbar.js';
 import { createWindowLayout } from './ui/windowLayout.js';
 import { createCardOperations } from './application/cardOperations.js';
 import { createChecklistOperations } from './application/checklistOperations.js';
-import { createNotesSubmission } from './application/submission.js';
-import { createNotesDrafts } from './application/drafts.js';
+import { createNoteSession } from './application/noteSession.js';
+import { createNoteVersions } from './application/noteVersions.js';
 import { createNotesLifecycle } from './ui/lifecycle.js';
 import * as noteRules from './domain/noteRules.js';
 import { createText } from './ui/text.js';
@@ -20,15 +20,13 @@ import { createQuickAdd } from './ui/quickAdd.js';
 import { createCardInteractions } from './ui/cardInteractions.js';
 import { createCardChecklist } from './ui/cardChecklist.js';
 import { createCardReorder } from './ui/cardReorder.js';
-import { createDraftEditor } from './ui/draftEditor.js';
-import { createEditor } from './ui/editor.js';
 import { createReminderPicker } from './ui/reminderPicker.js';
-import { createChecklist } from './ui/checklist.js';
 import { createDrawing } from './ui/drawing.js';
 import { createClipboard } from './ui/clipboard.js';
-import { createMobileEditor } from './ui/mobileEditor.js';
 import { createMobileReorder } from './ui/mobileReorder.js';
-import { createChecklistReorder } from './ui/checklistReorder.js';
+import { createRichBody } from './ui/richBody.js';
+import { createNoteTags } from './ui/noteTags.js';
+import { createNoteWindow } from './ui/noteWindow.js';
 import { createQueries } from './application/queries.js';
 import { createAgentActions } from './application/agentActions.js';
 import { createDeletion } from './application/deletion.js';
@@ -51,9 +49,9 @@ import { bindMenuDismiss, dismissOrRemove } from '/static/js/escMenuStack.js';
 import { bindTourHintDismiss } from '/static/js/tourHintDismiss.js';
 import { mdToHtml, noteImageSrc } from '/static/js/markdown.js';
 
-const api = createNotesApi({ origin: window.location.origin, request: (...args) => fetch(...args) });
+const rawApi = createNotesApi({ origin: window.location.origin, request: (...args) => fetch(...args) });
 const persistence = createNotesPersistence({ storage: typeof localStorage === 'undefined' ? undefined : localStorage });
-const { _loadPendingHighlights, _loadGlowedReminders, _saveGlowedReminders, _loadActiveHighlights, _saveActiveHighlights, _savePendingHighlights, _loadFiredReminders, _saveFiredReminders, _draftKey, _loadDraft, _clearDraft } = persistence;
+const { _loadPendingHighlights, _loadGlowedReminders, _saveGlowedReminders, _loadActiveHighlights, _saveActiveHighlights, _savePendingHighlights, _loadFiredReminders, _saveFiredReminders } = persistence;
 const clock = { now: () => Date.now() };
 const app = createNotesState({
  viewMode: (typeof localStorage !== 'undefined' && localStorage.getItem('odysseus-notes-view')) || 'list',
@@ -61,6 +59,12 @@ const app = createNotesState({
  firedDotDismissedAt: (() => { try { const v = parseInt(persistence.getItem(REMINDER_DISMISSED_AT_KEY) || '0', 10); return Number.isFinite(v) && v > 0 ? v : 0; } catch { return 0; } })(),
 });
 const state = app.state;
+// Every writer but the note window's own session goes through the tracked
+// API, so the window can tell a card checkbox ticked behind it from a change
+// made on another device.
+const noteVersions = createNoteVersions({ app });
+const api = noteVersions.track(rawApi);
+const _renderNoteMarkdown = source => mdToHtml(source, { tasks: 'interactive', images: 'notes', dialect: 'notes' });
 const lifecycle = createNotesLifecycle();
 const scheduler = { setTimeout: (...args) => setTimeout(...args), clearTimeout: id => clearTimeout(id), setInterval: (...args) => setInterval(...args), clearInterval: id => clearInterval(id) };
 const notifications = createNotesNotifications({ browser: window, notify: window.Notification, openPanel: () => openPanel(), toast: title => uiModule?.showToast?.(title) });
@@ -96,7 +100,7 @@ function _pushUndo(entry) { return workflows._pushUndo(entry); }
 function _popAndRunUndo() { return workflows._popAndRunUndo(); }
 function _undoArchive(note, prevIdx) { return workflows._undoArchive(note, prevIdx); }
 function _archiveNoteById(id, options) { return workflows._archiveNoteById(id, options); }
-function _fetchNotes() { return workflows._fetchNotes(); }
+function _fetchNotes(options) { return workflows._fetchNotes(options); }
 
 function _deleteNoteApi(id) { return workflows._deleteNoteApi(id); }
 function _patchNote(id, patch) { return workflows._patchNote(id, patch); }
@@ -129,7 +133,6 @@ function _dotBg(...args) { return colors._dotBg(...args); }
 function _dotIsActive(...args) { return colors._dotIsActive(...args); }
 function _customColorStyle(...args) { return colors._customColorStyle(...args); }
 function _pickCustomBgImage(...args) { return colors._pickCustomBgImage(...args); }
-function _wireFormColors(...args) { return colors._wireFormColors(...args); }
 
 function openPanel(...args) { return panel.openPanel(...args); }
 
@@ -145,41 +148,29 @@ function _updateBulkBar(...args) { return selection._updateBulkBar(...args); }
 
 function _renderLabelsInto(...args) { return filters._renderLabelsInto(...args); }
 function _renderLoadingSkeleton(...args) { return cardRendering._renderLoadingSkeleton(...args); }
-function _renderNotes(...args) { return cardRendering._renderNotes(...args); }
+function _renderNotes(...args) { const result = cardRendering._renderNotes(...args); noteWindow.sync(); return result; }
 function _captureCardPositions(...args) { return layout._captureCardPositions(...args); }
 function _animateReflow(...args) { return layout._animateReflow(...args); }
 function _applyMasonry(...args) { return layout._applyMasonry(...args); }
 function _renderQuickAdd(...args) { return quickAdd._renderQuickAdd(...args); }
 
-function _editNote(...args) { return quickAdd._editNote(...args); }
+function _openNoteWindow(id) { return noteWindow.open(id); }
 function _bindCardEvents(...args) { return cardInteractions._bindCardEvents(...args); }
 function _wireCardChecklist(...args) { return cardChecklist._wireCardChecklist(...args); }
 function _wireTodayView(...args) { return cardChecklist._wireTodayView(...args); }
 function _wireCardReorder(...args) { return cardReorder._wireCardReorder(...args); }
 
-function _wireDraftAutosave(...args) { return draftEditor._wireDraftAutosave(...args); }
-function _commitOpenInPlaceEditor(...args) { return draftEditor._commitOpenInPlaceEditor(...args); }
-function _applyDraftToNote(...args) { return draftEditor._applyDraftToNote(...args); }
-function _buildForm(...args) { return editor._buildForm(...args); }
 function _wireReminderPicker(...args) { return reminderPicker._wireReminderPicker(...args); }
-function _buildGoalHtml(...args) { return checklist._buildGoalHtml(...args); }
-function _wireGoalForm(...args) { return checklist._wireGoalForm(...args); }
-function _buildChecklistHtml(...args) { return checklist._buildChecklistHtml(...args); }
-function _wireRow(...args) { return checklist._wireRow(...args); }
-function _wireChecklist(...args) { return checklist._wireChecklist(...args); }
-function _collectItems(...args) { return checklist._collectItems(...args); }
-function _buildDrawHtml(...args) { return drawing._buildDrawHtml(...args); }
-function _wireCanvas(...args) { return drawing._wireCanvas(...args); }
-function _uploadCanvasAsPng(...args) { return drawing._uploadCanvasAsPng(...args); }
 function _openNoteCornerMenu(...args) { return clipboard._openNoteCornerMenu(...args); }
 function _copyNote(...args) { return clipboard._copyNote(...args); }
-function _isNotesMobileMode(...args) { return mobileEditor._isNotesMobileMode(...args); }
-function _openMobileFullscreenEdit(...args) { return mobileEditor._openMobileFullscreenEdit(...args); }
-function _closeMobileFullscreenEdit(...args) { return mobileEditor._closeMobileFullscreenEdit(...args); }
+function _isNotesMobileMode() { return ('ontouchstart' in window) && window.innerWidth <= 768; }
+// Uploads are stored in a note as same-origin paths.
+function _uploadPath(url) {
+  try { const parsed = new URL(url, window.location.origin); return parsed.origin === window.location.origin ? parsed.pathname + parsed.search : url; }
+  catch { return url; }
+}
 
 function _bindLongPressDrag(...args) { return mobileReorder._bindLongPressDrag(...args); }
-
-function _wireChecklistTouchReorder(...args) { return checklistReorder._wireChecklistTouchReorder(...args); }
 
 function _sortedVisibleNotes(...args) { return queries._sortedVisibleNotes(...args); }
 function _userVisibleNotes(...args) { return queries._userVisibleNotes(...args); }
@@ -215,14 +206,15 @@ const panel = createPanel({
   _wireNotesWindow: windowLayout._wireNotesWindow,
   _restoreNotesSidebarDock: windowLayout._restoreNotesSidebarDock,
   _bringNotesToFront: windowLayout._bringNotesToFront,
-  disposeUI: () => { layout.dispose(); mobileReorder.dispose(); checklistReorder.dispose(); lifecycle.dispose(); },
+  disposeUI: () => { layout.dispose(); mobileReorder.dispose(); lifecycle.dispose(); },
   lifecycle,
   Modals,
   NOTES_FIRST_OPEN_HINT_KEY,
   REMINDER_DISMISSED_AT_KEY,
   _clearViewedReminderGlows,
-  _closeMobileFullscreenEdit,
-  _commitOpenInPlaceEditor,
+  _flushNoteWindow: () => noteWindow.flush(),
+  _isNoteWindowShowing: () => noteWindow.isShowing(),
+  _openNoteWindow,
   _copyNote,
   _enterSelectMode,
   _exitSelectMode,
@@ -297,7 +289,7 @@ const cardRendering = createCardRendering({
   _linkify,
   _loadActiveHighlights,
   _renderLabelsInto,
-  _renderNoteMarkdown: source => mdToHtml(source, { tasks: 'interactive', images: 'notes' }),
+  _renderNoteMarkdown,
   _renderQuickAdd,
   _sortedVisibleNotes,
   _updateRailBadge,
@@ -309,13 +301,9 @@ const layout = createLayout({
   isOpen: () => state.open
 });
 const quickAdd = createQuickAdd({
-  _applyDraftToNote,
-  _applyMasonry,
-  _buildForm,
-  app,
+  openNewNote: options => noteWindow.openNew(options),
   openPanel,
-  state,
-  uiModule
+  state
 });
 const cardOperations = createCardOperations({
   app,
@@ -337,10 +325,9 @@ const cardInteractions = createCardInteractions({
   _customColorStyle,
   _dotBg,
   _dotIsActive,
-  _editNote,
   _isBgImage,
   _isNotesMobileMode,
-  _openMobileFullscreenEdit,
+  _openNoteWindow,
   _openNoteCornerMenu,
   _pickCustomBgImage,
   _renderNotes,
@@ -356,7 +343,7 @@ const cardInteractions = createCardInteractions({
 });
 const cardChecklist = createCardChecklist({
   checklistOperations,
-  _editNote,
+  _openNoteWindow,
   _renderNotes,
   app,
   spawnConfetti,
@@ -367,42 +354,6 @@ const cardReorder = createCardReorder({
   lifecycle,
   _isNotesMobileMode,
   state
-});
-const draftEditor = createDraftEditor({
-  bindDraft: (...args) => drafts.bindDraft(...args),
-  _collectItems,
-  _loadDraft,
-  _loadDraftRecovery: persistence._loadDraftRecovery
-});
-const editor = createEditor({
-  deleteFromEditor: id => deletion.deleteFromEditor(id),
-  submitNote: (...args) => submission.submitNote(...args),
-  COLORS,
-  _applyMasonry,
-  _archiveNoteById,
-  _buildChecklistHtml,
-  _buildDrawHtml,
-  _buildGoalHtml,
-  _collectItems,
-  _customColorStyle,
-  _dotBg,
-  _dotIsActive,
-  _esc,
-  _isBgImage,
-  _renderNotes,
-  _safeImgSrc,
-  _uid,
-  _uploadCanvasAsPng,
-  _wireCanvas,
-  _wireChecklist,
-  _wireDraftAutosave,
-  _wireFormColors,
-  _wireGoalForm,
-  _wireReminderPicker,
-  api,
-  app,
-  state,
-  uiModule
 });
 const reminderPicker = createReminderPicker({
   lifecycle,
@@ -415,11 +366,6 @@ const reminderPicker = createReminderPicker({
   _tomorrowDate,
   bindMenuDismiss,
   dismissOrRemove
-});
-const checklist = createChecklist({
-  _esc,
-  _uid,
-  spawnConfetti
 });
 const drawing = createDrawing({
   lifecycle,
@@ -435,28 +381,12 @@ const clipboard = createClipboard({
   topPortalZ,
   uiModule
 });
-const mobileEditor = createMobileEditor({
-  _applyDraftToNote,
-  _buildForm,
-  _fetchNotes,
-  _linkify,
-  _renderNotes,
-  _uid,
-  _wireChecklistTouchReorder,
-  _wireRow,
-  app,
-  state,
-  uiModule
-});
 const mobileReorder = createMobileReorder({
   commitMobileOrder: cardOperations.commitMobileOrder,
   lifecycle,
   _applyMasonry,
   _enterSelectMode,
   app
-});
-const checklistReorder = createChecklistReorder({
-  lifecycle
 });
 const queries = createQueries({
   _hasActiveReminder,
@@ -481,24 +411,72 @@ const deletion = createDeletion({
   effects: { styledConfirm: uiModule.styledConfirm, confirm: message => confirm(message), showToast: (...args) => uiModule.showToast(...args), showError: (...args) => uiModule.showError(...args) },
   state
 });
+// A note window swiped down on a phone is closed, not only hidden: its card opens it again.
+window.addEventListener('modal-dismissed', event => noteWindow.dismissed(event.detail?.id));
 const notesModule = { openPanel: panel.openPanel, closePanel: panel.closePanel, togglePanel: panel.togglePanel, isPanelOpen: panel.isPanelOpen, openNote: panel.openNote, newNote: quickAdd.newNote, openNotes: panel.openPanel, closeNotes: panel.closePanel, isNotesOpen: panel.isPanelOpen, refreshDueBadge: reminders.refreshDueBadge };
 const publicOpenPanel = panel.openPanel, publicClosePanel = panel.closePanel, publicTogglePanel = panel.togglePanel, publicIsPanelOpen = panel.isPanelOpen, publicOpenNote = panel.openNote, publicNewNote = quickAdd.newNote, publicRefreshDueBadge = reminders.refreshDueBadge, publicDismissFiredReminderDot = reminders.dismissFiredReminderDot;
 export { publicOpenPanel as openPanel, publicClosePanel as closePanel, publicTogglePanel as togglePanel, publicIsPanelOpen as isPanelOpen, publicOpenNote as openNote, publicNewNote as newNote, publicRefreshDueBadge as refreshDueBadge, publicDismissFiredReminderDot as dismissFiredReminderDot, publicOpenPanel as openNotes, publicClosePanel as closeNotes, publicIsPanelOpen as isNotesOpen };
 export function startNotesBackground() { reminders.start(); }
 export default notesModule;
-const submission = createNotesSubmission({
-  app,
-  api,
-  persistence,
-  clock,
-  uid: _uid,
-  fetchNotes: _fetchNotes,
-  effects: { render: _renderNotes, showError: (...args) => uiModule.showError(...args), clearGlow: id => _setReminderCardGlow(id, false) }
+const richBody = createRichBody({
+  renderMarkdown: _renderNoteMarkdown,
+  bindMenuDismiss,
+  dismissOrRemove,
+  pickImage: () => _pickCustomBgImage().then(url => (url ? _uploadPath(url) : null)),
+  sketch: insert => noteWindow.openSketch(insert)
 });
-const drafts = createNotesDrafts({
+const noteTags = createNoteTags({
+  esc: _esc,
+  attrEsc: (...args) => text._attrEsc(...args),
+  bindMenuDismiss,
+  dismissOrRemove
+});
+const noteWindow = createNoteWindow({
   app,
-  api,
-  persistence,
-  scheduler,
-  effects: { showError: (...args) => uiModule.showError(...args) }
+  state,
+  Modals,
+  makeWindowDraggable,
+  bindMenuDismiss,
+  dismissOrRemove,
+  richBody,
+  noteTags,
+  createSession: ({ note, collect, effects }) => createNoteSession({
+    api: rawApi,
+    persistence,
+    scheduler,
+    clock,
+    note,
+    collect,
+    effects,
+    // An edited note moves to the top of its section, as Save used to do.
+    firstWrite: () => (note?.pinned ? {} : { sort_order: noteRules.topSortOrder(state.notes, note?.id) }),
+  }),
+  wireReminderPicker: _wireReminderPicker,
+  drawing,
+  colors,
+  esc: _esc,
+  attrEsc: (...args) => text._attrEsc(...args),
+  isMobile: _isNotesMobileMode,
+  isLocalVersion: noteVersions.isLocal,
+  effects: {
+    render: () => _renderNotes(),
+    showError: (...args) => uiModule.showError(...args),
+    showToast: (...args) => uiModule.showToast?.(...args),
+    archive: id => _archiveNoteById(id),
+    unarchive: id => cardOperations.unarchive(id),
+    confirmDelete: () => deletion.confirmDelete(),
+    deleteNote: id => deletion.deleteNow(id),
+    celebrate: rect => spawnConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2, 60),
+    uploadPath: _uploadPath,
+    // A changed reminder fires (and glows) again.
+    reminderChanged: id => {
+      const fired = _loadFiredReminders();
+      fired.delete(id);
+      _saveFiredReminders(fired);
+      const glowed = _loadGlowedReminders();
+      glowed.delete(id);
+      _saveGlowedReminders(glowed);
+      _setReminderCardGlow(id, false);
+    },
+  }
 });
