@@ -6342,6 +6342,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                            'max_tokens': round_max_tokens, 'stream': True,
                            'stream_options': {'include_usage': True},
                            'chat_template_kwargs': {'enable_thinking': progressive_thinking}}
+                if not progressive_thinking and '/v1' in str(endpoint_url or '').lower():
+                    request['think'] = False
                 # Once the bound editor has been updated, the next round owns
                 # only the short user-facing confirmation. Re-offering the
                 # sole writer would force duplicate full-document rewrites.
@@ -6730,6 +6732,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         )
                         if reasoning:
                             round_reasoning += str(reasoning)
+                            if str(ignored.get('thinking_mode') or '').lower() != 'off':
+                                yield event({'delta': str(reasoning), 'thinking': True})
                         text = delta.get('content') or ''
                         if text:
                             first_token = first_token or time.monotonic()
@@ -7380,6 +7384,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         content += suffix
                         history[-1]['content'] = content
                         yield event({'delta': suffix})
+                    if content:
+                        from src.text_helpers import strip_think as _strip_think
+                        _cleaned_final = _strip_think(content, prose=True, prompt_echo=True).strip()
+                        if _cleaned_final != content.strip():
+                            content = _cleaned_final
+                            if history and history[-1].get('role') == 'assistant':
+                                history[-1]['content'] = content
+                            replace_streamed_draft_on_finish = True
                     if not content:
                         yield event({'delta': 'The test model returned no answer. No substitute answer was generated.'})
                     elif replace_streamed_draft_on_finish or finalize_search_answer or not streamed_round_text:
