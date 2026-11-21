@@ -1039,6 +1039,80 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('  fi  # end _odysseus_have_prebuilt guard')
 
 
+WINDOWS_LLAMA_PREBUILT_DIR = "$HOME/.cache/odysseus/llama-cpp-prebuilt/win"
+
+
+def _append_llama_cpp_windows_prebuilt_lines(runner_lines: list[str]) -> None:
+    """Append Git Bash lines that fetch a prebuilt llama-server on local Windows.
+
+    The local Windows serve command calls the native ``llama-server`` and only
+    hopes it is already on PATH; the Linux/macOS bootstrap never runs there, so
+    a fresh install dies with exit 127. llama.cpp publishes Windows builds on
+    its GitHub releases, so download the one that matches the GPU (CUDA plus
+    its cudart DLLs on NVIDIA, Vulkan on AMD, CPU otherwise) and unpack it into
+    one directory that stays on PATH. The DLLs have to sit next to the exe,
+    which is why this unpacks instead of symlinking into ~/bin.
+    """
+    runner_lines.append('# Ensure a native llama-server (prebuilt llama.cpp release on Windows)')
+    runner_lines.append(f'_odysseus_win_llama_dir="{WINDOWS_LLAMA_PREBUILT_DIR}"')
+    runner_lines.append('export PATH="$_odysseus_win_llama_dir:$PATH"')
+    runner_lines.append('if ! command -v llama-server >/dev/null 2>&1; then')
+    runner_lines.append('  _odysseus_variant="cpu"')
+    runner_lines.append('  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU "; then')
+    runner_lines.append('    _odysseus_variant="cuda"')
+    runner_lines.append('  elif powershell.exe -NoProfile -Command "(Get-CimInstance Win32_VideoController).Name" 2>/dev/null | grep -Eiq "radeon|amd"; then')
+    runner_lines.append('    _odysseus_variant="vulkan"')
+    runner_lines.append('  fi')
+    runner_lines.append('  _odysseus_arch="x64"')
+    runner_lines.append('  case "${PROCESSOR_ARCHITEW6432:-$PROCESSOR_ARCHITECTURE}" in ARM64) _odysseus_arch="arm64"; _odysseus_variant="cpu" ;; esac')
+    runner_lines.append('  echo "[odysseus] llama-server not found - fetching the prebuilt llama.cpp release for Windows ($_odysseus_variant, $_odysseus_arch)..."')
+    runner_lines.append('  _odysseus_assets="$(curl -fsSL --max-time 15 https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4)"')
+    # Stable releases can contain only a pointer to the nightly tag. Windows
+    # binaries live on the prereleases in that case, which /latest excludes.
+    runner_lines.append('  if ! printf \'%s\\n\' "$_odysseus_assets" | grep -qiE \'/llama-[^/]*-bin-win-[^/]*\\.zip$\'; then')
+    runner_lines.append('    _odysseus_assets="$(curl -fsSL --max-time 15 "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=5" 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4)"')
+    runner_lines.append('  fi')
+    runner_lines.append('  _odysseus_url=""; _odysseus_cudart_url=""')
+    runner_lines.append('  if [ "$_odysseus_variant" = "cuda" ]; then')
+    # CUDA 12 builds run on older drivers than the CUDA 13 ones, so try them first.
+    runner_lines.append('    _odysseus_url="$(printf \'%s\\n\' "$_odysseus_assets" | grep -iE \'/llama-[^/]*-bin-win-cuda-12[.0-9]*-x64\\.zip$\' | head -1)"')
+    runner_lines.append('    [ -n "$_odysseus_url" ] || _odysseus_url="$(printf \'%s\\n\' "$_odysseus_assets" | grep -iE \'/llama-[^/]*-bin-win-cuda-[.0-9]*-x64\\.zip$\' | head -1)"')
+    runner_lines.append('    _odysseus_cuda_tag="$(printf \'%s\\n\' "$_odysseus_url" | grep -oiE \'cuda-[.0-9]*[0-9]\' | head -1)"')
+    runner_lines.append('    [ -n "$_odysseus_cuda_tag" ] && _odysseus_cudart_url="$(printf \'%s\\n\' "$_odysseus_assets" | grep -iE "/cudart-llama-bin-win-${_odysseus_cuda_tag}-x64\\.zip$" | head -1)"')
+    runner_lines.append('  fi')
+    runner_lines.append('  [ -n "$_odysseus_url" ] || _odysseus_url="$(printf \'%s\\n\' "$_odysseus_assets" | grep -iE "/llama-[^/]*-bin-win-${_odysseus_variant}-${_odysseus_arch}\\.zip$" | head -1)"')
+    runner_lines.append('  [ -n "$_odysseus_url" ] || _odysseus_url="$(printf \'%s\\n\' "$_odysseus_assets" | grep -iE "/llama-[^/]*-bin-win-cpu-${_odysseus_arch}\\.zip$" | head -1)"')
+    runner_lines.append('  _odysseus_unzip() {')
+    runner_lines.append('    if command -v unzip >/dev/null 2>&1; then unzip -qq -o "$1" -d "$2"')
+    runner_lines.append('    else')
+    runner_lines.append('      _odysseus_py="$(command -v python || command -v python3)"')
+    runner_lines.append('      [ -n "$_odysseus_py" ] && "$_odysseus_py" -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"')
+    runner_lines.append('    fi')
+    runner_lines.append('  }')
+    runner_lines.append('  if [ -n "$_odysseus_url" ]; then')
+    runner_lines.append('    echo "[odysseus] Downloading $_odysseus_url"')
+    runner_lines.append('    _odysseus_stage="$_odysseus_win_llama_dir.download"')
+    runner_lines.append('    rm -rf "$_odysseus_stage" && mkdir -p "$_odysseus_stage/x"')
+    runner_lines.append('    if curl -fsSL --max-time 600 "$_odysseus_url" -o "$_odysseus_stage/llama.zip" && _odysseus_unzip "$_odysseus_stage/llama.zip" "$_odysseus_stage/x"; then')
+    runner_lines.append('      _odysseus_exe="$(find "$_odysseus_stage/x" -type f -iname llama-server.exe 2>/dev/null | head -1)"')
+    runner_lines.append('      if [ -n "$_odysseus_exe" ]; then')
+    runner_lines.append('        rm -rf "$_odysseus_win_llama_dir" && mkdir -p "$(dirname "$_odysseus_win_llama_dir")"')
+    runner_lines.append('        mv "$(dirname "$_odysseus_exe")" "$_odysseus_win_llama_dir"')
+    runner_lines.append('        if [ -n "$_odysseus_cudart_url" ]; then')
+    runner_lines.append('          echo "[odysseus] Downloading CUDA runtime DLLs: $_odysseus_cudart_url"')
+    runner_lines.append('          curl -fsSL --max-time 600 "$_odysseus_cudart_url" -o "$_odysseus_stage/cudart.zip" && _odysseus_unzip "$_odysseus_stage/cudart.zip" "$_odysseus_win_llama_dir" \\')
+    runner_lines.append('            || echo "[odysseus] WARNING: CUDA runtime download failed - llama-server may not start on the GPU."')
+    runner_lines.append('        fi')
+    runner_lines.append('        echo "[odysseus] Prebuilt llama-server installed in $_odysseus_win_llama_dir"')
+    runner_lines.append('      fi')
+    runner_lines.append('    fi')
+    runner_lines.append('    rm -rf "$_odysseus_stage"')
+    runner_lines.append('    hash -r')
+    runner_lines.append('  fi')
+    runner_lines.append('  command -v llama-server >/dev/null 2>&1 || echo "[odysseus] Could not install llama-server automatically. Download a Windows build from https://github.com/ggml-org/llama.cpp/releases and unzip it into $_odysseus_win_llama_dir"')
+    runner_lines.append('fi')
+
+
 ODYSSEUS_LLAMA_SHIM_MARKER = "# Auto-generated by Odysseus Cookbook: a `llama-server` lookalike"
 
 
