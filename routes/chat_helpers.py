@@ -1804,6 +1804,31 @@ async def _run_extraction_jobs_sequentially(session_id: str, jobs: list, max_wai
             logger.warning("[bg-extract] %s extraction job failed for session %s", name, session_id, exc_info=True)
 
 
+def _session_user_turn_count(sess) -> int:
+    """Count the user's own turns in the session history.
+
+    Untrusted source data stored with role ``user`` (``metadata.trusted`` is
+    False and a ``source`` is set, as ``untrusted_context_message`` builds
+    it) is context, not a turn. Same rule as ``src.agent_loop._user_turn_count``,
+    which takes a list of message dicts; this one reads a session's history and
+    handles both ChatMessage objects and plain dicts.
+    """
+    count = 0
+    for m in getattr(sess, "history", None) or []:
+        role = getattr(m, "role", None)
+        if role is None and isinstance(m, dict):
+            role = m.get("role")
+        if role != "user":
+            continue
+        md = getattr(m, "metadata", None)
+        if md is None and isinstance(m, dict):
+            md = m.get("metadata")
+        if isinstance(md, dict) and md.get("trusted") is False and md.get("source"):
+            continue
+        count += 1
+    return count
+
+
 def run_post_response_tasks(
     sess,
     session_manager,
@@ -1844,9 +1869,13 @@ def run_post_response_tasks(
     """
     _extraction_jobs: list = []
 
-    # Memory extraction — only every 4th message pair to avoid excess LLM calls
-    _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
-    _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
+    # Memory extraction — only every 2nd user turn to avoid excess LLM calls.
+    # Count user turns, not saved messages: an approved tool action saves an
+    # extra assistant message, which left the history length odd, and with only
+    # ordinary turns after it the old "multiple of 4 messages" check never
+    # matched again in that chat (#7113).
+    _user_turns = _session_user_turn_count(sess)
+    _should_extract = (_user_turns >= 2) and (_user_turns % 2 == 0)
     _chat_memory_extract = getattr(sess, "memory_extraction_enabled", True) is not False
     if allow_background_extraction and not incognito and not compare_mode and _chat_memory_extract and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
