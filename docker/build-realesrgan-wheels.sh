@@ -14,6 +14,13 @@
 # no fixed release, so we patch get_version() to exec into an explicit namespace
 # dict (works on every Python) and build wheels from the patched source.
 #
+# We also drop their setup_requires (cython, numpy and, for basicsr, torch).
+# Those are only needed for the optional CUDA ops, which are compiled only when
+# BASICSR_EXT=True, but setuptools' PEP 517 backend reports setup_requires as
+# build requirements. pip then installs them into its isolated build env, which
+# downloads the full CUDA torch stack (several GB) just to package three
+# pure-Python wheels, and starves the parallel runtime stage's network requests.
+#
 # Usage: build-realesrgan-wheels.sh [OUTPUT_DIR]   (default: /wheels)
 set -euo pipefail
 
@@ -70,18 +77,23 @@ PY
   rm -f "${name}.tar.gz"
 done
 
-echo ">> patching get_version()"
+echo ">> patching get_version() and dropping setup_requires"
 python - <<'PY'
 import pathlib
+import re
 old_exec = "exec(compile(f.read(), version_file, 'exec'))"
 new_exec = "_ver_ns = {}\n        exec(compile(f.read(), version_file, 'exec'), _ver_ns)"
 old_ret = "return locals()['__version__']"
 new_ret = "return _ver_ns['__version__']"
+setup_requires = re.compile(r"^[ \t]*setup_requires=\[[^\]]*\],[ \t]*\n", re.MULTILINE)
 patched = 0
 for setup in pathlib.Path(".").glob("*/setup.py"):
     s = setup.read_text()
     if old_exec in s and old_ret in s:
-        setup.write_text(s.replace(old_exec, new_exec).replace(old_ret, new_ret))
+        s = s.replace(old_exec, new_exec).replace(old_ret, new_ret)
+        s, dropped = setup_requires.subn("", s)
+        assert dropped == 1, f"{setup}: expected one setup_requires line, found {dropped}"
+        setup.write_text(s)
         print("   patched", setup)
         patched += 1
 assert patched == 3, f"expected to patch 3 setup.py files, patched {patched}"
