@@ -58,6 +58,15 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     # common alternative to `add`. Hyphenated forms also accepted.
     raw_action = (args.get("action") or "").replace("-", "_").strip().lower()
     action = raw_action
+    if (
+        not action
+        and not any(args.get(key) for key in ("id", "note_id", "noteId"))
+        and any(
+            args.get(key) is not None
+            for key in ("title", "content", "text", "body", "checklist_items", "items", "due_date")
+        )
+    ):
+        action = "add"
     _NOTE_ACTION_ALIASES = {
         "create": "add",
         "new": "add",
