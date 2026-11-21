@@ -8301,7 +8301,19 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "create_session", "list_sessions", "send_to_session", "pipeline",
     "ask_teacher", "list_models", "search_chats",
 ])
-_TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
+def _resolve_tool_selection_timeout() -> float:
+    raw = os.getenv("ODYSSEUS_TOOL_SELECTION_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return 3.0
+
+
+_TOOL_SELECTION_TIMEOUT_SECONDS = _resolve_tool_selection_timeout()
 _NATIVE_TOOL_REJECTION_TTL_SECONDS = 15 * 60
 _NATIVE_TOOL_REJECTIONS: Dict[tuple[str, str], float] = {}
 
@@ -22699,11 +22711,11 @@ async def stream_agent_loop(
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "[tool-rag] Tool index init exceeded %.1fs; falling back to always-available tools",
+                    "[tool-rag] Tool index init exceeded %.1fs; falling back to keyword tool selection",
                     _TOOL_SELECTION_TIMEOUT_SECONDS,
                 )
                 tool_idx = None
-                _relevant_tools = set(ALWAYS_AVAILABLE)
+                _relevant_tools = None
             if tool_idx:
                 if mcp_mgr:
                     try:
@@ -22742,12 +22754,16 @@ async def stream_agent_loop(
     # Fallback: if RAG unavailable, use keyword-based tool selection
     # instead of sending ALL tools (which overwhelms the model).
     if not guide_only and not _relevant_tools and _retrieval_query:
-        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
+        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex, matching_user_mcp_tools
         _relevant_tools = set(ALWAYS_AVAILABLE)
         ql = _retrieval_query.lower()
         for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
             if any(kw in ql for kw in keywords):
                 _relevant_tools.update(tools)
+        if mcp_mgr:
+            _relevant_tools.update(
+                matching_user_mcp_tools(_retrieval_query, mcp_mgr, _mcp_disabled_map)
+            )
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
     # If deterministic domain detection fired, seed the corresponding domain
