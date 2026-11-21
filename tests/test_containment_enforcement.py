@@ -333,6 +333,7 @@ async def test_setsid_daemon_cannot_survive_namespace_death(namespaces, exit_par
     assert containment.active_grants() == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: os.set_blocking on pipes")
 async def test_failed_namespace_initialization_does_not_claim_containment(workspace, monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(containment, "MECHANISMS", (containment.Mechanism(
