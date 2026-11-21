@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1154-pr40-editor-precache';
+const CACHE_NAME = 'odysseus-v1160-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -67,6 +67,9 @@ const PRECACHE = [
   '/static/js/appConfig.js',
   '/static/js/authStatus.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
+  '/static/js/shared/domain/html.js',
+  '/static/js/shared/domain/urlSchemes.js',
+  '/static/js/shared/domain/relativeTime.js',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
   '/static/js/sessions.js',
@@ -155,6 +158,8 @@ const PRECACHE = [
   '/static/js/chatStream.js?v=20261026devsync1',
   '/static/js/chat.js?v=20260917toolttft1',
   '/static/js/cookbook.js',
+  '/static/js/cookbookModelDirectories.js',
+  '/static/js/cookbookSchedule.js',
   '/static/js/search-chat.js',
   '/static/js/compare/index.js?v=20260909mobilepaneaddscroll1',
   '/static/js/compare/vote.js?v=20260828resendcaldrag1',
@@ -181,6 +186,9 @@ const PRECACHE = [
   '/static/js/settings/endpointCatalog.js',
   '/static/js/settings/fallbackWidget.js',
   '/static/js/settings/html.js',
+  '/static/js/shared/platform/clipboard.js',
+  '/static/js/shared/platform/debounce.js',
+  '/static/js/shared/platform/downloads.js',
   '/static/js/settings/imageModels.js',
   '/static/js/settings/integrations/events.js',
   '/static/js/settings/integrations/forms/agent.js',
@@ -241,6 +249,7 @@ const PRECACHE = [
   '/static/js/windowResize.js',
   '/static/js/modalManager.js',
   '/static/js/escMenuStack.js',
+  '/static/js/shared/ui/optionNavigation.js',
   '/static/js/tourHintDismiss.js',
   '/static/js/shared/ui/confetti.js',
   '/static/js/features/notes/application/selection.js',

@@ -14,6 +14,7 @@ import {
 } from './chatgptSubscriptionUsage.js';
 import { getSettings, getTools, invalidateSettings, invalidateTools } from './appConfig.js';
 import { initModelCustomization } from './settings/modelCustomization.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
 
 let initialized = false;
 let modalEl = null;
@@ -30,6 +31,19 @@ function esc(s) { return uiModule.esc(s); }
 
 // Clipboard API is unavailable on the HTTP LAN URL; keep copy actions usable
 // there with the browser's synchronous fallback.
+function _copyWithFocusedTextarea(text, readOnly) {
+  return withClipboardTextarea(text,
+    'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;',
+    field => {
+      field.focus();
+      field.select();
+      try { field.setSelectionRange(0, text.length); } catch (_) {}
+      try { return document.execCommand('copy'); } catch (_) { return false; }
+    },
+    { readOnly },
+  );
+}
+
 async function copyNotificationText(value) {
   const text = String(value ?? '');
   try {
@@ -39,18 +53,7 @@ async function copyNotificationText(value) {
     }
   } catch (_) {}
 
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  try { textarea.setSelectionRange(0, text.length); } catch (_) {}
-  let copied = false;
-  try { copied = document.execCommand('copy'); } catch (_) {}
-  textarea.remove();
-  return copied;
+  return _copyWithFocusedTextarea(text, true);
 }
 
 /* ═══════════════════════════════════════════
@@ -1652,15 +1655,7 @@ function _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl) {
     if (!ok) {
       // navigator.clipboard is unavailable in non-secure contexts (HTTP
       // self-host over a LAN IP), so fall back to execCommand('copy').
-      const ta = document.createElement('textarea');
-      ta.value = code;
-      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      try { ta.setSelectionRange(0, code.length); } catch (e) {}
-      try { ok = document.execCommand('copy'); } catch (e) {}
-      ta.remove();
+      ok = _copyWithFocusedTextarea(code, false);
     }
     copyBtn.textContent = ok ? 'Copied' : 'Failed';
     setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);

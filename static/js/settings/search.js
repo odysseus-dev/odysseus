@@ -1,3 +1,4 @@
+import { stepWrappedOption } from '../shared/ui/optionNavigation.js';
 import {
   SETTINGS_GROUPS,
   getSettingsPanel,
@@ -66,13 +67,9 @@ export function bindSettingsSearch(modalEl, options = {}) {
     setExpanded(false);
   }
 
-  function setActiveResult(index) {
+  function setActiveResult(next) {
     const buttons = getResultButtons(resultsEl);
     if (!buttons.length) return -1;
-
-    let next = index;
-    if (next < 0) next = buttons.length - 1;
-    if (next >= buttons.length) next = 0;
 
     buttons.forEach((button, buttonIndex) => {
       const active = buttonIndex === next;
@@ -208,13 +205,13 @@ export function bindSettingsSearch(modalEl, options = {}) {
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      activeIndex = setActiveResult(activeIndex + 1);
+      activeIndex = setActiveResult(stepWrappedOption(activeIndex, buttons.length, 1));
       return;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      activeIndex = setActiveResult(activeIndex - 1);
+      activeIndex = setActiveResult(stepWrappedOption(activeIndex, buttons.length, -1));
       return;
     }
 

@@ -46,8 +46,7 @@ function _playSkillsCascade(container = document.getElementById('skills-list')) 
 }
 
 // Cache of SKILL.md text by skill name, so expanding is instant (no async
-// fetch + content-settle jump). Populated lazily on expand AND eagerly in
-// the background for all visible cards right after render.
+// fetch + content-settle jump). Populated lazily on expand.
 const _mdCache = new Map();
 async function _fetchSkillMarkdown(name) {
   if (_mdCache.has(name)) return _mdCache.get(name);
@@ -58,19 +57,6 @@ async function _fetchSkillMarkdown(name) {
   _mdCache.set(name, md);
   return md;
 }
-// Background-load the markdown for every currently-rendered skill card so it
-// is ready (in the card's <pre> + _mdLoaded) before the user expands it.
-function _preloadVisibleMarkdown() {
-  document.querySelectorAll('#skills-list .skill-card[data-skill-name]').forEach(card => {
-    const name = card.dataset.skillName;
-    if (!name || card._mdLoaded) return;
-    const pre = card.querySelector('.skill-md-pre');
-    const apply = (md) => { if (pre) pre.textContent = md || '(empty)'; card._mdLoaded = true; card._md = md || ''; };
-    if (_mdCache.has(name)) { apply(_mdCache.get(name)); return; }
-    _fetchSkillMarkdown(name).then(apply).catch(() => {});
-  });
-}
-
 // Collapsed skills sections ("user" / "builtin"), persisted so the
 // choice survives reloads. Built-in defaults to collapsed (it's
 // reference info, not the user's own skills).
