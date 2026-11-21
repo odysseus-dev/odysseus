@@ -290,7 +290,8 @@ def test_source_failure_entry_carries_no_raw_detail(monkeypatch):
     entry = next(s for s in out["services"] if s["name"] == "email")
     assert entry["detail"] == (
         "Could not read configuration (configuration source could not be read).")
-    assert set(entry["meta"]) == {"error", "source", "source_error"}
+    assert set(entry["meta"]) == {"error", "source", "source_error", "next_step"}
+    assert entry["meta"]["next_step"] == sh._NEXT_STEP["config_source_error"]
 
 
 def test_collect_tolerates_inputs_without_a_failed_key(monkeypatch):
