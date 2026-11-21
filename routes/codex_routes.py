@@ -333,7 +333,11 @@ def setup_codex_routes(
             from_addr=from_addr,
             account_id=account_id,
             has_attachments=has_attachments,
+            date_from=None,
+            date_to=None,
+            cached_only=0,
             cache_bust=None,
+            refresh=0,
             owner=owner,
         )
 
