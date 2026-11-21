@@ -6,13 +6,14 @@ import uuid
 import time
 from pathlib import Path
 from datetime import datetime
+from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, Response, Request, Depends, Query
 import logging
 
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, Project, utcnow_naive
 from src.auth_helpers import (
     effective_user,
     _auth_disabled,
@@ -239,6 +240,19 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
             return
     raise HTTPException(404, f"Session {session_id} not found")
 
+
+def _verify_project_for_session(db, project_id: str | None, user: str | None) -> str | None:
+    """Return a usable project id, or reject cross-owner/missing projects."""
+    clean_id = (project_id or "").strip()
+    if not clean_id:
+        return None
+    q = db.query(Project).filter(Project.id == clean_id, Project.archived == False)
+    q = owner_filter(q, Project, user)
+    project = q.first()
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return project.id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -440,6 +454,8 @@ def setup_session_routes(
                 row for row in q.all()
                 if not _is_hidden_session_name(row.name)
             ]
+            project_query = owner_filter(db.query(Project), Project, user)
+            project_names = {project.id: project.name for project in project_query.all()}
             # Sessions with active documents that have content
             from sqlalchemy import func
             doc_session_ids = set(
@@ -500,6 +516,8 @@ def setup_session_routes(
                     "archived": s.archived,
                     "folder": s.folder,
                     "cwd": s.cwd,
+                    "project_id": s.project_id,
+                    "project_name": project_names.get(s.project_id),
                     "total_tokens": (s.total_input_tokens or 0) + (s.total_output_tokens or 0),
                     "total_cost_usd": s.total_cost_usd or 0.0,
                     "is_important": s.is_important or False,
@@ -527,6 +545,7 @@ def setup_session_routes(
         skip_validation: str = Form(None),
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
+        project_id: str = Form(""),
         cwd: str = Form(None),
     ):
         skip_val = str(skip_validation).lower() == "true"
@@ -621,6 +640,11 @@ def setup_session_routes(
         
         sid = str(uuid.uuid4())
         user = effective_user(request)
+        create_db = SessionLocal()
+        try:
+            verified_project_id = _verify_project_for_session(create_db, project_id, user)
+        finally:
+            create_db.close()
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",
@@ -628,6 +652,7 @@ def setup_session_routes(
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
+            project_id=verified_project_id,
             cwd=cwd or None,
             endpoint_id=endpoint_id.strip() if endpoint_id else None,
         )
@@ -656,12 +681,14 @@ def setup_session_routes(
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             archived=False,
+            project_id=verified_project_id,
             cwd=session.cwd,
         )    
     @router.patch("/session/{sid}")
     def rename_session(
         request: Request, sid: str,
         name: str = Form(None), folder: str = Form(None),
+        project_id: Annotated[str | None, Form()] = None,
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
         cwd: str = Form(None),
@@ -687,6 +714,22 @@ def setup_session_routes(
                     result["folder"] = folder if folder else None
             finally:
                 db.close()
+        if project_id is not None:
+            user = effective_user(request)
+            db = SessionLocal()
+            try:
+                verified_project_id = _verify_project_for_session(db, project_id, user)
+                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                if db_session:
+                    db_session.project_id = verified_project_id
+                    db_session.updated_at = utcnow_naive()
+                    db.commit()
+                    if sid in session_manager.sessions:
+                        session_manager.sessions[sid].project_id = verified_project_id
+                    result["project_id"] = verified_project_id
+            finally:
+                db.close()
+
         if cwd is not None:
             clean_cwd = cwd.strip() or None
             db = SessionLocal()

@@ -47,6 +47,7 @@ project documentation.
 - [auth-security.md](auth-security.md): auth, privileges, API tokens, security headers, untrusted data, SSRF and admin boundaries.
 - [persistence.md](persistence.md): SQLite models, startup migrations, encrypted columns, ownership columns, data directory rules.
 - [chat.md](chat.md): chat routes, sessions, streaming, uploads-in-chat, compare handoff, research/chat mode dispatch.
+- [projects.md](projects.md): durable project workspaces, chat membership, project sidebar grouping, and project-level context.
 - [compare.md](compare.md): model A/B comparison runs, voting/history, compare frontend panes, compare ownership.
 - [llm-models.md](llm-models.md): LLM provider calls, endpoint discovery, model context length, fallbacks, model endpoints.
 - [model-capability-canonical.md](model-capability-canonical.md): canonical provider/model capability shapes, evidence, payload resolution, and safe fallback.
