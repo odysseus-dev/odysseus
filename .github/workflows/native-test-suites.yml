@@ -1,0 +1,129 @@
+name: Native test suites
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-node:
+    name: Native Node regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      - name: Validate exhaustive disjoint runner mapping and execute omitted suites
+        run: |
+          node .github/scripts/run_native_tests.mjs
+          python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 43
+      - name: Verify and sanitize native test results fail-closed
+        id: verify-native-results
+        if: always()
+        run: |
+          python .github/scripts/verify_sanitized_artifacts.py test-results/native-node/
+      - name: Save native test identities and results
+        if: always() && steps.verify-native-results.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-node-results
+          path: test-results/native-node/
+          retention-days: 7
+          if-no-files-found: warn
+
+  browser:
+    name: Chromium application regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ODYSSEUS_E2E_DISPOSABLE_ARTIFACTS: '1'
+      ODYSSEUS_TEST_PYTHON: python
+      CHROMADB_HOST: 127.0.0.1
+      CHROMADB_PORT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg and establish system trust
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates
+          python scripts/check_ca_trust.py --system
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.13.5'
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+          prune-cache: false
+      - run: |
+          uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
+          python scripts/check_ca_trust.py --python
+          uv pip install --system -r requirements.txt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      - name: Run complete Chromium suite against a fresh authenticated app
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results/browser-junit.xml
+        run: |
+          npm run test:photo-editor -- --reporter=line,junit
+          python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 137
+      - name: Verify and sanitize failure diagnostics fail-closed
+        id: verify-browser-results
+        if: always()
+        run: |
+          python .github/scripts/verify_sanitized_artifacts.py test-results/
+      - name: Save per-test results and sanitized failure diagnostics
+        if: always() && steps.verify-browser-results.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chromium-regression-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: warn
+
+  authoritative-native-suites:
+    name: Authoritative native suites
+    if: always()
+    needs: [native-node, browser]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require both complete suites to succeed
+        env:
+          NODE_RESULT: ${{ needs.native-node.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: |
+          test "$NODE_RESULT" = success
+          test "$BROWSER_RESULT" = success
