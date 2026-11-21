@@ -564,7 +564,8 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   });
   mk(_ICON.edit, 'Edit', {}, async () => {
     if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
-    _toggleSkillEdit(card, name);
+    // Menu Edit only opens or focuses the editor; Save stays in the footer (#3575).
+    _toggleSkillEdit(card, name, { saveIfEditing: false });
   });
   menu.appendChild(selItem);
   // Audit kicks off the bulk audit-all loop (test → judge → fix → retry → demote).
@@ -1276,7 +1277,7 @@ async function _expandSkillCard(card, name) {
 
 // Swap the read-only <pre> for an editable <textarea> (and back). The
 // Edit button toggles; a Save button commits via the markdown endpoint.
-function _toggleSkillEdit(card, name) {
+function _toggleSkillEdit(card, name, { saveIfEditing = true } = {}) {
   // A loading/error preview is not source text. Menu entry points must obey
   // the same readiness gate as the disabled footer control.
   if (!card._mdLoaded) return;
@@ -1288,8 +1289,9 @@ function _toggleSkillEdit(card, name) {
   }
   const existing = preview.querySelector('.skill-md-editor');
   if (existing) {
-    // Already editing — treat Edit as Save.
-    _saveSkillEdit(card, name);
+    // Already editing — the footer toggle saves; the menu Edit only focuses.
+    if (saveIfEditing) _saveSkillEdit(card, name);
+    else existing.focus();
     return;
   }
   const pre = preview.querySelector('.skill-md-pre');
