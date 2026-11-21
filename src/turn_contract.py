@@ -3786,6 +3786,13 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
         re.I,
     ):
         return RequiredReadOperation("manage_skills", {"action": "list"}, maximum)
+    if re.fullmatch(
+        _REQUEST_PREFIX + r"(?:what(?:['’]?s|\s+is)|wats)\s+in\s+"
+        r"(?:my|the)\s+research\s+library\b[^\n]*",
+        text,
+        re.I,
+    ):
+        return RequiredReadOperation("manage_research", {"action": "list"}, maximum)
     research_history_lookup = re.fullmatch(
         _REQUEST_PREFIX
         + r"(?:when\s+it(?:['’]?s|\s+is)\s+done,?\s*)?how\s+do\s+i\s+"
@@ -4415,6 +4422,8 @@ def _clause_capabilities(text: str) -> set[str]:
         # before granting filesystem authority.
         return words
     if intent.needs_tools:
+        if intent.category == "library" and not words:
+            return {"documents", "research", "skills"}
         mapped = {"web": "search_browser",
                   "workspace": "shell_files", "shell": "shell_files"}.get(intent.category, intent.category)
         if mapped in {"shell_files", "search_browser"} and words and mapped not in words:
