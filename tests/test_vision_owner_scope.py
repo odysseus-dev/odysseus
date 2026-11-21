@@ -93,7 +93,7 @@ def test_request_vision_call_sites_pass_owner():
     memory_source = (ROOT / "routes" / "memory" / "memory_routes.py").read_text()
 
     assert 'analyze_image_with_vl_result(file_info["path"], owner=owner)' in chat_source
-    assert "analyze_image_with_vl(path, owner=current_user)" in upload_source
+    assert "analyze_image_with_vl_result(path, owner=current_user)" in upload_source
     assert "_process_pdf(path, owner=owner)" in processor_source
     assert "_process_pdf(pdf_path, owner=user)" in document_source
     assert "_resolve_vl_model(vl_model, owner=user)" in document_source
