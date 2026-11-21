@@ -120,9 +120,11 @@ async def extract_transcript_async(
 
     for attempt in range(max_retries):
         try:
-            api = YouTubeTranscriptApi()
-            transcript = api.fetch(video_id)
-            transcript_list = list(transcript)
+            # The SDK is synchronous; keep setup, network I/O and iterable
+            # materialization together off the event-loop thread.
+            transcript_list = await asyncio.to_thread(
+                lambda: list(YouTubeTranscriptApi().fetch(video_id))
+            )
 
             formatted = []
             for snippet in transcript_list:
