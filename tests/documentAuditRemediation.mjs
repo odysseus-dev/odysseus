@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
-import test, { after } from 'node:test';
+import os from 'node:os';
+import test, { after, describe } from 'node:test';
 import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
 
 const styles = (await fs.readFile('static/index.html', 'utf8')).match(/<link[^>]+rel="stylesheet"[^>]*>/g).join('');
+const defaultConcurrency = Math.min(4, Math.max(1, os.availableParallelism()));
+const parsedConcurrency = Number.parseInt(process.env.ODYSSEUS_DOC_AUDIT_CONCURRENCY || '', 10);
+const testConcurrency = Number.isInteger(parsedConcurrency) && parsedConcurrency > 0
+  ? parsedConcurrency
+  : defaultConcurrency;
 
 let sharedBrowserPromise = null;
 
@@ -11,9 +17,12 @@ async function getSharedBrowser() {
   if (!sharedBrowserPromise) {
     sharedBrowserPromise = chromium.launch({ headless: true });
   }
-  const browser = await sharedBrowserPromise;
+  const pending = sharedBrowserPromise;
+  const browser = await pending;
   if (!browser.isConnected()) {
-    sharedBrowserPromise = chromium.launch({ headless: true });
+    if (sharedBrowserPromise === pending) {
+      sharedBrowserPromise = chromium.launch({ headless: true });
+    }
     return sharedBrowserPromise;
   }
   return browser;
@@ -21,8 +30,9 @@ async function getSharedBrowser() {
 
 after(async () => {
   if (sharedBrowserPromise) {
-    const browser = await sharedBrowserPromise;
+    const pending = sharedBrowserPromise;
     sharedBrowserPromise = null;
+    const browser = await pending;
     await browser.close();
   }
 });
@@ -68,6 +78,7 @@ async function edit(page, content) {
   }, content);
 }
 
+describe('document audit remediation', { concurrency: testConcurrency }, () => {
 test('ownership: rapid minimize/reopen preserves cached snapshots and outgoing PUT', async t => {
   let release;
   const held = new Promise(resolve => { release = resolve; });
@@ -107,11 +118,13 @@ test('email: real envelope input, clearing recipients, local restoration and aut
     await route.fulfill({ json: { id: 'email', language: 'email', current_content: original, title: 'Draft' } });
     return true;
   });
+  await page.clock.install();
   await inject(page, 'email', original, 'email');
   for (const [field, value] of [['to', 'new@example.com'], ['cc', 'cc@example.com'], ['bcc', 'bcc@example.com'], ['subject', 'New subject']]) {
     await page.locator(`#doc-email-${field}`).fill(value);
   }
   assert.equal(await page.evaluate(() => state.docs.get('email')._saveState), 'dirty');
+  await page.clock.fastForward(1000);
   await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
   const first = requests.filter(request => request.method === 'PUT').at(-1);
   assert.match(first.body.content, /To: new@example.com/);
@@ -119,6 +132,7 @@ test('email: real envelope input, clearing recipients, local restoration and aut
   assert.match(first.body.content, /Bcc: bcc@example.com/);
   assert.match(first.body.content, /Subject: New subject/);
   await page.locator('[data-cc-close]').first().evaluate(button => button.click());
+  await page.clock.fastForward(1000);
   await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
   assert.doesNotMatch(requests.filter(request => request.method === 'PUT').at(-1).body.content, /\n(?:Cc|Bcc):/);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|42|'))));
@@ -149,11 +163,13 @@ test('email: Markdown preview shortcut executes integrated callback', async t =>
 
 test('titles: source work retains A identity across navigation', async t => {
   const { page, requests } = await setup(t);
+  await page.clock.install();
   await inject(page, 'a', 'initial', 'markdown', '');
   await inject(page, 'b', 'B correct body', 'markdown', '');
   await page.evaluate(() => editor.loadDocument('a'));
   await edit(page, 'Title belonging to A');
   await page.evaluate(() => editor.loadDocument('b'));
+  await page.clock.fastForward(700);
   await page.waitForFunction(() => state.docs.get('a').title === 'Title belonging to A');
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
   assert(requests.some(request => request.path === '/api/document/a' && request.body?.title === 'Title belonging to A'));
@@ -177,7 +193,7 @@ test('titles: image work is cancelled at disposal and repeated mount remains usa
     editor.closePanel('down');
     await editor.loadDocument('b');
   });
-  await page.clock.runFor(900);
+  await page.clock.fastForward(900);
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
   assert(!requests.some(request => request.method === 'PATCH' && request.body?.title));
   assert.equal(await page.evaluate(async () => {
@@ -185,7 +201,7 @@ test('titles: image work is cancelled at disposal and repeated mount remains usa
     return source._autoTitleDebounce;
   }), null);
   await edit(page, 'Valid title after reopen');
-  await page.clock.runFor(900);
+  await page.clock.fastForward(900);
   await page.waitForFunction(() => state.docs.get('b').title === 'Valid title after reopen');
 });
 
@@ -230,12 +246,12 @@ for (const lifecycle of ['mounted', 'minimized', 'navigation', 'detached', 'sess
     });
     if (lifecycle === 'minimized' || lifecycle === 'successful deletion') {
       await page.evaluate(() => editor.closePanel('down'));
-      await page.clock.runFor(250);
+      await page.clock.fastForward(250);
       assert.equal(await page.locator('#doc-editor-pane').count(), 0);
     }
     releaseDelete();
     await page.evaluate(() => window.deleting);
-    await page.clock.runFor(1200);
+    await page.clock.fastForward(1200);
     if (lifecycle === 'successful deletion') {
       assert.equal(await page.evaluate(() => state.docs.has('pdf-a') || state._closingDocs.has('pdf-a')), false);
       assert.equal(requests.filter(request => request.method === 'PUT' && request.path === '/api/document/pdf-a').length, 0);
@@ -314,10 +330,12 @@ test('compare: actual header action displays both versions in diff mode', async 
 
 test('panel: default divider collapse closes and can reopen repeatedly', async t => {
   const { page } = await setup(t);
+  await page.clock.install();
   await inject(page, 'a', 'body');
   for (let count = 0; count < 3; count++) {
     await page.locator('.doc-divider-collapse').evaluate(button => { delete button.dataset.mode; button.click(); });
     assert.equal(await page.evaluate(() => editor.isPanelOpen()), false);
+    await page.clock.fastForward(250);
     await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
     await page.evaluate(() => editor.loadDocument('a'));
     assert.equal(await page.evaluate(() => editor.isPanelOpen()), true);
@@ -339,6 +357,7 @@ test('autodetect: shipped highlighting library persists SVG metadata', async t =
 
 test('mobile: grabber click and synthetic touch dismissal preserve dock and reopen', async t => {
   const { page } = await setup(t, null, { hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  await page.clock.install();
   await inject(page, 'a', 'Mobile body');
   for (const action of ['click', 'swipe', 'click', 'swipe']) {
     if (action === 'click') await page.locator('#doc-mobile-grabber').tap();
@@ -351,6 +370,7 @@ test('mobile: grabber click and synthetic touch dismissal preserve dock and reop
     });
     assert.equal(await page.evaluate(() => editor.isPanelOpen()), false);
     assert.equal(await page.evaluate(async () => (await import('/static/js/modalManager.js')).isMinimized('doc-panel')), true);
+    await page.clock.fastForward(250);
     await page.locator('#doc-editor-pane').waitFor({ state: 'detached' });
     await page.evaluate(() => editor.loadDocument('a'));
     assert.equal(await page.evaluate(() => editor.isPanelOpen()), true);
@@ -419,7 +439,7 @@ test('attachments: forwarded staging completion persists its initiating email', 
   await pending;
   await page.evaluate(() => editor.loadDocument('b'));
   release(); await page.evaluate(() => window.staging);
-  await page.clock.runFor(1000);
+  await page.clock.fastForward(1000);
   await page.waitForFunction(() => state.docs.get('a')._saveState === 'saved');
   assert.deepEqual(await page.evaluate(() => ({ a: state.docs.get('a')._composeAtts.map(a => a.token), b: state.docs.get('b')._composeAtts || [] })), { a: ['attachment-a'], b: [] });
   assert(requests.some(request => request.method === 'PUT' && request.path === '/api/document/a'));
@@ -475,13 +495,13 @@ test('email: an older save response cannot acknowledge a later envelope revision
   await page.clock.install();
   await inject(page, 'email', 'To: old@example.com\nSubject: Old subject\n---\nBody', 'email');
   await page.locator('#doc-email-to').fill('new@example.com');
-  await page.clock.runFor(850);
+  await page.clock.fastForward(850);
   await pending;
   await page.locator('#doc-email-subject').fill('Later subject');
   release();
   await page.evaluate(() => state.docs.get('email')._saveQueueTail);
   assert.equal(await page.evaluate(() => state.docs.get('email')._saveState), 'dirty');
-  await page.clock.runFor(850);
+  await page.clock.fastForward(850);
   await page.waitForFunction(() => state.docs.get('email')._saveState === 'saved');
   const puts = requests.filter(request => request.method === 'PUT');
   assert.equal(puts.length, 2);
@@ -530,13 +550,13 @@ test('lifecycle: rich text, email and PDF remounts release global listeners', as
         if (id === 'pdf') await (await import('/static/js/document/ui/pdfTools.js'))._setPdfViewActive(true);
         editor.closePanel('down');
       }, id);
-      await page.clock.runFor(250);
+      await page.clock.fastForward(250);
       assert.equal(await page.locator('#doc-editor-pane').count(), 0);
     }
     // spinner.js permits a 2000 ms grace for loading rows removed before
     // their first connected frame. Drain that bounded owner cleanup with the
     // controlled clock before comparing quiescent listener counts.
-    await page.clock.runFor(2100);
+    await page.clock.fastForward(2100);
   };
   const cdp = await page.context().newCDPSession(page);
   const counts = async () => (await cdp.send('Runtime.evaluate', {
@@ -558,7 +578,7 @@ test('email: rapid drafts retain independent local snapshots', async t => {
   await page.locator('#doc-email-subject').fill('A latest subject');
   await page.evaluate(() => editor.loadDocument('b'));
   await page.locator('#doc-email-subject').fill('B latest subject');
-  await page.clock.runFor(1000);
+  await page.clock.fastForward(1000);
   const subjects = await page.evaluate(() => ['42', '43'].map(uid => JSON.parse(localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent(`INBOX|${uid}|`)))?.subject));
   assert.deepEqual(subjects, ['A latest subject', 'B latest subject']);
 });
@@ -575,7 +595,7 @@ test('email: explicit draft clearing cancels its captured storage write', async 
     state.markDeleted('a'); persistence._cancelAutoSave('a');
     state.removeDocument('a'); state.setActiveDocId(null);
   });
-  await page.clock.runFor(1000);
+  await page.clock.fastForward(1000);
   assert.equal(await page.evaluate(() => localStorage.getItem('odysseus.email.replyDraft.v1:' + encodeURIComponent('INBOX|42|'))), null);
 });
 
@@ -584,7 +604,7 @@ test('email: delayed initial focus cannot redirect recipient typing into the bod
   await page.clock.install();
   await inject(page, 'email', 'To: old@example.com\nSubject: Subject\n---\nBody', 'email');
   await page.locator('#doc-email-to').focus();
-  await page.clock.runFor(60);
+  await page.clock.fastForward(60);
   assert.equal(await page.evaluate(() => document.activeElement.id), 'doc-email-to');
   await page.keyboard.type('recipient@example.com');
   assert.equal(await page.locator('#doc-email-richbody').textContent(), 'Body');
@@ -601,7 +621,7 @@ test('compare: deferred accepted-change preview cannot change another document',
     document.getElementById('doc-diff-accept-all-btn').click();
     await editor.loadDocument('b');
   });
-  await page.clock.runFor(40);
+  await page.clock.fastForward(40);
   assert.equal(await page.evaluate(() => state.docs.get('b')._markdownPreviewActive === true), false);
   assert.equal(await page.locator('#doc-editor-textarea').inputValue(), 'print("B original")');
   assert.equal(await page.locator('#doc-editor-wrap').isVisible(), true);
@@ -610,7 +630,7 @@ test('compare: deferred accepted-change preview cannot change another document',
     editor.default.enterDiffMode('new Markdown', 'accepted Markdown');
     document.getElementById('doc-diff-accept-all-btn').click();
   });
-  await page.clock.runFor(40);
+  await page.clock.fastForward(40);
   assert.equal(await page.evaluate(() => state.docs.get('a')._markdownPreviewActive), true);
   assert.equal(await page.evaluate(() => state.docs.get('b')._markdownPreviewActive === true), false);
 });
@@ -787,7 +807,7 @@ test('titles: rich-text A to Markdown B retains A identity and leaves B untitled
   await page.locator('#doc-email-richbody').click();
   await page.keyboard.type('Rich Title A');
   await page.evaluate(() => editor.loadDocument('b'));
-  await page.clock.runFor(700);
+  await page.clock.fastForward(700);
   await page.waitForFunction(() => state.docs.get('a').title === 'Rich Title A');
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
   assert.match(await page.evaluate(() => state.docs.get('a').content), /Rich Title A/);
@@ -803,7 +823,7 @@ test('titles: rich-text A to rich-text B never applies A title to B', async t =>
   await page.locator('#doc-email-richbody').click();
   await page.keyboard.type('Alpha Rich Title');
   await page.evaluate(() => editor.loadDocument('b'));
-  await page.clock.runFor(700);
+  await page.clock.fastForward(700);
   await page.waitForFunction(() => state.docs.get('a').title === 'Alpha Rich Title');
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
   assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title));
@@ -811,7 +831,7 @@ test('titles: rich-text A to rich-text B never applies A title to B', async t =>
   await page.locator('#doc-email-richbody').fill('');
   await page.locator('#doc-email-richbody').click();
   await page.keyboard.type('Beta Own Title');
-  await page.clock.runFor(700);
+  await page.clock.fastForward(700);
   await page.waitForFunction(() => state.docs.get('b').title === 'Beta Own Title');
   assert.equal(await page.evaluate(() => state.docs.get('b').title), 'Beta Own Title');
   assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title === 'Alpha Rich Title'));
@@ -825,11 +845,11 @@ test('titles: rich-text A minimized before B opened cancels pending title timer'
   await page.locator('#doc-email-richbody').click();
   await page.keyboard.type('Minimized Rich Title');
   await page.evaluate(() => editor.closePanel('down'));
-  await page.clock.runFor(900);
+  await page.clock.fastForward(900);
   assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/editor/sourceEditor.js'))._autoTitleDebounce), null);
   assert(!requests.some(r => r.method === 'PATCH' && r.body?.title));
   await page.evaluate(() => editor.loadDocument('b'));
-  await page.clock.runFor(900);
+  await page.clock.fastForward(900);
   assert.equal(await page.evaluate(async () => (await import('/static/js/document/ui/editor/sourceEditor.js'))._autoTitleDebounce), null);
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
   assert.equal(await page.evaluate(() => state.docs.get('a').title), '');
@@ -853,7 +873,7 @@ test('titles: rich-text rapid switching and deletion guard stale callbacks, norm
   await page.locator('#doc-email-richbody').fill('Final Draft A');
   await page.locator('#doc-email-richbody').dispatchEvent('input');
   await page.evaluate(() => editor.loadDocument('b'));
-  await page.clock.runFor(700);
+  await page.clock.fastForward(700);
   await page.waitForFunction(() => state.docs.get('a').title === 'Final Draft A');
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
   assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title));
@@ -867,7 +887,7 @@ test('titles: rich-text rapid switching and deletion guard stale callbacks, norm
     state.removeDocument('temp');
     await editor.loadDocument('b');
   });
-  await page.clock.runFor(700);
+  await page.clock.fastForward(700);
   assert(!requests.some(r => r.method === 'PATCH' && r.path === '/api/document/temp' && r.body?.title));
   assert.equal(await page.evaluate(() => state.docs.get('b').title), '');
 
@@ -877,12 +897,12 @@ test('titles: rich-text rapid switching and deletion guard stale callbacks, norm
       editor.closePanel('down');
       await editor.loadDocument('b');
     });
-    await page.clock.runFor(250);
+    await page.clock.fastForward(250);
   }
   await page.locator('#doc-email-richbody').fill('');
   await page.locator('#doc-email-richbody').click();
   await page.keyboard.type('Normal Rich Title');
-  await page.clock.runFor(700);
+  await page.clock.fastForward(700);
   await page.waitForFunction(() => state.docs.get('b').title === 'Normal Rich Title');
   const bTitlePatches = requests.filter(r => r.method === 'PATCH' && r.path === '/api/document/b' && r.body?.title === 'Normal Rich Title');
   assert.equal(bTitlePatches.length, 1);
@@ -1777,4 +1797,5 @@ test('email actions preserve literal tags from the rich editor in draft, send, a
       assert.doesNotMatch(payload.body_html, /<b>bold<\/b>/);
     }
   }
+});
 });
