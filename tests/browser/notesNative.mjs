@@ -335,6 +335,10 @@ async function checkInlineImages({ context, page, mobile }) {
   await win.waitFor({ state: 'detached' });
   await page.evaluate(id => void window.notesModule.openNote(id, { focus: null }), note.id);
   await body.waitFor();
+  // The body loses focus first: its blur saves and re-applies the account's
+  // access (noteWindow.js), which would make the body editable again.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.waitForTimeout(300);
   await page.evaluate(() => document.querySelector('#note-window-modal .note-window-body').setAttribute('contenteditable', 'false'));
   // On a phone the sheet is still sliding up: a click before it settles lands
   // outside the viewport (the native flow's phone flake since T).
@@ -416,7 +420,10 @@ async function checkCardEdges({ context, page, mobile, outside }) {
   await untilNote(context, 'legacy-checklist', n => n.content.endsWith('- [ ] Added from the card'), 'the card append');
   page.off('request', record);
   assert.deepEqual(writes, ['POST /api/notes/legacy-checklist/items']);
-  await context.request.put(`${origin}/api/notes/legacy-checklist`, { data: { content: before.content } });
+  // A body write names the version it replaces (a tokenless one is a 409).
+  const appended = await noteById(context, 'legacy-checklist');
+  const restored = await context.request.put(`${origin}/api/notes/legacy-checklist`, { data: { content: before.content, replace_content: true, body_revision: appended.body_revision } });
+  assert.equal(restored.ok(), true, await restored.text());
 }
 const refreshPanel = async page => {
   await page.reload();
@@ -556,6 +563,9 @@ try {
     await card.waitFor();
     if (evidence) await page.screenshot({ path: path.join(evidence, mobile ? 'native-mobile.png' : 'native-desktop.png'), fullPage: true, animations: 'disabled' });
     await checkMarkdownCards({ context, page, mobile, externalId: external.id, outside });
+    // Gone before the flows that turn external images on for this account
+    // (extimages): its image would be requested from their cards too.
+    await context.request.delete(`${origin}/api/notes/${external.id}`);
     await page.locator('#notes-select-btn').click();
     await card.locator('.note-card-cb').check({ force: mobile });
     await page.locator('#notes-send-agent').click();
