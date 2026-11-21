@@ -17,6 +17,7 @@ const state = {
   _paneGenerationSettings: [],     // per-pane thinking / temperature / token overrides
   _paneMetrics: [],                // metrics per pane from last round
   _abortControllers: [],           // per-pane abort controllers
+  _broadcastController: null,      // cancels queued panes in a chat/image round
   _sidebarWasHidden: false,
   _compareElements: [],            // elements we added to container (for cleanup)
   _savedToggles: null,             // tool toggle states saved before compare
@@ -39,6 +40,8 @@ const state = {
 
 /** Reset transient state to defaults — useful for clean restarts. */
 export function reset() {
+  state._broadcastController?.abort();
+  state._broadcastController = null;
   state._openingSelector = false;
   state._streaming = false;
   state._finishOrder = 0;

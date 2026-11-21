@@ -211,6 +211,8 @@ async function toggleMode() {
 
 async function deactivate(teardown) {
   // Abort any in-flight streams
+  state._broadcastController?.abort();
+  state._broadcastController = null;
   state._abortControllers.forEach(ac => { if (ac) ac.abort(); });
   state._abortControllers = [];
 
@@ -996,6 +998,8 @@ async function _executeCompare(message) {
   }
 
   // ── Chat / Image mode ──
+  const broadcast = new AbortController();
+  state._broadcastController = broadcast;
   const isFollowUp = document.getElementById('cmp-history-0')?.querySelector('.msg-ai');
 
   try {
@@ -1058,14 +1062,14 @@ async function _executeCompare(message) {
       try {
         const fd = new FormData();
         fd.append('query', message);
-        const searchRes = await fetch(`${state.API_BASE}/api/search`, { method: 'POST', body: fd });
+        const searchRes = await fetch(`${state.API_BASE}/api/search`, { method: 'POST', body: fd, signal: broadcast.signal });
         if (searchRes.ok) {
           const searchData = await searchRes.json();
           if (searchData.context) sharedSearchContext = searchData.context;
           if (searchData.sources) sharedSearchSources = searchData.sources;
         }
       } catch (err) {
-        console.warn('Compare pre-search failed, panes will search individually:', err);
+        if (err.name !== 'AbortError') console.warn('Compare pre-search failed, panes will search individually:', err);
       }
     }
 
@@ -1078,6 +1082,7 @@ async function _executeCompare(message) {
     state._paneMetrics = new Array(n).fill(null);
     state._abortControllers = new Array(n).fill(null);
 
+    if (broadcast.signal.aborted) return;
     if (state._parallel) {
       // Run all panes at once
       await Promise.all(state._paneSessionIds.map((sid, i) =>
@@ -1091,12 +1096,14 @@ async function _executeCompare(message) {
       allPanes.forEach((p, idx) => { p.style.opacity = idx === 0 ? '1' : '0.35'; });
 
       for (let i = 0; i < state._paneSessionIds.length; i++) {
+        if (broadcast.signal.aborted) break;
         // Update spinner
         if (aiElements[i] && aiElements[i]._spinner) {
           aiElements[i]._spinner.updateLabel('Processing...');
         }
 
         await streamToPane(i, state._paneSessionIds[i], message, aiElements[i], { searchContext: sharedSearchContext, timeout: runTimeout });
+        if (broadcast.signal.aborted) break;
 
         // Swap opacity: dim current, brighten next
         if (allPanes[i]) allPanes[i].style.opacity = '0.35';
@@ -1106,7 +1113,9 @@ async function _executeCompare(message) {
       }
 
       // Restore all pane opacities when done
-      allPanes.forEach(p => { p.style.opacity = ''; p.style.transition = ''; });
+      if (state._broadcastController === broadcast) {
+        allPanes.forEach(p => { p.style.opacity = ''; p.style.transition = ''; });
+      }
     }
 
     // Re-focus main input for follow-up
@@ -1122,14 +1131,17 @@ async function _executeCompare(message) {
     // A pane may have started its own ask_user/approval continuation while the
     // original all-pane Promise was settling. Keep Compare busy until every
     // pane-owned controller is gone instead of exposing a second broadcast send.
-    const compareStillStreaming = state._abortControllers.some(Boolean);
-    state._streaming = compareStillStreaming;
-    _setSendBtn(compareStillStreaming ? 'stop' : 'send');
-    document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach((button) => {
-      button.disabled = compareStillStreaming;
-      button.style.opacity = compareStillStreaming ? '0.25' : '0.7';
-      button.style.pointerEvents = compareStillStreaming ? 'none' : '';
-    });
+    if (state._broadcastController === broadcast) {
+      state._broadcastController = null;
+      const compareStillStreaming = state._abortControllers.some(Boolean);
+      state._streaming = compareStillStreaming;
+      _setSendBtn(compareStillStreaming ? 'stop' : 'send');
+      document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach((button) => {
+        button.disabled = compareStillStreaming;
+        button.style.opacity = compareStillStreaming ? '0.25' : '0.7';
+        button.style.pointerEvents = compareStillStreaming ? 'none' : '';
+      });
+    }
   }
 }
 
