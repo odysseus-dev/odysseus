@@ -320,6 +320,7 @@ async function main() {
     }
 
     const results = new Array(tasks.length);
+    const recordedResponses = [];
     let nextTaskIndex = 0;
     const workerCount = Math.min(concurrency, tasks.length);
 
@@ -342,6 +343,11 @@ async function main() {
 
         try {
           const tab = await context.newPage();
+          if (job.recordResponses) {
+            tab.on('response', res => {
+              recordedResponses.push({ url: res.url(), status: res.status() });
+            });
+          }
           const cdp = await context.newCDPSession(tab);
           // Pin the UA standard font preference rather than overriding author
           // CSS. macOS defaults to Times; Linux defaults to Times New Roman.
@@ -445,7 +451,11 @@ async function main() {
       }
     }
 
-    process.stdout.write(JSON.stringify({ snapshot, missing }));
+    const payload = { snapshot, missing };
+    if (job.recordResponses) {
+      payload.responses = recordedResponses;
+    }
+    process.stdout.write(JSON.stringify(payload));
   } finally {
     await browser.close();
   }

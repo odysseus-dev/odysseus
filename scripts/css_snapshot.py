@@ -97,8 +97,8 @@ def playwright_available(node="node", cwd=ROOT):
 
 
 def capture(origin, inventory=None, *, swap_rule=None, variants=None,
-            measurement_delay_ms=0, concurrency=None, node="node", cwd=ROOT,
-            timeout=CAPTURE_TIMEOUT_SECONDS):
+            measurement_delay_ms=0, concurrency=None, record_responses=False,
+            node="node", cwd=ROOT, timeout=CAPTURE_TIMEOUT_SECONDS):
     """Drive the browser capture and return ``{"snapshot": ..., "missing": ...}``.
 
     ``swap_rule`` swaps the first two top-level declarations of one selector
@@ -130,6 +130,8 @@ def capture(origin, inventory=None, *, swap_rule=None, variants=None,
     }
     if concurrency is not None:
         job["concurrency"] = concurrency
+    if record_responses:
+        job["recordResponses"] = True
     result = subprocess.run(
         [node, str(CAPTURE_SCRIPT)],
         input=json.dumps(job), cwd=str(cwd),

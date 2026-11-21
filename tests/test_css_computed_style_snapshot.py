@@ -276,7 +276,18 @@ def test_intercepted_stylesheet_preserves_non_200_status(tmp_path):
     }
 
     try:
-        captured = snapshot.capture(origin, inventory, swap_rule=".dummy")
+        captured = snapshot.capture(origin, inventory, swap_rule=".dummy", record_responses=True)
+        # 1. HTTP contract: Chromium observes status 500 for the intercepted stylesheet
+        matching = [
+            r for r in captured.get("responses", [])
+            if r["url"].endswith("/static/css/failing.css")
+        ]
+        assert matching, "Expected intercepted response for failing.css was not recorded"
+        assert matching[0]["status"] == 500, (
+            f"Expected HTTP 500 for failing.css, but observed status {matching[0]['status']}"
+        )
+
+        # 2. CSS behavior: Failed stylesheet declarations were not applied
         values = captured["snapshot"]["fixture"][inventory["variants"][0]["name"]]
         assert values["guard"]["color"] == "rgb(0, 128, 0)"
     finally:
