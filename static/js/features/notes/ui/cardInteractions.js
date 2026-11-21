@@ -1,4 +1,5 @@
 /** Card taps, pin/color controls, menus and archive animation. */
+import { copyText } from '/static/js/shared/platform/clipboard.js';
 export function createCardInteractions({
   cardOperations,
   COLORS,
@@ -23,11 +24,13 @@ export function createCardInteractions({
   state,
   uiModule
 }) {
-  function _bindCardEvents(body) {
+  /** Wire the cards under `scope`: the whole grid, or one card re-rendered in place. */
+  function _bindCardEvents(body, scope = body) {
     // Skip completed leading rows so the first unfinished checklist item is
     // visible when a note preview has its own scroll area.
+    const previews = Array.from(scope.querySelectorAll('.note-checklist-preview'));
     requestAnimationFrame(() => {
-      body.querySelectorAll('.note-checklist-preview').forEach(preview => {
+      previews.forEach(preview => {
         const firstPending = preview.querySelector('.note-checkbox:not(.done)');
         if (firstPending) preview.scrollTop = Math.max(0, firstPending.offsetTop - 4);
       });
@@ -55,13 +58,13 @@ export function createCardInteractions({
     // select that card. Cancelled by movement (so it doesn't interfere with
     // vertical scrolling) or by lifting the finger before the timer fires.
     if (_isNotesMobileMode()) {
-      body.querySelectorAll('.note-card').forEach(card => _bindLongPressDrag(card));
+      scope.querySelectorAll('.note-card:not(.note-card-shared-in)').forEach(card => _bindLongPressDrag(card));
     }
-    body.querySelectorAll('.note-card.note-card-reminder-fired-sticky').forEach(card => {
+    scope.querySelectorAll('.note-card.note-card-reminder-fired-sticky').forEach(card => {
       card.addEventListener('click', () => _setReminderCardGlow(card.dataset.noteId, false), true);
     });
     // Click title : edit, or toggle select in select mode
-    body.querySelectorAll('.note-card-title[data-action="edit"]').forEach(el => {
+    scope.querySelectorAll('.note-card-title[data-action="edit"]').forEach(el => {
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         _smoothScrollToNoteCard(el.closest('.note-card'));
@@ -76,15 +79,22 @@ export function createCardInteractions({
       });
     });
     // Click content : edit, or toggle select in select mode
-    body.querySelectorAll('.note-content-preview').forEach(el => {
+    scope.querySelectorAll('.note-content-preview').forEach(el => {
       el.addEventListener('click', (e) => {
         // Links in rendered markdown open on their own; checkbox rows stop the event first.
         if (e.target.closest('a, summary')) { e.stopPropagation(); return; }
         e.stopPropagation(); tapToEditOrSelect(el.closest('.note-card'));
       });
     });
+    // The card's image thumbnail opens the note, like the title and the text.
+    scope.querySelectorAll('.note-card .note-card-image').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        tapToEditOrSelect(el.closest('.note-card'));
+      });
+    });
     // Click empty area of checklist preview (not on checkbox/X) : edit
-    body.querySelectorAll('.note-checklist-preview').forEach(el => {
+    scope.querySelectorAll('.note-checklist-preview').forEach(el => {
       el.addEventListener('wheel', (e) => {
         const atTop = el.scrollTop <= 0;
         const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
@@ -98,7 +108,8 @@ export function createCardInteractions({
       }, { passive: false });
       el.addEventListener('click', (e) => {
         if (e.target.closest('a, summary')) { e.stopPropagation(); return; }
-        if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input')) return;
+        const inertTask = e.target.closest('.note-card-readonly') && e.target.closest('.note-checkbox');
+        if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input') && !inertTask) return;
         e.stopPropagation();
         tapToEditOrSelect(el.closest('.note-card'));
       });
@@ -110,7 +121,7 @@ export function createCardInteractions({
     // clicks naturally bubble to the row toggle below.)
     // In select mode, clicking anywhere on the card toggles selection
     if (state.selectMode) {
-      body.querySelectorAll('.note-card').forEach(card => {
+      scope.querySelectorAll('.note-card').forEach(card => {
         card.addEventListener('click', (e) => {
           if (e.target.closest('.note-card-cb, a')) return; // links open without toggling selection
           e.stopPropagation();
@@ -125,16 +136,18 @@ export function createCardInteractions({
     // dead zones that felt broken on mobile.
     if (_isNotesMobileMode() && !state.selectMode) {
       const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
-      body.querySelectorAll('.note-card').forEach(card => {
+      scope.querySelectorAll('.note-card').forEach(card => {
         card.addEventListener('click', (e) => {
-          if (e.target.closest(_INTERACTIVE)) return;
+          // A view-only task row is not a checkbox: tapping it opens the note.
+          const inertTask = card.classList.contains('note-card-readonly') && e.target.closest('.note-checkbox');
+          if (e.target.closest(_INTERACTIVE) && !inertTask) return;
           e.stopPropagation();
           tapToEditOrSelect(card);
         });
       });
     }
     // Multi-select checkbox (only in select mode)
-    body.querySelectorAll('.note-card-cb').forEach(cb => {
+    scope.querySelectorAll('.note-card-cb').forEach(cb => {
       cb.addEventListener('click', (e) => e.stopPropagation());
       cb.addEventListener('change', () => {
         const id = cb.dataset.noteId;
@@ -145,7 +158,7 @@ export function createCardInteractions({
       });
     });
     // Pin toggle (optimistic)
-    body.querySelectorAll('.note-card-pin').forEach(btn => {
+    scope.querySelectorAll('.note-card-pin').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -165,7 +178,7 @@ export function createCardInteractions({
       });
       await cardOperations.updateColor(id, newColor);
     };
-    body.querySelectorAll('.note-card-color-dot').forEach(dot => {
+    scope.querySelectorAll('.note-card-color-dot').forEach(dot => {
       dot.addEventListener('click', (e) => {
         e.stopPropagation();
         const card = dot.closest('.note-card');
@@ -180,7 +193,7 @@ export function createCardInteractions({
     // Plain pencil corner → open the note window. The unarchive corner shares
     // the .note-card-edit-corner class for styling, so :not() keeps the edit
     // handler off it.
-    body.querySelectorAll('.note-card-edit-corner:not(.note-card-unarchive-corner)').forEach(btn => {
+    scope.querySelectorAll('.note-card-edit-corner:not(.note-card-unarchive-corner)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -191,14 +204,14 @@ export function createCardInteractions({
      // the Ctrl/Cmd+C shortcut wired further down so both code paths run the
      // same serializer + feedback flash.
     // ⋯ corner menu : Copy + Agent (solve-this-todo).
-    body.querySelectorAll('.note-card-corner-menu').forEach(btn => {
+    scope.querySelectorAll('.note-card-corner-menu').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         _openNoteCornerMenu(btn);
       });
     });
-    body.querySelectorAll('.note-card-label-chip').forEach(chip => {
+    scope.querySelectorAll('.note-card-label-chip').forEach(chip => {
       chip.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -214,7 +227,7 @@ export function createCardInteractions({
       });
     });
     // Done (✓) at bottom-right : only visible on hover for active notes.
-    body.querySelectorAll('.note-card-done').forEach(btn => {
+    scope.querySelectorAll('.note-card-done').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -240,7 +253,7 @@ export function createCardInteractions({
       });
     });
     // Unarchive corner : only visible in archive view.
-    body.querySelectorAll('.note-card-corner-unarchive').forEach(btn => {
+    scope.querySelectorAll('.note-card-corner-unarchive').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -248,7 +261,7 @@ export function createCardInteractions({
       });
     });
     // Trash corner : archive view only. Permanent delete, no confirmation.
-    body.querySelectorAll('.note-card-corner-trash').forEach(btn => {
+    scope.querySelectorAll('.note-card-corner-trash').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -256,7 +269,7 @@ export function createCardInteractions({
       });
     });
 
-    body.querySelectorAll('.note-card-archive').forEach(btn => {
+    scope.querySelectorAll('.note-card-archive').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -278,7 +291,7 @@ export function createCardInteractions({
       });
     });
     // Unarchive (optimistic) : only present in archive view
-    body.querySelectorAll('.note-card-unarchive').forEach(btn => {
+    scope.querySelectorAll('.note-card-unarchive').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -286,7 +299,7 @@ export function createCardInteractions({
       });
     });
     // Delete (optimistic)
-    body.querySelectorAll('.note-card-delete, .note-card-x').forEach(btn => {
+    scope.querySelectorAll('.note-card-delete, .note-card-x').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.noteId;
@@ -294,7 +307,7 @@ export function createCardInteractions({
       });
     });
     // Copy entire checklist (title + items, markdown-style)
-    body.querySelectorAll('.note-card-copy').forEach(btn => {
+    scope.querySelectorAll('.note-card-copy').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -311,25 +324,15 @@ export function createCardInteractions({
           lines.push(`- [${it.done ? 'x' : ' '}] ${(it.text || '').trim()}`);
         }
         const text = lines.join('\n').trim();
-        try {
-          await navigator.clipboard.writeText(text);
-          uiModule.showToast?.(`Copied ${(note.items || []).filter(i => (i?.text || '').trim()).length} items`);
-        } catch {
-          // Fallback for browsers blocking the async API
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed'; ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.select();
-          try { document.execCommand('copy'); uiModule.showToast?.('Copied'); }
-          catch { uiModule.showError?.('Copy failed'); }
-          ta.remove();
-        }
+        // copyText falls back to a hidden textarea when the async API is
+        // blocked or the page is served over plain HTTP.
+        if (await copyText(text)) uiModule.showToast?.(`Copied ${(note.items || []).filter(i => (i?.text || '').trim()).length} items`);
+        else uiModule.showError?.('Copy failed');
       });
     });
 
-    _wireCardChecklist(body);
-    _wireCardReorder(body);
+    _wireCardChecklist(scope);
+    _wireCardReorder(body, scope);
 
   }
 

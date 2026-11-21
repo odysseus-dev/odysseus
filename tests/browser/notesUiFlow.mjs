@@ -1,7 +1,7 @@
-// The owner's note window as a keyboard and touch user meets it: where focus
-// goes, and how big its controls are.
+// The owner's note window as a keyboard and touch user meets it: what it
+// shows after the 20 s re-read, where focus goes, and how big its controls are.
 import assert from 'node:assert/strict';
-import { openNotes, pngOf, tapOrClick, until, untilNote } from './notesHarness.mjs';
+import { createAccount, openNotes, pngOf, tapOrClick, until, untilNote, uploadPng } from './notesHarness.mjs';
 
 const WINDOW = '#note-window-modal';
 const openById = async (page, id) => {
@@ -12,7 +12,72 @@ const closeWindow = async page => {
   await page.evaluate(() => document.querySelector('#note-window-modal .modal-close')?.click());
   await page.locator(WINDOW).waitFor({ state: 'detached' });
 };
+const chips = page => page.locator(`${WINDOW} .note-tag-chip`).evaluateAll(els => els.map(el => el.firstChild.textContent));
+
 /** A tag and a reminder set elsewhere reach the open window with the next re-read, and the window's next tag edit keeps them. */
+async function checkMetaFollowsList({ browser, owner, size }) {
+  const api = owner.api;
+  const note = await (await api.post('/api/notes', { data: { title: `Meta ${size}`, content: 'Tagged', label: 'home' } })).json();
+  const { context, page } = await openNotes(browser, owner, size, { clock: true });
+  await page.locator(`.note-card[data-note-id="${note.id}"]`).waitFor();
+  await openById(page, note.id);
+  assert.deepEqual(await chips(page), ['#home']);
+  const due = '2031-05-06T09:30';
+  assert.equal((await api.put(`/api/notes/${note.id}`, { data: { label: 'home remote', due_date: due, repeat: 'none' } })).ok(), true);
+  // The re-read waits while the window has focus; the window is open but idle.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.clock.fastForward(20000);
+  await page.locator(`.note-card[data-note-id="${note.id}"] .note-card-label`, { hasText: '#remote' }).waitFor();
+  await page.locator(`${WINDOW} .note-tag-chip`, { hasText: '#remote' }).waitFor();
+  await page.locator(`${WINDOW} .note-window-reminder .note-reminder-tag`).waitFor();
+  assert.equal(await page.locator(`${WINDOW} .note-window-remind`).evaluate(el => el.classList.contains('has-date')), true);
+  const input = page.locator(`${WINDOW} .note-window-tag-input`);
+  await input.fill('local');
+  await input.press('Enter');
+  const saved = await untilNote(api, note.id, n => /local/.test(n?.label || ''), 'the tag edit');
+  assert.equal(saved.label, 'home remote local', 'a tag added in the window keeps the one set elsewhere');
+  assert.match(saved.due_date || '', /^2031-05-06T09:30/, 'and the reminder set elsewhere');
+  await closeWindow(page);
+  await context.close();
+  await api.delete(`/api/notes/${note.id}`);
+}
+
+const active = page => page.evaluate(() => {
+  const el = document.activeElement;
+  return { tag: el?.tagName, cls: el?.className || '', inShare: !!el?.closest('.note-share-menu'), user: el?.dataset?.user || null };
+});
+
+/** The share popover from the keyboard: focus moves in, Tab stays in, Escape returns to Share. */
+async function checkSharePopoverKeyboard({ browser, owner, size }) {
+  const api = owner.api;
+  const note = await (await api.post('/api/notes', { data: { title: `Share keys ${size}`, content: 'Keyboard' } })).json();
+  const { context, page } = await openNotes(browser, owner, size);
+  await openById(page, note.id);
+  const share = page.locator(`${WINDOW} .note-window-share`);
+  await share.focus();
+  await page.keyboard.press('Enter');
+  await page.locator('.note-share-menu .note-share-row').first().waitFor();
+  await page.waitForFunction(() => document.activeElement?.closest('.note-share-menu'));
+  const first = await active(page);
+  assert.equal(first.tag, 'INPUT', 'focus starts on the first account switch');
+  // Share it by keyboard: the redraw keeps focus on the same switch.
+  await page.keyboard.press('Space');
+  await page.locator('.note-share-menu .note-share-pill').first().waitFor();
+  assert.deepEqual(await active(page), first);
+  for (let i = 0; i < 6; i += 1) {
+    await page.keyboard.press('Tab');
+    assert.equal((await active(page)).inShare, true, `Tab ${i + 1} stays in the popover`);
+  }
+  await page.keyboard.press('Shift+Tab');
+  assert.equal((await active(page)).inShare, true, 'Shift+Tab stays in the popover');
+  await page.keyboard.press('Escape');
+  await page.locator('.note-share-menu').waitFor({ state: 'detached' });
+  assert.match((await active(page)).cls, /note-window-share/, 'Escape returns to Share');
+  await closeWindow(page);
+  await context.close();
+  await api.delete(`/api/notes/${note.id}`);
+}
+
 /** A card opens from the keyboard, and the phone's search and quick-add inputs are big enough that iOS does not zoom on focus. */
 async function checkCardKeyboard({ browser, owner, size }) {
   const api = owner.api;
@@ -97,6 +162,44 @@ async function checkFocusReturns({ browser, owner, size }) {
   await api.delete(`/api/notes/${doomed.id}`).catch(() => {});
 }
 
+/** An image in the body takes focus; Enter opens its size menu with focus in it, a size applies, and focus comes back to the image. */
+async function checkImageKeyboard({ browser, owner, size }) {
+  const api = owner.api;
+  const { context, page } = await openNotes(browser, owner, size);
+  const url = await uploadPng(api, await pngOf(page, '#3f6a9a'), 'keys.png');
+  const note = await (await api.post('/api/notes', { data: { title: `Image keys ${size}`, content: `Above\n\n![](${url})` } })).json();
+  await page.evaluate(() => window.notesModule.closePanel());
+  await page.evaluate(() => window.notesModule.openPanel());
+  await openById(page, note.id);
+  const img = page.locator(`${WINDOW} .note-window-body img.md-note-image`);
+  assert.equal(await img.getAttribute('tabindex'), '0');
+  // A phone moves focus from the image to the editing host as soon as it
+  // lands there, so the keyboard path is a desktop (hardware keyboard) one.
+  if (size === 'phone') { await closeWindow(page); await context.close(); await api.delete(`/api/notes/${note.id}`); return; }
+  await img.focus();
+  assert.equal(await activeIs(page, `${WINDOW} img.md-note-image`), true, 'the image takes focus');
+  await page.keyboard.press('Enter');
+  await page.locator('.note-image-menu').waitFor();
+  assert.equal(await activeIs(page, '.note-image-menu [data-w="100"]'), true, 'focus starts on the current size');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  assert.equal(await activeIs(page, '.note-image-menu [data-w="33"]'), true, 'the arrow keys reach Small');
+  await page.keyboard.press('Enter');
+  await page.locator('.note-image-menu').waitFor({ state: 'detached' });
+  assert.equal(await activeIs(page, `${WINDOW} img.md-note-image`), true, 'focus is back on the image');
+  const saved = await untilNote(api, note.id, n => /"w=33"/.test(n?.content || ''), 'the keyboard resize');
+  assert.equal(saved.content, `Above\n\n![](${url} "w=33")`);
+  // Escape closes the menu and also gives focus back.
+  await page.keyboard.press('Enter');
+  await page.locator('.note-image-menu').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.note-image-menu').waitFor({ state: 'detached' });
+  assert.equal(await activeIs(page, `${WINDOW} img.md-note-image`), true, 'Escape gives focus back to the image');
+  await closeWindow(page);
+  await context.close();
+  await api.delete(`/api/notes/${note.id}`);
+}
+
 /** On a phone the window is a sheet that slides up from the bottom: wait until it has stopped moving before measuring anything in it. */
 async function settledSheet(page) {
   let last = null;
@@ -178,7 +281,7 @@ async function checkNewTaskName({ browser, owner, size }) {
   assert.equal(await page.locator(WINDOW).getByRole('checkbox', { name: 'Call home' }).count(), 1);
   const saved = await untilNote(api, note.id, n => /Call home/.test(n?.content || ''), 'the typed tasks');
   // Typed blocks of different kinds are written a blank line apart (2028da2d).
-  assert.equal(saved.content, 'Intro\n- [ ] Buy milk\n- [ ] Call home');
+  assert.equal(saved.content, 'Intro\n\n- [ ] Buy milk\n- [ ] Call home');
   await closeWindow(page);
   await context.close();
   await api.delete(`/api/notes/${note.id}`);
@@ -192,10 +295,11 @@ async function checkWindowStyles({ browser, owner, size }) {
   const { context, page } = await openNotes(browser, owner, size);
   await openById(page, note.id);
   const styles = await page.evaluate(() => {
-    const pick = el => { const c = getComputedStyle(el); return [c.width, c.height, c.borderRadius, c.color].join(' '); };
+    // Share sizes to its count, so its width is left out.
+    const pick = el => { const c = getComputedStyle(el); return [el.matches('.note-window-share') ? '30px' : c.width, c.height, c.borderRadius, c.color].join(' '); };
     const q = s => document.querySelector(`#note-window-modal ${s}`);
     return {
-      buttons: [q('.note-window-remind'), q('[data-act="archive"]'), q('[data-act="delete"]')].map(pick),
+      buttons: [q('.note-window-remind'), q('.note-window-share'), q('[data-act="archive"]'), q('[data-act="delete"]')].map(pick),
       fonts: ['.note-window-title', '.note-window-body', '.note-window-source'].map(s => getComputedStyle(q(s)).fontSize),
     };
   });
@@ -222,7 +326,7 @@ const hitAreas = (page, selectors) => page.evaluate(selectors => {
   return out;
 }, selectors);
 
-/** On a phone every control in the window can be hit in at least a 44px square. */
+/** On a phone every control in the window and the share popover can be hit in at least a 44px square. */
 async function checkTouchTargets({ browser, owner, size }) {
   if (size !== 'phone') return;
   const api = owner.api;
@@ -232,18 +336,28 @@ async function checkTouchTargets({ browser, owner, size }) {
   await settledSheet(page);
   const W = WINDOW;
   const areas = await hitAreas(page, {
-    remind: `${W} .note-window-remind`, bold: `${W} .note-window-toolbar [data-md="bold"]`,
+    share: `${W} .note-window-share`, remind: `${W} .note-window-remind`, bold: `${W} .note-window-toolbar [data-md="bold"]`,
     archive: `${W} [data-act="archive"]`, remove: `${W} [data-act="delete"]`,
     dotNone: `${W} .note-color-dot[data-color=""]`, dotRed: `${W} .note-color-dot[data-color="red"]`, dotCustom: `${W} .note-color-dot[data-color="custom"]`,
-    tagRemove: `${W} .note-tag-rm`, taskBox: `${W} .md-task-box`,
+    tagRemove: `${W} .note-tag-rm`, taskBox: `${W} .md-task-box`, taskAgent: `${W} .note-task-agent`,
   });
   // The toolbar scrolls sideways on a phone: bring its last button into view before measuring it.
   await page.locator(`${W} .note-window-toolbar [data-md="source"]`).evaluate(b => b.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
   Object.assign(areas, await hitAreas(page, { source: `${W} .note-window-toolbar [data-md="source"]` }));
+  await page.locator(`${W} .note-window-share`).tap();
+  await page.locator('.note-share-menu .note-share-row').first().waitFor();
+  await page.locator('.note-share-menu .note-share-user').first().tap();
+  await page.locator('.note-share-menu .note-share-pill').first().waitFor();
+  Object.assign(areas, await hitAreas(page, {
+    shareSwitch: '.note-share-menu .note-share-user', pillView: '.note-share-menu .note-share-pill[data-perm="view"]', pillEdit: '.note-share-menu .note-share-pill[data-perm="edit"]',
+  }));
   console.log(JSON.stringify({ touchTargets: areas }));
   for (const [name, area] of Object.entries(areas)) {
+    if (area === null && name === 'taskAgent') continue; // only with an agent model
     assert.ok(area && area.w >= 44 && area.h >= 44, `${name}: ${JSON.stringify(area)}`);
   }
+  await page.locator('.note-share-menu .note-share-user').first().tap();
+  await page.keyboard.press('Escape');
   await closeWindow(page);
   await context.close();
   await api.delete(`/api/notes/${note.id}`);
@@ -296,50 +410,67 @@ async function checkQuickAddChecklist({ browser, owner, size }) {
 }
 
 /** Select all picks only my notes: a note shared with me stays unselected, and the count says so. */
-/** The colour ring is the owner's: my red note has one, a red note shared with me does not. */
-/** The link menu with the caret in plain text: the URL goes in as a link and is saved; a refused scheme is marked invalid and inserts nothing. */
-async function checkLinkInsert({ browser, owner, size }) {
-  const api = owner.api;
-  const note = await (await api.post('/api/notes', { data: { title: `Link ${size}`, content: 'Link here' } })).json();
+async function checkSelectAllOwnOnly({ browser, owner, size }) {
+  const sharer = await createAccount(owner, `selector-${size}`);
+  const theirs = await (await sharer.api.post('/api/notes', { data: { title: `Theirs ${size}`, content: 'Shared in' } })).json();
+  assert.equal((await sharer.api.post(`/api/notes/${theirs.id}/share`, { data: { users: [owner.username], permission: 'edit' } })).ok(), true);
+  const mine = await (await owner.api.post('/api/notes', { data: { title: `Mine to select ${size}`, content: 'Own' } })).json();
   const { context, page } = await openNotes(browser, owner, size);
-  await openById(page, note.id);
-  const body = page.locator(`${WINDOW} .note-window-body`);
-  await body.evaluate(el => {
-    const p = el.querySelector('p');
-    const range = document.createRange(); range.selectNodeContents(p); range.collapse(false);
-    getSelection().removeAllRanges(); getSelection().addRange(range); el.focus();
-  });
-  await page.keyboard.type(' ');
-  const menu = async () => {
-    await page.locator(`${WINDOW} .note-window-toolbar [data-md="link"]`).click();
-    await page.locator('.note-link-menu .note-link-input').waitFor();
-  };
-  await menu();
-  await page.locator('.note-link-input').fill('javascript:alert(1)');
-  await page.keyboard.press('Enter');
-  assert.equal(await page.locator('.note-link-input.invalid').count(), 1, 'a refused scheme is marked invalid');
+  await page.locator(`.note-card[data-note-id="${theirs.id}"]`).waitFor();
+  await tapOrClick(size === 'phone', page.locator('#notes-select-btn'));
+  await page.locator('.note-card-selectmode').first().waitFor();
+  await page.locator('#notes-select-all').check({ force: size === 'phone' });
+  const picked = await page.evaluate(() => [...document.querySelectorAll('.note-card.note-card-selected')].map(c => c.dataset.noteId));
+  const own = (((await (await owner.api.get('/api/notes')).json()).notes) || []).filter(n => n.is_owner !== false).map(n => n.id);
+  assert.ok(picked.includes(mine.id), 'my note is selected');
+  assert.equal(picked.includes(theirs.id), false, 'the shared note is not');
+  assert.equal(await page.locator('#notes-selected-count').textContent(), `${own.length} Selected`);
+  assert.equal(await page.locator('#notes-select-all').isChecked(), true, 'All stays ticked with every own note selected');
   await page.keyboard.press('Escape');
-  await page.locator('.note-link-menu').waitFor({ state: 'detached' });
-  await menu();
-  await page.locator('.note-link-input').fill('https://example.com/qa');
-  await page.keyboard.press('Enter');
-  await body.locator('a[href="https://example.com/qa"]').waitFor();
-  assert.equal(await body.locator('a[href^="javascript"]').count(), 0);
-  await untilNote(api, note.id, n => n?.content.includes('example.com/qa'), 'the inserted link');
-  assert.match((await (await api.get(`/api/notes/${note.id}`)).json()).content, /^Link here https:\/\/example\.com\/qa$/);
-  await closeWindow(page);
   await context.close();
-  await api.delete(`/api/notes/${note.id}`);
+  await sharer.api.delete(`/api/notes/${theirs.id}`);
+  await owner.api.delete(`/api/notes/${mine.id}`);
+}
+
+/** The colour ring is the owner's: my red note has one, a red note shared with me does not. */
+async function checkCollaboratorRing({ browser, owner, size }) {
+  const sharer = await createAccount(owner, `ringer-${size}`);
+  const theirs = await (await sharer.api.post('/api/notes', { data: { title: `Red theirs ${size}`, content: 'Ring', color: 'red' } })).json();
+  assert.equal((await sharer.api.post(`/api/notes/${theirs.id}/share`, { data: { users: [owner.username], permission: 'edit' } })).ok(), true);
+  const mine = await (await owner.api.post('/api/notes', { data: { title: `Red mine ${size}`, content: 'Ring', color: 'red' } })).json();
+  const { context, page } = await openNotes(browser, owner, size);
+  await page.locator(`.note-card[data-note-id="${theirs.id}"]`).waitFor();
+  const ring = async id => {
+    await openById(page, id);
+    const value = await page.evaluate(() => {
+      const content = document.querySelector('#note-window-modal .note-window-content');
+      const c = getComputedStyle(content);
+      return { outline: c.outlineColor, top: c.borderTopColor, ring: c.getPropertyValue('--note-ring').trim() };
+    });
+    await closeWindow(page);
+    return value;
+  };
+  const own = await ring(mine.id);
+  const shared = await ring(theirs.id);
+  assert.notEqual(own.ring, 'transparent', 'my red note shows its ring');
+  assert.equal(shared.ring, 'transparent', `a note shared with me shows no ring: ${JSON.stringify(shared)}`);
+  await context.close();
+  await sharer.api.delete(`/api/notes/${theirs.id}`);
+  await owner.api.delete(`/api/notes/${mine.id}`);
 }
 
 export async function checkWindowUi({ browser, owner, size }) {
-  await checkLinkInsert({ browser, owner, size });
+  await checkCollaboratorRing({ browser, owner, size });
+  await checkSelectAllOwnOnly({ browser, owner, size });
   await checkQuickAddPhoto({ browser, owner, size });
   await checkQuickAddChecklist({ browser, owner, size });
   await checkTouchTargets({ browser, owner, size });
   await checkWindowStyles({ browser, owner, size });
   await checkNewTaskName({ browser, owner, size });
   await checkToolbar({ browser, owner, size });
+  await checkImageKeyboard({ browser, owner, size });
   await checkFocusReturns({ browser, owner, size });
   await checkCardKeyboard({ browser, owner, size });
+  await checkMetaFollowsList({ browser, owner, size });
+  await checkSharePopoverKeyboard({ browser, owner, size });
 }

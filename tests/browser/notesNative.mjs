@@ -3,14 +3,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { browserName, engine, pngOf, signIn, sqlite, VIEWPORTS } from './notesHarness.mjs';
+import { browserName, createAccount, engine, signIn, VIEWPORTS } from './notesHarness.mjs';
+import { checkLonelyPopover, checkRenamedPoll, checkSharedRefresh, checkSharedReminder, checkSharing, checkSharedGrid } from './notesSharingFlow.mjs';
+import { checkAgentActions, useStubModel } from './notesAgentFlow.mjs';
+import { checkAgentEdits } from './notesAgentEditFlow.mjs';
+import { checkAccountDeletion, checkAgentCannotShare } from './notesAccountFlow.mjs';
 import { checkWindowGaps } from './notesGapFlow.mjs';
+import { checkCardCost } from './notesCardCost.mjs';
 import { checkWindowUi } from './notesUiFlow.mjs';
+import { checkEditableInPlace } from './notesEditableFlow.mjs';
+import { checkContextNotes } from './notesContextFlow.mjs';
+import { checkFocusTodo } from './notesFocusFlow.mjs';
+import { checkHistory } from './notesHistoryFlow.mjs';
+import { instrumentCoverage } from './notesCoverage.mjs';
+import { checkFormattingAndImageLinks, checkPanelKeys, checkRemindersAndFilters, checkRevokeAndDelete, checkSentCardKeepsTitle } from './notesCoverageFlow.mjs';
+import { checkKnownBugs } from './notesBugsFlow.mjs';
 import { createFlowRunner } from './notesRunner.mjs';
+import { checkExternalImages, externalImagesCollaborator } from './notesExternalImagesFlow.mjs';
 
 const origin = process.env.ODYSSEUS_NOTES_RUNTIME_ORIGIN;
-// NOTES_FLOWS=native,ui runs only those flows (all by default).
-const flows = new Set((process.env.NOTES_FLOWS || 'native,gaps,ui').split(',').map(s => s.trim()));
+// NOTES_FLOWS=sharing,agent runs only those flows (all by default).
+const flows = new Set((process.env.NOTES_FLOWS || 'native,gaps,editable,ui,sharing,agent,agentedit,accounts,context,focus,history,coverage,bugs,extimages').split(',').map(s => s.trim()));
 const evidence = process.env.NOTES_NATIVE_EVIDENCE_DIR;
 if (evidence) fs.mkdirSync(evidence, { recursive: true });
 const noteById = async (context, id) => (await (await context.request.get(`${origin}/api/notes/${id}`)).json());
@@ -126,7 +139,7 @@ async function checkNoteWindow({ context, page, mobile, created }) {
   await page.keyboard.press('Enter');
   await page.keyboard.type('after the list');
   await untilNote(context, created.id, note => note.content.includes('after the list'), 'the checklist save');
-  assert.equal((await noteById(context, created.id)).content, 'Saved by the note window\n- [ ] first task\n  - [ ] nested task\nafter the list');
+  assert.equal((await noteById(context, created.id)).content, 'Saved by the note window\n\n- [ ] first task\n  - [ ] nested task\n\nafter the list');
 
   // A checkbox goes through the toggle endpoint, never a whole-content PUT.
   writes.length = 0;
@@ -178,6 +191,164 @@ async function checkNoteWindow({ context, page, mobile, created }) {
 
 // Inline images: insert from the toolbar, paste a file, size S / M, reload
 // (sizes kept), card thumbnail, remove, sketch, beside math, and inert when view-only.
+const UPLOAD_IMAGE = /!\[\]\(\/api\/upload\/[^)\s]+\)/g;
+async function checkInlineImages({ context, page, mobile }) {
+  const note = await (await context.request.post(`${origin}/api/notes`, { data: { title: mobile ? 'Mobile packing' : 'Desktop packing', content: 'Packing list for the weekend\n\n- [ ] passport\n- [x] charger' } })).json();
+  const win = page.locator('#note-window-modal');
+  const body = win.locator('.note-window-body');
+  const tap = locator => (mobile ? locator.tap() : locator.click());
+  const images = body.locator('img.md-note-image');
+  const pngBuffer = async colour => Buffer.from(await page.evaluate(colour => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640; canvas.height = 400;
+    const g = canvas.getContext('2d');
+    g.fillStyle = colour; g.fillRect(0, 0, 640, 400);
+    g.fillStyle = '#f4f1e8'; g.beginPath(); g.arc(320, 200, 130, 0, Math.PI * 2); g.fill();
+    return canvas.toDataURL('image/png').split(',')[1];
+  }, colour), 'base64');
+  const caretAtEnd = selector => page.evaluate(selector => {
+    const target = document.querySelector(selector);
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    target.closest('[contenteditable="true"]').focus();
+  }, selector);
+  const openNote = async () => {
+    await page.evaluate(id => void window.notesModule.openNote(id, { focus: null }), note.id);
+    await body.waitFor();
+    await page.waitForTimeout(500);
+  };
+  await openNote();
+
+  // Toolbar image button: file picker, upload, new block after the caret's
+  // block. Cmd/Ctrl+Z right after takes the image out again (and so its
+  // upload reference), not the typing before it.
+  const insertFromToolbar = async () => {
+    await caretAtEnd('#note-window-modal .note-window-body p');
+    const chooser = page.waitForEvent('filechooser');
+    await win.locator('[data-md="image"]').click();
+    await (await chooser).setFiles({ name: 'photo.png', mimeType: 'image/png', buffer: await pngBuffer('#3f6fb5') });
+    return untilNote(context, note.id, n => (n.content.match(UPLOAD_IMAGE) || []).length === 1, 'the inserted image');
+  };
+  await insertFromToolbar();
+  await body.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await untilNote(context, note.id, n => n.content === 'Packing list for the weekend\n\n- [ ] passport\n- [x] charger', 'undo of the insert');
+  let saved = await insertFromToolbar();
+  assert.match(saved.content, /^Packing list for the weekend\n\n!\[\]\(\/api\/upload\/[^)]+\)\n\n- \[ \] passport\n- \[x\] charger$/);
+
+  // Pasting an image file uploads it the same way; pasted text stays text.
+  await caretAtEnd('#note-window-modal .note-window-body li.md-task:last-child .md-task-text');
+  await page.evaluate(async base64 => {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const data = new DataTransfer();
+    data.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }));
+    document.querySelector('#note-window-modal .note-window-body li.md-task:last-child .md-task-text')
+      .dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  }, (await pngBuffer('#3f9a6a')).toString('base64'));
+  saved = await untilNote(context, note.id, n => (n.content.match(UPLOAD_IMAGE) || []).length === 2, 'the pasted image');
+  assert.match(saved.content, /- \[x\] charger\n\n!\[\]\(\/api\/upload\/[^)]+\)$/);
+
+  // Tap an image: S / M / L and Remove. L clears the title.
+  const resize = async (index, width) => {
+    await tap(images.nth(index));
+    await page.locator('.note-image-menu').waitFor();
+    await tap(page.locator(`.note-image-menu [data-w="${width}"]`));
+    await page.locator('.note-image-menu').waitFor({ state: 'detached' });
+  };
+  await page.evaluate(() => document.activeElement?.blur());
+  await resize(0, 33);
+  await resize(1, 66);
+  saved = await untilNote(context, note.id, n => n.content.includes('"w=33")') && n.content.includes('"w=66")'), 'both sizes');
+  await resize(1, 100);
+  await untilNote(context, note.id, n => !n.content.includes('"w=66")'), 'L clears the title');
+  await resize(1, 66);
+  saved = await untilNote(context, note.id, n => n.content.includes('"w=66")'), 'medium again');
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('note-window-body')), false, 'tapping an image does not focus the body');
+
+  // Reload: the sizes come back from the markdown.
+  await page.reload();
+  await page.waitForFunction(() => window.notesModule?.openPanel);
+  await page.evaluate(() => window.notesModule.openPanel());
+  const card = page.locator(`.note-card[data-note-id="${note.id}"]`);
+  await card.waitFor();
+  assert.equal(await card.locator('.note-card-image').count(), 1, 'the card leads with one thumbnail');
+  assert.equal(await card.locator('.md-note-image').count(), 0, 'other images stay out of the card');
+  assert.equal(await card.locator('.note-card-image').evaluate(el => !!(el.compareDocumentPosition(el.closest('.note-card').querySelector('.note-md-preview')) & Node.DOCUMENT_POSITION_FOLLOWING)), true, 'thumbnail first, then the text');
+  await openNote();
+  await images.nth(1).evaluate(img => img.decode?.().catch(() => {}));
+  const widths = await page.evaluate(() => {
+    const body = document.querySelector('#note-window-modal .note-window-body');
+    return Array.from(body.querySelectorAll('img.md-note-image')).map(img => [img.dataset.w, Math.round(100 * img.getBoundingClientRect().width / img.parentElement.getBoundingClientRect().width)]);
+  });
+  assert.deepEqual(widths.map(w => w[0]), ['33', '66']);
+  for (const [w, measured] of widths) assert.ok(Math.abs(Number(w) - measured) <= 2, `rendered at ${w}%: ${measured}%`);
+  if (evidence) {
+    await page.locator('#note-window-modal .note-window-content').screenshot({ path: path.join(evidence, mobile ? 'images-mobile.png' : 'images-desktop.png'), animations: 'disabled' });
+    await tap(images.nth(0));
+    await page.locator('.note-image-menu').waitFor();
+    await page.screenshot({ path: path.join(evidence, mobile ? 'image-menu-mobile.png' : 'image-menu-desktop.png'), animations: 'disabled' });
+    await page.keyboard.press('Escape');
+    await page.locator('.note-image-menu').waitFor({ state: 'detached' }).catch(() => page.mouse.click(5, 5));
+  }
+
+  // Remove takes the image and the paragraph it leaves empty.
+  await tap(images.nth(1));
+  await tap(page.locator('.note-image-menu [data-act="remove"]'));
+  saved = await untilNote(context, note.id, n => (n.content.match(UPLOAD_IMAGE) || []).length === 0 && (n.content.match(/!\[\]\(/g) || []).length === 1, 'the removal');
+  assert.match(saved.content, /- \[x\] charger$/);
+  assert.equal(await body.locator('p:empty').count(), 0);
+
+  // Sketch: the drawing canvas opens in the window and inserts a PNG inline.
+  // The server takes 3 upload requests per IP per 10 s; this is the fourth.
+  await page.waitForTimeout(10500);
+  await caretAtEnd('#note-window-modal .note-window-body p');
+  await win.locator('[data-md="sketch"]').click();
+  const canvas = win.locator('.note-window-sketch .note-form-canvas');
+  await canvas.waitFor();
+  const box = await canvas.boundingBox();
+  await page.mouse.move(box.x + 40, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 200, box.y + 120, { steps: 8 });
+  await page.mouse.up();
+  await win.locator('.note-window-sketch [data-act="insert"]').click();
+  saved = await untilNote(context, note.id, n => (n.content.match(/!\[[^\]]*\]\(\/api\/upload\//g) || []).length === 2, 'the sketch');
+  assert.match(saved.content, /^Packing list for the weekend\n\n!\[\]\(\/api\/upload\/[^)]+\)\n\n!\[\]\(\/api\/upload\/[^)]+ "w=33"\)/);
+  await page.evaluate(() => document.querySelector('#note-window-modal .modal-close').click());
+  await win.waitFor({ state: 'detached' });
+
+  // Math beside an image no longer locks the block: the image is sized as
+  // anywhere else, and the formula keeps its bytes. A view-only body leaves
+  // images alone.
+  const upload = saved.content.match(/\/api\/upload\/[^)\s]+/)[0];
+  const beside = await (await context.request.post(`${origin}/api/notes`, { data: { title: 'Image beside math', content: `Area $x^2$ ![](${upload})` } })).json();
+  await page.evaluate(id => void window.notesModule.openNote(id, { focus: null }), beside.id);
+  await body.waitFor();
+  await tap(body.locator('img.md-note-image'));
+  await page.locator('.note-image-menu').waitFor();
+  await tap(page.locator('.note-image-menu [data-w="33"]'));
+  await untilNote(context, beside.id, n => n.content === `Area $x^2$ ![](${upload} "w=33")`, 'the image beside math, resized');
+  await page.evaluate(() => document.querySelector('#note-window-modal .modal-close').click());
+  await win.waitFor({ state: 'detached' });
+  await page.evaluate(id => void window.notesModule.openNote(id, { focus: null }), note.id);
+  await body.waitFor();
+  await page.evaluate(() => document.querySelector('#note-window-modal .note-window-body').setAttribute('contenteditable', 'false'));
+  // On a phone the sheet is still sliding up: a click before it settles lands
+  // outside the viewport (the native flow's phone flake since T).
+  await win.evaluate(el => Promise.all(el.getAnimations({ subtree: true }).map(a => a.finished.catch(() => {})))); // a cancelled one is settled too
+  await images.first().click({ force: true });
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.note-image-menu').count(), 0, 'view-only image is inert');
+  await page.evaluate(() => document.querySelector('#note-window-modal .modal-close').click());
+  await win.waitFor({ state: 'detached' });
+}
+
+// The two stored note types survive an edit in the window: a legacy goal
+// stays a goal (its tasks would otherwise make it a checklist) and a legacy
+// drawing stays a drawing with its gallery image (its text would make it a note).
 const LEGACY_CANVAS = '/api/upload/0123456789abcdef0123456789abcdef.png';
 async function checkStoredTypes({ context, page, mobile }) {
   const win = page.locator('#note-window-modal');
@@ -201,28 +372,13 @@ async function checkStoredTypes({ context, page, mobile }) {
   await win.waitFor({ state: 'detached' });
 
   const drawing = await noteById(context, 'legacy-drawing');
-  // The seed's canvas names an upload this instance never stored, and a save
-  // that references a missing upload is refused. Point the folded row at a
-  // real upload once, so the re-save below checks what the window writes.
-  let canvas = drawing.content.includes(LEGACY_CANVAS) ? LEGACY_CANVAS : drawing.content.match(/\/api\/upload\/[^)\s]+/)?.[0];
-  assert.deepEqual([drawing.note_type, drawing.gallery_id, drawing.content.split(canvas).length - 1], ['draw', 'gallery-legacy-drawing', 1], JSON.stringify(drawing));
-  if (canvas === LEGACY_CANVAS) {
-    const upload = await context.request.post(`${origin}/api/upload`, { multipart: { files: { name: 'canvas.png', mimeType: 'image/png', buffer: await pngOf(page, '#3f9a6a') } } });
-    assert.equal(upload.ok(), true, await upload.text());
-    const real = `/api/upload/${(await upload.json()).files[0].id}`;
-    sqlite('UPDATE notes SET content = replace(content, ?, ?), image_url = replace(image_url, ?, ?) WHERE id = ?', [LEGACY_CANVAS, real, LEGACY_CANVAS, real, 'legacy-drawing']);
-    canvas = real;
-    await page.evaluate(() => window.notesModule.closePanel());
-    await page.locator('#notes-pane').waitFor({ state: 'detached' });
-    await page.evaluate(() => window.notesModule.openPanel());
-    await page.locator('.note-card[data-note-id="legacy-drawing"]').waitFor();
-  }
+  assert.deepEqual([drawing.note_type, drawing.gallery_id, drawing.content.split(LEGACY_CANVAS).length - 1], ['draw', 'gallery-legacy-drawing', 1], JSON.stringify(drawing));
   await page.evaluate(() => void window.notesModule.openNote('legacy-drawing', { focus: null }));
   await win.locator('.note-window-body img.md-note-image').waitFor({ state: 'attached' });
   await win.locator('.note-window-title').evaluate(input => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); });
   await page.keyboard.type(` (${tag})`);
   const saved = await untilNote(context, 'legacy-drawing', n => n.title.endsWith(`(${tag})`), 'the drawing re-save');
-  assert.deepEqual([saved.note_type, saved.gallery_id, saved.content.split(canvas).length - 1], ['draw', 'gallery-legacy-drawing', 1], 'a re-saved drawing keeps its type, gallery image and one canvas');
+  assert.deepEqual([saved.note_type, saved.gallery_id, saved.content.split(LEGACY_CANVAS).length - 1], ['draw', 'gallery-legacy-drawing', 1], 'a re-saved drawing keeps its type, gallery image and one canvas');
   await page.evaluate(() => document.querySelector('#note-window-modal .modal-close').click());
   await win.waitFor({ state: 'detached' });
 }
@@ -367,6 +523,7 @@ async function checkWindowEdges({ context, page, mobile }) {
 }
 
 const browser = await engine.launch({ headless: true });
+const flushCoverage = instrumentCoverage(browser, browserName);
 const credentials = { username: 'notes-reference', password: randomUUID() + 'Aa1!' };
 try {
   const setupContext = await browser.newContext();
@@ -409,30 +566,90 @@ try {
     });
     await page.locator('#notes-send-agent').click();
     assert.equal(await page.locator('.note-card-selectmode').count(), 0);
-    assert.equal(await page.locator('#selected-notes-context-count').textContent(), '1 note selected');
+    // On a phone the Notes panel still covers the chat here.
+    await page.locator(`#notes-context-strip [data-context-note-id="${created.id}"]`).waitFor({ state: 'attached' });
     await page.evaluate(async () => (await import('/static/js/sessions.js')).createDirectChat('http://127.0.0.1:1', 'another-reference-model', null));
-    assert.equal(await page.locator('#selected-notes-context-count').textContent(), '');
+    assert.equal(await page.locator('#notes-context-strip [data-context-note-id]').count(), 0);
     await checkCardEdges({ context, page, mobile, outside });
     await checkStoredTypes({ context, page, mobile });
     await checkWindowEdges({ context, page, mobile });
     await checkNoteWindow({ context, page, mobile, created });
+    await checkInlineImages({ context, page, mobile });
+    const cardCost = await checkCardCost({ context, page, mobile, origin });
     await page.evaluate(() => window.notesModule.closePanel());
     await page.locator('#notes-pane').waitFor({ state: 'detached' });
     await context.close();
-    console.log(JSON.stringify({ native: true, browser: browserName, mobile, noteId: created.id, crud: true, selectedContext: true, markdownCards: true, cardEdges: true, storedTypes: true, windowEdges: true, noteWindow: true }));
+    console.log(JSON.stringify({ native: true, browser: browserName, mobile, noteId: created.id, crud: true, selectedContext: true, markdownCards: true, cardEdges: true, storedTypes: true, windowEdges: true, noteWindow: true, inlineImages: true, cardCost }));
   });
 
   const owner = await signIn(credentials.username, credentials.password);
+  if (flows.has('sharing')) for (const size of ['desktop', 'phone']) await guarded('lonelyPopover', size, () => checkLonelyPopover({ browser, owner, size }));
+  const stranger = await guarded('setup', 'stranger account', () => createAccount(owner, 'stranger'));
+  if (flows.has('agent') || flows.has('agentedit') || flows.has('accounts') || flows.has('context') || flows.has('focus') || flows.has('history') || flows.has('coverage') || flows.has('bugs')) await guarded('setup', 'stub model', () => useStubModel(owner));
+  const externalViewer = flows.has('extimages') ? await guarded('setup', 'external images collaborator', () => externalImagesCollaborator(owner)) : null;
   for (const size of ['desktop', 'phone']) {
+    if (flows.has('extimages')) await guarded('extimages', size, async () => {
+      await checkExternalImages({ browser, owner, size, collaborator: externalViewer });
+      console.log(JSON.stringify({ extimages: true, browser: browserName, size, offIsLink: true, settingUi: true, cardAndWindow: true, noReferrerNoCookie: true, typingKeepsBytes: true, menuEdit: true, collaboratorOff: true }));
+    });
     if (flows.has('gaps')) await guarded('gaps', size, async () => {
       await checkWindowGaps({ browser, owner, size });
-      console.log(JSON.stringify({ gaps: true, browser: browserName, size, blocksVerbatim: true, ownTick: !size.startsWith('phone'), flushOnSwitch: true }));
+      console.log(JSON.stringify({ gaps: true, browser: browserName, size, drop: true, uploadFailures: true, blocksVerbatim: true, ownTick: !size.startsWith('phone'), flushOnSwitch: true, chatLink: true }));
+    });
+    if (flows.has('editable')) await guarded('editable', size, async () => {
+      await checkEditableInPlace({ browser, owner, size });
+      console.log(JSON.stringify({ editable: true, browser: browserName, size, tableCell: true, island: true, underline: true, mailtoLink: true }));
     });
     if (flows.has('ui')) await guarded('ui', size, async () => {
       await checkWindowUi({ browser, owner, size });
       console.log(JSON.stringify({ ui: true, browser: browserName, size }));
     });
+    if (flows.has('sharing')) await guarded('sharing', size, async () => {
+      await checkSharing({ browser, owner, admin: owner, size, stranger });
+      await checkSharedGrid({ browser, owner, admin: owner, size });
+      await checkSharedRefresh({ browser, owner, admin: owner, size });
+      await checkSharedReminder({ browser, owner, admin: owner, size });
+      await checkRenamedPoll({ browser, owner, admin: owner, size });
+      console.log(JSON.stringify({ sharing: true, browser: browserName, size, sharedGrid: true, popoverStates: true, refresh: true, sharedReminder: true, renamedPoll: true }));
+    });
+    if (flows.has('agent')) await guarded('agent', size, async () => {
+      await checkAgentActions({ browser, owner, admin: owner, size });
+      console.log(JSON.stringify({ agentActions: true, browser: browserName, size }));
+    });
+    if (flows.has('agentedit')) await guarded('agentedit', size, async () => {
+      await checkAgentEdits({ browser, owner, admin: owner, size });
+      console.log(JSON.stringify({ agentEdit: true, browser: browserName, size, windowFollows: true, undoBytes: true, otherNoteRefused: true, sharedApproval: true }));
+    });
+    if (flows.has('context')) await guarded('context', size, async () => {
+      await checkContextNotes({ browser, owner, size });
+      console.log(JSON.stringify({ context: true, browser: browserName, size, noneByDefault: true, cards: true, opensWindow: true, sentRecorded: true, remove: true, afterReload: true, noteChat: true }));
+    });
+    if (flows.has('focus')) await guarded('focus', size, async () => {
+      await checkFocusTodo({ browser, owner, admin: owner, size });
+      console.log(JSON.stringify({ focus: true, browser: browserName, size, privateNoApproval: true, answerNamesItem: true, followUpKeepsItem: true, followUpAgent: true, sharedApprovalFromToast: true }));
+    });
+    if (flows.has('history')) await guarded('history', size, async () => {
+      await checkHistory({ browser, owner, size, agent: true });
+      console.log(JSON.stringify({ history: true, browser: browserName, size, changeRows: true, nowRow: true, diff: true, chatNamed: true, metaCount: true, restoreBytes: true, toastUndo: true, seeFromToast: true, seeFromChat: true }));
+    });
+    if (flows.has('coverage')) await guarded('coverage', size, async () => {
+      await checkRevokeAndDelete({ browser, owner, admin: owner, size });
+      await checkSentCardKeepsTitle({ browser, owner, size });
+      await checkFormattingAndImageLinks({ browser, owner, size });
+      await checkRemindersAndFilters({ browser, owner, size });
+      await checkPanelKeys({ browser, owner, size });
+      console.log(JSON.stringify({ coverage: true, browser: browserName, size, revokeWhileOpen: true, deleteWhileOpen: true, sentCardTitle: true, formatting: true, imageLinks: true, reminderPicker: true, filters: true, panelKeys: true }));
+    });
+    if (flows.has('accounts')) await guarded('accounts', size, async () => {
+      await checkAgentCannotShare({ browser, owner, size, target: stranger.username });
+      await checkAccountDeletion({ browser, owner, admin: owner, size });
+      console.log(JSON.stringify({ accounts: true, browser: browserName, size, agentShareRefused: true, ownerDeletion: true, cleanupWarning: true }));
+    });
   }
+  // Bugs found and not fixed yet (notesBugsFlow.mjs): checked after every
+  // other flow, reported together, and failing the run at the very end.
+  const knownBugs = [];
+  if (flows.has('bugs')) for (const size of ['desktop', 'phone']) await guarded('bugs', size, async () => knownBugs.push(...await checkKnownBugs({ browser, owner, admin: owner, size })));
   if (flows.has('native')) await guarded('smoke', 'api', async () => {
     const smoke = spawnSync(process.env.NOTES_TEST_PYTHON, ['-m', 'pytest', '-q', 'tests/smoke/test_notes_smoke.py'], {
       env: { ...process.env, APP_PORT: new URL(origin).port, ODYSSEUS_ADMIN_USER: credentials.username, ODYSSEUS_ADMIN_PASSWORD: credentials.password },
@@ -441,7 +658,9 @@ try {
     assert.equal(smoke.status, 0, smoke.stdout + smoke.stderr);
     console.log('PASS: original Notes release smoke test against the disposable authenticated instance');
   });
-  runner.finish();
+  if (knownBugs.length) console.log(JSON.stringify({ knownBugs }));
+  runner.finish(knownBugs);
 } finally {
+  await flushCoverage();
   await browser.close();
 }

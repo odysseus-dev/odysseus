@@ -2,6 +2,7 @@
 import { _serializeNoteForCopy } from '../domain/noteRules.js';
 export function createClipboard({
   _agentSolveNote,
+  _leaveNote,
   bindMenuDismiss,
   dismissOrRemove,
   state,
@@ -15,7 +16,9 @@ export function createClipboard({
     if (!note) return;
     const menu = document.createElement('div');
     menu.className = 'note-corner-menu-dropdown';
-    menu.innerHTML = `
+    // A note shared with me: Copy, and Leave instead of the owner's agent run.
+    const own = note.is_owner !== false;
+    menu.innerHTML = own ? `
     <button type="button" class="ncm-item" data-act="copy">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       <span>Copy</span>
@@ -23,6 +26,14 @@ export function createClipboard({
     <button type="button" class="ncm-item" data-act="agent">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
       <span>${note.agent_session_id ? 'Re-run agent' : 'Agent: solve this'}</span>
+    </button>` : `
+    <button type="button" class="ncm-item" data-act="copy">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      <span>Copy</span>
+    </button>
+    <button type="button" class="ncm-item" data-act="leave">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span>Leave note</span>
     </button>`;
     document.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
@@ -38,7 +49,8 @@ export function createClipboard({
     menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;`;
     const close = bindMenuDismiss(menu, () => { menu.remove(); });
     menu.querySelector('[data-act="copy"]').addEventListener('click', () => { close(); _copyNote(id, btn); });
-    menu.querySelector('[data-act="agent"]').addEventListener('click', () => { close(); _agentSolveNote(id); });
+    menu.querySelector('[data-act="agent"]')?.addEventListener('click', () => { close(); _agentSolveNote(id); });
+    menu.querySelector('[data-act="leave"]')?.addEventListener('click', () => { close(); _leaveNote(id); });
   }
 
   async function _copyNote(noteId, btnEl) {

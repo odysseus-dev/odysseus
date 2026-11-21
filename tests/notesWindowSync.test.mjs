@@ -80,6 +80,13 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
   const editor = {
     setContent: c => { editorMarkdown = c; editorEdited = false; },
     getMarkdown: () => editorMarkdown,
+    // The note window's editor API (richBody): what a save sends, and the caret kept over a redraw.
+    read: () => ({ content: editorMarkdown, unsaved: null }),
+    mode: 'rich',
+    setMode: () => {},
+    decorate: () => {},
+    saveCaret: () => null,
+    restoreCaret: () => {},
     taskItems: () => [],
     flipTask: () => {},
     destroy: () => {},
@@ -188,7 +195,7 @@ test('Finding B 1: successful autosave followed by an external checklist update 
   try {
     const session = h.getSession();
     assert.equal(h.getEditorMarkdown(), '- [ ] task 1');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
 
     // User edits text
     h.setEditorMarkdown('- [ ] task 1 modified');
@@ -199,7 +206,7 @@ test('Finding B 1: successful autosave followed by an external checklist update 
     // Autosave succeeds
     await session.flush();
     assert.equal(session.dirty, false);
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
     assert.equal(session.saved.content, '- [ ] task 1 modified');
     // Historical edited flag remains true in richBody
     assert.equal(h.editor.edited, true);
@@ -212,7 +219,7 @@ test('Finding B 1: successful autosave followed by an external checklist update 
 
     // The window must adopt the new content and revision
     assert.equal(h.getEditorMarkdown(), '- [x] task 1 modified');
-    assert.equal(session.base, 'r3');
+    assert.equal(session.revision, 'r3');
     assert.equal(session.saved.content, '- [x] task 1 modified');
   } finally {
     h.cleanup();
@@ -233,7 +240,7 @@ test('Finding B 2: clean editor synchronization without prior edits', () => {
     h.win.sync();
 
     assert.equal(h.getEditorMarkdown(), 'Updated remotely');
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
   } finally {
     h.cleanup();
   }
@@ -269,7 +276,7 @@ test('Finding B 3: dirty editor revision isolation protects uncommitted edits', 
     // Window sync must not overwrite dirty edits or advance base revision
     h.win.sync();
     assert.equal(h.getEditorMarkdown(), 'Local dirty typing');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
 
     // When save runs, it sends base r1 and receives 409 conflict
     await session.flush();
@@ -310,13 +317,13 @@ test('Finding B 4: synchronization during a pending save is deferred', async () 
 
     // Must not sync during in-flight save
     assert.equal(h.getEditorMarkdown(), 'Typing in flight');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
 
     // Complete the in-flight save
     finishSave();
     await flushing;
     assert.equal(session.saving, false);
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
   } finally {
     h.cleanup();
   }
@@ -344,7 +351,7 @@ test('Finding B 5: failed save followed by newer server revision preserves local
 
     // Local edits must remain intact, base revision must not advance
     assert.equal(h.getEditorMarkdown(), 'Offline edits');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
   } finally {
     h.cleanup();
   }
@@ -380,7 +387,7 @@ test('Finding B 6: conflict resolution reload followed by subsequent synchroniza
     // Resolve conflict with reload
     await session.resolveConflict('reload');
     assert.equal(session.conflict, null);
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
     assert.equal(session.saved.content, 'Server resolution content');
 
     // Set editor to match reloaded server content
@@ -392,7 +399,7 @@ test('Finding B 6: conflict resolution reload followed by subsequent synchroniza
 
     // Window must sync cleanly
     assert.equal(h.getEditorMarkdown(), 'Post-conflict newer update');
-    assert.equal(session.base, 'r4');
+    assert.equal(session.revision, 'r4');
   } finally {
     h.cleanup();
   }
@@ -412,7 +419,7 @@ test('Browser Scenario A: Focused clean editor defers synchronization while inte
     session.markDirty();
     await session.flush();
     assert.equal(session.dirty, false);
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
 
     // 5. Keep focus inside editor
     globalThis.document.activeElement = h.titleEl;
@@ -423,7 +430,7 @@ test('Browser Scenario A: Focused clean editor defers synchronization while inte
     // 7. Verify sync is deferred while focused
     h.win.sync();
     assert.equal(h.getEditorMarkdown(), '- [ ] item 1 edited');
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
 
     // 8. Blur the editor
     globalThis.document.activeElement = null;
@@ -431,7 +438,7 @@ test('Browser Scenario A: Focused clean editor defers synchronization while inte
 
     // 9. Verify update is incorporated
     assert.equal(h.getEditorMarkdown(), '- [x] item 1 edited');
-    assert.equal(session.base, 'r3');
+    assert.equal(session.revision, 'r3');
   } finally {
     h.cleanup();
   }
@@ -458,7 +465,7 @@ test('Browser Scenario B: Minimized window synchronizes when restored', async ()
 
     // 6. Verify updated checklist displayed
     assert.equal(h.getEditorMarkdown(), '- [x] task 1');
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
   } finally {
     h.cleanup();
   }
@@ -491,13 +498,13 @@ test('Browser Scenario C: In-flight save is protected and completes cleanly with
 
     // Must not overwrite local edits during in-flight save
     assert.equal(h.getEditorMarkdown(), 'User typed edits');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
 
     // Complete in-flight save
     resolveSave();
     await savePromise;
     assert.equal(session.saving, false);
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
     assert.equal(session.saved.content, 'User typed edits');
   } finally {
     h.cleanup();
@@ -537,7 +544,7 @@ test('Browser Scenario D: Genuine concurrent edit triggers HTTP 409 conflict and
     // Resolving conflict with Keep mine writes local text over server revision
     await session.resolveConflict('keep');
     assert.equal(session.conflict, null);
-    assert.equal(session.base, 'r3');
+    assert.equal(session.revision, 'r3');
     assert.equal(session.saved.content, 'Local conflict edit');
     assert.equal(keepMineBody?.body_revision, 'r2');
     assert.equal(keepMineBody?.content, 'Local conflict edit');
@@ -568,7 +575,7 @@ test('Browser Scenario E: Failed save followed by external revision preserves lo
 
     // Local content must remain intact
     assert.equal(h.getEditorMarkdown(), 'Local offline work');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
   } finally {
     h.cleanup();
   }
@@ -590,7 +597,7 @@ test('Browser Scenario F: Focus on toolbar or modal elements defers sync and rec
     // While interacting with formatting controls, sync is deferred
     h.win.sync();
     assert.equal(h.getEditorMarkdown(), '- [ ] item 1');
-    assert.equal(session.base, 'r1');
+    assert.equal(session.revision, 'r1');
 
     // When focus leaves modal (activeElement is outside)
     globalThis.document.activeElement = null;
@@ -598,7 +605,7 @@ test('Browser Scenario F: Focus on toolbar or modal elements defers sync and rec
 
     // Reconciled cleanly
     assert.equal(h.getEditorMarkdown(), '- [x] item 1');
-    assert.equal(session.base, 'r2');
+    assert.equal(session.revision, 'r2');
   } finally {
     h.cleanup();
   }

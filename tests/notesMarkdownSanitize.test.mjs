@@ -76,6 +76,10 @@ test('a style that names a URL in any CSS form is dropped from note HTML', () =>
   }
   // Notes keep no inline style at all, even one with no URL in it.
   assert.deepEqual(attrValues(render('<details><summary>s</summary><div style="color:var(--red)">x</div></details>'), 'style'), []);
+  // An image's own width is carried by data-w, not a style (15-notes.css sizes it).
+  const sized = render('![](/api/upload/0123456789abcdef0123456789abcdef "w=33")');
+  assert.deepEqual(attrValues(sized, 'style'), []);
+  assert.deepEqual(attrValues(sized, 'data-w'), ['33']);
 });
 
 test("a task's checkbox is named after the task's text", () => {

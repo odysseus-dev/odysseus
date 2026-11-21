@@ -1,5 +1,7 @@
 /** Panel mounting, keyboard handlers, minimization and note navigation. */
 export function createPanel({
+  _startNotesRefresh = () => {},
+  _stopNotesRefresh = () => {},
   wireToolbar,
   wireSelectionActions,
   _wireNotesWindow,
@@ -32,6 +34,7 @@ export function createPanel({
   workflows
 }) {
   function _forceCloseNotesPanel() {
+    _stopNotesRefresh();
     app.setOpen(false);
     app.setEditingId(null);
     try { _flushNoteWindow(); } catch {}
@@ -318,12 +321,14 @@ export function createPanel({
       _renderNotes();
       requestAnimationFrame(() => _flushPendingHighlights());
       _startReminderLoop();
+      _startNotesRefresh();
       _showNotesFirstOpenHint(pane);
     });
   }
 
   function closePanel(direction) {
     if (!state.open) return;
+    _stopNotesRefresh();
     app.setOpen(false);
     app.setEditingId(null);
     _clearViewedReminderGlows();

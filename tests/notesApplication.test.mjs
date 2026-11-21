@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createNotesState } from '../frontend/src/features/notes/application/state.js';
 import { createNotesWorkflows } from '../frontend/src/features/notes/application/workflows.js';
 import { createLayout } from '../frontend/src/features/notes/ui/layout.js';
+import { createSelectionOperations } from '../frontend/src/features/notes/application/selection.js';
 
 test('views cannot mutate Notes state, but captured identities observe application updates', () => {
   const app = createNotesState();
@@ -90,4 +91,23 @@ test('masonry observer is not re-created once Notes is closed', () => {
     globalThis.window = previous.window;
     globalThis.ResizeObserver = previous.ResizeObserver;
   }
+});
+
+test('bulk archive and delete count what the server accepted', async () => {
+  const app = createNotesState();
+  app.replaceNotes([{ id: 'mine' }, { id: 'theirs' }]);
+  app.selectId('mine'); app.selectId('theirs');
+  const toasts = [];
+  const refused = Object.assign(new Error('Only the owner can change that'), { status: 403 });
+  const operations = createSelectionOperations({
+    app,
+    api: { patchNote: id => (id === 'theirs' ? Promise.reject(refused) : Promise.resolve({})), deleteNote: () => Promise.resolve() },
+    effects: { render: () => {}, showToast: text => toasts.push(text) },
+    sendContext: () => {}, exitSelection: () => app.clearSelection(), fetchNotes: async () => {},
+  });
+  await operations.archiveSelected();
+  assert.deepEqual(toasts, ['Archived 1; 1 could not be archived']);
+  app.selectId('mine');
+  await operations.deleteSelected();
+  assert.deepEqual(toasts.at(-1), 'Deleted 1');
 });

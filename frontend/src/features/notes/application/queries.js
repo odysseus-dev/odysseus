@@ -1,5 +1,5 @@
 /** Application-owned filtering, searching and note ordering. */
-import { _noteTags, _visibleNoteTags, _nextGoalStep, _isCalendarReminderNote } from '../domain/noteRules.js';
+import { _noteTags, _visibleNoteTags, _nextGoalStep, _isCalendarReminderNote, isOwnNote } from '../domain/noteRules.js';
 import { _hasTimeComponent } from '../domain/recurrence.js';
 /** A search box value as lower-case words; blank or whitespace-only gives none. */
 export function searchTerms(query) {
@@ -30,6 +30,8 @@ export function createQueries({
       filtered = filtered.filter(n => _visibleNoteTags(n).length === 0);
     } else if (state.activeFilter === 'goals') {
       filtered = filtered.filter(n => n.note_type === 'goal' && !n.archived);
+    } else if (state.activeFilter === 'shared') {
+      filtered = filtered.filter(n => !isOwnNote(n));
     } else if (state.activeFilter === 'today') {
       // Today view: only goals that still have an unchecked step.
       filtered = filtered.filter(n => n.note_type === 'goal' && !n.archived && _nextGoalStep(n));
@@ -37,6 +39,9 @@ export function createQueries({
     const terms = searchTerms(state.searchQuery);
     if (terms.length) filtered = filtered.filter(n => noteMatchesSearch(n, terms));
     const sorted = [...filtered].sort((a, b) => {
+      // Notes shared with me follow mine, under their own header.
+      const aOwn = isOwnNote(a);
+      if (aOwn !== isOwnNote(b)) return aOwn ? -1 : 1;
       // In reminders view: sort by due date ascending (soonest first)
       if (state.activeFilter === 'reminders') {
         const da = new Date(a.due_date || 0).getTime();

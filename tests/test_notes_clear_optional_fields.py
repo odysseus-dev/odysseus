@@ -75,7 +75,11 @@ def test_null_clears_only_the_requested_part(client, field, content):
     created = client.post("/api/notes", json={"title": "Body", **FOLDED_BODY})
     assert created.status_code == 200, created.text
     path = f"/api/notes/{created.json()['id']}"
-    updated = client.put(path, json={field: None})
+    # A body write carries the token; without it nothing is cleared.
+    refused = client.put(path, json={field: None})
+    assert refused.status_code == 409, refused.text
+    revision = client.get(path).json()["body_revision"]
+    updated = client.put(path, json={field: None, "body_revision": revision})
     assert updated.status_code == 200, updated.text
     assert client.get(path).json()["content"] == content
 
@@ -121,11 +125,12 @@ def test_empty_values_still_clear_the_body(client):
     assert created.status_code == 200, created.text
     path = f"/api/notes/{created.json()['id']}"
 
-    assert client.put(path, json={"items": []}).status_code == 200
+    revision = lambda: client.get(path).json()["body_revision"]  # noqa: E731
+    assert client.put(path, json={"items": [], "body_revision": revision()}).status_code == 200
     assert "Saved item" not in client.get(path).json()["content"]
-    assert client.put(path, json={"image_url": ""}).status_code == 200
+    assert client.put(path, json={"image_url": "", "body_revision": revision()}).status_code == 200
     assert "note.png" not in client.get(path).json()["content"]
-    assert client.put(path, json={"content": ""}).status_code == 200
+    assert client.put(path, json={"content": "", "base_updated_at": client.get(path).json()["updated_at"]}).status_code == 200
     assert client.get(path).json()["content"] == ""
 
 

@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 import core.database as cdb
 from core.database import Note
+from core.note_writes import note_body_revision
 import routes.note_routes as nr
 from tests.helpers.database import disposable_database
 
@@ -42,8 +43,6 @@ def notes(monkeypatch, tmp_path):
     with disposable_database(tmp_path) as factory:
         monkeypatch.setattr(nr, "SessionLocal", factory)
         monkeypatch.setattr(cdb, "SessionLocal", factory)
-        # Upload reservation is covered elsewhere; these notes cite fake ids.
-        monkeypatch.setattr(nr, "reserve_upload_references", lambda *a, **kw: None)
         app = FastAPI()
         app.state.auth_manager = SimpleNamespace(is_configured=True)
         app.include_router(nr.setup_note_routes())
@@ -57,12 +56,17 @@ def notes(monkeypatch, tmp_path):
             with factory() as db:
                 return db.get(Note, note_id)
 
+        def revision(note_id):
+            # The token a body write or a toggle carries, as a GET returns it.
+            with factory() as db:
+                return note_body_revision(db.get(Note, note_id))
+
         async def call(method, url, user="alice", **kw):
             transport = httpx.ASGITransport(app=_Identity(app), client=_PEER)
             async with httpx.AsyncClient(transport=transport, base_url="http://notes.test") as c:
                 return await c.request(method, url, headers={"x-test-user": user}, **kw)
 
-        yield SimpleNamespace(seed=seed, row=row, call=call, factory=factory)
+        yield SimpleNamespace(seed=seed, row=row, revision=revision, call=call, factory=factory)
 
 
 async def test_create_writes_items_and_image_into_content(notes):
@@ -103,7 +107,7 @@ async def test_read_derives_items_and_type_from_content(notes):
 
 async def test_put_items_rewrites_task_lines_in_place(notes):
     notes.seed("n", content="Shopping\n- [ ] milk\nnot a task\n- [ ] eggs\n```\n- [ ] sample\n```\n- [ ] jam")
-    r = await notes.call("PUT", "/api/notes/n", json={"items": [{"text": "milk", "done": True}, {"text": "bread"}]})
+    r = await notes.call("PUT", "/api/notes/n", json={"body_revision": notes.revision("n"), "items": [{"text": "milk", "done": True}, {"text": "bread"}]})
     assert r.status_code == 200
     assert r.json()["content"] == "Shopping\n- [x] milk\nnot a task\n- [ ] bread\n```\n- [ ] sample\n```"
     assert notes.row("n").items is None
@@ -111,14 +115,14 @@ async def test_put_items_rewrites_task_lines_in_place(notes):
 
 async def test_put_on_unmigrated_row_folds_items_first(notes):
     notes.seed("n", content="Body", items='[{"text": "a"}, {"text": "b"}]')
-    r = await notes.call("PUT", "/api/notes/n", json={"items": [{"text": "a", "done": True}, {"text": "b"}]})
+    r = await notes.call("PUT", "/api/notes/n", json={"body_revision": notes.revision("n"), "items": [{"text": "a", "done": True}, {"text": "b"}]})
     assert r.json()["content"] == "Body\n\n- [x] a\n- [ ] b"
     assert notes.row("n").items is None
 
 
 async def test_put_image_url_folds_and_drawings_replace_their_canvas(notes):
     notes.seed("photo", content="Receipt")
-    r = await notes.call("PUT", "/api/notes/photo", json={"image_url": "/api/upload/p1"})
+    r = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "image_url": "/api/upload/p1"})
     assert r.json()["content"] == "Receipt\n\n![](/api/upload/p1)"
     assert r.json()["image_url"] == "/api/upload/p1"
 
@@ -126,7 +130,7 @@ async def test_put_image_url_folds_and_drawings_replace_their_canvas(notes):
     notes.seed("draw", content=original + "![](/api/upload/d1)", image_url="/api/upload/d1", note_type="draw", gallery_id="g1")
     got = (await notes.call("GET", "/api/notes/draw")).json()
     assert got["image_url"] == "/api/upload/d1" and got["note_type"] == "draw"
-    r = await notes.call("PUT", "/api/notes/draw", json={"note_type": "draw", "image_url": "/api/upload/d2", "gallery_id": "g1"})
+    r = await notes.call("PUT", "/api/notes/draw", json={"body_revision": notes.revision("draw"), "note_type": "draw", "image_url": "/api/upload/d2", "gallery_id": "g1"})
     assert r.json()["content"] == original + "![](/api/upload/d2)"
     assert r.json()["image_url"] == "/api/upload/d2"
     assert notes.row("draw").gallery_id == "g1"
@@ -136,18 +140,18 @@ async def test_put_image_url_folds_and_drawings_replace_their_canvas(notes):
 async def test_put_image_url_replaces_removes_and_never_stacks(notes):
     notes.seed("photo", content="Receipt")
     for _ in range(3):
-        r = await notes.call("PUT", "/api/notes/photo", json={"image_url": "/api/upload/p1"})
+        r = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "image_url": "/api/upload/p1"})
         assert r.status_code == 200, r.text
     assert notes.row("photo").content == "Receipt\n\n![](/api/upload/p1)"
 
     # A new URL replaces the note's legacy image; inline images are left alone.
     notes.seed("mixed", content="Intro ![x](/api/upload/inline) text\n\n![](/api/upload/old)", image_url="/api/upload/old")
-    r = await notes.call("PUT", "/api/notes/mixed", json={"image_url": "/api/upload/new"})
+    r = await notes.call("PUT", "/api/notes/mixed", json={"body_revision": notes.revision("mixed"), "image_url": "/api/upload/new"})
     assert r.json()["content"] == "Intro ![x](/api/upload/inline) text\n\n![](/api/upload/new)"
     # An empty string removes it, and only it.
-    r = await notes.call("PUT", "/api/notes/mixed", json={"image_url": ""})
+    r = await notes.call("PUT", "/api/notes/mixed", json={"body_revision": notes.revision("mixed"), "image_url": ""})
     assert r.json()["content"] == "Intro ![x](/api/upload/inline) text"
-    r = await notes.call("PUT", "/api/notes/mixed", json={"image_url": ""})
+    r = await notes.call("PUT", "/api/notes/mixed", json={"body_revision": notes.revision("mixed"), "image_url": ""})
     assert r.json()["content"] == "Intro ![x](/api/upload/inline) text"
 
 
@@ -159,7 +163,7 @@ async def test_put_image_url_replaces_removes_and_never_stacks(notes):
 async def test_put_image_url_with_spaces_or_parentheses_does_not_double(notes, url):
     notes.seed("n", content="Body")
     for _ in range(3):
-        assert (await notes.call("PUT", "/api/notes/n", json={"image_url": url})).status_code == 200
+        assert (await notes.call("PUT", "/api/notes/n", json={"body_revision": notes.revision("n"), "image_url": url})).status_code == 200
     content = notes.row("n").content
     assert content.count("![](") == 1, content
     assert "(" not in content.split("](", 1)[1].rstrip(")"), content
@@ -169,7 +173,7 @@ async def test_put_items_with_an_empty_text_removes_that_task(notes):
     # An item whose text is blank removes its task line; the others keep
     # their own lines, so what reads back is the array minus the blank one.
     notes.seed("n", content="- [ ] a\n- [x] b\n- [ ] c")
-    r = await notes.call("PUT", "/api/notes/n", json={"items": [{"text": "a"}, {"text": "  "}, {"text": "c", "done": True}]})
+    r = await notes.call("PUT", "/api/notes/n", json={"body_revision": notes.revision("n"), "items": [{"text": "a"}, {"text": "  "}, {"text": "c", "done": True}]})
     assert r.status_code == 200
     assert r.json()["content"] == "- [ ] a\n- [x] c"
     assert [(i["index"], i["text"], i["done"]) for i in r.json()["items"]] == [(0, "a", False), (1, "c", True)]
@@ -179,10 +183,10 @@ async def test_editing_a_goal_keeps_it_a_goal(notes):
     # A goal is a stored mode: its pure task list would otherwise read as a
     # checklist, and prose would read as a note.
     notes.seed("goal", content="- [x] Warm up\n- [ ] Run 5k", note_type="goal")
-    r = await notes.call("PUT", "/api/notes/goal", json={"content": "- [x] Warm up\n- [ ] Run 5k\n- [ ] Stretch"})
+    r = await notes.call("PUT", "/api/notes/goal", json={"body_revision": notes.revision("goal"), "content": "- [x] Warm up\n- [ ] Run 5k\n- [ ] Stretch"})
     assert r.status_code == 200
     assert r.json()["note_type"] == "goal"
-    r = await notes.call("PUT", "/api/notes/goal", json={"content": "Training plan\n\n- [ ] Run 5k"})
+    r = await notes.call("PUT", "/api/notes/goal", json={"body_revision": notes.revision("goal"), "content": "Training plan\n\n- [ ] Run 5k"})
     assert r.json()["note_type"] == "goal"
     assert notes.row("goal").note_type == "goal"
 
@@ -210,12 +214,12 @@ async def test_unmigrated_checklist_reads_as_task_lines_without_a_migration(note
 
 async def test_unmigrated_photo_note_shows_its_image_and_a_save_keeps_one(notes):
     # Without the boot migration the legacy `image_url` column is folded on
-    # read, as the migration would store it, so the editor shows the
+    # read, as the migration would store it, so the note window shows the
     # image and a save of what it shows keeps exactly one copy.
     notes.seed("photo", content="Receipt", image_url="/api/upload/receipt")
     got = (await notes.call("GET", "/api/notes/photo")).json()
     assert got["content"] == "Receipt\n\n![](/api/upload/receipt)"
-    r = await notes.call("PUT", "/api/notes/photo", json={"content": "Receipt edited by a legacy client"})
+    r = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "content": "Receipt edited by a legacy client"})
     assert r.status_code == 200, r.text
     again = (await notes.call("GET", "/api/notes/photo")).json()
     assert again["content"] == "Receipt edited by a legacy client\n\n![](/api/upload/receipt)"
@@ -229,19 +233,19 @@ async def test_migrated_photo_put_preserves_replaces_and_removes_attachment(note
     assert notes.row("photo").content == f"Receipt\n\n![]({url})"
 
     path = "/api/notes/photo"
-    updated = await notes.call("PUT", path, json={"content": "Updated prose"})
+    updated = await notes.call("PUT", path, json={"content": "Updated prose", "body_revision": notes.revision("photo")})
     assert updated.json()["image_url"] == url
     assert notes.row("photo").content == f"Updated prose\n\n![]({url})"
 
     new_url = "/api/upload/new"
-    await notes.call("PUT", path, json={"image_url": new_url})
+    await notes.call("PUT", path, json={"image_url": new_url, "body_revision": notes.revision("photo")})
     assert notes.row("photo").content == f"Updated prose\n\n![]({new_url})"
-    await notes.call("PUT", path, json={"image_url": None})
+    await notes.call("PUT", path, json={"image_url": None, "body_revision": notes.revision("photo")})
     assert notes.row("photo").content == "Updated prose"
     assert notes.row("photo").image_url is None
 
     # Current editor sends the complete document and its observed revision.
-    before = (await notes.call("PUT", path, json={"image_url": new_url})).json()
+    before = (await notes.call("PUT", path, json={"image_url": new_url, "body_revision": notes.revision("photo")})).json()
     unrelated = "Final edit\n\n![](/api/upload/ordinary-markdown)"
     updated = await notes.call("PUT", path, json={
         "content": unrelated, "replace_content": True, "body_revision": before["body_revision"],
@@ -262,7 +266,7 @@ async def test_clear_removes_only_standalone_legacy_image_with_alt_text(notes, m
     monkeypatch.setattr(cdb, "DATABASE_URL", str(notes.factory.kw["bind"].url))
     cdb._migrate_fold_image_url()
     assert notes.row("photo").content.count(f"![Receipt]({url})") == 1
-    cleared = await notes.call("PUT", "/api/notes/photo", json={"image_url": None})
+    cleared = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "image_url": None})
     assert cleared.status_code == 200, cleared.text
     expected = f"Inline ![detail]({url})\n\n[link]({url})\n\n```\n![code]({url})\n```"
     assert cleared.json()["content"] == expected and cleared.json()["image_url"] is None
@@ -275,7 +279,7 @@ async def test_full_replacement_with_only_an_inline_copy_clears_legacy_pointer(n
     url = "/api/upload/receipt"
     notes.seed("photo", content=f"![Receipt]({url})", image_url=url)
     content = f"Detail ![Receipt]({url})"
-    result = await notes.call("PUT", "/api/notes/photo", json={"content": content, "replace_content": True})
+    result = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "content": content, "replace_content": True})
     assert result.status_code == 200, result.text
     assert result.json()["content"] == content and result.json()["image_url"] is None
 
@@ -303,12 +307,12 @@ def _pause_first_guard(monkeypatch, module=nr):
     sessions = []
     original = module.guard_note_body
 
-    def guard(session, note):
+    def guard(session, note, *args, **kwargs):
         sessions.append(session)
         if len(sessions) == 1:
             entered.set()
             assert release.wait(10), "Competing request did not finish"
-        return original(session, note)
+        return original(session, note, *args, **kwargs)
 
     monkeypatch.setattr(module, "guard_note_body", guard)
     return entered, release, sessions
@@ -394,7 +398,7 @@ async def test_append_route_closes_an_unclosed_fence_first(notes):
 
 async def test_put_items_closes_an_unclosed_fence_first(notes):
     notes.seed("n", content="notes\n```\ncode")
-    r = await notes.call("PUT", "/api/notes/n", json={"items": [{"text": "buy milk"}]})
+    r = await notes.call("PUT", "/api/notes/n", json={"body_revision": notes.revision("n"), "items": [{"text": "buy milk"}]})
     assert r.status_code == 200, r.text
     assert r.json()["content"] == "notes\n```\ncode\n```\n\n- [ ] buy milk"
     assert [i["text"] for i in r.json()["items"]] == ["buy milk"]
@@ -427,6 +431,45 @@ async def test_ping_scanner_reminder_lists_pending_task_lines(notes, monkeypatch
     except builtin_actions.TaskNoop:
         pass
     assert [c["note_body"] for c in sent] == ["Before 6pm\n```\n- [ ] sample\n```\n\nPending (1):\n- eggs"]
+
+
+async def test_ping_scanner_never_pings_a_collaborator(notes, monkeypatch, tmp_path):
+    """A due note shared with bob reminds its owner, never bob."""
+    from core.database import NoteShare
+    from src import builtin_actions, settings
+
+    instant = datetime.datetime(2026, 10, 7, 12, tzinfo=datetime.timezone.utc)
+
+    class Clock(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+    sent = []
+
+    async def capture(**kw):
+        sent.append(kw)
+        return {"ok": True, "browser": True}
+
+    monkeypatch.setattr(settings, "load_settings", lambda: {"reminder_channel": "browser"})
+    monkeypatch.setattr(builtin_actions, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(nr, "dispatch_reminder", capture)
+    monkeypatch.setattr(datetime, "datetime", Clock)
+    notes.seed("n", owner="alice", title="Shared trip", due_date=instant.isoformat(), content="- [ ] tent")
+    with notes.factory() as db:
+        db.add(NoteShare(id="n-bob", note_id="n", shared_with="bob", permission="edit"))
+        db.commit()
+
+    async def scan(owner):
+        try:
+            await builtin_actions.action_ping_notes(owner)
+        except builtin_actions.TaskNoop:
+            pass
+
+    await scan("bob")
+    assert sent == []
+    await scan("alice")
+    assert [c["note_body"] for c in sent] == ["Pending (1):\n- tent"]
 
 
 def test_selected_notes_context_reads_task_lines():
@@ -466,6 +509,7 @@ def test_calendar_reminder_writer_uses_task_lines(notes):
     stored = notes.row(out["note_id"])
     assert stored.items is None
     assert stored.content.startswith("- [ ] Dentist @ Main St — ")
+
 
 
 def test_calendar_tool_reminder_writer_uses_task_lines(notes):
@@ -527,6 +571,30 @@ def _toggle(note_id, index, **fields):
     opened = _manage({"action": "view", "id": note_id})
     return _manage({"action": "toggle_item", "id": note_id, "index": index,
                     "body_revision": opened["body_revision"], **fields})
+
+
+def test_manage_notes_toggle_needs_the_body_it_was_computed_from(notes, monkeypatch):
+    from src.tools import notes as agent_notes
+
+    monkeypatch.setattr(agent_notes, "_SEEN_VERSIONS", type(agent_notes._SEEN_VERSIONS)())
+    notes.seed("tog12345-note", title="Packing", content="- [ ] passport\n- [ ] charger")
+    # Never shown to this caller, no revision: a positional flip is refused.
+    out = _manage({"action": "toggle_item", "id": "tog12345", "index": 0})
+    assert out["conflict"] is True and out["exit_code"] == 1
+    stale = notes.revision("tog12345-note")
+    _manage({"action": "view", "id": "tog12345"})
+    # A view of the current version is the proof, with or without the revision.
+    assert _manage({"action": "toggle_item", "id": "tog12345", "index": 0})["exit_code"] == 0
+    # A revision from before that tick is stale, whatever was viewed.
+    out = _manage({"action": "toggle_item", "id": "tog12345", "index": 1, "body_revision": stale})
+    assert out["conflict"] is True
+    assert notes.row("tog12345-note").content == "- [x] passport\n- [ ] charger"
+    # A change the tool did not make or show makes the seen version stale too.
+    with notes.factory() as db:
+        row = db.get(Note, "tog12345-note")
+        row.content = "- [x] passport\n- [ ] charger\n- [ ] adapter"
+        db.commit()
+    assert _manage({"action": "toggle_item", "id": "tog12345", "index": 1})["conflict"] is True
 
 
 def test_manage_notes_get_list_and_toggle_use_content(notes):

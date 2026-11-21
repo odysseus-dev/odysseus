@@ -56,7 +56,10 @@ try {
     });
     assert.equal(publicAPI.singleton && publicAPI.bridge && publicAPI.aliases, true);
     assert.deepEqual(publicAPI.names, ['closeNotes', 'closePanel', 'default', 'dismissFiredReminderDot', 'isNotesOpen', 'isPanelOpen', 'newNote', 'openNote', 'openNotes', 'openPanel', 'refreshDueBadge', 'togglePanel']);
-    assert.deepEqual(publicAPI.defaults, ['closeNotes', 'closePanel', 'isNotesOpen', 'isPanelOpen', 'newNote', 'openNote', 'openNotes', 'openPanel', 'refreshDueBadge', 'togglePanel']);
+    // contextNotes, openNoteHistory and openNoteWindow are on the default object (window.notesModule) only:
+    // chat.js reads contextNotes() into a sent message's metadata, chatRenderer.js opens a note card with
+    // openNoteWindow() and a "See changes" link with openNoteHistory(). The named exports stay as they were.
+    assert.deepEqual(publicAPI.defaults, ['closeNotes', 'closePanel', 'contextNotes', 'isNotesOpen', 'isPanelOpen', 'newNote', 'openNote', 'openNoteHistory', 'openNoteWindow', 'openNotes', 'openPanel', 'refreshDueBadge', 'togglePanel']);
     assert.deepEqual(publicAPI.arities, { closeNotes: 1, closePanel: 1, dismissFiredReminderDot: 0, isNotesOpen: 0, isPanelOpen: 0, newNote: 0, openNote: 1, openNotes: 0, openPanel: 0, refreshDueBadge: 0, togglePanel: 0 });
     assert.deepEqual(publicAPI.asyncMethods, ['openNote', 'refreshDueBadge']);
     await page.locator('.note-card').first().waitFor();
@@ -116,8 +119,10 @@ try {
     await body.click();
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.type('Recovered draft');
-    // Every edit is backed up at once, before the autosave.
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('odysseus-note-draft-plain')).content), 'Recovered draft');
+    // The first key is backed up at once and the rest of the burst together
+    // a moment later, so the draft holds a prefix of what was typed.
+    const draft = await page.evaluate(() => JSON.parse(localStorage.getItem('odysseus-note-draft-plain')).content);
+    assert.ok(draft && 'Recovered draft'.startsWith(draft), `draft backed up while typing: ${draft}`);
     await page.waitForFunction(() => !localStorage.getItem('odysseus-note-draft-plain'));
     assert.ok(requests.some(r => r.method === 'PUT' && JSON.parse(r.body).content === 'Recovered draft'));
     await page.locator('#note-window-modal [data-md="sketch"]').click();

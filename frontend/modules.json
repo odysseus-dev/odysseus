@@ -186,8 +186,24 @@
       "deployment": "js/features/notes/application/agentActions.js"
     },
     {
+      "source": "features/notes/application/agentEdits.js",
+      "deployment": "js/features/notes/application/agentEdits.js"
+    },
+    {
+      "source": "features/notes/application/noteHistory.js",
+      "deployment": "js/features/notes/application/noteHistory.js"
+    },
+    {
+      "source": "features/notes/application/externalImages.js",
+      "deployment": "js/features/notes/application/externalImages.js"
+    },
+    {
       "source": "features/notes/application/deletion.js",
       "deployment": "js/features/notes/application/deletion.js"
+    },
+    {
+      "source": "features/notes/domain/historyText.js",
+      "deployment": "js/features/notes/domain/historyText.js"
     },
     {
       "source": "features/notes/domain/noteRules.js",
@@ -202,12 +218,36 @@
       "deployment": "js/features/notes/domain/markdownSerializer.js"
     },
     {
+      "source": "features/notes/domain/sourceFidelity.js",
+      "deployment": "js/features/notes/domain/sourceFidelity.js"
+    },
+    {
       "source": "features/notes/application/noteSession.js",
       "deployment": "js/features/notes/application/noteSession.js"
     },
     {
       "source": "features/notes/application/noteVersions.js",
       "deployment": "js/features/notes/application/noteVersions.js"
+    },
+    {
+      "source": "features/notes/ui/noteImages.js",
+      "deployment": "js/features/notes/ui/noteImages.js"
+    },
+    {
+      "source": "features/notes/ui/sharePopover.js",
+      "deployment": "js/features/notes/ui/sharePopover.js"
+    },
+    {
+      "source": "features/notes/ui/noteAgent.js",
+      "deployment": "js/features/notes/ui/noteAgent.js"
+    },
+    {
+      "source": "features/notes/domain/contextNotes.js",
+      "deployment": "js/features/notes/domain/contextNotes.js"
+    },
+    {
+      "source": "features/notes/ui/contextStrip.js",
+      "deployment": "js/features/notes/ui/contextStrip.js"
     },
     {
       "source": "features/notes/ui/richBody.js",
@@ -220,6 +260,14 @@
     {
       "source": "features/notes/ui/noteWindow.js",
       "deployment": "js/features/notes/ui/noteWindow.js"
+    },
+    {
+      "source": "features/notes/ui/windowRoute.js",
+      "deployment": "js/features/notes/ui/windowRoute.js"
+    },
+    {
+      "source": "features/notes/ui/historyPanel.js",
+      "deployment": "js/features/notes/ui/historyPanel.js"
     },
     {
       "source": "features/notes/index.js",

@@ -178,6 +178,50 @@ AGENT_ISOLATED_TMP_DIRNAME = ".tmp"
 PASSWORD_MIN_LENGTH = 8
 USERNAME_MAX_LENGTH = 64
 
+# Upload types the note-scoped media route serves inline. A note only ever
+# shows uploads as images, and anything else served from this origin would
+# run in the reader's session.
+NOTE_MEDIA_INLINE_TYPES = frozenset({
+    "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/avif", "image/bmp",
+})
+# SVG can carry script when opened directly, so it is served as an attachment
+# (an <img> still renders it; a top-level navigation downloads it).
+NOTE_MEDIA_ATTACHMENT_TYPES = frozenset({"image/svg+xml"})
+
+# The most a note can hold, in characters (core.note_writes.size_refusal).
+# A write that would leave a note past a limit is refused with 413, unless
+# it makes that field shorter: a note stored before the limits existed can
+# still be trimmed, ticked and edited down.
+NOTE_TITLE_MAX_CHARS = 1_000
+NOTE_CONTENT_MAX_CHARS = 1_000_000
+# The tags (`label`, space-separated) and every other string a note stores:
+# colour, reminder, repeat rule, type, source and the session/gallery ids.
+# Each of those is a word, an id, an ISO date or an upload URL; the cap only
+# stops one from weighing on every list read, collaborators' included.
+NOTE_LABEL_MAX_CHARS = 1_000
+NOTE_FIELD_MAX_CHARS = 512
+
+# The note list's derived-view cache (routes.note.note_routes._derived_view)
+# keeps at most this many rows and this many characters of text, whichever
+# is reached first; the least recently read go first.
+NOTE_VIEW_CACHE_SIZE = 4096
+NOTE_VIEW_CACHE_MAX_CHARS = 16_000_000
+
+# Note version history (core.note_versions). A note keeps at most this many
+# earlier versions, and this many characters of them (as stored); the oldest
+# go first, but never the newest nor each author's latest save and what it
+# left.
+NOTE_VERSIONS_MAX = 50
+NOTE_VERSIONS_MAX_CHARS = 10_000_000
+# A save from the note window keeps a version only when the note's latest
+# version is older than this (or was not a save, or was someone else's), so
+# typing does not keep one version per keystroke.
+NOTE_VERSION_USER_GAP_SECONDS = 10 * 60
+# How much of a version's text the history list shows.
+NOTE_VERSION_PREVIEW_CHARS = 160
+# How much of a task's text a history row quotes ("ticked “book the cabin”").
+NOTE_VERSION_SUMMARY_ITEM_CHARS = 48
+
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 32768

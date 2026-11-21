@@ -221,6 +221,14 @@ class Session(TimestampMixin, Base):
     # opening the chat (all of which bump updated_at and last_accessed).
     # The "Last active" sort uses this.
     last_message_at = Column(DateTime, nullable=True, default=None)
+    # A chat started from a note (its agent runs): the one note this chat's
+    # manage_notes may change. Set once, server-side, when the session is
+    # created from that note; every later turn in the chat keeps it.
+    note_scope_id = Column(String, nullable=True, default=None)
+    # The checklist item a per-item run from that note is about, one line.
+    # Set with note_scope_id at creation and put in the context of every
+    # turn of the chat; a request never supplies it.
+    note_focus_task = Column(Text, nullable=True, default=None)
     
     
     # Indexes - optimized composites
@@ -1050,6 +1058,8 @@ def _migrate_add_session_generation_settings_columns():
             "thinking_mode": "VARCHAR DEFAULT 'off'",
             "temperature_override": "FLOAT",
             "max_tokens_override": "INTEGER",
+            "note_scope_id": "VARCHAR",
+            "note_focus_task": "TEXT",
         }
         for name, sql_type in additions.items():
             if name not in columns:
@@ -1422,6 +1432,8 @@ def _migrate_add_notes_sort_order():
             conn.execute("ALTER TABLE notes ADD COLUMN ai_content_hash TEXT")
         if columns and "agent_session_id" not in columns:
             conn.execute("ALTER TABLE notes ADD COLUMN agent_session_id TEXT")
+        if columns and "agent_undo" not in columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN agent_undo TEXT")
         conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"notes migration failed: {e}")
@@ -1663,6 +1675,127 @@ def _migrate_note_legacy_fields_cleanup():
         log.warning(f"note_legacy_fields cleanup skipped: {e}")
     finally:
         if conn is not None:
+            conn.close()
+
+
+def _migrate_note_shares_cascade():
+    """Rebuild a `note_shares` table that predates the `ON DELETE CASCADE`.
+
+    Test builds of an earlier sharing design created `note_shares` with a
+    plain `REFERENCES notes (id)` and a differently named unique index.
+    `create_all` skips an existing table, so on those DBs deleting a shared
+    note raised an IntegrityError. When the foreign key lacks the cascade,
+    the table is recreated from the current model (columns, FK, indexes) and
+    its rows copied, in one transaction. A table that already cascades is
+    left alone.
+
+    The copy is defensive about what those builds may have left: a missing
+    `id`, timestamp or `permission` column, or a NULL in one, gets a default
+    (`view` for the permission, the least access); an unknown permission
+    becomes `view`; usernames are trimmed and lowercased; duplicate grants
+    for one account collapse into one, keeping `edit` over `view`. Only rows
+    that cannot be kept (no note, no username, a duplicate) are dropped, and
+    each reason is counted in the log. `PRAGMA foreign_key_check` runs before
+    the commit, so a rebuild that would leave a dangling row rolls back.
+    """
+    import sqlite3
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+    from sqlalchemy.schema import CreateIndex, CreateTable
+    db_path = _note_migration_db_path()
+    if not db_path:
+        return
+    log = logging.getLogger(__name__)
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path, isolation_level=None)
+        fks = conn.execute("PRAGMA foreign_key_list(note_shares)").fetchall()
+        # (id, seq, table, from, to, on_update, on_delete, match)
+        note_fk = [fk for fk in fks if fk[2] == "notes" and fk[3] == "note_id"]
+        if not note_fk or all(fk[6].upper() == "CASCADE" for fk in note_fk):
+            return
+        table = NoteShare.__table__
+        dialect = sqlite_dialect.dialect()
+        create_sql = str(CreateTable(table).compile(dialect=dialect)).strip()
+        if not create_sql.startswith("CREATE TABLE note_shares ("):
+            raise RuntimeError("unexpected note_shares DDL")
+        create_sql = create_sql.replace("CREATE TABLE note_shares (", "CREATE TABLE note_shares_new (", 1)
+        index_sqls = [str(CreateIndex(ix).compile(dialect=dialect)) for ix in table.indexes]
+        old_cols = {row[1] for row in conn.execute("PRAGMA table_info(note_shares)").fetchall()}
+        if not {"note_id", "shared_with"} <= old_cols:
+            raise RuntimeError("note_shares has no note_id/shared_with columns")
+        now = "strftime('%Y-%m-%d %H:%M:%f', 'now')"
+        source = {
+            "id": "COALESCE(NULLIF(TRIM(id), ''), lower(hex(randomblob(16))))" if "id" in old_cols else "lower(hex(randomblob(16)))",
+            "note_id": "note_id",
+            "shared_with": "lower(trim(shared_with))",
+            "permission": (
+                "CASE WHEN lower(trim(permission)) IN ('view', 'edit') THEN lower(trim(permission)) ELSE 'view' END"
+                if "permission" in old_cols else "'view'"
+            ),
+            "created_at": f"COALESCE(created_at, {now})" if "created_at" in old_cols else now,
+            "updated_at": (
+                f"COALESCE(updated_at, created_at, {now})" if "updated_at" in old_cols and "created_at" in old_cols
+                else f"COALESCE(updated_at, {now})" if "updated_at" in old_cols
+                else f"COALESCE(created_at, {now})" if "created_at" in old_cols
+                else now
+            ),
+        }
+        cols = [c.name for c in table.columns]
+        missing = [c for c in cols if c not in source]
+        if missing:
+            raise RuntimeError(f"no copy rule for note_shares column(s) {missing}")
+        ordered = ", ".join(f"{source[c]} AS {c}" for c in cols)
+        rank_order = "CASE permission WHEN 'edit' THEN 0 ELSE 1 END, created_at, id"
+        copy_sql = (
+            f"INSERT INTO note_shares_new ({', '.join(cols)}) "
+            f"SELECT {', '.join(cols)} FROM ("
+            f"  SELECT *, ROW_NUMBER() OVER (PARTITION BY note_id, shared_with ORDER BY {rank_order}) AS rn"
+            f"  FROM (SELECT {ordered} FROM note_shares"
+            f"        WHERE note_id IN (SELECT id FROM notes) AND trim(COALESCE(shared_with, '')) != '')"
+            f") WHERE rn = 1"
+        )
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN")
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM note_shares").fetchone()[0]
+            orphans = conn.execute(
+                "SELECT COUNT(*) FROM note_shares WHERE note_id IS NULL OR note_id NOT IN (SELECT id FROM notes)"
+            ).fetchone()[0]
+            no_user = conn.execute(
+                "SELECT COUNT(*) FROM note_shares WHERE note_id IN (SELECT id FROM notes) "
+                "AND trim(COALESCE(shared_with, '')) = ''"
+            ).fetchone()[0]
+            conn.execute("DROP TABLE IF EXISTS note_shares_new")
+            conn.execute(create_sql)
+            conn.execute(copy_sql)
+            copied = conn.execute("SELECT COUNT(*) FROM note_shares_new").fetchone()[0]
+            conn.execute("DROP TABLE note_shares")
+            conn.execute("ALTER TABLE note_shares_new RENAME TO note_shares")
+            for sql in index_sqls:
+                conn.execute(sql)
+            dangling = conn.execute("PRAGMA foreign_key_check(note_shares)").fetchall()
+            if dangling:
+                raise RuntimeError(f"{len(dangling)} note_shares row(s) would point at a missing note")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        duplicates = total - orphans - no_user - copied
+        dropped = total - copied
+        detail = f"{copied} row(s) kept, {dropped} dropped"
+        if dropped:
+            detail += f": {orphans} without a note, {no_user} without a username, {duplicates} duplicate(s)"
+        log.info(f"Migrated: rebuilt note_shares with ON DELETE CASCADE ({detail})")
+        if dropped:
+            log.warning(f"note_shares cascade migration dropped {dropped} row(s) ({detail})")
+    except Exception as e:
+        log.warning(f"note_shares cascade migration skipped: {e}")
+    finally:
+        if conn is not None:
+            try:
+                conn.execute("PRAGMA foreign_keys=ON")
+            except Exception:
+                pass
             conn.close()
 
 
@@ -2346,6 +2479,48 @@ class Note(TimestampMixin, Base):
     # Chat session spawned by the note's "Agent" button (solve-this-todo).
     # The note shows a clickable tag that opens this session for review.
     agent_session_id  = Column(String, nullable=True)
+    # The note as it was before the last agent edit (JSON: title, content,
+    # items as stored, plus a digest of what the agent wrote), so the owner
+    # can undo it while nobody has changed the note since.
+    agent_undo        = Column(Text, nullable=True)
+
+
+class NoteShare(TimestampMixin, Base):
+    """Another account's access to a note: `view` (read) or `edit` (content,
+    title and tasks). The owner stays on `Note.owner`; one row per
+    collaborator."""
+    __tablename__ = "note_shares"
+    __table_args__ = (
+        Index("ux_note_shares_note_user", "note_id", "shared_with", unique=True),
+    )
+
+    id          = Column(String, primary_key=True, index=True)
+    note_id     = Column(String, ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True)
+    shared_with = Column(String, nullable=False, index=True)  # username, lowercased
+    permission  = Column(String, nullable=False, default="view")  # "view" | "edit"
+
+
+class NoteVersion(Base):
+    """An earlier state of a note, kept so its owner can go back to it.
+
+    `fields` is the note's `core.note_agent_scope.UNDO_FIELDS` as stored just
+    before a change (JSON), `source` what made that change: `agent`, `user`
+    (a save in the window, a tick, an added task) or `restore`. `author` is
+    the account that saved (a collaborator's edit stays in the owner's
+    history); `session_id` the chat, for an agent edit. Written and read by
+    core.note_versions only.
+    """
+    __tablename__ = "note_versions"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    note_id    = Column(String, ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner      = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+    source     = Column(String, nullable=False)
+    session_id = Column(String, nullable=True)
+    author     = Column(String, nullable=True)
+    fields     = Column(Text, nullable=False)
+    digest     = Column(String, nullable=False)
 
 
 class CalendarCal(TimestampMixin, Base):
@@ -2652,6 +2827,7 @@ def init_db():
     _migrate_unify_notes()
     _migrate_fold_image_url()
     _migrate_note_legacy_fields_cleanup()
+    _migrate_note_shares_cascade()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()

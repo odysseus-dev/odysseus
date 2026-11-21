@@ -14,6 +14,8 @@ from src.tools.notes import do_manage_notes
 def checklist(monkeypatch, tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'checklists.db'}")
     database.Note.__table__.create(engine)
+    database.NoteShare.__table__.create(engine)
+    database.NoteVersion.__table__.create(engine)
     factory = sessionmaker(bind=engine)
     monkeypatch.setattr(database, "SessionLocal", factory)
     with factory() as db:

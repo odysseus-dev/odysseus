@@ -12,6 +12,7 @@ const NOTES = [
   { id: 'dated', title: 'Date only', content: '', due_date: '2026-11-21', updated_at: '2026-10-01T10:00:00Z' },
   { id: 'goal', title: 'Run', note_type: 'goal', content: '- [x] 5k\n- [ ] 10k', items: [{ text: '5k', done: true }, { text: '10k', done: false }], updated_at: '2026-10-02T10:00:00Z' },
   { id: 'goal-done', title: 'Read', note_type: 'goal', content: '- [x] Book', items: [{ text: 'Book', done: true }], updated_at: '2026-10-03T10:00:00Z' },
+  { id: 'theirs', title: 'Shared plan', content: 'Milk', is_owner: false, can_edit: true, updated_at: '2026-11-05T10:00:00Z' },
   { id: 'pinned', title: 'Pinned', content: '', pinned: true, updated_at: '2026-09-01T10:00:00Z' },
   { id: 'cal', title: 'Meeting', source: 'calendar', label: 'calendar', content: '', updated_at: '2026-11-06T10:00:00Z' },
 ];
@@ -21,11 +22,12 @@ function view(state, active = () => false) {
 }
 const ids = queries => queries._sortedVisibleNotes().map(n => n.id);
 
-test('calendar reminder notes never show; pinned first, then newest', () => {
+test('calendar reminder notes never show; shared notes come after mine, pinned first, then newest', () => {
   const all = view({});
   assert.equal(all._userVisibleNotes().some(n => n.id === 'cal'), false);
   const order = ids(all);
   assert.equal(order[0], 'pinned');
+  assert.equal(order.at(-1), 'theirs', 'shared with me sits under its own header, after mine');
   assert.deepEqual(order.slice(1, 4), ['remind', 'remind-early', 'tagged'], 'newest edit first among the rest');
 });
 
@@ -45,11 +47,13 @@ test('each filter chip keeps only its notes', () => {
   assert.deepEqual(ids(view({ activeFilter: 'default' })).includes('tagged'), false, 'untagged only');
   assert.deepEqual(ids(view({ activeFilter: 'goals' })).sort(), ['goal', 'goal-done']);
   assert.deepEqual(ids(view({ activeFilter: 'today' })), ['goal'], 'goals with a step left');
+  assert.deepEqual(ids(view({ activeFilter: 'shared' })), ['theirs']);
   assert.deepEqual(ids(view({ activeLabel: 'home' })), ['tagged'], 'a #tag matches without its hash');
 });
 
 test('search matches title, content, tag and task text, case-insensitively as typed lower-case', () => {
   assert.deepEqual(ids(view({ searchQuery: 'groceries' })), ['plain']);
+  assert.deepEqual(ids(view({ searchQuery: 'milk' })), ['theirs']);
   assert.deepEqual(ids(view({ searchQuery: 'work' })), ['tagged']);
   assert.deepEqual(ids(view({ searchQuery: '10k', activeFilter: 'goals' })), ['goal']);
   assert.deepEqual(ids(view({ searchQuery: 'nothing like this' })), []);
@@ -80,7 +84,7 @@ test('an empty or blank search shows every note; a search with no match says so'
   assert.deepEqual(searchTerms('   '), []);
   assert.deepEqual(searchTerms(' Trip  LISBON '), ['trip', 'lisbon']);
   const all = ids(view({}));
-  assert.equal(all.length, 8);
+  assert.equal(all.length, 9);
   assert.deepEqual(ids(view({ searchQuery: '   ' })), all, 'whitespace is no filter');
   assert.equal(emptySearchText('zzzz'), 'No notes match \u201czzzz\u201d');
   assert.doesNotMatch(emptySearchText('zzzz'), /No notes yet/);

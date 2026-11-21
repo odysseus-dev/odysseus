@@ -188,7 +188,8 @@ _MAX_INDENT = 3
 
 # Note types that are stored modes rather than a description of the content.
 # Goal notes keep their progress/Today views and a drawing keeps its type and
-# gallery link, so neither is derived from content.
+# gallery link (it opens in the note window as a note with its image; the
+# canvas cannot be re-edited), so neither is derived from content.
 STORED_NOTE_TYPES = ("goal", "draw")
 
 
@@ -346,11 +347,13 @@ def strip_task_lines(content: Optional[str]) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
-def toggle_task(content: Optional[str], index: int) -> Tuple[str, Dict]:
+def toggle_task(content: Optional[str], index: int, done: Optional[bool] = None) -> Tuple[str, Dict]:
     """Flip the done state of the `index`-th task line (0-based).
 
-    Returns (new_content, toggled_item). Raises IndexError if there is no task
-    line at that ordinal. Indent, bullet and text are left as they were.
+    With `done`, set it to that state instead: a task already there is left
+    as it is. Returns (new_content, toggled_item). Raises IndexError if there
+    is no task line at that ordinal. Indent, bullet and text are left as they
+    were.
     """
     text = content or ""
     if index < 0:
@@ -359,7 +362,7 @@ def toggle_task(content: Optional[str], index: int) -> Tuple[str, Dict]:
     for seen, (lineno, m) in enumerate(_iter_task_matches(text)):
         if seen != index:
             continue
-        now_done = m.group(3).lower() != "x"
+        now_done = m.group(3).lower() != "x" if done is None else bool(done)
         raw = lines[lineno]
         box_at = raw.index("[", len(m.group(1)) + 1)
         lines[lineno] = raw[:box_at] + ("[x]" if now_done else "[ ]") + raw[box_at + 3:]
@@ -557,6 +560,24 @@ def keep_task_lines(previous: Optional[str], content: Optional[str]) -> str:
         return new
     lines = _split_lines(previous or "")
     return _insert_task_lines(new, [lines[lineno] for lineno, _ in _iter_task_matches(previous)])
+
+
+def find_task_index(content: Optional[str], index: int, text: Optional[str]) -> Optional[int]:
+    """The ordinal of the task a client meant, given the index and text it saw.
+
+    The index wins when the task there still has that text. Otherwise the one
+    task with that text is used (a line was inserted or removed above it).
+    Returns None when no task, or more than one, has the text. Without a text
+    (older clients) the index is taken as is.
+    """
+    tasks = parse_task_lines(content)
+    if text is None:
+        return index
+    wanted = " ".join(str(text).split())
+    if 0 <= index < len(tasks) and " ".join(tasks[index]["text"].split()) == wanted:
+        return index
+    same = [t["index"] for t in tasks if " ".join(t["text"].split()) == wanted]
+    return same[0] if len(same) == 1 else None
 
 
 def append_task_line(content: Optional[str], text: str, indent=0) -> Tuple[str, Dict]:

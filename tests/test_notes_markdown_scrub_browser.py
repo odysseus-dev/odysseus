@@ -306,4 +306,7 @@ def test_task_link_navigates_and_checkbox_still_toggles(page):
     with page.expect_response("**/items/0/toggle"):
         checkbox.press("Space")
     checkbox.and_(card.locator('[aria-checked="false"]')).wait_for()
-    assert toggles == [{"body_revision": "r0"}, {"body_revision": "r1"}]
+    # Each tick carries the revision it was made on; the task's text and the
+    # wanted state ride along (the toggle route's `text` and `done`).
+    assert [t["body_revision"] for t in toggles] == ["r0", "r1"]
+    assert [t.get("done") for t in toggles] in ([True, False], [None, None])
