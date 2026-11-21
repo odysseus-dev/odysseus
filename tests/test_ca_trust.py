@@ -15,6 +15,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from tests.helpers.symlinks import requires_symlinks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -219,6 +220,7 @@ class CATrustTests(unittest.TestCase):
                     with contextlib.redirect_stderr(io.StringIO()):
                         self.assertEqual(checker.main(["--overrides"]), 1)
 
+    @requires_symlinks
     def test_safe_cafile_does_not_hide_stale_hashed_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -235,6 +237,7 @@ class CATrustTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertIn("emSign ECC Root CA - G3", errors.getvalue())
 
+    @requires_symlinks
     def test_hashed_non_ca_certificate_does_not_reject_clean_store(self):
         # Ubuntu's OpenSSL directory can also hash ssl-cert-snakeoil.pem.
         # A valid server certificate has no CA entries in get_ca_certs().
@@ -249,6 +252,7 @@ class CATrustTests(unittest.TestCase):
             ), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(checker.main(["--system"]), 0)
 
+    @requires_symlinks
     def test_multiple_ca_directories_are_all_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             clean, stale = Path(tmp) / "clean", Path(tmp) / "stale"

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.helpers.cli_loader import load_script
+from tests.helpers.symlinks import requires_symlinks
 
 ROOT = Path(__file__).resolve().parents[1]
 build = load_script("build_frontend.py")
@@ -74,6 +75,7 @@ def test_duplicate_outputs_and_unmapped_sources_are_rejected(tmp_path):
     assert not output.exists()
 
 
+@requires_symlinks
 def test_symlink_output_cannot_overwrite_another_file(tmp_path):
     _, output = project(tmp_path)
     outside = tmp_path / "outside.js"
