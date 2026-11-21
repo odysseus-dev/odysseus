@@ -58,6 +58,26 @@ class EmbeddingClient:
         self._batch_size = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "8")))
         self._max_chars = max(200, int(os.getenv("EMBEDDING_MAX_CHARS", "900")))
 
+    def close(self) -> None:
+        """Release pooled HTTP connections; safe to call more than once."""
+        client = getattr(self, "_client", None)
+        if client is not None:
+            client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def __del__(self):
+        # Explicit close/context management is preferred. This also covers
+        # discarded lanes and partially initialized clients during shutdown.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def get_sentence_embedding_dimension(self) -> int:
         """Probe the endpoint for embedding dimension if not yet known."""
         if self._dim is not None:
@@ -273,12 +293,18 @@ def get_embedding_client():
     # Try the HTTP embedding API — unless we already found it down this process
     # (avoids paying the connect timeout again on every RAG/memory/tool probe).
     if not _http_embed_down:
+        client = None
         try:
             client = EmbeddingClient()
             client.get_sentence_embedding_dimension()  # health check
             logger.info(f"Using HTTP embedding API: {client.url} model={client.model}")
             return client
         except Exception as e:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    logger.debug("Could not close failed HTTP embedding probe")
             _http_embed_down = True
             logger.warning(f"HTTP embedding API unavailable ({e}); using local FastEmbed for the rest of this process")
 
