@@ -112,9 +112,9 @@ def _load_custom_endpoint() -> Dict[str, str]:
 
 
 def _build_fastembed_client():
-    from src.embeddings import FastEmbedClient
+    from src.embeddings import get_shared_fastembed_client
 
-    client = FastEmbedClient()
+    client = get_shared_fastembed_client()
     client.get_sentence_embedding_dimension()
     return client
 
