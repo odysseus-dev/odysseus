@@ -471,6 +471,28 @@ function _persistCompletedSessions() {
 // Session list keyboard navigation state
 let _sessionListFocused = false;
 
+// An open note window owns the `#note-<id>` hash (features/notes/ui/windowRoute.js).
+// The chat under it goes in that entry's history.state, under the same key as
+// there: a reload keeps it and comes back to that chat, a new tab has none.
+const NOTE_ENTRY_CHAT_KEY = 'odysseusChatId';
+const _NOTE_HASH_RE = /^#note-/;
+
+/** Show chat `id` in the URL (null: no chat), without touching an open note's hash. */
+function _writeChatHash(id, emptyUrl = window.location.pathname) {
+  if (_NOTE_HASH_RE.test(window.location.hash)) {
+    history.replaceState({ ...(history.state || {}), [NOTE_ENTRY_CHAT_KEY]: id || null }, '', window.location.href);
+    return;
+  }
+  history.replaceState(null, '', id ? '#' + id : emptyUrl);
+}
+
+/** The chat a `#note-<id>` entry was over, when this tab put it there before a reload. */
+function _noteEntryChatId() {
+  if (!_NOTE_HASH_RE.test(window.location.hash)) return '';
+  const id = history.state?.[NOTE_ENTRY_CHAT_KEY];
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id) ? id : '';
+}
+
 /** Clear current session from UI (after delete/archive). */
 function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
@@ -481,7 +503,7 @@ function _deselectCurrentSession(sid) {
   uiModule.el('chat-history').innerHTML = '';
   uiModule.el('current-meta').textContent = 'Odysseus Chat';
   Storage.remove('lastSessionId');
-  history.replaceState(null, '', window.location.pathname);
+  _writeChatHash(null);
   if (window.chatModule && window.chatModule.showWelcomeScreen) {
     window.chatModule.showWelcomeScreen();
   }
@@ -2039,6 +2061,8 @@ export async function loadSessions() {
     }
     sessions = _normalizeSessionsList(fetched);
     renderSessionList();
+    // The Notes context strip reads each chat's note from this list.
+    window.dispatchEvent(new CustomEvent('odysseus:sessions-loaded'));
 
     const sessionsSection = uiModule.el('sessions-section');
     const visibleSessions = sessions.filter(s => !s.archived && !_isUnsavedCompareSession(s));
@@ -2057,7 +2081,8 @@ export async function loadSessions() {
     const _realSessions = activeSessions.filter(s => !_isTransient(s));
     let hashId = window.location.hash.replace('#', '');
     if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId) || /^open=notes&note=/.test(hashId)) {
-      hashId = '';
+      // A reload with a note open: the chat it was open over, not a fresh root load.
+      hashId = _noteEntryChatId();
     }
     const _isFirstLoad = !sessionStorage.getItem('ody-session-active');
     const _freshRootLoad = !_rootFreshChatApplied && !hashId && !currentSessionId && !_pendingChat;
@@ -2212,9 +2237,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     if (!_isTransientChat) {
       Storage.set('lastSessionId', id);
       // Update URL hash without triggering hashchange handler
-      if (window.location.hash !== '#' + id) {
-        history.replaceState(null, '', '#' + id);
-      }
+      if (window.location.hash !== '#' + id) _writeChatHash(id);
     }
     _forceExitIncognitoUi();
     // Restore character preset for persistent chats
@@ -2586,7 +2609,7 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   }));
   try { window.__odysseusLastSelectedSessionId = ''; } catch (_) {}
   Storage.remove('lastSessionId');
-  history.replaceState(null, '', window.location.pathname);
+  _writeChatHash(null);
   document.querySelectorAll('.list-item.active-session, .session-item.active').forEach(el => {
     el.classList.remove('active-session', 'active');
   });
@@ -2699,7 +2722,7 @@ export async function materializePendingSession() {
     }));
     if (!isIncognito) {
       Storage.set('lastSessionId', payload.id);
-      history.replaceState(null, '', '#' + payload.id);
+      _writeChatHash(payload.id);
     }
 
     // Reload the sidebar in the background. Awaiting this used to block the first
@@ -2775,7 +2798,7 @@ export function setCurrentSessionId(id) {
   if (!id) {
     _suppressNextSessionLoading = true;
     Storage.remove('lastSessionId');
-    history.replaceState(null, '', window.location.pathname);
+    _writeChatHash(null);
     document.querySelectorAll('.list-item.active-session, .session-item.active').forEach(el => {
       el.classList.remove('active-session', 'active');
     });

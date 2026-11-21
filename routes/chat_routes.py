@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from core.models import ChatMessage
@@ -63,6 +63,7 @@ from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage, Note
 from core.database import Document as DBDocument, ModelEndpoint
+from core.note_agent_scope import bind_note_edit_scope, load_note_edit_scope, shared_note_ids, unbind_note_edit_scope
 from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
 from routes.model_routes import _visible_models
@@ -915,6 +916,27 @@ def _post_response_extraction_allowed(
         and not tool_approval_continuation
         and context.get("unattended_mode") is not True
     )
+
+
+_REQUESTED_DISABLED_TOOLS_MAX = 64
+
+
+def _requested_disabled_tools(raw: Any) -> set[str]:
+    """Tool names a chat_stream caller withholds for this turn.
+
+    A JSON array in the form field, or a list in a JSON body. It can only
+    narrow the turn's tools: the names join the disabled set, nothing is
+    re-enabled. Anything malformed is ignored.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return set()
+    if not isinstance(raw, (list, tuple)):
+        return set()
+    names = [str(item).strip()[:128] for item in raw if isinstance(item, str) and item.strip()]
+    return set(names[:_REQUESTED_DISABLED_TOOLS_MAX])
 
 
 def _client_runtime_context_system_message(
@@ -2184,8 +2206,13 @@ def _parse_selected_note_ids(raw) -> list[str]:
     return list(dict.fromkeys(parsed))
 
 
-def _format_selected_notes_context(notes) -> str:
-    """Format selected Notes/Todos as reference context for the model."""
+def _format_selected_notes_context(notes, focus_task: str = "") -> str:
+    """Format selected Notes/Todos as reference context for the model.
+
+    `focus_task` is the checklist item a chat started from one note is about
+    (`sessions.note_focus_task`); it is listed with the first note, which is
+    that chat's note.
+    """
     sections = []
 
     from core.notes_markdown import derive_note_type, effective_content, parse_task_lines
@@ -2194,8 +2221,12 @@ def _format_selected_notes_context(notes) -> str:
         # Checklists are `- [ ]` task lines inside content; the content block
         # carries them verbatim and the Items block restates them with indices.
         content = effective_content(note.content, note.items, getattr(note, "image_url", None))
-        lines = [
-            f"--- Selected Note {index} ---",
+        lines = [f"--- Selected Note {index} ---"]
+        note_id = getattr(note, "id", None)
+        if note_id:
+            # A run started from this note updates it by id.
+            lines.append(f"Id: {note_id}")
+        lines += [
             f"Title: {note.title or '(untitled)'}",
             f"Type: {derive_note_type(note.note_type, content)}",
         ]
@@ -2213,6 +2244,9 @@ def _format_selected_notes_context(notes) -> str:
                 status = "done" if task["done"] else "pending"
                 if task["text"]:
                     lines.append(f"- [{status}] {task['text']}")
+
+        if focus_task and index == 1:
+            lines.append(f"Focus todo: {focus_task}")
 
         sections.append("\n".join(lines))
 
@@ -2488,6 +2522,11 @@ def setup_chat_routes(
         message = form_data.get("message")
         session = form_data.get("session")
         selected_note_ids = _parse_selected_note_ids(form_data.get("selected_note_ids"))
+        # A chat started from a note: its note, and the todo a per-item run
+        # is about, come from the session row below. A request's own
+        # `note_focus_task` is never read.
+        note_edit_scope = None
+        selected_notes_untrusted = False
 
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")
@@ -2521,6 +2560,10 @@ def setup_chat_routes(
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         plan_mode = str(form_data.get("plan_mode") or (body or {}).get("plan_mode") or "").lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Notes' agent runs send ["manage_notes"]: the run must not edit notes.
+        requested_disabled_tools = _requested_disabled_tools(
+            form_data.get("disabled_tools") or (body or {}).get("disabled_tools")
+        )
         client_runtime_context = None
         raw_client_runtime_context = (
             form_data.get("client_runtime_context")
@@ -2814,20 +2857,55 @@ def setup_chat_routes(
             )
             owner = effective_user(request)
             selected_notes = []
-            if selected_note_ids:
-                notes_db = SessionLocal()
-                try:
-                    selected_notes = (
-                        notes_db.query(Note)
-                        .filter(
-                            Note.id.in_(selected_note_ids),
-                            Note.owner == owner,
-                        )
+            notes_db = SessionLocal()
+            try:
+                # A chat started from a note may change that note only; the
+                # scope is on the session row, never taken from this request.
+                note_edit_scope = load_note_edit_scope(notes_db, session, owner)
+                # The note a chat was started from is in context on every
+                # turn of that chat, not only the first, and it comes first.
+                context_note_ids = list(selected_note_ids)
+                if note_edit_scope is not None:
+                    context_note_ids = [note_edit_scope.note_id] + [i for i in context_note_ids if i != note_edit_scope.note_id]
+                if context_note_ids:
+                    # Single-user mode has no username: its notes carry no owner.
+                    owned = (Note.owner == owner) if owner else (Note.owner.is_(None) | (Note.owner == ""))
+                    by_id = {
+                        n.id: n for n in notes_db.query(Note)
+                        .filter(Note.id.in_(context_note_ids), owned)
                         .all()
+                    }
+                    selected_notes = [by_id[i] for i in context_note_ids if i in by_id]
+                    # Only the caller's own notes are loaded. One that nobody
+                    # else can open holds the owner's own text, so it does
+                    # not arm the tool gate; a note with a collaborator does,
+                    # since they may have written it.
+                    selected_notes_untrusted = bool(
+                        shared_note_ids(notes_db, [n.id for n in selected_notes])
                     )
-                finally:
-                    notes_db.close()
-            selected_notes_context = _format_selected_notes_context(selected_notes)
+            finally:
+                notes_db.close()
+            note_focus_task = ""
+            if note_edit_scope is not None:
+                # The run is shown its note below: that is the version it has read.
+                for _note in selected_notes:
+                    note_edit_scope.saw(_note)
+                if selected_notes and selected_notes[0].id == note_edit_scope.note_id:
+                    note_focus_task = note_edit_scope.focus_task
+                # Every turn of a chat started from a note is an agent turn,
+                # whatever the composer's toggle says: a follow-up (or a typed
+                # answer to an approval card) keeps the note's tools and scope.
+                if chat_mode != "agent":
+                    chat_mode = "agent"
+                    user_requested_agent = True
+            selected_notes_context = _format_selected_notes_context(selected_notes, note_focus_task)
+            # Which notes this turn carried, stored on its user message so
+            # the chat can show them later. The title is as it was sent. The
+            # todo a run is about goes with its note: the prompt does not name
+            # it, so this is the only place the chat can show it.
+            context_notes_meta = [{"id": n.id, "title": n.title or ""} for n in selected_notes]
+            if note_focus_task and context_notes_meta:
+                context_notes_meta[0]["focus_task"] = note_focus_task
 
             if tool_approval_id:
                 _reject_delegated_tool_approval(request)
@@ -3101,6 +3179,8 @@ def setup_chat_routes(
             message=message,
             session_id=session,
             selected_notes_context=selected_notes_context,
+            selected_notes_untrusted=selected_notes_untrusted,
+            context_notes=context_notes_meta,
             preset_id=preset_id,
             att_ids=att_ids,
             use_web=use_web,
@@ -3346,6 +3426,14 @@ def setup_chat_routes(
             # explicit notes/calendar/email requests merely because a browser
             # happened to run earlier in the session.
             _turn_capabilities = frozenset({'search_browser'})
+        if requested_disabled_tools:
+            # A family whose every tool the caller withheld is not something
+            # this turn can be required to do: a Notes run without
+            # manage_notes that mentions a "todo" is answered, not refused.
+            _turn_capabilities = frozenset(
+                family for family in _turn_capabilities
+                if not (FAMILY_TOOLS.get(family) and FAMILY_TOOLS[family] <= requested_disabled_tools)
+            )
         _active_turn_capabilities = _turn_capabilities
         if _use_turn_contract and active_doc:
             # A visible, owner-checked editor is a turn capability even when
@@ -3570,6 +3658,11 @@ def setup_chat_routes(
             if chat_mode == 'chat':
                 disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
 
+        # Tools the caller withheld for this turn. Added last, so no promotion
+        # above re-enables them; the turn contract and the agent loop both
+        # start from this set.
+        disabled_tools.update(requested_disabled_tools)
+
         # Plan mode: investigate read-only, propose a plan, don't mutate. Block
         # every tool not on the read-only allowlist. (stream_agent_loop enforces
         # this again + drops MCP, so this is belt-and-suspenders.)
@@ -3623,23 +3716,54 @@ def setup_chat_routes(
             ) == "spec"
         except Exception:
             _spec_surface = False
-        _request_authority = request_authority_for_http(
-            request, message, owner=_user, session_id=session, workspace=workspace,
-            history=_turn_history, policy=tool_policy,
-            client_runtime_context=client_runtime_context,
-            active_document=bool(active_doc),
-            image_attachment=any(str(a.get('mime') or '').startswith('image/')
-                                 for a in (ctx.preprocessed.attachment_meta or [])),
-            capabilities=(({"photo_editor"} if _photo_editor_active else set()) | ({'search_browser'} if (
-                _explicit_browser_intent or _external_discovery_intent
-            ) else set())),
-        )
-        if exact_tool_approval is not None:
-            from src.agent_runtime.authority import RequestAuthority
-            _request_authority = (
-                exact_tool_approval.pending.request_authority
-                or RequestAuthority.empty(owner=_user, session_id=session, workspace=workspace)
-            ).restrict(tool_policy)
+        try:
+            _request_authority = request_authority_for_http(
+                request, message, owner=_user, session_id=session, workspace=workspace,
+                history=_turn_history, policy=tool_policy,
+                client_runtime_context=client_runtime_context,
+                active_document=bool(active_doc),
+                image_attachment=any(str(a.get('mime') or '').startswith('image/')
+                                     for a in (ctx.preprocessed.attachment_meta or [])),
+                capabilities=(({"photo_editor"} if _photo_editor_active else set()) | ({'search_browser'} if (
+                    _explicit_browser_intent or _external_discovery_intent
+                ) else set())),
+            )
+            if exact_tool_approval is not None:
+                from src.agent_runtime.authority import RequestAuthority
+                _request_authority = (
+                    exact_tool_approval.pending.request_authority
+                    or RequestAuthority.empty(owner=_user, session_id=session, workspace=workspace)
+                ).restrict(tool_policy)
+            elif note_edit_scope is not None:
+                # A chat started from a note may edit that note whatever the turn
+                # asks for; manage_notes itself keeps every write to that note
+                # (core.note_agent_scope). A grant never lifts a denial: policy
+                # and disabled tools are still checked before it.
+                from dataclasses import replace as _replace_authority
+                from src.agent_runtime.authority import OperationGrant
+                from src.agent_runtime.resources import seal_owned_scopes
+                _note_scopes = tuple(
+                    scope for scope in seal_owned_scopes(
+                        _request_authority.owner, _request_authority.session_id, ("manage_notes",),
+                    ) if scope not in _request_authority.owned_scopes
+                )
+                # The request may already grant manage_notes ("make a new note
+                # from this one"), possibly limited to some actions. An authority
+                # holds one grant per tool, so the note chat's grant replaces it.
+                _request_authority = _replace_authority(
+                    _request_authority,
+                    grants=tuple(g for g in _request_authority.grants if g.tool != "manage_notes")
+                    + (OperationGrant("manage_notes"),),
+                    owned_scopes=tuple(_request_authority.owned_scopes) + _note_scopes,
+                )
+        except ValueError:
+            # A malformed authority is a server bug, not the user's. Nothing
+            # has run yet: say so in the chat instead of a bare 500.
+            logger.exception("Could not build the request authority for session %s", session)
+            return JSONResponse(status_code=500, content={"error": {"message": (
+                "This message could not be started: the server could not set up its "
+                f"permissions (session {session}). Nothing was run. Details are in the server log."
+            )}})
         _turn_contract = None
         # Image models execute directly, not through the text-agent inventory.
         # Keep the permission policy above, but do not apply routing omissions
@@ -3687,6 +3811,8 @@ def setup_chat_routes(
                 # do not broaden the turn to web search/fetch merely because
                 # the wording no longer repeats the original URL.
                 _selected_tools = frozenset({"private_browser"})
+            if _selected_tools is not None and requested_disabled_tools:
+                _selected_tools = frozenset(set(_selected_tools) - requested_disabled_tools) or None
             _required_tools = set(_selected_tools or ())
             _selected_tools = preserve_bound_editor_selected_tools(
                 message,
@@ -3766,7 +3892,13 @@ def setup_chat_routes(
                 policy=_contract_policy, required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
-                always_available_tools=(FAMILY_TOOLS["documents"] if active_doc else ()),
+                always_available_tools=(
+                    (FAMILY_TOOLS["documents"] if active_doc else frozenset())
+                    # A chat started from a note may always edit that note,
+                    # whatever else the request is about (the tool itself
+                    # keeps it to that note; core.note_agent_scope).
+                    | ({"manage_notes"} if note_edit_scope is not None else frozenset())
+                ),
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
@@ -4623,6 +4755,8 @@ def setup_chat_routes(
                 _agent_round_endpoint_ids = {1: _agent_actual_endpoint_id}
                 _agent_round_endpoint_labels = {1: _agent_actual_endpoint_label}
                 _terminal_saved = False
+                _pending_failure = False
+                _pending_failure_status = None
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -4949,6 +5083,17 @@ def setup_chat_routes(
                                     yield f'data: {json.dumps(_metrics_event)}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
+                        elif chunk.startswith("event: error"):
+                            # In a chat started from a note nobody may be
+                            # watching the stream, so the turn must say why
+                            # it stopped when reopened. The loop may still
+                            # send its recovered answer or agent_terminal
+                            # after the error; the save waits for the end of
+                            # the stream so that answer is the one kept.
+                            if note_edit_scope is not None and not _pending_failure:
+                                _pending_failure = True
+                                _pending_failure_status = _stream_failure_status(chunk)
+                            yield chunk
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
@@ -5009,6 +5154,51 @@ def setup_chat_routes(
                                 )
                             _stream_set(session, status="done")
                             yield chunk
+                    if _pending_failure and not _terminal_saved:
+                        # A failed turn of a chat started from a note: keep
+                        # what the loop answered (text before the error, or
+                        # the answer it recovered after it) and why it
+                        # stopped. Not post-processed, not completed.
+                        failure_status = _pending_failure_status
+                        failure_message = (
+                            f"Model request failed (HTTP {failure_status})"
+                            if failure_status is not None
+                            else "Model request failed"
+                        )
+                        failure_note = f"[Agent stopped: {failure_message}]"
+                        terminal_content = full_response.strip()
+                        terminal_content = (
+                            f"{terminal_content}\n\n{failure_note}"
+                            if terminal_content
+                            else failure_note
+                        )
+                        terminal_metadata = _render_state.metadata({
+                            **(last_metrics or {}),
+                            "failed": True,
+                            "failure": {
+                                "status": failure_status,
+                                "message": failure_message,
+                            },
+                            "model": _actual_model or _answered_by or _requested_model,
+                            "requested_model": _requested_model,
+                            "endpoint_id": _agent_actual_endpoint_id,
+                            "endpoint_label": _agent_actual_endpoint_label,
+                            "requested_endpoint_id": _agent_requested_route.get("endpoint_id"),
+                            "requested_endpoint_label": _agent_requested_route.get("endpoint_label"),
+                        })
+                        _saved_id = save_assistant_response(
+                            sess,
+                            session_manager,
+                            session,
+                            terminal_content,
+                            terminal_metadata,
+                            character_name=ctx.preset.character_name,
+                            incognito=incognito,
+                        )
+                        _terminal_saved = True
+                        _stream_set(session, status="error")
+                        if _saved_id:
+                            yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
                 except (asyncio.CancelledError, GeneratorExit):
                     # Client disconnected — save partial response. Wrap
                     # the save in its own try so an exception inside
@@ -5054,12 +5244,16 @@ def setup_chat_routes(
         async def _safe_stream() -> AsyncGenerator[str, None]:
             """Wrapper that guarantees _active_streams cleanup even if stream_with_save
             raises before reaching a mode-specific finally block."""
+            # Bound here, in the task that runs the agent loop, so every tool
+            # call of this turn sees the chat's note scope.
+            scope_token = bind_note_edit_scope(note_edit_scope)
             try:
                 async for chunk in stream_with_save():
                     if _shutdown.is_shutting_down():
                         break
                     yield chunk
             finally:
+                unbind_note_edit_scope(scope_token)
                 _active_streams.pop(session, None)
 
         # Compare panes and explicitly unattended native clients are

@@ -9,7 +9,7 @@ import { effectiveTemperature, temperatureHint } from './sessionTemperature.js';
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer, { renderToolIcon, noteEditCommandHtml } from './chatRenderer.js?v=20260914metricssummary1';
 import chatStream from './chatStream.js?v=20261026devsync1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -553,6 +553,23 @@ import { invalidateSettings } from './appConfig.js';
     );
   });
 
+  // A context card's x (features/notes/ui/contextStrip.js) takes that note
+  // out of this chat's selection.
+  window.addEventListener('odysseus:notes-context-remove', (event) => {
+    const noteId = event.detail?.noteId;
+    if (!noteId) return;
+    const sessionId = sessionModule.getCurrentSessionId?.();
+    const current = sessionId ? (_selectedNoteIdsBySession.get(sessionId) || []) : _pendingSelectedNoteIds;
+    const next = current.filter(id => id !== noteId);
+    if (sessionId) {
+      if (next.length) _selectedNoteIdsBySession.set(sessionId, next);
+      else _selectedNoteIdsBySession.delete(sessionId);
+    } else {
+      _pendingSelectedNoteIds = next;
+    }
+    _renderSelectedNotesIndicator(next);
+  });
+
   document.getElementById('selected-notes-context-btn')?.addEventListener('click', () => {
     const sessionId = sessionModule.getCurrentSessionId?.();
     if (sessionId) {
@@ -613,25 +630,14 @@ import { invalidateSettings } from './appConfig.js';
     return Math.max(50, Math.min(95, Math.round(n)));
   }
 
+  // The selected notes show as cards above the composer, next to the chat's
+  // own note (features/notes/ui/contextStrip.js); the old count chip stays
+  // hidden.
   function _renderSelectedNotesIndicator(noteIds){
+    const ids = Array.isArray(noteIds) ? [...noteIds] : [];
+    window.dispatchEvent(new CustomEvent('odysseus:notes-context-changed', { detail: { noteIds: ids } }));
     const button = document.getElementById('selected-notes-context-btn');
-    const count = document.getElementById('selected-notes-context-count');
-
-    if (!button || !count) return;
-
-    const total = Array.isArray(noteIds) ? noteIds.length : 0;
-    if(!total){
-      button.style.display = 'none';
-      count.textContent = '';
-      return;
-    }
-    count.textContent = `${total} note${total === 1 ? '' : 's'} selected`;
-    button.style.display = '';
-    button.title = `${total} selected Note/Todo${total === 1 ? '' : 's'} — click to clear`;
-    button.setAttribute(
-      'aria-label',
-      `Clear ${total} selected Note/Todo${total === 1 ? '' : 's'} context`
-    );
+    if (button) button.style.display = 'none';
   }
   function _liveSessionModule() {
     return (window.sessionModule && window.sessionModule.getCurrentSessionId)
@@ -2648,6 +2654,9 @@ import { invalidateSettings } from './appConfig.js';
         const _bubbleMode = (_toggleStateForBubble.mode || 'chat') === 'agent' ? 'agent' : 'chat';
         const _bubbleMeta = _pendingAttachInfo ? { attachments: _pendingAttachInfo } : {};
         _bubbleMeta.interaction_mode = _bubbleMode;
+        // The notes this turn carries, as the server records them on the message.
+        const _contextNotes = window.notesModule?.contextNotes?.() || [];
+        if (_contextNotes.length) _bubbleMeta.context_notes = _contextNotes;
         if (docSel) {
           _bubbleMeta.document_id = documentModule?.getCurrentDocId?.() || '';
           _bubbleMeta.document_selections = Array.isArray(docSel) ? docSel : [docSel];
@@ -3581,7 +3590,7 @@ import { invalidateSettings } from './appConfig.js';
             commandHtml: q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '',
           };
         }
-        return { label: '', commandHtml: '' };
+        return { label: '', commandHtml: noteEditCommandHtml(tool, command, data) };
       }
 
       function _suppressRawToolOutput(tool, ok) {
@@ -6674,6 +6683,10 @@ import { invalidateSettings } from './appConfig.js';
     let canonicalTerminalSeen = false;
     let currentToolBubble = null;
     let currentToolThread = null;
+    // A question or tool approval the run ended on. Rendered once the replay
+    // settles, with the same card the live stream and a reload show, so a chat
+    // opened while its run was still going can still be answered with a click.
+    let replayAskUser = null;
     // "Rich" responses (tool calls, sources, doc streaming, multi-round) need the
     // full canonical render, which is rebuilt from the saved DB record on reload.
     // Plain text replies can be finalized in place without a reload.
@@ -6849,6 +6862,9 @@ import { invalidateSettings } from './appConfig.js';
             }
           } else if (json.type === 'message_saved') {
             replayMessageId = String(json.id || '');
+          } else if (json.type === 'ask_user') {
+            rich = true;
+            replayAskUser = json.data || null;
           } else if (json.type === 'fallback') {
             // Replay can attach after the selected route has already failed.
             // Reflect the fallback immediately, then reload the canonical
@@ -6971,6 +6987,10 @@ import { invalidateSettings } from './appConfig.js';
             metricsData = { ...metricsData, ...saved.metadata };
             roundText = String(saved.content || '');
             if (roundText.trim()) renderDelta(saved.metadata || {}, false);
+            // The saved record is authoritative: it says whether the
+            // question is still open (a reload renders it from here too).
+            const pending = (saved.metadata?.tool_events || []).map(ev => ev?.ask_user).filter(Boolean).at(-1);
+            if (pending) replayAskUser = pending;
           }
         }
       } catch (error) {
@@ -7001,6 +7021,7 @@ import { invalidateSettings } from './appConfig.js';
     replayRendering.settle();
     replayMarker.remove();
     uiModule.restoreHistoryScroll?.(scrollSnapshot);
+    if (replayAskUser && !replayAskUser.resolved) chatRenderer.renderAskUserCard(replayAskUser);
     return true;
   }
 

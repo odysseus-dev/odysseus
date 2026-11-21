@@ -94,6 +94,8 @@ function makeClassList() {
   };
 }
 
+const dispatched = [];
+
 function makeWorld() {
   const byId = new Map();
   const frames = [];
@@ -167,6 +169,7 @@ function makeWorld() {
     location: { origin: 'http://odysseus.test', hash: '', pathname: '/', href: '/' },
     addEventListener() {},
     removeEventListener() {},
+    dispatchEvent(event) { dispatched.push(event.type); return true; },
     chatModule: {
       detachCurrentStream() {},
       showWelcomeScreen() {},
@@ -245,6 +248,7 @@ const sessions = await import(SESSIONS_URL + '?bootstrap');
 const shell = await import(SHELL_URL + '?bootstrap');
 
 const seeded = await sessions.loadSessions();
+const eventsAfterSeed = [...dispatched];
 world.paint(1);
 localStorage.setItem('lastSessionId', 'existing');
 message.value = 'draft must survive';
@@ -260,6 +264,7 @@ const beforePaint = row.status.textContent;
 world.paint(2);
 world.runTimers();
 const staleRouteRan = shell.runDeferredRouteOpener({ sessionsSettled: true });
+const eventsAfter503 = [...dispatched];
 
 const errorsBeforeAuth = __sessionErrors.length;
 globalThis.fetch = async () => {
@@ -289,6 +294,9 @@ console.log(JSON.stringify({
   authResult,
   authRedirect: window.location.href,
   authAddedError: __sessionErrors.length !== errorsBeforeAuth,
+  eventsAfterSeed,
+  eventsAfter503,
+  eventsAfterAuth: [...dispatched],
 }));
 """
 
@@ -390,3 +398,11 @@ def test_401_keeps_global_auth_redirect_contract(results):
     assert results["authRedirect"] == "/login"
     assert results["authAddedError"] is False
     assert results["sessionIds"] == ["existing"]
+
+
+def test_sessions_loaded_fires_only_once_a_list_is_applied(results):
+    # The Notes context strip re-reads each chat's note on this event, so it
+    # must follow the seeded list and never a 503 or a 401 that kept the old one.
+    assert results["eventsAfterSeed"] == ["odysseus:sessions-loaded"]
+    assert results["eventsAfter503"] == ["odysseus:sessions-loaded"]
+    assert results["eventsAfterAuth"] == ["odysseus:sessions-loaded"]

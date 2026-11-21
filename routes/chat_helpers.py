@@ -864,6 +864,7 @@ def add_user_message(
     incognito: bool = False,
     interaction_mode: str | None = None,
     auto_escalated: bool = False,
+    context_notes: list | None = None,
 ):
     """Add user message to session history and update session name.
     Incognito messages must not mutate persistent session history, even in
@@ -877,6 +878,8 @@ def add_user_message(
         user_meta["interaction_mode"] = interaction_mode
     if auto_escalated:
         user_meta["auto_escalated"] = True
+    if context_notes:
+        user_meta["context_notes"] = context_notes
     clean_content = strip_tui_local_context(preprocessed.user_content)
     sess.add_message(ChatMessage("user", clean_content, metadata=user_meta or None))
     chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
@@ -1117,6 +1120,27 @@ def _session_is_research_spinoff(sess) -> bool:
     return False
 
 
+def selected_notes_context_message(selected_notes_context: str, *, arm_tool_gate: bool = True) -> dict:
+    """The selected notes as untrusted reference context.
+
+    The text always stays fenced as data, never as the user's turn. Whether it
+    also arms the tool gate is the caller's call: a note with collaborators
+    may hold text another account wrote, so it does, like retrieved content;
+    the caller's own private notes do not (`arm_tool_gate=False`). Runs
+    started from a note get their note through here too.
+    """
+    return untrusted_context_message(
+        "Selected notes and todos",
+        "The following selected notes and todos are reference context explicitly chosen "
+        "by the user. Use them directly when relevant to the user's request. Do not "
+        "ask for permission to use this context, and do not call note-management "
+        "tools just to retrieve the same notes; use those tools only for a requested "
+        "change or when this context is insufficient.\n\n"
+        + selected_notes_context,
+        arm_tool_gate=arm_tool_gate,
+    )
+
+
 async def build_chat_context(
     sess,
     request,
@@ -1125,6 +1149,8 @@ async def build_chat_context(
     message: str,
     session_id: str,
     selected_notes_context: str | None = None,
+    selected_notes_untrusted: bool = True,
+    context_notes: list | None = None,
     preset_id=None,
     att_ids: list = None,
     use_web=None,
@@ -1179,6 +1205,8 @@ async def build_chat_context(
             user_meta["interaction_mode"] = interaction_mode
         if auto_escalated:
             user_meta["auto_escalated"] = True
+        if context_notes:
+            user_meta["context_notes"] = context_notes
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
     elif persist_user_message:
         add_user_message(
@@ -1188,6 +1216,7 @@ async def build_chat_context(
             incognito=False,
             interaction_mode=interaction_mode,
             auto_escalated=auto_escalated,
+            context_notes=context_notes,
         )
 
     # Fire events
@@ -1298,20 +1327,9 @@ async def build_chat_context(
 
     # Inject selected notes as context
     if selected_notes_context:
-        selected_notes_context = (
-            "The following selected notes and todos are reference context explicitly chosen "
-            "by the user. Use them directly when relevant to the user's request. Do not "
-            "ask for permission to use this context, and do not call note-management "
-            "tools just to retrieve the same notes; use those tools only for a requested "
-            "change or when this context is insufficient.\n\n"
-            + selected_notes_context
-        )
-        preface.append(
-            untrusted_context_message(
-                "Selected notes and todos",
-                selected_notes_context,
-            )
-        )
+        preface.append(selected_notes_context_message(
+            selected_notes_context, arm_tool_gate=selected_notes_untrusted,
+        ))
 
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:
