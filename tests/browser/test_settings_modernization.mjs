@@ -695,8 +695,8 @@ async function mobileFinderAction(page) {
 }
 
 // Calls the app's own Settings module, the way other modules deep-link into it.
-async function openViaModule(page, tab, section, via = 'settings') {
-  return page.evaluate(async ({ tab, section, via }) => {
+async function openViaModule(page, tab, section, via = 'settings', minObservationMs = 250) {
+  return page.evaluate(async ({ tab, section, via, minObservationMs }) => {
     const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
     const settings = await import(src);
     if (via === 'admin' && window.adminModule) window.adminModule.open(tab);
@@ -707,7 +707,7 @@ async function openViaModule(page, tab, section, via = 'settings') {
       const curTab = activeEl ? activeEl.dataset.settingsTab : null;
       const curSection = document.activeElement?.dataset?.settingsSection || null;
       if (curTab === tab && (!section || curSection === section)) break;
-      if (curTab && curTab !== tab && Date.now() - start >= 60) break;
+      if (curTab && curTab !== tab && Date.now() - start >= minObservationMs) break;
       await new Promise(r => setTimeout(r, 10));
     }
     const active = document.querySelector('#settings-modal [data-settings-tab].active');
@@ -715,7 +715,7 @@ async function openViaModule(page, tab, section, via = 'settings') {
       .filter(panel => !panel.classList.contains('hidden'))
       .map(panel => panel.dataset.settingsPanel);
     return { active: active ? active.dataset.settingsTab : null, shown, focused: document.activeElement?.dataset?.settingsSection || null };
-  }, { tab, section, via });
+  }, { tab, section, via, minObservationMs });
 }
 
 const RESTRICTED_PANELS = ['services', 'added-models', 'tools', 'users', 'system'];
@@ -734,6 +734,29 @@ async function testRestrictedNavigation(instance, cookies) {
   check('member: explicit open(tab) never activates an admin-only panel', leaked.length === 0, JSON.stringify(memberLandings));
   const adminEndpointsSeen = member.forbidden.filter(entry => entry.includes('/api/diagnostics/logs') || entry.includes('/api/model-endpoints'));
   check('member: adminModule.open(services) triggers no privileged requests', adminEndpointsSeen.length === 0, adminEndpointsSeen.join(','));
+
+  // Negative control: simulate delayed unauthorized panel activation at 120ms (within the 250ms window)
+  // to verify that the observation window reliably captures asynchronous/delayed regressions.
+  await member.page.evaluate(() => {
+    setTimeout(() => {
+      const modal = document.getElementById('settings-modal');
+      modal?.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+      modal?.querySelector('[data-settings-tab="services"]')?.classList.add('active');
+    }, 120);
+  });
+  const delayedActivationControl = await openViaModule(member.page, 'services');
+  check(
+    'negative control: delayed unauthorized panel activation within observation window is detected',
+    delayedActivationControl.active === 'services',
+    JSON.stringify(delayedActivationControl),
+  );
+  // Restore member back to a safe permitted tab for remaining checks
+  await member.page.evaluate(() => {
+    const modal = document.getElementById('settings-modal');
+    modal?.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+    modal?.querySelector('[data-settings-tab="ai"]')?.classList.add('active');
+  });
+
   const memberAccount = await openViaModule(member.page, 'account', 'two-factor');
   check('member: explicit open(tab) still opens panels the member is offered', memberAccount.active === 'account' && memberAccount.focused === 'two-factor', JSON.stringify(memberAccount));
   check('member restricted-navigation page has no script errors', member.errors.length === 0, member.errors.join(' | '));
@@ -2156,6 +2179,7 @@ async function main() {
 main()
   .catch(error => {
     console.error(error);
+    for (const instance of instances) console.error(`--- ${instance.name} server log tail ---\n${instance.log().slice(-3000)}`);
     process.exitCode = 1;
   })
   .finally(stopAll);
