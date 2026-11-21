@@ -291,7 +291,8 @@ test('P2 a phone in landscape shows at least 150 px of the note', async ({ brows
   await openNote(page, n.id);
   const h = await win(page).locator('.note-window-scroll').evaluate(e => e.getBoundingClientRect().height);
   expect(h).toBeGreaterThanOrEqual(150);
-  await expect(win(page).locator('.modal-close')).toBeInViewport();
+  // A phone sheet has no close button (a swipe down closes it): its title bar stays in view.
+  await expect(win(page).locator('.note-window-title')).toBeInViewport();
 });
 
 test('P2 Back with a note open closes the note, not the app', async ({ browser }) => {
