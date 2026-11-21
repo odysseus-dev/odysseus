@@ -4033,3 +4033,29 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   position: relative;
   top: 4px;
 }
+
+/* Note bodies rendered from markdown (ui/cardRendering.js). Task rows get the
+   card checklist classes (.note-checkbox, .note-check-dot, .note-check-text)
+   from ui/cardChecklist.js, so they reuse the rules above; only the markdown
+   containers need rules here. */
+.note-content-preview.note-md-preview {
+  white-space: normal;
+  opacity: 1;
+}
+.note-content-preview.note-md-preview > :not(.md-tasklist, :has(.md-note-image)) { opacity: 0.6; }
+.note-md-preview :is(p, ul, ol, pre, blockquote, h1, h2, h3, h4, h5, h6) { margin: 0; }
+.note-md-preview > * + * { margin-top: 4px; }
+.note-md-preview :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: 600; }
+.note-md-preview :is(ul, ol):not(.md-tasklist) { padding-left: 16px; }
+.note-md-preview .md-tasklist {
+  list-style: none;
+  padding: 0;
+}
+/* Same treatment as .note-link, which the plain-text preview used. */
+.note-md-preview a {
+  color: var(--accent-primary, var(--red));
+  text-decoration: underline;
+  word-break: break-all;
+}
+/* Code blocks are previews here; copy/run/edit live in chat. */
+.note-md-preview pre :is(.copy-code, .run-code, .edit-code) { display: none; }

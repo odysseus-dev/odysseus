@@ -28,6 +28,8 @@ def checklist(monkeypatch, tmp_path):
 
 
 def call(note_id, action="view", owner="sft_checklist", **args):
+    if action == "toggle_item" and "body_revision" not in args:
+        args["body_revision"] = call(note_id, owner=owner).get("body_revision")
     return asyncio.run(do_manage_notes(json.dumps({"action": action, "id": note_id, **args}), owner=owner))
 
 
@@ -86,7 +88,7 @@ def test_remove_item_never_silently_toggles_checked_state(checklist):
     assert call(checklist, "update", checklist_items=[
         {"text": "tea", "done": False}, {"text": "rice", "done": True},
     ])["exit_code"] == 0
-    assert call(checklist) == before
+    assert call(checklist)["results"].splitlines()[2:] == before["results"].splitlines()[2:]
 
 
 @pytest.mark.parametrize('items', [None, 'drop keys, meeting 2pm', [{'text': ''}], [{'text': 'keys', 'done': 'false'}]])

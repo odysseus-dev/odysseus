@@ -399,6 +399,8 @@ try {
       // M6: Selection highlight validity across edits
       const text = 'First line intro.\nTarget highlighted phrase to anchor.\nLast line footer.';
       await page.evaluate(async (content) => {
+        // Characterizes source-offset re-anchoring, so pin the Markdown source editor.
+        localStorage.setItem('odysseus-doc-md-editor-mode', 'markdown');
         await window.editor.injectFreshDoc({
           id: 'doc-highlight',
           title: 'Highlight Test',

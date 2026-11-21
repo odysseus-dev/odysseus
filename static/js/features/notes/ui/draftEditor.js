@@ -1,8 +1,11 @@
 /** Collect editor drafts, restore them and wire the autosave workflow. */
+import { itemsToMarkdown } from '../domain/markdownTasks.js';
+
 export function createDraftEditor({
   bindDraft,
   _collectItems,
-  _loadDraft
+  _loadDraft,
+  _loadDraftRecovery
 }) {
   function _collectFormDraft(form) {
     if (!form) return null;
@@ -16,7 +19,11 @@ export function createDraftEditor({
       due_date: form.querySelector('.note-form-due')?.value || null,
       repeat: form.querySelector('.note-form-repeat')?.value || 'none',
     };
-    if (type === 'note') d.content = form.querySelector('.note-form-content')?.value || '';
+    if (form._bodyRevision) d.body_revision = form._bodyRevision;
+    if (type === 'note') {
+      d.content = form.querySelector('.note-form-content')?.value || '';
+      if (form.dataset.replaceContent === 'true') d.replace_content = true;
+    }
     else if (type === 'goal') { d.content = form.querySelector('.note-form-goal-desc')?.value || ''; d.items = _collectItems(form); }
     else d.items = _collectItems(form);
     return d;
@@ -34,10 +41,38 @@ export function createDraftEditor({
     const view = {
       get failed() { return form._autosaveFailed; },
       set failed(value) { form._autosaveFailed = value; },
+      get bodyRevision() { return form._bodyRevision; },
+      set bodyRevision(value) { form._bodyRevision = value; },
     };
     const draft = bindDraft({ collect: () => _collectFormDraft(form), id, view });
     form._flushDraft = draft.flush;
     form._stopDraftAutosave = draft.stop;
+    form._acknowledgeDraftSave = draft.acknowledge;
+    const currentDraft = _loadDraft(id);
+    const recoverable = _loadDraftRecovery(id);
+    if (currentDraft && currentDraft.body_revision !== view.bodyRevision) recoverable.push(currentDraft);
+    if (recoverable.length) {
+      const recovery = document.createElement('details');
+      recovery.className = 'note-form-draft-recovery';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Recover unsaved draft';
+      const help = document.createElement('p');
+      help.textContent = 'This note changed after the draft was written. Copy the edits you want to keep into the current note.';
+      recovery.append(summary, help);
+      for (const entry of recoverable) {
+        const text = document.createElement('textarea');
+        text.readOnly = true;
+        text.setAttribute('aria-label', 'Unsaved draft');
+        text.value = [
+          entry.title, entry.content, itemsToMarkdown(entry.items),
+          entry.label && `Tags ${entry.label}`,
+          entry.due_date && `Reminder ${entry.due_date}`,
+        ].filter(Boolean).join('\n\n');
+        recovery.appendChild(text);
+      }
+      recovery.addEventListener('keydown', event => event.stopPropagation());
+      form.appendChild(recovery);
+    }
     form.addEventListener('input', draft.schedule);
     form.addEventListener('change', draft.schedule);
     form.addEventListener('click', event => {
@@ -56,10 +91,12 @@ export function createDraftEditor({
   function _applyDraftToNote(note, id) {
     const d = _loadDraft(id);
     if (!d) return { note, restored: false };
+    if (note?.body_revision !== d.body_revision) return { note, restored: false };
     const merged = { ...(note || {}) };
-    ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
+    ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items', 'body_revision'].forEach(k => {
       if (d[k] !== undefined) merged[k] = d[k];
     });
+    if (d.content !== undefined) merged.replace_content = d.replace_content === true;
     return { note: merged, restored: true };
   }
 

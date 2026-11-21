@@ -4,7 +4,7 @@
  * Extracted from document.js for modularity, clean maintenance, and isolated testing.
  */
 
-import { _escHtml, _isDocxLang, _isRichTextLang } from '../domain/documentKinds.js';
+import { _escHtml, _isDocxLang, _isRichTextLang, MARKDOWN_DOCUMENT_RENDER_OPTIONS } from '../domain/documentKinds.js';
 import { _normalizeRichLinkUrl } from '../domain/richTextRules.js';
 import { _importFromDevice } from './importFromDevice.js';
 import { _isFormBackedDoc } from './pdf/annotations.js';
@@ -224,7 +224,7 @@ export function buildHtmlExportMarkup(doc, options = {}) {
   if (_isRichTextLang(lang)) {
     body = _richTextToHtmlString(text);
   } else if (lang === 'markdown' && markdownMod?.mdToHtml) {
-    body = markdownMod.mdToHtml(text, { shortcodes: false });
+    body = markdownMod.mdToHtml(text, MARKDOWN_DOCUMENT_RENDER_OPTIONS);
   } else {
     body = '<pre style="white-space:pre-wrap;font-size:12px;font-family:monospace;">' +
       String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
@@ -339,7 +339,7 @@ export async function exportAsPdf(doc) {
       ? _richTextToHtmlString(previewHtml)
       : '<pre style="white-space:pre-wrap">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
   } else if (lang === 'markdown' && markdownMod?.mdToHtml) {
-    html = markdownMod.mdToHtml(text, { shortcodes: false });
+    html = markdownMod.mdToHtml(text, MARKDOWN_DOCUMENT_RENDER_OPTIONS);
   } else {
     html = '<pre style="white-space:pre-wrap;font-size:11px;font-family:monospace;color:#000;background:#fff;">' +
       text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';

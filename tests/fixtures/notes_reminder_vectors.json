@@ -1,0 +1,75 @@
+{
+  "_comment": "Reminder text for a note, from core.notes_markdown.reminder_body; the browser's reminderBody must agree.",
+  "reminder": [
+    {
+      "name": "prose only",
+      "content": "Call the bank before noon.",
+      "body": "Call the bank before noon."
+    },
+    {
+      "name": "image only",
+      "content": "![](/api/upload/0123456789abcdef0123456789abcdef.png \"w=50\")",
+      "body": ""
+    },
+    {
+      "name": "prose and image",
+      "content": "Pick up the frame\n\n![frame](/api/upload/0123456789abcdef0123456789abcdef.png)\n\nat the shop",
+      "body": "Pick up the frame\n\nat the shop"
+    },
+    {
+      "name": "link keeps its text",
+      "content": "Read [the guide](https://example.org/guide) first",
+      "body": "Read the guide first"
+    },
+    {
+      "name": "heading and quote markers",
+      "content": "# Trip\n> remember the charger\nPack light",
+      "body": "Trip\nremember the charger\nPack light"
+    },
+    {
+      "name": "open and done tasks",
+      "content": "Errands\n- [ ] post office\n- [x] bank\n- [ ] ![](/api/upload/0123456789abcdef0123456789abcdef.png)",
+      "body": "Errands\n\nPending (1):\n- post office"
+    },
+    {
+      "name": "all done",
+      "content": "- [x] a\n- [x] b",
+      "body": "2 items"
+    },
+    {
+      "name": "one done",
+      "content": "- [x] a",
+      "body": "1 item"
+    },
+    {
+      "name": "nine open",
+      "content": "Buy:\n- [ ] item 0\n- [ ] item 1\n- [ ] item 2\n- [ ] item 3\n- [ ] item 4\n- [ ] item 5\n- [ ] item 6\n- [ ] item 7\n- [ ] item 8\n- [ ] item 9\n- [x] done",
+      "body": "Buy:\n\nPending (10):\n- item 0\n- item 1\n- item 2\n- item 3\n- item 4\n- item 5\n- item 6\n- item 7\n...and 2 more"
+    },
+    {
+      "name": "task inside a fence stays prose",
+      "content": "```\n- [ ] sample\n```",
+      "body": "```\n- [ ] sample\n```"
+    },
+    {
+      "name": "long prose is capped",
+      "content": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+      "body": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
+    },
+    {
+      "name": "empty",
+      "content": "",
+      "body": ""
+    },
+    {
+      "name": "astral characters at the cap",
+      "content": "𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳",
+      "body": "𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳𝒳"
+    },
+    {
+      "name": "markup inside a fence stays",
+      "content": "Snippet:\n```md\n# not a heading\n![](/api/upload/a.png)\n```",
+      "body": "Snippet:\n```md\n# not a heading\n![](/api/upload/a.png)\n```"
+    }
+  ]
+}

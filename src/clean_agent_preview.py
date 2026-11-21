@@ -248,7 +248,7 @@ ALLOWED_EFFECTS = frozenset({
     ToolEffect.BROKERED_NETWORK_READ, ToolEffect.WRITE_PRIVATE,
 })
 SAFE_ACTIONS = {
-    'manage_notes': frozenset({'list', 'search', 'find', 'view', 'add', 'update', 'delete', 'toggle_item'}),
+    'manage_notes': frozenset({'list', 'search', 'find', 'view', 'get', 'read', 'show', 'open', 'add', 'update', 'delete', 'toggle_item'}),
     'manage_calendar': frozenset({'list_calendars', 'list_events', 'create_event', 'update_event', 'delete_event'}),
     'manage_memory': frozenset({'list', 'search', 'add', 'edit', 'delete'}),
     'manage_skills': frozenset({'list', 'index', 'view', 'view_ref', 'search', 'add', 'edit', 'patch', 'delete'}),
