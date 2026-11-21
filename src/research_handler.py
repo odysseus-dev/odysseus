@@ -17,6 +17,8 @@ from typing import Optional, Dict
 
 from src.research_utils import strip_thinking, is_low_quality
 from src.constants import DEEP_RESEARCH_DIR
+from core.atomic_io import atomic_write_json
+from src.research_report_lock import research_report_lock
 
 logger = logging.getLogger(__name__)
 
@@ -244,14 +246,15 @@ class ResearchHandler:
         if not old_key or not new_key:
             return 0
 
-        changed = 0
-        for entry in list(self._active_tasks.values()):
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("owner", "")).strip().lower() == old_key:
-                entry["owner"] = new_key
-                changed += 1
-        return changed
+        with research_report_lock:
+            changed = 0
+            for entry in list(self._active_tasks.values()):
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("owner", "")).strip().lower() == old_key:
+                    entry["owner"] = new_key
+                    changed += 1
+            return changed
 
     def start_research(
         self,
@@ -782,11 +785,13 @@ class ResearchHandler:
                 # SECURITY: stamp owner so route handlers can filter by user.
                 "owner": entry.get("owner", ""),
             }
-            path.write_text(json.dumps(data), encoding="utf-8")
-            logger.info(f"Research result saved to {path}")
+            with research_report_lock:
+                atomic_write_json(str(path), data)
+                logger.info(f"Research result saved to {path}")
+                event_owner = data["owner"]
             try:
                 from src.event_bus import fire_event
-                fire_event("research_completed", entry.get("owner") or None)
+                fire_event("research_completed", event_owner or None)
             except Exception:
                 logger.debug("research_completed event dispatch failed", exc_info=True)
         except Exception as e:
