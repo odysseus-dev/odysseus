@@ -201,8 +201,11 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
     def delete_user_template(self, template_id: str) -> bool:
         """Delete a user template by id."""
         templates = self.presets.get("user_templates", [])
-        self.presets["user_templates"] = [t for t in templates if t.get("id") != template_id]
-        return self.save(self.presets)
+        proposed = {**self.presets, "user_templates": [
+            t for t in templates if t.get("id") != template_id
+        ]}
+        # save() publishes the new live state only after the atomic write.
+        return self.save(proposed)
 
     def update_persona_memory(self, name: str, memory: str) -> bool:
         """Persist auto-maintained continuity notes for a saved/active persona."""
