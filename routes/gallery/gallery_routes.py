@@ -1243,10 +1243,12 @@ def setup_gallery_routes() -> APIRouter:
                 for one in (t.strip() for t in tag.split(",")):
                     if not one:
                         continue
-                    safe_tag = f"%{escape_like_pattern(one)}%"
+                    # Match a complete comma-delimited tag, trimming only
+                    # token edges so "new york" stays distinct from "newyork".
+                    tag_pattern = rf"(?i)(^|,)\s*{re.escape(one)}\s*(,|$)"
                     q = q.filter(_or(
-                        GalleryImage.tags.ilike(safe_tag, escape="\\"),
-                        GalleryImage.ai_tags.ilike(safe_tag, escape="\\"),
+                        GalleryImage.tags.regexp_match(tag_pattern),
+                        GalleryImage.ai_tags.regexp_match(tag_pattern),
                     ))
 
             # Model filter
