@@ -192,6 +192,10 @@ export function createNoteWindow({
         return Number(target.dataset.taskIndex);
       });
       if (!result) {
+        if (ctx.session.conflict) {
+          if (target) ctx.editor.flipTask(target);
+          return;
+        }
         if (!target) { ctx.editor.flipTask(li); ctx.session.markDirty(); }
         return;
       }
@@ -486,9 +490,7 @@ export function createNoteWindow({
     if (ctx.color !== (note.color || '')) showColor(ctx, note.color);
     syncMeta(ctx, note);
     if (!note.body_revision || note.body_revision === ctx.session.base) return;
-    const focused = ctx.els.content.contains(document.activeElement);
-    if (ctx.session.dirty || ctx.editor.edited || focused || ctx.session.conflict) {
-      if (isLocalVersion(note.id, note.body_revision)) ctx.session.rebase(note.body_revision);
+    if (ctx.session.dirty || ctx.editor.edited || ctx.session.conflict) {
       return;
     }
     ctx.session.replace(note);

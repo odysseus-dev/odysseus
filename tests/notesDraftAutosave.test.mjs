@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNotesPersistence } from '../frontend/src/features/notes/infrastructure/storage.js';
 import { createNoteSession } from '../frontend/src/features/notes/application/noteSession.js';
+import { createNoteVersions } from '../frontend/src/features/notes/application/noteVersions.js';
 import { chipLabel } from '../frontend/src/features/notes/ui/noteWindow.js';
 
 // The note window's edit session, driven with a fake API, clock and timers.
@@ -274,4 +275,162 @@ test('a checkbox flip sends the revision the window saw', async () => {
   const h = harness({ note: { id: 'note1', title: 'T', content: '- [ ] a', body_revision: 'r1' } });
   await h.session.toggleTask(() => 0);
   assert.deepEqual(h.calls[0], ['TOGGLE', 'note1', 0, 'r1']);
+});
+
+test('checkbox flip rejected with 409 enters conflict state and offers reload and keep mine', async () => {
+  const serverNote = { id: 'note1', title: 'Title', content: '- [x] a on server', body_revision: 'r2' };
+  const h = harness({
+    note: { id: 'note1', title: 'Title', content: '- [ ] a', body_revision: 'r1' },
+    toggle: async () => {
+      const err = new Error('conflict');
+      err.status = 409;
+      throw err;
+    },
+    server: serverNote,
+  });
+
+  const result = await h.session.toggleTask(() => 0);
+  assert.equal(result, null);
+  assert.ok(h.session.conflict, 'session entered conflict state');
+  assert.deepEqual(h.session.conflict.server, serverNote);
+  assert.equal(h.session.conflict.local.content, '- [ ] a');
+  assert.ok(h.events.some(([event]) => event === 'conflict'), 'conflict effect was triggered');
+
+  // Reload adopts server state
+  await h.session.resolveConflict('reload');
+  assert.equal(h.session.conflict, null);
+  assert.equal(h.session.base, 'r2');
+  assert.equal(h.session.saved.content, '- [x] a on server');
+});
+
+test('checkbox flip keep mine after 409 saves local text over server revision', async () => {
+  const serverNote = { id: 'note1', title: 'Title', content: '- [x] a on server', body_revision: 'r2' };
+  let patchedBody = null;
+  const h = harness({
+    note: { id: 'note1', title: 'Title', content: '- [ ] a', body_revision: 'r1' },
+    toggle: async () => {
+      const err = new Error('conflict');
+      err.status = 409;
+      throw err;
+    },
+    patch: async (id, body) => {
+      patchedBody = body;
+      return { id, ...body, body_revision: 'r3' };
+    },
+    server: serverNote,
+  });
+
+  await h.session.toggleTask(() => 0);
+  assert.ok(h.session.conflict);
+
+  await h.session.resolveConflict('keep');
+  assert.equal(h.session.conflict, null);
+  assert.equal(patchedBody.body_revision, 'r2');
+  assert.equal(patchedBody.content, '- [ ] a');
+  assert.equal(patchedBody.replace_content, true);
+  assert.equal(h.session.base, 'r3');
+});
+
+test('checkbox flip network error throws and does not enter conflict state', async () => {
+  const h = harness({
+    note: { id: 'note1', title: 'T', content: '- [ ] a', body_revision: 'r1' },
+    toggle: async () => {
+      const err = new Error('network down');
+      err.status = 500;
+      throw err;
+    },
+  });
+
+  await assert.rejects(async () => {
+    await h.session.toggleTask(() => 0);
+  }, /network down/);
+
+  assert.equal(h.session.conflict, null, 'network error is not treated as conflict');
+});
+
+test('repeated toggles during conflict return null and do not issue duplicate requests', async () => {
+  let toggleCount = 0;
+  const serverNote = { id: 'note1', title: 'Title', content: '- [x] a on server', body_revision: 'r2' };
+  const h = harness({
+    note: { id: 'note1', title: 'Title', content: '- [ ] a', body_revision: 'r1' },
+    toggle: async () => {
+      toggleCount++;
+      const err = new Error('conflict');
+      err.status = 409;
+      throw err;
+    },
+    server: serverNote,
+  });
+
+  await h.session.toggleTask(() => 0);
+  assert.equal(toggleCount, 1);
+  assert.ok(h.session.conflict);
+
+  const second = await h.session.toggleTask(() => 0);
+  assert.equal(second, null);
+  assert.equal(toggleCount, 1, 'no second toggle was sent');
+});
+
+test('same-tab checklist update does not advance dirty session revision and triggers 409 conflict on save', async () => {
+  const app = { state: { notes: [] } };
+  const versions = createNoteVersions({ app });
+  const serverNote = { id: 'note1', title: 'Title', content: '- [x] task 1\n- [ ] task 2', body_revision: 'r2' };
+
+  let patchedBody = null;
+  const rawApi = {
+    patchNote: async (id, body) => {
+      patchedBody = body;
+      if (body.body_revision && body.body_revision !== serverNote.body_revision) {
+        const err = new Error('conflict');
+        err.status = 409;
+        throw err;
+      }
+      return { ...body, id, body_revision: 'r3' };
+    },
+    getNote: async () => serverNote,
+    toggleTask: async () => ({ ok: true, note: serverNote }),
+  };
+  const trackedApi = versions.track(rawApi);
+
+  const h = harness({
+    note: { id: 'note1', title: 'Title', content: '- [ ] task 1\n- [ ] task 2', body_revision: 'r1' },
+    patch: trackedApi.patchNote,
+    server: serverNote,
+  });
+
+  // User modifies note in editor
+  h.type('- [ ] task 1\n- [ ] task 2 dirty local edit');
+  assert.equal(h.session.dirty, true);
+  assert.equal(h.session.base, 'r1');
+
+  // Another same-tab component toggles a task
+  await trackedApi.toggleTask('note1', 0);
+  assert.equal(versions.isLocal('note1', 'r2'), true);
+
+  // Sync check: because editor is dirty, base must not advance
+  assert.equal(h.session.base, 'r1');
+
+  // Next autosave/flush
+  await h.session.flush();
+
+  // Save must have targeted r1 and received 409 conflict, rather than overwriting r2
+  assert.equal(patchedBody.body_revision, 'r1');
+  assert.ok(h.session.conflict, 'session entered conflict state instead of silently overwriting');
+  assert.equal(h.session.conflict.local.content, '- [ ] task 1\n- [ ] task 2 dirty local edit');
+  assert.equal(h.session.conflict.server.content, '- [x] task 1\n- [ ] task 2');
+});
+
+test('same-tab update safely replaces clean session content and revision', () => {
+  const h = harness({
+    note: { id: 'note1', title: 'Title', content: '- [ ] task 1', body_revision: 'r1' },
+  });
+  assert.equal(h.session.dirty, false);
+  assert.equal(h.session.base, 'r1');
+
+  const updatedServerNote = { id: 'note1', title: 'Title', content: '- [x] task 1', body_revision: 'r2' };
+  h.session.replace(updatedServerNote);
+
+  assert.equal(h.session.base, 'r2');
+  assert.equal(h.session.saved.content, '- [x] task 1');
+  assert.equal(h.session.dirty, false);
 });

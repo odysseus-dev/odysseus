@@ -47,30 +47,95 @@ function _saveFiredReminders(set) {
   catch {}
 }
 
-function _draftKey(id) { return _DRAFT_PREFIX + (id || '__new__'); }
+function _draftKey(id, writer) {
+  if (!id) return _DRAFT_PREFIX + (writer ? `__new__-${writer}` : '__new__');
+  return _DRAFT_PREFIX + id;
+}
 
 function _loadDraft(id) {
-  try { return JSON.parse(localStorage.getItem(_draftKey(id)) || 'null'); } catch { return null; }
+  if (id) {
+    try { return JSON.parse(localStorage.getItem(_draftKey(id)) || 'null'); } catch { return null; }
+  }
+  try {
+    const standard = localStorage.getItem(_draftKey(null));
+    if (standard) return JSON.parse(standard);
+  } catch {}
+  try {
+    if (typeof localStorage.length === 'number' && typeof localStorage.key === 'function') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(_DRAFT_PREFIX + '__new__-')) {
+          const val = localStorage.getItem(k);
+          if (val) return JSON.parse(val);
+        }
+      }
+    }
+  } catch {}
+  return null;
 }
 
-function _clearDraft(id) { try { localStorage.removeItem(_draftKey(id)); } catch {} }
+function _clearDraft(id) {
+  try {
+    localStorage.removeItem(_draftKey(id));
+    if (!id || id === '__new__') {
+      if (typeof localStorage.length === 'number' && typeof localStorage.key === 'function') {
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(_DRAFT_PREFIX + '__new__-')) toRemove.push(k);
+        }
+        toRemove.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+      }
+    }
+  } catch {}
+}
 
-function _draftRecoveryKey(id) { return 'odysseus-note-recovery-' + id; }
+function _draftRecoveryKey(id) { return 'odysseus-note-recovery-' + (id || '__new__'); }
 
 function _loadDraftRecovery(id) {
+  const targetId = id || '__new__';
+  const list = [];
   try {
-    const drafts = JSON.parse(localStorage.getItem(_draftRecoveryKey(id)) || '[]');
-    return Array.isArray(drafts) ? drafts : [];
-  } catch { return []; }
+    const drafts = JSON.parse(localStorage.getItem(_draftRecoveryKey(targetId)) || '[]');
+    if (Array.isArray(drafts)) list.push(...drafts);
+  } catch {}
+  if (!id || id === '__new__') {
+    try {
+      if (typeof localStorage.length === 'number' && typeof localStorage.key === 'function') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(_DRAFT_PREFIX + '__new__-')) {
+            const val = localStorage.getItem(k);
+            if (val) {
+              try {
+                const parsed = JSON.parse(val);
+                if (parsed && !list.some(e => JSON.stringify(e) === JSON.stringify(parsed))) {
+                  list.push(parsed);
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+  return list;
 }
 
-function _clearDraftRecovery(id) { try { localStorage.removeItem(_draftRecoveryKey(id)); } catch {} }
+function _clearDraftRecovery(id) { try { localStorage.removeItem(_draftRecoveryKey(id || '__new__')); } catch {} }
 
 function _keepDraftForRecovery(id, draft) {
-  const drafts = _loadDraftRecovery(id);
+  if (!draft || typeof draft !== 'object') return;
+  const targetId = id || '__new__';
+  const drafts = _loadDraftRecovery(targetId);
   const stored = JSON.stringify(draft);
   if (drafts.some(entry => JSON.stringify(entry) === stored)) return;
-  localStorage.setItem(_draftRecoveryKey(id), JSON.stringify([...drafts, draft]));
+  const filtered = draft._draftWriter
+    ? drafts.filter(entry => entry._draftWriter !== draft._draftWriter)
+    : drafts;
+  try {
+    localStorage.setItem(_draftRecoveryKey(targetId), JSON.stringify([...filtered, draft]));
+  } catch {}
 }
 
 return { _loadPendingHighlights, _loadGlowedReminders, _saveGlowedReminders, _loadActiveHighlights, _saveActiveHighlights, _savePendingHighlights, _loadFiredReminders, _saveFiredReminders, _draftKey, _loadDraft, _clearDraft,

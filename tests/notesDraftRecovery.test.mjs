@@ -68,3 +68,109 @@ for (const kind of ['created', 'saved']) {
     assert.equal(session.dirty, false);
   });
 }
+
+test('same-revision concurrent drafts from two tabs remain recoverable', () => {
+  const first = setup();
+  first.draft.content = 'Draft from Tab 1';
+  first.session.markDirty();
+
+  const second = setup({}, {}, note, first.storage);
+  second.draft.content = 'Draft from Tab 2';
+  second.session.markDirty();
+
+  const primary = JSON.parse(first.storage.get(first.key) || 'null');
+  assert.equal(primary.content, 'Draft from Tab 2');
+
+  const recoveryKey = 'odysseus-note-recovery-' + note.id;
+  const recoveredList = JSON.parse(first.storage.get(recoveryKey) || '[]');
+  assert.equal(recoveredList.length, 1);
+  assert.equal(recoveredList[0].content, 'Draft from Tab 1');
+  assert.equal(recoveredList[0].body_revision, 'r1');
+
+  const stored = second.session.storedDraft();
+  assert.equal(stored.content, 'Draft from Tab 2');
+  assert.deepEqual(stored.recovered, [{ title: '', content: 'Draft from Tab 1' }]);
+});
+
+test('concurrent new notes in separate sessions have safe identities without collisions', () => {
+  const storage = new Map();
+  const first = setup({}, {}, null, storage);
+  first.draft.title = 'New Note 1';
+  first.draft.content = 'Content 1';
+  first.session.markDirty();
+
+  const second = setup({}, {}, null, storage);
+  second.draft.title = 'New Note 2';
+  second.draft.content = 'Content 2';
+  second.session.markDirty();
+
+  const values = [...storage.values()];
+  assert.ok(values.some(v => v.includes('Content 1')), 'first new note draft is preserved');
+  assert.ok(values.some(v => v.includes('Content 2')), 'second new note draft is preserved');
+});
+
+test('saving or discarding in one session does not delete another session recoverable data', async () => {
+  const storage = new Map();
+  const first = setup({ patchNote: async () => server }, {}, note, storage);
+  first.draft.content = 'Tab 1 edits';
+  first.session.markDirty();
+
+  const second = setup({ patchNote: async () => server }, {}, note, storage);
+  second.draft.content = 'Tab 2 edits';
+  second.session.markDirty();
+
+  // Second session saves successfully
+  await second.session.flush();
+
+  // Tab 1 recoverable data must still exist in storage
+  const recoveryKey = 'odysseus-note-recovery-' + note.id;
+  const recoveredList = JSON.parse(storage.get(recoveryKey) || '[]');
+  assert.ok(recoveredList.some(d => d.content === 'Tab 1 edits'), 'Tab 1 draft survives Tab 2 save');
+});
+
+test('legacy draft without writer is preserved when a new writer backs up', () => {
+  const storage = new Map();
+  const legacyKey = 'odysseus-note-draft-' + note.id;
+  storage.set(legacyKey, JSON.stringify({ _ts: 1, title: 'Old Title', content: 'Legacy unsaved draft', body_revision: 'r1' }));
+
+  const session = setup({}, {}, note, storage);
+  session.draft.content = 'Brand new typing';
+  session.session.markDirty();
+
+  const primary = JSON.parse(storage.get(legacyKey) || 'null');
+  assert.equal(primary.content, 'Brand new typing');
+
+  const recoveryKey = 'odysseus-note-recovery-' + note.id;
+  const recoveredList = JSON.parse(storage.get(recoveryKey) || '[]');
+  assert.ok(recoveredList.some(d => d.content === 'Legacy unsaved draft'), 'legacy draft was moved to recovery');
+});
+
+test('draft recovery predicate compares strings and ignores drafts identical to saved state', () => {
+  const storage = new Map();
+  const legacyKey = 'odysseus-note-draft-' + note.id;
+  // Seed a draft identical to saved note content
+  storage.set(legacyKey, JSON.stringify({ _ts: 1, title: '', content: 'saved', body_revision: 'r1' }));
+
+  const session = setup({}, {}, note, storage);
+  session.draft.content = 'Brand new typing';
+  session.session.markDirty();
+
+  const recoveryKey = 'odysseus-note-recovery-' + note.id;
+  // Because the previous draft matched saved content exactly, it should not be stored in recovery
+  assert.equal(storage.has(recoveryKey), false);
+});
+
+test('draft recovery predicate preserves drafts with different content from saved note', () => {
+  const storage = new Map();
+  const legacyKey = 'odysseus-note-draft-' + note.id;
+  storage.set(legacyKey, JSON.stringify({ _ts: 1, title: '', content: 'different unsaved draft', body_revision: 'r1' }));
+
+  const session = setup({}, {}, note, storage);
+  session.draft.content = 'Brand new typing';
+  session.session.markDirty();
+
+  const recoveryKey = 'odysseus-note-recovery-' + note.id;
+  const recoveredList = JSON.parse(storage.get(recoveryKey) || '[]');
+  assert.equal(recoveredList.length, 1);
+  assert.equal(recoveredList[0].content, 'different unsaved draft');
+});

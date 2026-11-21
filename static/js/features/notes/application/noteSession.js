@@ -30,7 +30,7 @@ export function createNoteSession({
   let pending = Promise.resolve();
   let conflict = null;
   let wrote = false;
-  const key = () => persistence._draftKey(id || '__new__');
+  const key = () => persistence._draftKey(id, writer);
 
   // Every write goes through one queue, so a colour change can never land
   // between a content save and its response.
@@ -41,7 +41,18 @@ export function createNoteSession({
   };
 
   function readDraft() {
-    try { return JSON.parse(persistence.getItem(key()) || 'null'); } catch { return null; }
+    try {
+      const own = persistence.getItem(key());
+      if (own) return JSON.parse(own);
+      return JSON.parse(persistence.getItem(persistence._draftKey(id || '__new__')) || 'null');
+    } catch { return null; }
+  }
+
+  function draftText(draft) {
+    if (!draft || typeof draft !== 'object') return null;
+    const content = typeof draft.content === 'string' ? draft.content : (Array.isArray(draft.items) ? itemsToMarkdown(draft.items) : null);
+    if (content === null) return null;
+    return { title: typeof draft.title === 'string' ? draft.title : saved.title, content };
   }
 
   function clearSavedBackup(draftKey, record) {
@@ -51,14 +62,16 @@ export function createNoteSession({
   }
 
   // The draft remembers the body revision it was typed against. A draft left
-  // by another tab, against another revision, is kept for recovery rather
-  // than overwritten.
+  // by another tab is kept for recovery rather than overwritten.
   function backup(draft = collect()) {
     const record = JSON.stringify({ _ts: clock.now(), _draftWriter: writer, title: draft.title, content: draft.content, body_revision: base });
     try {
       const previous = readDraft();
-      if (id && previous && typeof previous === 'object' && previous._draftWriter !== writer && previous.body_revision !== base) {
-        persistence._keepDraftForRecovery?.(id, previous);
+      if (previous && typeof previous === 'object' && previous._draftWriter !== writer) {
+        const prev = draftText(previous);
+        if (prev && (prev.title !== saved.title || prev.content !== saved.content)) {
+          persistence._keepDraftForRecovery?.(id || '__new__', previous);
+        }
       }
       persistence.setItem(key(), record);
     } catch { effects.backupUnavailable?.(); }
@@ -77,7 +90,10 @@ export function createNoteSession({
     const draft = collect();
     if (draft.title === saved.title && draft.content === saved.content) {
       dirty = false;
-      if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+      try {
+        if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
+        if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+      } catch {}
       return;
     }
     if (!id && !draft.title.trim() && isBlank(draft.content)) { dirty = false; return; }
@@ -157,9 +173,21 @@ export function createNoteSession({
       if (dirty || conflict || !id) return null;
       const index = resolveIndex();
       if (index == null || Number.isNaN(index)) return null;
-      const result = await api.toggleTask(id, index, base);
-      adopt(result?.note);
-      return result;
+      try {
+        const result = await api.toggleTask(id, index, base);
+        adopt(result?.note);
+        return result;
+      } catch (error) {
+        if (error?.status === 409) {
+          let server = null;
+          try { server = await api.getNote(id); } catch { /* offline: Keep mine reads it again */ }
+          const draft = collect();
+          conflict = { local: draft, server };
+          effects.conflict?.(conflict);
+          return null;
+        }
+        throw error;
+      }
     });
   }
 
@@ -179,7 +207,10 @@ export function createNoteSession({
         adopt(current);
         dirty = false;
         conflict = null;
-        if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+        try {
+          if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
+          if (readDraft()?._draftWriter === writer) persistence._clearDraft(id || '__new__');
+        } catch {}
         effects.reloaded?.(current);
       });
     }
@@ -189,17 +220,11 @@ export function createNoteSession({
     return enqueue(async () => {
       let current = server;
       if (!current) { try { current = await api.getNote(id); } catch { current = null; } }
+      if (current) saved = { title: current.title ?? '', content: current.content ?? '' };
       base = current?.body_revision ?? base;
       return save();
     });
   }
-
-  const draftText = draft => {
-    if (!draft || typeof draft !== 'object') return null;
-    const content = typeof draft.content === 'string' ? draft.content : (Array.isArray(draft.items) ? itemsToMarkdown(draft.items) : null);
-    if (content === null) return null;
-    return { title: typeof draft.title === 'string' ? draft.title : saved.title, content };
-  };
 
   /**
    * An earlier unsaved draft of this note on this device, if it differs from
@@ -211,10 +236,17 @@ export function createNoteSession({
     const raw = readDraft();
     let draft = draftText(raw);
     if (draft && draft.content === saved.content && draft.title === saved.title) {
-      persistence._clearDraft(id || '__new__');
+      try {
+        if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
+        persistence._clearDraft(id || '__new__');
+      } catch {}
       draft = null;
     }
-    const recovered = id ? (persistence._loadDraftRecovery?.(id) || []).map(draftText).filter(Boolean) : [];
+    const targetId = id || '__new__';
+    const recovered = (persistence._loadDraftRecovery?.(targetId) || [])
+      .filter(entry => entry._draftWriter !== writer)
+      .map(draftText)
+      .filter(Boolean);
     if (!draft && !recovered.length) return null;
     const stale = !!draft && !!id && raw.body_revision !== undefined && raw.body_revision !== base;
     return { ...(draft || { title: saved.title, content: null }), stale, recovered };
@@ -226,7 +258,10 @@ export function createNoteSession({
     timer = null;
     dirty = false;
     conflict = null;
-    persistence._clearDraft(id || '__new__');
+    try {
+      if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
+      persistence._clearDraft(id || '__new__');
+    } catch {}
   }
 
   return {
@@ -241,7 +276,13 @@ export function createNoteSession({
     toggleTask,
     resolveConflict,
     storedDraft,
-    discardDraft: () => { persistence._clearDraft(id || '__new__'); if (id) persistence._clearDraftRecovery?.(id); },
+    discardDraft: () => {
+      try {
+        if (key() !== persistence._draftKey(id || '__new__')) persistence.removeItem(key());
+        persistence._clearDraft(id || '__new__');
+        persistence._clearDraftRecovery?.(id || '__new__');
+      } catch {}
+    },
     close: () => flush(),
     get id() { return id; },
     get base() { return base; },
