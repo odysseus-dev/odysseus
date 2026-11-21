@@ -7,8 +7,8 @@ receipts and execution limits are in the [case study](notes-case-study.md) and
 responsibility map for comparison. Notes integration and the recipient's independent
 H reproduction remain pending.
 
-The later Notes rework (the markdown content model and the note window)
-changed the module graph after this roadmap; the
+The later Notes rework (markdown content model, note window, inline images,
+sharing and agent actions) changed the module graph after this roadmap; the
 current modules are in the [module inventory](notes-module-inventory.md), and
 the behaviour is specified in `specs/calendar-tasks-notes.md`. This page is
 left as written.

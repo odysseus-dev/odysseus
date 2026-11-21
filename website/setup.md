@@ -511,7 +511,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
 - Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
-- Non-admin users do not get shell/Python/file read/write by default, and admin-only routes/tools such as MCP management, API tokens, webhooks, model/cookbook serving, backup/vault, and app settings are admin-gated. Other features are controlled by per-user privileges, so review each user's privileges before exposing a deployment.
+- Non-admin users do not get shell/Python/file read/write by default, and admin-only routes/tools such as MCP management, API tokens, webhooks, model/cookbook serving, backup/vault, and app settings are admin-gated. Other features are controlled by per-user privileges, so review each user's privileges before exposing a deployment. "Share notes" is on for every account by default and lets a user share their notes with other accounts on the instance; switch it off under Settings → Users for accounts that should not. Removing a user deletes the notes that account owns, including the ones it shared, so collaborators lose them too. Images in those notes are left on disk until an admin runs the upload cleanup (`POST /api/upload/cleanup`), which removes unreferenced uploads older than 30 days.
 - Rotate any API keys or tokens that were ever pasted into a shared chat, demo, screenshot, or log.
 - If you enable API tokens or webhooks, create separate tokens per integration and delete unused ones.
 - Prefer binding manual development runs to `127.0.0.1`; bind to `0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
@@ -772,5 +772,5 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 To back up or restore everything in `data/`, see the
 [Backup & Restore guide](backup-restore.md).
 
-For using Notes (the note window, checklists, images and reminders), see
+For using Notes (checklists, images, sharing, reminders and agent actions), see
 the [Notes guide](notes.md).
