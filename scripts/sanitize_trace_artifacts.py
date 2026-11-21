@@ -214,7 +214,7 @@ def sanitize_structured_obj(obj: Any) -> Any:
 
 def sanitize_jsonl_content(data: bytes) -> bytes:
     """Sanitize newline-delimited JSON Lines (.trace, .network, .stacks).
-    
+
     If any non-empty record cannot be decoded as valid UTF-8 or parsed as valid JSON,
     or is malformed, raise ValueError fail-closed so the affected archive is permanently removed.
     """
