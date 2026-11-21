@@ -883,6 +883,9 @@ app.include_router(calendar_router)
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
+from orchestrator.routes import setup_orchestrator_routes
+app.include_router(setup_orchestrator_routes())
+
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
