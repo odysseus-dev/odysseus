@@ -21,6 +21,7 @@ sys.modules["xformers.ops"] = type(sys)("xformers.ops")
 sys.modules["xformers.ops.fmha"] = type(sys)("xformers.ops.fmha")
 
 import argparse
+import asyncio
 import base64
 import io
 import json
@@ -763,15 +764,24 @@ def image_progress(request_id: str):
 async def edit_image(
     prompt: str = Form(...),
     image: UploadFile = File(...),
+    mask: UploadFile | None = File(None),
     model: str = Form(""),
     n: int = Form(1),
     size: str = Form("1024x1024"),
     quality: str = Form("medium"),
     response_format: str = Form("b64_json"),
     request_id: str = Form(""),
+    strength: float = Form(0.75),
+    feather: int = Form(8),
 ):
     if _pipe is None:
         return {"error": "Model not loaded"}
+    if mask is not None:
+        # A masked edit is an inpaint. Route it through the inpaint handler so
+        # the mask is honoured (native inpaint, or crop+composite fallbacks)
+        # instead of calling the pipeline without mask_image, which inpaint
+        # pipelines reject and other pipelines would apply to the whole image.
+        return await _masked_edit(image, mask, prompt, size, strength, feather, request_id)
     accepts_image = _pipeline_accepts_arg("image")
     accepts_input_images = _pipeline_accepts_arg("input_images")
     if not accepts_image and not accepts_input_images:
@@ -869,6 +879,34 @@ async def edit_image(
     logger.info(f"Edited {len(images)} image(s) in {elapsed:.1f}s")
     _finish_progress(request_id)
     return _image_response(images)
+
+
+async def _masked_edit(image, mask, prompt, size, strength, feather, request_id):
+    width, height = _parse_size(size)
+    req = InpaintRequest(
+        image=base64.b64encode(await image.read()).decode(),
+        mask=base64.b64encode(await mask.read()).decode(),
+        prompt=prompt,
+        width=max(0, width),
+        height=max(0, height),
+        strength=strength,
+        feather=feather,
+    )
+    request_id = _start_progress(request_id, 1, prompt, "edit")
+    # inpaint_image is blocking inference. Run it on a worker thread, as
+    # FastAPI does for the sync /v1/images/inpaint route, so the event loop
+    # keeps answering progress polls while it works.
+    try:
+        result = await asyncio.to_thread(inpaint_image, req)
+    except Exception as e:
+        _finish_progress(request_id, "error", str(e))
+        raise
+    if not result.get("image"):
+        detail = result.get("error") or "Inpaint failed"
+        _finish_progress(request_id, "error", detail)
+        raise HTTPException(status_code=500, detail=detail)
+    _finish_progress(request_id)
+    return {"created": int(time.time()), "data": [{"b64_json": result["image"]}]}
 
 
 class InpaintRequest(BaseModel):
