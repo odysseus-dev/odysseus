@@ -767,6 +767,33 @@ export async function executeScenario(browser, name, origin, stylesheets) {
   }
 }
 
+export function createWorkerShutdown({ browser, rl, getRl, onExit = code => process.exit(code) } = {}) {
+  let shutdownPromise = null;
+  const shutdown = (exitCode = 0) => {
+    if (!shutdownPromise) {
+      const doShutdown = async () => {
+        const activeRl = typeof getRl === 'function' ? getRl() : (rl || null);
+        if (activeRl) {
+          try {
+            activeRl.close();
+          } catch (_) {}
+        }
+        try {
+          if (browser && typeof browser.close === 'function') {
+            await browser.close();
+          }
+        } catch (_) {}
+        if (typeof onExit === 'function') {
+          onExit(exitCode);
+        }
+      };
+      shutdownPromise = Promise.resolve().then(doShutdown);
+    }
+    return shutdownPromise;
+  };
+  return shutdown;
+}
+
 async function runWorker() {
   const origin = process.env.ODYSSEUS_TEST_STATIC_ORIGIN;
   if (!origin) {
@@ -777,24 +804,11 @@ async function runWorker() {
   const browser = await launchBrowser();
 
   let rl;
-  let shutdownPromise = null;
-  const shutdown = (exitCode = 0) => {
-    if (!shutdownPromise) {
-      const doShutdown = async () => {
-        if (rl) {
-          try {
-            rl.close();
-          } catch (_) {}
-        }
-        try {
-          await browser.close();
-        } catch (_) {}
-        process.exit(exitCode);
-      };
-      shutdownPromise = Promise.resolve().then(doShutdown);
-    }
-    return shutdownPromise;
-  };
+  const shutdown = createWorkerShutdown({
+    browser,
+    getRl: () => rl,
+    onExit: code => process.exit(code),
+  });
 
   process.on('SIGTERM', () => { shutdown(0); });
   process.on('SIGINT', () => { shutdown(0); });

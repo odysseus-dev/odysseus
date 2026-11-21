@@ -171,18 +171,18 @@ class LifecycleBrowserWorker:
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
 
-    def run_scenario(self, scenario_name: str) -> dict:
+    def send_command(self, command: dict, timeout: float = SCENARIO_TIMEOUT) -> dict:
         self.start()
 
         if self._proc.poll() is not None:
             exit_code = self._proc.poll()
             self.close()
             raise RuntimeError(
-                f"Cannot run scenario '{scenario_name}': worker terminated unexpectedly with code {exit_code}.\n"
+                f"Cannot deliver command: worker terminated unexpectedly with code {exit_code}.\n"
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
 
-        req = json.dumps({"scenario": scenario_name}) + "\n"
+        req = json.dumps(command) + "\n"
         try:
             self._proc.stdin.write(req)
             self._proc.stdin.flush()
@@ -190,17 +190,17 @@ class LifecycleBrowserWorker:
             exit_code = self._proc.poll()
             self.close()
             raise RuntimeError(
-                f"Failed to deliver scenario '{scenario_name}' to browser worker (exit code: {exit_code}): {exc}\n"
+                f"Failed to deliver command to browser worker (exit code: {exit_code}): {exc}\n"
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             ) from exc
 
         try:
-            resp_line = self._stdout_queue.get(timeout=self._scenario_timeout)
+            resp_line = self._stdout_queue.get(timeout=timeout)
         except queue.Empty:
             self._terminate_process_group()
             self.close()
             raise TimeoutError(
-                f"Scenario '{scenario_name}' timed out after {self._scenario_timeout}s without response from worker.\n"
+                f"Worker timed out after {timeout}s without response.\n"
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
 
@@ -211,26 +211,27 @@ class LifecycleBrowserWorker:
                 exit_code = self._proc.poll()
             self.close()
             raise RuntimeError(
-                f"Browser worker closed stdout unexpectedly (exit code: {exit_code}) while executing scenario '{scenario_name}'.\n"
+                f"Browser worker closed stdout unexpectedly (exit code: {exit_code}) while waiting for response.\n"
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
 
         try:
-            resp = json.loads(resp_line)
+            return json.loads(resp_line)
         except json.JSONDecodeError as exc:
             self.close()
             raise RuntimeError(
-                f"Scenario '{scenario_name}' returned malformed JSON from worker: {resp_line!r}\n"
+                f"Worker returned malformed JSON: {resp_line!r}\n"
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             ) from exc
 
+    def run_scenario(self, scenario_name: str) -> dict:
+        resp = self.send_command({"scenario": scenario_name}, timeout=self._scenario_timeout)
         if not resp.get("ok"):
             error_msg = resp.get("error", "Unknown worker error")
             raise RuntimeError(
                 f"Scenario '{scenario_name}' failed in browser runner:\n{error_msg}\n"
                 f"STDERR:\n{self._get_stderr_diagnostics()}"
             )
-
         return resp["data"]
 
     def close(self):
@@ -576,11 +577,10 @@ def test_worker_shutdown_is_idempotent_across_competing_triggers():
     """Verify Node worker shutdown is idempotent across competing close triggers."""
     harness = """
 import readline from 'node:readline';
+import { createWorkerShutdown } from './tests/helpers/document_persistence_lifecycle_runner.mjs';
 
 let rl;
-let shutdownPromise = null;
 let browserCloseCount = 0;
-
 const fakeBrowser = {
   close: async () => {
     browserCloseCount += 1;
@@ -588,24 +588,16 @@ const fakeBrowser = {
   }
 };
 
-const shutdown = (exitCode = 0) => {
-  if (!shutdownPromise) {
-    const doShutdown = async () => {
-      if (rl) {
-        try {
-          rl.close();
-        } catch (_) {}
-      }
-      try {
-        await fakeBrowser.close();
-      } catch (_) {}
-      process.stdout.write(JSON.stringify({ browserCloseCount }) + '\\n');
-      process.exit(exitCode);
-    };
-    shutdownPromise = Promise.resolve().then(doShutdown);
+let samePromise = false;
+
+const shutdown = createWorkerShutdown({
+  browser: fakeBrowser,
+  getRl: () => rl,
+  onExit: code => {
+    process.stdout.write(JSON.stringify({ ok: true, browserCloseCount, samePromise, exitCode: code }) + '\\n');
+    process.exit(code);
   }
-  return shutdownPromise;
-};
+});
 
 process.on('SIGTERM', () => { shutdown(0); });
 process.on('SIGINT', () => { shutdown(0); });
@@ -620,11 +612,12 @@ rl.on('close', () => {
   shutdown(0);
 });
 
-rl.on('line', async (line) => {
+rl.on('line', async line => {
   const msg = JSON.parse(line.trim());
   if (msg.action === 'close') {
     const p1 = shutdown(0);
     const p2 = shutdown(0);
+    samePromise = (p1 === p2);
     process.emit('SIGTERM');
     rl.close();
     await Promise.all([p1, p2]);
@@ -633,28 +626,58 @@ rl.on('line', async (line) => {
 
 process.stdout.write(JSON.stringify({ status: 'ready' }) + '\\n');
 """
-    proc = subprocess.Popen(
-        ["node", "--input-type=module", "-e", harness],
-        cwd=ROOT,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    worker = LifecycleBrowserWorker(
+        cmd=["node", "--input-type=module", "-e", harness],
+        startup_timeout=5.0,
     )
     try:
-        ready_line = proc.stdout.readline()
-        assert json.loads(ready_line.strip())["status"] == "ready"
+        worker.start()
+        saved_proc = worker._proc
+        result = worker.send_command({"action": "close"}, timeout=5.0)
 
-        proc.stdin.write(json.dumps({"action": "close"}) + "\n")
-        proc.stdin.flush()
+        assert result.get("ok") is True
+        assert result["browserCloseCount"] == 1, (
+            f"Expected exactly 1 browser.close() invocation, got {result['browserCloseCount']}"
+        )
+        assert result["samePromise"] is True, "Expected repeated shutdown calls to share the identical promise"
+        assert result["exitCode"] == 0
 
-        result_line = proc.stdout.readline()
-        result = json.loads(result_line.strip())
-        assert result["browserCloseCount"] == 1, f"Expected exactly 1 browser.close() invocation, got {result['browserCloseCount']}"
-
-        proc.wait(timeout=2.0)
-        assert proc.returncode == 0
+        saved_proc.wait(timeout=2.0)
+        assert saved_proc.returncode == 0
     finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=1.0)
+        worker.close()
+
+
+def test_worker_timeout_fails_deterministically_and_cleans_up():
+    """Verify worker timeouts fail with an actionable error and clean up processes."""
+    hang_code = (
+        "import os, sys, time\n"
+        "sys.stdout.write('{\"status\": \"ready\"}\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(30)\n"
+    )
+    worker = LifecycleBrowserWorker(
+        cmd=[sys.executable, "-c", hang_code],
+        startup_timeout=5.0,
+    )
+    try:
+        worker.start()
+        saved_pgid = worker._pgid
+        saved_proc = worker._proc
+
+        with pytest.raises(TimeoutError) as exc_info:
+            worker.send_command({"action": "test_hang"}, timeout=0.6)
+
+        assert "timed out after 0.6s without response" in str(exc_info.value)
+        assert worker._proc is None
+        assert worker._pgid is None
+
+        assert saved_proc.poll() is not None
+        try:
+            os.killpg(saved_pgid, 0)
+            still_alive = True
+        except (ProcessLookupError, OSError):
+            still_alive = False
+        assert still_alive is False, "Hanging worker process should have been terminated on timeout"
+    finally:
+        worker.close()
