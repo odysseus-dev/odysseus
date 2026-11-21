@@ -900,3 +900,28 @@ class TestRejectCrossSite:
 
     def test_missing_header_allowed(self):
         assert _reject_cross_site(self._req({})) is None
+
+
+class TestVllmCliResolutionAndCache:
+    def test_resolve_local_vllm_cli_falls_back_to_sysconfig_scripts(self, monkeypatch, tmp_path):
+        from routes import shell_routes
+
+        scripts_dir = tmp_path / "custom-scripts"
+        scripts_dir.mkdir()
+        fake_vllm = scripts_dir / ("vllm.exe" if shell_routes.os.name == "nt" else "vllm")
+        fake_vllm.write_text("#!/bin/sh\n", encoding="utf-8")
+        if shell_routes.os.name != "nt":
+            fake_vllm.chmod(0o755)
+
+        monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setattr("sysconfig.get_path", lambda scheme, *args, **kwargs: str(scripts_dir) if scheme == "scripts" else None)
+
+        resolved = shell_routes._resolve_local_vllm_cli()
+        assert resolved is not None and shell_routes.os.path.normcase(resolved) == shell_routes.os.path.normcase(str(fake_vllm))
+
+    def test_invalidate_package_status_cache_clears_cached_entries(self):
+        from routes import shell_routes
+
+        shell_routes._PACKAGE_STATUS_CACHE["vllm"] = (9999999999.0, {"installed": False})
+        shell_routes.invalidate_package_status_cache()
+        assert "vllm" not in shell_routes._PACKAGE_STATUS_CACHE
