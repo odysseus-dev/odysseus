@@ -105,11 +105,15 @@ function installDom() {
 
 const MOCKS = {
   'host.js': {
-    names: ['uiModule'],
+    names: ['uiModule', 'markdownModule'],
     evaluate(module) {
       module.setExport('uiModule', {
         showError(message) { calls.errors.push(message); },
         showToast(message) { calls.toasts.push(message); },
+      });
+      module.setExport('markdownModule', {
+        sanitizeAllowedHtml(value) { return String(value || ''); },
+        mdToHtml(value) { return String(value || ''); },
       });
     },
   },
@@ -133,11 +137,12 @@ const MOCKS = {
     },
   },
   'persistence.js': {
-    names: ['_cancelAutoSave', '_scheduleAutoSave', '_setDocumentSaveState'],
+    names: ['_cancelAutoSave', '_scheduleAutoSave', '_setDocumentSaveState', '_markDocumentDirty'],
     evaluate(module) {
       module.setExport('_cancelAutoSave', (...args) => { calls.cancelSave.push(args); });
       module.setExport('_scheduleAutoSave', (...args) => { calls.scheduleSave.push(args); });
       module.setExport('_setDocumentSaveState', (...args) => { calls.saveState.push(args); });
+      module.setExport('_markDocumentDirty', () => {});
     },
   },
 };
@@ -221,6 +226,7 @@ describe('versionHistory', () => {
       title: 'Notes',
       language: 'markdown',
       content: 'current',
+      _persistedContent: 'current',
       version: 1,
       sessionId: 'sess',
     });
@@ -299,6 +305,7 @@ describe('versionHistory', () => {
     await env.api.restoreVersion(2);
     const doc = env.state.docs.get('doc-1');
     assert.equal(doc.content, 'restored');
+    assert.equal(doc._persistedContent, 'restored');
     assert.equal(doc.version, 4);
     assert.deepEqual(calls.saveState[0], ['saved', 'doc-1']);
     assert.deepEqual(calls.switchTo[0][0], 'doc-1');
@@ -318,9 +325,15 @@ describe('versionHistory', () => {
     };
     await env.api.restoreVersion(2);
     assert.equal(doc.content, 'typed during restore');
+    assert.equal(doc._persistedContent, 'server');
     assert.deepEqual(calls.saveState[0], ['dirty', 'doc-1']);
     assert.equal(calls.scheduleSave.length, 1);
     assert.equal(calls.switchTo.length, 0);
+
+    globalThis.fetch = async () => ({ ok: false, status: 503 });
+    await env.api.restoreVersion(2);
+    assert.equal(doc.content, 'typed during restore');
+    assert.equal(doc._persistedContent, 'server');
   });
 
   it('shows a load failure without replacing a newer history view', async () => {

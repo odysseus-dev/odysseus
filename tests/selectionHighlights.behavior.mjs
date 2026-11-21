@@ -21,6 +21,7 @@ async function load() {
    'documentKinds.js':{_isRichTextLang:lang=>lang==='richtext'},
    'documentFlows.js':{_ensureDocPaneMounted(){},loadDocument:async()=>true},
    'richBodySync.js':{_emailRichbodyActive:()=>null},
+   'markdownVisualSync.js':{isMarkdownVisualModeActive:()=>false},
    'documentStatus.js':{_scheduleDocumentStats(){}},
   };
   const exports=imports[name];

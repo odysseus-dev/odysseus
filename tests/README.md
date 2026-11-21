@@ -94,42 +94,42 @@ fast lane; the test stays runnable directly, e.g.:
 
 ## Parallel shards (`--shard N/M`)
 
-CI no longer runs the whole suite as one workload. The `python-tests` job is a
-four-way matrix, and each job runs one section:
+The `python-tests` CI matrix has six shards. Each job runs one section:
 
 ```bash
-./venv/bin/python -m pytest -q --shard 1/4
+./venv/bin/python -m pytest -q --shard 1/6
 ```
 
 `tests/_shards.py` owns the partition and `tests/conftest.py` applies it. The
 unit of a shard is a **test file**, so tests that share module state stay
 together, and assignment is a total function of the file path - every file
-lands in exactly one shard, and the four shards together run every test exactly
-once. The partition is deliberately *not* built on the `area_*` markers: those
-do not partition the suite, because a file may carry a hand-applied `area_*`
-mark on top of the one derived from its filename.
+lands in exactly one shard. The matrix runs every test exactly once. A file
+can have several `area_*` markers, so the planner uses file paths directly.
 
 Sharding deselects; it does not narrow collection. Every test module is still
 imported, in the same order, in every shard, so the import-time stubbing in
 `conftest.py` behaves identically whether the suite runs whole or in sections.
 Only the deselected tests' call phase is skipped.
 
-Balance comes from the `slow` marker: a `slow` item is weighted far above an
-ordinary one, and files are packed heaviest-first into the lightest shard. The
-plan depends only on the collected file set, so every parallel job computes the
-same one from the same commit. As more tests earn a `slow` mark from duration
-evidence, the sections even out further - no duration table to keep current.
+The planner places the heaviest file on the lightest shard at each step. It
+uses measured per-file durations from `tests/.shard_durations.json` and
+estimates unprofiled files from ordinary and `slow` item counts. When a
+duration profile is active, the planner reserves time on shard 1 for the
+Playwright mobile layout checks that run after pytest.
 
 `--shard 1/1` is a no-op, and a selector that is malformed or out of range ends
 the run with a usage error rather than quietly testing a subset. If you change
 the shard count, change `DEFAULT_SHARD_COUNT` and the `ci.yml` matrix together;
-`tests/test_shards.py` fails when they drift apart.
+`tests/test_shards.py` fails when they drift apart. Authoritative duration
+generation expects a report and sidecar from each CI shard. To use reports
+from a different matrix size, pass `--expected-shards` to
+`scripts/generate_shard_durations.py`.
 
 ## Local pytest workers
 
 Install the application environment and parallel test tooling with
 `python -m pip install -r requirements-dev.txt`. Parallelism is opt-in; ordinary
-pytest remains serial, and the four CI shards are unchanged.
+pytest remains serial locally. CI uses the file-based matrix described above.
 
 ```bash
 python -m pytest -q -n 4 -p no:cacheprovider --max-worker-restart=0

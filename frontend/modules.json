@@ -134,6 +134,10 @@
       "deployment": "js/features/notes/domain/noteRules.js"
     },
     {
+      "source": "features/notes/domain/markdownTasks.js",
+      "deployment": "js/features/notes/domain/markdownTasks.js"
+    },
+    {
       "source": "features/notes/index.js",
       "deployment": "js/features/notes/index.js",
       "legacyImports": [
@@ -172,6 +176,10 @@
         {
           "specifier": "/static/js/tourHintDismiss.js",
           "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/markdown.js",
+          "reason": "Shared markdown renderer, injected at Notes composition so note cards use the same renderer as the rest of the app. Remove when markdown rendering migrates to maintained source."
         }
       ]
     },
@@ -280,6 +288,10 @@
       "deployment": "js/document/ui/richEditor/links.js"
     },
     {
+      "source": "features/documents/ui/richEditor/markdownVisualSync.js",
+      "deployment": "js/document/ui/richEditor/markdownVisualSync.js"
+    },
+    {
       "source": "features/documents/ui/richEditor/richBodySync.js",
       "deployment": "js/document/ui/richEditor/richBodySync.js"
     },
@@ -346,6 +358,18 @@
     {
       "source": "features/documents/domain/richTextRules.js",
       "deployment": "js/document/domain/richTextRules.js"
+    },
+    {
+      "source": "features/documents/domain/markdownVisualCodec.js",
+      "deployment": "js/document/domain/markdownVisualCodec.js"
+    },
+    {
+      "source": "features/documents/domain/sourceSegmentation.js",
+      "deployment": "js/document/domain/sourceSegmentation.js"
+    },
+    {
+      "source": "features/documents/domain/sourceFidelity.js",
+      "deployment": "js/document/domain/sourceFidelity.js"
     },
     {
       "source": "features/documents/application/documentCommands.js",

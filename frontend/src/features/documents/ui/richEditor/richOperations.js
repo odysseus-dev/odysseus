@@ -44,6 +44,60 @@ export function _normalizeRichChecklists(root) {
     });
   }
 
+export function _setRichAlertType(rich, type) {
+    const safeType = String(type || '').toUpperCase();
+    if (!['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'].includes(safeType)) return false;
+    const element = _richSelectionElement(rich);
+    const alert = element?.closest?.('blockquote.markdown-alert');
+    if (!alert || !rich.contains(alert)) return false;
+    for (const name of ['note', 'tip', 'important', 'warning', 'caution']) alert.classList.remove(`markdown-alert-${name}`);
+    const normalized = safeType.toLowerCase();
+    alert.classList.add(`markdown-alert-${normalized}`);
+    alert.dataset.alert = safeType;
+    const label = alert.querySelector('[data-alert-label]');
+    if (label) {
+      label.dataset.alertLabel = safeType;
+      label.textContent = normalized[0].toUpperCase() + normalized.slice(1);
+    }
+    rich.dispatchEvent(new Event('input', { bubbles: true }));
+    rich._syncActive?.();
+    return true;
+  }
+
+const _richCodeLanguages = Object.freeze({
+    plain: '',
+    javascript: 'js',
+    python: 'python',
+    shell: 'bash',
+    json: 'json',
+  });
+
+export function _setRichCodeBlockLanguage(rich, requested) {
+    const languageKey = String(requested || '').toLowerCase();
+    if (!Object.hasOwn(_richCodeLanguages, languageKey)) return false;
+    const element = _richSelectionElement(rich);
+    const pre = element?.closest?.('pre');
+    if (!pre || !rich.contains(pre)) return false;
+    let code = Array.from(pre.children).find(child => child.tagName === 'CODE');
+    if (!code) {
+      code = document.createElement('code');
+      while (pre.firstChild) code.appendChild(pre.firstChild);
+      pre.appendChild(code);
+    }
+    const language = _richCodeLanguages[languageKey];
+    code.removeAttribute('data-lang');
+    code.classList.remove(...Array.from(code.classList).filter(name => name.startsWith('language-')));
+    pre.removeAttribute('data-lang');
+    pre.classList.remove(...Array.from(pre.classList).filter(name => name.startsWith('language-')));
+    if (language) {
+      code.dataset.lang = language;
+      code.classList.add(`language-${language}`);
+    }
+    rich.dispatchEvent(new Event('input', { bubbles: true, inputType: 'formatBlock' }));
+    rich._syncActive?.();
+    return true;
+  }
+
 function _richTextOffsetWithin(root) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !root.contains(selection.anchorNode)) return null;
@@ -214,16 +268,23 @@ function _replaceRichChecklist(rich, original, replacement, targetIndex = 0, tex
   }
 
 export function _setRichChecklistItemChecked(rich, item, checked) {
-    const list = item.parentElement;
-    const items = _richChecklistItems(list);
-    const itemIndex = items.indexOf(item);
-    const textOffset = _richTextOffsetWithin(item);
-    const clone = list.cloneNode(true);
-    const cloneItem = _richChecklistItems(clone)[itemIndex];
-    if (!cloneItem) return;
-    cloneItem.dataset.checked = checked ? 'true' : 'false';
-    cloneItem.setAttribute('aria-checked', checked ? 'true' : 'false');
-    _replaceRichChecklist(rich, list, clone, itemIndex, textOffset);
+    const value = checked ? 'true' : 'false';
+    if (rich.classList.contains('markdown-visual-mode')) {
+      // Replacing an entire list through insertHTML can reparent its items,
+      // especially in the browser wrappers created after inserting a divider.
+      item.dataset.checked = value;
+      item.setAttribute('aria-checked', value);
+    } else {
+      const list = item.parentElement;
+      const itemIndex = _richChecklistItems(list).indexOf(item);
+      const textOffset = _richTextOffsetWithin(item);
+      const clone = list.cloneNode(true);
+      const cloneItem = _richChecklistItems(clone)[itemIndex];
+      if (!cloneItem) return;
+      cloneItem.dataset.checked = value;
+      cloneItem.setAttribute('aria-checked', value);
+      _replaceRichChecklist(rich, list, clone, itemIndex, textOffset);
+    }
     _syncEmailRichbody(rich);
     _scheduleEmailRichbodySave();
     rich._syncActive?.();
@@ -259,8 +320,38 @@ export function _toggleRichChecklist(rich) {
     const insertedItem = _richSelectionListItem(rich);
     const insertedList = insertedItem?.parentElement;
     if (!insertedList) return false;
-    insertedList.classList.add('rich-checklist');
-    _normalizeRichChecklists(insertedList);
+    // Shared fix, kept for every rich editor: when the browser merges the new item into
+    // an adjacent list, only the new item becomes a checklist. Converting the whole
+    // neighbouring bullet list was wrong in rich text too (pinned by
+    // test_block_shortcuts_exit_quotes_and_keep_adjacent_list_types).
+    const siblings = _richChecklistItems(insertedList).filter(item => item !== insertedItem);
+    if (!siblings.length) {
+      insertedList.classList.add('rich-checklist');
+      _normalizeRichChecklists(insertedList);
+      return true;
+    }
+    // The browser merged the new item into an adjacent list. Only the new item
+    // becomes a checklist; the neighbouring items keep their list type.
+    const items = _richChecklistItems(insertedList);
+    const position = items.indexOf(insertedItem);
+    const following = items.slice(position + 1);
+    const checklist = document.createElement('ul');
+    checklist.className = 'rich-checklist';
+    insertedList.after(checklist);
+    checklist.appendChild(insertedItem);
+    if (following.length) {
+      const tail = insertedList.cloneNode(false);
+      checklist.after(tail);
+      following.forEach(item => tail.appendChild(item));
+    }
+    if (position === 0) insertedList.remove();
+    _normalizeRichChecklists(checklist);
+    const caret = document.createRange();
+    caret.selectNodeContents(insertedItem);
+    caret.collapse(false);
+    const selection = window.getSelection?.();
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
     return true;
   }
 
@@ -349,6 +440,20 @@ export function _toggleRichInlineCode(rich) {
       return true;
     }
     const existing = _richSelectionInlineCode(rich);
+    const liveSelection = window.getSelection();
+    if (existing && liveSelection?.isCollapsed) {
+      // A caret inside inline code leaves the code: typing continues in plain text right
+      // after it. (Selecting the code's contents here made the next keystroke replace the
+      // code the user had just typed.)
+      const exit = document.createTextNode('\u200b');
+      existing.after(exit);
+      const caret = document.createRange();
+      caret.setStart(exit, 1);
+      caret.collapse(true);
+      liveSelection.removeAllRanges();
+      liveSelection.addRange(caret);
+      return true;
+    }
     if (existing) {
       const range = document.createRange();
       range.selectNodeContents(existing);

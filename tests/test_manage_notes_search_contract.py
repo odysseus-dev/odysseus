@@ -53,6 +53,7 @@ def _note(**overrides):
         "owner": None,
         "title": "Farmers market packing",
         "content": "private body marker",
+        "image_url": None,
         "note_type": "checklist",
         "color": None,
         "label": "market",

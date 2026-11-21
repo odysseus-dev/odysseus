@@ -74,14 +74,10 @@ export function createCardInteractions({
     });
     // Click content : edit, or toggle select in select mode
     body.querySelectorAll('.note-content-preview').forEach(el => {
-      el.addEventListener('click', (e) => { e.stopPropagation(); tapToEditOrSelect(el.closest('.note-card')); });
-    });
-    // A saved drawing is the note's primary content. Open its editor directly
-    // when the preview is clicked, matching title/content preview behavior.
-    body.querySelectorAll('.note-card-drawing .note-card-image').forEach(el => {
       el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        tapToEditOrSelect(el.closest('.note-card'));
+        // Links in rendered markdown open on their own; checkbox rows stop the event first.
+        if (e.target.closest('a, summary')) { e.stopPropagation(); return; }
+        e.stopPropagation(); tapToEditOrSelect(el.closest('.note-card'));
       });
     });
     // Click empty area of checklist preview (not on checkbox/X) : edit
@@ -98,6 +94,7 @@ export function createCardInteractions({
         }
       }, { passive: false });
       el.addEventListener('click', (e) => {
+        if (e.target.closest('a, summary')) { e.stopPropagation(); return; }
         if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input')) return;
         e.stopPropagation();
         tapToEditOrSelect(el.closest('.note-card'));
@@ -156,8 +153,8 @@ export function createCardInteractions({
     const _applyCardColor = async (card, id, newColor) => {
       const isBg = _isBgImage(newColor);
       COLORS.forEach(c => { if (c.value && c.value !== 'custom') card.classList.remove('note-color-' + c.value); });
-      if (newColor && !isBg) card.classList.add('note-color-' + newColor);
-      if (isBg) card.setAttribute('style', _customColorStyle(newColor));
+      if (newColor && !isBg && COLORS.some(c => c.value === newColor && c.value !== 'custom')) card.classList.add('note-color-' + newColor);
+      if (isBg && _customColorStyle(newColor)) card.setAttribute('style', _customColorStyle(newColor));
       else card.removeAttribute('style');
       card.querySelectorAll('.note-card-color-dot').forEach(d => {
         d.classList.toggle('active', _dotIsActive(d.dataset.color, newColor));

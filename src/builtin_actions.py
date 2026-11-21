@@ -1974,6 +1974,13 @@ def _daily_brief_local_start(event, tz=None):
     return start
 
 
+def _is_calendar_reminder_note(note) -> bool:
+    """A note the calendar wrote as an event's reminder (src/tools/calendar.py, routes/calendar_routes.py)."""
+    return getattr(note, "source", None) == "calendar" or (
+        getattr(note, "label", None) == "calendar" and getattr(note, "note_type", None) == "todo"
+    )
+
+
 async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
     """Build a short morning digest: today's calendar events, unread email count
     + top-N senders/subjects, active todos."""
@@ -2067,17 +2074,20 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
             logger.debug(f"daily_brief: email fetch failed: {ee}")
 
         # Pull active todo items from notes
+        from core.notes_markdown import effective_content, parse_task_lines
         todo_lines: list[str] = []
         for n in notes:
-            if n.note_type == "checklist" and n.items:
-                try:
-                    items = _json.loads(n.items)
-                    pending = [it.get("text", "") for it in items if not it.get("done")]
-                    for t in pending[:3]:
-                        if t:
-                            todo_lines.append(f"{n.title or 'Checklist'}: {t}")
-                except Exception:
-                    continue
+            # The calendar's own reminder notes repeat an event the Calendar
+            # section above already lists.
+            if _is_calendar_reminder_note(n):
+                continue
+            pending = [
+                t["text"] for t in parse_task_lines(effective_content(n.content, n.items, getattr(n, "image_url", None)))
+                if not t["done"] and t["text"]
+            ]
+            if pending:
+                for t in pending[:3]:
+                    todo_lines.append(f"{n.title or 'Checklist'}: {t}")
             elif n.pinned and n.title:
                 todo_lines.append(n.title)
 
@@ -2435,23 +2445,10 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         pass
                 # Compose + dispatch.
                 title = (n.title or "Reminder").strip() or "Reminder"
-                body_parts = []
-                if n.content:
-                    body_parts.append(n.content[:400])
-                # Items: list pending checklist entries inline.
-                if n.items:
-                    try:
-                        items = _json.loads(n.items)
-                        pending = [
-                            it.get("text", "")
-                            for it in items
-                            if not it.get("done") and not it.get("checked")
-                        ]
-                        if pending:
-                            body_parts.append("Pending:\n" + "\n".join(f"- {t}" for t in pending[:8]))
-                    except Exception:
-                        pass
-                body = "\n\n".join(p for p in body_parts if p) or title
+                # Same builder as the fire-reminder route: prose plus the open
+                # task lines from content.
+                from core.notes_markdown import effective_content, reminder_body
+                body = reminder_body(effective_content(n.content, n.items, getattr(n, "image_url", None))) or title
                 try:
                     from routes.note_routes import dispatch_reminder
                     result = await dispatch_reminder(

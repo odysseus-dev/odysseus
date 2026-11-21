@@ -1,5 +1,6 @@
 /** Page-owned reminder scheduler and notification delivery workflow. */
 import { _hasTimeComponent, _isDueTodayOrOverdue, _advanceRecurring } from '../domain/recurrence.js';
+import { reminderBody } from '../domain/noteRules.js';
 export function createNotesReminders({
   app,
   api,
@@ -10,7 +11,6 @@ export function createNotesReminders({
   effects,
   fetchNotes,
   isNoteFullyDone,
-  hasItems,
   dismissedKey
 }) {
   const state = app.state;
@@ -18,7 +18,6 @@ export function createNotesReminders({
   const _patchNote = api.patchNote;
   const _fetchNotes = fetchNotes;
   const _isNoteFullyDone = isNoteFullyDone;
-  const _hasItems = hasItems;
   const REMINDER_DISMISSED_AT_KEY = dismissedKey;
   const _updateRailBadge = effects.badge;
   let _reminderTimer = null;
@@ -71,25 +70,10 @@ export function createNotesReminders({
 
   function _fireReminder(note) {
     const title = note.title || 'Note reminder';
-    // Include the verbatim note content so the email/notification actually
-    // shows what to do, not just a count. Cap the per-item lines (8 max) and
-    // total length so the body stays inbox-friendly.
-    let rawBody;
-    if (_hasItems(note)) {
-      const pending = (note.items || [])
-        .filter(i => !i.done && !i.checked)
-        .map(i => (i.text || '').trim())
-        .filter(Boolean);
-      if (pending.length) {
-        const shown = pending.slice(0, 8).map(t => `- ${t}`).join('\n');
-        const extra = pending.length > 8 ? `\n…and ${pending.length - 8} more` : '';
-        rawBody = `Pending (${pending.length}):\n${shown}${extra}`;
-      } else {
-        rawBody = `${(note.items || []).length} item${(note.items || []).length === 1 ? '' : 's'}`;
-      }
-    } else {
-      rawBody = (note.content || '').slice(0, 400);
-    }
+    // The note's prose and open tasks as plain text, by the same rules the
+    // server's reminder builder uses, so the local notification and the
+    // email/ntfy one say the same thing.
+    const rawBody = reminderBody(note.content);
 
     // Ask the server to dispatch according to user settings. The server may
     // return an LLM-written synthesis line and/or send an email. We still show
@@ -165,12 +149,18 @@ export function createNotesReminders({
     _updateRailBadge();
   }
 
+  // An open panel showing active notes owns the list and redraws it; swapping
+  // it here without a redraw left cards that no longer matched it, so a note
+  // deleted elsewhere kept its card and the 20 s re-read saw nothing new.
+  const panelOwnsList = () => state.open && !state.showingArchived;
+
   async function _initReminders() {
     try {
+      if (panelOwnsList()) { _startReminderLoop(); return; }
       const res = await api.listNotes(false);
       if (res.ok && !disposed) {
         const data = await res.json();
-        app.replaceNotes(data.notes || data || []);
+        if (!panelOwnsList()) app.replaceNotes(data.notes || data || []);
         _startReminderLoop();
       }
     } catch {}

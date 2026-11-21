@@ -264,6 +264,8 @@ def test_find_and_replace_lifecycle_in_editor():
 
       await page.evaluate(async () => {
         const mod = await import('/static/js/document.js?v=20260831richtexttools91&lifecycle-test=1');
+        // Exercises textarea find/replace, so pin the Markdown source editor.
+        localStorage.setItem('odysseus-doc-md-editor-mode', 'markdown');
         mod.init('/api');
         mod.injectFreshDoc({
           id: 'lifecycle-find-doc',

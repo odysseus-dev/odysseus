@@ -1,14 +1,37 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
 
 const styles = (await fs.readFile('static/index.html', 'utf8')).match(/<link[^>]+rel="stylesheet"[^>]*>/g).join('');
 
+let sharedBrowserPromise = null;
+
+async function getSharedBrowser() {
+  if (!sharedBrowserPromise) {
+    sharedBrowserPromise = chromium.launch({ headless: true });
+  }
+  const browser = await sharedBrowserPromise;
+  if (!browser.isConnected()) {
+    sharedBrowserPromise = chromium.launch({ headless: true });
+    return sharedBrowserPromise;
+  }
+  return browser;
+}
+
+after(async () => {
+  if (sharedBrowserPromise) {
+    const browser = await sharedBrowserPromise;
+    sharedBrowserPromise = null;
+    await browser.close();
+  }
+});
+
 async function setup(t, routeHandler, options = {}) {
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, ...options });
+  const browser = await getSharedBrowser();
+  const context = await browser.newContext({ viewport: { width: 1200, height: 800 }, ...options });
+  t.after(() => context.close());
+  const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, [], 'integrated module graph must not throw'));
@@ -935,9 +958,10 @@ test('titles: AI-created document without explicit title preserves derived title
 });
 
 test('facade: importing and running document module publishes only the documented window globals and exports', async t => {
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const browser = await getSharedBrowser();
+  const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  t.after(() => context.close());
+  const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, [], 'integrated module graph must not throw'));
@@ -1455,6 +1479,9 @@ test('pdf lifecycle: switching to markdown releases transient PDF resources with
     return true;
   });
 
+  // This scenario edits Markdown B through the source textarea, so it pins the
+  // Markdown source editor instead of the visual default.
+  await page.evaluate(() => localStorage.setItem('odysseus-doc-md-editor-mode', 'markdown'));
   await page.evaluate(() => {
     const active = { docPointerdown: 0, docKeydown: 0, paneMousemove: 0, paneMouseleave: 0 };
     const tracked = new WeakMap();

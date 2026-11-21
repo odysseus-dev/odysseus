@@ -22,6 +22,14 @@ export function setRichSlashActiveIndex(idx) {
   _richSlashActiveIndex = idx;
 }
 
+const _RICH_ROOT_BLOCK_BOUNDARY_TAGS = new Set([
+  'P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'TABLE', 'HR', 'FIGURE', 'BR',
+]);
+
+function _isRichRootBlockBoundary(node) {
+  return node?.nodeType === Node.ELEMENT_NODE && _RICH_ROOT_BLOCK_BOUNDARY_TAGS.has(node.tagName);
+}
+
 export function _applyRichBlockInputRule(rich) {
     const selection = window.getSelection?.();
     if (!selection?.rangeCount || !selection.isCollapsed) return false;
@@ -56,10 +64,25 @@ export function _applyRichBlockInputRule(rich) {
     }
     if (element.closest('pre, blockquote, td, th')) return false;
     const block = element.closest('p, div');
-    if (!block || block === rich || !rich.contains(block)) return false;
+    if (!block || (block !== rich && !rich.contains(block))) return false;
+    // Text typed straight into an empty editor has no wrapping block. Only Markdown
+    // Visual applies input rules there; other editors never did.
+    if (block === rich && !rich.classList.contains('markdown-visual-mode')) return false;
     const markerRange = document.createRange();
     try {
-      markerRange.selectNodeContents(block);
+      if (block === rich) {
+        // Text typed into an empty editor has no block wrapper yet. The marker
+        // then starts at the inline run, after the last block boundary, that
+        // holds the caret.
+        let top = caretRange.startContainer;
+        if (top === rich) return false;
+        while (top.parentNode !== rich) top = top.parentNode;
+        let first = top;
+        while (first.previousSibling && !_isRichRootBlockBoundary(first.previousSibling)) first = first.previousSibling;
+        markerRange.setStartBefore(first);
+      } else {
+        markerRange.selectNodeContents(block);
+      }
       markerRange.setEnd(caretRange.startContainer, caretRange.startOffset);
     } catch (_) {
       return false;
@@ -102,6 +125,7 @@ function _richSlashCommands(query, rich) {
     const doc = activeDocId && docs.get(activeDocId);
     return _RICH_SLASH_COMMANDS.filter(command => {
       if (doc?.language === 'email' && command.action === 'check') return false;
+      if (doc?.language === 'markdown' && command.action === 'pagebreak') return false;
       if (!query) return true;
       return `${command.label} ${command.keywords}`.toLowerCase().includes(query);
     });

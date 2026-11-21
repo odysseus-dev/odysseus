@@ -921,6 +921,10 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "Testing, capture and development tooling", INTERNAL,
         "Path to a local compact model GGUF file used in Cookbook serve lifecycle audit flows.",
     ),
+    "ODYSSEUS_VALIDATION_DIR": (
+        "Testing, capture and development tooling", INTERNAL,
+        "Directory where real application Playwright validation artifacts and reports are written.",
+    ),
 
     # -- Build and release metadata ----------------------------------------
     "ODYSSEUS_BUILD_VERSION": (
