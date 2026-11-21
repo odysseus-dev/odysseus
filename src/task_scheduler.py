@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import re
@@ -44,6 +45,56 @@ def _background_owner_filter(column):
 def _utcnow() -> datetime:
     """Return naive UTC for task DB fields without using deprecated APIs."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# Tool calls made by the agent loop of the run executing in this asyncio task.
+# None means no agent loop ran (action/research runs); an empty list means the
+# loop ran and called no tools. A ContextVar keeps overlapping runs apart.
+_run_steps: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "task_run_steps", default=None)
+
+
+def _event_round(event: dict) -> int | None:
+    round_no = event.get("round")
+    if isinstance(round_no, bool) or not isinstance(round_no, int):
+        return None
+    return round_no
+
+
+def _task_run_step(event: dict, current_round: int | None = None) -> dict:
+    """Reduce a ``tool_output`` event to its durable ``task_runs.steps`` entry.
+
+    Arguments and output are left out on purpose: they can carry secrets and
+    the run result already holds what the task produced. ``current_round`` is
+    the round last announced by the loop, for emitters that put it only on
+    ``tool_start``. ``error`` is None when the event reports no outcome at
+    all, so an unknown result is never recorded as a success.
+    """
+    exit_code = event.get("exit_code")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        exit_code = None
+    round_no = _event_round(event)
+    if event.get("blocked") or isinstance(event.get("error"), bool):
+        error = bool(event.get("blocked") or event.get("error"))
+    elif exit_code is not None:
+        error = exit_code != 0
+    else:
+        error = None
+    return {
+        "round": current_round if round_no is None else round_no,
+        "tool": str(event.get("tool") or "?"),
+        "exit_code": exit_code,
+        "error": error,
+        "executed": event.get("execution_attempted") is not False,
+        "ts": _utcnow().isoformat() + "Z",
+    }
+
+
+def _record_run_steps(run) -> None:
+    """Write the current run's collected tool calls to ``run.steps``."""
+    steps = _run_steps.get()
+    if run is not None and steps is not None:
+        run.steps = json.dumps(steps)
 
 
 # Shell/file tools a scheduled task's agent should be offered by default,
@@ -509,6 +560,8 @@ class TaskScheduler:
                 run.error = message
                 run.result = run.result or message
                 run.finished_at = _utcnow()
+                # asyncio.to_thread carries the cancelled run's context here.
+                _record_run_steps(run)
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if task:
                 task.last_run = _utcnow()
@@ -1043,6 +1096,7 @@ class TaskScheduler:
             # previous llm/research run's model. The executors set it once the
             # model is resolved.
             self._last_run_model = None
+            _run_steps.set(None)
             foreground_cancel = {"hit": False}
             foreground_monitor = None
             if gate_foreground:
@@ -1083,6 +1137,7 @@ class TaskScheduler:
                 # Record which model actually ran (resolved inside the executor).
                 if getattr(self, "_last_run_model", None):
                     run.model = self._last_run_model
+                _record_run_steps(run)
                 if run.status == "success":
                     await self._deliver_task_result(task, result, db, model=getattr(self, "_last_run_model", None))
             except TaskDeferred as defer:
@@ -1249,6 +1304,7 @@ class TaskScheduler:
                     run_obj.status = "error"
                     run_obj.error = err_text[:2000]
                     run_obj.finished_at = _utcnow()
+                    _record_run_steps(run_obj)
                 # Advance next_run even on failure so a broken task doesn't
                 # busy-loop the scheduler every tick with a stale past date.
                 task_obj = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -2059,6 +2115,9 @@ class TaskScheduler:
         full_text = ""
         final_text_replaced = False
         tool_results = []
+        steps: list = []
+        _run_steps.set(steps)
+        current_round = 1  # the loop announces only later rounds
         approval_pause = None
 
         # Honor per-task max_steps (defense against runaway agent loops).
@@ -2119,7 +2178,10 @@ class TaskScheduler:
                             # answer as one replacement instead of deltas.
                             full_text = str(data.get("content") or "")
                             final_text_replaced = True
+                        elif data.get("type") in ("tool_start", "agent_step"):
+                            current_round = _event_round(data) or current_round
                         elif data.get("type") == "tool_output":
+                            steps.append(_task_run_step(data, current_round))
                             # Tool results — capture summary so we have SOMETHING even
                             # if the model never produces a final text response
                             tool_summary = data.get("stdout") or data.get("output") or data.get("result") or ""
