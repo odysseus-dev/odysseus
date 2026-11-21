@@ -350,3 +350,43 @@ async def test_runtime_denial_still_blocks_tool_selected_by_contract(monkeypatch
     assert "disabled" in result["error"] or "policy" in result["error"]
     assert result.get("failure_kind") != "turn_contract_denied"
     handler.assert_not_called()
+
+
+def test_chat_route_contract_uses_restricted_request_authority():
+    from routes.chat_routes import _resolve_authorized_turn_contract
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant
+
+    allowed = "mcp__test_server__read_data"
+    denied = "mcp__test_server__delete_data"
+
+    def schema(name):
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "Test MCP operation",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+    authority = RequestAuthority(
+        "req-chat-mcp-test",
+        "alice",
+        "session-test",
+        "",
+        (OperationGrant(allowed), OperationGrant(denied)),
+    )
+    policy = ToolPolicy(disabled_tools=frozenset({denied}))
+
+    contract, restricted = _resolve_authorized_turn_contract(
+        authority,
+        policy,
+        capabilities=set(),
+        schemas=[schema(allowed), schema(denied)],
+    )
+
+    assert allowed in contract.offered
+    assert denied not in contract.offered
+    from src.agent_runtime.authority import ExactOperation
+    assert restricted.permits(ExactOperation.normalize(allowed, '{}'))
+    assert not restricted.permits(ExactOperation.normalize(denied, '{}'))
