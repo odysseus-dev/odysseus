@@ -189,14 +189,77 @@ def params_b(model):
     return 0.0
 
 
-def estimate_memory_gb(model, quant, ctx):
+_KV_CACHE_ELEM_BYTES = {
+    "f32": 4.0,
+    "fp32": 4.0,
+    "f16": 2.0,
+    "fp16": 2.0,
+    "bf16": 2.0,
+    "q8_0": 1.0,
+    "q8": 1.0,
+    "fp8": 1.0,
+    "fp8_e4m3": 1.0,
+    "fp8_e5m2": 1.0,
+    "q4_0": 0.5,
+    "q4_1": 0.5,
+    "q4": 0.5,
+    "iq4_nl": 0.5,
+}
+
+
+def _int_field(model, *keys):
+    if not isinstance(model, dict):
+        return 0
+    for k in keys:
+        v = model.get(k)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+        if isinstance(v, str) and v.strip().isdigit():
+            iv = int(v.strip())
+            if iv > 0:
+                return iv
+    return 0
+
+
+def kv_bytes_per_token(model, cache_type="q8_0"):
+    """Exact KV-cache bytes per token from model attention layout when known,
+    falling back to the active-parameters heuristic when architecture fields
+    are absent."""
+    ct = str(cache_type or "q8_0").strip().lower()
+    elem_bytes = _KV_CACHE_ELEM_BYTES.get(ct, 1.0)
+    layers = _int_field(model, "num_hidden_layers", "n_layers", "num_layers", "block_count")
+    if layers > 0:
+        kv_lora_rank = _int_field(model, "kv_lora_rank")
+        qk_rope_dim = _int_field(model, "qk_rope_head_dim")
+        if kv_lora_rank > 0 and qk_rope_dim > 0:
+            return float(layers * (kv_lora_rank + qk_rope_dim) * elem_bytes)
+        n_heads = _int_field(model, "num_attention_heads", "n_heads", "num_heads", "head_count")
+        kv_heads = _int_field(model, "num_key_value_heads", "n_kv_heads", "num_kv_heads", "head_count_kv") or n_heads
+        head_dim = _int_field(model, "head_dim", "key_length", "value_length")
+        if head_dim <= 0 and n_heads > 0:
+            hidden = _int_field(model, "hidden_size", "embedding_length", "d_model")
+            if hidden > 0 and hidden % n_heads == 0:
+                head_dim = hidden // n_heads
+        if kv_heads > 0 and head_dim > 0:
+            return float(2 * layers * kv_heads * head_dim * elem_bytes)
+    kv_params = _active_params_b(model)
+    return 0.000008 * kv_params * elem_bytes * float(1024 ** 3)
+
+
+def kv_gb_per_token(model, cache_type="q8_0"):
+    """KV-cache GiB per token (architecture-derived when known, else fallback)."""
+    return kv_bytes_per_token(model, cache_type=cache_type) / float(1024 ** 3)
+
+
+def estimate_memory_gb(model, quant, ctx, cache_type="q8_0"):
     """Estimate VRAM needed to serve a model. All weights must be loaded,
     even for MoE (all experts live in memory, only active ones compute per token).
-    KV cache scales with active params for MoE (only active experts have KV state)."""
+    KV cache uses exact attention dimensions when known, else active params."""
     pb = params_b(model)
     bpp = QUANT_BPP.get(quant, 0.58)
-    kv_params = _active_params_b(model)
-    return pb * bpp + 0.000008 * kv_params * ctx + 0.5
+    return pb * bpp + kv_gb_per_token(model, cache_type=cache_type) * ctx + 0.5
 
 
 def _active_params_b(model):

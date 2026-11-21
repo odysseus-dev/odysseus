@@ -540,7 +540,10 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
   const effectiveActiveParams = (/minimax/.test(lower) && /\bm3\b/.test(lower)) ? 23 : activeParams;
   const kvDtype = String(fields.vllm_kv_cache_dtype || '').toLowerCase();
   const kvFactor = kvDtype === 'fp8' ? 0.55 : 1;
-  const kvGbPerTokenTotal = Math.max(0.00002, 0.000008 * effectiveActiveParams * kvFactor);
+  const archF16 = _archKvGbPerTokenF16(model, null);
+  const kvGbPerTokenTotal = archF16 > 0
+    ? archF16 * (kvDtype === 'fp8' ? 0.5 : 1.0)
+    : Math.max(0.00002, 0.000008 * effectiveActiveParams * kvFactor);
   const kvGbPerToken = kvGbPerTokenTotal / Math.max(1, tp);
   const perGpuBudgetGb = perGpuGb * gpuUtil;
   const modelShardGb = modelGb / Math.max(1, tp);
@@ -565,6 +568,43 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
     kvGbPerToken,
     reason: `~${ctx.toLocaleString()} tokens fits per-GPU KV (${freeForKv.toFixed(1)}G free)`,
   };
+}
+
+function _archKvGbPerTokenF16(model, profileData = null) {
+  const fromProfile = Number(profileData?.kv_gb_per_token_f16 || 0);
+  if (fromProfile > 0) return fromProfile;
+  const src = { ...(model || {}), ...(profileData?.arch || {}) };
+  const layers = Number(src.num_hidden_layers || src.n_layers || src.num_layers || src.block_count || 0);
+  if (layers <= 0) return 0;
+  const kvLora = Number(src.kv_lora_rank || 0);
+  const qkRope = Number(src.qk_rope_head_dim || 0);
+  if (kvLora > 0 && qkRope > 0) {
+    return (layers * (kvLora + qkRope) * 2) / (1024 ** 3);
+  }
+  const nHeads = Number(src.num_attention_heads || src.n_heads || src.num_heads || src.head_count || 0);
+  const kvHeads = Number(src.num_key_value_heads || src.n_kv_heads || src.num_kv_heads || src.head_count_kv || 0) || nHeads;
+  let headDim = Number(src.head_dim || src.key_length || src.value_length || 0);
+  if (headDim <= 0 && nHeads > 0) {
+    const hidden = Number(src.hidden_size || src.embedding_length || src.d_model || 0);
+    if (hidden > 0 && hidden % nHeads === 0) headDim = hidden / nHeads;
+  }
+  if (kvHeads > 0 && headDim > 0) {
+    return (2 * layers * kvHeads * headDim * 2) / (1024 ** 3);
+  }
+  return 0;
+}
+
+function _llamaKvGbPerToken(model, profileData, kvType, modelGb) {
+  const kv = String(kvType || '').toLowerCase();
+  const f16PerTok = _archKvGbPerTokenF16(model, profileData);
+  if (f16PerTok > 0) {
+    const elemRatio = kv === 'q4_0' || kv === 'q4_1' || kv === 'iq4_nl'
+      ? 0.25
+      : (kv === 'q8_0' || kv === 'fp8' ? 0.5 : (kv === 'f32' ? 2.0 : 1.0));
+    return f16PerTok * elemRatio;
+  }
+  const kvFactor = kv === 'q4_0' ? 0.55 : (kv === 'q8_0' ? 1 : (kv === 'f16' ? 1.9 : 1));
+  return Math.max(0.00008, (modelGb / 7.5) * 0.0007 * kvFactor);
 }
 
 function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0, fitSystem = null, profileData = null) {
@@ -633,11 +673,11 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
     : Math.max(1, totalVramGb - Math.max(1.0, selectedCount * 0.6));
   const freeForKv = usableGb - modelGb;
   const kv = String(fields.cache_type || '').toLowerCase();
-  const kvFactor = kv === 'q4_0' ? 0.55 : (kv === 'q8_0' ? 1 : (kv === 'f16' ? 1.9 : 1));
-  const kvGbPerToken = Math.max(0.00008, (modelGb / 7.5) * 0.0007 * kvFactor);
+  const kvGbPerToken = _llamaKvGbPerToken(model, profileData, kv, modelGb);
   if (freeForKv <= 0) {
     return {
-      ctx: Math.min(modelMax, 8192),
+      ctx: 0,
+      doesNotFit: true,
       modelGb,
       kvGbPerToken,
       reason: `model ${modelGb.toFixed(1)}G exceeds usable ${isUnifiedMode ? 'unified memory' : 'VRAM'} ${usableGb.toFixed(1)}G before KV`,
@@ -2012,7 +2052,7 @@ function _rerenderCachedModels() {
           if (_ctxAutoNote) _ctxAutoNote.textContent = '';
           return;
         }
-        if ((fit.needsHardwareScan || fit.needsModelSize) && !fit.ctx) {
+        if ((fit.needsHardwareScan || fit.needsModelSize || fit.doesNotFit) && !fit.ctx) {
           if (_ctxAutoNote) {
             _ctxAutoNote.textContent = fit.reason;
             _ctxAutoNote.title = fit.reason;
@@ -2043,7 +2083,11 @@ function _rerenderCachedModels() {
         const host = (target.host || '').trim();
         const params = new URLSearchParams({ model: repo });
         const profileModelPath = panel.querySelector('[data-field="model_path"]')?.value?.trim();
-        if (profileModelPath && profileModelPath !== repo) params.set('model_path', profileModelPath);
+        const fallbackLocalPath = (m?.is_local_dir && m?.path && m?.repo_id)
+          ? `${String(m.path).replace(/[\\/]+$/, '')}/${m.repo_id}`
+          : (m?.path || '');
+        const effectiveProfilePath = (profileModelPath && profileModelPath !== repo) ? profileModelPath : fallbackLocalPath;
+        if (effectiveProfilePath) params.set('model_path', effectiveProfilePath);
         if (host) {
           params.set('host', host);
           const _sp = (_serverByVal?.(target.serverKey || host) || (_es.servers || []).find(s => s.host === host) || {}).port;
@@ -3541,7 +3585,7 @@ function _rerenderCachedModels() {
             // KV, scaled linearly by model size. Imperfect but covers
             // the common 7B–70B range within ~20% — good enough to catch
             // overflow before it silently happens.
-            const _kvGbPerToken = _modelGb > 0 ? (_modelGb / 7.5) * 0.0007 : 0.0007;
+            const _kvGbPerToken = _llamaKvGbPerToken(m, panel._contextProfileData, serveState.cache_type, _modelGb || 7.5);
             const _kvGb = _ctx * _kvGbPerToken;
             const _needGb = _modelGb + _kvGb;
             const _selStr = (serveState.gpus || '').trim();

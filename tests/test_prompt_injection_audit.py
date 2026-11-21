@@ -259,3 +259,10 @@ def test_mcp_description_absent_when_no_mcp_mgr():
 
     mcp_msgs = [m for m in out if "Source: MCP tools" in (m.get("content") or "")]
     assert not mcp_msgs
+
+
+def test_external_mcp_tools_trusted_system_guidance_present():
+    loop_src = Path("src/agent_loop.py").read_text(encoding="utf-8")
+    assert "## External MCP Tools" in loop_src
+    assert "DO call the matching `mcp__*` native tools when relevant" in loop_src
+    assert 'untrusted_context_message(\n                    "MCP tools",' in loop_src
