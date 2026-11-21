@@ -39,8 +39,9 @@ import urllib.parse
 import uuid
 from pathlib import Path
 
-_DATA_DIR = Path(os.environ.get("DATA_DIR", str(_REPO_ROOT / "data")))
-_STATE_PATH = _DATA_DIR / "cookbook_state.json"
+from src.constants import COOKBOOK_STATE_FILE
+
+_STATE_PATH = Path(COOKBOOK_STATE_FILE)
 
 # Mirror routes/shell_routes.TMUX_LOG_DIR — don't import it because that pulls
 # the whole web app into the process. Match its definition instead.

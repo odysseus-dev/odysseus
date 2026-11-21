@@ -27,7 +27,9 @@ quiet_logs()
 import argparse, json, logging, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
-_USER_PREFS_PATH = _REPO_ROOT / "data" / "user_prefs.json"
+from src.constants import USER_PREFS_FILE
+
+_USER_PREFS_PATH = Path(USER_PREFS_FILE)
 _THEME_JS = _REPO_ROOT / "static" / "js" / "theme.js"
 
 
