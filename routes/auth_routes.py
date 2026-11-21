@@ -443,6 +443,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 SessionLocal,
                 lock_email_account_owner_mutations,
             )
+            from core.notes_sharing import rename_shared_user
             db = SessionLocal()
             try:
                 # Email-account defaults are protected by per-owner mutex rows.
@@ -501,6 +502,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                         .filter(func.lower(model.owner) == old_username)
                         .update({"owner": new_username}, synchronize_session=False)
                     )
+                # Notes shared with the account follow it to the new name.
+                rename_shared_user(db, old_username, new_username)
                 db.commit()
             except Exception:
                 db.rollback()
@@ -745,6 +748,28 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             except Exception:
                 pass
 
+        # One note has one owner: the notes the account owned go with it, in
+        # one transaction with their grants and legacy backup rows, and grants
+        # on other people's notes naming it are dropped, so a later account
+        # created under the same name starts with nothing. Legacy notes with
+        # no owner are never touched. This runs before the account is removed:
+        # if it fails, the account stays and the admin can retry, instead of
+        # the name being freed while its notes remain.
+        can_delete = getattr(auth_manager, "can_delete_user", None)
+        if can_delete is not None and not can_delete(body.username, user):
+            raise HTTPException(400, "Cannot delete user")
+        try:
+            from core.notes_sharing import purge_notes_owned_by
+            purged = purge_notes_owned_by(body.username)
+            if any(purged.values()):
+                logger.info("Removed notes data of user %s before deleting the account: %s", body.username, purged)
+        except Exception as e:
+            logger.error("Failed to remove notes of user %s; account kept: %s", body.username, e)
+            raise HTTPException(
+                500,
+                "The account's notes could not be removed, so the account was kept. "
+                "Check the server log and try again.",
+            )
         try:
             ok = auth_manager.delete_user(body.username, user)
         except Exception:
@@ -754,6 +779,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             _invalidate_api_token_cache()
             raise
         if not ok:
+            # The notes are already gone; deleting again finishes the job.
             raise HTTPException(400, "Cannot delete user")
         # delete_user removes the user's ApiToken rows, but the bearer-auth
         # middleware serves from an in-memory prefix->token cache that only

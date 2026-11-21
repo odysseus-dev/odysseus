@@ -82,6 +82,9 @@ class _EmptyQuery:
     def first(self):
         return None
 
+    def all(self):
+        return []
+
 
 class _EmptyDb:
     def query(self, *args, **kwargs):
@@ -813,6 +816,93 @@ async def test_chat_stream_route_does_not_save_or_postprocess_terminal_agent_err
 
     assert error_chunk in chunks
     assert "saved" not in captured
+    assert "post_processed" not in captured
+
+
+def _note_scoped(monkeypatch):
+    # The chat was started from a note (sessions.note_scope_id is set).
+    from core.note_agent_scope import NoteEditScope
+
+    monkeypatch.setattr(
+        chat_routes,
+        "load_note_edit_scope",
+        lambda db, session_id, owner: NoteEditScope(session_id=str(session_id), note_id="note-1"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_note_chat_saves_only_the_failure_for_terminal_agent_error(monkeypatch):
+    # A run started from a note has nobody watching its stream: when the
+    # model fails before any output, the reopened chat still says why.
+    captured = {}
+    error_chunk = 'event: error\ndata: {"status": 401, "error": "invalid key"}\n\n'
+    endpoint = _chat_stream_endpoint(
+        monkeypatch, "agent", captured, agent_chunks=[error_chunk], capture_completion=True,
+    )
+    _note_scoped(monkeypatch)
+
+    response = await endpoint(_RouteRequest("agent"))
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert error_chunk in chunks
+    assert "data: [DONE]\n\n" not in chunks
+    assert len(captured["saved"]) == 1
+    saved_args, _saved_kwargs = captured["saved"][0]
+    assert saved_args[3] == "[Agent stopped: Model request failed (HTTP 401)]"
+    assert "invalid key" not in str(saved_args)
+    assert saved_args[4]["failed"] is True
+    assert saved_args[4]["failure"] == {"status": 401, "message": "Model request failed (HTTP 401)"}
+    assert "post_processed" not in captured
+
+
+@pytest.mark.asyncio
+async def test_note_chat_saves_the_answer_the_loop_recovers_after_the_error(monkeypatch):
+    # The loop sends the provider error first, then the answer it recovered
+    # (src/agent_loop.py, the stream_error branch). That answer is what is
+    # saved, with the failure after it, once.
+    captured = {}
+    error_chunk = 'event: error\ndata: {"status": 504, "error": "Read timeout"}\n\n'
+    recovered = 'data: {"type": "final_response", "content": "Done. Created and verified `report.md`."}\n\n'
+    endpoint = _chat_stream_endpoint(
+        monkeypatch, "agent", captured, agent_chunks=[error_chunk, recovered, error_chunk], capture_completion=True,
+    )
+    _note_scoped(monkeypatch)
+
+    response = await endpoint(_RouteRequest("agent"))
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert any("Done. Created and verified" in chunk for chunk in chunks)
+    assert len(captured["saved"]) == 1
+    assert captured["saved"][0][0][3] == (
+        "Done. Created and verified `report.md`.\n\n"
+        "[Agent stopped: Model request failed (HTTP 504)]"
+    )
+    assert "post_processed" not in captured
+
+
+@pytest.mark.asyncio
+async def test_note_chat_keeps_the_agent_terminal_sent_after_the_error(monkeypatch):
+    # With partial output the loop sends agent_terminal after the error; its
+    # save (round texts, tool events) is the one kept, not a second one.
+    captured = {}
+    error_chunk = 'event: error\ndata: {"status": 500, "error": "boom"}\n\n'
+    partial = 'data: {"delta": "Half an answer"}\n\n'
+    terminal = (
+        'data: {"type": "agent_terminal", "data": {"failed": true, '
+        '"failure": {"status": 500}, "round_texts": ["Half an answer"]}}\n\n'
+    )
+    endpoint = _chat_stream_endpoint(
+        monkeypatch, "agent", captured, agent_chunks=[partial, error_chunk, terminal], capture_completion=True,
+    )
+    _note_scoped(monkeypatch)
+
+    response = await endpoint(_RouteRequest("agent"))
+    [chunk async for chunk in response.body_iterator]
+
+    assert len(captured["saved"]) == 1
+    saved_args, _saved_kwargs = captured["saved"][0]
+    assert saved_args[3] == "Half an answer\n\n[Agent stopped: Model request failed (HTTP 500)]"
+    assert saved_args[4]["round_texts"] == ["Half an answer"]
     assert "post_processed" not in captured
 
 

@@ -427,3 +427,52 @@ def test_vault_producer_revision_change_invalidates_sealed_item_and_cannot_cross
     observe_vault_records("alice", cfg, [{**item, "revisionDate": "two"}])
     with pytest.raises(ResourceIdentityError):
         bound.validate()
+
+
+# Whitespace around a selector is stripped before the control-character check,
+# so a trailing newline, CRLF or tab still reaches the record in every chat.
+# Review cases for the check, through
+# execute_tool_block, plus a document.
+_PADDED_SELECTORS = [
+    ("manage_notes", json.dumps({"action": "view", "id": "note-one\n"}), "note-one"),
+    ("manage_notes", json.dumps({"action": "view", "id": "\tnote-one"}), "note-one"),
+    ("manage_notes", json.dumps({"action": "view", "title": "first\n"}), "note-one"),
+    ("manage_notes", json.dumps({"action": "view", "title": "Q3\tbudget"}), "note-tab"),
+    ("manage_session", "rename\r\ns\r\nRenamed", "s"),
+    ("manage_session", "rename\ns\nRenamed", "s"),
+    ("manage_session", json.dumps({"action": "rename", "session_id": "s\n", "value": "Renamed"}), "s"),
+    ("manage_documents", json.dumps({"action": "read", "document_id": "d1\r\n"}), "d1"),
+]
+
+
+@pytest.mark.parametrize("tool,content,record", _PADDED_SELECTORS)
+async def test_a_selector_padded_with_whitespace_resolves_through_the_tool(records, monkeypatch, tool, content, record):
+    import core.database as db
+    from src.agent_tools import session_tools
+    renamed = []
+    monkeypatch.setattr(session_tools, "get_session_manager", lambda: SimpleNamespace(
+        update_session_name=lambda sid, name: renamed.append((sid, name))))
+    with records() as connection:
+        connection.add(db.Note(id="note-tab", owner="alice", title="Q3\tbudget", content="numbers"))
+        connection.commit()
+    bound = resolve_owned_operation(ExactOperation.normalize(tool, content), owner="alice", thread_id="s")
+    assert [r.record_id for r in bound.resources] == [record]
+    _, result = await dispatch(grant(tool), tool, content)
+    assert result.get("exit_code", 0) == 0 and not result.get("error"), result
+    if tool == "manage_session":
+        with records() as connection:
+            assert connection.get(db.Session, "s").name == "Renamed"
+        assert renamed == [("s", "Renamed")]
+
+
+@pytest.mark.parametrize("tool,content", [
+    ("manage_notes", json.dumps({"action": "view", "id": "note-one\x00"})),
+    ("manage_notes", json.dumps({"action": "view", "id": "note-one\x00\n"})),
+    ("manage_session", json.dumps({"action": "rename", "session_id": "\ts\x00", "value": "x"})),
+    ("manage_documents", json.dumps({"action": "read", "document_id": "d1\x1b"})),
+])
+async def test_a_control_character_left_after_stripping_is_still_refused(records, tool, content):
+    with pytest.raises(ResourceIdentityError, match="control characters"):
+        resolve_owned_operation(ExactOperation.normalize(tool, content), owner="alice", thread_id="s")
+    _, result = await dispatch(grant(tool), tool, content)
+    assert result.get("exit_code") == 1 and "control characters" in str(result.get("error")), result

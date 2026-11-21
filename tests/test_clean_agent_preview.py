@@ -1471,6 +1471,18 @@ def test_read_only_gate_blocks_mutation_and_network_shell():
     assert not readonly_call('mcp__email__send_email', {})
 
 
+
+@pytest.mark.parametrize('action', ['get', 'read', 'show', 'open'])
+def test_manage_notes_read_aliases_are_private_reads(action):
+    # `get` is in the manage_notes schema; the other spellings are what models
+    # emit for it. All of them read one note and must classify like `view`.
+    from src.tool_capabilities import ToolEffect, capabilities_for_action
+
+    args = {'action': action, 'id': 'abc'}
+    assert capabilities_for_action('manage_notes', json.dumps(args)).effects == frozenset({ToolEffect.READ_PRIVATE})
+    assert readonly_call('manage_notes', args)
+    assert preview_call_allowed('manage_notes', args, 'show my note abc')
+
 def test_preview_allows_safe_personal_writes_only():
     assert preview_call_allowed('manage_notes', {'action': 'add', 'title': 'x'}, 'add a note')
     assert preview_call_allowed('manage_tasks', {'action': 'create', 'task': 'x'}, 'add a task')

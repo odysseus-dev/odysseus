@@ -156,6 +156,7 @@ def test_audit_session_fallback_uses_resolver_without_manual_default(monkeypatch
 
 
 def test_add_memory_rejects_other_users_session(monkeypatch):
+    _allow_memory_management(monkeypatch)
     memory_manager = MagicMock()
     session_manager = MagicMock()
     memory_vector = MagicMock(healthy=True)

@@ -67,6 +67,7 @@ const PRIV_LABELS = {
   can_use_research: 'Deep research',
   can_generate_images: 'Image generation',
   can_manage_memory: 'Memory & skills',
+  can_share_notes: 'Share notes',
 };
 
 async function loadUsers() {
@@ -256,10 +257,16 @@ async function loadUsers() {
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const username = delBtn.dataset.admDelUser;
-          if (!await uiModule.styledConfirm(`Remove user "${username}"?`, { confirmText: 'Remove', danger: true })) return;
+          const confirmMsg = `Remove user "${username}"? Their notes are deleted too, including notes they shared: collaborators lose them.`;
+          if (!await uiModule.styledConfirm(confirmMsg, { confirmText: 'Remove', danger: true })) return;
           const res = await fetch('/api/auth/users', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
           if (res.ok) loadUsers();
-          else uiModule.showError('Failed to delete user');
+          else {
+            // The server keeps the account when its notes cannot be removed
+            // first, and says so in `detail`.
+            const data = await res.json().catch(() => ({}));
+            uiModule.showError(typeof data.detail === 'string' && data.detail ? data.detail : 'Failed to delete user');
+          }
         });
       }
 

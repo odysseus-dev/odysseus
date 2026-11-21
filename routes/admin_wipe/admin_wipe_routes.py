@@ -22,6 +22,7 @@ from core.database import (
     ChatMessage as DbChatMessage,
     Memory,
     Note,
+    NoteVersion,
     ScheduledTask,
     TaskRun,
     Document,
@@ -125,6 +126,7 @@ def setup_admin_wipe_routes(session_manager):
 
             if kind == "notes":
                 count = db.query(Note).count()
+                db.query(NoteVersion).delete()
                 db.query(Note).delete()
                 db.commit()
                 return {"status": "deleted", "kind": kind, "count": count}

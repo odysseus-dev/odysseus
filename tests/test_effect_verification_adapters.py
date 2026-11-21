@@ -496,6 +496,17 @@ def test_reported_external_mutation_without_artifacts_is_disclosed(store, monkey
     assert answer.startswith("Unsupported execution claims were omitted") and answer.endswith(DISCLOSURE)
 
 
+def test_a_named_remote_operation_with_a_receipt_still_cannot_claim_success(store, monkeypatch):
+    from src.agent_runtime.completion import completion_answer
+    journal = journal_for(store)
+    remote_act(journal, monkeypatch, result={"stdout": "ok", "stderr": "", "exit_code": 0})
+    ledger = _ledger(journal, CompletionRequirements())
+    claim = "I executed the mcp__server__send_email call."
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert claim not in answer and reason
+    assert answer.endswith(DISCLOSURE)
+
+
 def test_unknown_external_outcome_is_disclosed_as_unknown(store, monkeypatch):
     from src.agent_runtime.completion import completion_answer
     journal = journal_for(store)
@@ -560,3 +571,13 @@ def test_child_known_scope_mutation_leaves_unrelated_parent_evidence_fresh(store
     history = parent.effects.history()
     # Exact child scope invalidates only what it overlaps.
     assert fx.freshness(history.observations[0], history) is fx.Freshness.FRESH
+
+
+def test_the_omission_notice_never_lists_an_unverified_external_operation(store, monkeypatch):
+    from src.agent_runtime.completion import completion_answer
+    journal = journal_for(store)
+    remote_act(journal, monkeypatch, result={"stdout": "ok", "stderr": "", "exit_code": 0})
+    ledger = _ledger(journal, CompletionRequirements())
+    answer, _ = completion_answer("I executed everything you asked.", ledger, ledger.evaluate())
+    assert "Completed this turn" not in answer
+    assert answer.endswith(DISCLOSURE)

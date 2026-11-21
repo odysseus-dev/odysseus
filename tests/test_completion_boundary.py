@@ -455,3 +455,75 @@ async def test_slice2_quoted_example_does_not_hide_an_unsupported_report():
     assert 'The docs say "5 passed".' in final
     assert 'I ran pytest' not in final
     assert 'The task is incomplete' not in final
+
+
+def _receipts(*calls):
+    """A ledger holding this turn's tool receipts: (tool, arguments, exit code)."""
+    return EvidenceLedger.from_tool_events([
+        {'tool': tool, 'command': json.dumps(arguments), 'exit_code': code, 'error': code != 0,
+         'action_id': f'run:action:{index}', 'execution_id': f'run:action:{index}:execution:1'}
+        for index, (tool, arguments, code) in enumerate(calls, 1)])
+
+
+@pytest.mark.parametrize('claim', [
+    'I ran the list action and it returned 13 notes.',
+    "I've executed the toggle_item action on item 4.",
+    'I ran manage_notes list, then toggle_item.',
+])
+def test_an_execution_claim_naming_a_successful_receipt_is_kept(claim):
+    ledger = _receipts(('manage_notes', {'action': 'list'}, 0),
+                       ('manage_notes', {'action': 'toggle_item', 'id': 'n1', 'index': 4}, 0))
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert answer == claim
+    assert not reason
+
+
+@pytest.mark.parametrize('claim, calls', [
+    # Nothing ran.
+    ('I ran the list action.', ()),
+    # Something else ran.
+    ('I ran the search action.', (('manage_notes', {'action': 'list'}, 0),)),
+    # It ran and failed.
+    ('I ran the list action.', (('manage_notes', {'action': 'list'}, 1),)),
+    # One of the two named operations failed.
+    ('I ran the list and delete actions.', (('manage_notes', {'action': 'list'}, 0),
+                                            ('manage_notes', {'action': 'delete', 'id': 'n1'}, 1))),
+    # A generic claim still names no operation.
+    ('I executed everything you asked.', (('manage_notes', {'action': 'list'}, 0),)),
+    # A remote success is never a receipt's to vouch for.
+    ('The remote list operation completed.', (('manage_notes', {'action': 'list'}, 0),)),
+])
+def test_an_execution_claim_without_a_matching_successful_receipt_is_still_removed(claim, calls):
+    ledger = _receipts(*calls)
+    answer, reason = completion_answer(claim, ledger, ledger.evaluate())
+    assert reason == 'no matching operation supports the execution claim'
+    assert claim not in answer
+
+
+def test_a_supported_claim_does_not_vouch_for_a_test_or_artifact_claim_next_to_it():
+    ledger = _receipts(('manage_notes', {'action': 'list'}, 0))
+    text = 'I ran the list action. All 12 tests passed. I updated config.py.'
+    answer, reason = completion_answer(text, ledger, ledger.evaluate())
+    assert 'I ran the list action.' in answer
+    assert 'tests passed' not in answer and 'config.py' not in answer
+    assert reason
+
+
+def test_the_omission_notice_names_the_operations_that_did_complete():
+    # A later turn reads this notice as its own words: without the receipts
+    # it reads as "nothing ran", and the model retracts work that happened.
+    ledger = _receipts(('manage_notes', {'action': 'list'}, 0),
+                       ('manage_notes', {'action': 'view', 'id': 'n1'}, 0),
+                       ('manage_notes', {'action': 'list'}, 0),
+                       ('manage_notes', {'action': 'delete', 'id': 'n2'}, 1),
+                       ('manage_notes', {'action': 'toggle_item', 'id': 'n1', 'index': 4}, 0))
+    answer, reason = completion_answer('I executed everything you asked.', ledger, ledger.evaluate())
+    assert reason == 'no matching operation supports the execution claim'
+    assert answer == ('Unsupported execution claims were omitted: no matching operation supports the execution '
+                      'claim. Completed this turn: manage_notes list, manage_notes view, manage_notes toggle_item.')
+
+
+def test_the_omission_notice_names_nothing_when_nothing_completed():
+    ledger = _receipts(('manage_notes', {'action': 'delete', 'id': 'n2'}, 1))
+    answer, _ = completion_answer('I executed everything you asked.', ledger, ledger.evaluate())
+    assert answer == 'Unsupported execution claims were omitted: no matching operation supports the execution claim.'

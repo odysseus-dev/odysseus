@@ -29,6 +29,9 @@ DEFAULT_PRIVILEGES = {
     "can_use_research": True,
     "can_generate_images": True,
     "can_manage_memory": True,
+    # Share a note with another account. Listed so require_privilege, which
+    # treats unknown keys as allowed, has something an admin can switch off.
+    "can_share_notes": True,
     "max_messages_per_day": 0,
     "allowed_models": [],
     "allowed_models_restricted": False,
@@ -299,6 +302,21 @@ class AuthManager:
             self._save()
         logger.info(f"Created user '{username}' (admin={is_admin})")
         return True
+
+    def can_delete_user(self, username: str, requesting_user: str) -> bool:
+        """Whether `delete_user(username, requesting_user)` would be allowed.
+
+        The same checks `delete_user` makes before touching anything, so a
+        caller can run work that must happen first (removing the account's
+        notes) only for a deletion that is going ahead.
+        """
+        username = (username or "").strip().lower()
+        with self._config_lock:
+            return (
+                username in self.users
+                and username != requesting_user
+                and bool(self.users.get(requesting_user, {}).get("is_admin"))
+            )
 
     def delete_user(self, username: str, requesting_user: str) -> bool:
         """Delete a user. Only admins can delete, and can't delete themselves.

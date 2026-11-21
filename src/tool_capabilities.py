@@ -869,6 +869,9 @@ _EXTERNAL_MESSAGE_SOURCE_PREFIXES = ("web page:",)
 _CONTROL_PLANE_CONTEXT_SOURCES = frozenset(
     {
         "skills",
+        # The owner's skill names and descriptions (ChatProcessor's index of
+        # the same skills as above): reads stay open, changes still ask.
+        "available skills index",
         "client runtime context",
         "backend runtime context",
         "integrations",
@@ -1068,6 +1071,142 @@ def _is_authorized_local_mcp_continuation(
     return has_local_tool
 
 
+# Prompt context every agent run may carry that is server-owned descriptors
+# (the owner's skills and their index, runtime and integration descriptors),
+# not content read from outside. It does not count as untrusted content for a
+# chat started from a private note. The open editor document, the open email,
+# uploads, memories and earlier tool output do.
+_NOTE_SCOPE_CONTROL_PLANE_SOURCES = _SERVER_OWNED_CONTROL_PLANE_SOURCES | {"available skills index"}
+
+
+# Metadata key on a tool-result message holding only the answers to the run's
+# own calls on the note its chat was started from; the value is that note's id.
+NOTE_SCOPE_OWN_RESULT_KEY = "note_scope_own_result"
+
+
+def note_scope_own_result_marker(tool_name: Any, result: Any) -> str | None:
+    """The scoped note's id when this call's result is about that note only, else None.
+
+    Decided on what the tool did, not on what the model sent: manage_notes
+    stamps its result with the id of the note it loaded when that note is the
+    chat's own and the call was a view of it or a change to it
+    (`OWN_NOTE_RESULT_KEY`). A list, search or find returns other notes
+    whatever arguments it carried, so it is never the note's own answer.
+
+    Set on the tool-result message the loop adds, so re-reading the run's
+    messages every round does not count the note's own answers as content
+    from outside it (`messages_contain_untrusted_beyond_note`).
+    """
+    if tool_name != "manage_notes" or not isinstance(result, Mapping):
+        return None
+    from core.note_agent_scope import OWN_NOTE_RESULT_KEY, current_note_edit_scope
+    scope = current_note_edit_scope()
+    if scope is None or not scope.owns(result.get(OWN_NOTE_RESULT_KEY)):
+        return None
+    return scope.note_id
+
+
+def _is_own_note_result_message(message: dict, note_id: str | None) -> bool:
+    metadata = message.get("metadata")
+    return (
+        bool(note_id)
+        and isinstance(metadata, dict)
+        and metadata.get(NOTE_SCOPE_OWN_RESULT_KEY) == note_id
+    )
+
+
+def messages_contain_untrusted_beyond_note(messages: Iterable[dict]) -> bool:
+    """Whether the run's messages hold untrusted context other than server-owned descriptors.
+
+    The note a chat was started from comes in unarmed when it is private, so
+    it is not counted here either, and neither are the results of the run's
+    own calls on that note (marked by the loop, for the note bound now).
+    """
+    from core.note_agent_scope import current_note_edit_scope
+    scope = current_note_edit_scope()
+    note_id = scope.note_id if scope is not None else None
+    return messages_contain_external_untrusted_context(
+        message
+        for message in messages or ()
+        if not (
+            isinstance(message, dict)
+            and isinstance(message.get("metadata"), dict)
+            and (
+                (
+                    message["metadata"].get("tool_gate_untrusted") is True
+                    and str(message["metadata"].get("source") or "").strip().casefold()
+                    in _NOTE_SCOPE_CONTROL_PLANE_SOURCES
+                )
+                or _is_own_note_result_message(message, note_id)
+            )
+        )
+    )
+
+
+def _note_scope_call(tool_name: Any, content: Any):
+    """(scope, payload, ref) for a manage_notes call in a chat started from a note, else None."""
+    if tool_name != "manage_notes":
+        return None
+    from core.note_agent_scope import current_note_edit_scope
+    scope = current_note_edit_scope()
+    if scope is None:
+        return None
+    # Parse exactly as manage_notes does, {"body": {...}} envelope included,
+    # so the gate judges the call the tool will run.
+    from src.tool_utils import _parse_tool_args
+    try:
+        payload: Any = _parse_tool_args(content)
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, Mapping):
+        payload = {}
+    ref = str(payload.get("id") or payload.get("note_id") or payload.get("noteId") or "").strip()
+    return scope, payload, ref
+
+
+def _note_edit_scope_decision(
+    tool_name: Any, content: Any, *, untrusted_beyond_note: bool = False
+) -> "ToolGateDecision | None":
+    """The gate's answer for manage_notes in a chat started from a note, or None to decide as usual.
+
+    Reads pass to the usual rules. A change goes to the tool, which allows it
+    on the chat's own note only and refuses the rest with a clear error (no
+    prompt for something that cannot happen). On a shared note, whose text a
+    collaborator may have written, every change to it asks first, whether or
+    not other untrusted context was seen. A private note's change needs no
+    prompt while the run has seen nothing but that note: it is the owner's own
+    text, and it can be undone. Once the run has read anything else untrusted
+    (`untrusted_beyond_note`: a web page, an email, another tool's output),
+    a change to it asks too, as after untrusted content everywhere else.
+    """
+    call = _note_scope_call(tool_name, content)
+    if call is None:
+        return None
+    scope, payload, ref = call
+    if not (capabilities_for_action(tool_name, content).effects - {ToolEffect.READ_PRIVATE}):
+        # Viewing the chat's own note back (after an edit, or to retry one
+        # the tool refused as stale) shows nothing the run was not already
+        # given. A list, search or find returns other notes whatever id it
+        # carries, so it keeps the usual rule, as does every other read.
+        from core.note_agent_scope import VIEW_ACTIONS
+        action = str(payload.get("action") or "").replace("-", "_").strip().lower()
+        if action in VIEW_ACTIONS and ref and scope.note_id.startswith(ref):
+            return ToolGateDecision(True)
+        return None
+    if scope.shared or untrusted_beyond_note:
+        from core.note_agent_scope import SCOPED_WRITE_ACTIONS
+        action = str(payload.get("action") or "").replace("-", "_").strip().lower()
+        if action in SCOPED_WRITE_ACTIONS and scope.might_target(ref):
+            from core.note_agent_scope import (
+                SCOPE_SHARED_APPROVAL_REASON,
+                SCOPE_TAINTED_APPROVAL_REASON,
+            )
+            if scope.shared:
+                return ToolGateDecision(False, SCOPE_SHARED_APPROVAL_REASON)
+            return ToolGateDecision(False, SCOPE_TAINTED_APPROVAL_REASON)
+    return ToolGateDecision(True)
+
+
 @dataclass
 class ToolRunSecurityContext:
     """Server-owned integrity state for one agent run."""
@@ -1089,8 +1228,15 @@ class ToolRunSecurityContext:
     delegated_credential: bool = False
     explicit_untrusted_seen: bool = False
     prompt_external_untrusted_seen: bool = False
+    # Untrusted content other than the note a chat was started from and the
+    # server-owned descriptors every run carries: what makes a change to a
+    # private note ask (`_note_edit_scope_decision`). Left unset, a run that
+    # starts tainted counts, since nothing says the taint was only those.
+    untrusted_beyond_note: bool | None = None
 
     def __post_init__(self) -> None:
+        if self.untrusted_beyond_note is None:
+            self.untrusted_beyond_note = bool(self.external_untrusted_context_seen)
         if self.external_untrusted_context_seen and (
             not self.external_sources
             or any(
@@ -1134,6 +1280,8 @@ class ToolRunSecurityContext:
         if messages_contain_external_untrusted_context(message_list):
             self.external_untrusted_context_seen = True
             self.prompt_external_untrusted_seen = True
+        if messages_contain_untrusted_beyond_note(message_list):
+            self.untrusted_beyond_note = True
 
     def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
         # Checked before the bypasses below, because neither may lift it, and
@@ -1153,6 +1301,11 @@ class ToolRunSecurityContext:
             return ToolGateDecision(True)
         if isinstance(tool_name, str) and tool_name in self.unattended_tools:
             return ToolGateDecision(True)
+        scoped = _note_edit_scope_decision(
+            tool_name, content, untrusted_beyond_note=bool(self.untrusted_beyond_note)
+        )
+        if scoped is not None:
+            return scoped
         if not self.external_untrusted_context_seen:
             return ToolGateDecision(True)
 
@@ -1223,6 +1376,10 @@ class ToolRunSecurityContext:
             or not tool_result_is_successful(result)
         ):
             self.explicit_untrusted_seen = True
+        if note_scope_own_result_marker(tool_name, result) is None:
+            # A result about the chat's own note is that note; anything else
+            # is content from outside it.
+            self.untrusted_beyond_note = True
         if isinstance(tool_name, str) and tool_name not in self.external_sources:
             self.external_sources.append(tool_name)
 

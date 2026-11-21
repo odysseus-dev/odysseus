@@ -641,6 +641,9 @@ class EvidenceLedger:
         # order of actions so receipt evidence and effects share one ordering.
         self.effects: list[dict[str, Any]] = []
         self._action_order: dict[str, int] = {}
+        # Receipt operation identity (tool, action, succeeded, action id), kept
+        # privately so prose naming an operation can be matched to its receipt.
+        self._operations: list[tuple[str, str, bool, str]] = []
 
     def record_effects(self, entries: Iterable[Mapping[str, Any]], action_order: Mapping[str, int],
                        partial_reads: Iterable[str] = ()) -> None:
@@ -839,6 +842,13 @@ class EvidenceLedger:
         success = authoritative and exit_code == 0 and not event.get('error')
         if not authoritative:
             success = not bool(event.get("error"))
+        try:
+            arguments = json.loads(command) if command.lstrip().startswith("{") else {}
+        except (TypeError, json.JSONDecodeError):
+            arguments = {}
+        action = arguments.get("action") if isinstance(arguments, Mapping) else ""
+        self._operations.append((tool, action if isinstance(action, str) else "",
+                                 bool(authoritative and success), str(event.get("action_id") or "")))
         self._append(
             kind=EvidenceKind.TOOL_RESULT,
             success=success,
@@ -948,6 +958,48 @@ class EvidenceLedger:
         return (all(identity in names for identity in identities)
                 and all(any(_artifact_path_matches_required(word, path, self.requirements.workspace_root)
                             for word in words) for path in paths))
+
+    def _supports_operation_claim(self, statement: str) -> bool:
+        """A run claim that names operations this turn's receipts show succeeded.
+
+        "I ran the list action" names ``list``; "I ran manage_notes" names every
+        manage_notes operation. Each named operation needs an authoritative
+        successful receipt. A claim naming none, or any remote success, stays
+        unsupported: a remote acknowledgement never shows the remote state.
+        """
+        if not self._operations or re.search(r'\bremote\b', statement, re.I):
+            return False
+        external = {str(getattr(entry["assessment"], "action_id", "") or "")
+                    for entry in self.unverified_external_effects()}
+
+        def said(word: str, suffix: str = "") -> bool:
+            return bool(word) and re.search(rf'(?<![\w-]){re.escape(word)}(?![\w-]){suffix}', statement, re.I) is not None
+
+        kinds = r'(?:\s+and\s+[\w-]+)*\s+(?:actions?|operations?|calls?|commands?|requests?)\b'
+        named: set[tuple[str, str]] = set()
+        for tool, action, _, _ in self._operations:
+            tool_named = said(tool)
+            if action and (said(action, kinds) or ("_" in action and said(action)) or (tool_named and said(action))):
+                named.add((tool, action))
+        for tool, action, _, _ in self._operations:
+            if said(tool) and not any(named_tool == tool for named_tool, _ in named):
+                named.add((tool, action))
+        if not named:
+            return False
+        return all(any((tool, action) == operation and ok and action_id not in external
+                       for tool, action, ok, action_id in self._operations)
+                   for operation in named)
+
+    def completed_operations(self) -> tuple[str, ...]:
+        """"tool action" for each operation with a successful receipt, in order.
+
+        Operations with an unverified external effect are left out: the
+        server's own disclosure states those.
+        """
+        external = {str(getattr(entry["assessment"], "action_id", "") or "")
+                    for entry in self.unverified_external_effects()}
+        return tuple(dict.fromkeys(f"{tool} {action}".strip() for tool, action, ok, action_id in self._operations
+                                   if ok and tool and action_id not in external))
 
     def _supports_artifact_claim(self, kind: EvidenceKind, paths: Sequence[str]) -> bool:
         """Match every claimed artifact by identity, never by basename."""

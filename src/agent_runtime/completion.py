@@ -126,8 +126,10 @@ def _supported_prose(text: str, ledger: EvidenceLedger, decision: CompletionDeci
                 if not ledger._supports_artifact_claim(EvidenceKind.ARTIFACT_MUTATION, paths):
                     why = 'no matching artifact mutation supports the execution claim'
             elif claim == 'execution':
-                # A generic assertion cannot be tied confidently to a receipt.
-                why = 'no matching operation supports the execution claim'
+                # A generic assertion cannot be tied confidently to a receipt;
+                # one naming operations this turn completed can.
+                if not ledger._supports_operation_claim(scope):
+                    why = 'no matching operation supports the execution claim'
             elif claim == 'terminal' and decision.status not in {CompletionStatus.SATISFIED, CompletionStatus.VERIFIED}:
                 why = incomplete or 'no successful execution supports completion'
             if why:
@@ -183,6 +185,11 @@ def _completion_answer(text: str, ledger: EvidenceLedger, decision: CompletionDe
         return notice + ('\n\n' + prose if prose.strip() else ''), reason
     if removed and not execution_required and decision.status != CompletionStatus.VERIFIED:
         notice = 'Unsupported execution claims were omitted: ' + removed.rstrip('.') + '.'
+        # The next turn reads this notice as its own words; say what did run
+        # so it is not taken back as "nothing happened".
+        completed = ledger.completed_operations()
+        if completed:
+            notice += ' Completed this turn: ' + ', '.join(completed) + '.'
         return (prose.rstrip() + '\n\n' + notice) if prose.strip() else notice, removed
     if decision.can_complete and (ledger.requirements.required_artifacts or ledger.requirements.verifier_required or removed):
         facts = []

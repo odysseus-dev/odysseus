@@ -79,6 +79,20 @@ NAMED_COMPUTER_TASK = (
     r"[^.?!\n]{0,60}\b(?:files?|logs?|folders?|director(?:y|ies)|configs?|checkpoints?|backups?)\b"
     rf"[^.?!\n]{{0,40}}\bfrom\s+{_NAMED_COMPUTER}"
 )
+# A note-store item. "to-do" and plurals count; "note-taking" does not.
+_NOTE_THING = r"(?:to-?dos?|tasks?|reminders?|notes?|checklists?)(?!-)"
+# Up to two qualifiers between the article and the noun ("a new note", "a
+# quick shopping checklist"). Prepositions end the run so "a summary of the
+# notes" and "a list of tasks" are not read as a note being created.
+_NOTE_QUALIFIERS = (
+    r"(?:(?!(?:about|for|on|of|with|from|to|in|into|that|which|and)\b)[a-z]+\s+){0,2}?"
+)
+# A note or todo followed by one of these names software, not a note.
+_NOTE_SOFTWARE = (
+    r"(?:apps?|application|website|web\s*app|page|component|tool|system|manager|"
+    r"tracker|template|script|program|module|class|function|api|schema|table|"
+    r"model|feature|widget|extension|plugin|clone)"
+)
 _CODE_ACTION = r"(?:write|create|add|edit|modify|code|program|implement|build)"
 _CODE_ARTIFACT = (
     r"(?:code|function|class|script|module|component|snippet|program|app|feature|file|"
@@ -122,9 +136,11 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         # Notes, todos, checklists, and reminders.
         ("notes", "reminder request", r"\bremind\s+me\b"),
         ("notes", "assistant note/todo action request", rf"{_ACTION_QUESTION}(?:add|create|make|take|jot|write\s+down|set)\b.{{0,120}}\b(?:note|todo|task|checklist|reminder)\b"),
-        ("notes", "note/todo imperative request", rf"{_PLEASE}(?:add|create|make)\s+(?:a\s+|an\s+)?(?:todo|task|reminder|note|checklist)\b"),
+        ("notes", "note/todo imperative request", rf"{_PLEASE}(?:add|create|make)\s+(?:a\s+|an\s+|another\s+|some\s+)?{_NOTE_QUALIFIERS}{_NOTE_THING}\b(?!\s+(?:list\s+)?{_NOTE_SOFTWARE}\b)"),
+        ("notes", "named notes tool request", r"\b(?:use|using|with|via|through)\s+(?:the\s+|my\s+|your\s+)?(?:notes?|to-?dos?|checklists?)\s+(?:tool|feature)\b"),
+        ("notes", "save as note request", rf"{_PLEASE}(?:save|store|keep|turn|convert|make)\b.{{0,80}}\b(?:as|into)\s+(?:a\s+|an\s+)?{_NOTE_QUALIFIERS}(?:notes?|to-?dos?(?:\s+list)?|checklists?|task\s+lists?)\b(?!-)"),
         ("notes", "take note request", rf"{_PLEASE}(?:take|jot|write\s+down)\s+(?:a\s+|an\s+)?note\b"),
-        ("notes", "add item to notes/todo request", rf"{_PLEASE}(?:add|jot|write\s+down)\b.{{0,120}}\b(?:to|in|into)\s+(?:my\s+|the\s+)?(?:todo(?:\s+list)?|task\s+list|notes?|checklist)\b"),
+        ("notes", "add item to notes/todo request", rf"{_PLEASE}(?:add|jot|write\s+down|save|put|store)\b.{{0,120}}\b(?:to|in|into)\s+(?:my\s+|the\s+)?(?:todo(?:\s+list)?|task\s+list|notes?|checklist)\b"),
         ("notes", "set reminder request", rf"{_PLEASE}set\s+(?:a\s+)?reminder\b"),
         ("notes", "assistant reminder request", rf"{_ACTION_QUESTION}set\s+(?:a\s+)?reminder\b"),
 
