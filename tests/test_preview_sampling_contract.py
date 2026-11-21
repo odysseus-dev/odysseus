@@ -18,7 +18,7 @@ class SamplingContractTests(unittest.TestCase):
                 validate_temperature(value)
 
     def test_preview_wrapper_forwards_temperature(self):
-        tree = ast.parse((ROOT / 'src/agent_loop.py').read_text())
+        tree = ast.parse((ROOT / 'src/agent_loop.py').read_text(encoding="utf-8"))
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Name) and n.func.id == 'stream_preview']
         self.assertTrue(calls)
@@ -29,7 +29,7 @@ class SamplingContractTests(unittest.TestCase):
             self.assertEqual(values[0].id, 'temperature')
 
     def test_preview_request_uses_validated_temperature(self):
-        tree = ast.parse((ROOT / 'src/clean_agent_preview.py').read_text())
+        tree = ast.parse((ROOT / 'src/clean_agent_preview.py').read_text(encoding="utf-8"))
         function = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'stream_preview')
         values = [v for n in ast.walk(function) if isinstance(n, ast.Dict)
                   for k, v in zip(n.keys, n.values) if isinstance(k, ast.Constant) and k.value == 'temperature']
