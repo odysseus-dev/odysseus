@@ -384,15 +384,27 @@ async function runValidation() {
     assert.equal(await selectedCount.textContent(), '1 Selected');
     console.log('✓ Document selection interaction verified');
 
-    // 7. Verify close library
-    console.log('7. Testing library close...');
+    // 7. Test narrow viewport (mobile) responsiveness
+    console.log('7. Testing narrow mobile viewport (375x667)...');
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(() => window.docLib.isLibraryOpen()), true, 'Library should remain open on narrow viewport');
+    const modalBox = await modal.boundingBox();
+    assert.ok(modalBox && modalBox.width <= 375, 'Modal width should fit within mobile viewport');
+    console.log('✓ Narrow mobile viewport verified');
+
+    // Restore desktop viewport
+    await page.setViewportSize({ width: 1280, height: 900 });
+
+    // 8. Verify close library
+    console.log('8. Testing library close...');
     await page.evaluate(() => window.docLib.closeLibrary());
     await page.waitForTimeout(300);
     assert.equal(await page.evaluate(() => window.docLib.isLibraryOpen()), false, 'Library should report closed');
     assert.equal(await page.locator('#doclib-modal').count(), 0, 'Modal should be removed from DOM');
     console.log('✓ Document Library close verified');
 
-    // 8. Console errors check
+    // 9. Console errors check
     assert.equal(consoleErrors.length, 0, `Browser console errors occurred:\n${consoleErrors.join('\n')}`);
     assert.equal(pageErrors.length, 0, `Page errors occurred:\n${pageErrors.join('\n')}`);
     console.log('✓ No unresolved module imports or browser console errors occurred');

@@ -173,12 +173,18 @@ function flatFind(nodes, ...tags) {
 }
 
 function decodeHtmlEntities(str) {
-  return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+  const entities = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+  };
+
+  return str.replace(
+    /&(?:amp|lt|gt|quot|#39);/g,
+    entity => entities[entity],
+  );
 }
 
 function parseAttrs(str) {
@@ -328,6 +334,11 @@ describe('htmlToMarkdown', () => {
   it('trims and returns non-empty content', () => {
     const result = api.htmlToMarkdown('<p>  hello  </p>');
     assert.ok(result === result.trim(), `result should be trimmed: ${JSON.stringify(result)}`);
+  });
+
+  it('decodes nested HTML entities in text only once', () => {
+    const result = api.htmlToMarkdown('<p>&amp;lt;script&amp;gt;</p>');
+    assert.equal(result, '&lt;script&gt;');
   });
 });
 
