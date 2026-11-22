@@ -34,19 +34,38 @@ export function createExternalImagesSetting({ origin, request, onChange = () => 
 
   // Saves go out one at a time, in the order they were asked for: two quick
   // toggles can never have the first one's answer arrive last and undo an
-  // opt-out.
+  // opt-out. Only the latest choice is applied, so a quick on then off never
+  // turns images on, even for the moment the "off" is still being saved.
   let queue = Promise.resolve();
+  let latest = 0;
+  // What the server last confirmed, for a failed latest save to fall back to.
+  let stored = null;
 
+  /** Resolves true when this save was the latest choice and was applied. */
   function save(value) {
+    const wanted = value === true;
+    const token = ++latest;
     const run = queue.then(async () => {
-      const response = await request(url, {
-        method: 'PUT',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: value === true }),
-      });
-      if (!response.ok) throw new Error('Failed to save preference');
-      apply(value === true);
+      let response;
+      try {
+        response = await request(url, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: wanted }),
+        });
+      } catch (error) {
+        if (token === latest && stored !== null) apply(stored);
+        throw error;
+      }
+      if (!response.ok) {
+        if (token === latest && stored !== null) apply(stored);
+        throw new Error('Failed to save preference');
+      }
+      stored = wanted;
+      if (token !== latest) return false;
+      apply(wanted);
+      return true;
     });
     queue = run.catch(() => {});
     return run;
@@ -60,8 +79,7 @@ export function createExternalImagesSetting({ origin, request, onChange = () => 
     input.addEventListener('change', async () => {
       const wanted = input.checked;
       try {
-        await save(wanted);
-        showToast(wanted ? 'External images shown in notes' : 'External images shown as links');
+        if (await save(wanted)) showToast(wanted ? 'External images shown in notes' : 'External images shown as links');
       } catch {
         input.checked = enabled;
         showError('Failed to save preference');

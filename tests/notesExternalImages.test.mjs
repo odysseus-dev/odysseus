@@ -188,3 +188,74 @@ test('a refused save does not block the next one', async () => {
   await setting.save(true);
   assert.equal(setting.enabled(), true);
 });
+
+// A checkbox as bind() uses it: checked, plus one change listener.
+function fakeCheckbox() {
+  const listeners = [];
+  return {
+    checked: false,
+    addEventListener: (type, listener) => { if (type === 'change') listeners.push(listener); },
+    toggle(value) { this.checked = value; return Promise.all(listeners.map(listener => listener())); },
+  };
+}
+
+test('on then off while the first save is pending: the last choice wins, and images never turn on', async () => {
+  const pending = [];
+  let stored;
+  const order = [];
+  const request = (url, init = {}) => {
+    if (init.method !== 'PUT') return Promise.resolve({ ok: true, json: async () => ({ value: stored }) });
+    const value = JSON.parse(init.body).value;
+    order.push(value);
+    return new Promise(resolve => pending.push(() => { stored = value; resolve({ ok: true, json: async () => ({ value }) }); }));
+  };
+  const changes = [];
+  const toasts = [];
+  const setting = createExternalImagesSetting({ origin: 'http://x', request, onChange: value => changes.push(value) });
+  const input = fakeCheckbox();
+  setting.bind(input, { showToast: text => toasts.push(text) });
+  const first = input.toggle(true);
+  const second = input.toggle(false);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  // The second PUT waits for the first, so the server sees them in order.
+  assert.deepEqual(order, [true]);
+  pending.shift()();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(order, [true, false]);
+  // The superseded "on" is not applied while "off" is on its way.
+  assert.equal(setting.enabled(), false);
+  assert.equal(input.checked, false);
+  pending.shift()();
+  await Promise.all([first, second]);
+  assert.equal(stored, false);
+  assert.equal(setting.enabled(), false);
+  assert.equal(input.checked, false);
+  assert.deepEqual(changes, [], 'images were never turned on');
+  assert.deepEqual(toasts, ['External images shown as links']);
+});
+
+test('a failed last save falls back to what the server last stored', async () => {
+  const pending = [];
+  let stored;
+  const request = (url, init = {}) => {
+    if (init.method !== 'PUT') return Promise.resolve({ ok: true, json: async () => ({ value: stored }) });
+    const value = JSON.parse(init.body).value;
+    return new Promise(resolve => pending.push(ok => { if (ok) stored = value; resolve({ ok, json: async () => ({ value }) }); }));
+  };
+  const errors = [];
+  const setting = createExternalImagesSetting({ origin: 'http://x', request });
+  const input = fakeCheckbox();
+  setting.bind(input, { showError: text => errors.push(text) });
+  const first = input.toggle(true);
+  const second = input.toggle(false);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  pending.shift()(true);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  pending.shift()(false);
+  await Promise.all([first, second]);
+  // The server kept "on": the checkbox and the setting say so.
+  assert.equal(stored, true);
+  assert.equal(setting.enabled(), true);
+  assert.equal(input.checked, true);
+  assert.deepEqual(errors, ['Failed to save preference']);
+});
