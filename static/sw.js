@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1161-pr40-editor-precache';
+const CACHE_NAME = 'odysseus-v1164-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -258,8 +258,6 @@ const PRECACHE = [
   '/static/js/features/notes/ui/windowLayout.js',
   '/static/js/features/notes/application/cardOperations.js',
   '/static/js/features/notes/application/checklistOperations.js',
-  '/static/js/features/notes/application/submission.js',
-  '/static/js/features/notes/application/drafts.js',
   '/static/js/features/notes/ui/lifecycle.js',
   '/static/js/features/notes/ui/text.js',
   '/static/js/features/notes/ui/colors.js',
@@ -273,20 +271,21 @@ const PRECACHE = [
   '/static/js/features/notes/ui/cardInteractions.js',
   '/static/js/features/notes/ui/cardChecklist.js',
   '/static/js/features/notes/ui/cardReorder.js',
-  '/static/js/features/notes/ui/draftEditor.js',
-  '/static/js/features/notes/ui/editor.js',
   '/static/js/features/notes/ui/reminderPicker.js',
-  '/static/js/features/notes/ui/checklist.js',
   '/static/js/features/notes/ui/drawing.js',
   '/static/js/features/notes/ui/clipboard.js',
-  '/static/js/features/notes/ui/mobileEditor.js',
   '/static/js/features/notes/ui/mobileReorder.js',
-  '/static/js/features/notes/ui/checklistReorder.js',
   '/static/js/features/notes/application/queries.js',
   '/static/js/features/notes/application/agentActions.js',
   '/static/js/features/notes/application/deletion.js',
   '/static/js/features/notes/domain/noteRules.js',
   '/static/js/features/notes/domain/markdownTasks.js',
+  '/static/js/features/notes/domain/markdownSerializer.js',
+  '/static/js/features/notes/application/noteSession.js',
+  '/static/js/features/notes/application/noteVersions.js',
+  '/static/js/features/notes/ui/richBody.js',
+  '/static/js/features/notes/ui/noteTags.js',
+  '/static/js/features/notes/ui/noteWindow.js',
   '/static/js/features/notes/index.js',
   '/static/js/features/notes/application/reminders.js',
   '/static/js/features/notes/infrastructure/notifications.js',

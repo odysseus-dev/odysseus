@@ -162,20 +162,8 @@
       "deployment": "js/features/notes/ui/cardReorder.js"
     },
     {
-      "source": "features/notes/ui/draftEditor.js",
-      "deployment": "js/features/notes/ui/draftEditor.js"
-    },
-    {
-      "source": "features/notes/ui/editor.js",
-      "deployment": "js/features/notes/ui/editor.js"
-    },
-    {
       "source": "features/notes/ui/reminderPicker.js",
       "deployment": "js/features/notes/ui/reminderPicker.js"
-    },
-    {
-      "source": "features/notes/ui/checklist.js",
-      "deployment": "js/features/notes/ui/checklist.js"
     },
     {
       "source": "features/notes/ui/drawing.js",
@@ -186,16 +174,8 @@
       "deployment": "js/features/notes/ui/clipboard.js"
     },
     {
-      "source": "features/notes/ui/mobileEditor.js",
-      "deployment": "js/features/notes/ui/mobileEditor.js"
-    },
-    {
       "source": "features/notes/ui/mobileReorder.js",
       "deployment": "js/features/notes/ui/mobileReorder.js"
-    },
-    {
-      "source": "features/notes/ui/checklistReorder.js",
-      "deployment": "js/features/notes/ui/checklistReorder.js"
     },
     {
       "source": "features/notes/application/queries.js",
@@ -216,6 +196,30 @@
     {
       "source": "features/notes/domain/markdownTasks.js",
       "deployment": "js/features/notes/domain/markdownTasks.js"
+    },
+    {
+      "source": "features/notes/domain/markdownSerializer.js",
+      "deployment": "js/features/notes/domain/markdownSerializer.js"
+    },
+    {
+      "source": "features/notes/application/noteSession.js",
+      "deployment": "js/features/notes/application/noteSession.js"
+    },
+    {
+      "source": "features/notes/application/noteVersions.js",
+      "deployment": "js/features/notes/application/noteVersions.js"
+    },
+    {
+      "source": "features/notes/ui/richBody.js",
+      "deployment": "js/features/notes/ui/richBody.js"
+    },
+    {
+      "source": "features/notes/ui/noteTags.js",
+      "deployment": "js/features/notes/ui/noteTags.js"
+    },
+    {
+      "source": "features/notes/ui/noteWindow.js",
+      "deployment": "js/features/notes/ui/noteWindow.js"
     },
     {
       "source": "features/notes/index.js",
@@ -242,14 +246,6 @@
           "reason": "Shared markdown renderer, injected at Notes composition so note cards use the same renderer as the rest of the app. Remove when markdown rendering migrates to maintained source."
         }
       ]
-    },
-    {
-      "source": "features/notes/application/submission.js",
-      "deployment": "js/features/notes/application/submission.js"
-    },
-    {
-      "source": "features/notes/application/drafts.js",
-      "deployment": "js/features/notes/application/drafts.js"
     },
     {
       "source": "features/notes/ui/lifecycle.js",

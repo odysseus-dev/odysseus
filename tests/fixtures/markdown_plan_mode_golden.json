@@ -1,5 +1,5 @@
 {
- "_comment": "mdToHtml(input) with no options, captured from unmodified dev (4d0610a1). Plan mode and chat must keep rendering task lines byte-for-byte like this.",
+ "_comment": "mdToHtml(input) with no options, captured from unmodified dev (0096533c). Plan mode and chat must keep rendering these byte-for-byte: task lines, ordered lists and their start numbers, HTML escaping, nested lists, backslash escapes and literal placeholder-shaped tokens.",
  "cases": [
   {
    "input": "Plan:\n- [ ] Read the spec\n- [x] Write tests\n* [ ] Ship it",
@@ -24,6 +24,70 @@
   {
    "input": "~~~\n- [ ] tilde fenced\n~~~\n| a | b |\n|---|---|\n| 1 | 2 |",
    "html": "<p>~<del></p>\n<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">tilde fenced</span></li></ul></del>~<table style=\"border-collapse: collapse; width: 100%; margin: 10px 0;\"><tr><th style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">a</th><th style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">b</th></tr><tbody><tr><td style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">1</td><td style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">2</td></tr></tbody></table>"
+  },
+  {
+   "input": "Steps:\n1. Read the spec\n2. Write tests\n3. Ship it",
+   "html": "<p>Steps:<ol><li>Read the spec</li></p>\n<li>Write tests</li>\n<li>Ship it</li></ol>"
+  },
+  {
+   "input": "Continue from step four:\n\n4. Wire the route\n5. Add the test",
+   "html": "<p>Continue from step four:</p>\n<ol><li>Wire the route</li>\n<li>Add the test</li></ol>"
+  },
+  {
+   "input": "1. First\n\n2. Second after a blank line\n\n3. Third",
+   "html": "<ol><li>First</li></ol>\n<ol><li>Second after a blank line</li></ol>\n<ol><li>Third</li></ol>"
+  },
+  {
+   "input": "- [ ] 1. numbered task\n1. plain ordered item",
+   "html": "<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">1. numbered task<ol><li>plain ordered item</li></ol></span></li></ul>"
+  },
+  {
+   "input": "Escaping: <b>bold?</b> & \"quotes\" 'single' <script>alert(1)</script>",
+   "html": "<p>Escaping: &lt;b&gt;bold?&lt;/b&gt; &amp; \"quotes\" 'single' &lt;script&gt;alert(1)&lt;/script&gt;</p>"
+  },
+  {
+   "input": "A < B > C & D",
+   "html": "<p>A &lt; B &gt; C &amp; D</p>"
+  },
+  {
+   "input": "- outer\n  - inner\n    - innermost\n- back out",
+   "html": "<ul><li>outer</li></ul>  - inner\n<p>    - innermost</p>\n<ul><li>back out</li></ul>"
+  },
+  {
+   "input": "- [ ] parent task\n  - [x] child task\n  - plain child\n- [ ] sibling",
+   "html": "<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">parent task</span></li></ul>  - [x] child task\n<p>  - plain child</p>\n<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\">sibling</span></li></ul>"
+  },
+  {
+   "input": "1. ordered\n   - nested bullet\n   - another\n2. next",
+   "html": "<ol><li>ordered</li></ol>\n<p>   - nested bullet</p>\n<p>   - another<ol><li>next</li></ol></p>"
+  },
+  {
+   "input": "Escapes: \\*not italic\\* \\_not\\_ \\`not code\\` \\# not heading \\[not link\\]",
+   "html": "<p>Escapes: \\<em>not italic\\</em> \\_not\\_ \\<code>not code\\</code> \\# not heading <span class=\"ody-math-pending\" data-display=\"true\">not link</span></p>"
+  },
+  {
+   "input": "Backslash at end \\\\ and \\- dash",
+   "html": "<p>Backslash at end \\\\ and \\- dash</p>"
+  },
+  {
+   "input": "Literal tokens: ___MD_TASK_0___ ___MD_ESC_1___ ___MD_OL_2___ ___ALLOWED_HTML_0___",
+   "html": "<p>Literal tokens: ___MD_TASK_0___ ___MD_ESC_1___ ___MD_OL_2___ ___ALLOWED_HTML_0___</p>"
+  },
+  {
+   "input": "`___MD_TASK_0___` in code and **___MD_ESC_0___** bold",
+   "html": "<p><code>___MD_TASK_0___</code> in code and <strong>___MD_ESC_0___</strong> bold</p>"
+  },
+  {
+   "input": "> quoted\n> - [ ] task in quote\n> 1. ordered in quote",
+   "html": "<blockquote><p>quoted</p>\n<p><p>- [ ] task in quote</p></p>\n<p><p>1. ordered in quote</p></blockquote></p>"
+  },
+  {
+   "input": "| a | b |\n|---|---|\n| 1 | 2 |",
+   "html": "<p><table style=\"border-collapse: collapse; width: 100%; margin: 10px 0;\"><tr><th style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">a</th><th style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">b</th></tr><tbody><tr><td style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">1</td><td style=\"padding: 8px; text-align: left; border-bottom: 1px solid var(--border);\">2</td></tr></tbody></table></p>"
+  },
+  {
+   "input": "Plan:\n- [ ] [link](https://example.org)\n- [x] ![img](https://example.org/i.png)",
+   "html": "<p>Plan:</p>\n<ul><li class=\"task-item\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\"><a href=\"https://example.org/\" target=\"_blank\" rel=\"noopener noreferrer\">link</a></span></li>\n<li class=\"task-item task-done\"><span class=\"task-check\" aria-hidden=\"true\"></span><span class=\"task-text\"><a class=\"chat-image\" href=\"https://example.org/i.png\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open image in a new tab\"><img class=\"chat-inline-image\" src=\"https://example.org/i.png\" alt=\"img\" loading=\"lazy\" decoding=\"async\" referrerpolicy=\"no-referrer\"><span class=\"chat-image-fallback\">img — https:&#47;&#47;example.org/i.png</span></a></span></li></ul>"
   }
  ]
 }

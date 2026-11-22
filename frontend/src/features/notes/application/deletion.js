@@ -33,19 +33,29 @@ export function createDeletion({
     effects.showToast?.(`Cleared ${targets.length} past reminder${targets.length === 1 ? '' : 's'}`);
   }
 
-  async function deleteFromEditor(id) {
-    const ok = effects.styledConfirm
-      ? await effects.styledConfirm('Delete this note?', { confirmText: 'Delete', danger: true })
-      : effects.confirm('Delete this note?');
-    if (!ok) return;
+  function confirmDelete() {
+    return Promise.resolve(effects.styledConfirm
+      ? effects.styledConfirm('Delete this note?', { confirmText: 'Delete', danger: true })
+      : effects.confirm('Delete this note?'));
+  }
+
+  /** Delete without asking again: the note window already confirmed. */
+  // A delete the server did not take puts the card back where it
+  // was, then re-reads the list in case it did happen. If that read fails
+  // too (offline), the list on screen stays as it is.
+  function putBack(index, removed) {
+    if (removed && !state.notes.some(note => note.id === removed.id)) app.insertNoteAt(Math.min(index, state.notes.length), removed);
+    return _fetchNotes({ keepOnFailure: true });
+  }
+
+  function deleteNow(id) {
     const index = state.notes.findIndex(note => note.id === id);
-    if (index >= 0) app.removeNoteAt(index);
-    app.setEditingId(null);
+    const removed = index >= 0 ? app.removeNoteAt(index) : null;
     _renderNotes();
-    _deleteNoteApi(id).then(() => effects.showToast('Deleted')).catch(() => {
+    return _deleteNoteApi(id).then(() => effects.showToast('Deleted')).catch(() => {
       effects.showError('Failed to delete');
-      _fetchNotes().then(() => _renderNotes());
+      putBack(index, removed).then(() => _renderNotes());
     });
   }
-  return { _deleteNote, _clearPastReminders, deleteFromEditor };
+  return { _deleteNote, _clearPastReminders, confirmDelete, deleteNow };
 }

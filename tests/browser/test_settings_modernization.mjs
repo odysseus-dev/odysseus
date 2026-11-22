@@ -371,7 +371,7 @@ async function testFinder(instance, cookies) {
   check('admin-managed panel result routes through the admin controller and reveals the card', adminReveal.activeTab === 'system' && adminReveal.focused === 'backup', JSON.stringify(adminReveal));
   // A failed server-wide save is reported, not only logged.
   await admin.page.click('[data-settings-tab="reminders"]');
-  await admin.page.waitForSelector('[data-settings-panel="reminders"]:not(.hidden)');
+  await admin.page.waitForSelector('[data-settings-panel="reminders"][data-ready="true"]:not(.hidden)');
   await admin.page.route('**/api/auth/settings', route => (
     route.request().method() === 'POST'
       ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })

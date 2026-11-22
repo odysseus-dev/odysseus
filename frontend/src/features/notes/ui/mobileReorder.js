@@ -16,7 +16,7 @@ export function createMobileReorder({
     card.addEventListener('touchstart', (e) => {
       // Don't fight scroll on touchpoints over real interactive children
       // (in mobile-mode they're CSS-hidden anyway, but be defensive).
-      if (e.target.closest('button, input, a, .note-form')) return;
+      if (e.target.closest('button, input, a')) return;
       if (e.touches.length !== 1) return;
       armed = true;
       startX = e.touches[0].clientX;

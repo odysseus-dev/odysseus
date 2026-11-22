@@ -54,17 +54,11 @@ export function _isPastReminder(n, clock) {
   return !isNaN(due) && due <= clock.now();
 }
 
+/** The title, then the note's markdown as stored. Its task lines are already in `content`; `items` is derived from them. */
 export function _serializeNoteForCopy(note) {
   const lines = [];
   if (note.title) lines.push(note.title);
   if (note.content) lines.push(note.content);
-  if (Array.isArray(note.items) && note.items.length) {
-    if (lines.length) lines.push('');
-    for (const it of note.items) {
-      if (!it || !(it.text || '').trim()) continue;
-      lines.push(`- [${it.done ? 'x' : ' '}] ${(it.text || '').trim()}`);
-    }
-  }
   return lines.join('\n').trim();
 }
 
@@ -85,6 +79,14 @@ export function _standardVisualVariant(note) {
   let hash = 0;
   for (let i = 0; i < source.length; i++) hash = ((hash << 5) - hash + source.charCodeAt(i)) | 0;
   return Math.abs(hash) % 5;
+}
+
+/** The sort order that puts an edited or new note at the top of the unpinned notes. */
+export function topSortOrder(notes, exceptId = null) {
+  const lowest = (notes || [])
+    .filter(n => !n.pinned && n.id !== exceptId)
+    .reduce((min, n) => Math.min(min, n.sort_order || 0), 0);
+  return lowest - 1;
 }
 
 // Reminder text, the same rules as the server's `reminder_body` (checked

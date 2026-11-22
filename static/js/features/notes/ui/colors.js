@@ -1,4 +1,4 @@
-/** Note colors, custom background selection and form color controls. */
+/** Note colors and custom background selection. */
 export function createColors({
   api
 }) {
@@ -81,35 +81,5 @@ export function createColors({
     });
   }
 
-  function _wireFormColors(form, setColor) {
-    // Color dots : apply to entire form immediately
-    const _applyFormColor = (newColor) => {
-      const currentColor = newColor || '';
-      setColor(currentColor);
-      form.dataset.noteColor = currentColor;
-      const isBg = _isBgImage(currentColor);
-      COLORS.forEach(c => { if (c.value && c.value !== 'custom') form.classList.remove('note-color-' + c.value); });
-      if (currentColor && !isBg) form.classList.add('note-color-' + currentColor);
-      if (isBg) form.setAttribute('style', _customColorStyle(currentColor));
-      else form.removeAttribute('style');
-      form.querySelectorAll('.note-color-dot').forEach(d => {
-        d.classList.toggle('active', _dotIsActive(d.dataset.color, currentColor));
-        d.style.background = _dotBg(d.dataset.color, currentColor);
-      });
-      form.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-    form.querySelectorAll('.note-color-dot').forEach(dot => {
-      dot.addEventListener('click', () => {
-        if (dot.dataset.color === 'custom') {
-          _pickCustomBgImage().then(url => { if (url) _applyFormColor('bg:' + url); });
-          return;
-        }
-        _applyFormColor(dot.dataset.color);
-      });
-    });
-
-
-  }
-
-  return { COLORS, COLOR_HEX, _isBgImage, _bgImageUrl, _dotBg, _dotIsActive, _customColorStyle, _pickCustomBgImage, _wireFormColors };
+  return { COLORS, COLOR_HEX, _isBgImage, _bgImageUrl, _dotBg, _dotIsActive, _customColorStyle, _pickCustomBgImage };
 }

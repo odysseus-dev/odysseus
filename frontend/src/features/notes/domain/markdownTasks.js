@@ -2,7 +2,8 @@
 const TASK_RE = /^([ \t]*)([-*+])[ \t]+\[([ xX])\][ \t]?([^\n]*)$/;
 const FENCE_RE = /^[ \t]*(`{3,}|~{3,})/;
 const INDENT_UNIT = 2;
-const MAX_INDENT = 3;
+/** Deepest task nesting a note keeps; deeper lines are clamped to it. */
+export const MAX_INDENT = 3;
 
 function splitLines(content) {
   const lines = String(content).replace(/\r\n/g, '\n').split('\n');
@@ -42,6 +43,25 @@ const taskLine = (text, done, indent, bullet = '-', ws = null) =>
 export function fenceDelimiter(raw) {
   const m = FENCE_RE.exec(raw);
   return m ? m[1] : null;
+}
+
+/** Every fenced code block: its delimiter character, info string and body lines, as written. */
+export function fencedCode(content) {
+  const blocks = [];
+  let open = null;
+  for (const raw of splitLines(content || '')) {
+    const marker = fenceDelimiter(raw);
+    if (open === null) {
+      if (marker) open = { char: marker[0], len: marker.length, info: raw.trim().slice(marker.length).trim(), body: [] };
+      continue;
+    }
+    if (marker && marker[0] === open.char && marker.length >= open.len) {
+      blocks.push({ char: open.char, info: open.info, body: open.body });
+      open = null;
+    } else open.body.push(raw);
+  }
+  if (open) blocks.push({ char: open.char, info: open.info, body: open.body });
+  return blocks;
 }
 
 /** [lineno, raw] for every line outside fenced code (CommonMark open/close rules). */

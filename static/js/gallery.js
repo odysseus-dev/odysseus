@@ -2226,17 +2226,22 @@ import * as Modals from './modalManager.js';
 
 // Module-owned listeners resolve the current picker; closed modals are never retained.
 window.addEventListener('ge-ai-command-model-change', (e) => {
-  const imageModelSelect = document.getElementById('gallery-image-model');
-  if (!imageModelSelect || !imageModelSelect._modelsReady) return;
   let val = (e && e.detail && typeof e.detail.value === 'string') ? e.detail.value : '';
-  if (val && ![...imageModelSelect.options].some(o => o.value === val)) {
-    if (localStorage.getItem('ge-ai-command-model') === val) localStorage.removeItem('ge-ai-command-model');
-    val = '';
+  const imageModelSelect = document.getElementById('gallery-image-model');
+  if (imageModelSelect && imageModelSelect._modelsReady) {
+    if (val && ![...imageModelSelect.options].some(o => o.value === val)) {
+      if (localStorage.getItem('ge-ai-command-model') === val) localStorage.removeItem('ge-ai-command-model');
+      val = '';
+    }
+    if (imageModelSelect.value !== val) {
+      imageModelSelect.value = val;
+      if (imageModelSelect.value !== val) imageModelSelect.value = '';
+    }
   }
-  if (imageModelSelect.value !== val) {
-    imageModelSelect.value = val;
-    if (imageModelSelect.value !== val) imageModelSelect.value = '';
-  }
+  try {
+    if (val) localStorage.setItem('ge-ai-command-model', val);
+    else localStorage.removeItem('ge-ai-command-model');
+  } catch (_) {}
 });
 window.addEventListener('storage', (e) => {
   const imageModelSelect = document.getElementById('gallery-image-model');
