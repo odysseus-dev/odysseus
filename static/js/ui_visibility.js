@@ -16,7 +16,7 @@ export const UI_VIS_MAP = {
   'sidebar-search':      '#sidebar-search-btn',
   'sessions-section':   '#sessions-section',
   'email-section':       '#email-section, #rail-email',
-  'tools-section':       '#tools-section',
+  'tools-section':       '#tools-section, #workspace-section',
   // Per-tool entries pair the sidebar button with its rail launcher.
   'tool-calendar':       '#tool-calendar-btn, #rail-calendar',
   'tool-compare':        '#tool-compare-btn, #rail-compare',
@@ -32,7 +32,7 @@ export const UI_VIS_MAP = {
   'user-bar':            '#user-bar-profile',
   'sidebar-settings-btn':'#user-bar-settings',
   'chat-meta':           '.chat-meta-overlay',
-  'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
+  'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip, #welcome-starters',
   'incognito-btn':       '.incognito-btn',
   'web-toggle-btn':      '#web-toggle-btn',
   'doc-toggle-btn':      '#overflow-doc-btn',
@@ -67,7 +67,9 @@ export const resolveVisibility = (state = {}) => {
   const out = {};
   for (const [key, selector] of Object.entries(UI_VIS_MAP)) {
     let visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
-    if (!toolsOn && key.startsWith('tool-')) visible = false;
+    // Theme lives in the sidebar footer, not the Tools section, so it no
+    // longer follows the Tools toggle.
+    if (!toolsOn && key.startsWith('tool-') && key !== 'tool-theme') visible = false;
     out[selector] = visible;
   }
   return out;

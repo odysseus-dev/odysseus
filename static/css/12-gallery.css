@@ -358,7 +358,7 @@
 }
 .ge-vision-link:hover { opacity: 0.8; }
 .ge-alpha-tag {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -726,7 +726,7 @@
   text-overflow: ellipsis;
 }
 .gallery-editor-draft-meta {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   white-space: nowrap;
   overflow: hidden;

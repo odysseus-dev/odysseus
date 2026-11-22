@@ -382,7 +382,7 @@ select.task-form-input { text-overflow: ellipsis; }
 }
 .email-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .email-draft-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.email-attachment-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-attachment-chip .att-size { opacity: 0.5; font-size: 11px; flex-shrink: 0; }
 .email-attachment-chip-muted { opacity: 0.65; }
 .email-attachment-chip-muted:hover { opacity: 1; }
 .email-attachment-open.is-loading {
@@ -397,7 +397,7 @@ select.task-form-input { text-overflow: ellipsis; }
   position: relative;
   top: 0;
 }
-.email-compose-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-compose-chip .att-size { opacity: 0.5; font-size: 11px; flex-shrink: 0; }
 .email-odysseus-attach-thumb img {
   width: 100%;
   height: 100%;
