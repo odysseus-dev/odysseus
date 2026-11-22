@@ -71,9 +71,19 @@ test('the restore toast names the version and its Undo restores what the restore
   assert.match(toast.message, /from yesterday /, 'said against the injected clock, not the wall clock');
   toast.onAction();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(calls.at(-1), ['restore', 'n1', 12, 't5b'], 'onto the note as it is (the harness settle stamps t5b)');
+  assert.deepEqual(calls.at(-1), ['restore', 'n1', 12, 't6'], "against the restore's own version, not the note as it is by then");
   assert.equal(app.state.notes[0].content, NOW.content, 'back to the note before the restore');
   assert.deepEqual(effects.toasts.at(-1), 'Restore undone', 'undoing a restore offers no further Undo');
+});
+
+test("Undo after a newer edit sends the restore's version, so the server refuses instead of overwriting", async () => {
+  const { app, history, calls, effects } = harness();
+  assert.equal(await history.restore('n1', 3), true);
+  // A collaborator's edit (or a save of what was typed) lands after the restore.
+  app.mergeNote(app.state.notes[0], { content: 'newer text', updated_at: 't8' });
+  effects.toasts[0].onAction();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(calls.at(-1), ['restore', 'n1', 12, 't6']);
 });
 
 test('a restore that kept nothing offers no Undo', async () => {

@@ -25,19 +25,22 @@ export function createNoteHistory({ api, app, state, noteWindow, clock, effects 
    * Put version `versionId` back. Anything typed in the open note is saved
    * first, so it is the version the restore keeps. `at`: when that version
    * was kept, for the toast. `undoing`: this restore undoes another one, so
-   * its toast offers no further Undo.
+   * its toast offers no further Undo. `base`: the `updated_at` the undo
+   * expects, the restore's own, so an edit made since (typed, or a
+   * collaborator's) gets a 409 instead of being overwritten.
    */
-  async function restore(id, versionId, { at = null, undoing = false } = {}) {
+  async function restore(id, versionId, { at = null, undoing = false, base } = {}) {
     try { await noteWindow.settle(id); } catch {}
     try {
-      const { undo_version_id: undoId = null, ...note } = await api.restoreVersion(id, versionId, stateNote(id)?.updated_at ?? null);
+      const expected = base !== undefined ? base : (stateNote(id)?.updated_at ?? null);
+      const { undo_version_id: undoId = null, ...note } = await api.restoreVersion(id, versionId, expected);
       take(note);
       if (undoing) effects.showToast('Restore undone');
       else {
         const when = at ? shortTime(at, new Date(clock.now())) : '';
         const message = when ? `Restored the version from ${when}` : 'Version restored';
         effects.showToast(message, undoId != null
-          ? { duration: 10000, action: 'Undo', actionIcon: effects.undoIcon, onAction: () => restore(id, undoId, { undoing: true }) }
+          ? { duration: 10000, action: 'Undo', actionIcon: effects.undoIcon, onAction: () => restore(id, undoId, { undoing: true, base: note.updated_at ?? null }) }
           : undefined);
       }
       return true;
