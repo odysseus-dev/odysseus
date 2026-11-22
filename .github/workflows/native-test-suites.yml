@@ -137,7 +137,7 @@ jobs:
         env:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results/browser-junit.xml
         run: |
-          npm run test:photo-editor -- --reporter=line,junit
+          npm run test:photo-editor -- --reporter=line,junit --workers=2
           python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 137
       - name: Verify and sanitize failure diagnostics fail-closed
         id: verify-browser-results
