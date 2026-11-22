@@ -622,6 +622,34 @@ def load_legacy_items(raw) -> Optional[List[Dict]]:
     return items if isinstance(items, list) else None
 
 
+# The fields that are not columns: checklists (`items`, the tool's
+# `checklist_items`) and the legacy `image_url` are lines inside `content`. A
+# null on one has no meaning of its own: "clear" would wipe the note's body
+# and "ignore" would answer success for a write that did nothing. Writers
+# refuse it and say how to clear instead.
+NULL_FOLDED_FIELD_HINTS = {
+    "content": "send an empty string to clear the note",
+    "items": "send [] to remove the checklist",
+    "checklist_items": "send [] to remove the checklist",
+    "image_url": "remove its image line from content",
+}
+
+
+def null_folded_field_error(values: Dict, sent: Optional[Iterable[str]] = None) -> Optional[str]:
+    """The refusal for a write that sends null on a folded field, else None.
+
+    `values` maps field names to what was sent; `sent` names the fields the
+    request actually carried (a pydantic model's `model_fields_set`), for
+    callers whose missing keys also read as None. Without it, a key's
+    presence in `values` decides.
+    """
+    keys = values.keys() if sent is None else sent
+    for field in NULL_FOLDED_FIELD_HINTS:
+        if field in keys and values.get(field) is None:
+            return f"{field} cannot be null; {NULL_FOLDED_FIELD_HINTS[field]}."
+    return None
+
+
 def effective_content(content: Optional[str], legacy_items=None, legacy_image_url=None) -> str:
     """Content with any not-yet-migrated legacy `items` and `image_url` folded in.
 

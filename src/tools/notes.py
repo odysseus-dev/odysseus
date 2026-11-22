@@ -36,6 +36,7 @@ from core.notes_markdown import (
     keep_task_lines,
     merge_items_into_content,
     normalize_note_color,
+    null_folded_field_error,
     parse_task_lines,
     strip_task_lines,
     toggle_task,
@@ -131,6 +132,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             args["color"] = normalize_note_color(args["color"])
         except ValueError as exc:
             return {"error": f"{exc}. Nothing was saved.", "exit_code": 1}
+    if action == "update":
+        refused = null_folded_field_error(args)
+        if refused:
+            return {"error": f"{refused} Nothing was saved.", "exit_code": 1}
     if action == "add" and any(args.get(key) for key in ("id", "note_id", "noteId")):
         return {
             "error": 'Nothing saved. add creates a new note and cannot take an existing note ID. '

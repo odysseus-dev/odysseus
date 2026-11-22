@@ -240,7 +240,7 @@ async def test_migrated_photo_put_preserves_replaces_and_removes_attachment(note
     new_url = "/api/upload/new"
     await notes.call("PUT", path, json={"image_url": new_url, "body_revision": notes.revision("photo")})
     assert notes.row("photo").content == f"Updated prose\n\n![]({new_url})"
-    await notes.call("PUT", path, json={"image_url": None, "body_revision": notes.revision("photo")})
+    await notes.call("PUT", path, json={"image_url": "", "body_revision": notes.revision("photo")})
     assert notes.row("photo").content == "Updated prose"
     assert notes.row("photo").image_url is None
 
@@ -266,7 +266,7 @@ async def test_clear_removes_only_standalone_legacy_image_with_alt_text(notes, m
     monkeypatch.setattr(cdb, "DATABASE_URL", str(notes.factory.kw["bind"].url))
     cdb._migrate_fold_image_url()
     assert notes.row("photo").content.count(f"![Receipt]({url})") == 1
-    cleared = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "image_url": None})
+    cleared = await notes.call("PUT", "/api/notes/photo", json={"body_revision": notes.revision("photo"), "image_url": ""})
     assert cleared.status_code == 200, cleared.text
     expected = f"Inline ![detail]({url})\n\n[link]({url})\n\n```\n![code]({url})\n```"
     assert cleared.json()["content"] == expected and cleared.json()["image_url"] is None

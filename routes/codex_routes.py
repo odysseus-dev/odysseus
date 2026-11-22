@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from core.middleware import require_admin
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
+from core.notes_markdown import null_folded_field_error
 from core.notes_sharing import AGENT_REFUSED_ACTIONS, SHARING_UI_ONLY_ERROR
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
@@ -309,6 +310,11 @@ def setup_codex_routes(
         if isinstance(body.get("body"), dict):
             raise HTTPException(
                 422, 'Send the note fields at the top level of the JSON, not inside "body". Nothing was saved.')
+        # The tool refuses these too, but answers 200 with an error body; an
+        # HTTP client gets the same 422 as PUT /api/notes/{id}.
+        refused = null_folded_field_error(body) if action == "update" else None
+        if refused:
+            raise HTTPException(422, refused)
         args = dict(body)
         args["action"] = action
         result = await do_manage_notes(json.dumps(args), owner=owner)

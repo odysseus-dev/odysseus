@@ -49,6 +49,7 @@ from core.notes_markdown import (
     derive_note_type,
     effective_content,
     find_task_index,
+    null_folded_field_error,
     fold_image_url,
     fold_legacy_columns,
     has_legacy_image,
@@ -1039,6 +1040,10 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         """
         user = _owner(request)
         supplied = body.model_fields_set
+        # Before the note is read, so the answer is the same for every id.
+        refused = null_folded_field_error(body.model_dump(), supplied)
+        if refused:
+            raise HTTPException(422, refused)
         if body.replace_content and "content" not in supplied:
             raise HTTPException(422, "replace_content requires content")
         # Only when sent: assigning a field marks it as sent, and the
