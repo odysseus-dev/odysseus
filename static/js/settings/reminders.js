@@ -9,7 +9,10 @@ import uiModule from '../ui.js?v=20260916largetoolscroll1';
 
 export async function initReminderSettings(modalEl, { canManage, restricted = () => false }) {
   const root = el('settings-modal');
-  if (!root || !root.querySelector('[data-settings-panel="reminders"]')) return;
+  const panel = root && root.querySelector('[data-settings-panel="reminders"]');
+  if (!panel) return;
+  // Set again once every control below is wired; until then a click is not saved.
+  delete panel.dataset.ready;
 
   // Public URL field (used for deep-links in outgoing alert emails)
   const pubUrlIn = el('set-app-public-url');
@@ -486,4 +489,5 @@ export async function initReminderSettings(modalEl, { canManage, restricted = ()
       }
     });
   }
+  panel.dataset.ready = 'true';
 }
