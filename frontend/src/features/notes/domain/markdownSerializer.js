@@ -35,8 +35,8 @@ function textOf(node) {
  * A typed `\(` or `\)` gets its backslash doubled, so `\(a+b\)` stays text and is not inline math.
  */
 export function escapeMarkdownText(text) {
-  let out = String(text).replace(/\\(?=[\\`*~#\-+.>|$<_!\[\]:()])/g, '\\\\');
-  out = out.replace(/[`*[]/g, '\\$&');
+  // One pass: a backslash before a character escaped below is doubled, and ` * [ get a backslash.
+  let out = String(text).replace(/\\(?=[\\`*~#\-+.>|$<_!\[\]:()])|[`*[]/g, (m) => (m === '\\' ? '\\\\' : `\\${m}`));
   out = out.replace(/~(?=~)|(?<=~)~/g, '\\~');
   if ((out.match(/(?<!\\)\$/g) || []).length > 1) out = out.replace(/(?<!\\)\$/g, '\\$');
   out = out.replace(/<(?=[A-Za-z/!?])/g, '\\<');
