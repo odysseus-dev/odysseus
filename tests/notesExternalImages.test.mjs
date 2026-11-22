@@ -152,3 +152,39 @@ test('saving stores the per-user pref and tells the notes to redraw', async () =
   await assert.rejects(refused.save(true));
   assert.equal(refused.enabled(), false);
 });
+
+test('a quick on then off ends off, even when the first answer is the slow one', async () => {
+  // The server answers the first PUT only after the second one was sent.
+  let stored = false;
+  const pending = [];
+  const sent = [];
+  const request = (_url, init = {}) => {
+    if (init.method !== 'PUT') return Promise.resolve({ ok: true, json: async () => ({ value: stored }) });
+    const value = JSON.parse(init.body).value;
+    sent.push(value);
+    return new Promise(resolve => pending.push(() => { stored = value; resolve({ ok: true, json: async () => ({ value }) }); }));
+  };
+  const setting = createExternalImagesSetting({ origin: 'http://x', request });
+  const on = setting.save(true);
+  const off = setting.save(false);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(sent, [true], 'the second save waits for the first');
+  pending.shift()();
+  await on;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(sent, [true, false]);
+  pending.shift()();
+  await off;
+  assert.equal(setting.enabled(), false);
+  assert.equal(stored, false);
+});
+
+test('a refused save does not block the next one', async () => {
+  let fail = true;
+  const request = async (_url, init = {}) => (init.method === 'PUT' && fail ? { ok: false } : { ok: true, json: async () => ({}) });
+  const setting = createExternalImagesSetting({ origin: 'http://x', request });
+  await assert.rejects(setting.save(true));
+  fail = false;
+  await setting.save(true);
+  assert.equal(setting.enabled(), true);
+});

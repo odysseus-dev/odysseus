@@ -32,15 +32,24 @@ export function createExternalImagesSetting({ origin, request, onChange = () => 
     return enabled;
   }
 
-  async function save(value) {
-    const response = await request(url, {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value: value === true }),
+  // Saves go out one at a time, in the order they were asked for: two quick
+  // toggles can never have the first one's answer arrive last and undo an
+  // opt-out.
+  let queue = Promise.resolve();
+
+  function save(value) {
+    const run = queue.then(async () => {
+      const response = await request(url, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: value === true }),
+      });
+      if (!response.ok) throw new Error('Failed to save preference');
+      apply(value === true);
     });
-    if (!response.ok) throw new Error('Failed to save preference');
-    apply(value === true);
+    queue = run.catch(() => {});
+    return run;
   }
 
   /** Keeps a checkbox in step with the setting, and saves it when toggled. */
