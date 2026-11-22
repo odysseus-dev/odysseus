@@ -469,6 +469,8 @@ def _receipts(*calls):
     'I ran the list action and it returned 13 notes.',
     "I've executed the toggle_item action on item 4.",
     'I ran manage_notes list, then toggle_item.',
+    'I ran the list and toggle_item actions.',
+    'I ran the two manage_notes calls: list and toggle_item.',
 ])
 def test_an_execution_claim_naming_a_successful_receipt_is_kept(claim):
     ledger = _receipts(('manage_notes', {'action': 'list'}, 0),
@@ -488,6 +490,10 @@ def test_an_execution_claim_naming_a_successful_receipt_is_kept(claim):
     # One of the two named operations failed.
     ('I ran the list and delete actions.', (('manage_notes', {'action': 'list'}, 0),
                                             ('manage_notes', {'action': 'delete', 'id': 'n1'}, 1))),
+    # One of the two named operations never ran.
+    ('I ran the list and delete actions.', (('manage_notes', {'action': 'list'}, 0),)),
+    ('I ran the list, view and delete operations.', (('manage_notes', {'action': 'list'}, 0),
+                                                     ('manage_notes', {'action': 'view', 'id': 'n1'}, 0))),
     # A generic claim still names no operation.
     ('I executed everything you asked.', (('manage_notes', {'action': 'list'}, 0),)),
     # A remote success is never a receipt's to vouch for.

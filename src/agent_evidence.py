@@ -628,6 +628,17 @@ def _event_id(payload: Mapping[str, Any], occurrence: int) -> str:
     return "ev-" + _digest(f"{occurrence}:{canonical}")[:16]
 
 
+# Words that can sit before "actions" / "operations" / "calls" without
+# naming an operation ("the two actions", "the requested operations").
+_GENERIC_OPERATION_WORDS = frozenset({
+    "a", "an", "the", "this", "that", "these", "those", "both", "all", "each", "every", "some",
+    "several", "many", "few", "other", "same", "same-named", "its", "my", "your", "their", "our",
+    "one", "two", "three", "four", "five", "multiple", "tool", "api", "http", "previous", "next",
+    "first", "last", "following", "above", "below", "required", "needed", "necessary", "relevant",
+    "requested", "remaining", "individual", "separate", "further", "additional", "more", "any",
+})
+
+
 class EvidenceLedger:
     def __init__(self, requirements: CompletionRequirements | None = None) -> None:
         self.requirements = requirements or CompletionRequirements()
@@ -975,7 +986,20 @@ class EvidenceLedger:
         def said(word: str, suffix: str = "") -> bool:
             return bool(word) and re.search(rf'(?<![\w-]){re.escape(word)}(?![\w-]){suffix}', statement, re.I) is not None
 
-        kinds = r'(?:\s+and\s+[\w-]+)*\s+(?:actions?|operations?|calls?|commands?|requests?)\b'
+        nouns = r'\s+(?:actions?|operations?|calls?|commands?|requests?)\b'
+        kinds = r'(?:\s+and\s+[\w-]+)*' + nouns
+        # Every operation the sentence lists ("the list and delete actions"),
+        # read from the text rather than the receipts: one with no successful
+        # receipt makes the whole claim unsupported.
+        tools = {tool.lower() for tool, _, _, _ in self._operations}
+        for listed in re.finditer(r'((?:[\w-]+\s*,\s*)*[\w-]+(?:\s*,?\s+and\s+[\w-]+)*)' + nouns, statement, re.I):
+            for word in re.split(r'\s*,\s*(?:and\s+)?|\s+and\s+', listed.group(1)):
+                word = word.strip().lower()
+                if not word or word.isdigit() or word in tools or word in _GENERIC_OPERATION_WORDS:
+                    continue
+                if not any(action.lower() == word and ok and action_id not in external
+                           for _, action, ok, action_id in self._operations):
+                    return False
         named: set[tuple[str, str]] = set()
         for tool, action, _, _ in self._operations:
             tool_named = said(tool)
