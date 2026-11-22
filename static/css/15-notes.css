@@ -46,286 +46,6 @@ body.notes-drag-mode .note-card {
   transition: width 0.18s ease, height 0.18s ease;
 }
 
-
-/* ── Fullscreen single-note edit overlay ──────────────── */
-.note-fullscreen-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 10500;
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  opacity: 0;
-  /* Bigger zoom range so the transition reads as a real "tile expands
-     into a page" motion. transform-origin is set per-tile by JS. */
-  transform: scale(0.45);
-  transform-origin: center center;
-  transition: opacity 0.28s ease, transform 0.32s cubic-bezier(0.18, 0.74, 0.24, 1.06);
-  will-change: transform, opacity;
-}
-.note-fullscreen-overlay.open {
-  opacity: 1;
-  transform: scale(1);
-}
-.note-fullscreen-overlay.closing {
-  opacity: 0;
-  transform: scale(0.7);
-  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.4, 0, 0.6, 1);
-}
-.note-fullscreen-header {
-  flex-shrink: 0;
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-bottom: 1px solid var(--border);
-}
-.note-fullscreen-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-/* Compact the relocated Archive/Delete buttons so two of them fit
-   alongside the back chevron without crowding. */
-.note-fullscreen-actions .note-form-text-btn {
-  padding: 8px 12px;
-  font-size: 12px;
-  border-radius: 8px;
-}
-.note-fullscreen-actions .note-form-text-btn svg {
-  width: 14px;
-  height: 14px;
-  margin-right: 4px;
-}
-.note-fullscreen-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px; height: 40px;
-  background: none;
-  border: none;
-  color: var(--fg);
-  border-radius: 8px;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.note-fullscreen-back:active {
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
-}
-.note-fullscreen-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 14px 24px;
-}
-/* The reused .note-form inside the fullscreen overlay should breathe —
-   it was originally sized to slot into a grid cell. */
-.note-fullscreen-body .note-form {
-  max-width: 720px;
-  margin: 0 auto;
-  border: none;
-  box-shadow: none;
-  background: transparent;
-}
-
-/* Bigger touch targets inside the fullscreen overlay. The default form
-   is tuned for the grid-card context (tiny icons fit a 200px wide
-   tile); on a phone-sized full-bleed page we want chunky thumb-sized
-   controls. */
-.note-fullscreen-back svg {
-  width: 28px;
-  height: 28px;
-}
-.note-fullscreen-overlay .note-form-type-pill svg {
-  width: 16px;
-  height: 16px;
-}
-.note-fullscreen-overlay .note-cl-row {
-  padding: 8px 0;
-  gap: 8px;
-  align-items: center;
-}
-.note-fullscreen-overlay .note-cl-grip {
-  font-size: 22px;
-  line-height: 1;
-  padding: 6px 8px;
-  opacity: 0.5;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-  /* Pull 4px toward the left edge of the row. */
-  margin-left: -4px;
-}
-.note-fullscreen-overlay .note-cl-dot {
-  width: 16px;
-  height: 16px;
-  border-width: 2px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  position: relative;
-  /* Generous invisible tap target around the visible dot */
-}
-/* Filled checkmark glyph when the row is marked done — gives a clear
-   visual cue beyond the colored fill. Nudged up 2px so it sits
-   centered in the smaller dot. */
-.note-fullscreen-overlay .note-cl-row.done .note-cl-dot::after {
-  content: '';
-  position: absolute;
-  left: 2px; top: 1px;
-  width: 8px; height: 4px;
-  border-left: 2px solid #fff;
-  border-bottom: 2px solid #fff;
-  transform: rotate(-45deg);
-}
-.note-fullscreen-overlay .note-cl-rm {
-  width: 40px;
-  height: 40px;
-  font-size: 28px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.7;
-  /* Nudge 4px further toward the right edge of the row. */
-  margin-right: -4px;
-}
-/* Lifted row + placeholder while dragging a checklist item. Mirrors
-   the card-drag look so the two interactions feel consistent. */
-.note-cl-row-dragging {
-  box-shadow: 0 12px 28px rgba(0,0,0,0.4);
-  background: var(--bg);
-  border-radius: 8px;
-  opacity: 0.98;
-}
-.note-cl-row-placeholder {
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
-  border: 2px dashed color-mix(in srgb, var(--fg) 22%, transparent);
-  border-radius: 6px;
-  margin: 4px 0;
-  box-sizing: border-box;
-  transition: height 0.16s ease;
-}
-.note-fullscreen-overlay .note-form-text-btn {
-  padding: 10px 16px;
-  font-size: 14px;
-}
-.note-fullscreen-overlay .note-form-text-btn svg {
-  width: 16px;
-  height: 16px;
-}
-/* + Add and the camera/photo button share a row inside checklists, so
-   they're both within thumb reach when editing items. The whole row
-   reads as a single dashed "tap to add" surface — tapping ANYWHERE
-   on it triggers + Add (the photo button stays its own target). */
-.note-fullscreen-overlay .note-cl-add-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 4px 8px 4px 4px;
-  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-.note-fullscreen-overlay .note-cl-add-row:active {
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  border-color: color-mix(in srgb, var(--fg) 36%, transparent);
-}
-.note-fullscreen-overlay .note-cl-add-row .note-cl-add {
-  flex: 1;
-  justify-content: flex-start;
-  background: transparent;
-  border: none;
-}
-.note-fullscreen-overlay .note-cl-add-row .note-form-photo-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: auto;
-  height: 36px;
-  padding: 0 12px 0 10px;
-  border-radius: 8px;
-  /* No border / no background — the surrounding +Add row provides the
-     bordered container, the camera is just an icon inside it. */
-  border: none;
-  background: transparent;
-}
-
-/* Read-mode overlay shown over the textarea for plain notes. Renders
-   linkified content so URLs are tappable. Click anywhere off a link
-   to flip to edit mode (focuses the underlying textarea). */
-.note-form-content-reader {
-  font-size: 15px;
-  line-height: 1.55;
-  padding: 10px 6px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  color: var(--fg);
-  cursor: text;
-  min-height: 40px;
-}
-
-/* Per-row read mode for todo items — replaces the bare <input> with a
-   clickable linkified span when the value contains a URL. */
-.note-fullscreen-overlay .note-cl-text-reader {
-  flex: 1;
-  padding: 7px 6px;
-  font-size: 14px;
-  line-height: 1.4;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  word-break: break-word;
-  color: var(--fg);
-  cursor: text;
-}
-.note-fullscreen-overlay .note-cl-row.done .note-cl-text-reader {
-  opacity: 0.5;
-  text-decoration: line-through;
-}
-.note-fullscreen-overlay .note-form-icon-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-
-/* Tags input is JS-relocated into the bottom actions row, pinned
-   left of Cancel/Update. Style it as a dashed pill so it reads as
-   metadata rather than another control. */
-.note-fullscreen-overlay .note-form-actions-group .note-form-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 13px;
-  padding: 8px 10px;
-  margin: 0 auto 0 0;
-  background: transparent;
-  border: 1px dashed color-mix(in srgb, var(--fg) 16%, transparent);
-  border-radius: 6px;
-  text-align: left;
-}
-
-.note-fullscreen-overlay .note-color-picker { order: 1; }
-.note-fullscreen-overlay .note-form-type-seg {
-  order: 3;
-  margin-left: auto;  /* shove right */
-  /* The overlay enlarges the pills (padding 10px), but the base seg is only
-     28px tall with overflow:hidden — which clipped them. Grow the track so
-     the bigger touch targets fit. */
-  height: 40px;
-  border-radius: 12px;
-}
-.note-fullscreen-overlay .note-form-actions-group {
-  order: 4;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-
 .notes-mobile-grabber { display: none; }
 /* Notes panel: mounted like a window, docked to the right on desktop. */
 .notes-pane-backdrop {
@@ -941,22 +661,6 @@ body.notes-drag-mode .note-card {
 .note-card-ai-done svg { animation: none; }
 #notes-auto-ai-toggle.active { color: var(--accent, var(--red)); }
 
-/* ─── AI improve button (note form header) ───────────────────────────── */
-.note-form-improve-btn {
-  width: 38px !important;
-  height: 38px !important;
-  color: var(--accent, var(--red));
-}
-.note-form-improve-btn svg {
-  width: 22px !important;
-  height: 22px !important;
-  animation: note-ai-shine 2.4s ease-in-out infinite;
-}
-.note-form-improve-btn.busy svg {
-  animation: spin 0.9s linear infinite;
-  filter: none;
-}
-
 .note-card:hover .note-card-select,
 .note-card:hover .note-card-pin,
 .note-card-selected .note-card-select,
@@ -1080,62 +784,6 @@ body.notes-drag-mode .note-card {
   margin: 4px 0;
   display: block;
 }
-.note-form-image-wrap {
-  position: relative;
-  margin: 4px 0;
-}
-.note-form-image {
-  width: 100%;
-  max-height: 200px;
-  object-fit: cover;
-  border-radius: 4px;
-  display: block;
-  /* Images are draggable=true by default; that catches the mousedown
-     and beats the X button to the click. Disabling drag at the CSS
-     level (the -webkit-user-drag prop) keeps the X button reliably
-     clickable even if the JS forgets to set draggable="false" on the
-     element. Unprefixed user-drag was never standardized — Firefox
-     drops it with a warning. */
-  -webkit-user-drag: none;
-  user-select: none;
-}
-.note-form-image-rm {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 5;
-  background: rgba(0,0,0,0.65);
-  border: none;
-  color: #fff;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 20px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.note-form-photo-btn {
-  flex: 0 0 auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  cursor: pointer;
-  border-radius: 4px;
-  width: auto;
-  min-width: 32px;
-  height: 32px;
-  padding: 0 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  opacity: 1;
-  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
-}
-.note-form-photo-btn:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
 /* Quick-add bar (always at top) */
 .notes-quick-add {
@@ -1146,9 +794,7 @@ body.notes-drag-mode .note-card {
   background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));
   border-radius: 6px;
-  /* Toggle pill sits at the very left of the bar — no inset padding. The
-     pill's own border provides visual breathing room from the wrapper edge. */
-  padding: 4px 6px 4px 4px;
+  padding: 4px 6px;
   margin-top: 2px;
   margin-bottom: 8px;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
@@ -1195,80 +841,8 @@ body.notes-drag-mode .note-card {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-/* 2-pill Note/Todo toggle in the quick-add bar — same look as the form's
-   type-seg but slimmer to fit the compact row. */
-.notes-quick-type-seg {
-  display: inline-flex;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  position: relative;
-  flex-shrink: 0;
-  /* Negative order pushes the toggle BEFORE the wrapper's ::before caret
-     hint, so the blinking | sits between the toggle and the input rather
-     than at the far-left edge. */
-  order: -1;
-}
-.notes-quick-type-seg::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 50%;
-  height: 100%;
-  background: color-mix(in srgb, var(--fg) 10%, transparent);
-  border-radius: 6px;
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-  z-index: 0;
-}
-.notes-quick-type-pill {
-  background: none;
-  border: none;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
-  cursor: pointer;
-  padding: 0 11px;
-  font-family: inherit;
-  transition: color 0.2s;
-  white-space: nowrap;
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-  position: relative;
-  z-index: 1;
-}
-.notes-quick-type-pill svg {
-  width: 16px;
-  height: 16px;
-}
-.notes-quick-type-pill:not(.active):hover {
-  color: color-mix(in srgb, var(--fg) 65%, transparent);
-}
-.notes-quick-type-pill.active,
-.notes-quick-type-pill.active:hover,
-.notes-quick-type-pill.active:focus {
-  color: var(--fg);
-  cursor: default;
-}
-/* Mobile: thumb-sized Note/Todo toggle. The 22px desktop pill is too
-   small to hit reliably on a phone. */
+/* Mobile: a thumb-sized bar. */
 @media (max-width: 768px) {
-  .notes-quick-type-seg {
-    height: 36px;
-    border-radius: 10px;
-  }
-  .notes-quick-type-seg::before {
-    border-radius: 9px;
-  }
-  .notes-quick-type-pill {
-    padding: 0 14px;
-  }
-  .notes-quick-type-pill svg {
-    width: 17px;
-    height: 17px;
-  }
-  /* Match the input + photo button heights to the bigger toggle so the
-     row reads as one consistent bar. */
   .notes-quick-input {
     height: 36px;
     font-size: 15px;
@@ -1310,71 +884,20 @@ body.notes-drag-mode .note-card {
   background-size: 200% 100%;
   animation: notes-skeleton-shimmer 1.4s ease-in-out infinite;
 }
-
-/* Type toggle (note vs todo) */
-.note-form-type-row {
-  display: flex;
-  gap: 4px;
-  margin-top: -2px;
-}
 /* Reminder bell button */
-/* Mobile-only: bell icon in the note editor is accent-coloured so it pops as
-   the primary "set a reminder" affordance. The Archive button is hidden — the
-   Update (✓) button morphs into an Archive action when the user opens a note
-   and clicks without making any edits (see notes.js `archive-mode` toggle). */
-@media (max-width: 768px) {
-  .note-form-remind-btn { color: var(--accent, var(--red)) !important; }
-  .note-form-remind-btn > svg { color: var(--accent, var(--red)); }
-  .note-form-archive-btn { display: none !important; }
-  .notes-pane #notes-archive-toggle { display: none !important; }
-  .note-form-save.archive-mode {
-    color: var(--accent, var(--red)) !important;
-    border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
-    background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent) !important;
-  }
-}
-.note-form-remind-btn {
-  flex: 0 0 auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  border-radius: 4px;
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 1;
-  position: relative;
-  top: -2px;
-  transition: opacity 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
-}
-.note-form-remind-btn:hover { opacity: 1; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.note-form-remind-btn.has-date { color: var(--accent); border-color: var(--accent); }
 
 /* Calendar event form + notes form: jingle the little bell when the user
    picks a reminder. Anchored near the top of the bell so the swing reads
    as the bell clanging side-to-side. */
-.cal-remind-bell,
-.note-form-remind-btn > svg {
+.cal-remind-bell {
   transform-origin: 50% 4px;
   transition: transform 0.1s ease;
 }
-.cal-remind-bell.jingling,
-.note-form-remind-btn > svg.jingling {
+.cal-remind-bell.jingling {
   animation: cal-bell-jingle 0.65s cubic-bezier(0.36, 0, 0.66, -0.56) both;
 }
 @media (prefers-reduced-motion: reduce) {
-  .cal-remind-bell.jingling,
-  .note-form-remind-btn > svg.jingling { animation: none; }
-}
-
-/* Reminder tag inside form */
-.note-form-reminder-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  .cal-remind-bell.jingling { animation: none; }
 }
 .note-reminder-tag {
   display: inline-flex;
@@ -1572,64 +1095,6 @@ body.notes-drag-mode .note-card {
   color: #fff;
 }
 
-.note-form-type-btn,
-.note-form-type-toggle {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  cursor: pointer;
-  border-radius: 4px;
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 1;
-  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
-}
-.note-form-type-toggle:hover { opacity: 1; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.note-form-type-toggle[data-type="todo"] { color: var(--accent); }
-
-/* Note | Todo | Draw segmented toggle — mirrors .mode-toggle (agent/chat) */
-.note-form-type-seg {
-  display: inline-flex;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  position: relative;
-  flex-shrink: 0;
-}
-.note-form-type-pill {
-  background: none;
-  border: none;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
-  cursor: pointer;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  transition: color 0.2s;
-  white-space: nowrap;
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-  z-index: 1;
-}
-.note-form-type-pill:not(.active):hover { color: color-mix(in srgb, var(--fg) 60%, transparent); }
-.note-form-type-pill.active,
-.note-form-type-pill.active:hover,
-.note-form-type-pill.active:focus {
-  color: var(--fg);
-  cursor: default;
-}
-@media (max-width: 480px) {
-  .note-form-type-pill span { display: none; }
-  .note-form-type-pill { padding: 0 8px; }
-}
-
 .note-card-action:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
@@ -1735,22 +1200,11 @@ body.notes-drag-mode .note-card {
   flex-direction: column;
   gap: 4px;
 }
-.notes-pane.notes-view-grid .note-form,
+
 .notes-pane.notes-view-grid .notes-quick-add {
   grid-column: 1 / -1;
   margin-bottom: 0;
   grid-row-end: span 16;
-}
-/* Edit form in grid view: span the full row and size naturally — same shape
-   as the new-note form. The earlier max-width: 380px + max-height: 220px
-   inner-scroll combo read as a tiny popup floating in a wider panel and
-   didn't actually fit the form's content. */
-.notes-pane.notes-view-grid .note-form {
-  width: 100%;
-  max-width: none;
-  margin-left: 0;
-  margin-right: 0;
-  box-sizing: border-box;
 }
 /* Pinned section break: the first unpinned card jumps to column 1, leaving
    any leftover cell in the pinned row empty. Reads as a visual divider
@@ -1784,28 +1238,13 @@ body.notes-drag-mode .note-card {
   .notes-pane.notes-view-grid .notes-label-toggle,
   .notes-pane.notes-view-grid .notes-labels-bar,
   .notes-pane.notes-view-grid .doclib-chip-scroll-frame:has(> .notes-labels-bar),
-  .notes-pane.notes-view-grid .notes-quick-add,
-  .notes-pane.notes-view-grid .note-form {
+  .notes-pane.notes-view-grid .notes-quick-add {
     grid-column: 1 / -1;
   }
   .notes-pane.notes-view-grid .notes-label-toggle { grid-row: span 8; }
   .notes-pane.notes-view-grid .notes-labels-bar { grid-row: span 16; }
   .notes-pane.notes-view-grid .doclib-chip-scroll-frame:has(> .notes-labels-bar) { grid-row: span 16; }
   .notes-pane.notes-view-grid .notes-quick-add { grid-row: span 12; }
-  .notes-pane.notes-view-grid .note-form {
-    width: 100%;
-    max-width: none;
-    margin-left: 0;
-    margin-right: 0;
-    box-sizing: border-box;
-    grid-row: auto / span 64;
-  }
-  .notes-pane.notes-view-grid .note-form:has(.note-form-type-seg.is-draw) {
-    grid-row: auto / span 152;
-  }
-  .notes-pane.notes-view-grid .note-form.note-form-new {
-    transform: translateY(-28px);
-  }
   .notes-pane.notes-view-grid .notes-labels-bar {
     padding-top: 0;
     margin-top: -6px;
@@ -2013,64 +1452,6 @@ body.notes-drag-mode .note-card {
   line-height: 1;
   z-index: 2;
 }
-/* Description blurb above the checklist on goal cards */
-.note-goal-desc {
-  font-size: 12px;
-  opacity: 0.7;
-  margin: 4px 0 6px;
-  white-space: pre-wrap;
-  line-height: 1.4;
-}
-
-/* ── Goal form (Break-down editor) ───────────────────────────────────── */
-.note-form-goal {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.note-form-goal-desc {
-  width: 100%;
-  box-sizing: border-box;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  font-family: inherit;
-  font-size: 13px;
-  padding: 8px 10px;
-  resize: vertical;
-  min-height: 60px;
-}
-.note-form-goal-desc:focus {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent-warm) 60%, var(--border));
-}
-.note-form-goal-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.note-form-goal-ai {
-  display: inline-flex;
-  align-items: center;
-  background: color-mix(in srgb, var(--accent-warm) 16%, transparent);
-  color: var(--accent-warm);
-  border: 1px solid color-mix(in srgb, var(--accent-warm) 45%, transparent);
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.note-form-goal-ai:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-warm) 26%, transparent);
-  border-color: color-mix(in srgb, var(--accent-warm) 65%, transparent);
-}
-.note-form-goal-hint {
-  font-size: 11px;
-  opacity: 0.55;
-}
 
 /* ── Today view ──────────────────────────────────────────────────────── */
 .notes-today-wrap {
@@ -2166,22 +1547,6 @@ body.notes-drag-mode .note-card {
   opacity: 0.6;
   margin-left: 4px;
 }
-
-/* Form label input */
-.note-form-label {
-  background: transparent;
-  border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
-  color: var(--fg);
-  font-size: 11px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  outline: none;
-  width: 80px;
-  font-family: inherit;
-  opacity: 0.6;
-  transition: opacity 0.15s, border-color 0.15s;
-}
-.note-form-label:hover, .note-form-label:focus { opacity: 1; border-color: var(--border); }
 @keyframes noteLabelFlash {
   0%   { background: color-mix(in srgb, var(--accent) 35%, transparent); }
   100% { background: transparent; }
@@ -2299,33 +1664,6 @@ body.notes-drag-mode .note-card {
 .notes-pane-body.drag-active .note-card:not(.dragging):hover {
   border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
   opacity: 1;
-}
-
-/* Checklist drag grip */
-.note-cl-grip {
-  cursor: grab;
-  opacity: 0.2;
-  font-size: 9px;
-  letter-spacing: -2px;
-  user-select: none;
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.15s;
-}
-.note-cl-row.dragging {
-  opacity: 0.4;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-radius: 4px;
-}
-.note-cl-row.drop-before {
-  box-shadow: 0 -2px 0 0 var(--accent);
-}
-.note-cl-row.drop-after {
-  box-shadow: 0 2px 0 0 var(--accent);
 }
 
 .note-card-footer {
@@ -2548,105 +1886,6 @@ body.notes-drag-mode .note-card {
   border-color: var(--fg);
 }
 
-/* Note form */
-.note-form {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 10px;
-  transition: background 0.2s, border-color 0.2s;
-  /* Container so the action buttons can collapse to icons when the note
-     card is narrow (see .note-form-collapsible). */
-  container-type: inline-size;
-  container-name: noteform;
-}
-@media (max-width: 768px) {
-  .notes-pane:not(.notes-view-grid) .note-form.note-form-new {
-    transform: translateY(6px);
-  }
-}
-/* Label sits after the icon in each action button */
-.note-form-text-btn .nft-label { margin-left: 5px; }
-/* Never let the action buttons spill outside the card */
-.note-form-actions-group { flex-wrap: wrap; row-gap: 6px; }
-/* When the note card is narrow, collapse Archive / Delete / Cancel to
-   icon-only (their text label hides; tooltip via title= remains). The
-   Save/Update button is NOT collapsible — it always keeps its label and
-   stays last. */
-@container noteform (max-width: 360px) {
-  .note-form-collapsible .nft-label { display: none; }
-  .note-form-collapsible { padding-left: 9px; padding-right: 9px; }
-}
-.note-form.note-color-red    { background: color-mix(in srgb, var(--red) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--red) 30%, var(--border)) !important; }
-.note-form.note-color-orange { background: color-mix(in srgb, #d19a66 18%, var(--panel)) !important; border-color: color-mix(in srgb, #d19a66 30%, var(--border)) !important; }
-.note-form.note-color-yellow { background: color-mix(in srgb, var(--hl-string) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--hl-string) 30%, var(--border)) !important; }
-.note-form.note-color-green  { background: color-mix(in srgb, #98c379 18%, var(--panel)) !important; border-color: color-mix(in srgb, #98c379 30%, var(--border)) !important; }
-.note-form.note-color-blue   { background: color-mix(in srgb, var(--hl-function) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--hl-function) 30%, var(--border)) !important; }
-.note-form.note-color-purple { background: color-mix(in srgb, var(--hl-keyword) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--hl-keyword) 30%, var(--border)) !important; }
-.note-form-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-right: 0;
-}
-.note-form-header .note-form-remind-btn {
-  margin-right: -7px; /* align bell center with X-button column on todo rows */
-  position: relative;
-  top: -2px;
-}
-.note-form-title {
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 14px;
-  font-weight: 600;
-  padding: 4px 0;
-  outline: none;
-}
-.note-form-title:focus { border-color: var(--fg); }
-.note-form-header { position: relative; }
-.note-form-header .note-form-due {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  right: 0;
-  bottom: 0;
-}
-.note-form-due-btn {
-  flex: 0 0 auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  border-radius: 4px;
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0.85;
-  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
-}
-.note-form-due-btn:hover { opacity: 1; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.note-form-due-btn.has-date {
-  opacity: 1;
-  border-style: solid;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-}
-
 .note-type-toggle {
   display: flex;
   gap: 4px;
@@ -2666,98 +1905,6 @@ body.notes-drag-mode .note-card {
   opacity: 1;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
 }
-
-.note-form-content {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 12px;
-  padding: 8px;
-  border-radius: 4px;
-  resize: vertical;
-  /* Roomier default so editing a note isn't cramped; JS auto-grow takes
-     it further as you type. */
-  min-height: 120px;
-  line-height: 1.5;
-  font-family: inherit;
-  outline: none;
-}
-.note-form-content:focus { border-color: var(--fg); }
-
-.note-form-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.note-form-meta .note-color-picker { gap: 3px; }
-.note-form-actions-group {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  /* Take the full width of the meta row so Archive/Delete can sit on the
-     LEFT side and the spacer pushes Cancel + Update to the right edge. */
-  flex: 1 1 auto;
-  flex-shrink: 0;
-  flex-wrap: nowrap;
-}
-.note-form-actions-spacer { flex: 1 1 auto; }
-/* Unified text+icon action button — used for Archive, Delete, Cancel, Update
-   so all 4 read as a matched set. Matches the existing .note-form-save
-   sizing/padding via the rules at ~25023. */
-.note-form-text-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  border: 1px solid var(--border);
-  color: var(--fg);
-  border-radius: 6px;
-  padding: 5px 12px;
-  font-size: 12px;
-  font-family: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-  white-space: nowrap;
-}
-.note-form-text-btn:hover {
-  background: color-mix(in srgb, var(--fg) 14%, transparent);
-  border-color: color-mix(in srgb, var(--fg) 28%, var(--border));
-}
-.note-form-text-btn.note-form-save {
-  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
-  color: var(--accent, var(--red));
-  font-weight: 600;
-}
-.note-form-text-btn.note-form-save:hover {
-  background: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
-}
-.note-form-text-btn.danger:hover {
-  background: color-mix(in srgb, var(--red) 14%, transparent);
-  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
-  color: var(--red);
-}
-.note-form-icon-btn {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  cursor: pointer;
-  border-radius: 4px;
-  width: 38px;
-  height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.65;
-  transition: opacity 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
-}
-/* Force the inner icons to render at the inline-attribute size — some other
-   stylesheets clamp `svg { width: ... }` globally and that shrinks them. */
-.note-form-icon-btn svg { width: 31px !important; height: 31px !important; }
-.note-form-icon-btn:hover { opacity: 1; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.note-form-delete-btn:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 50%, var(--border)); background: color-mix(in srgb, var(--red) 8%, transparent); }
 
 /* Draw mode — canvas + small toolbar */
 .note-form-draw-wrap {
@@ -2787,14 +1934,6 @@ body.notes-drag-mode .note-card {
   justify-content: center;
 }
 .note-form-draw-bg-rm:hover { background: rgba(0, 0, 0, 0.8); }
-/* Draw mode hides the note's background-color picker and the standalone
-   image preview — they don't make sense alongside a canvas. Uses :has() so
-   it kicks in whenever the type-seg flips to .is-draw, in addition to the
-   JS that sets display:none. */
-.note-form:has(.note-form-type-seg.is-draw) .note-color-picker,
-.note-form:has(.note-form-type-seg.is-draw) .note-form-image-wrap {
-  display: none !important;
-}
 .note-form-canvas {
   background: var(--panel, var(--bg));
   border: 1px solid var(--border);
@@ -2831,12 +1970,6 @@ body.notes-drag-mode .note-card {
   flex: 0 0 24px;
 }
 .note-form-draw-size-wrap { width: 110px; display: inline-flex; align-items: center; }
-.note-form-photo-plus {
-  font-size: 16px;
-  line-height: 1;
-  font-weight: 600;
-  opacity: 0.8;
-}
 /* Mirrors .gallery-editor-container input[type=range] — slim pill track that
    grows on interaction, red circular thumb. */
 .note-form-draw-size {
@@ -2954,118 +2087,10 @@ body.notes-drag-mode .note-card {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
 }
-.note-form-due {
-  background: transparent;
-  border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
-  color: var(--fg);
-  font-size: 11px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  outline: none;
-  opacity: 0.4;
-  transition: opacity 0.15s, border-color 0.15s;
-}
-.note-form-due:hover, .note-form-due:focus { opacity: 0.9; border-color: var(--border); }
-
-.note-form-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-.note-form-save,
-.note-form-cancel,
-.note-form-archive {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 11px;
-  padding: 4px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.note-form-save { background: color-mix(in srgb, var(--fg) 12%, transparent); font-weight: 600; }
-.note-form-save:hover { background: color-mix(in srgb, var(--fg) 20%, transparent); }
-.note-form-cancel:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
-.note-form-archive:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
-
-/* Checklist inputs in form */
-.note-checklist-inputs {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.note-cl-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.note-cl-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--fg) 30%, transparent);
-  flex-shrink: 0;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.note-cl-dot:hover { border-color: var(--fg); transform: scale(1.2); }
-.note-cl-row.done .note-cl-dot {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.note-cl-row.done .note-cl-text {
-  opacity: 0.4;
-  background: linear-gradient(currentColor, currentColor) no-repeat;
-  background-size: 0 1px;
-  background-position: 0 calc(50% - 1px);
-  animation: cl-strike 0.32s ease-out forwards;
-  transition: opacity 0.2s ease;
-}
 /* Draws the strikethrough line left-to-right when the row is marked
    done, instead of snapping it in full-width on the same frame. */
 @keyframes cl-strike {
   to { background-size: 100% 1px; }
-}
-.note-cl-text {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 12px;
-  padding: 3px 0 3px 3px;
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  outline: none;
-}
-.note-cl-text:focus { border-color: var(--fg); }
-.note-cl-rm {
-  background: none;
-  border: none;
-  color: var(--fg);
-  opacity: 0.3;
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0;
-  width: 24px;
-  height: 14px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  line-height: 1;
-}
-.note-cl-rm:hover { opacity: 0.8; color: var(--red); }
-.note-cl-add {
-  background: none;
-  border: none;
-  color: var(--fg);
-  opacity: 0.4;
-  cursor: pointer;
-  font-size: 11px;
-  padding: 4px 0;
-  text-align: left;
 }
 
 /* ── Calendar ── */
@@ -4059,3 +3084,318 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 }
 /* Code blocks are previews here; copy/run/edit live in chat. */
 .note-md-preview pre :is(.copy-code, .run-code, .edit-code) { display: none; }
+/* chat.js tags every one-line <pre> as .pre-compact, which reserves 200px on
+   the right for that button row. Without the buttons the space is dead, and on
+   a grid card it leaves the code one character wide. Same 4px as the pre's left. */
+.note-md-preview pre.pre-compact { padding-right: 4px; }
+
+/* ── Note window: the one note editor. A tool window on desktop, a
+   full-height sheet on phones. Rendered with the same markdown as the card. ── */
+#note-window-modal .hidden { display: none; }
+#note-window-modal .note-window-content {
+  width: min(640px, 92vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  /* The note's colour, as a ring (transparent when it has none). */
+  outline: 3px solid var(--note-ring, transparent);
+  outline-offset: 2px;
+  transition: outline-color 0.2s ease;
+}
+#note-window-modal .note-window-header {
+  gap: 6px;
+  padding: 10px 14px 6px;
+  flex-shrink: 0;
+}
+.note-window-title {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 2px 0;
+}
+.note-window-title::placeholder { opacity: 0.4; }
+.note-window-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.note-window-icon-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.note-window-remind.has-date { color: var(--accent-warm); }
+.note-window-reminder { padding: 0 14px 6px; }
+.note-window-reminder:empty { display: none; }
+.note-window-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 14px 8px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.note-window-banner span { flex: 1; }
+.note-window-toolbar[data-mode="source"] [data-md]:not([data-md="source"]) { opacity: 0.3; pointer-events: none; }
+.note-window-toolbar [data-md].active { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); border-radius: 5px; }
+.note-window-hint { padding: 6px 16px 0; font-size: 11px; opacity: 0.7; }
+.note-window-hint button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+#note-window-modal .note-window-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px 14px;
+}
+.note-window-body {
+  min-height: 160px;
+  outline: none;
+  cursor: text;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+.note-window-body[data-empty]::before {
+  content: attr(data-placeholder);
+  opacity: 0.4;
+  pointer-events: none;
+}
+.note-window-source {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+.note-window-body .md-tasklist { list-style: none; margin: 4px 0; padding: 0; }
+.note-window-body .md-task { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
+.note-window-body .md-task-box {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.12s, background 0.12s;
+}
+.note-window-body .md-task-box:hover { border-color: var(--green); }
+.note-window-body .md-task[data-done="true"] .md-task-box {
+  background: color-mix(in srgb, var(--green) 25%, transparent);
+  border-color: var(--green);
+}
+.note-window-body .md-task[data-done="true"] .md-task-text { text-decoration: line-through; opacity: 0.55; }
+.note-window-body .md-task-text { flex: 1; min-width: 0; min-height: 1.6em; outline: none; }
+.note-window-body li[data-indent="1"] { margin-left: 16px; }
+.note-window-body li[data-indent="2"] { margin-left: 32px; }
+.note-window-body li[data-indent="3"] { margin-left: 48px; }
+.note-window-body .md-note-image { max-width: 100%; border-radius: 8px; }
+/* Links read like the card's links. */
+.note-window-body a { color: var(--accent-primary, var(--red)); text-decoration: underline; }
+/* A click opens a link, even while editing (see richBody.js). */
+.note-window-body a[href] { cursor: pointer; }
+/* A block only Markdown source can edit (math, raw HTML, an aligned table). */
+.note-window-body .note-md-locked {
+  outline: 1px dashed var(--border);
+  outline-offset: 3px;
+  border-radius: 4px;
+  cursor: default;
+}
+.note-window-meta {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  opacity: 0.55;
+  text-align: center;
+}
+.note-window-meta:empty { display: none; }
+.note-window-sketch { margin-top: 10px; }
+.note-window-sketch-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.note-window-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.note-window-colors { display: flex; align-items: center; gap: 5px; }
+.note-window-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; flex: 1 1 160px; min-width: 0; }
+.note-window-tags .note-tag-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.note-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-warm) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent-warm) 10%, transparent);
+  color: var(--accent-warm);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.note-tag-rm {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.note-tag-rm:hover { opacity: 1; }
+.note-window-tag-input {
+  flex: 1;
+  min-width: 80px;
+  padding: 4px 2px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.note-window-tag-input:focus { border-bottom-color: var(--border); }
+.note-link-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.note-link-input.invalid { border-color: var(--red); }
+.note-window-act-danger:hover { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+/* A thumb-sized checkbox target without changing the layout. */
+@media (pointer: coarse) {
+  .note-window-body .md-task-box { position: relative; }
+  .note-window-body .md-task-box::before { content: ''; position: absolute; inset: -10px -10px -10px -14px; }
+}
+@media (max-width: 768px) {
+  #note-window-modal { padding: 0; align-items: flex-end; }
+  #note-window-modal .note-window-content {
+    width: 100vw;
+    max-width: 100vw;
+    /* The shared mobile sheet rules force height: auto and a max-height;
+       min-height is the one they leave alone, and it wins over max-height. */
+    min-height: calc(var(--app-height, 100dvh) - var(--sheet-top));
+    border-radius: 14px 14px 0 0;
+    /* The sticky header would paint over an inset outline. */
+    outline: none;
+    border-top: 3px solid var(--note-ring, transparent);
+  }
+  #note-window-modal .note-window-footer { padding-bottom: calc(8px + var(--safe-bottom)); }
+  /* iOS does not resize the page for the keyboard: it shrinks the visible
+     area and pans it down the page towards the caret, which left the title
+     bar above the screen. While the keyboard is up the sheet fills the
+     visible area instead (init.js publishes its height and pan). It is
+     stretched rather than sized, because the shared sheet rules own its
+     height and max-height; their bottom alignment comes from a selector
+     this one cannot outrank, hence the !important, and their negative
+     bottom margin is taken off the overlay. */
+  :root.keyboard-open #note-window-modal {
+    top: var(--keyboard-viewport-top, 0px);
+    height: calc(var(--keyboard-viewport-height) - env(safe-area-inset-bottom, 0px));
+  }
+  :root.keyboard-open #note-window-modal .note-window-content {
+    min-height: 0;
+    margin-top: var(--sheet-top);
+    align-self: stretch !important;
+  }
+  /* 16px editable text: iOS does not zoom on focus, and pinch-zoom stays on. */
+  .note-window-body,
+  .note-window-title,
+  .note-window-source,
+  .note-window-tag-input,
+  .note-link-input { font-size: 16px; }
+}
+
+/* Phones: the note window's toolbar is one row that scrolls sideways, with
+   the shared toolbar's edge fade showing there is more; wrapped, it took
+   three rows. While the text (or its source) has focus the footer steps
+   aside, so the keyboard leaves room for the note. It folds to no height
+   rather than display: none, so Tab from the text still lands on its first
+   control; the text has lost focus by then, and the footer is back. */
+@media (max-width: 768px) {
+  /* The shared mobile rule pins every markdown toolbar at 40px with !important. */
+  #note-window-modal .note-window-toolbar { height: auto !important; }
+  #note-window-modal .note-window-content:has(.note-window-body:focus, .note-window-source:focus) .note-window-footer {
+    height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; border-top: 0; overflow: hidden;
+  }
+}
+/* A phone on its side is wide enough for the footer on one row: the tag
+   area gives way first (a tag stacks over its input), and anything still
+   left over scrolls sideways like the toolbar. */
+@media (max-width: 768px) and (orientation: landscape) {
+  /* 14px: the colour dots' 44px targets reach that far past each dot (see below). */
+  #note-window-modal .note-window-footer { flex-wrap: nowrap; overflow-x: auto; column-gap: 14px; }
+}
+
+/* Touch screens and phones: every control in the note window is at least
+   44px to hit. Small marks (colour dots, a task's box, a tag's x) keep their
+   size and get an invisible 44px target; the gaps around them grow so no two
+   targets overlap. */
+@media (pointer: coarse), (max-width: 768px) {
+  #note-window-modal .note-window-icon-btn { width: 44px; height: 44px; }
+  #note-window-modal .note-window-toolbar [data-md] { min-width: 44px; min-height: 44px; }
+  #note-window-modal .note-window-colors { min-height: 44px; gap: 28px; }
+  #note-window-modal .note-color-dot { position: relative; }
+  #note-window-modal .note-color-dot::before { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+  #note-window-modal .note-window-tags { min-height: 44px; column-gap: 14px; }
+  #note-window-modal .note-window-tags .note-tag-chips { column-gap: 14px; row-gap: 24px; }
+  #note-window-modal .note-tag-rm { position: relative; }
+  #note-window-modal .note-tag-rm::before { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+  /* A task row is at least 44px tall; its box's target is the row's height
+     and 44px wide, centred on the box. */
+  .note-window-body .md-task { position: relative; min-height: 44px; }
+  .note-window-body .md-task-box { position: static; }
+  .note-window-body .md-task-box::before { content: ''; position: absolute; top: 0; bottom: 0; left: -14px; width: 44px; inset-inline-end: auto; }
+}
+
+/* Phones: the search and quick-add inputs at 16px, so iOS does not zoom
+   the page when one takes focus (the note window's inputs already are). */
+@media (max-width: 768px) {
+  .notes-search-bar .memory-search-input,
+  .notes-quick-input { font-size: 16px; }
+}

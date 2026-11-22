@@ -377,8 +377,14 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
       if (vv.scale > 1.01) return;
       const keyboardOpen = window.innerHeight - vv.height > 120;
       root.classList.toggle('keyboard-open', keyboardOpen);
-      if (keyboardOpen) root.style.setProperty('--keyboard-viewport-height', vv.height + 'px');
-      else root.style.removeProperty('--keyboard-viewport-height');
+      // offsetTop: how far iOS has panned the visible area down the page to show the caret
+      if (keyboardOpen) {
+        root.style.setProperty('--keyboard-viewport-height', vv.height + 'px');
+        root.style.setProperty('--keyboard-viewport-top', vv.offsetTop + 'px');
+      } else {
+        root.style.removeProperty('--keyboard-viewport-height');
+        root.style.removeProperty('--keyboard-viewport-top');
+      }
     };
     // iOS fires visualViewport resize only once, mid-animation, and no focusin when
     // the tapped field already had focus (e.g. the composer after a new chat)

@@ -1,7 +1,7 @@
 /** Card checklist editing and Today-step interactions. */
 export function createCardChecklist({
   checklistOperations,
-  _editNote,
+  _openNoteWindow,
   _renderNotes,
   app,
   spawnConfetti,
@@ -188,12 +188,7 @@ export function createCardChecklist({
       el.addEventListener('click', () => {
         const id = el.dataset.noteId;
         if (!id) return;
-        // Drop the Today filter first so the regular card list is rendered;
-        // _editNote needs to find a .note-card in the DOM to replace with
-        // the editor form.
-        app.setActiveFilter(null);
-        _renderNotes();
-        _editNote(id);
+        _openNoteWindow(id);
       });
     });
   }

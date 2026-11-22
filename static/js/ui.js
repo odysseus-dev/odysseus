@@ -274,6 +274,9 @@ function _initHoverCardSpaceToggle() {
     }
     const id = _spaceWindowId(hoveredToggleWindow);
     if (!id) return;
+    // A window that is read or edited in place (a note) counts as in use
+    // while it is open, even when nothing in it has focus.
+    if (hoveredToggleWindow.closest?.('[data-space-minimize="off"]')) return;
     if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
     e.preventDefault();
     Modals.minimize(id);
@@ -1331,6 +1334,9 @@ if ('ontouchstart' in window || window.innerWidth <= 768) {
     const isText = tag === 'INPUT' || tag === 'TEXTAREA' ||
                    (tag === 'DIV' && el.isContentEditable);
     if (!isText) return;
+    // A window that keeps its own fields in view while the keyboard is up
+    // opts out: centring a tall editor, or a title near the top, pans the page.
+    if (el.closest('[data-keyboard-scroll="off"]')) return;
     // Inputs of type button/checkbox/radio/range/etc. don't summon a keyboard
     if (tag === 'INPUT') {
       const t = (el.type || 'text').toLowerCase();
