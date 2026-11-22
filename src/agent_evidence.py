@@ -1000,6 +1000,23 @@ class EvidenceLedger:
                 if not any(action.lower() == word and ok and action_id not in external
                            for _, action, ok, action_id in self._operations):
                     return False
+        # The same list after a tool's name, with no noun ("manage_notes list
+        # and delete"). It counts once its first word is an action that tool
+        # ran, and ends at the clause, so "manage_notes list and it returned
+        # 13 notes" lists only list.
+        word = r'[A-Za-z][\w-]*'
+        separator = r'\s*(?:,\s*(?:and\s+|then\s+)?|\s+and\s+(?:then\s+)?|\s+then\s+)'
+        ends = r'(?=\s*(?:[.,;:!?)]|$)|\s+(?:on|for|to|with|in|from|at|of|by)\b)'
+        for tool in {tool for tool, _, _, _ in self._operations if tool}:
+            ran = {action.lower() for receipt_tool, action, _, _ in self._operations if receipt_tool == tool and action}
+            for listed in re.finditer(rf'(?<![\w-]){re.escape(tool)}\s+({word}(?:{separator}{word})*){ends}', statement, re.I):
+                words = [w.lower() for w in re.findall(word, listed.group(1)) if w.lower() not in {"and", "then"}]
+                if not words or words[0] not in ran:
+                    continue
+                for listed_word in words[1:]:
+                    if not any(receipt_tool == tool and action.lower() == listed_word and ok and action_id not in external
+                               for receipt_tool, action, ok, action_id in self._operations):
+                        return False
         named: set[tuple[str, str]] = set()
         for tool, action, _, _ in self._operations:
             tool_named = said(tool)
