@@ -781,6 +781,17 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not ok:
             # The notes are already gone; deleting again finishes the job.
             raise HTTPException(400, "Cannot delete user")
+        # The account could still write between the purge and its removal (a
+        # signed-in tab, a request already past its auth check). delete_user
+        # revoked its sessions and tokens, so sweep once more: a note or grant
+        # left under the freed name would go to the next account given it.
+        try:
+            late = purge_notes_owned_by(body.username)
+            if any(late.values()):
+                logger.info("Removed notes data user %s wrote during its deletion: %s", body.username, late)
+        except Exception as e:
+            logger.error("Second notes purge for deleted user %s failed; run it again before reusing the name: %s",
+                         body.username, e)
         # delete_user removes the user's ApiToken rows, but the bearer-auth
         # middleware serves from an in-memory prefix->token cache that only
         # rebuilds when flagged dirty. Without this, a deleted user's already

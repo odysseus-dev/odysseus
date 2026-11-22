@@ -711,6 +711,26 @@ async def test_account_deletion_deletes_owned_notes_shares_and_backups(env, tmp_
     assert env.row("legacy-1").content == "single-user era"
 
 
+async def test_a_note_or_grant_written_during_the_deletion_does_not_outlive_it(env, tmp_path, monkeypatch):
+    # bob is still signed in while the first purge runs: a note he creates and
+    # a grant naming him land after it, just before his account goes. The
+    # sweep after the removal takes them, so a new "bob" inherits nothing.
+    _seed_accounts(env)
+    real_delete = _REAL_AUTH_MANAGER.delete_user
+
+    def _late_writes_then_delete(self, username, *args, **kwargs):
+        env.seed("bob-late", owner="bob")
+        env.seed("carol-late", owner="carol", shares=[("bob", "edit")])
+        return real_delete(self, username, *args, **kwargs)
+
+    monkeypatch.setattr(_REAL_AUTH_MANAGER, "delete_user", _late_writes_then_delete)
+    r, mgr = await _delete_account(env, tmp_path, "bob")
+    assert r.status_code == 200, r.text
+    assert "bob-late" not in _notes(env)
+    assert all(grantee != "bob" for _note, grantee, _level in env.grants())
+    assert "carol-late" in _notes(env), "carol's note stays, only the grant naming bob goes"
+
+
 async def test_collaborator_gets_404_once_the_owner_is_deleted(env, tmp_path):
     _seed_accounts(env)
     assert (await env.call("GET", "/api/notes/bob-1", user="carol")).status_code == 200
