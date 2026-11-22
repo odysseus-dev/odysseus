@@ -385,6 +385,30 @@ def classify_paths(paths: Iterable[str]) -> tuple[bool, bool, str]:
     return True, True, "Conservative fallback for unclassified change set"
 
 
+def parse_decision_boolean(val: Any) -> bool | None:
+    """Parse strict decision boolean.
+
+    Accepted values:
+    - Boolean True or string "true"
+    - Boolean False or string "false"
+
+    Rejects:
+    - Empty strings
+    - Missing values / None
+    - Unexpected strings or numbers
+    - Ambiguous or malformed representations
+    """
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        normalized = val.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return None
+
+
 def evaluate_gate_compliance(
     decision_result: str,
     run_node: str | bool,
@@ -396,21 +420,26 @@ def evaluate_gate_compliance(
     if decision_result != "success":
         return False, f"Coverage decision job did not succeed (status: {decision_result})"
 
-    req_node = run_node is True or str(run_node).lower() == "true"
-    req_browser = run_browser is True or str(run_browser).lower() == "true"
+    req_node = parse_decision_boolean(run_node)
+    if req_node is None:
+        return False, f"Invalid or missing Native Node decision: {run_node!r}"
+
+    req_browser = parse_decision_boolean(run_browser)
+    if req_browser is None:
+        return False, f"Invalid or missing Chromium browser decision: {run_browser!r}"
 
     if req_node:
         if node_result != "success":
             return False, f"Required Native Node suite did not succeed (status: {node_result})"
     else:
-        if node_result not in ("skipped", ""):
+        if node_result != "skipped":
             return False, f"Native Node suite had unexpected status for permitted skip (status: {node_result})"
 
     if req_browser:
         if browser_result != "success":
             return False, f"Required Chromium browser suite did not succeed (status: {browser_result})"
     else:
-        if browser_result not in ("skipped", ""):
+        if browser_result != "skipped":
             return False, f"Chromium browser suite had unexpected status for permitted skip (status: {browser_result})"
 
     return True, "Authoritative native gate PASSED: all required suites succeeded; permitted skips verified."

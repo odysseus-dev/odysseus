@@ -240,6 +240,197 @@ def test_control_14_permitted_test_skip():
     assert "PASSED" in msg
 
 
+# Explicit aggregate gate compliance negative controls (Items 1-10)
+
+def test_aggregate_gate_control_01_missing_native_node_decision():
+    """1. Missing Native Node decision must fail fail-closed."""
+    for empty_val in ["", None]:
+        ok, err = evaluate_gate_compliance(
+            decision_result="success",
+            run_node=empty_val,
+            run_browser="true",
+            node_result="skipped",
+            browser_result="success",
+        )
+        assert ok is False
+        assert "Invalid or missing Native Node decision" in err
+
+
+def test_aggregate_gate_control_02_missing_chromium_decision():
+    """2. Missing Chromium decision must fail fail-closed."""
+    for empty_val in ["", None]:
+        ok, err = evaluate_gate_compliance(
+            decision_result="success",
+            run_node="true",
+            run_browser=empty_val,
+            node_result="success",
+            browser_result="skipped",
+        )
+        assert ok is False
+        assert "Invalid or missing Chromium browser decision" in err
+
+
+def test_aggregate_gate_control_03_both_decisions_missing():
+    """3. Both decisions missing must fail fail-closed even if jobs skipped."""
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="",
+        run_browser="",
+        node_result="skipped",
+        browser_result="skipped",
+    )
+    assert ok is False
+    assert "Invalid or missing Native Node decision" in err
+
+
+def test_aggregate_gate_control_04_malformed_decision_values():
+    """4. Malformed decision values must fail fail-closed."""
+    malformed_inputs = ["yes", "no", "1", "0", "undefined", "null", "invalid", 123, []]
+    for bad in malformed_inputs:
+        ok, err = evaluate_gate_compliance(
+            decision_result="success",
+            run_node=bad,
+            run_browser="true",
+            node_result="success",
+            browser_result="success",
+        )
+        assert ok is False
+        assert "Invalid or missing Native Node decision" in err
+
+        ok, err = evaluate_gate_compliance(
+            decision_result="success",
+            run_node="true",
+            run_browser=bad,
+            node_result="success",
+            browser_result="success",
+        )
+        assert ok is False
+        assert "Invalid or missing Chromium browser decision" in err
+
+
+def test_aggregate_gate_control_05_required_suite_skipped():
+    """5. Required suite skipped must fail aggregate gate."""
+    # Native node required but skipped
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node=True,
+        run_browser=False,
+        node_result="skipped",
+        browser_result="skipped",
+    )
+    assert ok is False
+    assert "Required Native Node suite did not succeed" in err
+
+    # Chromium required but skipped
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node=False,
+        run_browser="true",
+        node_result="skipped",
+        browser_result="skipped",
+    )
+    assert ok is False
+    assert "Required Chromium browser suite did not succeed" in err
+
+
+def test_aggregate_gate_control_06_required_suite_failed():
+    """6. Required suite failed must fail aggregate gate."""
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="true",
+        run_browser="false",
+        node_result="failure",
+        browser_result="skipped",
+    )
+    assert ok is False
+    assert "Required Native Node suite did not succeed" in err
+
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node=False,
+        run_browser=True,
+        node_result="skipped",
+        browser_result="failure",
+    )
+    assert ok is False
+    assert "Required Chromium browser suite did not succeed" in err
+
+
+def test_aggregate_gate_control_07_required_suite_cancelled():
+    """7. Required suite cancelled must fail aggregate gate."""
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node=True,
+        run_browser=True,
+        node_result="cancelled",
+        browser_result="success",
+    )
+    assert ok is False
+    assert "Required Native Node suite did not succeed" in err
+
+    ok, err = evaluate_gate_compliance(
+        decision_result="success",
+        run_node=True,
+        run_browser=True,
+        node_result="success",
+        browser_result="cancelled",
+    )
+    assert ok is False
+    assert "Required Chromium browser suite did not succeed" in err
+
+
+def test_aggregate_gate_control_08_valid_authorized_skips():
+    """8. Valid authorized skips must pass aggregate gate."""
+    # Both skipped legitimately
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="false",
+        run_browser=False,
+        node_result="skipped",
+        browser_result="skipped",
+    )
+    assert ok is True
+    assert "PASSED" in msg
+
+    # Node required and success, browser permitted skip
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node=True,
+        run_browser="false",
+        node_result="success",
+        browser_result="skipped",
+    )
+    assert ok is True
+    assert "PASSED" in msg
+
+
+def test_aggregate_gate_control_09_both_required_suites_successful():
+    """9. Both required suites successful must pass aggregate gate."""
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="true",
+        run_browser=True,
+        node_result="success",
+        browser_result="success",
+    )
+    assert ok is True
+    assert "PASSED" in msg
+
+
+def test_aggregate_gate_control_10_coverage_decision_job_failure_or_cancellation():
+    """10. Coverage decision job failure or cancellation must fail aggregate gate."""
+    for bad_status in ["failure", "cancelled", "timed_out", ""]:
+        ok, err = evaluate_gate_compliance(
+            decision_result=bad_status,
+            run_node=True,
+            run_browser=True,
+            node_result="success",
+            browser_result="success",
+        )
+        assert ok is False
+        assert "Coverage decision job did not succeed" in err
+
+
 def test_control_15_incomplete_test_inventory(tmp_path):
     """15. An incomplete test inventory must fail validation fail-closed."""
     manifest_file = ROOT / "tests" / "native-ci-manifest.json"
