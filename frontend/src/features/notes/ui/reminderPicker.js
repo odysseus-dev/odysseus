@@ -12,7 +12,7 @@ export function createReminderPicker({
   bindMenuDismiss,
   dismissOrRemove
 }) {
-  function _wireReminderPicker(form) {
+  function _wireReminderPicker(form, { onChange } = {}) {
     // Reminder bell : opens dropdown menu
     const remindBtn = form.querySelector('.note-form-remind-btn');
     const dueInput = form.querySelector('.note-form-due');
@@ -35,7 +35,9 @@ export function createReminderPicker({
         if (e.target.classList.contains('note-reminder-tag-x')) {
           dueInput.value = '';
           repeatInput.value = 'none';
+          remindBtn?.classList.remove('has-date');
           _renderReminderTag();
+          onChange?.();
           return;
         }
         _openReminderMenu(remindBtn || tagsEl, true);
@@ -46,7 +48,7 @@ export function createReminderPicker({
       // Close any existing menu
       document.querySelectorAll('.note-reminder-menu').forEach(m => m.remove());
       const menu = document.createElement('div');
-      menu.className = 'note-reminder-menu';
+      menu.className = 'note-reminder-menu note-reminder-picker';
       document.body.appendChild(menu);
 
       const presetItems = [
@@ -74,6 +76,7 @@ export function createReminderPicker({
         repeatInput.value = val;
         _renderReminderTag();
         menu.remove();
+        onChange?.();
       }
 
       // Like commit, but first snaps dueInput.value forward to the next matching
@@ -279,13 +282,14 @@ export function createReminderPicker({
       }
       _renderReminderTag();
       _ensureNotificationPermission();
+      onChange?.();
     }
 
     function _pickCustomDate() {
       // Replace the dropdown menu with a small inline picker
       document.querySelectorAll('.note-reminder-menu').forEach(dismissOrRemove);
       const menu = document.createElement('div');
-      menu.className = 'note-reminder-menu';
+      menu.className = 'note-reminder-menu note-reminder-picker';
       const initial = dueInput.value || _toLocalDatetimeStr(_tomorrowDate());
       menu.innerHTML = `
       <div class="note-reminder-menu-title">Pick date and time</div>
@@ -327,8 +331,8 @@ export function createReminderPicker({
 
     if (remindBtn) remindBtn.addEventListener('click', (e) => { e.stopPropagation(); _openReminderMenu(remindBtn, !!dueInput.value); });
     _renderReminderTag();
-
-
+    // The caller may change the inputs itself (a newer copy of the note).
+    return { refresh: _renderReminderTag };
   }
 
   return { _wireReminderPicker };

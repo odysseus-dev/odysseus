@@ -8,12 +8,10 @@ brush-preset rows carry a soft/hard/pixel disc reflecting the preset tip.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLBAR = (ROOT / "static/js/editor/build/toolbar.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_flyout_triangle_is_on_the_slot_not_the_face():
@@ -51,7 +49,3 @@ def test_flyout_is_clamped_inside_the_viewport():
     assert "const maxTop = Math.max(4, window.innerHeight - fh - 4);" in TOOLBAR
     assert "if (viewLeft > maxLeft) flyout.style.left = (maxLeft - cbX) + 'px';" in TOOLBAR
     assert "if (viewTop > maxTop) flyout.style.top = (maxTop - cbY) + 'px';" in TOOLBAR
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

@@ -102,14 +102,6 @@ export function initSelfApiTokens(isAdmin) {
     scopesEl.querySelectorAll('.self-token-scope').forEach(cb => { cb.checked = false; });
   });
 
-  // Cancel create — hide panel, show button
-  const cancelCreate = () => {
-    createPanel.style.display = 'none';
-    newBtn.style.display = '';
-    revealEl.style.display = 'none';
-    msgEl.textContent = '';
-  };
-
   // Create token
   createBtn.addEventListener('click', async () => {
     const name = nameInput.value.trim();

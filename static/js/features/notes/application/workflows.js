@@ -55,16 +55,19 @@ export function createNotesWorkflows({
     return true;
   }
 
-  async function _fetchNotes() {
+  // `keepOnFailure`: a re-read after a failed write leaves the list as it is
+  // when the read fails too (offline), instead of emptying it.
+  async function _fetchNotes(options) {
+    const keepOnFailure = options?.keepOnFailure === true;
     app.setLoading(true);
     try {
       const res = await api.listNotes(state.showingArchived);
-      if (!res.ok) { app.replaceNotes([]); return; }
+      if (!res.ok) { if (!keepOnFailure) app.replaceNotes([]); return; }
       const data = await res.json();
       app.replaceNotes(data.notes || data || []);
     } catch (e) {
       console.error('Failed to fetch notes:', e);
-      app.replaceNotes([]);
+      if (!keepOnFailure) app.replaceNotes([]);
     } finally {
       app.setLoading(false);
     }

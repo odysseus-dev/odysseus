@@ -4,6 +4,7 @@
  * State writes use documentState setters.
  */
 
+import { persistMarkdownDraft } from '../../application/documentSession.js';
 import {
   activeDocId,
   docs,
@@ -30,7 +31,8 @@ import {
 import { _showEmailFields } from '../email/composerFields.js';
 import { _splitEmailReplyQuote } from '../email/emailBody.js';
 import { _clearEmailLocalDraft } from '../email/localDraft.js';
-import { _showRichTextEditor } from '../richEditor/richBodyWiring.js';
+import { _showRichTextEditor, _showMarkdownVisualEditor, _hideMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
+import { hideMarkdownCompatBanner, isMarkdownVisualModeActive, isVisualMarkdownDoc, renderMarkdownCompatBanner, resolveMarkdownEditorMode } from '../richEditor/markdownVisualSync.js';
 import {
   diffLines,
   exitDiffMode,
@@ -252,7 +254,7 @@ export function handleDocUpdate(data) {
         for (const [existingId, existingDoc] of docs) {
           if (existingDoc.sessionId === curSession &&
               (!existingDoc.title || existingDoc.title === 'Untitled') &&
-              (!existingDoc.content || existingDoc.content.trim() === '')) {
+              !existingDoc._visualSyncBlocked && (!existingDoc.content || existingDoc.content.trim() === '')) {
             reuseId = existingId;
             break;
           }
@@ -300,6 +302,9 @@ export function handleDocUpdate(data) {
     if (isExistingDoc) {
       const doc = docs.get(docId);
       doc.content = newContent;
+      doc._persistedContent = newContent;
+      if (doc._visualSyncBlocked) doc._visualCompatReasons = ['document source changed while visual edits were pending'];
+      persistMarkdownDraft(doc);
       doc.version = data.version || doc.version;
       if (data.title) doc.title = data.title;
       if (data.language) doc.language = data.language;
@@ -309,6 +314,7 @@ export function handleDocUpdate(data) {
         title: data.title || '',
         language: data.language || '',
         content: newContent,
+        _persistedContent: newContent,
         version: data.version || 1,
         sessionId: sessionModule?.getCurrentSessionId() || '',
       });
@@ -353,11 +359,12 @@ export function handleDocUpdate(data) {
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
     const isRichTextUpdate = _isRichTextLang(docLang);
     const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
+    const targetDoc = docs.get(docId);
 
     // The server has already saved doc_update. Show its current content now;
     // a temporary diff or typing animation makes a completed edit look pending.
     const isEdit = !isEmailUpdate && !isRichTextUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
-    const updatedDocForRichText = isRichTextUpdate ? docs.get(docId) : null;
+    const updatedDocForRichText = isRichTextUpdate ? targetDoc : null;
     if (isRichTextUpdate && updatedDocForRichText) {
       _showRichTextEditor(updatedDocForRichText);
     } else if (isEdit && textarea) {
@@ -382,6 +389,18 @@ export function handleDocUpdate(data) {
         if (textarea) textarea.value = newContent;
         syncHighlighting();
         _refreshMarkdownPreviewIfVisible(docId, newContent);
+      }
+    }
+
+    if (!isRichTextUpdate && !isEmailUpdate && targetDoc && isVisualMarkdownDoc(targetDoc) && !markdownPreviewWasVisible) {
+      // Re-render from the saved content (including a finished stream); this
+      // also resets the no-op baseline.
+      if (resolveMarkdownEditorMode(targetDoc) === 'visual') {
+        _showMarkdownVisualEditor(targetDoc);
+      } else {
+        _hideMarkdownVisualEditor();
+        if (targetDoc._visualCompatReasons?.length) renderMarkdownCompatBanner(targetDoc._visualCompatReasons);
+        else hideMarkdownCompatBanner();
       }
     }
 
@@ -434,7 +453,13 @@ export function handleDocUpdate(data) {
         if (csvPreview && csvPreview.style.display === 'none') toggleCsvPreview();
       });
     } else if (streamingId && finalLangLower === 'markdown') {
-      requestAnimationFrame(() => { if (ownsPane()) _setMarkdownPreviewActive(true, { remember: true }); });
+      // A finished stream is shown rendered. The visual editor is already the
+      // rendered (and editable) view; Preview remains for documents that stay
+      // in source mode, where it renders diagrams and math.
+      requestAnimationFrame(() => {
+        if (!ownsPane() || isMarkdownVisualModeActive()) return;
+        _setMarkdownPreviewActive(true, { remember: true });
+      });
     }
 
     _restoreSuggestionsFromStorage(docId);

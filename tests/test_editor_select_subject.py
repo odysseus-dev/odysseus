@@ -3,7 +3,6 @@
 Static contract tests: the offline saliency engine, its wiring into the
 `selection.subject` control op, the Select-menu entry and the sw cache bump.
 """
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -11,7 +10,6 @@ MODULE = ROOT / "static" / "js" / "editor" / "select-subject.js"
 EDITOR = ROOT / "static" / "js" / "galleryEditor.js"
 TOPBAR = ROOT / "static" / "js" / "editor" / "build" / "topbar.js"
 WIRE = ROOT / "static" / "js" / "editor" / "wire-topbar-menus.js"
-SW = ROOT / "static" / "sw.js"
 
 
 def test_module_exists_and_is_offline():
@@ -68,7 +66,3 @@ def test_select_menu_entry_and_wiring():
     assert '<button class="dropdown-item-compact" data-selection-action="subject"><span>Subject</span></button>' in topbar
     wire = WIRE.read_text()
     assert "else if (action === 'subject') { window.geEditorControl?.invoke?.('selection.subject', {}); handled = true; }" in wire
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW.read_text())

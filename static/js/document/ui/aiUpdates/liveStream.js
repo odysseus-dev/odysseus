@@ -34,6 +34,7 @@ import {
 } from '../email/composerFields.js';
 import { _renderStreamingEmailBody } from '../email/emailBody.js';
 import { _closeVersionPanel } from '../history/versionHistory.js';
+import { _hideMarkdownVisualEditor } from '../richEditor/richBodyWiring.js';
 import { _syncEditorPlaceholder } from '../status/documentStatus.js';
 import { exitDiffMode, _diffModeActive } from '../diffViewer.js';
 import {
@@ -125,6 +126,10 @@ export function streamDocOpen(title, language) {
       _flushAutoSave(activeDocId);
       _releasePdfPane(activeDocId);
     }
+    // Streamed content is shown live in the source view. Detach the visual
+    // surface so it cannot keep showing, or be synchronized from, the previous
+    // content; the finalizing doc_update re-renders the visual view.
+    _hideMarkdownVisualEditor();
     _streamDocId = docId;
     setActiveDocId(docId);
     _syncDocIndicator();

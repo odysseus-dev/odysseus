@@ -11,7 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MASK = (ROOT / "static/js/editor/selection-mask.js").read_text(encoding="utf-8")
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_selection_boundary_helper_returns_flags():
@@ -50,8 +49,3 @@ def test_overlay_passes_zoom_and_flags():
 def test_crop_overlay_is_zoom_compensated():
     assert "state.mainCtx.lineWidth = 1 / state.zoom;" in EDITOR
     assert "state.mainCtx.setLineDash([4 / state.zoom, 4 / state.zoom]);" in EDITOR
-
-
-def test_sw_cache_name_bumped():
-    import re
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

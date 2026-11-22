@@ -28,6 +28,7 @@ const _DOCUMENT_TOOLBAR_GROUPS = [
         '#md-toolbar-sep-after-ai-reply',
         '#doc-ai-writing-btn',
         '[data-dd="heading"]',
+        '[data-dd="alert"]',
         '[data-dd="font"]',
         '#md-toolbar-sep-after-heading',
         '[data-dd="textsize"]',

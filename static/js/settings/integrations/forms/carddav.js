@@ -5,6 +5,7 @@ import { byId as el } from '../../dom.js';
 import { notifyIntegrationsChanged } from '../events.js';
 import uiModule from '../../../ui.js?v=20260916largetoolscroll1';
 import { esc } from '../../html.js';
+import { downloadBlob } from '../../../shared/platform/downloads.js';
 
 // ── CardDAV form + contacts manager ──
 export async function showCardDavForm({ formEl, renderList, closeForm }) {
@@ -111,14 +112,7 @@ export async function showCardDavForm({ formEl, renderList, closeForm }) {
       const res = await fetch(`/api/contacts/export?format=${encodeURIComponent(format)}`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error('Export failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = format === 'csv' ? 'odysseus-contacts.csv' : 'odysseus-contacts.vcf';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(blob, format === 'csv' ? 'odysseus-contacts.csv' : 'odysseus-contacts.vcf', 1000);
     } catch (_) {
       uiModule.showError ? uiModule.showError('Export failed') : alert('Export failed');
     } finally {

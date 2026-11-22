@@ -72,6 +72,12 @@ Three exemptions apply even when the gate is on, all deliberate:
 - A TUI run that advertises a host shell bridge and declares `unattended_mode` exempts the local execution set in `TUI_CLIENT_TOOL_NAMES`. Personal, network and deployment-local tools are never exempted.
 - Narrow continuation for local MCP tools declared via `ODYSSEUS_LOCAL_MCP_READ_TOOLS` and `ODYSSEUS_LOCAL_MCP_WRITE_TOOLS`: Only explicitly configured stdio MCP servers qualify; remote HTTP and SSE servers fail closed. Declarations never override built-in tool effects, so built-in email, browser, memory, image generation, and other built-in servers cannot receive continuation exceptions. Declared read tools remain untrusted (`EXTERNAL_UNTRUSTED`) to ensure that prompt injections in local data cannot reach shell, network, or unrelated tools without approval. Stdio transport does not guarantee network isolation, as local processes may still reach the host network. However, declared non-destructive write tools on the exact same stdio MCP server are permitted to continue without an approval prompt if the only untrusted context in the run was produced by declared local reads on that same server, without any explicit error or external taint. Genuinely external content (web search, web fetch, emails, external message context) blocks these writes. Authorization must still originate from the trusted request: request authority must permit the tool and retain the sealed backend resource grant. The residual same-store write risk (the agent writing to the same local store after reading a local prompt injection) remains subject to the user's initial request authority.
 
+## Notes
+
+Notes are untrusted input like the other surfaces above: the agent writes them, and so can anything that steered the agent. The contract is in `specs/calendar-tasks-notes.md`.
+
+- **Displaying a note fetches nothing from another origin.** Note rendering (`static/js/markdown.js`, `images: 'notes'`) loads an image only from an upload on this server, a base64 raster `data:` URL or a same-origin `blob:`. Any other markdown image becomes a plain link, and fetching attributes in raw HTML (`src`, `srcset`, `poster`, `background`, `xlink:href`, CSS `url()`) that do not point at this origin are stripped before the markup reaches the page. A note cannot be used as a read receipt or to leak the viewer's address by being opened.
+
 ## Security Headers
 
 `core/middleware.py:SecurityHeadersMiddleware` sets headers on every response:

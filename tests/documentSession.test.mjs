@@ -370,3 +370,181 @@ describe('Document Session Module', () => {
     });
   });
 });
+
+describe('Markdown draft recovery', () => {
+  let draftStorage;
+  beforeEach(() => {
+    draftStorage = new Map();
+    globalThis.sessionStorage = {
+      getItem: key => draftStorage.get(key) ?? null,
+      setItem: (key, value) => draftStorage.set(key, value),
+      removeItem: key => draftStorage.delete(key),
+    };
+    clearDocuments();
+    _closingDocs.clear();
+  });
+
+  it('recovers unsaved source after server-authorized adoption and rejects a different session', async () => {
+    const { persistMarkdownDraft } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'recovery', current_content: 'Server', language: 'markdown' }, 's1');
+    const local = docs.get('recovery');
+    local.content = 'Local pending';
+    assert.equal(persistMarkdownDraft(local), true);
+    clearDocuments();
+    addDocToTabs({ id: 'recovery', current_content: 'Server', language: 'markdown' }, 's2');
+    assert.equal(docs.get('recovery').content, 'Server');
+    clearDocuments();
+    addDocToTabs({ id: 'recovery', current_content: 'Server', language: 'markdown' }, 's1');
+    assert.equal(docs.get('recovery').content, 'Local pending');
+    assert.equal(docs.get('recovery')._saveState, 'dirty');
+  });
+
+  it('retains diverged source as a blocked conflict instead of overwriting newer server content', async () => {
+    const { persistMarkdownDraft } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'conflict', current_content: 'Server', language: 'markdown' }, 's1');
+    const local = docs.get('conflict');
+    local.content = 'Local edit';
+    persistMarkdownDraft(local);
+    clearDocuments();
+    addDocToTabs({ id: 'conflict', current_content: 'Server changed', language: 'markdown' }, 's1');
+    const recovered = docs.get('conflict');
+    assert.equal(recovered.content, 'Server changed');
+    assert.equal(recovered._visualSyncBlocked, true);
+    assert.equal(recovered._visualRecoveryMarkdown, 'Local edit');
+  });
+
+  it('clears only acknowledged source and retains blocked formatting even at the acknowledged revision', async () => {
+    const { persistMarkdownDraft } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'ack', current_content: 'Original', language: 'markdown' }, 's1');
+    const local = docs.get('ack');
+    local.content = 'Newer';
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 1);
+    local._persistedContent = 'Older write';
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 1);
+    local._persistedContent = 'Newer';
+    local._visualSyncBlocked = true;
+    local._visualDraftHtml = '<p>Unrepresentable draft</p>';
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 1);
+    local._visualSyncBlocked = false;
+    persistMarkdownDraft(local);
+    assert.equal(draftStorage.size, 0);
+  });
+
+  it('warns on unload when draft storage is unavailable without losing the live draft', async () => {
+    const { guardMarkdownDraftUnload } = await import('../frontend/src/features/documents/application/documentSession.js');
+    addDocToTabs({ id: 'quota', current_content: 'Original', language: 'markdown' }, 's1');
+    const local = docs.get('quota');
+    local.content = 'Unsaved';
+    local._saveState = 'dirty';
+    globalThis.sessionStorage.setItem = () => { throw Error('quota'); };
+    let warned = false;
+    const event = { preventDefault() { warned = true; } };
+    guardMarkdownDraftUnload(event);
+    assert.equal(warned, true);
+    assert.equal(local.content, 'Unsaved');
+    assert.equal(local._markdownRecoveryStored, false);
+  });
+});
+
+it('warns before leaving an unsaved draft even when tab-scoped recovery was stored', async () => {
+  const { guardMarkdownDraftUnload } = await import('../frontend/src/features/documents/application/documentSession.js');
+  const previousStorage = globalThis.sessionStorage;
+  const recovery = new Map();
+  clearDocuments();
+  _closingDocs.clear();
+  try {
+    globalThis.sessionStorage = {
+      getItem: key => recovery.get(key) ?? null,
+      setItem: (key, value) => recovery.set(key, value),
+      removeItem: key => recovery.delete(key),
+    };
+    registerDocument({ id: 'tab-close', sessionId: 's1', language: 'markdown', content: 'Unsaved', _persistedContent: 'Original', _saveState: 'dirty' });
+    let warned = false;
+    guardMarkdownDraftUnload({ preventDefault() { warned = true; } });
+    assert.equal(recovery.size, 1);
+    assert.equal(warned, true, 'sessionStorage disappears when the browser tab closes');
+  } finally {
+    globalThis.sessionStorage = previousStorage;
+    clearDocuments();
+  }
+});
+
+describe('Logout draft boundary', () => {
+  let sessionCase = 0;
+  async function withSessionStorage(run) {
+    const session = await import(`../frontend/src/features/documents/application/documentSession.js?logout-case=${++sessionCase}`);
+    const previousStorage = globalThis.sessionStorage;
+    const recovery = new Map();
+    clearDocuments();
+    _closingDocs.clear();
+    globalThis.sessionStorage = {
+      getItem: key => recovery.get(key) ?? null,
+      setItem: (key, value) => recovery.set(key, value),
+      removeItem: key => recovery.delete(key),
+      clear: () => recovery.clear(),
+    };
+    try {
+      await run(session, recovery);
+    } finally {
+      globalThis.sessionStorage = previousStorage;
+      clearDocuments();
+    }
+  }
+  const dirtyDoc = () => ({ id: 'd1', sessionId: 's1', language: 'markdown', content: 'Private', _persistedContent: 'Original', _saveState: 'dirty' });
+
+  it('keeps ordinary refresh recovery until the account session ends', async () => {
+    await withSessionStorage(({ guardMarkdownDraftUnload }, recovery) => {
+      registerDocument(dirtyDoc());
+      let warned = false;
+      guardMarkdownDraftUnload({ preventDefault() { warned = true; } });
+      assert.equal(recovery.size, 1);
+      assert.equal(warned, true);
+    });
+  });
+
+  it('does not recreate the outgoing draft from the unload guard, timers or status changes', async () => {
+    await withSessionStorage(({ guardMarkdownDraftUnload, persistMarkdownDraft, endMarkdownDraftPersistence }, recovery) => {
+      const doc = dirtyDoc();
+      registerDocument(doc);
+      persistMarkdownDraft(doc);
+      assert.equal(recovery.size, 1);
+
+      endMarkdownDraftPersistence();
+      recovery.clear(); // what logout does to tab storage
+      let warned = false;
+      guardMarkdownDraftUnload({ preventDefault() { warned = true; } });
+      doc.content = 'More private text';
+      assert.equal(persistMarkdownDraft(doc), false);
+      assert.equal(recovery.size, 0, 'no stale writer may refill tab storage');
+      assert.equal(warned, false, 'logout is not a Leave site? prompt');
+    });
+  });
+
+  it('does not recover a stored draft into a document adopted after the boundary', async () => {
+    await withSessionStorage(({ addDocToTabs: adopt, endMarkdownDraftPersistence }, recovery) => {
+      recovery.set('odysseus.document.markdownDraft.v1:s1:d1', JSON.stringify({
+        id: 'd1', sessionId: 's1', content: 'Private', baseContent: 'Original', visualBase: 'Original', visualHtml: null,
+      }));
+      endMarkdownDraftPersistence();
+      adopt({ id: 'd1', title: 't', language: 'markdown', current_content: 'Original', version_count: 1 }, 's1');
+      assert.equal(docs.get('d1').content, 'Original');
+    });
+  });
+
+  it('keeps blocked visual drafts recoverable until logout succeeds', async () => {
+    await withSessionStorage(({ persistMarkdownDraft, endMarkdownDraftPersistence }, recovery) => {
+      const doc = { ...dirtyDoc(), _visualSyncBlocked: true, _visualDraftHtml: '<p>Private visual draft</p>', _visualBaselineMarkdown: 'Original', _saveState: 'blocked' };
+      registerDocument(doc);
+      assert.equal(persistMarkdownDraft(doc), true);
+      assert.equal(recovery.size, 1);
+      assert.match([...recovery.values()][0], /Private visual draft/);
+      endMarkdownDraftPersistence();
+      recovery.clear();
+      assert.equal(persistMarkdownDraft(doc), false);
+      assert.equal(recovery.size, 0);
+    });
+  });
+});

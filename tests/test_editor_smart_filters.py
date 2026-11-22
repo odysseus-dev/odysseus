@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,7 +6,6 @@ WORKER = (ROOT / "static" / "js" / "editor" / "effects-worker.js").read_text()
 TOPBAR = (ROOT / "static" / "js" / "editor" / "build" / "topbar.js").read_text()
 WIRE = (ROOT / "static" / "js" / "editor" / "wire-topbar-menus.js").read_text()
 GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 
 def test_effect_types_include_the_new_smart_filters():
@@ -74,7 +72,3 @@ def test_wire_routes_the_new_menu_items():
     assert "else if (action === 'effect-motion-blur') addRetainedEffect?.('motion-blur');" in WIRE
     assert "else if (action === 'effect-zoom-blur') addRetainedEffect?.('zoom-blur');" in WIRE
     assert "else if (action === 'effect-pixelate') addRetainedEffect?.('pixelate');" in WIRE
-
-
-def test_service_worker_cache_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

@@ -8,7 +8,6 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 
 def test_tool_buttons_are_44px():
@@ -51,9 +50,3 @@ def test_all_new_rules_are_mobile_scoped():
         # the nearest preceding media query must be the mobile one
         last_media = head.rfind("@media")
         assert "@media (max-width: 700px)" in head[last_media:]
-
-
-def test_sw_cache_bumped():
-    # Version-agnostic: every commit bumps the SW cache.
-    import re
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", SW)

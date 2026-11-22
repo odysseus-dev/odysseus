@@ -93,7 +93,11 @@ export function _replaceRichTable(rich, original, replacement, targetRow = 0, ta
   const token = `doc-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   if (replacement) replacement.dataset.editorTableToken = token;
   const range = document.createRange();
-  range.selectNode(original);
+  // Selecting the table node itself lets the browser merge the inserted table into a
+  // block quote that directly follows it (the table ends up inside the quote). Selecting
+  // its contents replaces the table in place; removing a table still selects the node.
+  if (replacement) range.selectNodeContents(original);
+  else range.selectNode(original);
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
@@ -609,6 +613,16 @@ export function _applyRichTableAction(rich, action) {
     if (alignment === 'top') target.style.removeProperty('vertical-align');
     else target.style.verticalAlign = alignment;
     if (!target.getAttribute('style')) target.removeAttribute('style');
+  } else if (action.startsWith('table:column-align:')) {
+    const alignment = action.slice('table:column-align:'.length);
+    if (!['left', 'center', 'right', 'reset'].includes(alignment)) return false;
+    for (const row of Array.from(clone.rows)) {
+      const target = row.cells[cellIndex];
+      if (!target) continue;
+      if (alignment === 'reset') target.style.removeProperty('text-align');
+      else target.style.textAlign = alignment;
+      if (!target.getAttribute('style')) target.removeAttribute('style');
+    }
   } else if (action === 'table:column-left' || action === 'table:column-right') {
     const insertAt = cellIndex + (action.endsWith('right') ? 1 : 0);
     Array.from(clone.rows).forEach(row => {

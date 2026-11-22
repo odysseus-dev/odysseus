@@ -2631,6 +2631,7 @@ body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-textarea
 .doc-save-button[data-save-state="dirty"] { color: var(--accent, var(--red)); }
 .doc-save-button[data-save-state="saving"] { color: var(--fg-muted, var(--fg)); }
 .doc-save-button[data-save-state="saved"] { color: var(--fg); }
+.doc-save-button[data-save-state="blocked"],
 .doc-save-button[data-save-state="error"] { color: var(--color-danger, #e06c75); }
 .doc-stats-wrap {
   position: relative;

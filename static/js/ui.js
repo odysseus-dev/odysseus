@@ -9,6 +9,9 @@ import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ, topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
+import { escapeHtmlString } from './shared/domain/html.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
+import { debounceTrailing } from './shared/platform/debounce.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -165,13 +168,6 @@ function _windowAtPointer() {
   });
 }
 
-function _containsPointer(el) {
-  if (!el || _lastPointerClientX == null || _lastPointerClientY == null) return false;
-  const r = el.getBoundingClientRect();
-  return _lastPointerClientX >= r.left && _lastPointerClientX <= r.right
-    && _lastPointerClientY >= r.top && _lastPointerClientY <= r.bottom;
-}
-
 function _closeHoveredWindow() {
   let win = _windowAtPointer();
   if (!win) {
@@ -278,6 +274,9 @@ function _initHoverCardSpaceToggle() {
     }
     const id = _spaceWindowId(hoveredToggleWindow);
     if (!id) return;
+    // A window that is read or edited in place (a note) counts as in use
+    // while it is open, even when nothing in it has focus.
+    if (hoveredToggleWindow.closest?.('[data-space-minimize="off"]')) return;
     if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
     e.preventDefault();
     Modals.minimize(id);
@@ -295,13 +294,10 @@ export async function copyToClipboard(text) {
     showToast('Copied');
   }
   catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
+    withClipboardTextarea(text, 'position:fixed;left:-9999px;top:-9999px;opacity:0', field => {
+      field.select();
+      document.execCommand('copy');
+    });
     showToast('Copied');
   }
 }
@@ -732,15 +728,7 @@ export function autoResize(textarea) {
  * Debounce function for performance
  */
 export function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    const later = () => {
-      timeout = null;
-      func.apply(this, args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
+  return debounceTrailing(func, wait);
 }
 
 /**
@@ -965,15 +953,9 @@ export function styledPrompt(message, {
   });
 }
 
-// Lookup table for esc(); hoisted out of the replace callback so it is
-// allocated once rather than per matched character.
-const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-/**
- * HTML-escape a string to prevent XSS.
- * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
- */
+/** HTML-escape a string for legacy UI consumers. */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
+  return escapeHtmlString(s || '');
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──
@@ -1366,6 +1348,9 @@ if ('ontouchstart' in window || window.innerWidth <= 768) {
     const isText = tag === 'INPUT' || tag === 'TEXTAREA' ||
                    (tag === 'DIV' && el.isContentEditable);
     if (!isText) return;
+    // A window that keeps its own fields in view while the keyboard is up
+    // opts out: centring a tall editor, or a title near the top, pans the page.
+    if (el.closest('[data-keyboard-scroll="off"]')) return;
     // Inputs of type button/checkbox/radio/range/etc. don't summon a keyboard
     if (tag === 'INPUT') {
       const t = (el.type || 'text').toLowerCase();

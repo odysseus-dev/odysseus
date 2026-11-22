@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent, Note
+from core.notes_markdown import items_to_markdown
 from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 from src.upload_handler import reserve_upload_references
@@ -769,7 +770,7 @@ def _create_calendar_reminder_for_event(db, owner: str, ev: CalendarEvent, minut
         id=str(uuid.uuid4()),
         owner=owner,
         title=f"Calendar reminder: {summary}",
-        items=json.dumps([{"text": f"{summary}{loc} — {start_fmt}", "done": False, "checked": False}]),
+        content=items_to_markdown([{"text": f"{summary}{loc} — {start_fmt}", "done": False}]),
         note_type="todo",
         label="calendar",
         due_date=due_date,

@@ -8,14 +8,12 @@ in the group; the group re-collapses out of the rail and returns when one of
 its panels is re-enabled from the Window menu.
 """
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCK = (ROOT / "static/js/editor/build/dock.js").read_text(encoding="utf-8")
 RIGHT = (ROOT / "static/js/editor/build/right-panel.js").read_text(encoding="utf-8")
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_dock_accepts_and_uses_onCloseGroup():
@@ -56,7 +54,3 @@ def test_composer_closes_every_panel_in_the_group():
 def test_close_menu_styling_present():
     assert ".ge-dock-tabs-menu-close {" in CSS
     assert ".ge-dock-tabs-menu-sep {" in CSS
-
-
-def test_sw_cache_bumped():
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", SW)

@@ -168,3 +168,107 @@ def test_attribute_enforcement_fails_clearly_when_development_git_is_missing(tmp
     with pytest.raises(ValueError, match="Git is required for frontend publication"):
         build.synchronize(tmp_path)
     assert not output.exists()
+
+
+def test_output_only_modification_fails_check_with_canonical_source_warning(tmp_path):
+    source, output = project(tmp_path)
+    build.synchronize(tmp_path)
+    assert output.read_bytes() == source.read_bytes()
+
+    source_content = source.read_bytes()
+    output.write_bytes(b"export const value = 'direct edit';\n")
+    output_content = output.read_bytes()
+
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/build_frontend.py"), "--check", "--root", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 1
+    assert "Stale frontend deployment modules:" in proc.stdout
+    assert "static/js/helper.js" in proc.stdout
+    assert "Source: frontend/src/shared/helper.js" in proc.stdout
+    assert "Edit the maintained source module first, then run:" in proc.stdout
+    assert "python scripts/build_frontend.py" in proc.stdout
+    assert "The publisher regenerates deployment files from maintained source." in proc.stdout
+    assert "Direct edits to deployment files may be overwritten." in proc.stdout
+
+    assert source.read_bytes() == source_content
+    assert output.read_bytes() == output_content
+
+
+def test_multiple_stale_modules_diagnostic_reports_distinct_sources(tmp_path):
+    source1 = tmp_path / "frontend/src/shared/alpha.js"
+    source2 = tmp_path / "frontend/src/shared/beta.js"
+    source1.parent.mkdir(parents=True, exist_ok=True)
+    source1.write_bytes(b"export const a = 1;\n")
+    source2.write_bytes(b"export const b = 2;\n")
+
+    manifest = {
+        "version": 1,
+        "modules": [
+            {"source": "shared/alpha.js", "deployment": "js/alpha.js"},
+            {"source": "shared/beta.js", "deployment": "js/beta.js"},
+        ],
+    }
+    (tmp_path / "frontend/modules.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / ".gitattributes").write_text(
+        "* text=auto\nfrontend/src/** text eol=lf\nstatic/js/alpha.js text eol=lf\nstatic/js/beta.js text eol=lf\n",
+        encoding="utf-8",
+    )
+
+    build.synchronize(tmp_path)
+    output1 = tmp_path / "static/js/alpha.js"
+    output2 = tmp_path / "static/js/beta.js"
+    assert output1.read_bytes() == source1.read_bytes()
+    assert output2.read_bytes() == source2.read_bytes()
+
+    output1.write_bytes(b"export const a = 'modified';\n")
+    output2.write_bytes(b"export const b = 'modified';\n")
+
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/build_frontend.py"), "--check", "--root", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 1
+
+    stdout = proc.stdout
+    assert "static/js/alpha.js" in stdout
+    assert "Source: frontend/src/shared/alpha.js" in stdout
+    assert "static/js/beta.js" in stdout
+    assert "Source: frontend/src/shared/beta.js" in stdout
+
+    idx_alpha = stdout.index("static/js/alpha.js")
+    idx_beta = stdout.index("static/js/beta.js")
+    assert idx_alpha < idx_beta
+
+
+def test_missing_deployment_output_produces_source_diagnostic(tmp_path):
+    source, output = project(tmp_path)
+    assert not output.exists()
+
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/build_frontend.py"), "--check", "--root", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 1
+    assert "Stale frontend deployment modules:" in proc.stdout
+    assert "static/js/helper.js" in proc.stdout
+    assert "Source: frontend/src/shared/helper.js" in proc.stdout
+    assert "The publisher regenerates deployment files from maintained source." in proc.stdout
+    assert not output.exists()
+
+
+def test_format_stale_diagnostic_direct(tmp_path):
+    project(tmp_path)
+    diag = build.format_stale_diagnostic(["static/js/helper.js"], root=tmp_path)
+    assert "Stale frontend deployment modules:" in diag
+    assert "static/js/helper.js" in diag
+    assert "Source: frontend/src/shared/helper.js" in diag
+    assert "The publisher regenerates deployment files from maintained source." in diag
+    assert "Direct edits to deployment files may be overwritten." in diag

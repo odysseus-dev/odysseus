@@ -23,16 +23,13 @@ def test_notes_sidebar_new_action_opens_a_note_without_toggling_panel_closed():
     assert "event.stopPropagation()" in app[app.index("const notesNewNoteBtn"):]
     assert "notesModule?.newNote?.()" in app
     assert "function newNote()" in notes
-    assert "requestAnimationFrame(() => _createNote('note'))" in notes
     assert "newNote: quickAdd.newNote" in notes
     assert "publicNewNote as newNote" in notes
 
 
-def test_sidebar_new_note_focuses_note_body_instead_of_title():
-    notes = notes_source("ui/quickAdd", "ui/cardInteractions", "ui/reminderDisplay", "index")
-
-    assert "form.querySelector('.note-form-content')" in notes
-    assert "initialField?.focus()" in notes
+# "The sidebar new note focuses the body, not the title" is now a behavioural
+# check: tests/browser/notesNative.mjs calls newNote() and asserts the note
+# window's body has focus.
 
 
 def test_notes_reminder_dot_stays_before_new_note_action():

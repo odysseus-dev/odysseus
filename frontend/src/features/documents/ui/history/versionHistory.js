@@ -5,12 +5,15 @@
 
 import { API_BASE, activeDocId, docs, isOpen } from '../../application/documentState.js';
 import { saveCurrentToMap, switchToDoc } from '../../application/documentCommands.js';
+import { persistMarkdownDraft } from '../../application/documentSession.js';
 import { _cancelAutoSave, _scheduleAutoSave, _setDocumentSaveState } from '../../application/persistence.js';
 import { _buildDiffSummary, _escHtml } from '../../domain/documentKinds.js';
 import { syncHighlighting } from '../editor/sourceEditor.js';
 import { exitDiffMode, _diffModeActive } from '../diffViewer.js';
 import { _releasePdfPane } from '../pdfTools.js';
 import { uiModule } from '../host.js';
+import { markdownToVisualHtml } from '../../domain/markdownVisualCodec.js';
+import { assessMarkdownVisualSupport, isMarkdownVisualModeActive, isVisualMarkdownDoc, unbindVisualSurface } from '../richEditor/markdownVisualSync.js';
 
 let _versionClickOutside = null;
 
@@ -74,7 +77,14 @@ export function _closeVersionPanel({ restoreFocus = false } = {}) {
         if (state.previewing) textarea.value = state.doc.content || '';
         textarea.readOnly = state.readOnly;
       }
-      if (state.previewing) syncHighlighting();
+      if (state.previewing) {
+        if (state.wasVisualMarkdown && isVisualMarkdownDoc(state.doc)) {
+          const rich = document.getElementById('doc-email-richbody');
+          if (rich) rich.contentEditable = 'true';
+          switchToDoc(state.docId, { captureCurrent: false, preserveHistory: true });
+        }
+        syncHighlighting();
+      }
     }
     if (_versionClickOutside) document.removeEventListener('click', _versionClickOutside, true);
     _versionClickOutside = null;
@@ -141,7 +151,7 @@ async function loadVersionHistory(state = _versionHistory) {
 
 async function previewVersion(num) {
     const state = _versionHistory;
-    if (!_historyOwnsView(state) || state.restoring) return;
+    if (!_historyOwnsView(state) || state.restoring || state.doc._visualSyncBlocked) return;
     const operation = ++state.operation;
     const revision = state.doc._editRevision || 0;
     try {
@@ -150,11 +160,32 @@ async function previewVersion(num) {
       const ver = await res.json();
       if (!_historyOwnsView(state) || state.operation !== operation
           || (state.doc._editRevision || 0) !== revision) return;
+      const verContent = ver.content || '';
+      const rich = document.getElementById('doc-email-richbody');
+      const wasVisual = state.wasVisualMarkdown || isMarkdownVisualModeActive();
+      if (wasVisual) state.wasVisualMarkdown = true;
       const textarea = document.getElementById('doc-editor-textarea');
       if (textarea) {
         state.previewing = true;
         textarea.readOnly = true;
-        textarea.value = ver.content || '';
+        textarea.value = verContent;
+      }
+      if (state.wasVisualMarkdown && rich) {
+        // The preview is read-only and detached from the document, so no sync
+        // path can write the previewed version into the live document.
+        unbindVisualSurface(rich);
+        const wrap = document.getElementById('doc-editor-wrap');
+        if (assessMarkdownVisualSupport(verContent).supported) {
+          if (wrap) wrap.style.display = 'none';
+          rich.style.display = '';
+          rich.classList.add('markdown-visual-mode');
+          rich.contentEditable = 'false';
+          rich.innerHTML = markdownToVisualHtml(verContent);
+        } else {
+          rich.classList.remove('markdown-visual-mode');
+          rich.style.display = 'none';
+          if (wrap) wrap.style.display = '';
+        }
       }
       syncHighlighting();
     } catch (e) {
@@ -164,7 +195,7 @@ async function previewVersion(num) {
 
 async function restoreVersion(num) {
     const state = _versionHistory;
-    if (!_historyOwnsView(state) || state.restoring) return;
+    if (!_historyOwnsView(state) || state.restoring || state.doc._visualSyncBlocked) return;
     state.restoring = true;
     const operation = ++state.operation;
     const doc = state.doc;
@@ -183,13 +214,15 @@ async function restoreVersion(num) {
       const restored = await res.json();
       const unchanged = (doc._editRevision || 0) === revision && doc.content === content;
       doc.version = Math.max(doc.version || 1, restored.version_count || 1);
+      doc._persistedContent = restored.current_content ?? restored.content ?? '';
       if (unchanged) {
-        doc.content = restored.current_content ?? restored.content ?? '';
+        doc.content = doc._persistedContent;
         _setDocumentSaveState('saved', state.docId);
       } else {
         _setDocumentSaveState('dirty', state.docId);
         _scheduleAutoSave(state.docId, 0);
       }
+      persistMarkdownDraft(doc);
       if (_historyOwnsView(state) && state.operation === operation) {
         state.previewing = false;
         const textarea = document.getElementById('doc-editor-textarea');

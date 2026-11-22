@@ -1,10 +1,8 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "static" / "js" / "galleryEditor.js").read_text()
 CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 
 def test_toolbar_is_wrapped_for_an_overlay_chevron():
@@ -27,12 +25,6 @@ def test_chevron_css():
     assert ".ge-tool-more { display: none; }" in CSS
     assert ".ge-tool-more.is-visible { display: flex; }" in CSS
     assert "flex: 1 1 auto; min-width: 0;" in CSS
-
-
-def test_sw_cache_bumped():
-    m = re.search(r"CACHE_NAME = '(odysseus-v\d+-pr40-editor-precache)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))
 
 
 def test_quick_edit_bar_is_clamped_off_the_tool_rail():

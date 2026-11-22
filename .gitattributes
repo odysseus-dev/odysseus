@@ -13,6 +13,15 @@ docker/entrypoint.sh text eol=lf
 # Maintained frontend modules and this lane's byte-identical deployment output.
 frontend/src/** text eol=lf
 static/js/actionMenuOrder.js text eol=lf
+static/js/shared/domain/html.js text eol=lf
+static/js/shared/domain/urlSchemes.js text eol=lf
+static/js/shared/domain/relativeTime.js text eol=lf
+static/js/shared/platform/clipboard.js text eol=lf
+static/js/shared/platform/debounce.js text eol=lf
+static/js/shared/platform/downloads.js text eol=lf
+static/js/escMenuStack.js text eol=lf
+static/js/shared/ui/optionNavigation.js text eol=lf
+static/js/toolWindowZOrder.js text eol=lf
 
 # Windows-native scripts stay CRLF.
 *.ps1 text eol=crlf
@@ -43,3 +52,16 @@ static/js/shared/ui/confetti.js text eol=lf
 
 # Document editor deployment modules.
 static/js/document/** text eol=lf
+
+# Existing runtime paths of maintained shared infrastructure.
+static/js/modelSort.js text eol=lf
+static/js/appConfig.js text eol=lf
+static/js/authStatus.js text eol=lf
+static/js/platform.js text eol=lf
+static/js/storage.js text eol=lf
+static/js/modalSnap.js text eol=lf
+static/js/modalVisibility.js text eol=lf
+static/js/spinner.js text eol=lf
+static/js/tourHintDismiss.js text eol=lf
+static/js/windowDrag.js text eol=lf
+static/js/windowResize.js text eol=lf

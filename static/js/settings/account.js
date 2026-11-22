@@ -5,6 +5,8 @@
 import { byId as el } from './dom.js';
 import { initSelfApiTokens } from './apiTokens.js';
 import { esc } from './html.js';
+import { SESSION_ENDED_EVENT } from '../authStatus.js';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 
 let _authPolicy = { password_min_length: 8 };
 
@@ -181,7 +183,22 @@ export function initAccount() {
     logoutBtn.addEventListener('mouseenter', () => { logoutBtn.style.opacity = '1'; logoutBtn.style.borderColor = 'var(--red)'; logoutBtn.style.color = 'var(--red)'; });
     logoutBtn.addEventListener('mouseleave', () => { logoutBtn.style.opacity = ''; logoutBtn.style.borderColor = ''; logoutBtn.style.color = ''; });
     logoutBtn.addEventListener('click', async () => {
-      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+      if (logoutBtn.disabled) return;
+      logoutBtn.disabled = true;
+      let loggedOut = false;
+      try {
+        const res = await fetch('/api/auth/logout', { method: 'POST' });
+        // An already-expired session (401) is logged out as far as this tab is concerned.
+        loggedOut = res.ok || res.status === 401;
+      } catch (_) {}
+      if (!loggedOut) {
+        logoutBtn.disabled = false;
+        if (uiModule && uiModule.showToast) uiModule.showToast('Could not log out. You are still signed in.');
+        return;
+      }
+      // Keep recovery active until logout is acknowledged. Then stop draft
+      // writers before clearing storage and navigating away.
+      window.dispatchEvent(new CustomEvent(SESSION_ENDED_EVENT));
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.
@@ -190,16 +207,19 @@ export function initAccount() {
       // the previous user's last model into a fresh session, which read as
       // cross-account leakage.
       try {
-        const _keepKeys = new Set(['odysseus-last-user']);
+        const _keepKeys = new Set(['odysseus-last-user', SESSION_ENDED_EVENT]);
         const _toRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           if (k && !_keepKeys.has(k)) _toRemove.push(k);
         }
         _toRemove.forEach(k => localStorage.removeItem(k));
-        sessionStorage.clear();
       } catch (_) {}
-      window.location.href = '/login';
+      try { sessionStorage.clear(); } catch (_) {}
+      // Other tabs share the account cookie but have their own sessionStorage.
+      // Leave a marker for live tabs and tabs that load the app later.
+      try { localStorage.setItem(SESSION_ENDED_EVENT, String(Date.now())); } catch (_) {}
+      window.location.replace('/login');
     });
   }
 }

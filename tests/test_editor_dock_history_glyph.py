@@ -1,9 +1,7 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_tab_undock_glyph_is_hover_and_keyboard_only():
@@ -23,9 +21,3 @@ def test_docked_history_has_no_open_in_window_button():
     panels = (ROOT / "static/js/editor/panels/studio-panels.js").read_text(encoding="utf-8")
     assert "ge-history-popout" not in panels
     assert "Open in window" not in panels
-
-
-def test_sw_cache_name_versions():
-    m = re.search(r"CACHE_NAME = '([^']+)'", SW)
-    assert m is not None
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

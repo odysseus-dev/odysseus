@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-export async function loadMarkdown() {
+// `templates` swaps in a <template> that really parses (tests/helpers/miniDom.mjs
+// templateDocument), for tests of the passes that sanitize on an inert template.
+export async function loadMarkdown({ templates = null } = {}) {
   globalThis.window = { location: { origin: 'http://localhost' }, katex: null };
   globalThis.document = {
     readyState: 'loading',
@@ -23,9 +25,12 @@ export async function loadMarkdown() {
       };
     },
   };
+  if (templates) globalThis.document.createElement = templates.createElement;
   globalThis.MutationObserver = class { observe() {} };
 
   let src = fs.readFileSync(path.join(REPO, 'static/js/markdown.js'), 'utf8');
+  src = src.replace(/from '(\.\/shared\/domain\/[^']+)'/g, (_match, specifier) =>
+    `from '${new URL(specifier, new URL('../../static/js/', import.meta.url)).href}'`);
   src = src.replace(/import uiModule from ['"]\.\/ui\.js(?:[?#][^'"]*)?['"];?/, '');
   src = src.replace(
     /import \{ splitTableRow \} from ['"]\.\/markdown\/tableRow\.js['"];/,

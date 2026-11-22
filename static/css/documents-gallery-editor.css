@@ -914,6 +914,7 @@ body.doc-find-active mark.doc-find-mark.current {
 .doc-save-button[data-save-state="dirty"] .doc-save-state-dirty,
 .doc-save-button[data-save-state="saving"] .doc-save-state-saving,
 .doc-save-button[data-save-state="saved"] .doc-save-state-saved,
+.doc-save-button[data-save-state="blocked"] .doc-save-state-error,
 .doc-save-button[data-save-state="error"] .doc-save-state-error { display: block; }
 .doc-save-button[data-save-state="saving"] .doc-save-state-saving {
   animation: doc-save-spin 800ms linear infinite;
