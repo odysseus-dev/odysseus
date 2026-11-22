@@ -74,7 +74,7 @@ jobs:
       - name: Validate exhaustive disjoint runner mapping and execute native suites
         run: |
           node .github/scripts/run_native_tests.mjs
-          python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 84
+          python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 157
       - name: Verify and sanitize native test results fail-closed
         id: verify-native-results
         if: always()

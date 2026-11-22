@@ -8,7 +8,7 @@ It establishes authoritative JavaScript and browser validation without imposing 
 The workflow implements a three-level execution architecture:
 
 1. **Level A: Coverage Verification and Selection**
-   Runs on every pull request in approximately 10 to 15 seconds without launching Chromium or heavy application dependencies. It validates the complete 74-file test inventory against `tests/native-ci-manifest.json`, checks that declared pytest wrappers exist and invoke their assigned tests, and computes required test execution from the PR diff against merge base (`git merge-base`).
+   Runs on every pull request in approximately 10 to 15 seconds without launching Chromium or heavy application dependencies. It validates the complete 84-file test inventory against `tests/native-ci-manifest.json`, checks that declared pytest wrappers exist and invoke their assigned tests, and computes required test execution from the PR diff against merge base (`git merge-base`).
 
 2. **Level B: Selective PR Validation**
    Runs only the suites required by the PR diff:
@@ -21,7 +21,7 @@ The workflow implements a three-level execution architecture:
    - Unknown or unclassified paths fall back conservatively to full execution fail-closed.
 
 3. **Level C: Full Integration Validation**
-   Runs all 19 native Node suites (84 test cases) and all 36 Chromium suites (137 test cases) on:
+   Runs all 26 native Node suites (157 test cases) and all 36 Chromium suites (137 test cases) on:
    - Every push to `dev`.
    - Every push to `main`.
    - Explicit manual workflow dispatches (`workflow_dispatch`).
@@ -41,13 +41,13 @@ Repository administrators must configure branch protection or rulesets to requir
 
 ## Test Inventory and Execution Ownership
 
-All 74 discovered test files importing `node:test` are partitioned into explicit, disjoint categories in `tests/native-ci-manifest.json`:
-- **19 files in `native-ci`:** Directly executed by `node .github/scripts/run_native_tests.mjs` (84 test cases total, including `notesColors.test.mjs`, `notesReminderText.test.mjs`, and `markdownPreviewParity.test.mjs`).
+All 84 discovered test files importing `node:test` are partitioned into explicit, disjoint categories in `tests/native-ci-manifest.json`:
+- **26 files in `native-ci`:** Directly executed by `node .github/scripts/run_native_tests.mjs` (157 test cases total, including `notesColors.test.mjs`, `notesReminderText.test.mjs`, `notesBrowserRunner.test.mjs`, `notesDraftRecovery.test.mjs`, `notesExports.test.mjs`, `notesMarkdownSanitize.test.mjs`, `notesMarkdownSerializer.test.mjs`, `notesQueries.test.mjs`, `notesWindowSync.test.mjs`, and `markdownPreviewParity.test.mjs`).
 - **1 file in `browser-ci`:** `tests/emailReplyBrowser.test.mjs`, executed against the disposable authenticated application via `tests/e2e/photo-editor/email-reply-native.spec.js`.
 - **1 file in `architecture-ci`:** `tests/frontendArchitecture.test.mjs`, executed during frontend architecture gates.
 - **15 files in `ci-syntax`:** Document behavior and reference suites executed in `ci.yml` `node-syntax`.
 - **11 files in `behavior-delegates`:** Behavioral modules invoked via `runBehaviorSuite` by their corresponding runner tests.
-- **27 files in `python-ci`:** Validated via established pytest wrappers in `python-tests` shards.
+- **30 files in `python-ci`:** Validated via established pytest wrappers in `python-tests` shards.
 
 The manifest validator (`.github/scripts/coverage_decision.py --validate-manifest`) verifies that every assigned file exists, that wrappers execute their declared tests, and that no unassigned or duplicated tests exist.
 
