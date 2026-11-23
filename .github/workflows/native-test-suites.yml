@@ -90,11 +90,15 @@ jobs:
           if-no-files-found: warn
 
   browser:
-    name: Chromium application regressions
+    name: Chromium application regressions (${{ matrix.shard }}/4)
     needs: [coverage-decision]
     if: needs.coverage-decision.outputs.run_browser == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       ODYSSEUS_E2E_DISPOSABLE_ARTIFACTS: '1'
       ODYSSEUS_TEST_PYTHON: python
@@ -133,12 +137,12 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
-      - name: Run complete Chromium suite against a fresh authenticated app
+      - name: Run Chromium shard against a fresh authenticated app
         env:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results/browser-junit.xml
         run: |
-          npm run test:photo-editor -- --reporter=line,junit
-          python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 137
+          npm run test:photo-editor -- --reporter=line,junit --shard=${{ matrix.shard }}/4 --workers=1
+          python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 1
       - name: Verify and sanitize failure diagnostics fail-closed
         id: verify-browser-results
         if: always()
@@ -148,7 +152,7 @@ jobs:
         if: always() && steps.verify-browser-results.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: chromium-regression-results
+          name: chromium-results-shard-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
           if-no-files-found: warn
@@ -162,10 +166,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: .github/scripts
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
+      - name: Download all Chromium shard results when browser validation executed
+        if: needs.coverage-decision.outputs.run_browser == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: chromium-results-shard-*
+          path: chromium-shard-artifacts
+      - name: Verify exhaustive Chromium shard coverage and test identities
+        if: needs.coverage-decision.outputs.run_browser == 'true'
+        run: |
+          python3 .github/scripts/verify_chromium_shards.py chromium-shard-artifacts/ --expected-shards 4
       - name: Require all selected suites to succeed and verify permitted skips
         env:
           DECISION_RESULT: ${{ needs.coverage-decision.result }}
