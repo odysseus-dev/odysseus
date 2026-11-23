@@ -36,6 +36,7 @@
   "ci-syntax": [
     "tests/documentActions.test.mjs",
     "tests/documentBehaviorRunner.test.mjs",
+    "tests/documentFileProcessing.test.mjs",
     "tests/documentFlows.test.mjs",
     "tests/documentLiveStream.test.mjs",
     "tests/documentOverflow.test.mjs",

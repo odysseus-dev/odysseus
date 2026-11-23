@@ -21,6 +21,12 @@ import {
   unbindExpandedCardDismiss,
 } from './escMenuStack.js';
 import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
+import {
+  ensureXLSX,
+  readFileContent,
+  EXT_TO_LANG,
+  SPREADSHEET_EXTENSIONS,
+} from './document/ui/fileProcessing.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -1582,140 +1588,8 @@ function _setLibraryCountChipContent(chip, label, count) {
     if (uiModule) uiModule.showToast(`Exported ${_librarySelectedIds.size} document${_librarySelectedIds.size !== 1 ? 's' : ''}`);
   }
 
-  /** Lazy-load SheetJS for spreadsheet parsing */
-  let _xlsxReady = null;
-  function ensureXLSX() {
-    if (_xlsxReady) return _xlsxReady;
-    if (window.XLSX) return (_xlsxReady = Promise.resolve());
-    _xlsxReady = new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = '/static/lib/xlsx.full.min.js';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load XLSX library'));
-      document.head.appendChild(s);
-    });
-    return _xlsxReady;
-  }
-
-  let _mammothReady = null;
-  function ensureMammoth() {
-    if (_mammothReady) return _mammothReady;
-    if (window.mammoth) return (_mammothReady = Promise.resolve());
-    _mammothReady = new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = '/static/lib/mammoth.browser.min.js';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load DOCX library'));
-      document.head.appendChild(s);
-    });
-    return _mammothReady;
-  }
-
-  /** Convert HTML from mammoth to clean markdown */
-  function htmlToMarkdown(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    let md = '';
-    function walk(node) {
-      if (node.nodeType === 3) { md += node.textContent; return; }
-      if (node.nodeType !== 1) return;
-      const tag = node.tagName.toLowerCase();
-      if (tag === 'h1') { md += '\n# '; walkChildren(node); md += '\n'; }
-      else if (tag === 'h2') { md += '\n## '; walkChildren(node); md += '\n'; }
-      else if (tag === 'h3') { md += '\n### '; walkChildren(node); md += '\n'; }
-      else if (tag === 'h4') { md += '\n#### '; walkChildren(node); md += '\n'; }
-      else if (tag === 'strong' || tag === 'b') { md += '**'; walkChildren(node); md += '**'; }
-      else if (tag === 'em' || tag === 'i') { md += '*'; walkChildren(node); md += '*'; }
-      else if (tag === 'a') { md += '['; walkChildren(node); md += `](${node.href || ''})`; }
-      else if (tag === 'br') { md += '\n'; }
-      else if (tag === 'p') { md += '\n'; walkChildren(node); md += '\n'; }
-      else if (tag === 'ul' || tag === 'ol') { md += '\n'; walkChildren(node); }
-      else if (tag === 'li') {
-        const parent = node.parentElement?.tagName?.toLowerCase();
-        if (parent === 'ol') {
-          const idx = Array.from(node.parentElement.children).indexOf(node) + 1;
-          md += `${idx}. `;
-        } else { md += '- '; }
-        walkChildren(node);
-        md += '\n';
-      }
-      else if (tag === 'table') { md += '\n'; convertTable(node); md += '\n'; }
-      else if (tag === 'img') {
-        // Skip embedded base64 images — they produce huge unreadable blobs
-        const src = node.src || '';
-        if (!src.startsWith('data:')) {
-          md += `![${node.alt || ''}](${src})`;
-        } else if (node.alt) {
-          md += `*[image: ${node.alt}]*`;
-        }
-      }
-      else { walkChildren(node); }
-    }
-    function walkChildren(node) { for (const child of node.childNodes) walk(child); }
-    function convertTable(table) {
-      const rows = table.querySelectorAll('tr');
-      rows.forEach((tr, i) => {
-        const cells = tr.querySelectorAll('th, td');
-        md += '| ' + Array.from(cells).map(c => c.textContent.trim()).join(' | ') + ' |\n';
-        if (i === 0) md += '| ' + Array.from(cells).map(() => '---').join(' | ') + ' |\n';
-      });
-    }
-    walkChildren(doc.body);
-    return md.replace(/\n{3,}/g, '\n\n').trim();
-  }
-
-  /** Read file contents — handles text, spreadsheet, and DOCX formats */
-  async function readFileContent(file) {
-    const name = file.name.toLowerCase();
-    const isSpreadsheet = name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.ods');
-    const isDocx = name.endsWith('.docx');
-
-    if (isSpreadsheet) {
-      await ensureXLSX();
-      const buf = await file.arrayBuffer();
-      const wb = window.XLSX.read(buf, { type: 'array' });
-      // Convert each sheet to CSV, join with a header per sheet
-      const parts = [];
-      for (const sheetName of wb.SheetNames) {
-        if (wb.SheetNames.length > 1) parts.push(`# Sheet: ${sheetName}`);
-        parts.push(window.XLSX.utils.sheet_to_csv(wb.Sheets[sheetName]));
-      }
-      return parts.join('\n\n');
-    }
-
-    if (isDocx) {
-      await ensureMammoth();
-      const buf = await file.arrayBuffer();
-      const result = await window.mammoth.convertToHtml({ arrayBuffer: buf });
-      return htmlToMarkdown(result.value);
-    }
-
-    // Plain text
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsText(file);
-    });
-  }
-
   /** Import files from disk into the document library */
   async function libraryImportFiles(fileList) {
-    const EXT_TO_LANG = {
-      '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
-      '.html': 'html', '.htm': 'html', '.css': 'css', '.md': 'markdown',
-      '.json': 'json', '.yml': 'yaml', '.yaml': 'yaml', '.sh': 'bash',
-      '.bash': 'bash', '.sql': 'sql', '.rs': 'rust', '.go': 'go',
-      '.java': 'java', '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp',
-      '.rb': 'ruby', '.php': 'php', '.xml': 'xml',
-      '.toml': 'toml', '.ini': 'ini', '.txt': '', '.log': '',
-      '.cfg': 'ini', '.conf': 'ini', '.env': '', '.jsx': 'javascript',
-      '.tsx': 'typescript', '.vue': 'html', '.svelte': 'html',
-      '.scss': 'css', '.sass': 'css', '.less': 'css',
-      '.csv': 'csv', '.tsv': 'csv',
-      '.xlsx': 'csv', '.xls': 'csv', '.ods': 'csv',
-      '.docx': 'docx', '.doc': 'markdown',
-    };
-
     let imported = 0;
     let failed = 0;
     let _firstErr = '';
@@ -1730,7 +1604,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         const baseTitle = dotIdx > 0 ? name.slice(0, dotIdx) : name;
         const language = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
 
-        const isSpreadsheet = ['.xlsx', '.xls', '.ods'].includes(ext);
+        const isSpreadsheet = SPREADSHEET_EXTENSIONS.includes(ext);
         const isPdf = ext === '.pdf';
         const isDocx = ext === '.docx';
 
