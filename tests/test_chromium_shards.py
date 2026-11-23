@@ -311,3 +311,27 @@ def test_scenario_15_native_node_fails_while_chromium_succeeds():
     )
     assert ok is False
     assert "Required Native Node suite did not succeed" in msg
+
+
+def test_scenario_16_directory_discovery_ignores_nested_fixture_xml(tmp_path, mock_inventory_and_shards):
+    """16. Main CLI discovers shard reports in subdirectories without including nested fixture xml files."""
+    expected, _, shards_data = mock_inventory_and_shards
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+
+    for i, data in enumerate(shards_data, 1):
+        shard_dir = artifacts_dir / f"chromium-results-shard-{i}"
+        shard_dir.mkdir()
+        # Standard report name
+        create_mock_shard_xml(shard_dir, "browser-junit", data)
+
+    # Add an extraneous nested test fixture xml in a subfolder of shard 1
+    nested_dir = artifacts_dir / "chromium-results-shard-1" / "photo-editor" / "subtest"
+    nested_dir.mkdir(parents=True)
+    extraneous_xml = nested_dir / "native-email-junit.xml"
+    extraneous_xml.write_text("<testsuites><testsuite name='fixture'/></testsuites>")
+
+    # Test main CLI via argv
+    main_func = v_mod.main
+    code = main_func([str(artifacts_dir), "--expected-shards", "4"])
+    assert code == 0

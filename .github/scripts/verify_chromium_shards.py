@@ -185,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Expected total number of shards (default: 4)",
     )
     parser.add_argument(
+        "--report-name",
+        default="browser-junit.xml",
+        help="Expected shard JUnit report filename (default: browser-junit.xml)",
+    )
+    parser.add_argument(
         "--config",
         default="tests/e2e/playwright.config.js",
         help="Path to playwright config file",
@@ -195,8 +200,18 @@ def main(argv: list[str] | None = None) -> int:
     report_files: list[Path] = []
     for r in args.reports:
         if r.is_dir():
-            xmls = list(r.glob("**/*.xml"))
-            report_files.extend(xmls)
+            # Check for standard shard report naming in subdirectories or directory itself
+            named_reports = list(r.glob(f"*/{args.report_name}"))
+            if not named_reports and (r / args.report_name).is_file():
+                named_reports = [r / args.report_name]
+            if named_reports:
+                report_files.extend(named_reports)
+            else:
+                direct_xmls = list(r.glob("*.xml"))
+                if direct_xmls:
+                    report_files.extend(direct_xmls)
+                else:
+                    report_files.extend(r.glob("**/*.xml"))
         elif r.is_file():
             report_files.append(r)
 

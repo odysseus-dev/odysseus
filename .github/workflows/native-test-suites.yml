@@ -114,8 +114,14 @@ jobs:
           python-version: '3.11'
       - name: Install FFmpeg and establish system trust
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            printf '%s\n' \
+              'Acquire::Retries "1";' \
+              'Acquire::http::Timeout "15";' \
+              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+            sudo apt-get update || sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates
+          fi
           python scripts/check_ca_trust.py --system
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
