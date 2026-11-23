@@ -27,6 +27,7 @@ from src.host_docker_access import (
 from src.optional_deps import prepare_optional_dependency_import
 from src.auth_helpers import _auth_disabled
 from src import process_lifecycle
+from src import shutdown as _shutdown
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
 # on Windows, so importing them unconditionally crashed app startup there
@@ -1025,7 +1026,7 @@ async def _generate_tmux(cmd: str, request: Request):
     lines_sent = 0
     exit_code = None
 
-    while True:
+    while not _shutdown.is_shutting_down():
         # Check client disconnect
         if await request.is_disconnected():
             # tmux keeps running — that's the whole point
@@ -1142,7 +1143,7 @@ async def _generate_win_detached(cmd: str, request: Request):
 
     lines_sent = 0
     exit_code = None
-    while True:
+    while not _shutdown.is_shutting_down():
         if await request.is_disconnected():
             yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Disconnected. Background job {session_id} continues running.'})}\n\n"
             return
@@ -1267,7 +1268,7 @@ def setup_shell_routes() -> APIRouter:
                     """Read chunks, split on \\n or \\r for progress bar support."""
                     try:
                         buf = b""
-                        while True:
+                        while not _shutdown.is_shutting_down():
                             chunk = await stream.read(4096)
                             if not chunk:
                                 if buf:

@@ -88,16 +88,58 @@ def check_lf_attributes(root: Path, paths: set[Path]) -> None:
         raise ValueError("manifest paths require repository-owned 'text eol=lf' Git attributes: " + ", ".join(invalid))
 
 
+def load_manifest(root: Path = ROOT) -> dict:
+    manifest_path = root / "frontend" / "modules.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("modules"), list):
+        raise ValueError("expected frontend module manifest version 1")
+    if not manifest["modules"]:
+        raise ValueError("module manifest must not be empty")
+    return manifest
+
+
+def load_manifest_mappings(root: Path = ROOT) -> dict[str, str]:
+    root = root.resolve()
+    source_root = root / "frontend" / "src"
+    static_root = root / "static"
+    manifest = load_manifest(root)
+    mappings = {}
+    for entry in manifest["modules"]:
+        if not isinstance(entry, dict) or "source" not in entry or "deployment" not in entry:
+            continue
+        try:
+            source = module_path(source_root, entry["source"])
+            output = module_path(static_root, entry["deployment"])
+            mappings[output.relative_to(root).as_posix()] = source.relative_to(root).as_posix()
+        except ValueError:
+            continue
+    return mappings
+
+
+def format_stale_diagnostic(stale: list[str], root: Path = ROOT) -> str:
+    root = root.resolve()
+    mappings = load_manifest_mappings(root)
+    lines = ["Stale frontend deployment modules:", ""]
+    for output_path in stale:
+        lines.append(f"  {output_path}")
+        source_path = mappings.get(output_path)
+        if source_path:
+            lines.append(f"    Source: {source_path}")
+        lines.append("")
+    lines.append("Edit the maintained source module first, then run:")
+    lines.append("  python scripts/build_frontend.py")
+    lines.append("")
+    lines.append("The publisher regenerates deployment files from maintained source.")
+    lines.append("Direct edits to deployment files may be overwritten.")
+    return "\n".join(lines)
+
+
 def synchronize(root: Path = ROOT, *, check: bool = False) -> list[str]:
     """Validate the entire plan before writing. Return stale deployment paths."""
     root = root.resolve()
     source_root = root / "frontend" / "src"
     static_root = root / "static"
-    manifest = json.loads((root / "frontend" / "modules.json").read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("modules"), list):
-        raise ValueError("expected frontend module manifest version 1")
-    if not manifest["modules"]:
-        raise ValueError("module manifest must not be empty")
+    manifest = load_manifest(root)
     sources, outputs, plan = set(), set(), []
     for entry in manifest["modules"]:
         source = module_path(source_root, entry["source"])
@@ -131,14 +173,15 @@ def synchronize(root: Path = ROOT, *, check: bool = False) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail on invalid attributes or stale output; write no deployment files")
+    parser.add_argument("--root", type=Path, default=ROOT, help="path to repository root")
     args = parser.parse_args()
+    root = args.root.resolve()
     try:
-        stale = synchronize(check=args.check)
+        stale = synchronize(root, check=args.check)
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.exit(2, f"frontend: {error}\n")
     if args.check and stale:
-        print("Stale frontend deployment modules: " + ", ".join(stale))
-        print("Run python scripts/build_frontend.py and include the source and output changes together.")
+        print(format_stale_diagnostic(stale, root))
         return 1
     print(f"Frontend {'check passed' if args.check else 'published'} ({len(stale)} changed modules).")
     return 0

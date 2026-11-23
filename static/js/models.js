@@ -580,7 +580,7 @@ export async function refreshModels(force = false, opts = {}) {
     if (!_cachedItems || _cachedItems.length === 0) {
       const noModels = document.createElement('div');
       noModels.className = 'models-empty-state';
-      if (window._isAdmin) {
+      if (window._canManageSettings ?? window._isAdmin) {
         noModels.innerHTML = '<span class="muted">No models found</span><br>'
           + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">Open Admin to add endpoints</a>'
           + '<br><span class="muted-sm">Type /setup for Local models or API setup.</span>';
@@ -589,6 +589,12 @@ export async function refreshModels(force = false, opts = {}) {
           + '<span class="muted-sm">Ask an admin to configure model endpoints</span>';
       }
       box.appendChild(noModels);
+      const openAdmin = noModels.querySelector('#models-open-admin');
+      if (openAdmin) openAdmin.addEventListener('click', (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('user-bar-admin');
+        if (btn) btn.click();
+      });
     }
   } catch (e) {
     console.error(e);

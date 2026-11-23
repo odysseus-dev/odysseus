@@ -4,7 +4,10 @@
  * Extracted from document.js to reduce file size.
  */
 
+import { formatArchiveAge, formatRecentAge } from './shared/domain/relativeTime.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { downloadBlob } from './shared/platform/downloads.js';
+import { debounceTrailing } from './shared/platform/debounce.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
@@ -160,7 +163,10 @@ let _librarySessionCount = 0;
 let _libraryActiveLanguage = null;
 let _librarySort = 'recent';
 let _librarySearch = '';
-let _librarySearchDebounce = null;
+const _librarySearchDebounce = debounceTrailing((input) => {
+  _librarySearch = input.value.trim();
+  libraryFetch(false);
+}, 300);
 
 // Highlight the active search terms inside a plain string. Escapes first,
 // then wraps each whitespace-separated term in <mark>. Multi-term, matching
@@ -426,12 +432,9 @@ function _setLibraryCountChipContent(chip, label, count) {
     const now = Date.now();
     const then = new Date(isoString).getTime();
     const diffS = Math.floor((now - then) / 1000);
-    if (diffS < 60) return 'just now';
-    const diffM = Math.floor(diffS / 60);
-    if (diffM < 60) return diffM + 'm ago';
-    const diffH = Math.floor(diffM / 60);
-    if (diffH < 24) return diffH + 'h ago';
-    const diffD = Math.floor(diffH / 24);
+    const recent = formatRecentAge(diffS);
+    if (recent !== null) return recent;
+    const diffD = Math.floor(diffS / 86400);
     if (diffD === 1) return 'yesterday';
     if (diffD < 14) return diffD + 'd ago';
     const diffW = Math.floor(diffD / 7);
@@ -1434,8 +1437,10 @@ function _setLibraryCountChipContent(chip, label, count) {
   }
 
   async function libraryBulkDelete() {
-    if (_librarySelectedIds.size === 0) return;
-    const count = _librarySelectedIds.size;
+    // Keep the confirmed identities stable while the dialog and requests wait.
+    const ids = [..._librarySelectedIds];
+    if (ids.length === 0) return;
+    const count = ids.length;
     if (uiModule && uiModule.styledConfirm) {
       const ok = await uiModule.styledConfirm(
         `Delete ${count} document${count !== 1 ? 's' : ''}?`,
@@ -1449,7 +1454,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     let deleted = 0;
     let failed = 0;
     const deletedIds = [];
-    for (const id of _librarySelectedIds) {
+    for (const id of ids) {
       try {
         const res = await fetch(`${API_BASE}/api/document/${id}`, { method: 'DELETE', credentials: 'same-origin' });
         if (res.ok) {
@@ -1537,14 +1542,7 @@ function _setLibraryCountChipContent(chip, label, count) {
         });
         if (!res.ok) throw new Error('zip failed');
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'documents.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        downloadBlob(blob, 'documents.zip', 2000);
         if (uiModule) uiModule.showToast(`Exported ${ids.length} documents (zip)`);
       } catch (e) {
         if (uiModule) uiModule.showError('Failed to create zip');
@@ -3426,15 +3424,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     // handler — which lives outside openLibrary's closure — can call it).
 
     function _relTime(iso) {
-      if (!iso) return '';
-      const diff = Date.now() - new Date(iso).getTime();
-      const mins = Math.floor(diff / 60000);
-      if (mins < 60) return mins + 'm ago';
-      const hrs = Math.floor(mins / 60);
-      if (hrs < 24) return hrs + 'h ago';
-      const days = Math.floor(hrs / 24);
-      if (days < 30) return days + 'd ago';
-      return new Date(iso).toLocaleDateString();
+      return formatArchiveAge(iso, Date.now());
     }
 
     // Switch to the initial tab. Always call this — even when the
@@ -3444,11 +3434,7 @@ function _setLibraryCountChipContent(chip, label, count) {
 
     const searchInput = document.getElementById('doclib-search');
     searchInput.addEventListener('input', () => {
-      clearTimeout(_librarySearchDebounce);
-      _librarySearchDebounce = setTimeout(() => {
-        _librarySearch = searchInput.value.trim();
-        libraryFetch(false);
-      }, 300);
+      _librarySearchDebounce(searchInput);
     });
 
     document.getElementById('doclib-sort').addEventListener('change', (e) => {
@@ -3676,7 +3662,7 @@ function _setLibraryCountChipContent(chip, label, count) {
     _librarySelectMode = false;
     _librarySelectedIds.clear();
     _libraryImportMode = false;
-    clearTimeout(_librarySearchDebounce);
+    _librarySearchDebounce.cancel();
 
     const modal = document.getElementById('doclib-modal');
     if (modal) {

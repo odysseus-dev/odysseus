@@ -315,15 +315,32 @@ def test_server_lacking_uidplus_never_calls_mailbox_expunge(bulk_delete):
     bulk_delete.index_delete.assert_not_called()
 
 
-def test_concurrent_client_marks_unrelated_deleted_message_during_operation(bulk_delete):
-    # Another client marks unrelated UID 999 \Deleted before/during the operation
-    bulk_delete.mailbox.inbox.add("999")
-    bulk_delete.mailbox.deleted.add("999")
+def test_concurrent_client_marks_unrelated_deleted_message_during_operation(bulk_delete, monkeypatch):
+    mailbox = bulk_delete.mailbox
+    mailbox.inbox.add("999")
+    assert "999" not in mailbox.deleted
+    uid_command = mailbox.uid
+    interleavings = []
+
+    def other_client_marks_deleted(command, uid, *args):
+        response = uid_command(command, uid, *args)
+        if command == "STORE" and uid == b"101" and args[0] == "+FLAGS":
+            # The requested message is flagged; another client now flags 999
+            # before the server receives the subsequent EXPUNGE command.
+            assert mailbox.deleted == {"101"}
+            assert not any(cmd == "EXPUNGE" for cmd, _ in mailbox.calls)
+            mailbox.deleted.add("999")
+            interleavings.append("STORE")
+        return response
+
+    monkeypatch.setattr(mailbox, "uid", other_client_marks_deleted)
 
     result = bulk_delete.delete(["101"])
 
     assert result["success"] is True
     assert result["deleted_uids"] == ["101"]
+    assert interleavings == ["STORE"]
+    assert mailbox.inbox == {"102", "103", "999"}
     # 101 was expunged, unrelated 999 is NEVER expunged
     assert "101" not in bulk_delete.mailbox.inbox
     assert "999" in bulk_delete.mailbox.inbox

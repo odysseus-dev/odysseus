@@ -12,9 +12,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # File-backed databases remain fixture-owned. Cleanup restores the caller.
 # Keep the existing generated environment-reference locations stable.
 _database_environment = pytest.MonkeyPatch()
-_database_environment.setenv("DATABASE_URL", "sqlite:///:memory:")
 from tests.helpers.worker_runtime import bootstrap_runtime, configure_runtime
 _runtime_environment = bootstrap_runtime()
+# A file keeps the collection schema consistent across TestClient threads;
+# SingletonThreadPool can evict the populated in-memory main-thread database.
+# One patcher owns this variable, including restoration of an inherited URL.
+_database_environment.setenv(
+    "DATABASE_URL",
+    f"sqlite:///{_runtime_environment.root / 'collection.db'}"
+    if _runtime_environment is not None else "sqlite:///:memory:",
+)
+_collection_database_engine = None
 
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
@@ -26,6 +34,7 @@ try:
     import sqlalchemy.orm  # noqa: F401
     import core.database  # noqa: F401
     import src.database
+    _collection_database_engine = core.database.engine
 except ImportError:
     pass  # not installed - the stubs below will handle it
 
@@ -69,7 +78,7 @@ def pytest_addoption(parser):
         default=None,
         metavar="N/M",
         help=(
-            "run only shard N of M (1-based), e.g. --shard 1/4. Shards partition "
+            "run only shard N of M (1-based), e.g. --shard 1/6. Shards partition "
             "the suite by test file, so together they run every test exactly "
             "once. See tests/_shards.py."
         ),
@@ -100,6 +109,10 @@ def pytest_configure(config):
     only registers marker names; it imports no production module.
     """
     config.add_cleanup(_database_environment.undo)
+    if _collection_database_engine is not None:
+        # Registered after runtime cleanup, so connections close before the
+        # owned file is removed (also required on Windows).
+        config.add_cleanup(_collection_database_engine.dispose)
 
     import pathlib
     from tests._taxonomy import discover_markers
@@ -136,28 +149,75 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(getattr(pytest.mark, marker_name))
 
     spec = _shard_spec(config)
-    if spec is None or spec.selects_everything:
+    export_path = os.environ.pop("PYTEST_COLLECTION_EXPORT", None)
+    if not export_path and os.environ.get("RUNNER_TEMP") and spec is not None and not spec.selects_everything:
+        export_path = str(Path(os.environ["RUNNER_TEMP"]) / "pytest-collection.json")
+
+    export_requested = bool(export_path and spec is not None and not spec.selects_everything)
+    if spec is None and not export_requested:
         return
 
-    from tests._shards import accumulate_file_weights, plan_shards, relative_file_key
+    from tests._shards import (
+        accumulate_file_weights,
+        default_fixed_shard_loads,
+        load_duration_manifest,
+        plan_shards,
+        relative_file_key,
+    )
 
     root = getattr(config, "rootpath", None)
     keys = [
         relative_file_key(getattr(item, "path", None) or item.fspath, root)
         for item in items
     ]
-    weights = accumulate_file_weights(
-        (key, item.get_closest_marker("slow") is not None)
-        for key, item in zip(keys, items)
-    )
-    selected_files = plan_shards(weights, spec.count)[spec.index - 1]
 
-    selected, deselected = [], []
-    for key, item in zip(keys, items):
-        (selected if key in selected_files else deselected).append(item)
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
-    items[:] = selected
+    if spec is not None and not spec.selects_everything:
+        durations = load_duration_manifest(root=root)
+        weights = accumulate_file_weights(
+            ((key, item.get_closest_marker("slow") is not None) for key, item in zip(keys, items)),
+            durations=durations,
+        )
+        fixed_loads = default_fixed_shard_loads(spec.count, durations_active=durations is not None)
+        selected_files = plan_shards(weights, spec.count, fixed_loads=fixed_loads)[spec.index - 1]
+
+        selected, deselected = [], []
+        for key, item in zip(keys, items):
+            (selected if key in selected_files else deselected).append(item)
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+    else:
+        selected = items
+
+    if export_requested:
+        # Record the actual pytest-collected suite file inventory and the shard-selected
+        # per-file test counts after shard deselection, so authoritative duration generation
+        # verifies exact collection coverage and full test execution on every shard.
+        selected_keys = [
+            relative_file_key(getattr(item, "path", None) or item.fspath, root)
+            for item in selected
+        ]
+        selected_test_counts: dict[str, int] = {}
+        selected_test_names: dict[str, list[str]] = {}
+        for sk, item in zip(selected_keys, selected):
+            selected_test_counts[sk] = selected_test_counts.get(sk, 0) + 1
+            nodeid = getattr(item, "nodeid", "")
+            test_ident = nodeid.split("::", 1)[1] if "::" in nodeid else item.name
+            selected_test_names.setdefault(sk, []).append(test_ident)
+
+        payload = {
+            "collected_files": sorted(set(keys)),
+            "selected_files": sorted(set(selected_keys)),
+            "selected_test_counts": selected_test_counts,
+            "selected_test_names": selected_test_names,
+        }
+
+        if export_path:
+            import json
+            from pathlib import Path
+            ep = Path(export_path)
+            ep.parent.mkdir(parents=True, exist_ok=True)
+            ep.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(scope="session", autouse=True)

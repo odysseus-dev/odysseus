@@ -1,5 +1,7 @@
 /** Alpha clipping for flat layer stacks and isolated groups. */
 
+import { blendDraw } from './blend-modes.js';
+
 function scopeByLayer(editorState) {
   const scopes = new Map();
   for (const group of editorState.layerGroups || []) {
@@ -18,7 +20,9 @@ export function clippingBaseForLayer(editorState, layerId) {
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     const candidate = layers[cursor];
     if ((scopes.get(candidate.id) || null) !== scope) return null;
-    if (candidate.kind === 'adjustment') return null;
+    // Skip over adjacent adjustment layers so a stack of clipped adjustments
+    // all resolve to the same underlying pixel layer.
+    if (candidate.kind === 'adjustment') continue;
     if (!candidate.clipped) return candidate;
   }
   return null;
@@ -61,9 +65,7 @@ export function drawLayerStack(target, editorState, layers, renderLayer, renderA
   const drawNormal = layer => {
     if (!layer.visible) return;
     const offset = editorState.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-    target.globalAlpha = layer.opacity;
-    target.globalCompositeOperation = layer.blendMode || 'source-over';
-    target.drawImage(renderLayer(layer), offset.x, offset.y);
+    blendDraw(target, renderLayer(layer), layer.blendMode, layer.opacity, offset.x, offset.y);
   };
   for (const layer of layers) {
     if (layer.kind === 'adjustment' && renderAdjustment) {
@@ -88,9 +90,7 @@ export function drawLayerStack(target, editorState, layers, renderLayer, renderA
     const baseOffset = editorState.layerOffsets.get(base.id) || { x: 0, y: 0 };
     scratchCtx.drawImage(renderLayer(base), baseOffset.x, baseOffset.y);
     scratchCtx.globalCompositeOperation = 'source-over';
-    target.globalAlpha = layer.opacity;
-    target.globalCompositeOperation = layer.blendMode || 'source-over';
-    target.drawImage(scratch, 0, 0);
+    blendDraw(target, scratch, layer.blendMode, layer.opacity, 0, 0);
   }
   target.globalAlpha = 1;
   target.globalCompositeOperation = 'source-over';
@@ -102,11 +102,9 @@ export async function drawLayerStackAsync(target, editorState, layers, renderLay
   const drawNormal = async layer => {
     if (!layer.visible || !shouldContinue()) return;
     const offset = editorState.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-    target.globalAlpha = layer.opacity;
-    target.globalCompositeOperation = layer.blendMode || 'source-over';
     const rendered = await renderLayer(layer);
     if (!shouldContinue() || !rendered) return;
-    target.drawImage(rendered, offset.x, offset.y);
+    blendDraw(target, rendered, layer.blendMode, layer.opacity, offset.x, offset.y);
   };
   for (const layer of layers) {
     if (!shouldContinue()) return;
@@ -135,9 +133,7 @@ export async function drawLayerStackAsync(target, editorState, layers, renderLay
     const baseOffset = editorState.layerOffsets.get(base.id) || { x: 0, y: 0 };
     scratchCtx.drawImage(renderedBase, baseOffset.x, baseOffset.y);
     scratchCtx.globalCompositeOperation = 'source-over';
-    target.globalAlpha = layer.opacity;
-    target.globalCompositeOperation = layer.blendMode || 'source-over';
-    target.drawImage(scratch, 0, 0);
+    blendDraw(target, scratch, layer.blendMode, layer.opacity, 0, 0);
   }
   target.globalAlpha = 1;
   target.globalCompositeOperation = 'source-over';

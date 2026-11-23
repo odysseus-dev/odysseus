@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const chatSource = readFileSync(new URL('../static/js/chat.js', import.meta.url), 'utf8');
 const sessionSource = readFileSync(new URL('../static/js/sessions.js', import.meta.url), 'utf8');
-const notesSource = readFileSync(new URL('../static/js/notes.js', import.meta.url), 'utf8');
+const notesSource = readFileSync(new URL('../static/js/features/notes/application/selection.js', import.meta.url), 'utf8');
 
 function setup() {
   const start = chatSource.indexOf("  window.addEventListener('odysseus:notes-context-selected'");

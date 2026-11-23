@@ -128,7 +128,7 @@ def test_auto_sort_keeps_fresh_session_while_first_response_is_pending(monkeypat
         db.close()
 
 
-def test_auto_sort_still_deletes_old_throwaway_sessions(monkeypatch):
+def test_auto_sort_keeps_old_nonempty_sessions_even_with_throwaway_title(monkeypatch):
     session_factory = _make_session_factory()
     _install_session_factory(monkeypatch, session_factory)
 
@@ -160,7 +160,8 @@ def test_auto_sort_still_deletes_old_throwaway_sessions(monkeypatch):
 
     db = session_factory()
     try:
-        assert db.query(DbSession).filter(DbSession.id == sid).first() is None
-        assert "Cleaned 1 sessions" in result
+        assert db.query(DbSession).filter(DbSession.id == sid).first() is not None
+        assert db.query(DbMessage).filter(DbMessage.session_id == sid).count() == 1
+        assert "Cleaned 0 sessions" in result
     finally:
         db.close()

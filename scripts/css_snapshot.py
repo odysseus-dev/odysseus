@@ -97,8 +97,8 @@ def playwright_available(node="node", cwd=ROOT):
 
 
 def capture(origin, inventory=None, *, swap_rule=None, variants=None,
-            measurement_delay_ms=0, node="node", cwd=ROOT,
-            timeout=CAPTURE_TIMEOUT_SECONDS):
+            measurement_delay_ms=0, concurrency=None, record_responses=False,
+            node="node", cwd=ROOT, timeout=CAPTURE_TIMEOUT_SECONDS):
     """Drive the browser capture and return ``{"snapshot": ..., "missing": ...}``.
 
     ``swap_rule`` swaps the first two top-level declarations of one selector
@@ -128,6 +128,10 @@ def capture(origin, inventory=None, *, swap_rule=None, variants=None,
         "swapRule": swap_rule,
         "measurementDelayMs": measurement_delay_ms,
     }
+    if concurrency is not None:
+        job["concurrency"] = concurrency
+    if record_responses:
+        job["recordResponses"] = True
     result = subprocess.run(
         [node, str(CAPTURE_SCRIPT)],
         input=json.dumps(job), cwd=str(cwd),
@@ -203,8 +207,9 @@ def serve_repository(root=ROOT):
                 return "text/css"
             return super().guess_type(path)
 
-    class Server(socketserver.TCPServer):
-        allow_reuse_address = True
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = allow_reuse_address = True
+        request_queue_size = 128
 
     server = Server(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -243,6 +248,8 @@ def main(argv=None):
                         help="swap the first two top-level declarations of SELECTOR "
                              "before capturing (harness self-test)")
     parser.add_argument("--variants", help="comma-separated variant names to restrict the run to")
+    parser.add_argument("--concurrency", type=int, default=None,
+                        help="number of concurrent browser captures (1-4, default: 2)")
     parser.add_argument("--node", default="node", help="node binary to use")
     args = parser.parse_args(argv)
 
@@ -255,7 +262,8 @@ def main(argv=None):
     if not origin:
         origin, shutdown = serve_repository()
     try:
-        captured = capture(origin, swap_rule=args.swap_rule, variants=variants, node=args.node)
+        captured = capture(origin, swap_rule=args.swap_rule, variants=variants,
+                           concurrency=args.concurrency, node=args.node)
     finally:
         if shutdown:
             shutdown()

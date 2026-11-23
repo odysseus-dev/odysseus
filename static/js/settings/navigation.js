@@ -19,6 +19,73 @@ export function activateSettingsPanel(modalEl, tab) {
   return tab;
 }
 
+export function findSettingsSectionElement(modalEl, panelId, sectionId) {
+  if (!modalEl || !panelId || !sectionId) return null;
+  const panelEl = Array.from(modalEl.querySelectorAll('[data-settings-panel]'))
+    .find(element => element.dataset.settingsPanel === panelId);
+  if (!panelEl) return null;
+  return Array.from(panelEl.querySelectorAll('[data-settings-section]'))
+    .find(element => element.dataset.settingsSection === sectionId) || null;
+}
+
+/**
+ * Whether a section card is currently presented to this user. The owning panel
+ * itself is ignored (inactive panels are always hidden); only the card and its
+ * ancestors inside the panel count.
+ */
+export function isSettingsSectionAvailable(sectionEl, options = {}) {
+  const isAdmin = options.isAdmin === true;
+  let node = sectionEl;
+  while (node && !(node.dataset && node.dataset.settingsPanel)) {
+    if (node.hidden === true) return false;
+    if (typeof node.getAttribute === 'function') {
+      if (node.getAttribute('hidden') !== null) return false;
+      if (node.getAttribute('aria-hidden') === 'true') return false;
+    }
+    if (node.style && node.style.display === 'none') return false;
+    if (!isAdmin && node.classList?.contains('admin-only')) return false;
+    node = node.parentElement;
+  }
+  return Boolean(node);
+}
+
+const SECTION_TARGET_CLASS = 'settings-section-target';
+const _targetTimers = new WeakMap();
+
+/**
+ * Scroll a section of the active panel into view and move focus to it, so a
+ * search result or deep link lands on the control the user asked for rather
+ * than on the top of the panel.
+ */
+export function revealSettingsSection(modalEl, panelId, sectionId) {
+  const sectionEl = findSettingsSectionElement(modalEl, panelId, sectionId);
+  if (!sectionEl) return false;
+
+  if (sectionEl.getAttribute('tabindex') === null) {
+    sectionEl.setAttribute('tabindex', '-1');
+  }
+
+  const reduceMotion = typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (typeof sectionEl.scrollIntoView === 'function') {
+    sectionEl.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+  }
+  if (typeof sectionEl.focus === 'function') {
+    sectionEl.focus({ preventScroll: true });
+  }
+
+  sectionEl.classList.remove(SECTION_TARGET_CLASS);
+  // Restart the highlight when the same section is revealed twice in a row.
+  void sectionEl.offsetWidth;
+  sectionEl.classList.add(SECTION_TARGET_CLASS);
+  clearTimeout(_targetTimers.get(sectionEl));
+  _targetTimers.set(sectionEl, setTimeout(() => {
+    sectionEl.classList.remove(SECTION_TARGET_CLASS);
+  }, 1800));
+  return true;
+}
+
 export function getActiveSettingsTab(modalEl, fallback = DEFAULT_SETTINGS_PANEL_ID) {
   if (!modalEl) return fallback;
   const active = modalEl.querySelector('[data-settings-tab].active');

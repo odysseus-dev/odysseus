@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from core.database import Base
 from core.database import ChatMessage as DbChatMessage
 from core.database import Session as DbSession
-from src.session_search import SessionSearchResult, search_session_messages
+from src.session_search import SessionSearchResult, _snippet, search_session_messages
 
 
 def _db(with_fts=True):
@@ -59,6 +59,47 @@ def _has_fts(db):
         .first()
         is not None
     )
+
+
+def test_snippet_locates_quoted_phrase_instead_of_raw_query():
+    content = "A" * 100 + "The session search result is useful." + "Z" * 100
+
+    snippet = _snippet(content, '"session search"', radius=20)
+
+    assert "session search" in snippet
+    assert snippet.startswith("...")
+    assert snippet.endswith("...")
+
+
+def test_snippet_locates_punctuation_bearing_term_case_insensitively():
+    content = "A" * 100 + "Use FOO_BAR.py for routing." + "Z" * 100
+
+    snippet = _snippet(content, "foo_bar.py!", radius=20)
+
+    assert "FOO_BAR.py" in snippet
+
+
+def test_snippet_uses_first_meaningful_matching_term():
+    content = "A" * 100 + "second appears here; first appears later." + "Z" * 100
+
+    snippet = _snippet(content, "first second", radius=12)
+
+    assert "second appears" in snippet
+    assert "first appears" not in snippet
+
+
+def test_snippet_falls_back_to_content_start_when_no_term_matches():
+    content = "Beginning of the transcript, followed by more detail."
+
+    assert _snippet(content, '"missing phrase"', radius=10) == content[:20]
+
+
+def test_snippet_preserves_boundary_markers_and_truncation():
+    content = "A" * 50 + "target" + "Z" * 50
+
+    snippet = _snippet(content, "target", radius=5)
+
+    assert snippet == "...AAAAAtargetZZZZZ..."
 
 
 def test_session_search_uses_fts_and_returns_context():

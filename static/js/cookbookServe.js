@@ -17,6 +17,7 @@ import {
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { normalizeCookbookModelDir } from './cookbookModelDirectories.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -76,11 +77,6 @@ function _syncServeStats() {
   if (!stats) return;
   const count = _cachedAllModels.length;
   stats.textContent = `${count} model${count === 1 ? '' : 's'}`;
-}
-
-function _normalizeCookbookModelDir(dir) {
-  const d = String(dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
-  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
 }
 
 function _serveCmdPort(cmd) {
@@ -1498,7 +1494,8 @@ function _rerenderCachedModels() {
       const _ggufOptions = _ggufChoices.map(f =>
         `<option value="${esc(f.rel_path)}"${f.rel_path === _defaultGguf ? ' selected' : ''}>${esc(_ggufFileLabel(f))}</option>`
       ).join('');
-      const _defaultServeModel = (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
+      const _minimaxM3Snapshot = '~/.cache/huggingface/hub/models--cyankiwi--MiniMax-M3-AWQ-INT4/snapshots/4082acbbec1236d21828d55b6bb0fe02ade4ab5b';
+      const _defaultServeModel = _isMiniMaxM3 ? _minimaxM3Snapshot : (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
       const _savedModelPath = String(svm('model_path', _defaultServeModel) || '').trim();
       const _modelPathValue = _savedModelPath || _defaultServeModel;
       const _defaultServedModelName = _isMiniMaxM3 ? repo : '';
@@ -4045,7 +4042,7 @@ function _retryCachedModel(repo, m) {
   const env = _target.host ? (srv.env || 'none') : (_envState.env || 'none');
   const envPath = _target.host ? (srv.envPath || '') : (_envState.envPath || '');
   const downloadDir = srv.downloadDir || (m?.is_local_dir && m?.path ? m.path : '');
-  if (downloadDir) payload.local_dir = _normalizeCookbookModelDir(downloadDir);
+  if (downloadDir) payload.local_dir = normalizeCookbookModelDir(downloadDir);
   payload.disable_hf_transfer = true;
   if (platform === 'windows') {
     if (env === 'venv' && envPath) {
@@ -4285,7 +4282,7 @@ async function _fetchCachedModelsImpl(fresh = false, opts = {}) {
     const modelDirs = [];
     if (selectedServer && Array.isArray(selectedServer.modelDirs)) {
       for (const d of selectedServer.modelDirs) {
-        const normalized = _normalizeCookbookModelDir(d);
+        const normalized = normalizeCookbookModelDir(d);
         if (normalized && normalized !== '~/.cache/huggingface/hub') modelDirs.push(normalized);
       }
     }
@@ -4298,7 +4295,7 @@ async function _fetchCachedModelsImpl(fresh = false, opts = {}) {
       const _allDirs = (Array.isArray(selectedServer.modelDirs) && selectedServer.modelDirs.length
         ? selectedServer.modelDirs
         : [selectedServer.modelDir || '~/.cache/huggingface/hub'])
-        .map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
+        .map(d => normalizeCookbookModelDir(d)).filter(Boolean);
       _dirsEl.innerHTML = _allDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('')
         + '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
       _dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {

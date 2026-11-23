@@ -123,12 +123,88 @@ def test_blocks_listing_the_data_directory_itself():
         _resolve_tool_path(DATA_DIR)
 
 
-def test_blocks_app_state_reached_by_relative_path(monkeypatch):
-    """The data directory is a relative hop from the checkout root, so
+def test_blocks_app_state_reached_by_relative_path(tmp_path, monkeypatch):
+    """The data directory is a relative hop from the agent workspace, so
     confinement cannot depend on the model supplying an absolute path."""
-    monkeypatch.chdir(os.path.dirname(DATA_DIR))
+    current_execution = importlib.import_module("src.tool_execution")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _configure_test_data_tree(monkeypatch, data_dir)["AGENT_WORKSPACE_DIR"]
+    workspace.mkdir()
+    monkeypatch.setattr(current_execution, "_AGENT_WORKDIR", str(workspace))
     with pytest.raises(ValueError, match="application state"):
-        _resolve_tool_path(os.path.join(os.path.basename(DATA_DIR), "sessions.json"))
+        current_execution._resolve_tool_path(os.path.join("..", "sessions.json"))
+
+
+def test_relative_path_resolves_in_agent_workspace_not_server_cwd(tmp_path, monkeypatch):
+    """With no workspace bound, bash runs in the agent workspace, so a
+    relative write_file/read_file path must land there too (#6679), not in
+    the server's cwd, which is outside the allowed roots."""
+    current_execution = importlib.import_module("src.tool_execution")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _configure_test_data_tree(monkeypatch, data_dir)["AGENT_WORKSPACE_DIR"]
+    workspace.mkdir()
+    monkeypatch.setattr(current_execution, "_AGENT_WORKDIR", str(workspace))
+    server_cwd = tmp_path / "checkout"
+    server_cwd.mkdir()
+    monkeypatch.chdir(server_cwd)
+    token = current_execution._active_workspace.set(None)
+    try:
+        assert current_execution._resolve_tool_path("test.txt") == os.path.join(
+            os.path.realpath(workspace), "test.txt"
+        )
+        assert current_execution._resolve_search_root("sub") == os.path.join(
+            os.path.realpath(workspace), "sub"
+        )
+    finally:
+        current_execution._active_workspace.reset(token)
+
+
+def test_request_without_workspace_seals_the_agent_workspace(tmp_path, monkeypatch):
+    """With no workspace, the native file tools get the folder bash/python
+    already run in (#6679) instead of no root at all, and a relative path
+    lands there while app state next to it stays out of reach."""
+    from src.agent_runtime.authority import ExactOperation, OperationGrant, RequestAuthority
+    from src.agent_runtime.resource_binding import resolve_filesystem_operation
+    current_execution = importlib.import_module("src.tool_execution")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _configure_test_data_tree(monkeypatch, data_dir)["AGENT_WORKSPACE_DIR"]
+    workspace.mkdir()
+    (data_dir / "sessions.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(current_execution, "_AGENT_WORKDIR", str(workspace))
+
+    authority = RequestAuthority("request", "alice", "s", "", (OperationGrant("write_file"),))
+    assert [r.path for r in authority.resource_roots] == [os.path.realpath(workspace)]
+
+    bound = resolve_filesystem_operation(
+        ExactOperation.normalize("write_file", "test.txt\nhello"), roots=authority.resource_roots)
+    assert bound.bindings[0].resource.path == os.path.join(os.path.realpath(workspace), "test.txt")
+    with pytest.raises(ValueError, match="outside the sealed roots"):
+        resolve_filesystem_operation(
+            ExactOperation.normalize("read_file", "../sessions.json"), roots=authority.resource_roots)
+
+
+def test_symlinked_agent_workspace_is_not_sealed(tmp_path, monkeypatch):
+    """A symlinked agent workspace must not become the file-tool root:
+    agent_cwd() and create_directories() refuse the same layout."""
+    from src.agent_runtime.authority import OperationGrant, RequestAuthority
+    current_execution = importlib.import_module("src.tool_execution")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _configure_test_data_tree(monkeypatch, data_dir)["AGENT_WORKSPACE_DIR"]
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "notes.txt").write_text("private", encoding="utf-8")
+    try:
+        workspace.symlink_to(elsewhere, target_is_directory=True)
+    except OSError:
+        pytest.skip("cannot create symlink")
+    monkeypatch.setattr(current_execution, "_AGENT_WORKDIR", str(workspace))
+
+    authority = RequestAuthority("request", "alice", "s", "", (OperationGrant("read_file"),))
+    assert authority.resource_roots == ()
 
 
 def test_blocks_app_state_reached_through_a_symlink(tmp_path):

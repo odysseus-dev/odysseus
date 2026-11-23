@@ -22,8 +22,10 @@ def test_live_compact_document_reference_is_rendered_as_an_interactive_tag():
 def test_clicking_document_reference_restores_the_editor_selection():
     assert "querySelectorAll('[data-doc-edit-ref]')" in RENDERER
     assert "restoreSelectionReference" in RENDERER
-    assert "export async function restoreSelectionReference" in DOCUMENT
-    assert "restoreSelectionReference," in DOCUMENT
+    restore = function_body("restoreSelectionReference")
+    assert "async function restoreSelectionReference" in restore
+    assert "_restoreSelectionReferenceFacade as restoreSelectionReference" in DOCUMENT
+    assert "restoreSelectionReference: _restoreSelectionReferenceFacade" in DOCUMENT
 
 
 def test_document_reference_looks_clickable_and_has_keyboard_focus_feedback():

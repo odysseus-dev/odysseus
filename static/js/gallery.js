@@ -2,7 +2,10 @@
  * Gallery Module — photo backup + AI-generated image library.
  */
 
+import { formatRecentAge } from './shared/domain/relativeTime.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
+import { debounceTrailing } from './shared/platform/debounce.js';
+import { downloadBlob } from './shared/platform/downloads.js';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
@@ -172,7 +175,10 @@ function _computeFetchLimit() {
   const rows = Math.ceil(gridH / ROW_H) + 2; // +2 buffer rows for scroll
   return Math.min(100, Math.max(24, cols * rows));
 }
-let _searchDebounce = null;
+const _searchDebounce = debounceTrailing((input) => {
+  _search = input.value.trim();
+  _fetchLibrary(false);
+}, 300);
 let _escHandler = null;
 let _albums = [];
 // Albums tab — search filter + multi-select state. Mirrors what the
@@ -623,13 +629,12 @@ function _ensureAlbumsToolbar(container) {
 
   // Wire search — debounced re-render, same pattern as Photos.
   const searchInput = container.querySelector('#gallery-albums-search');
-  let _albumSearchDebounce = null;
+  const albumSearchDebounce = debounceTrailing(() => {
+    _albumSearch = searchInput.value;
+    _renderAlbumsGrid();
+  }, 150);
   searchInput.addEventListener('input', () => {
-    clearTimeout(_albumSearchDebounce);
-    _albumSearchDebounce = setTimeout(() => {
-      _albumSearch = searchInput.value;
-      _renderAlbumsGrid();
-    }, 150);
+    albumSearchDebounce();
   });
 
   // Wire Select + bulk bar — Cancel restores the normal click-to-open
@@ -1228,9 +1233,8 @@ function _draftsWireOnce() {
 // Human-readable "x minutes ago" / "y days ago" for the drafts list.
 function _humanRelativeDate(when) {
   const diff = (Date.now() - when.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  const recent = formatRecentAge(diff);
+  if (recent !== null) return recent;
   if (diff < 86400 * 30) return Math.floor(diff / 86400) + 'd ago';
   return when.toLocaleDateString();
 }
@@ -1278,6 +1282,7 @@ function _renderEditorLanding() {
       <p>Start a blank canvas, or open a photo from your gallery to edit it.</p>
       <div class="gallery-editor-landing-actions">
         <button class="gallery-select-btn" id="gallery-editor-new">New canvas...</button>
+        <button class="gallery-select-btn" id="gallery-editor-import"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;margin-right:4px;"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 21h14a2 2 0 0 0 2-2v-4"/><path d="M3 15v4a2 2 0 0 0 2 2"/></svg>Import</button>
         <button class="gallery-select-btn" id="gallery-editor-pick"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;margin-right:4px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Browse gallery</button>
       </div>
       <section class="gallery-editor-template-picker" aria-labelledby="gallery-editor-template-title">
@@ -1320,13 +1325,40 @@ function _renderEditorLanding() {
     // openEditor() now returns a Promise — it's async because the size
     // prompt is a styled modal. Await it before checking whether the
     // editor actually opened (the user may have cancelled).
-    await openEditor(null, null, null, 'New canvas');
+    try {
+      await openEditor(null, null, null, 'New canvas');
+    } catch (error) {
+      // openEditor reports the initialization error and tears down its shell.
+      console.error('[gallery] New canvas failed', error);
+    }
     if (!document.querySelector('#gallery-editor-container .gallery-editor')) {
       _renderEditorLanding();
     }
   });
   document.getElementById('gallery-editor-pick')?.addEventListener('click', () => {
     document.querySelector('#gallery-modal .gallery-tab[data-tab="images"]')?.click();
+  });
+  document.getElementById('gallery-editor-import')?.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const name = (file.name || 'Imported image').replace(/\.[^.]+$/, '') || 'Imported image';
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          await openEditor(reader.result, null, null, name);
+        } catch (e) {
+          console.error('[gallery] image import failed', e);
+          uiModule?.showError?.('Could not import that image');
+        }
+      };
+      reader.onerror = () => uiModule?.showError?.('Could not read that file');
+      reader.readAsDataURL(file);
+    });
+    input.click();
   });
 }
 
@@ -1350,6 +1382,11 @@ function _wireUploadTile() {
       if (files.length) _bulkUpload(files, _activeAlbum);
     });
     input.click();
+  });
+  tile.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    tile.click();
   });
 }
 
@@ -1464,6 +1501,14 @@ function _renderGrid() {
       const img = _items.find(i => i.id === card.dataset.id);
       if (img) _openDetail(img);
     });
+    card.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      e.preventDefault();
+      const selectBtn = document.getElementById('gallery-select-btn');
+      if (selectBtn && selectBtn.classList.contains('active')) return;
+      const img = _items.find(i => i.id === card.dataset.id);
+      if (img) _openDetail(img);
+    });
   });
 
   // Download buttons
@@ -1475,14 +1520,7 @@ function _renderGrid() {
       try {
         const res = await fetch(url, { credentials: 'same-origin' });
         const blob = await res.blob();
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+        downloadBlob(blob, filename, 1000);
       } catch (_) {
         const a = document.createElement('a');
         a.href = url;
@@ -1884,14 +1922,7 @@ function _openDetail(img) {
     try {
       const res = await fetch(img.url, { credentials: 'same-origin' });
       const blob = await res.blob();
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = img.filename || `image-${img.id}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+      downloadBlob(blob, img.filename || `image-${img.id}.png`, 1000);
     } catch (e) {
       // Fallback: direct link
       const a = document.createElement('a');
@@ -2193,6 +2224,41 @@ function _makeGalleryDraggable(content) {
 // Re-export the manager for the rail click handler
 import * as Modals from './modalManager.js';
 
+// Module-owned listeners resolve the current picker; closed modals are never retained.
+window.addEventListener('ge-ai-command-model-change', (e) => {
+  let val = (e && e.detail && typeof e.detail.value === 'string') ? e.detail.value : '';
+  const imageModelSelect = document.getElementById('gallery-image-model');
+  if (imageModelSelect && imageModelSelect._modelsReady) {
+    if (val && ![...imageModelSelect.options].some(o => o.value === val)) {
+      if (localStorage.getItem('ge-ai-command-model') === val) localStorage.removeItem('ge-ai-command-model');
+      val = '';
+    }
+    if (imageModelSelect.value !== val) {
+      imageModelSelect.value = val;
+      if (imageModelSelect.value !== val) imageModelSelect.value = '';
+    }
+  }
+  try {
+    if (val) localStorage.setItem('ge-ai-command-model', val);
+    else localStorage.removeItem('ge-ai-command-model');
+  } catch (_) {}
+});
+window.addEventListener('storage', (e) => {
+  const imageModelSelect = document.getElementById('gallery-image-model');
+  if (e && e.key === 'ge-ai-command-model' && imageModelSelect?._modelsReady) {
+    let val = e.newValue || '';
+    if (val && ![...imageModelSelect.options].some(o => o.value === val)) {
+      if (localStorage.getItem('ge-ai-command-model') === val) localStorage.removeItem('ge-ai-command-model');
+      val = '';
+    }
+    if (imageModelSelect.value !== val) {
+      imageModelSelect.value = val;
+      if (imageModelSelect.value !== val) imageModelSelect.value = '';
+    }
+  }
+});
+
+
 export function openGallery() {
   // If already minimized — restore in place, preserve all state
   if (Modals.isRegistered('gallery-modal') && Modals.isMinimized('gallery-modal')) {
@@ -2251,6 +2317,7 @@ export function openGallery() {
           <span class="gallery-tab-label">Edit</span>
           <span class="gallery-tab-close" id="gallery-editor-tab-close" title="Close edit" aria-label="Close edit">×</span>
         </button>
+        <span class="gallery-editor-tabs-extra" id="gallery-editor-tabs-extra"></span>
         <button class="gallery-tab" data-tab="settings">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
           <span class="gallery-tab-label">Settings</span>
@@ -2318,6 +2385,13 @@ export function openGallery() {
               </button>
             </div>
           </div>
+          <div class="admin-card">
+            <h2>Image model</h2>
+            <p class="memory-desc doclib-desc">Model used for AI edits and generated content in the editor (Quick Edit). Shared with the Quick Edit model picker.</p>
+            <select id="gallery-image-model" style="margin-top:8px;width:100%;">
+              <option value="">Loading…</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>
@@ -2358,6 +2432,9 @@ export function openGallery() {
   if (editorTabClose) {
     editorTabClose.addEventListener('click', async (e) => {
       e.stopPropagation();
+      // With several document tabs open the × closes only the active one and
+      // switches to its neighbour; the editor itself stays open.
+      if (window.geEditorCloseActiveDocument?.()) return;
       if (isEditorOpen()) {
         const ok = await uiModule.styledConfirm(
           'Close the edit? Any unsaved changes will be lost.',
@@ -2440,11 +2517,7 @@ export function openGallery() {
 
   const searchInput = document.getElementById('gallery-search');
   searchInput.addEventListener('input', () => {
-    clearTimeout(_searchDebounce);
-    _searchDebounce = setTimeout(() => {
-      _search = searchInput.value.trim();
-      _fetchLibrary(false);
-    }, 300);
+    _searchDebounce(searchInput);
   });
   // Pressing Enter in the search box converts the current query into a
   // stacked tag-filter pill (strips a leading "#"), clears the box, and
@@ -2468,7 +2541,7 @@ export function openGallery() {
     }
     searchInput.value = '';
     _search = '';
-    clearTimeout(_searchDebounce);
+    _searchDebounce.cancel();
     _fetchLibrary(false);
     _renderAlbums();
   });
@@ -2557,6 +2630,71 @@ export function openGallery() {
       }).catch(() => {});
     });
   }
+
+  // ── Image model (Settings tab) ──
+  // Mirror of the Quick Edit picker: same source (GET /api/editor/image-models)
+  // and the SAME localStorage key `ge-ai-command-model` (value `<endpoint_id>::<id>`)
+  // so the two stay in sync.
+  const _GE_MODEL_KEY = 'ge-ai-command-model';
+  const imageModelSelect = document.getElementById('gallery-image-model');
+  if (imageModelSelect) {
+    const _fillImageModels = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/editor/image-models`, { credentials: 'same-origin' });
+        const data = r.ok ? await r.json() : null;
+        const models = (data && Array.isArray(data.models)) ? data.models : [];
+        const rawSaved = localStorage.getItem(_GE_MODEL_KEY) || '';
+        let saved = rawSaved;
+        imageModelSelect.innerHTML = '';
+        const def = document.createElement('option');
+        def.value = '';
+        def.textContent = 'Default (configured provider)';
+        imageModelSelect.appendChild(def);
+        for (const m of models) {
+          const opt = document.createElement('option');
+          const endpointKey = m.endpoint_id ? String(m.endpoint_id) : (m.source === 'local' ? 'local' : '');
+          opt.value = endpointKey ? `${endpointKey}::${m.id}` : m.id;
+          opt.textContent = `${m.id} · ${m.provider || ''} (${m.kind || 'edit'})`.trim();
+          imageModelSelect.appendChild(opt);
+        }
+        imageModelSelect._modelsReady = true;
+        // Invalidate or migrate legacy localStorage values containing URLs or leading ::
+        if (saved.startsWith('http://') || saved.startsWith('https://') || saved.includes('://') || saved.startsWith('::')) {
+          const modelPart = saved.includes('::') ? saved.split('::').pop() : '';
+          const matching = models.filter(m => m.id === modelPart);
+          if (matching.length === 1) {
+            const epKey = matching[0].endpoint_id ? String(matching[0].endpoint_id) : (matching[0].source === 'local' ? 'local' : '');
+            saved = epKey ? `${epKey}::${matching[0].id}` : matching[0].id;
+          } else {
+            saved = '';
+          }
+          try {
+            if (saved) localStorage.setItem(_GE_MODEL_KEY, saved);
+            else localStorage.removeItem(_GE_MODEL_KEY);
+          } catch (_) {}
+        }
+        imageModelSelect.value = saved;
+        if (imageModelSelect.value !== saved) imageModelSelect.value = '';
+        if (imageModelSelect.value !== rawSaved) {
+          if (imageModelSelect.value) localStorage.setItem(_GE_MODEL_KEY, imageModelSelect.value);
+          else localStorage.removeItem(_GE_MODEL_KEY);
+          window.dispatchEvent(new CustomEvent('ge-ai-command-model-change', { detail: { value: imageModelSelect.value } }));
+        }
+      } catch (e) {
+        imageModelSelect.innerHTML = '<option value="">Default (configured provider)</option>';
+      }
+    };
+    imageModelSelect.addEventListener('change', () => {
+      const val = imageModelSelect.value || '';
+      try {
+        if (val) localStorage.setItem(_GE_MODEL_KEY, val);
+        else localStorage.removeItem(_GE_MODEL_KEY);
+      } catch (e) {}
+      window.dispatchEvent(new CustomEvent('ge-ai-command-model-change', { detail: { value: val } }));
+    });
+    _fillImageModels();
+  }
+
 
   // ── Tag All Untagged ──
   let _tagCancelRequested = false;
@@ -2954,14 +3092,7 @@ export function openGallery() {
         });
         if (!res.ok) throw new Error('zip failed');
         const blob = await res.blob();
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = 'gallery-photos.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(objUrl), 2000);
+        downloadBlob(blob, 'gallery-photos.zip', 2000);
         _exitSelectMode();
         if (uiModule) uiModule.showToast(`Downloaded ${ids.length} photos (zip)`);
       } catch (e) {
@@ -2977,14 +3108,7 @@ export function openGallery() {
       try {
         const res = await fetch(it.url, { credentials: 'same-origin' });
         const blob = await res.blob();
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = it.filename || `image-${it.id}.png`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+        downloadBlob(blob, it.filename || `image-${it.id}.png`, 1000);
         n++;
         // Stagger so the browser doesn't drop simultaneous downloads.
         await new Promise(r => setTimeout(r, 250));
@@ -3181,7 +3305,7 @@ function _doCloseGallery() {
     return;
   }
   _open = false;
-  clearTimeout(_searchDebounce);
+  _searchDebounce.cancel();
   if (_galleryResizeHandler) {
     window.removeEventListener('resize', _galleryResizeHandler);
     _galleryResizeHandler = null;

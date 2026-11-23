@@ -20,8 +20,8 @@ from src.task_action_policy import (
     is_admin_only_task_action,
     owner_has_admin_task_privileges,
 )
-from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
-from routes.prefs_routes import _load_for_user, _save_for_user
+from src.task_scheduler import compute_next_run, is_valid_cron, HOUSEKEEPING_DEFAULTS
+from routes.prefs_routes import _load_for_user, _update_off_loop
 
 logger = logging.getLogger(__name__)
 
@@ -289,15 +289,15 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
 
     try:
         from core.database import ModelEndpoint
-        eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        from src.auth_helpers import owner_filter
+        from src.endpoint_resolver import _endpoint_enabled_models
+
+        eps = owner_filter(
+            db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True),
+            ModelEndpoint, getattr(task, "owner", None),
+        ).all()
         for ep in eps:
-            cached = []
-            if ep.cached_models:
-                try:
-                    cached = json.loads(ep.cached_models) or []
-                except Exception:
-                    cached = []
-            if model in cached:
+            if model in _endpoint_enabled_models(ep):
                 return ep.base_url or ""
     except Exception:
         pass
@@ -340,6 +340,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 max_tokens=20,
                 headers=headers,
                 timeout=15,
+                thinking_mode="off",
             )
             title = result.strip().strip('"\'').strip()
             return title[:60] if title else prompt[:50].strip()
@@ -391,12 +392,14 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     @router.post("/onboarding")
     async def update_tasks_onboarding(request: Request, body: dict):
         user = _owner(request)
-        prefs = _load_for_user(user) or {}
-        prefs["tasks_opened"] = True
         enable = bool(body.get("enabled"))
+        # Onboarding owns only these keys. Writing them as a locked partial
+        # update keeps a concurrent Settings save from being overwritten by
+        # a stale copy of the whole record.
+        onboarding_updates = {"tasks_opened": True}
         if enable:
-            prefs["tasks_enabled"] = True
-        _save_for_user(user, prefs)
+            onboarding_updates["tasks_enabled"] = True
+        prefs = await _update_off_loop(user, onboarding_updates)
         if user:
             await task_scheduler.ensure_defaults(user)
 
@@ -475,10 +478,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         if req.trigger_type == "schedule" and req.schedule == "cron" and not req.cron_expression:
             raise HTTPException(400, "Cron expression is required for cron schedule")
         if req.trigger_type == "schedule" and req.schedule == "cron" and req.cron_expression:
-            try:
-                from croniter import croniter
-                croniter(req.cron_expression)
-            except Exception:
+            if not is_valid_cron(req.cron_expression):
                 raise HTTPException(400, "Invalid cron expression")
         if req.trigger_type == "event" and not req.trigger_event:
             raise HTTPException(400, "Event name is required for event-triggered tasks")
@@ -788,10 +788,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.character_id = req.character_id or None
             if req.cron_expression is not None:
                 if req.cron_expression:
-                    try:
-                        from croniter import croniter
-                        croniter(req.cron_expression)
-                    except Exception:
+                    if not is_valid_cron(req.cron_expression):
                         raise HTTPException(400, "Invalid cron expression")
                 task.cron_expression = req.cron_expression or None
 

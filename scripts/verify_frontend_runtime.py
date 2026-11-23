@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify the current Python runtime from an isolated distribution without frontend tooling."""
 import os
+import json
 from pathlib import Path
 import shutil
 import socket
@@ -13,12 +14,20 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = """
 from pathlib import Path
 import shutil
+import json
+import sys
 from starlette.testclient import TestClient
 from app import app
 assert not Path('frontend').exists()
 assert not Path('node_modules').exists()
 assert shutil.which('node') is None
 with TestClient(app) as client:
+    for output in json.loads(sys.argv[1]):
+        asset = client.get('/static/' + output)
+        assert asset.status_code == 200, (output, asset.status_code)
+        assert asset.content == Path('static', output).read_bytes(), output
+        assert asset.headers['content-type'].startswith('text/javascript'), output
+        assert asset.headers['cache-control'] == 'no-cache', output
     response = client.get('/static/js/actionMenuOrder.js')
     assert response.status_code == 200, response.status_code
     assert response.content == Path('static/js/actionMenuOrder.js').read_bytes()
@@ -58,7 +67,10 @@ def main() -> int:
         )
         # A caller's Python search path must not import the original checkout.
         env.pop("PYTHONPATH", None)
-        result = subprocess.run([sys.executable, "-c", PROBE], cwd=target, env=env, capture_output=True, text=True, timeout=60)
+        outputs = [entry['deployment'] for entry in json.loads(
+            (ROOT / 'frontend/modules.json').read_text(encoding='utf-8')
+        )['modules']]
+        result = subprocess.run([sys.executable, "-c", PROBE, json.dumps(outputs)], cwd=target, env=env, capture_output=True, text=True, timeout=60)
         print(result.stdout, end="")
         if result.returncode:
             print(result.stderr[-8000:], file=sys.stderr)

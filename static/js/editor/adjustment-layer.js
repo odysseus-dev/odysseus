@@ -2,10 +2,12 @@
 import { applyAdjustment } from './fx/pixel-pass.js';
 import { defaultAdjParams } from './layer-helpers.js';
 import { renderWithLayerMasks } from './composite-helpers.js';
+import { blendDraw } from './blend-modes.js';
 
 const TYPES = new Set([
   'brightness-contrast',
   'exposure',
+  'develop',
   'white-balance',
   'hue-saturation',
   'vibrance',
@@ -16,6 +18,12 @@ const TYPES = new Set([
   'color-balance',
   'selective-color',
   'gradient-map',
+  'invert',
+  'posterize',
+  'threshold',
+  'photo-filter',
+  'channel-mixer',
+  'color-lookup',
 ]);
 
 function clone(value) {
@@ -50,6 +58,11 @@ export function normalizeAdjustmentData(value) {
     };
     for (const name of Object.keys(defaults.ranges)) {
       params.ranges[name] = { ...clone(defaults.ranges[name]), ...(params.ranges[name] || {}) };
+    }
+  }
+  if (type === 'channel-mixer') {
+    for (const name of ['red', 'green', 'blue', 'constant']) {
+      params[name] = { ...clone(defaults[name]), ...(params[name] || {}) };
     }
   }
   return { type, params };
@@ -109,11 +122,8 @@ export function drawAdjustmentLayer(target, editorState, layer, clippingBase, re
     adjusted = clipped;
   }
 
-  target.globalAlpha = Number.isFinite(layer.opacity) ? layer.opacity : 1;
-  target.globalCompositeOperation = layer.blendMode || 'source-over';
-  target.drawImage(adjusted, 0, 0);
-  target.globalAlpha = 1;
-  target.globalCompositeOperation = 'source-over';
+  const opacity = Number.isFinite(layer.opacity) ? layer.opacity : 1;
+  blendDraw(target, adjusted, layer.blendMode, opacity, 0, 0);
   return true;
 }
 
@@ -154,11 +164,8 @@ export async function drawAdjustmentLayerAsync(target, editorState, layer, clipp
     clippedCtx.globalCompositeOperation = 'source-over';
     adjusted = clipped;
   }
-  target.globalAlpha = Number.isFinite(layer.opacity) ? layer.opacity : 1;
-  target.globalCompositeOperation = layer.blendMode || 'source-over';
-  target.drawImage(adjusted, 0, 0);
-  target.globalAlpha = 1;
-  target.globalCompositeOperation = 'source-over';
+  const opacity = Number.isFinite(layer.opacity) ? layer.opacity : 1;
+  blendDraw(target, adjusted, layer.blendMode, opacity, 0, 0);
   return true;
 }
 

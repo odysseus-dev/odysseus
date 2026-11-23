@@ -57,6 +57,10 @@ _SHARED_ADDRESS_SPACE_V4 = ipaddress.ip_network("100.64.0.0/10")
 # membership test excludes and which stays rejected as reserved.
 _NAT64_WELL_KNOWN_PREFIX_V6 = ipaddress.ip_network("64:ff9b::/96")
 
+_LOCALHOST_NAMES = frozenset({"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"})
+# Alibaba's metadata endpoint is shared address space, not link-local.
+_METADATA_IPS = {ipaddress.ip_address("100.100.100.200")}
+
 
 def _nat64_well_known_embedded_ipv4(
     ip: ipaddress._BaseAddress,
@@ -92,6 +96,8 @@ def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[st
             if reason:
                 return f"NAT64 translated destination blocked: {reason}"
             return None
+    if ip in _METADATA_IPS:
+        return f"metadata endpoint blocked: {ip}"
     if ip.is_link_local:
         return f"link-local address blocked (SSRF metadata risk): {ip}"
     # IPv6 loopback is also reserved; its policy must match IPv4 loopback.
@@ -161,6 +167,58 @@ def check_outbound_url(
 
 
 
+def check_outbound_host(
+    host: str,
+    *,
+    block_private: bool = False,
+    resolver: Optional[Callable[[str], List[str]]] = None,
+) -> Tuple[bool, str]:
+    """Validate a bare mail hostname/IP, rejecting unresolved destinations.
+
+    Saving an unresolvable hostname is unsafe: another consumer of the stored
+    configuration may later connect after its DNS records change. Live mail
+    connections separately pin their sockets with connect_outbound_tcp.
+    """
+    if not isinstance(host, str):
+        return False, "host must be a string"
+    host = host.strip()
+    if not host:
+        return False, "host is required"
+    if any(ch.isspace() for ch in host) or any(ch in host for ch in "/\\@?#"):
+        return False, "host must be a bare hostname or IP address"
+    literal = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    try:
+        ip = ipaddress.ip_address(literal.split("%")[0])
+    except ValueError:
+        if ":" in literal:
+            return False, "host must be a bare hostname or IP address"
+    else:
+        reason = _classify(ip, block_private=block_private)
+        return (False, reason) if reason else (True, "ok")
+    name = host.lower().rstrip(".")
+    if name in _LOCALHOST_NAMES or name.endswith(".localhost"):
+        if block_private:
+            return False, f"private/shared/loopback address blocked: {host}"
+        return True, "ok"
+    try:
+        ips = (resolver or _default_resolver)(host)
+        if not ips:
+            return False, "host does not resolve to an IP"
+        saw_ip = False
+        for raw in ips:
+            # Malformed answers fail closed, including mixed valid/invalid ones.
+            ip = ipaddress.ip_address(raw.split("%")[0])
+            saw_ip = True
+            reason = _classify(ip, block_private=block_private)
+            if reason:
+                return False, reason
+    except Exception as exc:
+        return False, f"host does not resolve to valid IP addresses: {exc}"
+    if not saw_ip:
+        return False, "host does not resolve to an IP"
+    return True, "ok"
+
+
 class OutboundAddressBlocked(PermissionError):
     """A non-HTTP outbound host resolves into a disallowed address range."""
 
@@ -183,7 +241,15 @@ def connect_outbound_tcp(
     a rebinding name pass the check with a public answer and then connect to
     metadata/private space. TLS callers keep wrapping the returned socket with
     ``server_hostname=host``, so SNI and certificate checks are unchanged.
+
+    An injected resolver must implement socket.getaddrinfo's argument and
+    result contract. Resolver errors propagate without an unvetted retry.
     """
+    if isinstance(port, bool) or not isinstance(port, (int, str)):
+        raise ValueError("port must be an integer between 1 and 65535")
+    port = int(port)
+    if not 1 <= port <= 65535:
+        raise ValueError("port must be an integer between 1 and 65535")
     resolve = resolver or socket.getaddrinfo
     infos = resolve(host, port, 0, socket.SOCK_STREAM)
     for _family, _type, _proto, _canon, sockaddr in infos:

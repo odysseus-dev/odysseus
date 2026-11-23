@@ -20,7 +20,6 @@ function _loadDismissed() {
 function _saveDismissed(set) {
   try { localStorage.setItem(_DISMISSED_KEY, JSON.stringify([...set])); } catch {}
 }
-function _isDismissed(id) { return _loadDismissed().has(id); }
 function _markDismissed(ids) {
   const set = _loadDismissed();
   for (const id of ids) set.add(id);
@@ -80,7 +79,10 @@ export function init(apiBase) {
   // sidebar — _reconnectActive only ran once at load before, so
   // agent-started jobs never appeared until a page reload.
   if (_activePollInterval) clearInterval(_activePollInterval);
-  _activePollInterval = setInterval(() => { _reconnectActive(); }, 20000);
+  _activePollInterval = setInterval(() => {
+    if (document.hidden) return;
+    _reconnectActive();
+  }, 60000);
 }
 
 // Allow an immediate adopt when the chat stream signals a new research

@@ -8,7 +8,10 @@ import themeModule from './theme.js?v=20260911organsrain1';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
-import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import { nextToolWindowZ, topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
+import { escapeHtmlString } from './shared/domain/html.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
+import { debounceTrailing } from './shared/platform/debounce.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -31,9 +34,43 @@ function _targetEl(target) {
   return target && target.nodeType === 1 ? target : target?.parentElement || null;
 }
 
+function _editorPanelVisible() {
+  if (!document.body || !document.body.classList.contains('ge-editor-open')) return false;
+  const sel = '.ge-adj-popup, .ge-fx-popup, .ge-fx-menu, .ge-transform-popup, .ge-filter-overlay, .ge-history-panel';
+  return [...document.querySelectorAll(sel)].some((candidate) => {
+    if (!document.contains(candidate)) return false;
+    const style = getComputedStyle(candidate);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = candidate.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+}
+
 function _positionToastForOpenPanel(el) {
   if (!el) return;
+  // The Free Transform hint is pinned by CSS to one fixed spot under the
+  // canvas; letting the panel rules move it made it hop between the top-right
+  // corner and the bottom banner depending on which panel happened to be open.
+  if (el.classList.contains('toast-transform-hint')) {
+    el.classList.remove('toast-editor-bottom', 'toast-panel-offset');
+    el.style.left = '';
+    el.style.right = '';
+    el.style.maxWidth = '';
+    return;
+  }
   const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  el.classList.remove('toast-editor-bottom');
+  // In the editor, a floating panel (Adjust/Develop, FX, Transform, filter
+  // modal, History) is anchored to the top/right; drop the toast to the
+  // bottom-centre so it can never cover a control (EVAL: "never over an
+  // active panel"). On phones the CSS already anchors it at the bottom.
+  if (_editorPanelVisible()) {
+    el.style.left = '';
+    el.style.right = '';
+    el.style.maxWidth = '';
+    el.classList.add('toast-editor-bottom');
+    return;
+  }
   const panel = [...document.querySelectorAll('.notes-pane')]
     .filter((candidate) => {
       if (!document.contains(candidate)) return false;
@@ -131,13 +168,6 @@ function _windowAtPointer() {
   });
 }
 
-function _containsPointer(el) {
-  if (!el || _lastPointerClientX == null || _lastPointerClientY == null) return false;
-  const r = el.getBoundingClientRect();
-  return _lastPointerClientX >= r.left && _lastPointerClientX <= r.right
-    && _lastPointerClientY >= r.top && _lastPointerClientY <= r.bottom;
-}
-
 function _closeHoveredWindow() {
   let win = _windowAtPointer();
   if (!win) {
@@ -174,7 +204,9 @@ function _closeHoveredWindow() {
 function _spaceIsBlocked(e, surface) {
   const target = _targetEl(e.target);
   if (!target) return false;
-  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  // Space must always type in a field, even when that field lives in a fixed
+  // overlay outside the hovered surface (e.g. the editor's on-canvas text box).
+  if (_isTextEditingTarget(target)) return true;
   const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
   return !!(blocked && (!surface || surface.contains(blocked)));
 }
@@ -221,6 +253,10 @@ function _initHoverCardSpaceToggle() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
+    // The image editor owns Space (hold to pan, otherwise text fields type a
+    // space). A card/window toggle must never fire while it is open, or the
+    // hovered gallery card can click itself closed underneath the editor.
+    if (document.body?.classList.contains('ge-editor-open')) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
       if (_spaceIsBlocked(e, hoveredToggleCard)) return;
       e.preventDefault();
@@ -238,6 +274,9 @@ function _initHoverCardSpaceToggle() {
     }
     const id = _spaceWindowId(hoveredToggleWindow);
     if (!id) return;
+    // A window that is read or edited in place (a note) counts as in use
+    // while it is open, even when nothing in it has focus.
+    if (hoveredToggleWindow.closest?.('[data-space-minimize="off"]')) return;
     if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
     e.preventDefault();
     Modals.minimize(id);
@@ -255,13 +294,10 @@ export async function copyToClipboard(text) {
     showToast('Copied');
   }
   catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
+    withClipboardTextarea(text, 'position:fixed;left:-9999px;top:-9999px;opacity:0', field => {
+      field.select();
+      document.execCommand('copy');
+    });
     showToast('Copied');
   }
 }
@@ -342,7 +378,7 @@ export function showToast(msg, durationOrOpts) {
   _wireToastSwipe(toastEl);
   toastEl.textContent = '';
   toastEl.classList.remove('error');
-  toastEl.classList.remove('toast-ai-reply-progress', 'toast-ai-reply-result', 'toast-sending', 'toast-message-sent');
+  toastEl.classList.remove('toast-ai-reply-progress', 'toast-ai-reply-result', 'toast-sending', 'toast-message-sent', 'toast-transform-hint');
 
   let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null, toastClass = null, aiReplyProgress = false, aiReplyResult = false;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
@@ -357,6 +393,14 @@ export function showToast(msg, durationOrOpts) {
     aiReplyResult = !!durationOrOpts.aiReplyResult;
   } else if (typeof durationOrOpts === 'number') {
     duration = durationOrOpts;
+  }
+  // While the editor is open, cap every toast so it auto-dismisses within
+  // ~2.5s and can never linger over the canvas or a panel (EVAL: "auto-dismiss
+  // in 2.5s"). Longer informational durations (persist warnings etc.) are
+  // still readable but do not pile up.
+  if (typeof document !== 'undefined' && document.body
+      && document.body.classList.contains('ge-editor-open')) {
+    duration = Math.min(duration, 2500);
   }
   if (aiReplyProgress) toastEl.classList.add('toast-ai-reply-progress');
   if (aiReplyResult) toastEl.classList.add('toast-ai-reply-result');
@@ -473,6 +517,7 @@ export function showError(msg) {
   _wireToastSwipe(toastEl);
   toastEl.textContent = '';
   toastEl.classList.add('error');
+  toastEl.classList.remove('toast-transform-hint');
   toastEl.style.pointerEvents = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
@@ -669,15 +714,7 @@ export function autoResize(textarea) {
  * Debounce function for performance
  */
 export function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    const later = () => {
-      timeout = null;
-      func.apply(this, args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
+  return debounceTrailing(func, wait);
 }
 
 /**
@@ -727,14 +764,16 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
 
     if (titleEl) titleEl.textContent = title || 'Confirm';
     msgEl.textContent = message;
+    // Labels sit in spans so CSS can nudge the text without moving the button.
+    const btnLabel = (text) => Object.assign(document.createElement('span'), { className: 'styled-confirm-btn-label', textContent: text });
     // Use the affirmative label consistently for generic confirmations.
-    okBtn.textContent = confirmText === 'OK' ? 'Yes' : confirmText;
+    okBtn.replaceChildren(btnLabel(confirmText === 'OK' ? 'Yes' : confirmText));
     cancelBtn.textContent = '';
     const cancelLabel = document.createElement('span');
     cancelLabel.className = 'styled-confirm-cancel-label';
     cancelLabel.textContent = cancelText;
     cancelBtn.appendChild(cancelLabel);
-    altBtn.textContent = alternateText || '';
+    altBtn.replaceChildren(btnLabel(alternateText || ''));
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
     altBtn.className = 'confirm-btn confirm-btn-secondary';
@@ -744,10 +783,12 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
+    overlay.style.zIndex = String(topPortalZ() + 1000);
 
     function cleanup(result) {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
+      overlay.style.zIndex = '';
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       altBtn.removeEventListener('click', onAlt);
@@ -898,15 +939,9 @@ export function styledPrompt(message, {
   });
 }
 
-// Lookup table for esc(); hoisted out of the replace callback so it is
-// allocated once rather than per matched character.
-const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-/**
- * HTML-escape a string to prevent XSS.
- * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
- */
+/** HTML-escape a string for legacy UI consumers. */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
+  return escapeHtmlString(s || '');
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──
@@ -1299,6 +1334,9 @@ if ('ontouchstart' in window || window.innerWidth <= 768) {
     const isText = tag === 'INPUT' || tag === 'TEXTAREA' ||
                    (tag === 'DIV' && el.isContentEditable);
     if (!isText) return;
+    // A window that keeps its own fields in view while the keyboard is up
+    // opts out: centring a tall editor, or a title near the top, pans the page.
+    if (el.closest('[data-keyboard-scroll="off"]')) return;
     // Inputs of type button/checkbox/radio/range/etc. don't summon a keyboard
     if (tag === 'INPUT') {
       const t = (el.type || 'text').toLowerCase();

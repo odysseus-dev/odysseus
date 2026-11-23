@@ -83,6 +83,7 @@ def _auth_regressions_stubs(monkeypatch):
         build_chat_url=MagicMock(),
         build_models_url=MagicMock(),
         build_headers=MagicMock(),
+        resolve_owner_registered_endpoint_url=MagicMock(),
     )
     # _ensure_stub now registers each stub through monkeypatch itself, so the
     # whole set is undone at teardown. Re-setting them here would capture the
@@ -233,9 +234,10 @@ def test_research_status_rejects_wrong_owner():
     rh.get_status.return_value = {"status": "running", "progress": {}}
     router = setup_research_routes(rh)
     target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/status/{session_id}")
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(target(session_id="x", request=_fake_request(user="bob")))
-    assert exc.value.status_code == 404
+    # Another owner's research is indistinguishable from no research at all.
+    out = asyncio.run(target(session_id="x", request=_fake_request(user="bob")))
+    assert out == {"status": "none"}
+    rh.get_status.assert_not_called()
 
 
 def test_research_cancel_rejects_anonymous():

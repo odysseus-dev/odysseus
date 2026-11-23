@@ -14,6 +14,9 @@
  *   { type: 'curves',              params: { points: {rgb, red, green, blue} } }
  *   { type: 'color-balance',       params: { shadows, midtones, highlights } }
  */
+import { developImageData } from './develop.js';
+import { applyCubeLut } from './cube-lut.js';
+
 function clampByte(value) {
   return value < 0 ? 0 : value > 255 ? 255 : Math.round(value);
 }
@@ -136,6 +139,12 @@ export function applyAdjustment(srcCanvas, adj) {
   const img = octx.getImageData(0, 0, w, h);
   const d = img.data;
 
+  if (adj.type === 'develop') {
+    const p = adj.params || {};
+    developImageData(d, w, h, p);
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
   if (adj.type === 'exposure') {
     const p = adj.params || {};
     const multiplier = Math.pow(2, finiteOr(p.exposure, 0));
@@ -182,13 +191,20 @@ export function applyAdjustment(srcCanvas, adj) {
 
   if (adj.type === 'vibrance') {
     const amount = Math.max(-1, Math.min(1, finiteOr(adj.params?.vibrance, 0) / 100));
+    // Scale chroma around luminance by a factor that leans on low-saturation
+    // pixels. Doing it directly in RGB (no HSL round-trip) keeps near-gray
+    // pixels near-gray instead of pinning them to an absolute saturation floor,
+    // which previously turned faint hue noise (e.g. lifted shadow haze) into
+    // false-colour banding.
     for (let i = 0; i < d.length; i += 4) {
-      const [hue, saturation, lightness] = rgbToHsl(d[i], d[i + 1], d[i + 2]);
-      const adjustedSaturation = amount >= 0
-        ? saturation + (1 - saturation) * amount
-        : saturation * (1 + amount);
-      const rgb = hslToRgb(hue, Math.max(0, Math.min(1, adjustedSaturation)), lightness);
-      d[i] = clampByte(rgb[0]); d[i + 1] = clampByte(rgb[1]); d[i + 2] = clampByte(rgb[2]);
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const avg = (r + g + b) / 3;
+      const sat = max <= 0 ? 0 : (max - min) / max;
+      const factor = 1 + (1 - sat) * amount;
+      d[i] = clampByte(avg + (r - avg) * factor);
+      d[i + 1] = clampByte(avg + (g - avg) * factor);
+      d[i + 2] = clampByte(avg + (b - avg) * factor);
     }
     octx.putImageData(img, 0, 0);
     return out;
@@ -213,16 +229,23 @@ export function applyAdjustment(srcCanvas, adj) {
   if (adj.type === 'shadows-highlights') {
     const shadows = Math.max(-1, Math.min(1, finiteOr(adj.params?.shadows, 0) / 100));
     const highlights = Math.max(-1, Math.min(1, finiteOr(adj.params?.highlights, 0) / 100));
-    const toneAdjust = (value, amount, weight) => amount >= 0
-      ? value + (255 - value) * amount * weight
-      : value + value * amount * weight;
+    // Endpoint-preserving tonal lift. A linear "add toward white" lift turns
+    // every near-black pixel grey (flattening the whole image under a veil);
+    // instead scale luminance with a gamma curve so 0 stays 0 and 255 stays 255
+    // while shadows/midtones open up. Colour is preserved via the luminance ratio.
     for (let i = 0; i < d.length; i += 4) {
-      const luminance = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
-      const shadowWeight = (1 - luminance) ** 2;
-      const highlightWeight = luminance ** 2;
-      d[i] = clampByte(toneAdjust(toneAdjust(d[i], shadows, shadowWeight), highlights, highlightWeight));
-      d[i + 1] = clampByte(toneAdjust(toneAdjust(d[i + 1], shadows, shadowWeight), highlights, highlightWeight));
-      d[i + 2] = clampByte(toneAdjust(toneAdjust(d[i + 2], shadows, shadowWeight), highlights, highlightWeight));
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      if (luminance <= 1 / 255) continue;
+      const shadowWeight = (1 - luminance) * (1 - luminance);
+      const highlightWeight = luminance * luminance;
+      let exponent = 1;
+      if (shadows) exponent /= (1 + shadows * shadowWeight * 0.85);
+      if (highlights) exponent /= (1 + highlights * highlightWeight * 0.85);
+      const ratio = Math.pow(luminance, exponent - 1);
+      d[i] = clampByte(r * ratio);
+      d[i + 1] = clampByte(g * ratio);
+      d[i + 2] = clampByte(b * ratio);
     }
     octx.putImageData(img, 0, 0);
     return out;
@@ -261,7 +284,17 @@ export function applyAdjustment(srcCanvas, adj) {
   if (adj.type === 'color-balance') {
     const cb = adj.params;
     const scale = 0.6;
-    const s = cb.shadows, m = cb.midtones, hi = cb.highlights;
+    // Be robust to malformed planner params: a tone may arrive as a bare
+    // number instead of {r,g,b}, which would otherwise produce NaN pixels
+    // (a blank white canvas). Coerce every tone to finite {r,g,b}.
+    const toTone = (v) => {
+      if (v && typeof v === 'object') {
+        return { r: Number.isFinite(v.r) ? v.r : 0, g: Number.isFinite(v.g) ? v.g : 0, b: Number.isFinite(v.b) ? v.b : 0 };
+      }
+      const n = Number.isFinite(v) ? v : 0;
+      return { r: n, g: n, b: n };
+    };
+    const s = toTone(cb.shadows), m = toTone(cb.midtones), hi = toTone(cb.highlights);
     const sR = s.r*scale, sG = s.g*scale, sB = s.b*scale;
     const mR = m.r*scale, mG = m.g*scale, mB = m.b*scale;
     const hR = hi.r*scale, hG = hi.g*scale, hB = hi.b*scale;
@@ -322,6 +355,116 @@ export function applyAdjustment(srcCanvas, adj) {
       d[i] = clampByte(shadows[0] + (highlights[0] - shadows[0]) * amount);
       d[i + 1] = clampByte(shadows[1] + (highlights[1] - shadows[1]) * amount);
       d[i + 2] = clampByte(shadows[2] + (highlights[2] - shadows[2]) * amount);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'invert') {
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'posterize') {
+    const levels = Math.max(2, Math.min(255, Math.round(finiteOr(adj.params?.levels, 4))));
+    const step = 255 / (levels - 1);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = clampByte(Math.round(d[i] / step) * step);
+      d[i + 1] = clampByte(Math.round(d[i + 1] / step) * step);
+      d[i + 2] = clampByte(Math.round(d[i + 2] / step) * step);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'threshold') {
+    const level = Math.max(0, Math.min(255, Math.round(finiteOr(adj.params?.level, 128))));
+    for (let i = 0; i < d.length; i += 4) {
+      const luminance = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      const value = luminance >= level ? 255 : 0;
+      d[i] = value; d[i + 1] = value; d[i + 2] = value;
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'photo-filter') {
+    const p = adj.params || {};
+    const color = parseHexColor(p.color, 'ec8a00');
+    const density = Math.max(0, Math.min(1, finiteOr(p.density, 25) / 100));
+    const preserve = p.preserve_luminosity !== false;
+    for (let i = 0; i < d.length; i += 4) {
+      const sourceLum = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      let r = d[i] * (1 - density) + color[0] * density;
+      let g = d[i + 1] * (1 - density) + color[1] * density;
+      let b = d[i + 2] * (1 - density) + color[2] * density;
+      if (preserve) {
+        const filteredLum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if (filteredLum > 0.001) { const scale = sourceLum / filteredLum; r *= scale; g *= scale; b *= scale; }
+      }
+      d[i] = clampByte(r); d[i + 1] = clampByte(g); d[i + 2] = clampByte(b);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'channel-mixer') {
+    const p = adj.params || {};
+    const red = p.red || { r: 100, g: 0, b: 0 };
+    const green = p.green || { r: 0, g: 100, b: 0 };
+    const blue = p.blue || { r: 0, g: 0, b: 100 };
+    const constant = p.constant || { r: 0, g: 0, b: 0 };
+    const mono = !!p.monochrome;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const nr = (r * finiteOr(red.r, 100) + g * finiteOr(red.g, 0) + b * finiteOr(red.b, 0)) / 100 + finiteOr(constant.r, 0) * 2.55;
+      const ng = (r * finiteOr(green.r, 0) + g * finiteOr(green.g, 100) + b * finiteOr(green.b, 0)) / 100 + finiteOr(constant.g, 0) * 2.55;
+      const nb = (r * finiteOr(blue.r, 0) + g * finiteOr(blue.g, 0) + b * finiteOr(blue.b, 100)) / 100 + finiteOr(constant.b, 0) * 2.55;
+      if (mono) { d[i] = d[i + 1] = d[i + 2] = clampByte(nr); continue; }
+      d[i] = clampByte(nr); d[i + 1] = clampByte(ng); d[i + 2] = clampByte(nb);
+    }
+    octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  if (adj.type === 'color-lookup') {
+    const preset = String(adj.params?.preset || 'none');
+    // An imported .cube LUT (Adobe Cube spec) takes precedence over the small
+    // built-in preset matrices. `params.cube` is stored serializable:
+    //   { size, domainMin:[3], domainMax:[3], data:[size^3*3] }  (red fastest)
+    const cube = adj.params?.cube;
+    if (cube && cube.size && cube.data) {
+      const lut = {
+        size: Number(cube.size),
+        domainMin: Array.isArray(cube.domainMin) ? cube.domainMin.slice(0, 3) : [0, 0, 0],
+        domainMax: Array.isArray(cube.domainMax) ? cube.domainMax.slice(0, 3) : [1, 1, 1],
+        data: cube.data instanceof Float64Array ? cube.data : new Float64Array(cube.data),
+      };
+      const strength = adj.params?.strength == null ? 1 : Math.max(0, Math.min(1, Number(adj.params.strength) / 100));
+      applyCubeLut(d, w, h, lut, { strength });
+      octx.putImageData(img, 0, 0);
+      return out;
+    }
+    const matrices = {
+      teal_orange: [[1.05, -0.05, 0.0], [0.0, 1.0, 0.0], [0.0, -0.02, 1.05]],
+      cold: [[0.95, 0.0, 0.05], [0.0, 1.0, 0.03], [0.02, 0.05, 1.12]],
+      warm: [[1.12, 0.02, 0.0], [0.03, 1.0, 0.0], [0.0, 0.02, 0.92]],
+      high_contrast: [[1.35, -0.18, -0.17], [-0.17, 1.35, -0.18], [-0.18, -0.17, 1.35]],
+      sepia: [[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]],
+    };
+    const m = matrices[preset];
+    if (m) {
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        d[i] = clampByte(r * m[0][0] + g * m[0][1] + b * m[0][2]);
+        d[i + 1] = clampByte(r * m[1][0] + g * m[1][1] + b * m[1][2]);
+        d[i + 2] = clampByte(r * m[2][0] + g * m[2][1] + b * m[2][2]);
+      }
     }
     octx.putImageData(img, 0, 0);
     return out;

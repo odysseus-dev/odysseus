@@ -1,0 +1,21 @@
+# CI-only isolation; retain the service's entrypoint, healthcheck and capabilities.
+services:
+  searxng:
+    image: ${SEARXNG_VALIDATION_IMAGE:?set the image being validated}
+    ports: !reset []
+    volumes: !override
+      - searxng-validation-data:/etc/searxng
+      - ${SEARXNG_VALIDATION_CHECKS:?}/settings.yml:/tmp/searxng-settings.yml.template:ro
+      - ${SEARXNG_VALIDATION_CHECKS:?}/migrate_searxng_settings.py:/tmp/migrate-searxng-settings.py:ro
+      - ${SEARXNG_VALIDATION_CHECKS:?}:/opt/odysseus-checks:ro
+    networks: !override
+      - default
+    restart: "no"
+
+networks:
+  default: {}
+
+volumes:
+  searxng-validation-data:
+    external: true
+    name: ${SEARXNG_VALIDATION_VOLUME:?}

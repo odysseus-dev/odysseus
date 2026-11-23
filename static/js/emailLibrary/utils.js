@@ -3,6 +3,8 @@
 // Pure helpers extracted from emailLibrary.js. No DOM state, no fetch,
 // no shared mutable references — safe to import anywhere.
 
+import { compactUrlSchemeValue } from '../shared/domain/urlSchemes.js';
+
 // ── Talon-inspired multilingual quote-detection regexes ───────────
 // Borrowed (loosely) from Mailgun's `talon` library. These are partial
 // regex source strings — combined with surrounding patterns by callers.
@@ -58,12 +60,8 @@ function _attrEsc(text) {
     .replace(/`/g, '&#96;');
 }
 
-function _compactUrlSchemeValue(value) {
-  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
-}
-
 function _isDangerousUrl(value) {
-  const compact = _compactUrlSchemeValue(value);
+  const compact = compactUrlSchemeValue(value);
   return compact.startsWith('javascript:') || compact.startsWith('vbscript:') || compact.startsWith('data:');
 }
 
@@ -73,16 +71,24 @@ function _isDangerousSrcset(value) {
 
 // Escape + linkify URLs and email addresses. Returns innerHTML-safe markup.
 export function _escLinkify(text) {
-  const escaped = _esc(text);
-  // URLs: http(s)://... or www....
-  const urlRe = /\b((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
-  const mailRe = /\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
-  return escaped
-    .replace(urlRe, (m) => {
-      const href = m.startsWith('www.') ? `https://${m}` : m;
-      return `<a href="${_attrEsc(href)}" target="_blank" rel="noopener noreferrer">${m}</a>`;
-    })
-    .replace(mailRe, (m) => `<a href="${_attrEsc(`mailto:${m}`)}">${m}</a>`);
+  const raw = String(text || '');
+  // Match raw text once so generated anchors are never linkified again.
+  const tokenRe = /\b((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)\]])|\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
+  const parts = [];
+  let offset = 0;
+  for (const match of raw.matchAll(tokenRe)) {
+    parts.push(_esc(raw.slice(offset, match.index)));
+    const token = match[0];
+    const isUrl = !!match[1];
+    const href = isUrl
+      ? (token.startsWith('www.') ? `https://${token}` : token)
+      : `mailto:${token}`;
+    const attrs = isUrl ? ' target="_blank" rel="noopener noreferrer"' : '';
+    parts.push(`<a href="${_attrEsc(_esc(href))}"${attrs}>${_esc(token)}</a>`);
+    offset = match.index + token.length;
+  }
+  parts.push(_esc(raw.slice(offset)));
+  return parts.join('');
 }
 
 // Pull display name out of "Name <email@x>"; fallback to local-part of
@@ -213,7 +219,7 @@ function _sanitizeHtmlOnce(html) {
     if (style) {
       const kept = style.split(';').map(s => s.trim()).filter(decl => {
         if (!decl) return false;
-        const lower = _compactUrlSchemeValue(decl);
+        const lower = compactUrlSchemeValue(decl);
         if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:') || lower.includes('expression(')) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
         return !STRIP_CSS_PROPS.includes(prop);

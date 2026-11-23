@@ -13,7 +13,7 @@ def run_node(body: str):
         f"""
         import {{
           cropDocument, flipDocument, resizeCanvasDocument,
-          resizeImageDocument, rotateDocument,
+          resizeImageDocument, rotateDocument, flipLayer, rotateLayer,
         }} from {json.dumps(MODULE)};
 
         let tempId = 0;
@@ -426,3 +426,68 @@ def test_image_menu_exposes_separate_canvas_and_image_size_commands():
     assert "resizeCanvasDocument(state, newW, newH, options)" in wiring
     assert "resizeImageDocument(state, newW, newH, {" in wiring
     assert "_cropDocument(state, state.cropRect)" in editor
+
+
+def test_flip_layer_and_rotate_layer_are_single_layer_and_keep_centre():
+    result = run_node(
+        """
+        const layer = holder('layer','L',60,40,[mask('m','M',20,20,'layer','layer')]);
+        layer.masks[0].offset = {x:5,y:5};
+        const state = {
+          imgWidth:100, imgHeight:80,
+          layers:[layer], activeLayerId:layer.id,
+          layerOffsets:new Map([[layer.id, {x:20,y:10}]]),
+        };
+        flipLayer(state, layer, 'h');
+        const afterFlip = {
+          size:[layer.canvas.width,layer.canvas.height],
+          offset:state.layerOffsets.get(layer.id),
+          maskOffset:layer.masks[0].offset,
+        };
+        rotateLayer(state, layer, 90);
+        const afterRotate = {
+          size:[layer.canvas.width,layer.canvas.height],
+          offset:state.layerOffsets.get(layer.id),
+        };
+        console.log(JSON.stringify({afterFlip, afterRotate}));
+        """
+    )
+    # Flip keeps the layer in place (same size + offset), mask offset reflects.
+    assert result["afterFlip"]["size"] == [60, 40]
+    assert result["afterFlip"]["offset"] == {"x": 20, "y": 10}
+    assert result["afterFlip"]["maskOffset"] == {"x": 35, "y": 5}
+    # Rotate swaps the layer's box but pins its centre (50, 30).
+    assert result["afterRotate"]["size"] == [40, 60]
+    assert result["afterRotate"]["offset"] == {"x": 30, "y": 0}
+
+
+def test_flip_and_rotate_menu_scopes_match_photoshop():
+    wiring = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text(encoding="utf-8")
+    extra = (ROOT / "static/js/editor/wire-extra-menus.js").read_text(encoding="utf-8")
+    topbar = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
+    ctxmenu = (ROOT / "static/js/editor/canvas-context-menu.js").read_text(encoding="utf-8")
+    # Image menu = whole document (all layers + canvas).
+    assert "rotateAllLayers(90)" in wiring
+    assert "rotateAllLayers(180)" in wiring
+    assert "flipAllLayers('h')" in wiring
+    assert "flipAllLayers('v')" in wiring
+    assert "Image Rotation (whole image)" in topbar
+    assert 'data-image-action="flip-h"' in topbar
+    # Edit > Transform = active layer only.
+    assert 'data-edit-action="rotate-90"' in topbar
+    assert 'data-edit-action="flip-v"' in topbar
+    assert "invoke('layer.rotate', { degrees: 90 })" in extra
+    assert "invoke('layer.flip', { axis: 'h' })" in extra
+    # Right-click menu defaults to the active layer.
+    assert "invoke('layer.rotate', { degrees: 90 })" in ctxmenu
+    assert "invoke('layer.flip', { axis: 'v' })" in ctxmenu
+    # Wrappers + control ops exist.
+    assert "function _flipActiveLayer" in editor
+    assert "function _rotateActiveLayer" in editor
+    assert "'layer.flip'" in editor and "'layer.rotate'" in editor
+    # Quick Edit defaults to the active layer but routes whole-image phrasing
+    # ("the whole image/canvas/photo") to the document transforms. The hybrid
+    # fast path routes these through the control ops so the trace is observable.
+    assert "await _runQuickControlOp(wholeImage ? 'document.rotate' : 'layer.rotate', { degrees: deg });" in editor
+    assert "await _runQuickControlOp(wholeImage ? 'document.flip' : 'layer.flip', { axis });" in editor

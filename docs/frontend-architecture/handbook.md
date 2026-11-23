@@ -1,9 +1,10 @@
 # Odysseus frontend architecture handbook
 
-Status: F1 foundation and continuation guide, pending review. The final Notes
-reference case study belongs to the comprehensive Notes draft PR; the recipient
-handoff follows its integration. This document must evolve with reviewed internal
-checkpoints and distinguish executed work from proposals.
+Status: F1 merged in PR #6701. The complete Notes reference is implemented as an
+unpublished review diff on `refactor/notes-reference-decomposition`. Read its
+[case study](notes-case-study.md), [module inventory](notes-module-inventory.md)
+and [validation receipts](notes-validation.md). Publication and the recipient's
+post-integration reproduction remain pending.
 
 Read the [ADR](ADR-001-source-and-deployment.md), [assessment](assessment.md),
 [validation report](validation.md) and [Notes roadmap](notes-roadmap.md).
@@ -89,6 +90,13 @@ operation owns writes; UI receives a view/snapshot or subscription. Preserve
 existing objects and initialization timing when extracting a stateful module.
 Do not instantiate a new store in both the legacy facade and the feature API.
 Compatibility facades only forward the same live implementation.
+
+The Notes reference uses internal read-only live views to preserve captured note
+identity across existing asynchronous completions. Its state owner supplies all
+mutations; the public index exposes operations without the store. Notes deliberately
+retains last-completion fetch ordering. Do not infer request-generation guards from
+its decomposition. Its page-owned reminders survive panel closure, and panel/editor
+listeners and observers have separate disposal scopes.
 
 Document lifecycle scopes: page, authenticated user, session, mounted panel and
 editor/draft. Name owners of subscriptions, DOM listeners, timers, observers,

@@ -36,6 +36,7 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
+from src.email_mime import decode_text_part as _decode_text_part
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
 from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
@@ -1613,9 +1614,9 @@ def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
     for part in msg.walk():
         if part.is_multipart():
             continue
-        cd = str(part.get("Content-Disposition", ""))
+        cd = part.get_content_disposition()
         ct = (part.get_content_type() or "").lower()
-        if ct in ("text/plain", "text/html") and "attachment" not in cd.lower():
+        if ct in ("text/plain", "text/html") and cd != "attachment":
             continue
         filename = part.get_filename() or ""
         if filename:
@@ -1670,13 +1671,13 @@ def _list_attachments_from_msg(msg):
         return attachments
     idx = 0
     for part in msg.walk():
-        cd = str(part.get("Content-Disposition", ""))
+        cd = part.get_content_disposition()
         ct = part.get_content_type()
-        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        is_attached_email = ct == "message/rfc822" and (cd == "attachment" or part.get_filename())
         if part.is_multipart() and not is_attached_email:
             continue
         # Skip text/html body parts (only consider real attachments)
-        if ct in ("text/plain", "text/html") and "attachment" not in cd:
+        if ct in ("text/plain", "text/html") and cd != "attachment":
             continue
         filename = part.get_filename()
         if filename:
@@ -1700,7 +1701,7 @@ def _list_attachments_from_msg(msg):
             "filename": filename,
             "content_type": ct,
             "size": size,
-            "is_inline": "inline" in cd.lower(),
+            "is_inline": cd == "inline",
             "content_id": content_id,
         })
         idx += 1
@@ -1734,12 +1735,12 @@ def _extract_attachment_to_disk(msg, index, target_dir):
         return None
     idx = 0
     for part in msg.walk():
-        cd = str(part.get("Content-Disposition", ""))
+        cd = part.get_content_disposition()
         ct = part.get_content_type()
-        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        is_attached_email = ct == "message/rfc822" and (cd == "attachment" or part.get_filename())
         if part.is_multipart() and not is_attached_email:
             continue
-        if ct in ("text/plain", "text/html") and "attachment" not in cd:
+        if ct in ("text/plain", "text/html") and cd != "attachment":
             continue
         if idx == index:
             filename = part.get_filename()
@@ -1774,46 +1775,40 @@ def _extract_html(msg):
     if msg.is_multipart():
         for part in msg.walk():
             ct = part.get_content_type()
-            cd = str(part.get("Content-Disposition", ""))
-            if ct == "text/html" and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
+            cd = part.get_content_disposition()
+            if ct == "text/html" and cd != "attachment":
+                text = _decode_text_part(part)
+                if text:
+                    return text
     elif msg.get_content_type() == "text/html":
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+        text = _decode_text_part(msg)
+        if text:
+            return text
     return None
 
 
 def _extract_text(msg):
     if msg.is_multipart():
         text_parts = []
+        html_parts = []
         for part in msg.walk():
             ct = part.get_content_type()
-            cd = str(part.get("Content-Disposition", ""))
-            if ct == "text/plain" and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
-            elif ct == "text/html" and not text_parts and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+            cd = part.get_content_disposition()
+            if ct == "text/plain" and cd != "attachment":
+                text = _decode_text_part(part)
+                if text:
+                    text_parts.append(text)
+            elif ct == "text/html" and not html_parts and cd != "attachment":
+                raw_html = _decode_text_part(part)
+                if raw_html:
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts)
+                    html_parts.append(text.strip())
+        return "\n".join(text_parts or html_parts)
     else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="replace")
+        text = _decode_text_part(msg)
+        if text:
             if msg.get_content_type() == "text/html":
                 text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
                 text = re.sub(r"</(?:p|div|li|tr|h[1-6])\s*>", "\n", text, flags=re.I)

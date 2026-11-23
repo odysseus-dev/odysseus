@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-15
 
 ## Scope
 
@@ -50,8 +50,8 @@ Agent tools and the CLI read and mutate persisted research JSON directly. They a
 `src.deep_research.DeepResearcher` owns multi-round research work:
 
 - date/context setup;
-- search provider selection and fallback through `src.search.providers` and `src.search.core`;
-- URL/content fetching through `src.search.fetch_webpage_content`;
+- search provider selection and fallback through `src.research_navigator.ResearchNavigator`, which dispatches the shared provider chain;
+- URL/content fetching through `ResearchNavigator.fetch()` and the canonical service content fetcher, with structured unavailable results for disabled private-browser reads;
 - separate tracking of analyzed URLs, last search errors, and empty-round limits;
 - source summarization/extraction;
 - synthesis into final answers/reports;
@@ -80,12 +80,7 @@ Spinoff/Discuss creates a new chat session from a saved report. It seeds the rep
 
 Research persistence uses `data/deep_research/<session_id>.json`. Current JSON can include result/report text, raw report, sources, raw findings, stats, category, archived state, hidden images, owner, timestamps, and consumed state.
 
-Route access to persisted report files is path-confined. Browser routes validate
-session ids against `^[a-zA-Z0-9-]{1,128}$`, enumerate trusted `*.json` files
-under the resolved research storage root, match by exact filename, reject
-symlink/path escapes after `resolve().relative_to(root)`, and then perform owner
-checks before detail/archive/delete/result-peek/spinoff reads or mutations.
-Invalid ids return 400; missing or cross-owner reports return 404.
+Route access to persisted report files is path-confined. Browser routes validate session ids against `^[a-zA-Z0-9-]{1,128}$`, enumerate trusted `*.json` files under the resolved research storage root, match by exact filename, reject symlink/path escapes after `resolve().relative_to(root)`, and then perform owner checks before detail/archive/delete/result-peek/spinoff reads or mutations. Invalid ids return 400; missing or cross-owner reports return 404.
 
 `src.visual_report` owns HTML report generation from markdown-like research output, heading/TOC processing, category styling, image injection, allowlist sanitization of untrusted rendered HTML, and client-side controls for hiding images and discussing reports.
 
@@ -119,8 +114,7 @@ The active FastAPI app path uses `src.research_handler.ResearchHandler`.
 
 `services/research/service.py` is a public wrapper around a duplicate `services.research.research_handler.ResearchHandler`. That services handler remains compatibility/cleanup surface rather than canonical runtime truth; check parity before assuming it has every active-route field or policy behavior.
 
-Its source extraction skips non-dict finding rows so one malformed cached or
-generated entry does not discard later valid URL/title/summary sources.
+Its source extraction skips non-dict finding rows so one malformed cached or generated entry does not discard later valid URL/title/summary sources.
 
 Search compatibility also matters: `src.search.core`, `src.search.providers`, and `src.search.content` alias the service search path so old imports stay live without a second fetch implementation.
 
@@ -144,6 +138,12 @@ Visual reports render model/source-influenced Markdown into HTML with inline Jav
 Existing useful coverage includes deep-research runtime/degraded tests, handler/service tests, persisted route owner-scope tests, endpoint selection tests, auth regressions, visual report tests, query fallback tests, and CLI preview/store tests.
 
 Coverage is still thin around live job route ownership, `/api/research/start` route behavior, SSE/result-peek/cancel edges, spinoff endpoint ownership, tool/CLI direct JSON access, remote-image policy, and frontend panel/jobs behavior.
+
+## Bounded Navigation And Evidence
+
+`src.research_navigator.py` owns parsed `ResearchAction` requests, normalized `ResearchPage` responses, and source assessments. Search uses the shared provider chain off the event loop; ordinary fetch uses the canonical URL-safe content fetcher, while `browser_read` requests the private browser tool and currently receives the common denial for page actions. `DeepResearcher` chooses bounded navigation actions, records retrieval mode/provider use and source coverage, and can request a browser retry for weak fetches; the current disabled page-action policy prevents that retry from supplying page evidence.
+
+Small local model heuristics select a simpler fact/research path with smaller planning calls. Findings-window synthesis and extraction concurrency/timeouts still bound work; useful source text remains a dependency; private-browser page actions are currently unavailable. Scheduled research binds sealed task authority around the handler call; direct handler/route behavior must not be assumed to share that scheduling wrapper. Saved reports retain gathered evidence and fallback reports when model synthesis cannot complete.
 
 ## Current Gaps
 

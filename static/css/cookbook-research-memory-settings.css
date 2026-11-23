@@ -1241,7 +1241,7 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
   left: 0;
   right: 0;
   min-width: 100%;
-  max-height: 300px;
+  max-height: min(360px, 60vh);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 4px;
@@ -1254,8 +1254,10 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
+  height: auto;
+  min-height: 32px;
   align-items: center;
-  gap: 10px;
+  gap: 2px 10px;
   padding: 8px 9px;
   border: 0;
   border-radius: 5px;
@@ -1271,6 +1273,7 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
 }
 .settings-search-result-label {
   min-width: 0;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1284,6 +1287,80 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
   white-space: nowrap;
   font-size: 9px;
   opacity: 0.5;
+}
+.settings-search-result-description {
+  grid-column: 1 / -1;
+  min-width: 0;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  opacity: 0.55;
+}
+[data-settings-section] {
+  scroll-margin: 10px 0;
+}
+[data-settings-section]:focus {
+  outline: none;
+}
+.settings-section-target {
+  animation: settings-section-target-pulse 1.8s ease-out;
+}
+@keyframes settings-section-target-pulse {
+  0%, 40% {
+    outline: 2px solid var(--accent, var(--red));
+    outline-offset: 2px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-section-target {
+    animation: none;
+    outline: 2px solid var(--accent, var(--red));
+    outline-offset: 2px;
+  }
+}
+.settings-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  vertical-align: 2px;
+  white-space: nowrap;
+  opacity: 0.72;
+  cursor: help;
+}
+.settings-scope-badge[data-scope="model-default"] {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+}
+.settings-scope-note {
+  margin: 0 0 8px;
+  padding: 6px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 11px;
+  opacity: 0.75;
+}
+.settings-scope-locked [inert] {
+  opacity: 0.55;
+}
+.settings-model-default-retry {
+  margin-left: 6px;
+  padding: 2px 10px;
+  font-size: 11px;
 }
 .settings-search-empty {
   padding: 8px;
@@ -1356,6 +1433,9 @@ body.settings-sidebar-resize-active {
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
   display: none;
 }
+.settings-sidebar.settings-sidebar-collapsed .settings-nav-search-wrap {
+  display: none;
+}
 .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-build {
   display: none;
 }
@@ -1387,11 +1467,26 @@ body.settings-sidebar-resize-active {
     overflow-y: hidden;
   }
 
-  .settings-nav-search-wrap,
   .settings-sidebar-resize-handle,
   .settings-sidebar-toggle,
   .settings-sidebar-build {
     display: none;
+  }
+
+  /* The finder stays available above the horizontal tab rail; only the rail
+     scrolls, so the results list is not clipped by it. */
+  .settings-sidebar {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .settings-nav-search-wrap {
+    margin: 0 0 6px;
+  }
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 
   .settings-sidebar.settings-sidebar-collapsed {
@@ -1416,11 +1511,26 @@ body.settings-sidebar-resize-active {
     overflow-y: hidden;
   }
 
-  .settings-nav-search-wrap,
   .settings-sidebar-resize-handle,
   .settings-sidebar-toggle,
   .settings-sidebar-build {
     display: none;
+  }
+
+  /* The finder stays available above the horizontal tab rail; only the rail
+     scrolls, so the results list is not clipped by it. */
+  .settings-sidebar {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .settings-nav-search-wrap {
+    margin: 0 0 6px;
+  }
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 }
 .cookbook-chat-target {

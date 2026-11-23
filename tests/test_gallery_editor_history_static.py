@@ -6,7 +6,7 @@ EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 
 
 def test_history_snapshot_captures_document_and_layer_state():
-    snapshot = EDITOR[EDITOR.index("function _snapshotState()") : EDITOR.index("function _saveState(")]
+    snapshot = EDITOR[EDITOR.index("function _snapshotState(options = {})") : EDITOR.index("function _saveState(")]
 
     assert "activeLayerId: state.activeLayerId" in snapshot
     assert "nextLayerId: state.nextLayerId" in snapshot

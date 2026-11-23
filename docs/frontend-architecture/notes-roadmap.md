@@ -1,15 +1,26 @@
 # Notes reference decomposition roadmap
 
-Status: planning only. F1 changes no Notes implementation. Begin after the
-foundation has been reviewed and integrated into official `upstream/dev`.
-The reference program ends after Notes integration and the completed H handoff.
+Status: N0 through N6 implemented as an unpublished Notes review diff after F1
+merged in PR #6701. Actual decisions, interfaces, module ownership, checkpoint
+receipts and execution limits are in the [case study](notes-case-study.md) and
+[validation report](notes-validation.md). The proposal below retains the original
+responsibility map for comparison. Notes integration and the recipient's independent
+H reproduction remain pending.
+
+The later Notes rework (the markdown content model and the note window)
+changed the module graph after this roadmap; the
+current modules are in the [module inventory](notes-module-inventory.md), and
+the behaviour is specified in `specs/calendar-tasks-notes.md`. This page is
+left as written.
 F1 remains an entirely separate foundation-only PR. The complete Notes
 decomposition, regression tests, compatibility validation and final reference
 case study belong to one comprehensive draft PR targeting official `dev`.
 
 ## Verified current responsibility and compatibility map
 
-Baseline: `8feb50e89468235cd3e0986da80edbd3acaf2c40`.
+Historical assessment baseline: `8feb50e89468235cd3e0986da80edbd3acaf2c40`.
+The implementation starts from merged F1 at
+`1cc56cb9d78f3e2399d1d61155b71d771a17b85b`.
 The module is `static/js/notes.js`, about 5,470 lines, with browser identity
 `/static/js/notes.js?v=20260911notesselectioncancel1`. Preserve that identity across
 the app import, HTML, SW and lazy consumers until a separately reviewed migration

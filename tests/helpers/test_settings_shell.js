@@ -242,6 +242,10 @@ function buildFixture(document) {
   const panels = document.createElement('div');
   content.appendChild(panels);
 
+  // Section anchors mirror the production markup so registry/DOM drift in
+  // static/index.html fails here as well as in the browser.
+  const productionSections = productionSectionAnchors();
+
   const makeTab = (id, active = false) => {
     const button = document.createElement('button');
     button.setAttribute('data-settings-tab', id);
@@ -251,7 +255,15 @@ function buildFixture(document) {
     panel.setAttribute('data-settings-panel', id);
     if (!active) panel.classList.add('hidden');
     panels.appendChild(panel);
-    return { button, panel };
+    const sections = {};
+    for (const sectionId of productionSections.get(id) || []) {
+      const card = document.createElement('div');
+      card.className = 'admin-card';
+      card.setAttribute('data-settings-section', sectionId);
+      panel.appendChild(card);
+      sections[sectionId] = card;
+    }
+    return { button, panel, sections };
   };
 
   const panelIds = [
@@ -289,6 +301,24 @@ function buildFixture(document) {
     sidebarToggle,
     sidebarHandle,
   };
+}
+
+function productionSectionAnchors() {
+  const html = fs.readFileSync(path.join(__dirname, '../../static/index.html'), 'utf8');
+  const start = html.indexOf('id="settings-modal"');
+  const markup = html.slice(start);
+  const anchors = new Map();
+  let currentPanel = null;
+  const pattern = /data-settings-(panel|section)="([^"]+)"/g;
+  for (const match of markup.matchAll(pattern)) {
+    if (match[1] === 'panel') {
+      currentPanel = match[2];
+      anchors.set(currentPanel, []);
+    } else if (currentPanel) {
+      anchors.get(currentPanel).push(match[2]);
+    }
+  }
+  return anchors;
 }
 
 function moduleSource(relativePath) {
@@ -348,14 +378,18 @@ function moduleSource(relativePath) {
     },
     makeWindowDraggable: (...args) => dragCalls.push(args),
     clearDockSide: (...args) => dockCalls.push(args),
+    restoreMinimizedModal: () => false,
+    clearTimeout() {},
     setTimeout: callback => { callback(); return 1; },
     WeakSet,
   };
   vm.createContext(context);
   vm.runInContext(moduleSource('registry.js'), context, { filename: 'registry.js' });
+  vm.runInContext(moduleSource('../shared/ui/optionNavigation.js'), context, { filename: 'optionNavigation.js' });
   vm.runInContext(moduleSource('search.js'), context, { filename: 'search.js' });
   vm.runInContext(moduleSource('sidebar.js'), context, { filename: 'sidebar.js' });
   vm.runInContext(moduleSource('navigation.js'), context, { filename: 'navigation.js' });
+  vm.runInContext(moduleSource('../modalVisibility.js'), context, { filename: 'modalVisibility.js' });
   vm.runInContext(moduleSource('lifecycle.js'), context, { filename: 'lifecycle.js' });
   vm.runInContext(moduleSource('dom.js'), context, { filename: 'dom.js' });
 
@@ -411,9 +445,11 @@ function moduleSource(relativePath) {
 
   check(
     'Settings registry distinguishes admin-only visibility from admin-controlled routing',
-    ['tools', 'users', 'system'].every(id => context.isAdminOnlySettingsTab(id))
-      && ['services', 'added-models', 'integrations']
-        .every(id => !context.isAdminOnlySettingsTab(id)),
+    // Endpoint management is admin-only on the server; Integrations also
+    // holds personal email and calendar accounts.
+    ['services', 'added-models', 'tools', 'users', 'system'].every(id => context.isAdminOnlySettingsTab(id))
+      && ['integrations'].every(id => !context.isAdminOnlySettingsTab(id))
+      && ['services', 'added-models', 'integrations'].every(id => context.isAdminManagedSettingsTab(id)),
   );
 
   check(
@@ -551,6 +587,107 @@ function moduleSource(relativePath) {
     'Settings finder Escape clears results without closing Settings',
     fixture.searchInput.value === ''
       && fixture.searchResults.classList.contains('hidden'),
+  );
+
+  // ── Section-level search ──
+  const sectionFixture = buildFixture(document);
+  const ttsCard = sectionFixture.settingsPanels.ai.sections['text-to-speech'];
+  ttsCard.setAttribute('hidden', '');
+  const tokensCard = sectionFixture.settingsPanels.account.sections['api-tokens'];
+  tokensCard.style.display = 'none';
+
+  const sectionOpens = [];
+  const sectionReveals = [];
+  context.bindSettingsSearch(sectionFixture.modal, {
+    isAdmin: () => false,
+    openPanel(tab) { sectionOpens.push(tab); },
+    revealSection(panelId, sectionId) { sectionReveals.push(`${panelId}/${sectionId}`); },
+  });
+  const typeQuery = value => {
+    sectionFixture.searchInput.value = value;
+    sectionFixture.searchInput.dispatchEvent({ type: 'input', preventDefault() {}, stopPropagation() {} });
+  };
+  const renderedResults = () => sectionFixture.searchResults
+    .querySelectorAll('[data-settings-search-result]')
+    .map(button => `${button.dataset.settingsSearchResult}/${button.dataset.settingsSearchSection || '*'}`);
+
+  check(
+    'Settings registry reports a declared section that is missing from its panel',
+    (() => {
+      const probe = buildFixture(document);
+      const card = probe.settingsPanels.ai.sections['default-chat'];
+      card.setAttribute('data-settings-section', 'renamed-card');
+      card.dataset.settingsSection = 'renamed-card';
+      const issues = context.getSettingsRegistryIssues(probe.modal);
+      return issues.includes('Registry section missing from DOM: ai/default-chat')
+        && issues.includes('DOM section missing from registry: ai/renamed-card');
+    })(),
+  );
+
+  typeQuery('fallback');
+  check(
+    'Settings finder returns the cards that own a control, not only panels',
+    renderedResults().includes('ai/default-chat')
+      && renderedResults().includes('ai/utility-model')
+      && renderedResults().includes('search/web-search'),
+    renderedResults().join(','),
+  );
+  check(
+    'Settings finder results carry a description and combobox state',
+    sectionFixture.searchResults.querySelector('.settings-search-result-description') !== null
+      && sectionFixture.searchInput.getAttribute('aria-expanded') === 'true'
+      && sectionFixture.searchInput.getAttribute('role') === 'combobox',
+  );
+
+  typeQuery('voice');
+  check(
+    'Settings finder omits sections whose card is hidden in the DOM',
+    !renderedResults().includes('ai/text-to-speech')
+      && renderedResults().includes('ai/writing-style'),
+    renderedResults().join(','),
+  );
+
+  typeQuery('api tokens');
+  check(
+    'Settings finder omits sections hidden with an inline display:none',
+    !renderedResults().includes('account/api-tokens'),
+    renderedResults().join(','),
+  );
+
+  typeQuery('signup');
+  check(
+    'Settings finder omits sections of admin-only panels for non-admin users',
+    renderedResults().length === 0,
+    renderedResults().join(','),
+  );
+
+  typeQuery('2fa');
+  sectionFixture.searchInput.dispatchEvent({ type: 'keydown', key: 'ArrowDown', preventDefault() {}, stopPropagation() {} });
+  check(
+    'Settings finder arrow keys expose the active option to assistive technology',
+    sectionFixture.searchInput.getAttribute('aria-activedescendant') === 'settings-search-option-0',
+  );
+  sectionFixture.searchInput.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  check(
+    'Settings finder Enter on a section opens its panel and reveals the card',
+    sectionOpens.join(',') === 'account'
+      && sectionReveals.join(',') === 'account/two-factor'
+      && sectionFixture.searchInput.value === ''
+      && sectionFixture.searchInput.getAttribute('aria-expanded') === 'false',
+    `${sectionOpens.join(',')} | ${sectionReveals.join(',')}`,
+  );
+
+  const visible = sectionFixture.settingsPanels.ai.sections['default-chat'];
+  check(
+    'Section availability ignores the inactive owning panel but honors admin-only cards',
+    context.isSettingsSectionAvailable(visible, { isAdmin: false }) === true
+      && (() => {
+        visible.classList.add('admin-only');
+        const hiddenForUser = context.isSettingsSectionAvailable(visible, { isAdmin: false }) === false;
+        const shownForAdmin = context.isSettingsSectionAvailable(visible, { isAdmin: true }) === true;
+        visible.classList.remove('admin-only');
+        return hiddenForUser && shownForAdmin;
+      })(),
   );
 
   context.setSettingsSidebarWidth(fixture.modal, 280);
@@ -768,6 +905,141 @@ function moduleSource(relativePath) {
   check(
     'hideSettingsModal preserves the closing animation fallback semantics',
     fixture.modal.classList.contains('hidden') && !fixture.content.classList.contains('modal-closing'),
+  );
+
+  // ── Explicit open(tab) respects what this caller is offered ──
+  vm.runInContext(moduleSource('peek.js'), context, { filename: 'peek.js' });
+  vm.runInContext(moduleSource('shell.js'), context, { filename: 'shell.js' });
+
+  const MEMBER = { isAdmin: false, accountsEnabled: true };
+  const ADMIN = { isAdmin: true, accountsEnabled: true };
+  const OPERATOR = { isAdmin: true, accountsEnabled: false };
+  const UNKNOWN = { isAdmin: false, accountsEnabled: true };
+  const shellFor = (initialAccess, known = true) => {
+    const probe = buildFixture(document);
+    const state = { access: initialAccess, known, adminInits: 0 };
+    const shell = context.createSettingsShell({
+      getModal: () => probe.modal,
+      ensureInitialized() {},
+      syncAppearanceCheckboxes() {},
+      refreshAiModelEndpoints() {},
+      isAdmin: () => state.access.isAdmin,
+      accountsEnabled: () => state.access.accountsEnabled,
+      accessKnown: () => state.known,
+      getAdminModule: () => ({ _initialized: false, _initData() { state.adminInits += 1; } }),
+    });
+    const shownPanels = () => Object.entries(probe.settingsPanels)
+      .filter(([, tab]) => !tab.panel.classList.contains('hidden'))
+      .map(([id]) => id);
+    const landing = () => `${context.getActiveSettingsTab(probe.modal, '')}|${shownPanels().join(',')}`;
+    return { probe, shell, state, landing };
+  };
+
+  const restricted = ['services', 'added-models', 'tools', 'users', 'system'];
+  const member = shellFor(MEMBER);
+  const memberLandings = restricted.map(tab => {
+    member.shell.open(tab);
+    return member.landing();
+  });
+  check(
+    'open(tab) never activates an admin-only panel for a member',
+    memberLandings.every(value => value === 'ai|ai') && member.state.adminInits === 0,
+    `${memberLandings.join(' ; ')} adminInits=${member.state.adminInits}`,
+  );
+  member.shell.open('account');
+  member.shell.open('tools', { section: 'agent-limits' });
+  check(
+    'a refused open(tab) keeps a member on the panel they were using and reveals nothing',
+    member.landing() === 'account|account'
+      && member.probe.settingsPanels.tools.sections['agent-limits'].getAttribute('tabindex') === null,
+    member.landing(),
+  );
+  member.shell.open('no-such-panel');
+  check('open(tab) with an unknown panel id lands on an offered panel', member.landing() === 'account|account', member.landing());
+
+  const admin = shellFor(ADMIN);
+  const adminLandings = restricted.map(tab => {
+    admin.shell.open(tab);
+    return admin.landing();
+  });
+  check(
+    'open(tab) still activates every admin panel for an administrator',
+    adminLandings.join(' ; ') === restricted.map(tab => `${tab}|${tab}`).join(' ; '),
+    adminLandings.join(' ; '),
+  );
+  admin.shell.open('tools', { section: 'agent-limits' });
+  check(
+    'open(tab, { section }) still reveals an admin card for an administrator',
+    admin.probe.settingsPanels.tools.sections['agent-limits'].getAttribute('tabindex') === '-1',
+  );
+
+  const operator = shellFor(OPERATOR);
+  operator.shell.open('tools');
+  const operatorTools = operator.landing();
+  operator.shell.open('users');
+  check(
+    'auth-disabled operator opens admin panels but not user management',
+    operatorTools === 'tools|tools' && operator.landing() === 'tools|tools',
+    `${operatorTools} ; ${operator.landing()}`,
+  );
+
+  const early = shellFor(UNKNOWN, false);
+  early.shell.open('tools', { section: 'agent-limits' });
+  const beforeAccess = early.landing();
+  early.state.access = ADMIN;
+  early.state.known = true;
+  early.shell.syncAdminVisibility();
+  check(
+    'an admin panel requested before access is known opens once it is known',
+    beforeAccess === 'ai|ai' && early.landing() === 'tools|tools'
+      && early.probe.settingsPanels.tools.sections['agent-limits'].getAttribute('tabindex') === '-1',
+    `${beforeAccess} ; ${early.landing()}`,
+  );
+
+  const earlyMember = shellFor(UNKNOWN, false);
+  earlyMember.shell.open('tools');
+  earlyMember.state.access = MEMBER;
+  earlyMember.state.known = true;
+  earlyMember.shell.syncAdminVisibility();
+  check(
+    'a request made before access is known is dropped for a member',
+    earlyMember.landing() === 'ai|ai',
+    earlyMember.landing(),
+  );
+
+  const closedEarly = shellFor(UNKNOWN, false);
+  closedEarly.shell.open('tools');
+  closedEarly.shell.close();
+  closedEarly.state.access = ADMIN;
+  closedEarly.state.known = true;
+  closedEarly.shell.syncAdminVisibility();
+  check(
+    'closing Settings cancels a request made before access was known',
+    closedEarly.landing() === 'ai|ai',
+    closedEarly.landing(),
+  );
+
+  const movedEarly = shellFor(UNKNOWN, false);
+  movedEarly.shell.open('tools');
+  // The sidebar path: activate, then the shell's activation callback.
+  context.activateSettingsPanel(movedEarly.probe.modal, 'appearance');
+  movedEarly.shell.onPanelActivated('appearance');
+  movedEarly.state.access = ADMIN;
+  movedEarly.state.known = true;
+  movedEarly.shell.syncAdminVisibility();
+  check(
+    'choosing another panel cancels a request made before access was known',
+    movedEarly.landing() === 'appearance|appearance',
+    movedEarly.landing(),
+  );
+
+  const stale = shellFor(MEMBER);
+  // The fixture starts on Add Models, which a member is not offered.
+  stale.shell.syncAdminVisibility();
+  check(
+    'access resolution moves a member off a panel they are not offered',
+    stale.landing() === 'ai|ai',
+    stale.landing(),
   );
 
   console.log(JSON.stringify(results));

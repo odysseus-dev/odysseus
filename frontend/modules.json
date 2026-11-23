@@ -4,6 +4,592 @@
     {
       "source": "shared/actionMenuOrder.js",
       "deployment": "js/actionMenuOrder.js"
+    },
+    {
+      "source": "shared/domain/html.js",
+      "deployment": "js/shared/domain/html.js"
+    },
+    {
+      "source": "shared/domain/urlSchemes.js",
+      "deployment": "js/shared/domain/urlSchemes.js"
+    },
+    {
+      "source": "shared/domain/relativeTime.js",
+      "deployment": "js/shared/domain/relativeTime.js"
+    },
+    {
+      "source": "shared/platform/clipboard.js",
+      "deployment": "js/shared/platform/clipboard.js"
+    },
+    {
+      "source": "shared/platform/debounce.js",
+      "deployment": "js/shared/platform/debounce.js"
+    },
+    {
+      "source": "shared/platform/downloads.js",
+      "deployment": "js/shared/platform/downloads.js"
+    },
+    {
+      "source": "shared/ui/escMenuStack.js",
+      "deployment": "js/escMenuStack.js"
+    },
+    {
+      "source": "shared/ui/optionNavigation.js",
+      "deployment": "js/shared/ui/optionNavigation.js"
+    },
+    {
+      "source": "shared/ui/toolWindowZOrder.js",
+      "deployment": "js/toolWindowZOrder.js"
+    },
+    {
+      "source": "shared/domain/modelSort.js",
+      "deployment": "js/modelSort.js"
+    },
+    {
+      "source": "shared/platform/appConfig.js",
+      "deployment": "js/appConfig.js"
+    },
+    {
+      "source": "shared/platform/authStatus.js",
+      "deployment": "js/authStatus.js"
+    },
+    {
+      "source": "shared/platform/browserCapabilities.js",
+      "deployment": "js/platform.js"
+    },
+    {
+      "source": "shared/platform/storage.js",
+      "deployment": "js/storage.js"
+    },
+    {
+      "source": "shared/ui/modalSnap.js",
+      "deployment": "js/modalSnap.js"
+    },
+    {
+      "source": "shared/ui/modalVisibility.js",
+      "deployment": "js/modalVisibility.js"
+    },
+    {
+      "source": "shared/ui/spinner.js",
+      "deployment": "js/spinner.js"
+    },
+    {
+      "source": "shared/ui/tourHintDismiss.js",
+      "deployment": "js/tourHintDismiss.js"
+    },
+    {
+      "source": "shared/ui/windowDrag.js",
+      "deployment": "js/windowDrag.js"
+    },
+    {
+      "source": "shared/ui/windowResize.js",
+      "deployment": "js/windowResize.js"
+    },
+    {
+      "source": "features/notes/domain/recurrence.js",
+      "deployment": "js/features/notes/domain/recurrence.js"
+    },
+    {
+      "source": "features/notes/infrastructure/http.js",
+      "deployment": "js/features/notes/infrastructure/http.js"
+    },
+    {
+      "source": "features/notes/infrastructure/storage.js",
+      "deployment": "js/features/notes/infrastructure/storage.js"
+    },
+    {
+      "source": "features/notes/application/state.js",
+      "deployment": "js/features/notes/application/state.js"
+    },
+    {
+      "source": "features/notes/application/workflows.js",
+      "deployment": "js/features/notes/application/workflows.js"
+    },
+    {
+      "source": "features/notes/application/reminders.js",
+      "deployment": "js/features/notes/application/reminders.js"
+    },
+    {
+      "source": "features/notes/infrastructure/notifications.js",
+      "deployment": "js/features/notes/infrastructure/notifications.js"
+    },
+    {
+      "source": "features/notes/ui/text.js",
+      "deployment": "js/features/notes/ui/text.js"
+    },
+    {
+      "source": "features/notes/ui/colors.js",
+      "deployment": "js/features/notes/ui/colors.js"
+    },
+    {
+      "source": "features/notes/ui/panel.js",
+      "deployment": "js/features/notes/ui/panel.js"
+    },
+    {
+      "source": "features/notes/ui/reminderDisplay.js",
+      "deployment": "js/features/notes/ui/reminderDisplay.js"
+    },
+    {
+      "source": "features/notes/ui/selection.js",
+      "deployment": "js/features/notes/ui/selection.js"
+    },
+    {
+      "source": "features/notes/ui/filters.js",
+      "deployment": "js/features/notes/ui/filters.js"
+    },
+    {
+      "source": "features/notes/ui/cardRendering.js",
+      "deployment": "js/features/notes/ui/cardRendering.js"
+    },
+    {
+      "source": "features/notes/ui/layout.js",
+      "deployment": "js/features/notes/ui/layout.js"
+    },
+    {
+      "source": "features/notes/ui/quickAdd.js",
+      "deployment": "js/features/notes/ui/quickAdd.js"
+    },
+    {
+      "source": "features/notes/ui/cardInteractions.js",
+      "deployment": "js/features/notes/ui/cardInteractions.js"
+    },
+    {
+      "source": "features/notes/ui/cardChecklist.js",
+      "deployment": "js/features/notes/ui/cardChecklist.js"
+    },
+    {
+      "source": "features/notes/ui/cardReorder.js",
+      "deployment": "js/features/notes/ui/cardReorder.js"
+    },
+    {
+      "source": "features/notes/ui/reminderPicker.js",
+      "deployment": "js/features/notes/ui/reminderPicker.js"
+    },
+    {
+      "source": "features/notes/ui/drawing.js",
+      "deployment": "js/features/notes/ui/drawing.js"
+    },
+    {
+      "source": "features/notes/ui/clipboard.js",
+      "deployment": "js/features/notes/ui/clipboard.js"
+    },
+    {
+      "source": "features/notes/ui/mobileReorder.js",
+      "deployment": "js/features/notes/ui/mobileReorder.js"
+    },
+    {
+      "source": "features/notes/application/queries.js",
+      "deployment": "js/features/notes/application/queries.js"
+    },
+    {
+      "source": "features/notes/application/agentActions.js",
+      "deployment": "js/features/notes/application/agentActions.js"
+    },
+    {
+      "source": "features/notes/application/deletion.js",
+      "deployment": "js/features/notes/application/deletion.js"
+    },
+    {
+      "source": "features/notes/domain/noteRules.js",
+      "deployment": "js/features/notes/domain/noteRules.js"
+    },
+    {
+      "source": "features/notes/domain/markdownTasks.js",
+      "deployment": "js/features/notes/domain/markdownTasks.js"
+    },
+    {
+      "source": "features/notes/domain/markdownSerializer.js",
+      "deployment": "js/features/notes/domain/markdownSerializer.js"
+    },
+    {
+      "source": "features/notes/application/noteSession.js",
+      "deployment": "js/features/notes/application/noteSession.js"
+    },
+    {
+      "source": "features/notes/application/noteVersions.js",
+      "deployment": "js/features/notes/application/noteVersions.js"
+    },
+    {
+      "source": "features/notes/ui/richBody.js",
+      "deployment": "js/features/notes/ui/richBody.js"
+    },
+    {
+      "source": "features/notes/ui/noteTags.js",
+      "deployment": "js/features/notes/ui/noteTags.js"
+    },
+    {
+      "source": "features/notes/ui/noteWindow.js",
+      "deployment": "js/features/notes/ui/noteWindow.js"
+    },
+    {
+      "source": "features/notes/index.js",
+      "deployment": "js/features/notes/index.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/ui.js?v=20260916largetoolscroll1",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/modalManager.js",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/colorPicker.js?v=20260910eyedropper1",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/tileManager.js?v=20260910responsivebounds1",
+          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
+        },
+        {
+          "specifier": "/static/js/markdown.js",
+          "reason": "Shared markdown renderer, injected at Notes composition so note cards use the same renderer as the rest of the app. Remove when markdown rendering migrates to maintained source."
+        }
+      ]
+    },
+    {
+      "source": "features/notes/ui/lifecycle.js",
+      "deployment": "js/features/notes/ui/lifecycle.js"
+    },
+    {
+      "source": "features/notes/application/cardOperations.js",
+      "deployment": "js/features/notes/application/cardOperations.js"
+    },
+    {
+      "source": "features/notes/application/checklistOperations.js",
+      "deployment": "js/features/notes/application/checklistOperations.js"
+    },
+    {
+      "source": "features/notes/application/selection.js",
+      "deployment": "js/features/notes/application/selection.js"
+    },
+    {
+      "source": "features/notes/ui/toolbar.js",
+      "deployment": "js/features/notes/ui/toolbar.js"
+    },
+    {
+      "source": "features/notes/ui/windowLayout.js",
+      "deployment": "js/features/notes/ui/windowLayout.js"
+    },
+    {
+      "source": "shared/ui/confetti.js",
+      "deployment": "js/shared/ui/confetti.js"
+    },
+    {
+      "source": "features/documents/ui/findReplace.js",
+      "deployment": "js/document/ui/findReplace.js"
+    },
+    {
+      "source": "features/documents/ui/diffViewer.js",
+      "deployment": "js/document/ui/diffViewer.js"
+    },
+    {
+      "source": "features/documents/ui/exportDocx.js",
+      "deployment": "js/document/ui/exportDocx.js"
+    },
+    {
+      "source": "features/documents/ui/importFromDevice.js",
+      "deployment": "js/document/ui/importFromDevice.js"
+    },
+    {
+      "source": "features/documents/ui/previewModes.js",
+      "deployment": "js/document/ui/previewModes.js"
+    },
+    {
+      "source": "features/documents/ui/pdf/annotations.js",
+      "deployment": "js/document/ui/pdf/annotations.js"
+    },
+    {
+      "source": "features/documents/ui/pdf/geometry.js",
+      "deployment": "js/document/ui/pdf/geometry.js"
+    },
+    {
+      "source": "features/documents/ui/pdf/persistence.js",
+      "deployment": "js/document/ui/pdf/persistence.js"
+    },
+    {
+      "source": "features/documents/ui/pdfTools.js",
+      "deployment": "js/document/ui/pdfTools.js"
+    },
+    {
+      "source": "features/documents/ui/suggestions.js",
+      "deployment": "js/document/ui/suggestions.js"
+    },
+    {
+      "source": "features/documents/ui/richTables.js",
+      "deployment": "js/document/ui/richTables.js"
+    },
+    {
+      "source": "features/documents/ui/editor/sourceEditor.js",
+      "deployment": "js/document/ui/editor/sourceEditor.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/formatMenus.js",
+      "deployment": "js/document/ui/richEditor/formatMenus.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/formatting.js",
+      "deployment": "js/document/ui/richEditor/formatting.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/imageMenus.js",
+      "deployment": "js/document/ui/richEditor/imageMenus.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/imageOps.js",
+      "deployment": "js/document/ui/richEditor/imageOps.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/links.js",
+      "deployment": "js/document/ui/richEditor/links.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/markdownVisualSync.js",
+      "deployment": "js/document/ui/richEditor/markdownVisualSync.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/richBodySync.js",
+      "deployment": "js/document/ui/richEditor/richBodySync.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/richBodyWiring.js",
+      "deployment": "js/document/ui/richEditor/richBodyWiring.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/richOperations.js",
+      "deployment": "js/document/ui/richEditor/richOperations.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/selectionToolbar.js",
+      "deployment": "js/document/ui/richEditor/selectionToolbar.js"
+    },
+    {
+      "source": "features/documents/ui/richEditor/slashMenu.js",
+      "deployment": "js/document/ui/richEditor/slashMenu.js"
+    },
+    {
+      "source": "features/documents/ui/email/aiReply.js",
+      "deployment": "js/document/ui/email/aiReply.js"
+    },
+    {
+      "source": "features/documents/ui/email/attachments.js",
+      "deployment": "js/document/ui/email/attachments.js"
+    },
+    {
+      "source": "features/documents/ui/email/composerFields.js",
+      "deployment": "js/document/ui/email/composerFields.js"
+    },
+    {
+      "source": "features/documents/ui/email/emailBody.js",
+      "deployment": "js/document/ui/email/emailBody.js"
+    },
+    {
+      "source": "features/documents/ui/email/emailDocuments.js",
+      "deployment": "js/document/ui/email/emailDocuments.js"
+    },
+    {
+      "source": "features/documents/ui/email/localDraft.js",
+      "deployment": "js/document/ui/email/localDraft.js"
+    },
+    {
+      "source": "features/documents/ui/email/recipients.js",
+      "deployment": "js/document/ui/email/recipients.js"
+    },
+    {
+      "source": "features/documents/ui/email/sendWorkflow.js",
+      "deployment": "js/document/ui/email/sendWorkflow.js"
+    },
+    {
+      "source": "features/documents/ui/email/signedReply.js",
+      "deployment": "js/document/ui/email/signedReply.js"
+    },
+    {
+      "source": "features/documents/domain/documentKinds.js",
+      "deployment": "js/document/domain/documentKinds.js"
+    },
+    {
+      "source": "features/documents/domain/emailMessage.js",
+      "deployment": "js/document/domain/emailMessage.js"
+    },
+    {
+      "source": "features/documents/domain/richTextRules.js",
+      "deployment": "js/document/domain/richTextRules.js"
+    },
+    {
+      "source": "features/documents/domain/markdownVisualCodec.js",
+      "deployment": "js/document/domain/markdownVisualCodec.js"
+    },
+    {
+      "source": "features/documents/domain/sourceSegmentation.js",
+      "deployment": "js/document/domain/sourceSegmentation.js"
+    },
+    {
+      "source": "features/documents/domain/sourceFidelity.js",
+      "deployment": "js/document/domain/sourceFidelity.js"
+    },
+    {
+      "source": "features/documents/application/documentCommands.js",
+      "deployment": "js/document/application/documentCommands.js"
+    },
+    {
+      "source": "features/documents/application/documentState.js",
+      "deployment": "js/document/application/documentState.js"
+    },
+    {
+      "source": "features/documents/application/persistence.js",
+      "deployment": "js/document/application/persistence.js"
+    },
+    {
+      "source": "features/documents/application/documentSession.js",
+      "deployment": "js/document/application/documentSession.js"
+    },
+    {
+      "source": "features/documents/ui/host.js",
+      "deployment": "js/document/ui/host.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/ui.js?v=20260916largetoolscroll1",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/sessions.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/emojiPicker.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/emailReplyStream.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/markdown.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/codeRunner.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/langIcons.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/documentLibrary.js?v=20260911librarybulkdelete1",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/signature.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/modalManager.js",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/documentStats.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/documentOutline.js?v=20260831richtexttools91",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/colorPicker.js?v=20260910eyedropper1",
+          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
+        },
+        {
+          "specifier": "/static/js/emailLibrary.js?v=20260915trashmove2",
+          "reason": "Legacy host bridge dynamically loading emailLibrary with exact query string identity."
+        }
+      ]
+    },
+    {
+      "source": "features/documents/ui/documentActions.js",
+      "deployment": "js/document/ui/documentActions.js"
+    },
+    {
+      "source": "features/documents/ui/header/overflow.js",
+      "deployment": "js/document/ui/header/overflow.js"
+    },
+    {
+      "source": "features/documents/ui/editor/markdownImages.js",
+      "deployment": "js/document/ui/editor/markdownImages.js"
+    },
+    {
+      "source": "features/documents/ui/documentFlows.js",
+      "deployment": "js/document/ui/documentFlows.js"
+    },
+    {
+      "source": "features/documents/ui/selection/selectionHighlights.js",
+      "deployment": "js/document/ui/selection/selectionHighlights.js"
+    },
+    {
+      "source": "features/documents/ui/toolbar/toolbar.js",
+      "deployment": "js/document/ui/toolbar/toolbar.js"
+    },
+    {
+      "source": "features/documents/ui/tabs/tabBar.js",
+      "deployment": "js/document/ui/tabs/tabBar.js"
+    },
+    {
+      "source": "features/documents/ui/aiUpdates/documentUpdate.js",
+      "deployment": "js/document/ui/aiUpdates/documentUpdate.js"
+    },
+    {
+      "source": "features/documents/ui/aiUpdates/liveStream.js",
+      "deployment": "js/document/ui/aiUpdates/liveStream.js"
+    },
+    {
+      "source": "features/documents/ui/history/versionHistory.js",
+      "deployment": "js/document/ui/history/versionHistory.js"
+    },
+    {
+      "source": "features/documents/ui/status/documentStatus.js",
+      "deployment": "js/document/ui/status/documentStatus.js"
+    },
+    {
+      "source": "features/documents/ui/panel/paneTemplate.js",
+      "deployment": "js/document/ui/panel/paneTemplate.js"
+    },
+    {
+      "source": "features/documents/ui/panel/paneLayout.js",
+      "deployment": "js/document/ui/panel/paneLayout.js"
+    },
+    {
+      "source": "features/documents/ui/panel/documentPresenter.js",
+      "deployment": "js/document/ui/panel/documentPresenter.js"
+    },
+    {
+      "source": "features/documents/ui/header/headerActions.js",
+      "deployment": "js/document/ui/header/headerActions.js"
+    },
+    {
+      "source": "features/documents/ui/header/languagePicker.js",
+      "deployment": "js/document/ui/header/languagePicker.js"
+    },
+    {
+      "source": "features/documents/ui/email/composerWiring.js",
+      "deployment": "js/document/ui/email/composerWiring.js"
+    },
+    {
+      "source": "features/documents/ui/editor/sourceEditorBinding.js",
+      "deployment": "js/document/ui/editor/sourceEditorBinding.js"
+    },
+    {
+      "source": "features/documents/ui/moduleWiring.js",
+      "deployment": "js/document/ui/moduleWiring.js"
+    },
+    {
+      "source": "features/documents/ui/panel/panelLifecycle.js",
+      "deployment": "js/document/ui/panel/panelLifecycle.js",
+      "legacyImports": [
+        {
+          "specifier": "/static/js/notes.js?v=20260911notesselectioncancel1",
+          "reason": "Preserve the existing notes-panel module URL identity while invoking the legacy notes panel from document lifecycle."
+        }
+      ]
     }
   ]
 }

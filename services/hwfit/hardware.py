@@ -660,6 +660,8 @@ def _detect_windows():
             "gpu_vram_gb": d.get("gpu_vram_gb"),
             "gpu_count": _as_int(d.get("gpu_count"), 0),
             "backend": d.get("gpu_backend", "cpu_x86"),
+            "gpus": [],
+            "gpu_groups": [],
             "homogeneous": True,
             "gpu_error": None,
             "platform": "windows",
@@ -822,12 +824,14 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         if result:
             result = _attach_probe_context(result, host=host)
             _remote_host = None
+            _remote_port = None
             _remote_platform = None
             _cache_by_host[cache_key] = (now, result)
             return result
         # SSH may work while the PowerShell hardware probe still fails.
         result = {"error": f"Windows hardware probe failed for {host}", "host": host}
         _remote_host = None
+        _remote_port = None
         _remote_platform = None
         _cache_by_host[cache_key] = (now, result)
         return result
@@ -852,6 +856,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         result = {"error": f"Cannot connect to {host}", "host": host}
         _cache_by_host[cache_key] = (now, result)
         _remote_host = None
+        _remote_port = None
         _remote_platform = None
         return result
     available_ram = round(_get_available_ram_gb(), 1)
@@ -893,6 +898,9 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "gpu_name": None,
             "gpu_vram_gb": None,
             "gpu_count": 0,
+            "gpus": [],
+            "gpu_groups": [],
+            "homogeneous": True,
             "backend": backend,
             # Set when nvidia-smi exists but failed (e.g. driver/library
             # version mismatch) — lets the UI say "GPU driver error" instead
@@ -902,6 +910,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
 
     result = _attach_probe_context(result, host=host)
     _remote_host = None
+    _remote_port = None
     _remote_platform = None
     _cache_by_host[cache_key] = (now, result)
     return result

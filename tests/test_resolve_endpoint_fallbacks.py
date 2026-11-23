@@ -57,7 +57,7 @@ class _FakeDb:
         pass
 
 
-def _endpoint(ep_id, model, *, hidden=None):
+def _endpoint(ep_id, model, *, hidden=None, model_type="llm"):
     return SimpleNamespace(
         id=ep_id,
         name=f"Endpoint {ep_id}",
@@ -65,6 +65,7 @@ def _endpoint(ep_id, model, *, hidden=None):
         api_key=f"key-{ep_id}",
         cached_models=json.dumps([model]),
         hidden_models=json.dumps(hidden or []),
+        model_type=model_type,
         is_enabled=True,
     )
 
@@ -234,6 +235,51 @@ def test_exact_fallback_drops_known_missing_model(monkeypatch):
     ) is None
 
 
+def test_exact_fallback_treats_hidden_only_inventory_as_known(monkeypatch):
+    endpoint = SimpleNamespace(
+        id="fallback",
+        base_url="https://fallback.example/v1",
+        api_key="key-fallback",
+        cached_models=json.dumps([]),
+        pinned_models=json.dumps([]),
+        hidden_models=json.dumps(["blocked-model"]),
+        is_enabled=True,
+    )
+    _install_resolver_fakes(monkeypatch, {}, [endpoint])
+
+    assert resolve_endpoint_by_id(
+        "fallback",
+        "blocked-model",
+        require_exact_model=True,
+    ) is None
+    assert resolve_endpoint_by_id(
+        "fallback",
+        "another-model",
+        require_exact_model=True,
+    ) is None
+
+
+def test_exact_fallback_rejects_unlisted_model_when_all_known_models_hidden(
+    monkeypatch,
+):
+    endpoint = SimpleNamespace(
+        id="fallback",
+        base_url="https://fallback.example/v1",
+        api_key="key-fallback",
+        cached_models=json.dumps(["hidden-model"]),
+        pinned_models=json.dumps([]),
+        hidden_models=json.dumps(["hidden-model"]),
+        is_enabled=True,
+    )
+    _install_resolver_fakes(monkeypatch, {}, [endpoint])
+
+    assert resolve_endpoint_by_id(
+        "fallback",
+        "other-model",
+        require_exact_model=True,
+    ) is None
+
+
 def test_fallback_entry_resolution_preserves_credential_distinct_endpoints(monkeypatch):
     seen = []
 
@@ -319,6 +365,25 @@ def test_exact_id_descriptor_wins_when_routes_are_identical(monkeypatch):
         "endpoint_cost_tracked": True,
     }
     assert seen_owners == ["alice"]
+
+
+def test_foreground_descriptor_resolution_rejects_non_llm_endpoint(monkeypatch):
+    _install_resolver_fakes(
+        monkeypatch,
+        {},
+        [_endpoint("image", "image-model", model_type="image")],
+    )
+
+    assert resolve_fallback_entries_with_descriptors(
+        [{"endpoint_id": "image", "model": "image-model"}],
+        require_exact_model=True,
+        required_model_type="llm",
+    ) == []
+    assert resolve_endpoint_by_id(
+        "image",
+        "image-model",
+        require_exact_model=True,
+    ) is not None
 
 
 def test_endpoint_cost_tracking_is_non_secret_route_classification():

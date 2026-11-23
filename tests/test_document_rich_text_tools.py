@@ -71,7 +71,7 @@ def test_line_spacing_preserves_selection_and_uses_one_undoable_snapshot():
 
 
 def test_rich_text_commands_sync_and_schedule_save():
-    apply_format = DOC_JS.split("function applyMdFormat(action)", 1)[1]
+    apply_format = DOC_JS.split("function applyMdFormat(action", 1)[1]
     command_branch = apply_format.split("const _rich = _emailRichbodyActive();", 1)[1].split(
         "const ta = document.getElementById('doc-editor-textarea');", 1
     )[0]
@@ -258,7 +258,7 @@ def test_existing_figure_wrapped_images_are_normalized_on_load():
 
 
 def test_inline_code_and_code_blocks_use_distinct_rich_text_commands():
-    apply_format = DOC_JS.split("function applyMdFormat(action)", 1)[1]
+    apply_format = DOC_JS.split("function applyMdFormat(action", 1)[1]
     rich_branch = apply_format.split("const _rich = _emailRichbodyActive();", 1)[1].split(
         "const ta = document.getElementById('doc-editor-textarea');", 1
     )[0]
@@ -307,9 +307,7 @@ def test_rich_code_styles_are_scoped_and_exported():
 
 
 def test_rich_link_dialog_supports_edit_open_and_remove_actions():
-    link_dialog = DOC_JS.split("function _normalizeRichLinkUrl", 1)[1].split(
-        "function _promptImageAlt", 1
-    )[0]
+    link_dialog = function_body("_promptLink")
 
     assert "editing ? 'Edit link' : 'Insert link'" in link_dialog
     assert 'id="doc-link-open"' in link_dialog
@@ -321,9 +319,7 @@ def test_rich_link_dialog_supports_edit_open_and_remove_actions():
 
 
 def test_rich_links_validate_protocols_during_paste_save_and_editing():
-    normalizer = DOC_JS.split("function _normalizeRichLinkUrl", 1)[1].split(
-        "function _promptLink", 1
-    )[0]
+    normalizer = function_body("_normalizeRichLinkUrl")
     sanitizer = function_body("_sanitizedRichTextHtml")
     paste_cleaner = function_body("_cleanRichTextPasteHtml")
 
@@ -367,9 +363,7 @@ def test_rich_text_exports_include_structural_styles():
 
 
 def test_header_history_controls_persist_rich_text_changes():
-    history = DOC_JS.split("// Undo button in header", 1)[1].split(
-        "// Diff toggle button", 1
-    )[0]
+    history = function_body("bindHeaderActionsSecondary")
 
     assert "doc-undo-btn" in history
     assert "doc-redo-btn" in history
@@ -379,17 +373,16 @@ def test_header_history_controls_persist_rich_text_changes():
 
 
 def test_find_uses_dom_ranges_for_visible_rich_text():
-    find_section = DOC_JS.split("// ── In-document find (Ctrl+F) ──", 1)[1].split(
-        "// Delete (or Backspace)", 1
-    )[0]
+    rich_build = function_body("_buildRichFindRanges")
+    rich_render = function_body("_renderRichFindRanges")
+    do_find = function_body("_doFind")
 
-    assert "function _buildRichFindRanges" in find_section
-    assert "document.createTreeWalker(rich, NodeFilter.SHOW_TEXT)" in find_section
-    assert "document.createRange()" in find_section
-    assert "CSS.highlights.set(_richFindAllName" in find_section
-    assert "CSS.highlights.set(_richFindCurrentName" in find_section
-    assert "if (rich)" in find_section
-    assert find_section.index("if (rich)") < find_section.index("const text = ta.value")
+    assert "document.createTreeWalker(rich, NodeFilter.SHOW_TEXT)" in rich_build
+    assert "document.createRange()" in rich_build
+    assert "CSS.highlights.set(_richFindAllName" in rich_render
+    assert "CSS.highlights.set(_richFindCurrentName" in rich_render
+    assert "if (rich)" in do_find
+    assert do_find.index("if (rich)") < do_find.index("const text = ta.value")
 
 
 def test_rich_find_highlights_are_non_persistent_and_cleaned_up():
@@ -424,9 +417,10 @@ def test_rich_find_replace_preserves_structure_and_uses_native_undo_commands():
     assert "function _replaceFindCurrent()" in replace_section
     assert "document.execCommand('insertText'" in replace_section
     assert "function _replaceFindAll()" in replace_section
-    assert "const clone = rich.cloneNode(true)" in replace_section
+    # Behavior (block structure, undo) is covered in Chromium by
+    # tests/test_document_visual_editor.py::test_visual_lifecycle_switching_history_preview_and_find_replace.
     assert "[...ranges].reverse()" in replace_section
-    assert "document.execCommand('insertHTML', false, clone.innerHTML)" in replace_section
+    assert "document.execCommand('insertHTML', false, clone.innerHTML)" not in replace_section
     assert "_syncEmailRichbody(rich)" in replace_section
     assert "_scheduleEmailRichbodySave()" in replace_section
 
@@ -443,15 +437,16 @@ def test_source_find_replace_uses_literal_matching_and_shared_undo_path():
 
 
 def test_visible_rich_text_selection_feeds_ai_editing_context():
-    selection_section = DOC_JS.split("// ---- Selection-based AI editing ----", 1)[1].split(
-        "// ── Inline Suggestion Comments", 1
-    )[0]
+    selection_section = function_body("updateRichSelectionState")
+    range_helpers = function_body("_richRangeFromOffsets")
+    validation_helpers = function_body("_validateSelections")
+    render_helpers = function_body("renderAllSelectionHighlights")
 
     assert "function updateRichSelectionState(rich)" in selection_section
     assert "kind: 'rich'" in selection_section
-    assert "function _richRangeFromOffsets" in selection_section
-    assert "CSS.highlights.set(_richSelectionHighlightName" in selection_section
-    assert "const source = s.kind === 'rich' ? richText : text;" in selection_section
+    assert "function _richRangeFromOffsets" in range_helpers
+    assert "CSS.highlights.set(_richSelectionHighlightName" in render_helpers
+    assert "const source = s.kind === 'rich' ? richText : text;" in validation_helpers
     assert "rich.addEventListener('mouseup'" in DOC_JS
 
 

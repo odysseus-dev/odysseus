@@ -1,6 +1,7 @@
 // Memory Management Functions
 // This module handles all memory-related operations
 
+import { formatRecentAge } from './shared/domain/relativeTime.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
@@ -150,9 +151,8 @@ function _wireMemoryDrag() {
 function relativeTime(timestamp) {
   const now = Math.floor(Date.now() / 1000);
   const diff = now - timestamp;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  const recent = formatRecentAge(diff);
+  if (recent !== null) return recent;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
   if (diff < 2592000) return `${Math.floor(diff / 604800)}w ago`;
   if (diff < 31536000) return `${Math.floor(diff / 2592000)}mo ago`;
@@ -163,11 +163,13 @@ function buildCategoryChips() {
   const container = document.getElementById('memory-category-filters');
   if (!container) return;
 
+  const cats = new Set(memories.map(m => m.category || 'fact'));
+  if (activeCategory !== 'all' && !cats.has(activeCategory)) activeCategory = 'all';
+
   // Hide the chip row entirely when there are no memories — no point showing
   // an "all" chip with nothing to filter.
   if (!memories.length) { container.innerHTML = ''; return; }
 
-  const cats = new Set(memories.map(m => m.category || 'fact'));
   const sorted = ['all', ...Array.from(cats).sort()];
   const counts = memories.reduce((result, memory) => {
     const category = memory.category || 'fact';
@@ -277,6 +279,7 @@ export function openMemoryModal(tabName = 'browse') {
       else if (m.default?.loadSkills) m.default.loadSkills(true);
     });
   }
+  if (mode === 'memory') return loadMemories();
 }
 
 function _decodeMemoryAnchorId(memoryId) {
@@ -297,9 +300,8 @@ function _resetMemoryDeepLinkFilters() {
 // Memory search output may expose a shortened id, so prefix matching is
 // intentional here.
 export async function openMemory(memoryId, attempt = 0) {
-  openMemoryModal('browse');
   _resetMemoryDeepLinkFilters();
-  await loadMemories();
+  await openMemoryModal('browse');
   if (renderMemoryList) renderMemoryList();
   const wanted = _decodeMemoryAnchorId(memoryId);
   if (!wanted) return;
