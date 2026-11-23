@@ -385,6 +385,7 @@ function moduleSource(relativePath) {
   };
   vm.createContext(context);
   vm.runInContext(moduleSource('registry.js'), context, { filename: 'registry.js' });
+  vm.runInContext(moduleSource('../shared/ui/optionNavigation.js'), context, { filename: 'optionNavigation.js' });
   vm.runInContext(moduleSource('search.js'), context, { filename: 'search.js' });
   vm.runInContext(moduleSource('sidebar.js'), context, { filename: 'sidebar.js' });
   vm.runInContext(moduleSource('navigation.js'), context, { filename: 'navigation.js' });

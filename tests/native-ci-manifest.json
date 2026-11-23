@@ -1,0 +1,160 @@
+{
+  "native-ci": [
+    "tests/backgroundToolJobs.test.mjs",
+    "tests/chatEditorProgress.test.mjs",
+    "tests/chatImageDeletion.test.mjs",
+    "tests/chatPhotoEditorIntegrity.test.mjs",
+    "tests/chatProcessingHandoff.test.mjs",
+    "tests/copyChatHeader.test.mjs",
+    "tests/emailReplyStream.test.mjs",
+    "tests/galleryModelPickerSync.test.mjs",
+    "tests/generatedImageResult.test.mjs",
+    "tests/markdownPreviewParity.test.mjs",
+    "tests/notesBrowserRunner.test.mjs",
+    "tests/notesColors.test.mjs",
+    "tests/notesDraftRecovery.test.mjs",
+    "tests/notesExports.test.mjs",
+    "tests/notesMarkdownSanitize.test.mjs",
+    "tests/notesMarkdownSerializer.test.mjs",
+    "tests/notesQueries.test.mjs",
+    "tests/notesReminderText.test.mjs",
+    "tests/notesWindowSync.test.mjs",
+    "tests/researchMobileButtons.test.mjs",
+    "tests/schemaThinkingProbe.test.mjs",
+    "tests/sidebarNewChat.test.mjs",
+    "tests/skillsApproval.test.mjs",
+    "tests/streamingRendererRaf.test.mjs",
+    "tests/toolFollowupOracle.test.mjs",
+    "tests/tool_followup_oracle.test.mjs"
+  ],
+  "browser-ci": [
+    "tests/emailReplyBrowser.test.mjs"
+  ],
+  "architecture-ci": [
+    "tests/frontendArchitecture.test.mjs"
+  ],
+  "ci-syntax": [
+    "tests/documentActions.test.mjs",
+    "tests/documentBehaviorRunner.test.mjs",
+    "tests/documentFileProcessing.test.mjs",
+    "tests/documentFlows.test.mjs",
+    "tests/documentLiveStream.test.mjs",
+    "tests/documentOverflow.test.mjs",
+    "tests/documentPersistence.test.mjs",
+    "tests/documentReferences.test.mjs",
+    "tests/documentStatus.test.mjs",
+    "tests/documentTabBar.test.mjs",
+    "tests/documentToolbar.test.mjs",
+    "tests/documentUpdate.test.mjs",
+    "tests/documentVersionHistory.test.mjs",
+    "tests/domainModules.test.mjs",
+    "tests/markdownImages.test.mjs",
+    "tests/selectionHighlights.test.mjs"
+  ],
+  "behavior-delegates": {
+    "tests/documentActions.behavior.mjs": "tests/documentActions.test.mjs",
+    "tests/documentFlows.behavior.mjs": "tests/documentFlows.test.mjs",
+    "tests/documentLiveStream.behavior.mjs": "tests/documentLiveStream.test.mjs",
+    "tests/documentOverflow.behavior.mjs": "tests/documentOverflow.test.mjs",
+    "tests/documentStatus.behavior.mjs": "tests/documentStatus.test.mjs",
+    "tests/documentTabBar.behavior.mjs": "tests/documentTabBar.test.mjs",
+    "tests/documentToolbar.behavior.mjs": "tests/documentToolbar.test.mjs",
+    "tests/documentUpdate.behavior.mjs": "tests/documentUpdate.test.mjs",
+    "tests/documentVersionHistory.behavior.mjs": "tests/documentVersionHistory.test.mjs",
+    "tests/markdownImages.behavior.mjs": "tests/markdownImages.test.mjs",
+    "tests/selectionHighlights.behavior.mjs": "tests/selectionHighlights.test.mjs"
+  },
+  "python-ci": {
+    "tests/documentAuditRemediation.mjs": [
+      "tests/test_document_audit_remediation.py"
+    ],
+    "tests/documentEmailWorkflows.test.mjs": [
+      "tests/test_document_email_workflows.py"
+    ],
+    "tests/documentFinalRemediation.mjs": [
+      "tests/test_document_final_remediation.py"
+    ],
+    "tests/documentRichEditor.test.mjs": [
+      "tests/test_document_rich_editor_contract.py"
+    ],
+    "tests/documentSession.test.mjs": [
+      "tests/test_document_session_contract.py"
+    ],
+    "tests/documentStateContract.mjs": [
+      "tests/test_document_state_contract.py"
+    ],
+    "tests/historyResumeRendering.test.mjs": [
+      "tests/test_history_resume_rendering_js.py",
+      "tests/test_live_fallback_round_attribution.py"
+    ],
+    "tests/live_thinking_scheduler.test.mjs": [
+      "tests/test_live_thinking_scheduler_js.py"
+    ],
+    "tests/markdownRendererModes.test.mjs": [
+      "tests/test_markdown_rendering_js.py"
+    ],
+    "tests/markdownVisualCodec.test.mjs": [
+      "tests/test_document_markdown_domains.py"
+    ],
+    "tests/noteTestOracle.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesApplication.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesCharacterization.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesDraftAutosave.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesInfrastructure.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesMarkdownRender.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesMarkdownTasks.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesRecurrence.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesReminders.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/notesWorkflows.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/selectedNotesContext.test.mjs": [
+      "tests/test_notes_reference_contracts_js.py"
+    ],
+    "tests/serviceWorkerInstall.test.mjs": [
+      "tests/test_service_worker_install.py"
+    ],
+    "tests/sourceEditor.test.mjs": [
+      "tests/test_document_source_editor.py"
+    ],
+    "tests/sourceFidelity.test.mjs": [
+      "tests/test_document_markdown_domains.py"
+    ],
+    "tests/streaming/invariant.test.mjs": [
+      "tests/test_streaming_segmenter_js.py"
+    ],
+    "tests/streaming/segmenter.test.mjs": [
+      "tests/test_streaming_segmenter_js.py"
+    ],
+    "tests/turnRendering.test.mjs": [
+      "tests/test_turn_rendering_js.py"
+    ],
+    "tests/helpers/test_shared_download_timing.mjs": [
+      "tests/test_settings_shell_js_behavior.py"
+    ],
+    "tests/helpers/test_shared_settings_clipboard.mjs": [
+      "tests/test_settings_shell_js_behavior.py"
+    ],
+    "tests/helpers/test_shared_ui_options.mjs": [
+      "tests/test_settings_shell_js_behavior.py"
+    ]
+  }
+}

@@ -12,16 +12,9 @@
 // derived from pointer velocity (slower → thicker), which gives signatures
 // their characteristic ink-bleed feel.
 
-const API_BASE = window.location.origin;
+import { escapeHtml as _esc } from './shared/domain/html.js';
 
-function _esc(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const API_BASE = window.location.origin;
 
 function _safeSignatureDataUrl(raw) {
   const value = String(raw || '').trim();

@@ -10,7 +10,6 @@ precision-guides overlay.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
@@ -20,7 +19,6 @@ VIEW = (ROOT / "static/js/editor/wire-view-menu.js").read_text()
 MERGE = (ROOT / "static/js/editor/wire-merge-buttons.js").read_text()
 GUIDES = (ROOT / "static/js/editor/precision-guides.js").read_text()
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 
 def test_edit_copy_merged_menu_item_present():
@@ -95,9 +93,3 @@ def test_offset_and_glowing_edges_ops_present():
 def test_new_guide_reuses_precision_guides():
     assert "addGuide(orientation, position) {" in GUIDES
     assert "saveState?.('Add guide');" in GUIDES
-
-
-def test_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)

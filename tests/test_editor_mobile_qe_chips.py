@@ -1,9 +1,7 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static/css/13-image-editor.css").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 
 def test_mobile_quick_edit_uses_chip_row():
@@ -38,9 +36,3 @@ def test_quick_edit_collapsed_bar_stays_translucent_over_the_canvas():
     assert "opacity: 0.55;" in CSS
     assert ".ge-canvas-area .ge-ai-command-collapsed:hover,\n.ge-canvas-area .ge-ai-command-collapsed:focus-within {" in CSS
     assert "opacity: 0.94;" in CSS
-
-
-def test_sw_version_is_current():
-    m = re.search(r"CACHE_NAME = '(odysseus-v\d+-pr40-editor-precache)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

@@ -771,3 +771,6 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 
 To back up or restore everything in `data/`, see the
 [Backup & Restore guide](backup-restore.md).
+
+For using Notes (the note window, checklists, images and reminders), see
+the [Notes guide](notes.md).

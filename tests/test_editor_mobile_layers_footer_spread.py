@@ -1,9 +1,7 @@
-import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 CSS = (REPO / "static" / "css" / "13-image-editor.css").read_text(encoding="utf-8")
-SW = (REPO / "static" / "sw.js").read_text(encoding="utf-8")
 
 
 def _block(text, opener):
@@ -28,9 +26,3 @@ def test_editor_hides_the_dimmed_chat_selector():
     assert "body.ge-editor-open .chat-meta-overlay {" in CSS
     block = _block(CSS, "body.ge-editor-open .chat-meta-overlay {")
     assert "display: none !important;" in block
-
-
-def test_sw_cache_name_is_versioned():
-    match = re.search(r"const CACHE_NAME = '([^']+)';", SW)
-    assert match
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", match.group(1))

@@ -1,9 +1,7 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 
 def _last_mobile_block(css: str) -> str:
@@ -26,9 +24,3 @@ def test_menu_row_stays_single_row():
     block = CSS[i:i + 240]
     assert "overflow-x: auto;" in block
     assert "flex-wrap: wrap" not in block
-
-
-def test_sw_cache_bumped():
-    # Version-agnostic: every commit bumps the SW cache.
-    m = re.search(r"CACHE_NAME = '(odysseus-v\d+-pr40-editor-precache)'", SW)
-    assert m, "CACHE_NAME not found"

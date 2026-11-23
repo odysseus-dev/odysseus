@@ -1,6 +1,7 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
+import { stepWrappedOption } from '../shared/ui/optionNavigation.js';
 import * as jobs from './jobs.js?v=20260910researcherrorpersist1';
 import themeModule from '../theme.js?v=20260911organsrain1';
 import createResearchSynapse from '../researchSynapse.js?v=20260910roundlabels2';
@@ -1510,7 +1511,7 @@ function _setupResearchPickers(pane) {
       const items = Array.from(menu.querySelectorAll('.research-picker-option'));
       if (!items.length) return;
       const currentIndex = Math.max(0, items.indexOf(document.activeElement));
-      items[(currentIndex + offset + items.length) % items.length].focus();
+      items[stepWrappedOption(currentIndex, items.length, offset)].focus();
     };
     const open = () => {
       _closeResearchPickers(id);

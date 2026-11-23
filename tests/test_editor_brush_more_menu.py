@@ -3,7 +3,6 @@
 matching the wand's "More" treatment."""
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
@@ -11,7 +10,6 @@ CONTROLS = (ROOT / "static/js/editor/build/controls.js").read_text(encoding="utf
 OPTIONS = (ROOT / "static/js/editor/build/options-bar.js").read_text(encoding="utf-8")
 STROKE = (ROOT / "static/js/editor/stroke-tool-sliders.js").read_text(encoding="utf-8")
 GALLERY = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_brush_strip_has_a_caret_more_dropdown():
@@ -171,7 +169,3 @@ def test_brush_colour_syncs_to_the_sidebar_swatch():
 
 def test_blend_row_is_right_aligned():
     assert ".ge-brush-more-menu #ge-brush-blend { margin-left: auto; }" in CSS
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

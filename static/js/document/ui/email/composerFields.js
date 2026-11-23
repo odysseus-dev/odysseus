@@ -1,6 +1,6 @@
 import { _hideRichSelectionToolbar } from '../richEditor/selectionToolbar.js';
 import { _hideRichSlashMenu } from '../richEditor/slashMenu.js';
-import { spinnerModule, uiModule } from '../host.js';
+import { downloadBlob, spinnerModule, uiModule } from '../host.js';
 import { loadDocument } from '../documentFlows.js';
 import { syncHighlighting } from '../editor/sourceEditor.js';
 import { resetEmailStreamState } from './emailBody.js';
@@ -236,13 +236,7 @@ export function _showEmailFields(doc, { applyLocalDraft = true, forceHeaderField
                 const res = await fetch(`${API_BASE}/api/email/attachment/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = att.filename;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                downloadBlob(blob, att.filename);
               } catch (e) {
                 console.error('Download attachment failed:', e);
                 if (uiModule) uiModule.showError('Download failed: ' + e.message);

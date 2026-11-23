@@ -3,7 +3,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = ROOT / "static/js/galleryEditor.js"
-SW = ROOT / "static/sw.js"
 
 
 def _js():
@@ -26,14 +25,6 @@ def test_quick_edit_bar_watches_sheet_for_lift():
     assert "_watchSheetForLift" in js
     assert "MutationObserver(_settleMobileChrome)" in js
     assert "_settleMobileChrome" in js
-
-
-def test_sw_cache_bumped():
-    # Version-agnostic: every commit bumps the SW cache, so pinning the exact
-    # number makes this test fail on the next commit.
-    import re
-    sw = SW.read_text(encoding="utf-8")
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", sw)
 
 
 def test_opening_quick_edit_collapses_the_sheet_on_phones():

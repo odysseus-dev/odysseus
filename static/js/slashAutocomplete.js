@@ -3,6 +3,7 @@
 // type. Reads COMMANDS from slashCommands.js — no command logic lives here.
 
 import { COMMANDS, LEGACY_ALIASES } from './slashCommands.js?v=20260921chatgptusage1';
+import { stepWrappedOption } from './shared/ui/optionNavigation.js';
 
 const POPUP_ID = 'slash-autocomplete';
 const MAX_VISIBLE = 14;
@@ -270,11 +271,11 @@ export function initSlashAutocomplete(textarea) {
     if (!visible || !items.length) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      selectedIdx = (selectedIdx + 1) % items.length;
+      selectedIdx = stepWrappedOption(selectedIdx, items.length, 1);
       _render(popup, items, selectedIdx, textarea.value);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      selectedIdx = (selectedIdx - 1 + items.length) % items.length;
+      selectedIdx = stepWrappedOption(selectedIdx, items.length, -1);
       _render(popup, items, selectedIdx, textarea.value);
     } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
       // Tab always inserts. Enter inserts only when the user hasn't already

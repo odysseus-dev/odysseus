@@ -49,7 +49,7 @@ export function createLayout({ isOpen = () => true } = {}) {
     if (!isOpen()) return;
     if (!isGrid) {
       // Clear any leftover inline spans so list view lays out normally.
-      body.querySelectorAll('.note-card, .notes-label-toggle, .notes-labels-bar, .notes-quick-add, .note-form, .doclib-chip-scroll-frame:has(> .notes-labels-bar)').forEach(c => { c.style.gridRowEnd = ''; });
+      body.querySelectorAll('.note-card, .notes-label-toggle, .notes-labels-bar, .notes-quick-add, .doclib-chip-scroll-frame:has(> .notes-labels-bar)').forEach(c => { c.style.gridRowEnd = ''; });
       return;
     }
     const ROW_PX = 4;
@@ -72,15 +72,6 @@ export function createLayout({ isOpen = () => true } = {}) {
         const shave = isMobileGrid ? 4 : 0;
         quickAdd.style.gridRowEnd = `span ${Math.max(1, spanForHeight(quickAdd.scrollHeight + 10) - shave)}`;
       }
-      body.querySelectorAll('.note-form').forEach(form => {
-        form.style.gridColumn = '1 / -1';
-        const isDrawForm = !!form.querySelector('.note-form-type-seg.is-draw');
-        const minSpan = isMobileGrid ? (isDrawForm ? 104 : 64) : 1;
-        const renderedHeight = form.getBoundingClientRect?.().height || 0;
-        const drawReserve = isDrawForm && isMobileGrid ? 12 : 12;
-        const measuredHeight = Math.max(form.scrollHeight, renderedHeight) + drawReserve;
-        form.style.gridRowEnd = `span ${Math.max(minSpan, spanForHeight(measuredHeight))}`;
-      });
     };
     const recompute = (card) => {
       // scrollHeight returns the natural content height : card.getBoundingClientRect()
@@ -93,7 +84,7 @@ export function createLayout({ isOpen = () => true } = {}) {
     recomputeFullRows();
     body.querySelectorAll('.note-card').forEach(recompute);
     // Watch masonry participants : content can grow (image load, todo edits,
-    // quick-add/form expansion), and stale spans are what cause visual merging.
+    // quick-add expansion), and stale spans are what cause visual merging.
     if ('ResizeObserver' in window) {
       _masonryObserver = new ResizeObserver(entries => {
         let fullRowsChanged = false;
@@ -104,7 +95,7 @@ export function createLayout({ isOpen = () => true } = {}) {
         if (fullRowsChanged) recomputeFullRows();
       });
       body.querySelectorAll('.note-card').forEach(c => _masonryObserver.observe(c));
-    body.querySelectorAll('.notes-label-toggle, .notes-quick-add, .note-form').forEach(c => _masonryObserver.observe(c));
+    body.querySelectorAll('.notes-label-toggle, .notes-quick-add').forEach(c => _masonryObserver.observe(c));
     const labelsBar = body.querySelector('.notes-labels-bar');
     const labelsLayout = labelsBar?.parentElement?.classList.contains('doclib-chip-scroll-frame')
       ? labelsBar.parentElement

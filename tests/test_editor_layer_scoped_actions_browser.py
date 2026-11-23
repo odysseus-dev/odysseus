@@ -11,8 +11,8 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture
-def page():
+@pytest.fixture(scope="module")
+def browser_instance():
     if sync_playwright is None:
         pytest.fail("playwright is required for editor browser tests. Install requirements-dev.txt")
     with sync_playwright() as playwright:
@@ -20,7 +20,18 @@ def page():
         if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"):
             launch_kwargs["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"]
         browser = playwright.chromium.launch(**launch_kwargs)
-        page = browser.new_page(viewport={"width": 1000, "height": 700})
+        try:
+            yield browser
+        finally:
+            if browser.is_connected():
+                browser.close()
+
+
+@pytest.fixture
+def page(browser_instance):
+    context = browser_instance.new_context(viewport={"width": 1000, "height": 700})
+    try:
+        page = context.new_page()
 
         def serve(route):
             url = route.request.url
@@ -38,7 +49,8 @@ def page():
         page.route('http://editor.test/**', serve)
         page.goto('http://editor.test/')
         yield page
-        browser.close()
+    finally:
+        context.close()
 
 
 def test_remove_background_sends_only_active_layer_and_preserves_others(page):

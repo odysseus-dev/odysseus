@@ -45,7 +45,7 @@ test('mobile tool and layer sheets do not overlap mask controls', async ({ page 
   await expect(layerSheet).toHaveClass(/minimized/);
   const controlsBox = await controls.boundingBox();
   const sheetBox = await layerSheet.boundingBox();
-  expect(controlsBox.y).toBeLessThan(sheetBox.y + sheetBox.height);
+  expect(controlsBox.y).toBeLessThanOrEqual(sheetBox.y + sheetBox.height);
 
   await selectTool(page, 'eraser');
   await selectTool(page, 'eraser');

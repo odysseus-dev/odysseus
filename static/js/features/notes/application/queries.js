@@ -1,6 +1,20 @@
 /** Application-owned filtering, searching and note ordering. */
 import { _noteTags, _visibleNoteTags, _nextGoalStep, _isCalendarReminderNote } from '../domain/noteRules.js';
 import { _hasTimeComponent } from '../domain/recurrence.js';
+/** A search box value as lower-case words; blank or whitespace-only gives none. */
+export function searchTerms(query) {
+  return String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/** Every word must appear somewhere in the note (title, body, tags or a task),
+ *  in any order and not necessarily in the same field. */
+function noteMatchesSearch(note, terms) {
+  const fields = [note.title, note.content, note.label];
+  if (Array.isArray(note.items)) for (const it of note.items) fields.push(it && it.text);
+  const haystack = fields.map(f => String(f || '').toLowerCase()).join('\n');
+  return terms.every(term => haystack.includes(term));
+}
+
 export function createQueries({
   _hasActiveReminder,
   state
@@ -20,16 +34,8 @@ export function createQueries({
       // Today view: only goals that still have an unchecked step.
       filtered = filtered.filter(n => n.note_type === 'goal' && !n.archived && _nextGoalStep(n));
     }
-    if (state.searchQuery) {
-      filtered = filtered.filter(n => {
-        const q = state.searchQuery;
-        if ((n.title || '').toLowerCase().includes(q)) return true;
-        if ((n.content || '').toLowerCase().includes(q)) return true;
-        if ((n.label || '').toLowerCase().includes(q)) return true;
-        if (Array.isArray(n.items) && n.items.some(it => (it.text || '').toLowerCase().includes(q))) return true;
-        return false;
-      });
-    }
+    const terms = searchTerms(state.searchQuery);
+    if (terms.length) filtered = filtered.filter(n => noteMatchesSearch(n, terms));
     const sorted = [...filtered].sort((a, b) => {
       // In reminders view: sort by due date ascending (soonest first)
       if (state.activeFilter === 'reminders') {

@@ -554,8 +554,7 @@ body.notes-mobile-mode .note-card .note-checkbox {
   touch-action: manipulation;
 }
 body.notes-mobile-mode .note-card .note-check-dot,
-body.notes-mobile-mode .note-card .note-checkbox-dot,
-body.notes-mobile-mode .note-card .note-cl-dot {
+body.notes-mobile-mode .note-card .note-checkbox-dot {
   opacity: 0.55;
   cursor: pointer !important;
 }
@@ -608,91 +607,6 @@ body.notes-drag-mode .note-card-pin svg {
 }
 @media (prefers-reduced-motion: reduce) {
   body.notes-drag-mode .note-card::after { animation: none; }
-}
-.note-fullscreen-overlay .note-form-type-pill {
-  padding: 10px 16px;
-  font-size: 14px;
-}
-.note-fullscreen-overlay .note-cl-grip:active { cursor: grabbing; opacity: 0.9; }
-.note-fullscreen-overlay .note-cl-dot::before {
-  content: '';
-  position: absolute;
-  inset: -12px;
-}
-.note-fullscreen-overlay .note-cl-text {
-  font-size: 14px;
-  padding: 7px 6px;
-  min-height: 32px;
-}
-.note-fullscreen-overlay .note-cl-rm:active { opacity: 1; }
-/* + Add (new checklist item) was tiny — bump for thumbs */
-.note-fullscreen-overlay .note-cl-add {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 18px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: 8px;
-  letter-spacing: -0.01em;
-  opacity: 0.85;
-}
-.note-fullscreen-overlay .note-cl-add:active { opacity: 1; }
-.note-fullscreen-overlay .note-cl-add-row .note-cl-add { margin: 0; }
-.note-fullscreen-overlay .note-cl-add-row .note-form-photo-btn::before {
-  content: '+';
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1;
-  opacity: 0.85;
-}
-.note-fullscreen-overlay .note-cl-add-row .note-form-photo-btn svg {
-  width: 16px;
-  height: 16px;
-}
-.note-form-content-reader a {
-  color: var(--accent, var(--red));
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.note-form-content-reader a:active { opacity: 0.7; }
-.note-fullscreen-overlay .note-cl-text-reader a {
-  color: var(--accent, var(--red));
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.note-fullscreen-overlay .note-cl-text-reader a:active { opacity: 0.7; }
-/* Reminder bell + other header icon-buttons. Tightened down 2px so
-   the bell sits more proportionally next to the title field. */
-.note-fullscreen-overlay .note-form-icon-btn {
-  width: 36px;
-  height: 36px;
-}
-/* The plain-note textarea was rows="4" — fine for an in-grid card but
-   cramped in fullscreen. Let it grow to fill the available height so
-   writing feels like a real notepad, not a tweet box. The read-mode
-   reader inherits the same minimum so the layout doesn't jump when
-   the user taps to edit. */
-.note-fullscreen-overlay .note-form-content,
-.note-fullscreen-overlay .note-form-content-reader {
-  min-height: 55vh;
-  font-size: 15px;
-  line-height: 1.55;
-}
-/* Reorganized meta-row layout for fullscreen: color picker pinned to
-   the LEFT, type-toggle (Note/Todo/Draw) shoved to the RIGHT, with
-   the photo button next to the color picker. Tags are moved up into
-   the form header (next to the reminder bell) via JS. */
-.note-fullscreen-overlay .note-form-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding-top: 8px;
-}
-.note-fullscreen-overlay .note-form-photo-btn { order: 2; }
-.note-fullscreen-overlay .note-form-actions-group .note-form-cancel,
-.note-fullscreen-overlay .note-form-actions-group .note-form-save {
-  flex: 0 0 auto;
 }
 @keyframes notes-backdrop-fade-in {
   from { opacity: 0; }
@@ -775,11 +689,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   0%, 100% { opacity: 0.85; filter: drop-shadow(0 0 0 transparent); }
   50%      { opacity: 1;    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent)); }
 }
-.note-form-improve-btn:disabled,
-.note-form-improve-btn.busy {
-  opacity: 0.6;
-  cursor: wait;
-}
 /* In select mode the whole card is a checkbox — kill every hover affordance
    that would otherwise suggest "preview" or "open" so users know exactly
    what their tap will do (toggle selection). */
@@ -834,7 +743,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   0%, 49%  { opacity: 1; }
   50%, 100%{ opacity: 0; }
 }
-.notes-quick-type-seg.is-todo::before { transform: translateX(100%); }
 .notes-skeleton-card.short { height: 46px; }
 @keyframes notes-skeleton-shimmer {
   0% { background-position: 200% 0; }
@@ -850,24 +758,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   88%  { transform: rotate(3deg); }
   100% { transform: rotate(0deg); }
 }
-.note-form-reminder-tags:empty { display: none; }
 .note-reminder-day-chip.wide { padding: 0 6px; }
-.note-form-type-seg::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  /* 3 pills now (note / todo / draw) — Goal was removed. Slider takes
-     1/3 of the track and translates by full multiples of itself. */
-  width: 33.3333%;
-  height: 100%;
-  background: color-mix(in srgb, var(--fg) 10%, transparent);
-  border-radius: 9px;
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  z-index: 0;
-}
-.note-form-type-seg.is-todo::before { transform: translateX(100%); }
-.note-form-type-seg.is-draw::before { transform: translateX(200%); }
 /* Bulk-bar appears under the search bar — inset its sides to match the
    search bar's own 8px horizontal padding so the two visually align. */
 #notes-bulk-bar.memory-bulk-bar {
@@ -886,40 +777,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
    so the row stays legible. */
 .note-card-selectmode.note-card-goal .note-goal-pill { display: none; }
 .note-card-selectmode.note-card-goal .note-card-header { padding-left: 0; }
-.note-form-goal-ai:disabled,
-.note-form-goal-ai.busy {
-  opacity: 0.6;
-  cursor: wait;
-}
-/* Fresh goal form: hide the title input + tag input + reminder button so the
-   user only sees the single "what do you want to achieve?" textarea. */
-.note-form-goal-fresh ~ .note-form-actions-group { display: none; }
-.note-form:has(.note-form-goal-fresh) .note-form-title,
-.note-form:has(.note-form-goal-fresh) .note-form-label,
-.note-form:has(.note-form-goal-fresh) .note-form-remind-btn,
-.note-form-bespoke:has(.note-form-goal-fresh) .note-form-title,
-.note-form-bespoke:has(.note-form-goal-fresh) .note-form-label,
-.note-form-bespoke:has(.note-form-goal-fresh) .note-form-remind-btn {
-  display: none !important;
-}
-.note-form-goal-fresh .note-form-goal-desc {
-  font-size: 15px;
-  min-height: 90px;
-  padding: 12px 14px;
-}
-.note-form-goal-fresh.building .note-form-goal-desc {
-  opacity: 0.55;
-  pointer-events: none;
-}
-.note-form-goal-fresh.building::after {
-  content: 'AI is planning your goal…';
-  display: block;
-  text-align: center;
-  font-size: 12px;
-  opacity: 0.7;
-  margin-top: 6px;
-  animation: note-goal-pulse 1.4s ease-in-out infinite;
-}
 @keyframes note-goal-pulse {
   0%, 100% { opacity: 0.5; }
   50%      { opacity: 1; }
@@ -933,10 +790,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   opacity: 0.6;
 }
 .notes-bulk-btn:hover { opacity: 1; }
-.note-form-label.flash-once {
-  animation: noteLabelFlash 0.6s ease-out;
-}
-.note-form-label:not([value=""]) { opacity: 0.9; border-style: solid; }
 .note-card-title:hover { opacity: 0.7; }
 .note-card-title.empty::before {
   content: 'No title';
@@ -946,7 +799,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 /* Note card drag */
 .note-card { cursor: grab; }
-.note-cl-row:hover .note-cl-grip { opacity: 0.6; }
 .note-archive-btn:hover { opacity: 0.7; }
 .note-checklist-preview > .note-checkbox:last-child .note-check-text {
   /* Reserve room on the LAST row only for the bottom-right copy button so it
@@ -1039,10 +891,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-card.note-standard-v3 { --note-accent: #72a5cf; }
 .note-card.note-standard-v4 { --note-accent: #aa86c7; }
 .note-type-btn:hover { opacity: 0.8; }
-.note-form-meta .note-form-label {
-  width: 112px;
-  flex: 0 1 140px;
-}
 /* After attachColorPicker swaps the input to type=text + .cp-swatch-input,
    re-pin the swatch to a 24px circle (otherwise it inherits text-input
    sizing and becomes a giant rectangle). */
@@ -1112,13 +960,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-form-draw-text.size-s { font-size: 13px; }
 .note-form-draw-text.size-m { font-size: 18px; }
 .note-form-draw-text.size-l { font-size: 23px; line-height: 1; }
-/* Narrow widths: shrink the tag input to make room for the action group;
-   the hashtag-in-content shortcut still works, so the input can be tiny. */
-@media (max-width: 600px) {
-  .note-form-meta .note-form-label { width: 78px; flex-shrink: 1; min-width: 0; }
-}
-.note-form-due:not([value=""]) { opacity: 0.85; border-style: solid; }
-.note-cl-add:hover { opacity: 0.7; }
 /* Matching ↵ hint at the right of the event title while it's empty; hidden once
    editing (the ✓ Done button takes over then). */
 /* Title placeholder overlay: the prompt text with a ↵ enter glyph right after
@@ -1558,13 +1399,3 @@ select.cal-input { appearance:auto; }
 textarea.cal-input { resize:vertical; font-family:inherit; }
 button.cal-btn.cal-btn-danger { color:var(--accent, var(--red)); border-color:var(--accent, var(--red)); background:transparent; }
 button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); color:var(--bg); }
-/* Brief outline flash on a note card when it's the target of a
-   #note-<id> link click from chat — same pattern as the cookbook
-   task flash, just scoped to .note-card. */
-.note-card-flash {
-  animation: note-card-flash-anim 1.6s ease-out;
-}
-@keyframes note-card-flash-anim {
-  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
-  100% { box-shadow: 0 0 0 2px transparent; }
-}

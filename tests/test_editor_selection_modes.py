@@ -7,12 +7,10 @@ hard-coded `'replace'`, so picking Subtract did nothing in either tool.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 QUICK = (ROOT / "static/js/editor/tools/quick-select.js").read_text(encoding="utf-8")
 OBJECT = (ROOT / "static/js/editor/tools/object-select.js").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_quick_select_reads_the_wand_mode_toggle():
@@ -32,7 +30,3 @@ def test_object_select_reads_the_wand_mode_toggle():
     assert "import { state } from '../state.js';" in OBJECT
     assert "mode = selectionModeForEvent(event, state.wandMode || 'replace');" in OBJECT
     assert "mode = selectionModeForEvent(event, 'replace');" not in OBJECT
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

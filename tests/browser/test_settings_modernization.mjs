@@ -52,6 +52,8 @@ function resolvePython() {
     process.env.ODYSSEUS_TEST_PYTHON,
     process.env.VIRTUAL_ENV ? join(process.env.VIRTUAL_ENV, 'bin', 'python') : null,
     join(REPO_ROOT, '..', '..', 'dev', 'venvs', 'main', 'bin', 'python'),
+    join(REPO_ROOT, '..', '..', 'dev', 'venv', 'bin', 'python'),
+    join(REPO_ROOT, '..', 'dev', 'venv', 'bin', 'python'),
     join(REPO_ROOT, 'venv', 'bin', 'python'),
     join(REPO_ROOT, '.venv', 'bin', 'python'),
     join(homedir(), '.cache', 'odysseus-ci-baseline-py311', 'bin', 'python'),
@@ -84,7 +86,7 @@ async function waitFor(url, timeoutMs = 40000, instance = null) {
       const response = await fetch(url);
       if (response.status < 500) return;
     } catch (_) {}
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 100));
   }
   const extra = instance ? `\nServer output:\n${instance.log()}` : '';
   throw new Error(`Server did not start at ${url}${extra}`);
@@ -369,7 +371,7 @@ async function testFinder(instance, cookies) {
   check('admin-managed panel result routes through the admin controller and reveals the card', adminReveal.activeTab === 'system' && adminReveal.focused === 'backup', JSON.stringify(adminReveal));
   // A failed server-wide save is reported, not only logged.
   await admin.page.click('[data-settings-tab="reminders"]');
-  await admin.page.waitForTimeout(600);
+  await admin.page.waitForSelector('[data-settings-panel="reminders"][data-ready="true"]:not(.hidden)');
   await admin.page.route('**/api/auth/settings', route => (
     route.request().method() === 'POST'
       ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
@@ -634,50 +636,31 @@ async function testMemberScope(instance, cookies) {
   const utilityPrefs = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
   check('member utility model is stored per account', utilityPrefs.utility_endpoint_id === 'ep-alpha' && utilityPrefs.utility_model === 'alpha-large', JSON.stringify(utilityPrefs));
 
-  // Light theme and mobile rendering of the scoped cards.
-  const light = await pageAs(instance, cookies.memberCookie, { width: 1280, height: 860 }, 'light');
-  // Apply the built-in light preset colors through the theme module.
-  await light.page.evaluate(() => window.themeModule.applyColors(window.themeModule.THEMES.light));
-  await openSettings(light.page, 'ai');
-  await waitForAiDefaults(light.page);
-  await screenshot(light.page, 'scope-member-ai-light');
-  await light.context.close();
+  // Light theme rendering of the scoped cards using the existing member session.
+  await member.page.emulateMedia({ colorScheme: 'light' });
+  await member.page.evaluate(() => window.themeModule.applyColors(window.themeModule.THEMES.light));
+  await screenshot(member.page, 'scope-member-ai-light');
+
+  // Mobile layout check in a dedicated mobile context exercising actual touch capabilities.
   const mobile = await pageAs(instance, cookies.memberCookie, { width: 390, height: 844 });
   await openSettings(mobile.page, 'ai');
   await waitForAiDefaults(mobile.page);
-  const overflow = await mobile.page.evaluate(() => {
+  const overflowResult = await mobile.page.evaluate(() => {
     const content = document.querySelector('.settings-modal-content');
-    return content.scrollWidth - content.clientWidth;
+    if (!content) return { found: false, overflow: -1 };
+    return { found: true, overflow: content.scrollWidth - content.clientWidth };
   });
-  check('mobile Settings has no horizontal overflow with scope badges', overflow <= 1, String(overflow));
+  check(
+    'mobile Settings has no horizontal overflow with scope badges',
+    overflowResult.found && overflowResult.overflow <= 1,
+    overflowResult.found ? String(overflowResult.overflow) : 'missing .settings-modal-content',
+  );
   await screenshot(mobile.page, 'scope-member-ai-mobile');
   // The finder stays usable on a phone: visible above the tab rail, with a
   // results list that is not clipped by the horizontally scrolling rail.
   const finderVisible = await mobile.page.isVisible('#settings-nav-search');
   check('mobile Settings shows the finder', finderVisible);
-  await mobile.page.fill('#settings-nav-search', 'research model');
-  const topResult = await mobile.page.evaluate(() => {
-    const button = document.querySelector('[data-settings-search-section="research-model"]');
-    if (!button) return { found: false };
-    const rect = button.getBoundingClientRect();
-    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    return { found: true, height: rect.height, hittable: Boolean(hit && button.contains(hit)) };
-  });
-  check('mobile finder results are on screen and tappable', topResult.found && topResult.height > 20 && topResult.hittable, JSON.stringify(topResult));
-  await screenshot(mobile.page, 'finder-member-mobile');
-  await mobile.page.tap('[data-settings-search-section="research-model"]');
-  await mobile.page.waitForFunction(() => {
-    const card = document.querySelector('[data-settings-section="research-model"]');
-    if (!card) return false;
-    const rect = card.getBoundingClientRect();
-    return document.activeElement === card && rect.top >= 0 && rect.top < window.innerHeight;
-  }, null, { timeout: 8000 });
-  const mobileReveal = await mobile.page.evaluate(() => {
-    const card = document.querySelector('[data-settings-section="research-model"]');
-    const rect = card.getBoundingClientRect();
-    return { focused: document.activeElement === card, top: rect.top, viewport: window.innerHeight };
-  });
-  check('mobile finder result reveals the card', mobileReveal.focused && mobileReveal.top >= 0 && mobileReveal.top < mobileReveal.viewport, JSON.stringify(mobileReveal));
+  await mobileFinderAction(mobile.page);
   check('member scope pages have no script errors', member.errors.length === 0 && mobile.errors.length === 0, [...member.errors, ...mobile.errors].join(' | '));
   check('member session never posts server-wide settings', member.settingsWrites.length === 0 && mobile.settingsWrites.length === 0, [...member.settingsWrites, ...mobile.settingsWrites].join(','));
   forbiddenReport.member = [...new Set([...member.forbidden, ...mobile.forbidden])];
@@ -685,20 +668,54 @@ async function testMemberScope(instance, cookies) {
   await member.context.close();
 }
 
+async function mobileFinderAction(page) {
+  await page.fill('#settings-nav-search', 'research model');
+  const topResult = await page.evaluate(() => {
+    const button = document.querySelector('[data-settings-search-section="research-model"]');
+    if (!button) return { found: false };
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return { found: true, height: rect.height, hittable: Boolean(hit && button.contains(hit)) };
+  });
+  check('mobile finder results are on screen and tappable', topResult.found && topResult.height > 20 && topResult.hittable, JSON.stringify(topResult));
+  await screenshot(page, 'finder-member-mobile');
+  await page.tap('[data-settings-search-section="research-model"]');
+  await page.waitForFunction(() => {
+    const card = document.querySelector('[data-settings-section="research-model"]');
+    if (!card) return false;
+    const rect = card.getBoundingClientRect();
+    return document.activeElement === card && rect.top >= 0 && rect.top < window.innerHeight;
+  }, null, { timeout: 8000 });
+  const mobileReveal = await page.evaluate(() => {
+    const card = document.querySelector('[data-settings-section="research-model"]');
+    const rect = card.getBoundingClientRect();
+    return { focused: document.activeElement === card, top: rect.top, viewport: window.innerHeight };
+  });
+  check('mobile finder result reveals the card', mobileReveal.focused && mobileReveal.top >= 0 && mobileReveal.top < mobileReveal.viewport, JSON.stringify(mobileReveal));
+}
+
 // Calls the app's own Settings module, the way other modules deep-link into it.
-async function openViaModule(page, tab, section, via = 'settings') {
-  return page.evaluate(async ({ tab, section, via }) => {
+async function openViaModule(page, tab, section, via = 'settings', minObservationMs = 250) {
+  return page.evaluate(async ({ tab, section, via, minObservationMs }) => {
     const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
     const settings = await import(src);
     if (via === 'admin' && window.adminModule) window.adminModule.open(tab);
     else settings.open(tab, section ? { section } : undefined);
-    await new Promise(resolve => setTimeout(resolve, 250));
+    const start = Date.now();
+    while (Date.now() - start < 2000) {
+      const activeEl = document.querySelector('#settings-modal [data-settings-tab].active');
+      const curTab = activeEl ? activeEl.dataset.settingsTab : null;
+      const curSection = document.activeElement?.dataset?.settingsSection || null;
+      if (curTab === tab && (!section || curSection === section)) break;
+      if (curTab && curTab !== tab && Date.now() - start >= minObservationMs) break;
+      await new Promise(r => setTimeout(r, 10));
+    }
     const active = document.querySelector('#settings-modal [data-settings-tab].active');
     const shown = Array.from(document.querySelectorAll('#settings-modal [data-settings-panel]'))
       .filter(panel => !panel.classList.contains('hidden'))
       .map(panel => panel.dataset.settingsPanel);
     return { active: active ? active.dataset.settingsTab : null, shown, focused: document.activeElement?.dataset?.settingsSection || null };
-  }, { tab, section, via });
+  }, { tab, section, via, minObservationMs });
 }
 
 const RESTRICTED_PANELS = ['services', 'added-models', 'tools', 'users', 'system'];
@@ -717,6 +734,29 @@ async function testRestrictedNavigation(instance, cookies) {
   check('member: explicit open(tab) never activates an admin-only panel', leaked.length === 0, JSON.stringify(memberLandings));
   const adminEndpointsSeen = member.forbidden.filter(entry => entry.includes('/api/diagnostics/logs') || entry.includes('/api/model-endpoints'));
   check('member: adminModule.open(services) triggers no privileged requests', adminEndpointsSeen.length === 0, adminEndpointsSeen.join(','));
+
+  // Negative control: simulate delayed unauthorized panel activation at 120ms (within the 250ms window)
+  // to verify that the observation window reliably captures asynchronous/delayed regressions.
+  await member.page.evaluate(() => {
+    setTimeout(() => {
+      const modal = document.getElementById('settings-modal');
+      modal?.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+      modal?.querySelector('[data-settings-tab="services"]')?.classList.add('active');
+    }, 120);
+  });
+  const delayedActivationControl = await openViaModule(member.page, 'services');
+  check(
+    'negative control: delayed unauthorized panel activation within observation window is detected',
+    delayedActivationControl.active === 'services',
+    JSON.stringify(delayedActivationControl),
+  );
+  // Restore member back to a safe permitted tab for remaining checks
+  await member.page.evaluate(() => {
+    const modal = document.getElementById('settings-modal');
+    modal?.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+    modal?.querySelector('[data-settings-tab="ai"]')?.classList.add('active');
+  });
+
   const memberAccount = await openViaModule(member.page, 'account', 'two-factor');
   check('member: explicit open(tab) still opens panels the member is offered', memberAccount.active === 'account' && memberAccount.focused === 'two-factor', JSON.stringify(memberAccount));
   check('member restricted-navigation page has no script errors', member.errors.length === 0, member.errors.join(' | '));
@@ -974,7 +1014,7 @@ async function testMemberStatusRecovery(instance, cookies) {
   // Closing and reopening Settings must not bind or label anything twice.
   await member.page.click('#settings-modal .close-btn').catch(() => {});
   await openSettings(member.page, 'ai');
-  await member.page.waitForTimeout(400);
+  await member.page.waitForSelector('[data-settings-section="default-chat"] .settings-scope-badge');
   const reopenedBadges = await member.page.$$eval('[data-settings-section="default-chat"] .settings-scope-badge', nodes => nodes.length);
   const prefs = (await api(instance, cookies.memberCookie, '/api/prefs')).body;
   const globalAfter = (await api(instance, cookies.adminCookie, '/api/auth/settings')).body;
@@ -1055,6 +1095,11 @@ async function testAdminLoadFailure(instance, cookies) {
   ));
   await openSettings(admin.page, 'ai');
   await admin.page.waitForSelector('[data-settings-section="default-chat"] .settings-model-default-retry', { timeout: 15000 });
+  await admin.page.evaluate(async () => {
+    const src = document.querySelector('script[src*="/static/js/settings.js"]').getAttribute('src');
+    const settings = await import(src);
+    await settings.refreshAiModelEndpoints();
+  });
   const priorOption = await admin.page.$('#set-defaultEpSelect option');
   // Leave and return: the AI panel refreshes its endpoint lists on entry.
   await admin.page.click('[data-settings-tab="search"]');
@@ -1495,14 +1540,18 @@ async function testIntegrationsAuthRecovery(instance, cookies, { admin, authDisa
   const adminRequestsBeforeRecovery = session.adminRequests.length;
 
   session.status.mode = 'ok';
+  const listResponsePromise = admin ? page.waitForResponse(
+    r => r.url().includes('/api/auth/integrations') && r.request().method() === 'GET',
+    { timeout: 10000 },
+  ) : null;
   await closeAndReopenSettings(page, 'integrations');
 
   if (admin) {
+    await listResponsePromise;
     await page.waitForSelector(INTEGRATION_CARD, { timeout: 10000 }).catch(() => {});
     const shown = await page.$$eval(INTEGRATION_CARD, nodes => nodes.map(node => node.textContent.replace(/\s+/g, ' ').trim()));
     check(`${label} recovery: the existing integration appears without a reload`, shown.some(text => text.includes(probeName)), JSON.stringify(shown));
     check(`${label} recovery: no placeholder remains once the list is loaded`, !(await page.textContent('#unified-integrations-list')).includes('No integrations configured'));
-    await page.waitForTimeout(500);
     const listRequests = session.adminRequests.slice(adminRequestsBeforeRecovery).filter(path => path === '/api/auth/integrations');
     check(`${label} recovery: the list is requested exactly once`, listRequests.length === 1, String(listRequests.length));
     const form = await page.evaluate(() => ({
@@ -1518,6 +1567,7 @@ async function testIntegrationsAuthRecovery(instance, cookies, { admin, authDisa
     check(`${label} recovery: reopening adds no duplicate cards or list requests`, cards === 1 && total === 1, JSON.stringify({ cards, total }));
     await screenshot(page, 'integrations-admin-recovered');
   } else {
+    // Preserve full 1200ms observation window to maintain sensitivity to delayed unauthorized requests
     await page.waitForTimeout(1200);
     check('member recovery: no admin-managed list is ever requested', session.adminRequests.length === 0, session.adminRequests.join(','));
     const view = await page.evaluate(() => ({
@@ -1553,9 +1603,14 @@ async function testIntegrationsRapidReopenDuringRecovery(instance, cookies) {
   await page.waitForTimeout(300);
   check('admin rapid reopen: overlapping retries share one status request', session.status.requests - requestsBefore === 1, String(session.status.requests - requestsBefore));
   check('admin rapid reopen: nothing privileged is requested while the answer is pending', session.adminRequests.length === 0, session.adminRequests.join(','));
+  const listResponsePromise = page.waitForResponse(
+    r => r.url().includes('/api/auth/integrations') && r.request().method() === 'GET',
+    { timeout: 10000 },
+  );
   session.status.release();
+  await listResponsePromise;
   await page.waitForSelector(INTEGRATION_CARD, { timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
   const cards = await page.$$eval(INTEGRATION_CARD, nodes => nodes.length);
   const listRequests = session.adminRequests.filter(path => path === '/api/auth/integrations').length;
   check('admin rapid reopen: the integration appears once with one list request', cards === 1 && listRequests === 1, JSON.stringify({ cards, listRequests }));
@@ -1674,6 +1729,66 @@ async function testEarlyEndpointRefreshAndRepeatedOpen(instance, cookies) {
 
   check('early refresh and repeated open session has no script errors', session.errors.length === 0, session.errors.join(' | '));
   await session.context.close();
+}
+
+async function testIntegrationClipboard(instance, cookies) {
+  for (const viewport of [{ width: 1280, height: 860 }, { width: 390, height: 844 }]) {
+    const { page, context, errors } = await pageAs(instance, cookies.adminCookie, viewport);
+    try {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: instance.baseUrl });
+      await openSettings(page, 'integrations');
+      await page.click('#unified-intg-add-btn');
+      await page.click('.uf-type-option[data-value="email"]');
+      await page.click('#uf-email-provider-trigger');
+      await page.click('.ufp-option[data-value="gmail"]');
+      const copyLink = page.locator('.uf-prov-copy');
+      const [notice] = await Promise.all([
+        page.waitForRequest(request => (
+          request.method() === 'POST'
+          && new URL(request.url()).pathname === '/api/tasks/notification-logs'
+          && request.postDataJSON()?.body === 'Copied'
+        )),
+        copyLink.click(),
+      ]);
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      check(`provider URL copies and logs success at ${viewport.width}px`,
+        copied === await copyLink.getAttribute('data-url') && notice.postDataJSON().status === 'success');
+      await page.click('#uf-email-cancel');
+
+      if (viewport.width > 768) {
+        await page.click('#unified-intg-add-btn');
+        await page.click('.uf-type-option[data-value="codex"]');
+        await page.fill('#uf-codex-name-input', 'Clipboard regression test');
+        const [created] = await Promise.all([
+          page.waitForResponse(response => new URL(response.url()).pathname === '/api/tokens'
+            && response.request().method() === 'POST'),
+          page.click('#uf-codex-create-btn'),
+        ]);
+        check('agent clipboard test creates a disposable minimum-scope token', created.ok()
+          && /name="scopes"\r\n\r\nchat\r\n/.test(created.request().postData() || ''));
+        await page.waitForSelector('#uf-codex-copy-token');
+        await page.evaluate(() => {
+          navigator.clipboard.writeText = async () => { throw new Error('Clipboard write denied'); };
+          document.execCommand = command => {
+            const field = document.activeElement;
+            window.clipboardFallbackSelected = command === 'copy'
+              && field instanceof HTMLTextAreaElement && field.readOnly
+              && field.selectionStart === 0 && field.selectionEnd === field.value.length;
+            return false;
+          };
+        });
+        await page.click('#uf-codex-copy-token');
+        await page.waitForFunction(() => document.querySelector('#uf-codex-reveal > pre:last-child'));
+        check('denied agent clipboard write preserves manual selection and cleans up the temporary field',
+          await page.evaluate(() => window.clipboardFallbackSelected
+            && !document.querySelector('body > textarea[readonly]')
+            && document.querySelector('#uf-codex-token').textContent === window.getSelection().toString()));
+      }
+      check(`clipboard form interactions have no script errors at ${viewport.width}px`, errors.length === 0, errors.join(' | '));
+    } finally {
+      await context.close();
+    }
+  }
 }
 
 async function testIntegrationForms(instance, cookies) {
@@ -1876,7 +1991,7 @@ async function testIntegrationForms(instance, cookies) {
   check('admin integration forms session has no script errors', admin.errors.length === 0, admin.errors.join(' | '));
   await admin.context.close();
 
-  // Mobile layout check for integration form
+  // Mobile layout check for integration form in a dedicated mobile touch context
   const mobile = await pageAs(instance, cookies.adminCookie, { width: 390, height: 844 });
   await openSettings(mobile.page, 'integrations');
   await mobile.page.click('#unified-intg-add-btn');
@@ -1885,13 +2000,19 @@ async function testIntegrationForms(instance, cookies) {
   const mobileFormLayout = await mobile.page.evaluate(() => {
     const form = document.querySelector('#unified-intg-form');
     return {
+      found: Boolean(form),
       fits: form ? form.scrollWidth <= 390 : false,
       docWidth: document.documentElement.scrollWidth,
       viewportWidth: window.innerWidth,
     };
   });
-  check('mobile integration form fits viewport without horizontal overflow', mobileFormLayout.fits && mobileFormLayout.docWidth <= 390, JSON.stringify(mobileFormLayout));
+  check(
+    'mobile integration form fits viewport without horizontal overflow',
+    mobileFormLayout.found && mobileFormLayout.fits && mobileFormLayout.docWidth <= 390,
+    JSON.stringify(mobileFormLayout),
+  );
   await screenshot(mobile.page, 'integration-mobile-api-dark');
+  check('mobile integration forms session has no script errors', mobile.errors.length === 0, mobile.errors.join(' | '));
   await mobile.context.close();
 }
 
@@ -1941,23 +2062,54 @@ async function testUnknownTabAndRepeatedOpen(instance, cookies) {
   await member.context.close();
 }
 
-async function testAccessibilityAndThemes(instance, cookies) {
-  const viewports = [
-    { name: 'desktop', width: 1280, height: 860 },
-    { name: 'laptop', width: 1024, height: 768 },
-    { name: 'tablet', width: 768, height: 1024 },
-    { name: 'mobile', width: 390, height: 844 },
-  ];
+async function checkResponsiveSettings(page, vpName, scheme, errors) {
+  const overflowResult = await page.evaluate(() => {
+    const content = document.querySelector('.settings-modal-content');
+    if (!content) return { found: false, overflow: -1 };
+    return { found: true, overflow: content.scrollWidth - content.clientWidth };
+  });
+  check(
+    `responsive settings renders without overflow on ${vpName} (${scheme})`,
+    errors.length === 0 && overflowResult.found && overflowResult.overflow <= 1,
+    !overflowResult.found
+      ? 'missing .settings-modal-content'
+      : errors.length
+      ? errors.join(' | ')
+      : `overflow: ${overflowResult.overflow}px`,
+  );
+  await screenshot(page, `settings-${vpName}-${scheme}`);
+}
 
-  for (const vp of viewports) {
-    for (const scheme of ['dark', 'light']) {
-      const s = await pageAs(instance, cookies.adminCookie, { width: vp.width, height: vp.height }, scheme);
-      await openSettings(s.page, 'ai');
-      await screenshot(s.page, `settings-${vp.name}-${scheme}`);
-      check(`responsive settings renders without overflow on ${vp.name} (${scheme})`, s.errors.length === 0, s.errors.join(' | '));
-      await s.context.close();
-    }
+async function testAccessibilityAndThemes(instance, cookies) {
+  // 1. Representative fresh desktop dark initialization and responsive adaptation
+  const desktopDark = await pageAs(instance, cookies.adminCookie, { width: 1280, height: 860 }, 'dark');
+  await openSettings(desktopDark.page, 'ai');
+  await checkResponsiveSettings(desktopDark.page, 'desktop', 'dark', desktopDark.errors);
+  for (const vp of [{ name: 'laptop', width: 1024, height: 768 }, { name: 'tablet', width: 768, height: 1024 }]) {
+    await desktopDark.page.setViewportSize({ width: vp.width, height: vp.height });
+    await checkResponsiveSettings(desktopDark.page, vp.name, 'dark', desktopDark.errors);
   }
+  await desktopDark.context.close();
+
+  // 2. Representative fresh light-mode initialization and responsive adaptation
+  const desktopLight = await pageAs(instance, cookies.adminCookie, { width: 1280, height: 860 }, 'light');
+  await desktopLight.page.evaluate(() => window.themeModule?.applyColors?.(window.themeModule.THEMES.light));
+  await openSettings(desktopLight.page, 'ai');
+  await checkResponsiveSettings(desktopLight.page, 'desktop', 'light', desktopLight.errors);
+  for (const vp of [{ name: 'laptop', width: 1024, height: 768 }, { name: 'tablet', width: 768, height: 1024 }]) {
+    await desktopLight.page.setViewportSize({ width: vp.width, height: vp.height });
+    await checkResponsiveSettings(desktopLight.page, vp.name, 'light', desktopLight.errors);
+  }
+  await desktopLight.context.close();
+
+  // 3. Representative fresh mobile initialization (narrow viewport with hasTouch: true)
+  const mobileSession = await pageAs(instance, cookies.adminCookie, { width: 390, height: 844 }, 'dark');
+  await openSettings(mobileSession.page, 'ai');
+  await checkResponsiveSettings(mobileSession.page, 'mobile', 'dark', mobileSession.errors);
+  await mobileSession.page.emulateMedia({ colorScheme: 'light' });
+  await mobileSession.page.evaluate(() => window.themeModule?.applyColors?.(window.themeModule.THEMES.light));
+  await checkResponsiveSettings(mobileSession.page, 'mobile', 'light', mobileSession.errors);
+  await mobileSession.context.close();
 
   const member = await pageAs(instance, cookies.memberCookie);
   await openSettings(member.page, 'ai');
@@ -2023,6 +2175,18 @@ async function main() {
     cookies = await setupUsers(authInstance);
   });
 
+  let openInstanceError = null;
+  const openInstancePromise = (async () => {
+    try {
+      const inst = await launchInstance('noauth', { authEnabled: false });
+      seedEndpoints(inst);
+      return inst;
+    } catch (err) {
+      openInstanceError = err;
+      return null;
+    }
+  })();
+
   await timeScenario('testFinder', () => testFinder(authInstance, cookies));
   await timeScenario('testMemberLoadFailureAndFallbackCompatibility', () => testMemberLoadFailureAndFallbackCompatibility(authInstance, cookies));
   await timeScenario('testMemberScope', () => testMemberScope(authInstance, cookies));
@@ -2035,6 +2199,7 @@ async function main() {
   await timeScenario('testDelayedAuthorizationResolution', () => testDelayedAuthorizationResolution(authInstance, cookies));
   await timeScenario('testEarlyEndpointRefreshAndRepeatedOpen', () => testEarlyEndpointRefreshAndRepeatedOpen(authInstance, cookies));
   await timeScenario('testIntegrationForms', () => testIntegrationForms(authInstance, cookies));
+  await timeScenario('testIntegrationClipboard', () => testIntegrationClipboard(authInstance, cookies));
   await timeScenario('testIntegrationsAuthRecovery (admin)', () => testIntegrationsAuthRecovery(authInstance, cookies, { admin: true }));
   await timeScenario('testIntegrationsAuthRecovery (member)', () => testIntegrationsAuthRecovery(authInstance, cookies, { admin: false }));
   await timeScenario('testIntegrationsRapidReopenDuringRecovery', () => testIntegrationsRapidReopenDuringRecovery(authInstance, cookies));
@@ -2044,8 +2209,8 @@ async function main() {
 
   let openInstance = null;
   await timeScenario('setup: noauth instance', async () => {
-    openInstance = await launchInstance('noauth', { authEnabled: false });
-    seedEndpoints(openInstance);
+    openInstance = await openInstancePromise;
+    if (openInstanceError) throw openInstanceError;
   });
   await timeScenario('testAuthDisabledOperator', () => testAuthDisabledOperator(openInstance));
   await timeScenario('testIntegrationsAuthRecovery (noauth operator)', () => testIntegrationsAuthRecovery(openInstance, {}, { admin: true, authDisabled: true }));
@@ -2075,6 +2240,7 @@ async function main() {
 main()
   .catch(error => {
     console.error(error);
+    for (const instance of instances) console.error(`--- ${instance.name} server log tail ---\n${instance.log().slice(-3000)}`);
     process.exitCode = 1;
   })
   .finally(stopAll);
