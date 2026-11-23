@@ -16,20 +16,19 @@ def test_notes_image_src_guard_rejects_script_capable_data_images():
 
 
 def test_notes_linkify_escapes_href_attribute():
-    src = notes_source("ui/text", "ui/editor", "ui/drawing")
+    src = notes_source("ui/text", "ui/drawing")
 
     assert "function _attrEsc(s)" in src
     assert 'href="${_attrEsc(href)}"' in src
     assert 'href="${href}"' not in src
 
 
-def test_notes_edit_form_uses_safe_image_src_guard():
-    src = notes_source("ui/text", "ui/editor", "ui/drawing")
+def test_drawing_canvas_uses_safe_image_src_guard():
+    # The note window renders images through mdToHtml's same-origin note
+    # policy (tests/notesMarkdownRender.test.mjs); the canvas still loads a
+    # starting image itself, so it keeps the guard.
+    src = notes_source("ui/text", "ui/drawing")
 
-    assert "let currentImageUrl = _safeImgSrc(note?.image_url || '');" in src
-    assert "let _stashedDrawUrl = (type === 'draw') ? (_safeImgSrc(note?.image_url) || null) : null;" in src
-    assert "_wireCanvas(bodyEl, _stashedDrawUrl || currentImageUrl || _safeImgSrc(note?.image_url) || null)" in src
-    assert "_wireCanvas(form.querySelector('.note-form-body'), _safeImgSrc(note?.image_url) || null)" in src
     assert "const safeInitialImageUrl = _safeImgSrc(initialImageUrl);" in src
     assert "img.src = safeInitialImageUrl;" in src
     assert "img.src = initialImageUrl;" not in src

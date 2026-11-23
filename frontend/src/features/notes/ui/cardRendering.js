@@ -1,6 +1,12 @@
 /** Render note cards from application queries and read-only state. */
 import { _nextGoalStep, _goalProgress, _hasItems, _standardVisualVariant, _visibleNoteTags } from '../domain/noteRules.js';
 import { _hasTimeComponent, _formatRepeatLabel } from '../domain/recurrence.js';
+/** The empty-list line while a search is active: says the search found
+ *  nothing, rather than suggesting the account has no notes. */
+export function emptySearchText(query) {
+  return `No notes match “${query}”`;
+}
+
 export function createCardRendering({
   COLORS,
   COLOR_HEX,
@@ -93,7 +99,6 @@ export function createCardRendering({
       return;
     }
     for (const note of sorted) {
-      if (state.editingId === note.id) continue; // skip : form is shown instead
       const borderColor = COLOR_HEX[note.color || ''] || 'var(--border)';
       const dueFmt = _formatDueDate(note.due_date);
       const overdue = _isDueOverdue(note.due_date);
@@ -156,7 +161,7 @@ export function createCardRendering({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>` : ''}`}
       <div class="note-card-header">
-        <div class="note-card-title${note.title ? '' : ' empty'}" data-action="edit">${_esc(note.title || '')}</div>
+        <div class="note-card-title${note.title ? '' : ' empty'}" data-action="edit" role="button" tabindex="0"${note.title ? '' : ' aria-label="Untitled note"'}>${_esc(note.title || '')}</div>
         ${dueBadge}
       </div>
       ${contentHtml}
@@ -190,26 +195,17 @@ export function createCardRendering({
     </div>`;
     }
 
-    // Always render quick-add at top (collapsed unless user is typing)
-    const existingForm = body.querySelector('.note-form');
-    if (existingForm && state.editingId === '__new__') {
-      // Keep the expanded form, replace cards after it
-      const next = [...body.children].filter(c => c !== existingForm);
-      next.forEach(c => c.remove());
-      if (sorted.length === 0) {
-        body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
-      } else {
-        existingForm.insertAdjacentHTML('afterend', html);
-      }
+    // Quick-add always sits at the top.
+    body.innerHTML = '';
+    _renderLabelsInto(body);
+    _renderQuickAdd(body);
+    if (sorted.length === 0) {
+      const query = String(state.searchQuery || '').trim();
+      body.insertAdjacentHTML('beforeend', query
+        ? '<div class="notes-empty-msg">' + _esc(emptySearchText(query)) + '</div>'
+        : '<div class="notes-empty-msg">No notes yet <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
     } else {
-      body.innerHTML = '';
-      _renderLabelsInto(body);
-      _renderQuickAdd(body);
-      if (sorted.length === 0) {
-        body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes yet <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
-      } else {
-        body.insertAdjacentHTML('beforeend', html);
-      }
+      body.insertAdjacentHTML('beforeend', html);
     }
 
     _bindCardEvents(body);

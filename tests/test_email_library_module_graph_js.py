@@ -314,3 +314,48 @@ def test_wrapper_and_entry_module_hand_out_the_same_functions():
         "not every export is callable: "
         f"{sorted(set(data['names']) - set(data['callable']))}"
     )
+
+
+def test_email_list_renders_sync_age_from_a_successful_response():
+    script = r'''
+      import assert from 'node:assert/strict';
+      import { chromium } from 'playwright';
+      const origin = process.env.ODYSSEUS_TEST_STATIC_ORIGIN;
+      const browser = await chromium.launch({ headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.goto(`${origin}/static/js/documentStats.js`);
+        await page.setContent(`
+          <div id="toast"></div><div id="chat-container"></div><div id="sidebar"></div>
+          <div id="email-lib-grid"></div><div id="email-lib-stats"></div>
+          <div id="email-lib-sync-status"></div>
+        `);
+        await page.route('**/api/email/**', route => {
+          const url = new URL(route.request().url());
+          if (url.pathname === '/api/email/list') {
+            return route.fulfill({ json: {
+              emails: [], total: 0,
+              sync: { updated_at: new Date(Date.now() - 90000).toISOString() },
+            } });
+          }
+          return route.fulfill({ json: {} });
+        });
+        await page.evaluate(async () => {
+          const { _loadEmails } = await import('/static/js/emailLibrary/index.js');
+          await _loadEmails({ force: true, useCache: false });
+        });
+        assert.equal(await page.textContent('#email-lib-sync-status'), 'Last: 1m ago');
+        assert.equal(await page.textContent('#email-lib-stats'), '0 emails');
+        assert.doesNotMatch(await page.textContent('#email-lib-grid'), /Failed to load/);
+      } finally {
+        await browser.close();
+      }
+    '''
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=40,
+    )
+    assert result.returncode == 0, result.stderr

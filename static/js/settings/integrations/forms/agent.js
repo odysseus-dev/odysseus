@@ -3,6 +3,7 @@
 
 import { esc } from '../../html.js';
 import { byId as el } from '../../dom.js';
+import { copyText } from '../../../shared/platform/clipboard.js';
 import { notifyIntegrationsChanged } from '../events.js';
 
 // Config shared by the Codex Agent and Claude Agent forms. Both use the same
@@ -401,28 +402,6 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
   };
   // Bind the explicit Create button; no auto-creation.
   el('uf-codex-create-btn')?.addEventListener('click', () => { _autoCreateCodex(); });
-  const _copyCodexToken = async (text) => {
-    const value = String(text || '');
-    if (!value) return false;
-    if (navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch (_) {}
-    }
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.setAttribute('readonly', 'readonly');
-    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1;';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, value.length);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-    ta.remove();
-    return ok;
-  };
   const _selectTextFallback = (text, containerId) => {
     const code = document.createElement('pre');
     code.textContent = text;
@@ -441,7 +420,7 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
     const btn = el('uf-codex-copy-setup');
     if (!token) return;
     const setup = setupForToken(token);
-    const ok = await _copyCodexToken(setup);
+    const ok = await copyText(setup);
     if (!btn) return;
     if (ok) {
       btn.innerHTML = CHECK_ICON;
@@ -457,7 +436,7 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
   });
   el('uf-codex-copy-token')?.addEventListener('click', async () => {
     const token = el('uf-codex-token')?.textContent || '';
-    const ok = await _copyCodexToken(token);
+    const ok = await copyText(token);
     const btn = el('uf-codex-copy-token');
     if (!btn) return;
     if (ok) {
@@ -472,35 +451,6 @@ export async function showAgentForm({ formEl, renderList, closeForm }, kind, edi
       if (latest) { latest.innerHTML = COPY_ICON; latest.style.color = ''; latest.style.opacity = '0.7'; }
     }, 1600);
   });
-  function _wireScopeChange(scope) {
-    scope.querySelectorAll('.uf-codex-scope').forEach(cb => {
-      if (cb.dataset.wired === '1') return;
-      cb.dataset.wired = '1';
-      cb.addEventListener('change', async () => {
-        const tokenId = cb.dataset.tokenId;
-        const panel = formEl.querySelector(`.uf-codex-token[data-token-id="${CSS.escape(tokenId)}"]`);
-        const msg = formEl.querySelector(`.uf-codex-scope-msg[data-token-id="${CSS.escape(tokenId)}"]`);
-        const scopes = Array.from(panel.querySelectorAll('.uf-codex-scope:checked')).map(input => input.dataset.scope);
-        try {
-          const r = await fetch(`/api/tokens/${tokenId}`, {
-            method: 'PATCH',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scopes }),
-          });
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(d.detail || 'Failed');
-          if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
-          await renderList();
-        } catch (err) {
-          cb.checked = !cb.checked;
-          if (msg) { msg.textContent = err?.message || 'Failed'; msg.style.color = 'var(--red)'; }
-        }
-      });
-    });
-  }
-  // Note: don't call _wireScopeChange(formEl) here. The existing-token
-  // editor (current) already wires its own change handler that PATCHes
-  // immediately. The inline scopes for a *just-created* token should
-  // remain unwired so they only persist on Save click below.
+  // Existing-token changes patch immediately. Scopes on a new token are saved
+  // only through the explicit Save action.
 }

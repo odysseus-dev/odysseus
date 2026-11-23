@@ -8,11 +8,9 @@ change), appended as a mobile block in 13-image-editor.css.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_mobile_touch_target_block_present():
@@ -38,7 +36,3 @@ def test_touch_target_rules_are_mobile_scoped():
     assert media != -1
     # the rules sit inside that media block (no closing brace before them)
     assert "}" not in CSS[media + len("@media (max-width: 700px)") : idx]
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

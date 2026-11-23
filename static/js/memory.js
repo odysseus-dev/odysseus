@@ -1,6 +1,7 @@
 // Memory Management Functions
 // This module handles all memory-related operations
 
+import { formatRecentAge } from './shared/domain/relativeTime.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
@@ -150,9 +151,8 @@ function _wireMemoryDrag() {
 function relativeTime(timestamp) {
   const now = Math.floor(Date.now() / 1000);
   const diff = now - timestamp;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  const recent = formatRecentAge(diff);
+  if (recent !== null) return recent;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
   if (diff < 2592000) return `${Math.floor(diff / 604800)}w ago`;
   if (diff < 31536000) return `${Math.floor(diff / 2592000)}mo ago`;

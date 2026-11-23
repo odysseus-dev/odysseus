@@ -127,6 +127,20 @@ def test_offline_fallback_ignores_only_an_origin_vary_inside_the_current_cache()
     assert ".catch(() => cachedStaticFile(e.request))" in _fetch_handler()
 
 
+def test_cache_name_matches_versioned_precache_contract():
+    """Verify service-worker CACHE_NAME follows the versioned schema:
+    odysseus-v<digits>-<slug>
+    and matches the current release/precache identifier.
+    """
+    m = re.search(r"^const CACHE_NAME = '([^']+)';", SW, re.M)
+    assert m, "const CACHE_NAME declaration not found in static/sw.js"
+    cache_name = m.group(1)
+
+    match = re.fullmatch(r"odysseus-v(\d+)-([a-z0-9-]+)", cache_name)
+    assert match, f"CACHE_NAME '{cache_name}' does not match schema odysseus-v<digits>-<slug>"
+    assert match.group(2) == "pr40-editor-precache", f"Expected active slug 'pr40-editor-precache', got '{match.group(2)}'"
+
+
 def test_activation_removes_every_other_cache_version():
     assert re.search(r"const CACHE_NAME = 'odysseus-v\d+-[a-z0-9-]+';", SW)
     activate = SW[SW.index("self.addEventListener('activate'"):SW.index("async function cachedStaticFile")]

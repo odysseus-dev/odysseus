@@ -4,7 +4,6 @@ import pathlib
 REPO = pathlib.Path(__file__).resolve().parent.parent
 EDITOR_JS = (REPO / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 CSS = (REPO / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (REPO / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_mobile_footer_sits_flush_on_the_sheet():
@@ -24,9 +23,3 @@ def test_phone_menu_bar_compaction_rules_present():
     # stay rendered; interaction-contract.spec.js checks it at 390px.
     assert ".ge-topbar.ge-topbar-compact #ge-save-menu-btn .ge-save-action-label { display: none !important; }" in CSS
     assert not re.search(r"ge-topbar-compact\s+#ge-draft-status\s*\{[^}]*display:\s*none", CSS)
-
-
-def test_sw_cache_name_is_version_agnostic_pattern():
-    m = re.search(r"CACHE_NAME\s*=\s*'([^']+)'", SW)
-    assert m is not None
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

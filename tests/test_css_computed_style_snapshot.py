@@ -191,3 +191,105 @@ def test_reordering_two_conflicting_declarations_moves_the_digest():
     drift = snapshot.compare(unchanged, reordered)
     assert "app-shell/attach-strip" in drift["elements"]
     assert "bench/.attach-strip" in drift["elements"]
+
+
+@_requires_browser
+def test_concurrent_capture_matches_sequential_capture():
+    """Concurrency must produce identical results to sequential capture."""
+    variants = ["desktop-dark-comfortable", "desktop-light-compact"]
+    serial = snapshot.capture(static_origin(), variants=variants, concurrency=1)
+    concurrent = snapshot.capture(static_origin(), variants=variants, concurrency=2)
+    assert serial["snapshot"] == concurrent["snapshot"]
+    assert serial["missing"] == concurrent["missing"]
+
+
+@_requires_browser
+@pytest.mark.parametrize("invalid", [0, -1, 1.5, "0", "-2", "1.5", "2foo", "abc", 5, "10"])
+def test_capture_rejects_invalid_and_excessive_concurrency(invalid):
+    """Zero, negative, fractional, malformed, and excessive values must fail cleanly."""
+    variants = ["desktop-dark-comfortable"]
+    with pytest.raises(RuntimeError, match=r"(invalid concurrency|exceeds maximum allowed)"):
+        snapshot.capture(static_origin(), variants=variants, concurrency=invalid)
+
+
+@_requires_browser
+def test_concurrency_job_precedence_over_env(monkeypatch):
+    """Explicit job configuration takes precedence over environment variable."""
+    variants = ["desktop-dark-comfortable"]
+    monkeypatch.setenv("CSS_SNAPSHOT_CONCURRENCY", "invalid-env-string")
+    res = snapshot.capture(static_origin(), variants=variants, concurrency=1)
+    assert res["missing"] == {}
+
+
+@_requires_browser
+def test_intercepted_stylesheet_preserves_non_200_status(tmp_path):
+    """Failed stylesheet responses must preserve non-200 HTTP status and not apply styles."""
+    html = """<!doctype html><html><head>
+      <style>#guard { color: rgb(0, 128, 0); }</style>
+      <link rel="stylesheet" href="/static/css/two-rules.css">
+      <link rel="stylesheet" href="/static/css/failing.css">
+    </head><body><div id="guard">content</div></body></html>"""
+    (tmp_path / "fixture.html").write_text(html, encoding="utf-8")
+
+    static_css = tmp_path / "static" / "css"
+    static_css.mkdir(parents=True)
+    (static_css / "two-rules.css").write_text(
+        ".dummy { margin: 1px; }\n.dummy { margin: 2px; }\n",
+        encoding="utf-8",
+    )
+
+    import http.server
+    import socketserver
+    import threading
+
+    class FailingHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(tmp_path), **kwargs)
+
+        def do_GET(self):
+            if self.path == "/static/css/failing.css":
+                body = b"#guard { color: rgb(255, 0, 0); }"
+                self.send_response(500)
+                self.send_header("Content-Type", "text/css")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            super().do_GET()
+
+        def log_message(self, fmt, *args):
+            pass
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = allow_reuse_address = True
+
+    server = Server(("127.0.0.1", 0), FailingHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+
+    inventory = {
+        "properties": ["color"],
+        "variants": [snapshot.load_inventory()["variants"][0]],
+        "pages": [{"name": "fixture", "url": "/fixture.html",
+                   "elements": [{"key": "guard", "selector": "#guard"}]}],
+    }
+
+    try:
+        captured = snapshot.capture(origin, inventory, swap_rule=".dummy", record_responses=True)
+        # 1. HTTP contract: Chromium observes status 500 for the intercepted stylesheet
+        matching = [
+            r for r in captured.get("responses", [])
+            if r["url"].endswith("/static/css/failing.css")
+        ]
+        assert matching, "Expected intercepted response for failing.css was not recorded"
+        assert matching[0]["status"] == 500, (
+            f"Expected HTTP 500 for failing.css, but observed status {matching[0]['status']}"
+        )
+
+        # 2. CSS behavior: Failed stylesheet declarations were not applied
+        values = captured["snapshot"]["fixture"][inventory["variants"][0]["name"]]
+        assert values["guard"]["color"] == "rgb(0, 128, 0)"
+    finally:
+        server.shutdown()
+        server.server_close()

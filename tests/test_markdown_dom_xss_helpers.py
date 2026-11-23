@@ -23,7 +23,8 @@ def test_svg_title_extraction_never_reparses_model_output_as_dom():
 def test_markdown_raw_html_sanitizer_checks_url_attr_edge_cases():
     src = (_REPO / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
 
-    assert "function _compactUrlSchemeValue(value)" in src
+    assert "from './shared/domain/urlSchemes.js'" in src
+    assert "test(compactUrlSchemeValue(value))" in src
     assert "function _isDangerousUrl(value)" in src
     assert "function _isDangerousSrcset(value)" in src
     assert "'srcset'" in src
@@ -35,6 +36,7 @@ def test_markdown_raw_html_sanitizer_strips_scriptable_css():
     src = (_REPO / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
 
     assert "if (name === 'style')" in src
+    assert "compactUrlSchemeValue(attr.value)" in src
     assert r"javascript:|vbscript:|data:|expression\(" in src
     assert "el.removeAttribute(attr.name);" in src
 

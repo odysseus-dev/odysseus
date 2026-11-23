@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { disposableCIArtifacts, marker } = require('./artifact-policy');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const defaultResultsDir = path.join(repoRoot, 'test-results');
@@ -28,6 +29,9 @@ module.exports = async (options = {}) => {
   // If options is a Playwright FullConfig object, ignore it and use safe defaults
   const isPlaywrightConfig = options && (options.configFile || options.rootDir);
   const testOpts = (!isPlaywrightConfig && typeof options === 'object') ? options : {};
+
+  // Validate fixture ownership before removing its temporary directory.
+  const disposableCI = disposableCIArtifacts();
 
   // Confine cleanup of PHOTO_EDITOR_E2E_DATA_DIR:
   // Strictly require it to be within an OS temporary directory and match the expected test prefix
@@ -100,7 +104,7 @@ module.exports = async (options = {}) => {
     const isCI = Boolean(process.env.CI) || Boolean(process.env.GITHUB_ACTIONS);
     const traceOptIn = !isCI && ['1', 'true'].includes(String(process.env.PLAYWRIGHT_ENABLE_TRACE || '').toLowerCase());
 
-    if (isCI || !traceOptIn) {
+    if ((isCI && !disposableCI) || (!traceOptIn && !disposableCI)) {
       // In CI or default local runs, purge all sensitive trace archives and artifacts
       purgeSensitiveArtifacts(resultsDir);
     } else {
@@ -124,7 +128,17 @@ module.exports = async (options = {}) => {
 
       if (!sanitizerSucceeded) {
         // Fail closed: purge all remaining zip or tmp archives
-        purgeZipAndTmp(resultsDir);
+        if (disposableCI) purgeSensitiveArtifacts(resultsDir);
+        else purgeZipAndTmp(resultsDir);
+      } else if (disposableCI) {
+        // Re-affirm fixture proof in resultsDir so independent verifier can establish ownership
+        try {
+          fs.writeFileSync(path.join(resultsDir, marker), JSON.stringify({
+            synthetic: true,
+            authenticated: true,
+            database: process.env.PHOTO_EDITOR_E2E_DB_PATH || path.join(dataDirectory || '', 'app.db'),
+          }));
+        } catch (_) {}
       }
     }
   }

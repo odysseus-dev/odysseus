@@ -15,7 +15,6 @@ WIRE = (ROOT / "static/js/editor/wire-extra-menus.js").read_text(encoding="utf-8
 HISTORY = (ROOT / "static/js/editor/history-panel.js").read_text(encoding="utf-8")
 GALLERY = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 STYLE = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 WINDOW_ACTIONS = {
     "quick-edit",
@@ -75,10 +74,6 @@ def test_history_row_stays_toggleable():
 def test_window_dot_uses_shared_active_glyph_css():
     assert ".ge-window-toggle .ge-window-check { opacity: 0; }" in STYLE
     assert ".ge-window-toggle.active .ge-window-check { opacity: 1; color: var(--red); }" in STYLE
-
-
-def test_sw_cache_name_bumped_for_window_dots():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)
 
 
 def test_shortcuts_row_toggles_off():

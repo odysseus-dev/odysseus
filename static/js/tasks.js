@@ -9,6 +9,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
+import { escapeHtml as _escHtml } from './shared/domain/html.js';
 import {
   bindMenuDismiss,
   dismissOrRemove,
@@ -2952,12 +2953,6 @@ function _renderActivityEntry(entry, opts = {}) {
       </div>
     </div>
   `;
-}
-
-function _escHtml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ---- Main view ----

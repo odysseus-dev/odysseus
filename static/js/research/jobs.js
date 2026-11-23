@@ -20,7 +20,6 @@ function _loadDismissed() {
 function _saveDismissed(set) {
   try { localStorage.setItem(_DISMISSED_KEY, JSON.stringify([...set])); } catch {}
 }
-function _isDismissed(id) { return _loadDismissed().has(id); }
 function _markDismissed(ids) {
   const set = _loadDismissed();
   for (const id of ids) set.add(id);

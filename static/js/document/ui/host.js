@@ -12,6 +12,8 @@ export { default as markdownModule } from '/static/js/markdown.js';
 export { default as codeRunnerModule } from '/static/js/codeRunner.js?v=20260831richtexttools91';
 export { langIcon } from '/static/js/langIcons.js?v=20260831richtexttools91';
 export { default as spinnerModule } from '/static/js/spinner.js';
+export { downloadBlob } from '/static/js/shared/platform/downloads.js';
+export { stepWrappedOption } from '/static/js/shared/ui/optionNavigation.js';
 export {
   openLibrary,
   closeLibrary,

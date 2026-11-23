@@ -10,7 +10,6 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GE = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static" / "css" / "13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 
 def test_footer_placer_exists_and_is_mobile_scoped():
@@ -37,10 +36,3 @@ def test_floating_footer_css_is_mobile_only():
     # the rule must live inside the max-width:700px mobile block that also
     # tightens the footer
     assert "@media (max-width: 700px)" in CSS[:idx]
-
-
-def test_sw_cache_bumped():
-    # Version-agnostic: every commit bumps the SW cache, so pinning the exact
-    # number makes this test fail on the next commit.
-    import re
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", SW)

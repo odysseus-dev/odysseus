@@ -35,6 +35,8 @@ import {
 
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { normalizeCookbookModelDir } from './cookbookModelDirectories.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
 
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
@@ -53,11 +55,6 @@ function _fetchCookbookUiWithTimeout(input, init = {}, timeoutMs = 20000) {
 // OFF = hollow circle (pickable); ON = checked circle (accent-tinted via CSS).
 export const _MODELDIR_CHECK_OFF = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>';
 export const _MODELDIR_CHECK_ON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="8 12 11 15 16 9"/></svg>';
-
-function _normalizeCookbookModelDir(dir) {
-  const d = String(dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
-  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
-}
 
 // Monochrome platform glyphs (currentColor) for a server's OS tag: a penguin for
 // Linux, the four-pane logo for Windows, an Android robot for Termux/Android.
@@ -1016,13 +1013,10 @@ export function _copyText(text) {
 }
 
 function _fallbackCopy(text) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); } catch (_) {}
-  document.body.removeChild(ta);
+  withClipboardTextarea(text, 'position:fixed;left:-9999px;top:-9999px', field => {
+    field.select();
+    try { document.execCommand('copy'); } catch (_) {}
+  });
   return Promise.resolve();
 }
 
@@ -2080,7 +2074,7 @@ function _wireTabEvents(body) {
       const dirs = [];
       entry.querySelectorAll('.cookbook-modeldir-tag').forEach(tag => {
         // Read from data attribute (authoritative) — never parse displayed text
-        const d = _normalizeCookbookModelDir(tag.dataset.dir || '');
+        const d = normalizeCookbookModelDir(tag.dataset.dir || '');
         if (d) dirs.push(d);
       });
       // Directory flagged as the download target ('' = default HF cache).
@@ -2166,7 +2160,7 @@ function _wireTabEvents(body) {
       if (cacheDirEl) cacheDirEl.value = srv.modelDir || '~/.cache/huggingface/hub';
       const dirsEl = document.querySelector('.cookbook-serve-dirs');
       if (dirsEl) {
-        const dirs = (Array.isArray(srv.modelDirs) ? srv.modelDirs : [srv.modelDir || '~/.cache/huggingface/hub']).map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
+        const dirs = (Array.isArray(srv.modelDirs) ? srv.modelDirs : [srv.modelDir || '~/.cache/huggingface/hub']).map(d => normalizeCookbookModelDir(d)).filter(Boolean);
         dirsEl.innerHTML = dirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('') +
           '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
         dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {
@@ -3320,7 +3314,7 @@ function _renderRecipes() {
   html += '<h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;color:var(--accent, var(--red));"><path d="M12 22c4.4 0 8-3.1 8-7.2 0-3.8-2.5-6.8-5.3-9.8.1 2.2-.5 3.8-1.8 5.2.1-3.5-1.2-6.1-3-8.2.1 4-5.9 7.4-5.9 12.8C4 18.9 7.6 22 12 22Z"></path></svg>Launch <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
   html += '</div>';
   const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
-  const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
+  const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => normalizeCookbookModelDir(d)).filter(Boolean);
   html += '<div class="cookbook-serve-dirs" style="margin-top:6px;">';
   html += _srvDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('');
   html += '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';

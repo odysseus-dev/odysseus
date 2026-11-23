@@ -7,7 +7,6 @@ is the shared `wireSubmenuToggles` helper (also used by Image/Filter/Selection).
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
@@ -61,6 +60,5 @@ def test_workspace_flyout_releases_the_menu_clip():
     assert ".ge-window-menu:has(.ge-menu-parent.open)" in CSS
 
 
-def test_submenu_helper_is_precached_and_cache_bumped():
+def test_submenu_helper_is_precached():
     assert "'/static/js/editor/submenu-toggles.js'" in SW
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

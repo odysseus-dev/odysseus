@@ -6,6 +6,86 @@
       "deployment": "js/actionMenuOrder.js"
     },
     {
+      "source": "shared/domain/html.js",
+      "deployment": "js/shared/domain/html.js"
+    },
+    {
+      "source": "shared/domain/urlSchemes.js",
+      "deployment": "js/shared/domain/urlSchemes.js"
+    },
+    {
+      "source": "shared/domain/relativeTime.js",
+      "deployment": "js/shared/domain/relativeTime.js"
+    },
+    {
+      "source": "shared/platform/clipboard.js",
+      "deployment": "js/shared/platform/clipboard.js"
+    },
+    {
+      "source": "shared/platform/debounce.js",
+      "deployment": "js/shared/platform/debounce.js"
+    },
+    {
+      "source": "shared/platform/downloads.js",
+      "deployment": "js/shared/platform/downloads.js"
+    },
+    {
+      "source": "shared/ui/escMenuStack.js",
+      "deployment": "js/escMenuStack.js"
+    },
+    {
+      "source": "shared/ui/optionNavigation.js",
+      "deployment": "js/shared/ui/optionNavigation.js"
+    },
+    {
+      "source": "shared/ui/toolWindowZOrder.js",
+      "deployment": "js/toolWindowZOrder.js"
+    },
+    {
+      "source": "shared/domain/modelSort.js",
+      "deployment": "js/modelSort.js"
+    },
+    {
+      "source": "shared/platform/appConfig.js",
+      "deployment": "js/appConfig.js"
+    },
+    {
+      "source": "shared/platform/authStatus.js",
+      "deployment": "js/authStatus.js"
+    },
+    {
+      "source": "shared/platform/browserCapabilities.js",
+      "deployment": "js/platform.js"
+    },
+    {
+      "source": "shared/platform/storage.js",
+      "deployment": "js/storage.js"
+    },
+    {
+      "source": "shared/ui/modalSnap.js",
+      "deployment": "js/modalSnap.js"
+    },
+    {
+      "source": "shared/ui/modalVisibility.js",
+      "deployment": "js/modalVisibility.js"
+    },
+    {
+      "source": "shared/ui/spinner.js",
+      "deployment": "js/spinner.js"
+    },
+    {
+      "source": "shared/ui/tourHintDismiss.js",
+      "deployment": "js/tourHintDismiss.js"
+    },
+    {
+      "source": "shared/ui/windowDrag.js",
+      "deployment": "js/windowDrag.js"
+    },
+    {
+      "source": "shared/ui/windowResize.js",
+      "deployment": "js/windowResize.js"
+    },
+    {
       "source": "features/notes/domain/recurrence.js",
       "deployment": "js/features/notes/domain/recurrence.js"
     },
@@ -82,20 +162,8 @@
       "deployment": "js/features/notes/ui/cardReorder.js"
     },
     {
-      "source": "features/notes/ui/draftEditor.js",
-      "deployment": "js/features/notes/ui/draftEditor.js"
-    },
-    {
-      "source": "features/notes/ui/editor.js",
-      "deployment": "js/features/notes/ui/editor.js"
-    },
-    {
       "source": "features/notes/ui/reminderPicker.js",
       "deployment": "js/features/notes/ui/reminderPicker.js"
-    },
-    {
-      "source": "features/notes/ui/checklist.js",
-      "deployment": "js/features/notes/ui/checklist.js"
     },
     {
       "source": "features/notes/ui/drawing.js",
@@ -106,16 +174,8 @@
       "deployment": "js/features/notes/ui/clipboard.js"
     },
     {
-      "source": "features/notes/ui/mobileEditor.js",
-      "deployment": "js/features/notes/ui/mobileEditor.js"
-    },
-    {
       "source": "features/notes/ui/mobileReorder.js",
       "deployment": "js/features/notes/ui/mobileReorder.js"
-    },
-    {
-      "source": "features/notes/ui/checklistReorder.js",
-      "deployment": "js/features/notes/ui/checklistReorder.js"
     },
     {
       "source": "features/notes/application/queries.js",
@@ -138,6 +198,30 @@
       "deployment": "js/features/notes/domain/markdownTasks.js"
     },
     {
+      "source": "features/notes/domain/markdownSerializer.js",
+      "deployment": "js/features/notes/domain/markdownSerializer.js"
+    },
+    {
+      "source": "features/notes/application/noteSession.js",
+      "deployment": "js/features/notes/application/noteSession.js"
+    },
+    {
+      "source": "features/notes/application/noteVersions.js",
+      "deployment": "js/features/notes/application/noteVersions.js"
+    },
+    {
+      "source": "features/notes/ui/richBody.js",
+      "deployment": "js/features/notes/ui/richBody.js"
+    },
+    {
+      "source": "features/notes/ui/noteTags.js",
+      "deployment": "js/features/notes/ui/noteTags.js"
+    },
+    {
+      "source": "features/notes/ui/noteWindow.js",
+      "deployment": "js/features/notes/ui/noteWindow.js"
+    },
+    {
       "source": "features/notes/index.js",
       "deployment": "js/features/notes/index.js",
       "legacyImports": [
@@ -154,27 +238,7 @@
           "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
         },
         {
-          "specifier": "/static/js/windowDrag.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
           "specifier": "/static/js/tileManager.js?v=20260910responsivebounds1",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/modalSnap.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/toolWindowZOrder.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/escMenuStack.js",
-          "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
-        },
-        {
-          "specifier": "/static/js/tourHintDismiss.js",
           "reason": "Existing shared UI/platform identity, injected at Notes composition. Remove when that shared responsibility migrates to maintained source."
         },
         {
@@ -182,14 +246,6 @@
           "reason": "Shared markdown renderer, injected at Notes composition so note cards use the same renderer as the rest of the app. Remove when markdown rendering migrates to maintained source."
         }
       ]
-    },
-    {
-      "source": "features/notes/application/submission.js",
-      "deployment": "js/features/notes/application/submission.js"
-    },
-    {
-      "source": "features/notes/application/drafts.js",
-      "deployment": "js/features/notes/application/drafts.js"
     },
     {
       "source": "features/notes/ui/lifecycle.js",
@@ -234,6 +290,10 @@
     {
       "source": "features/documents/ui/importFromDevice.js",
       "deployment": "js/document/ui/importFromDevice.js"
+    },
+    {
+      "source": "features/documents/ui/fileProcessing.js",
+      "deployment": "js/document/ui/fileProcessing.js"
     },
     {
       "source": "features/documents/ui/previewModes.js",
@@ -420,10 +480,6 @@
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
         },
         {
-          "specifier": "/static/js/spinner.js",
-          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
-        },
-        {
           "specifier": "/static/js/documentLibrary.js?v=20260911librarybulkdelete1",
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
         },
@@ -433,14 +489,6 @@
         },
         {
           "specifier": "/static/js/modalManager.js",
-          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
-        },
-        {
-          "specifier": "/static/js/escMenuStack.js",
-          "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
-        },
-        {
-          "specifier": "/static/js/toolWindowZOrder.js",
           "reason": "Legacy host bridge re-exporting platform dependency with exact query string identity (Decision D6)."
         },
         {

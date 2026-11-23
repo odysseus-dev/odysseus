@@ -3,6 +3,8 @@
 // "What Fits?" hardware model fitting UI
 // ============================================
 
+import { normalizeCookbookModelDir } from './cookbookModelDirectories.js';
+
 import {
   _envState,
   _persistEnvState,
@@ -61,11 +63,6 @@ function _dependencyPkgForModel(runBackend, modelData = {}) {
   // model names: users can run new models without a frontend code change.
   const declared = typeof modelData === 'string' ? '' : String(modelData?.dependency_package || '').trim();
   return declared || _BACKEND_PKG[runBackend];
-}
-
-function _normalizeCookbookModelDir(dir) {
-  const d = String(dir || '').replaceAll('\u2715', '').replaceAll('\u2716', '').trim();
-  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
 }
 
 function _wireServerColorPicker(entry) {
@@ -2410,7 +2407,7 @@ export function _hwfitInit() {
       const dirTags = entry.querySelectorAll('.cookbook-modeldir-tag');
       const modelDirs = [];
       dirTags.forEach(tag => {
-        const d = _normalizeCookbookModelDir(tag.dataset.dir || '');
+        const d = normalizeCookbookModelDir(tag.dataset.dir || '');
         if (d) modelDirs.push(d);
       });
       if (!modelDirs.length) modelDirs.push('~/.cache/huggingface/hub');

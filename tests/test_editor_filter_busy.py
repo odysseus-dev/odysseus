@@ -5,12 +5,10 @@ the editor now shows a busy veil while that final render runs.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "static/js/galleryEditor.js").read_text()
 CSS = (ROOT / "static/css/13-image-editor.css").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 
 def test_busy_helpers_exist():
@@ -40,9 +38,3 @@ def test_busy_veil_css_present():
     assert ".ge-busy-veil.is-on { display: flex; }" in CSS
     assert ".ge-busy-spin {" in CSS
     assert "@keyframes ge-busy-spin" in CSS
-
-
-def test_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)
