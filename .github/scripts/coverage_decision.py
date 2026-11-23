@@ -409,6 +409,47 @@ def parse_decision_boolean(val: Any) -> bool | None:
     return None
 
 
+def evaluate_job_or_matrix_result(res_str: str) -> tuple[str, bool]:
+    """Parse a job outcome or matrix result string into (canonical_status, is_all_equal).
+
+    In GitHub Actions, `needs.<job_id>.result` for a matrix job can be either a
+    single status string (e.g. 'success', 'failure', 'cancelled', 'skipped') or a
+    JSON structure mapping matrix keys to individual job results.
+
+    Returns:
+    - (status, True) if all jobs/shards share the same status (e.g. ('success', True))
+    - (first_non_success_status, False) if results are mixed (e.g. ('failure', False))
+    """
+    cleaned = (res_str or "").strip()
+    if not cleaned:
+        return "", False
+
+    if cleaned in ("success", "failure", "cancelled", "skipped"):
+        return cleaned, True
+
+    try:
+        val = json.loads(cleaned)
+        if isinstance(val, str) and val in ("success", "failure", "cancelled", "skipped"):
+            return val, True
+        if isinstance(val, (dict, list)):
+            items = list(val.values()) if isinstance(val, dict) else val
+            if not items:
+                return "", False
+            # Check if all items match the first status
+            first = items[0]
+            if all(x == first for x in items):
+                return str(first), True
+            # Mixed: return failure or cancelled if present, else first
+            for priority in ("failure", "cancelled", "skipped"):
+                if priority in items:
+                    return priority, False
+            return str(first), False
+    except Exception:
+        pass
+
+    return cleaned, False
+
+
 def evaluate_gate_compliance(
     decision_result: str,
     run_node: str | bool,
@@ -428,18 +469,21 @@ def evaluate_gate_compliance(
     if req_browser is None:
         return False, f"Invalid or missing Chromium browser decision: {run_browser!r}"
 
+    node_status, node_uniform = evaluate_job_or_matrix_result(node_result)
+    browser_status, browser_uniform = evaluate_job_or_matrix_result(browser_result)
+
     if req_node:
-        if node_result != "success":
+        if node_status != "success" or not node_uniform:
             return False, f"Required Native Node suite did not succeed (status: {node_result})"
     else:
-        if node_result != "skipped":
+        if node_status != "skipped" or not node_uniform:
             return False, f"Native Node suite had unexpected status for permitted skip (status: {node_result})"
 
     if req_browser:
-        if browser_result != "success":
+        if browser_status != "success" or not browser_uniform:
             return False, f"Required Chromium browser suite did not succeed (status: {browser_result})"
     else:
-        if browser_result != "skipped":
+        if browser_status != "skipped" or not browser_uniform:
             return False, f"Chromium browser suite had unexpected status for permitted skip (status: {browser_result})"
 
     return True, "Authoritative native gate PASSED: all required suites succeeded; permitted skips verified."

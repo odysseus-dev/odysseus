@@ -1,0 +1,313 @@
+"""Executable negative controls and coverage oracle tests for sharded Chromium CI.
+
+Tests Section 7 scenarios:
+1. All four shards succeed with complete coverage.
+2. One shard fails (test failure).
+3. One shard is cancelled.
+4. One shard is unexpectedly skipped.
+5. One shard never produces a report (missing shard file).
+6. One shard produces an empty report (0 test cases).
+7. One shard produces malformed JUnit XML.
+8. A test identity appears in two shards (duplicate execution).
+9. A test identity is missing from the combined inventory.
+10. All reported counts match, but the identities are incorrect.
+11. A new Playwright test is added (expected inventory mismatch).
+12. A Playwright test is removed or renamed (expected inventory mismatch).
+13. Chromium execution is legitimately skipped (coverage policy and gate).
+14. Coverage-decision output is missing.
+15. Native Node execution fails while Chromium succeeds.
+"""
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+import xml.etree.ElementTree as ET
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+VERIFY_SCRIPT = ROOT / ".github" / "scripts" / "verify_chromium_shards.py"
+GATE_SCRIPT = ROOT / ".github" / "scripts" / "coverage_decision.py"
+
+# Import verify_chromium_shards
+v_spec = importlib.util.spec_from_file_location("verify_chromium_shards", VERIFY_SCRIPT)
+v_mod = importlib.util.module_from_spec(v_spec)
+v_spec.loader.exec_module(v_mod)
+discover_playwright_test_identities = v_mod.discover_playwright_test_identities
+verify_chromium_shards = v_mod.verify_chromium_shards
+
+# Import coverage_decision
+g_spec = importlib.util.spec_from_file_location("coverage_decision", GATE_SCRIPT)
+g_mod = importlib.util.module_from_spec(g_spec)
+g_spec.loader.exec_module(g_mod)
+evaluate_gate_compliance = g_mod.evaluate_gate_compliance
+
+
+def create_mock_shard_xml(tmp_path: Path, shard_name: str, test_cases: list[tuple[str, str]], status: str = "pass") -> Path:
+    """Helper to create a valid or modified JUnit XML shard report."""
+    shard_file = tmp_path / f"{shard_name}.xml"
+    ts = ET.Element("testsuites")
+    suite = ET.SubElement(
+        ts,
+        "testsuite",
+        name=shard_name,
+        tests=str(len(test_cases)),
+        failures="1" if status == "failure" else "0",
+        errors="1" if status == "error" else "0",
+        skipped="1" if status == "skipped" else "0",
+    )
+    for spec, title in test_cases:
+        tc = ET.SubElement(suite, "testcase", classname=spec, name=title, time="1.0")
+        if status == "failure":
+            f = ET.SubElement(tc, "failure", message="Assertion error")
+            f.text = "Traceback details"
+        elif status == "error":
+            e = ET.SubElement(tc, "error", message="Runtime crash")
+            e.text = "Crash stack"
+        elif status == "skipped":
+            s = ET.SubElement(tc, "skipped")
+    tree = ET.ElementTree(ts)
+    tree.write(shard_file)
+    return shard_file
+
+
+@pytest.fixture
+def mock_inventory_and_shards(tmp_path):
+    """Provides a realistic 4-shard test distribution matching expected inventory."""
+    expected = discover_playwright_test_identities(ROOT)
+    sorted_expected = sorted(expected)
+    # Split 137 into 35, 39, 32, 31
+    shards_data = [
+        sorted_expected[0:35],
+        sorted_expected[35:74],
+        sorted_expected[74:106],
+        sorted_expected[106:137],
+    ]
+    shard_files = []
+    for i, data in enumerate(shards_data, 1):
+        f = create_mock_shard_xml(tmp_path, f"shard-{i}", data)
+        shard_files.append(f)
+    return expected, shard_files, shards_data
+
+
+def test_scenario_01_all_four_shards_succeed_complete_coverage(mock_inventory_and_shards):
+    """1. All four shards succeed with complete coverage."""
+    expected, shard_files, _ = mock_inventory_and_shards
+    ok, msg, meta = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is True
+    assert "Verified all 137 Chromium tests" in msg
+    assert meta["executed_tests"] == 137
+    assert len(meta["missing_identities"]) == 0
+    assert len(meta["duplicate_identities"]) == 0
+
+
+def test_scenario_02_one_shard_fails(tmp_path, mock_inventory_and_shards):
+    """2. One shard fails (test failure)."""
+    expected, _, shards_data = mock_inventory_and_shards
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data[0]),
+        create_mock_shard_xml(tmp_path, "shard-2", shards_data[1], status="failure"),
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, _ = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "Test failure in" in msg
+
+
+def test_scenario_03_one_shard_is_cancelled():
+    """3. One shard cancelled must fail the aggregate gate."""
+    # Matrix job outcome where one shard was cancelled
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="true",
+        run_browser="true",
+        node_result="success",
+        browser_result=json.dumps({"1": "success", "2": "cancelled", "3": "success", "4": "success"}),
+    )
+    assert ok is False
+    assert "Required Chromium browser suite did not succeed" in msg
+
+
+def test_scenario_04_one_shard_is_unexpectedly_skipped(tmp_path, mock_inventory_and_shards):
+    """4. One shard is unexpectedly skipped."""
+    expected, _, shards_data = mock_inventory_and_shards
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data[0]),
+        create_mock_shard_xml(tmp_path, "shard-2", shards_data[1], status="skipped"),
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, _ = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "Unexpected skipped test" in msg
+
+
+def test_scenario_05_one_shard_never_produces_a_report(mock_inventory_and_shards):
+    """5. One shard never produces a report (missing shard file)."""
+    expected, shard_files, _ = mock_inventory_and_shards
+    # Pass only 3 shard files instead of 4
+    ok, msg, _ = verify_chromium_shards(shard_files[:3], expected, expected_shard_count=4)
+    assert ok is False
+    assert "Expected 4 shard reports, found 3" in msg
+
+    # Pass non-existent file
+    missing_file = Path("/nonexistent/shard-4.xml")
+    ok, msg, _ = verify_chromium_shards(shard_files[:3] + [missing_file], expected, expected_shard_count=4)
+    assert ok is False
+    assert "does not exist" in msg
+
+
+def test_scenario_06_one_shard_produces_empty_report(tmp_path, mock_inventory_and_shards):
+    """6. One shard produces an empty report (0 test cases)."""
+    expected, _, shards_data = mock_inventory_and_shards
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data[0]),
+        create_mock_shard_xml(tmp_path, "shard-2", []),  # empty
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, _ = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "zero test cases" in msg
+
+
+def test_scenario_07_one_shard_produces_malformed_xml(tmp_path, mock_inventory_and_shards):
+    """7. One shard produces malformed JUnit XML."""
+    expected, _, shards_data = mock_inventory_and_shards
+    bad_file = tmp_path / "shard-2-bad.xml"
+    bad_file.write_text("<testsuites><testsuite>unclosed tag", encoding="utf-8")
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data[0]),
+        bad_file,
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, _ = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "Malformed JUnit XML" in msg
+
+
+def test_scenario_08_test_identity_appears_in_two_shards(tmp_path, mock_inventory_and_shards):
+    """8. A test identity appears in two shards (duplicate execution)."""
+    expected, _, shards_data = mock_inventory_and_shards
+    # Duplicate case from shard 1 into shard 2
+    shards_data_2 = list(shards_data[1]) + [shards_data[0][0]]
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data[0]),
+        create_mock_shard_xml(tmp_path, "shard-2", shards_data_2),
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, meta = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "duplicate test execution" in msg
+    assert len(meta["duplicate_identities"]) == 1
+
+
+def test_scenario_09_test_identity_missing_from_combined_inventory(tmp_path, mock_inventory_and_shards):
+    """9. A test identity is missing from the combined inventory."""
+    expected, _, shards_data = mock_inventory_and_shards
+    # Drop one case from shard 1
+    shards_data_1 = shards_data[0][1:]
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data_1),
+        create_mock_shard_xml(tmp_path, "shard-2", shards_data[1]),
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, meta = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "Missing 1 required test(s)" in msg
+    assert len(meta["missing_identities"]) == 1
+
+
+def test_scenario_10_matching_counts_but_incorrect_identities(tmp_path, mock_inventory_and_shards):
+    """10. All reported counts match, but the identities are incorrect."""
+    expected, _, shards_data = mock_inventory_and_shards
+    # Replace one valid test with a fake test so count remains 35
+    fake_case = ("adjustment-layers.spec.js", "Nonexistent synthetic test title")
+    shards_data_1 = shards_data[0][:-1] + [fake_case]
+    shard_files = [
+        create_mock_shard_xml(tmp_path, "shard-1", shards_data_1),
+        create_mock_shard_xml(tmp_path, "shard-2", shards_data[1]),
+        create_mock_shard_xml(tmp_path, "shard-3", shards_data[2]),
+        create_mock_shard_xml(tmp_path, "shard-4", shards_data[3]),
+    ]
+    ok, msg, meta = verify_chromium_shards(shard_files, expected, expected_shard_count=4)
+    assert ok is False
+    assert "Missing 1 required test(s)" in msg
+    assert len(meta["missing_identities"]) == 1
+
+
+def test_scenario_11_new_playwright_test_added(mock_inventory_and_shards):
+    """11. A new Playwright test is added (expected inventory mismatch)."""
+    expected, shard_files, _ = mock_inventory_and_shards
+    expanded_expected = expected | {("new-feature.spec.js", "newly added test")}
+    ok, msg, meta = verify_chromium_shards(shard_files, expanded_expected, expected_shard_count=4)
+    assert ok is False
+    assert "Missing 1 required test(s)" in msg
+    assert "new-feature.spec.js::newly added test" in meta["missing_identities"]
+
+
+def test_scenario_12_playwright_test_removed_or_renamed(mock_inventory_and_shards):
+    """12. A Playwright test is removed or renamed (unexpected test in shards)."""
+    expected, shard_files, _ = mock_inventory_and_shards
+    # Expected has fewer tests than what shards executed
+    reduced_expected = set(list(expected)[1:])
+    ok, msg, meta = verify_chromium_shards(shard_files, reduced_expected, expected_shard_count=4)
+    assert ok is False
+    assert "unexpected test(s)" in msg
+    assert len(meta["unexpected_identities"]) == 1
+
+
+def test_scenario_13_chromium_execution_legitimately_skipped():
+    """13. Chromium execution is legitimately skipped (coverage policy and gate)."""
+    # Both skipped via scalar string
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="false",
+        run_browser="false",
+        node_result="skipped",
+        browser_result="skipped",
+    )
+    assert ok is True
+    assert "PASSED" in msg
+
+    # Matrix json output with all skipped
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="false",
+        run_browser="false",
+        node_result="skipped",
+        browser_result=json.dumps({"1": "skipped", "2": "skipped", "3": "skipped", "4": "skipped"}),
+    )
+    assert ok is True
+    assert "PASSED" in msg
+
+
+def test_scenario_14_coverage_decision_output_missing():
+    """14. Coverage-decision output is missing."""
+    for empty_val in ["", None]:
+        ok, msg = evaluate_gate_compliance(
+            decision_result="success",
+            run_node="true",
+            run_browser=empty_val,
+            node_result="success",
+            browser_result="success",
+        )
+        assert ok is False
+        assert "Invalid or missing Chromium browser decision" in msg
+
+
+def test_scenario_15_native_node_fails_while_chromium_succeeds():
+    """15. Native Node execution fails while Chromium succeeds."""
+    ok, msg = evaluate_gate_compliance(
+        decision_result="success",
+        run_node="true",
+        run_browser="true",
+        node_result="failure",
+        browser_result=json.dumps({"1": "success", "2": "success", "3": "success", "4": "success"}),
+    )
+    assert ok is False
+    assert "Required Native Node suite did not succeed" in msg
