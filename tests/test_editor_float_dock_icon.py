@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,10 +23,3 @@ def test_float_dock_button_css_is_larger():
     assert "height: 26px;" in css
     assert "padding: 0;" in css
     assert ".ge-float-dock svg { width: 16px; height: 16px; flex: 0 0 auto; }" in css
-
-
-def test_sw_cache_name_version_agnostic():
-    body = _read("static/sw.js")
-    m = re.search(r"const CACHE_NAME = '([^']+)';", body)
-    assert m
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

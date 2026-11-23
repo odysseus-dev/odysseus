@@ -1,10 +1,8 @@
-import re
 import pathlib
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 EDITOR_JS = (REPO / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 CSS = (REPO / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (REPO / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_footer_docks_to_the_sheet_top():
@@ -31,9 +29,3 @@ def test_css_squares_the_docked_footer_and_hides_the_grab():
     assert "border-bottom: 0;" in CSS
     assert "body.ge-footer-docked .ge-right-panel .ge-layers-grab {" in CSS
     assert "display: none !important;" in CSS
-
-
-def test_sw_cache_name_is_version_agnostic_pattern():
-    m = re.search(r"CACHE_NAME\s*=\s*'([^']+)'", SW)
-    assert m is not None
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

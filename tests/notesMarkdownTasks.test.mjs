@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as tasks from '../frontend/src/features/notes/domain/markdownTasks.js';
+import { _serializeNoteForCopy } from '../frontend/src/features/notes/domain/noteRules.js';
 
 // Same vectors as tests/test_notes_markdown.py: the JS mirror must number,
 // toggle and rewrite task lines exactly like core/notes_markdown.py.
@@ -41,4 +42,19 @@ test('appendTaskLine matches the shared vectors', () => {
 test('stripTaskLines keeps prose and fenced samples', () => {
   assert.equal(tasks.stripTaskLines('Goal\n\n- [ ] a\n- [x] b\n\n```\n- [ ] sample\n```'), 'Goal\n\n```\n- [ ] sample\n```');
   assert.equal(tasks.itemsToMarkdown([{ text: 'a' }, { text: 'b', done: true, indent: 1 }]), '- [ ] a\n  - [x] b');
+});
+
+test('fencedCode returns each fence as written, unclosed ones included', () => {
+  assert.deepEqual(tasks.fencedCode('a\n~~~c++ x\n  keep  \n\n````\n~~~\n```py\nnever closed'), [
+    { char: '~', info: 'c++ x', body: ['  keep  ', '', '````'] },
+    { char: '`', info: 'py', body: ['never closed'] },
+  ]);
+});
+
+test('copying a note gives its markdown once, nested tasks kept', () => {
+  const content = 'Errands\n- [ ] Post office\n  - [x] Stamps\n- [x] Bank';
+  const note = { title: 'Saturday', content, items: tasks.parseTaskLines(content).map(t => ({ text: t.text, done: t.done })) };
+  assert.equal(_serializeNoteForCopy(note), `Saturday\n${content}`);
+  assert.equal(_serializeNoteForCopy({ title: '', content: '- [ ] only' }), '- [ ] only');
+  assert.equal(_serializeNoteForCopy({ title: 'Empty', content: '' }), 'Empty');
 });

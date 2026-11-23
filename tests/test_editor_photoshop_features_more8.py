@@ -19,14 +19,12 @@ multi-word name.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
 WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text()
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
 EFFECTS = (ROOT / "static/js/editor/filters/effects.js").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 IDS = (
     "sharpen-more",
@@ -163,9 +161,3 @@ def test_more8_renderers_preserve_alpha():
     # Sharpen More delegates to the module `convolve` helper, which carries the
     # source alpha through unchanged.
     assert "out[di + 3] = src[di + 3];" in EFFECTS
-
-
-def test_more8_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)

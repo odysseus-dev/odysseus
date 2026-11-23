@@ -2,6 +2,7 @@
 // Extracted from settings.js; opening another Settings panel is injected.
 
 import { byId as el } from './dom.js';
+import { escapeHtmlDoubleQuoted } from '../shared/domain/html.js';
 
 export async function initEmailAccountsSettings({ openSettings }) {
   const root = el('settings-modal');
@@ -44,7 +45,7 @@ export async function initEmailAccountsSettings({ openSettings }) {
   const addBtn = el('set-email-accounts-add-btn');
   if (!listEl || !addBtn || !formEl) return;
 
-  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const esc = s => escapeHtmlDoubleQuoted(String(s || ''));
 
   async function fetchAccounts() {
     const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });

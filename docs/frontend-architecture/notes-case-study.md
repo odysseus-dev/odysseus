@@ -14,6 +14,12 @@ checkpoints, not separate branches, commits or PRs. The [validation receipts](no
 [module inventory](notes-module-inventory.md) and [changed-file inventory](notes-changed-files.md)
 accompany this case study.
 
+This case study records the decomposition as validated on 2026-10-14. The later
+Notes rework replaced several of the modules it names (the form editor, the
+mobile editor, drafts and submission); the module inventory lists the current
+graph and what was removed, and `specs/calendar-tasks-notes.md` specifies the
+current behaviour.
+
 ## Responsibility map and size
 
 The original `static/js/notes.js` contained 5,471 lines. It mixed mutable Notes

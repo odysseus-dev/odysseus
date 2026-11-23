@@ -98,59 +98,6 @@ function showOutput(panel, text, isError) {
 }
 
 /**
- * Legacy absolute-positioned copy button — replaced by the inline bar in
- * showOutput. Kept here as no-op so any earlier callers don't crash.
- */
-function addCopyBtn_unused(panel, text) {
-  if (!text) return;
-  const btn = document.createElement('button');
-  btn.type = 'button';  // Default <button> type is 'submit' — explicit "button" avoids any accidental form submission.
-  btn.className = 'code-runner-copy';
-  btn.title = 'Copy output';
-  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    // Synchronous copy via a hidden textarea + execCommand — this is the
-    // single most reliable path across browsers / non-secure contexts /
-    // mobile Firefox. Run BEFORE any async navigator.clipboard attempt so
-    // the user-gesture context is preserved.
-    let ok = false;
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      ta.setSelectionRange(0, text.length);
-      ok = document.execCommand && document.execCommand('copy');
-      ta.remove();
-    } catch (_) {}
-    // As a backup, also try the modern clipboard API (won't hurt if the
-    // legacy path already copied).
-    if (!ok && navigator.clipboard && window.isSecureContext) {
-      try { await navigator.clipboard.writeText(text); ok = true; } catch (_) {}
-    }
-    if (uiModule && uiModule.showToast) {
-      uiModule.showToast(ok ? 'Copied' : 'Copy failed');
-    }
-    const _orig = btn.innerHTML;
-    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.innerHTML = _orig; btn.classList.remove('copied'); }, 1500);
-  });
-  panel.prepend(btn);
-}
-
-/**
- * Add a collapse/close button to the panel.
- * Disabled \u2014 the run-output panel is now closed via the unified Code\u2194Run
- * toggle in the editor footer, so a separate X was redundant + cluttered.
- */
-function addCloseBtn(_panel) { /* no-op */ }
-
-/**
  * Lazy-load Pyodide from CDN
  */
 function loadPyodide() {
@@ -203,7 +150,6 @@ export async function runPython(code, panel) {
     py = await loadPyodide();
   } catch (e) {
     showOutput(panel, 'Failed to load Python runtime: ' + e.message, true);
-    addCloseBtn(panel);
     return;
   }
 
@@ -246,7 +192,6 @@ finally:
   } catch (e) {
     showOutput(panel, e.message, true);
   }
-  addCloseBtn(panel);
 }
 
 /**
@@ -269,7 +214,6 @@ export function runJavaScript(code, panel) {
     if (!settled) {
       settled = true;
       showOutput(panel, 'Execution timed out (10 s)', true);
-      addCloseBtn(panel);
       cleanup();
     }
   }, 15000);
@@ -290,7 +234,6 @@ export function runJavaScript(code, panel) {
     } else {
       showOutput(panel, '(no output)', false);
     }
-    addCloseBtn(panel);
     cleanup();
   };
 
@@ -362,7 +305,6 @@ export async function runServer(code, panel, lang) {
   } catch (e) {
     showOutput(panel, 'Execution failed: ' + e.message, true);
   }
-  addCloseBtn(panel);
 }
 
 /**
@@ -374,7 +316,6 @@ export function runHTML(code, panel) {
   const win = window.open('', '_blank', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
   if (!win) {
     showOutput(panel, 'Popup blocked — please allow popups for this site.', true);
-    addCloseBtn(panel);
     return;
   }
   try { win.opener = null; } catch (_) {}
@@ -383,7 +324,6 @@ export function runHTML(code, panel) {
   win.document.close();
 
   showOutput(panel, 'Opened in new window', false);
-  addCloseBtn(panel);
 }
 
 /**

@@ -21,11 +21,6 @@ export function _aiReplyIcon(data) {
   return '<svg class="email-ai-reply-icon" width="14" height="14" viewBox="0 0 24 24" fill="var(--accent-primary, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';
 }
 
-function _summaryIcon(data) {
-  const fill = data?.cached_summary ? 'var(--accent-primary, var(--red))' : 'currentColor';
-  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="${fill}"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>`;
-}
-
 async function _emailTranslateLanguage() {
   try {
     const res = await fetch(`${API_BASE}/api/email/config`);

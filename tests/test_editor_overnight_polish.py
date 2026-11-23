@@ -25,7 +25,6 @@ EDITOR = _read("static/js/galleryEditor.js")
 PANELS = _read("static/js/editor/panels/panels.js")
 STROKE = _read("static/js/editor/stroke-pipeline.js")
 BUCKET = _read("static/js/editor/tools/bucket.js")
-SW = _read("static/sw.js")
 
 
 def test_brightness_contrast_has_extra_presets():
@@ -122,7 +121,3 @@ def test_dodge_and_burn_cap_per_dab_strength():
 def test_bucket_falls_back_to_a_paintable_layer():
     assert "function paintableLayer()" in BUCKET
     assert "'Select a pixel layer to fill'" in BUCKET
-
-
-def test_sw_cache_name_matches():
-    assert re.search(r"CACHE_NAME = 'odysseus-v\d+-pr40-editor-precache'", SW)

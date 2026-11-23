@@ -17,6 +17,7 @@ import {
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { normalizeCookbookModelDir } from './cookbookModelDirectories.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -76,11 +77,6 @@ function _syncServeStats() {
   if (!stats) return;
   const count = _cachedAllModels.length;
   stats.textContent = `${count} model${count === 1 ? '' : 's'}`;
-}
-
-function _normalizeCookbookModelDir(dir) {
-  const d = String(dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
-  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
 }
 
 function _serveCmdPort(cmd) {
@@ -4046,7 +4042,7 @@ function _retryCachedModel(repo, m) {
   const env = _target.host ? (srv.env || 'none') : (_envState.env || 'none');
   const envPath = _target.host ? (srv.envPath || '') : (_envState.envPath || '');
   const downloadDir = srv.downloadDir || (m?.is_local_dir && m?.path ? m.path : '');
-  if (downloadDir) payload.local_dir = _normalizeCookbookModelDir(downloadDir);
+  if (downloadDir) payload.local_dir = normalizeCookbookModelDir(downloadDir);
   payload.disable_hf_transfer = true;
   if (platform === 'windows') {
     if (env === 'venv' && envPath) {
@@ -4286,7 +4282,7 @@ async function _fetchCachedModelsImpl(fresh = false, opts = {}) {
     const modelDirs = [];
     if (selectedServer && Array.isArray(selectedServer.modelDirs)) {
       for (const d of selectedServer.modelDirs) {
-        const normalized = _normalizeCookbookModelDir(d);
+        const normalized = normalizeCookbookModelDir(d);
         if (normalized && normalized !== '~/.cache/huggingface/hub') modelDirs.push(normalized);
       }
     }
@@ -4299,7 +4295,7 @@ async function _fetchCachedModelsImpl(fresh = false, opts = {}) {
       const _allDirs = (Array.isArray(selectedServer.modelDirs) && selectedServer.modelDirs.length
         ? selectedServer.modelDirs
         : [selectedServer.modelDir || '~/.cache/huggingface/hub'])
-        .map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
+        .map(d => normalizeCookbookModelDir(d)).filter(Boolean);
       _dirsEl.innerHTML = _allDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('')
         + '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
       _dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {

@@ -11,6 +11,7 @@
 
 // ── Submodule imports ──
 import state from './state.js';
+import { downloadBlob } from '../shared/platform/downloads.js';
 import { EVAL_PROMPTS, WAVE_FRAMES,
   ICON_DICE, ICON_EXPAND, ICON_COLLAPSE, ICON_CLOSE,
   ICON_REROLL, ICON_COPY, ICON_PLAY, ICON_CODE,
@@ -1242,14 +1243,7 @@ function _exportDownloadMarkdown() {
   if (!md) return;
   const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   const blob = new Blob([md], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'compare-' + ts + '.md';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(blob, 'compare-' + ts + '.md', 1000);
 }
 
 function _exportPrint() {

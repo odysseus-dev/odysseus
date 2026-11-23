@@ -3,6 +3,7 @@
 
 import { esc } from '../../html.js';
 import { byId as el } from '../../dom.js';
+import { copyText } from '../../../shared/platform/clipboard.js';
 import uiModule from '../../../ui.js?v=20260916largetoolscroll1';
 import { bindMenuDismiss } from '../../../escMenuStack.js';
 import { notifyIntegrationsChanged } from '../events.js';
@@ -151,30 +152,6 @@ export async function showEmailForm({ formEl, renderList, setNotice, closeForm }
     },
   };
   const noteEl = el('uf-email-provider-note');
-  const _copyProviderUrl = async (text) => {
-    const value = String(text || '');
-    if (!value) return false;
-    if (navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch (_) {
-        // Fall through to the textarea path below.
-      }
-    }
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.setAttribute('readonly', 'readonly');
-    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1;';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, value.length);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-    ta.remove();
-    return ok;
-  };
   if (noteEl && !noteEl._ufProviderCopyWired) {
     noteEl._ufProviderCopyWired = true;
     noteEl.addEventListener('click', async (e) => {
@@ -184,7 +161,7 @@ export async function showEmailForm({ formEl, renderList, setNotice, closeForm }
       e.stopPropagation();
       const url = copyBtn.dataset.url || '';
       const orig = copyBtn.innerHTML;
-      const ok = await _copyProviderUrl(url);
+      const ok = await copyText(url);
       if (!ok) {
         uiModule.showError?.('Copy failed');
         return;

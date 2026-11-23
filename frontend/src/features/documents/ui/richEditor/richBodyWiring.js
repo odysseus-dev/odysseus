@@ -1,3 +1,4 @@
+import { stepWrappedOption } from '../host.js';
 import { _selections, clearSelection, updateRichSelectionState } from '../selection/selectionHighlights.js';
 import { scheduleAutoTitle } from '../editor/sourceEditor.js';
 import { _scheduleDocumentStats, _refreshDocumentOutline, _scheduleDocumentOutline, _scheduleDocumentHistoryControls } from '../status/documentStatus.js';
@@ -445,7 +446,7 @@ export function _wireEmailRichbody(rich) {
           else if (e.key === 'End') setRichSlashActiveIndex(commandCount - 1);
           else {
             const delta = e.key === 'ArrowDown' ? 1 : -1;
-            setRichSlashActiveIndex((_richSlashActiveIndex + delta + commandCount) % commandCount);
+            setRichSlashActiveIndex(stepWrappedOption(_richSlashActiveIndex, commandCount, delta));
           }
           const context = _richSlashContext(rich);
           if (context) _renderRichSlashMenu(rich, context);

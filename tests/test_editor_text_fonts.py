@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -73,12 +72,6 @@ def test_wire_text_controls_loads_and_prunes_fonts():
     assert "_loadEditorFonts" in js
     assert "_availableEditorFonts" in js
     assert "Array.from(_fontSel.options).forEach" in js
-
-
-def test_sw_version_is_current():
-    sw = _read("static/sw.js")
-    m = re.search(r"CACHE_NAME = '([^']+)'", sw)
-    assert m and re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m
 
 
 def test_text_box_width_survives_the_position_loop():

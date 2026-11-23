@@ -4491,10 +4491,6 @@ function _schedulePersist() {
   state.persistTimer = setTimeout(() => { state.persistTimer = null; _persistDraft(); }, delay);
 }
 
-function _buildDraftPayload() {
-  return _serializeEditorDocument(state);
-}
-
 function _serializationSnapshot(source, canvasProxy) {
   const groups = (source.layerGroups || []).map(group => ({
     ...group,

@@ -1,0 +1,220 @@
+name: Native test suites
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage-decision:
+    name: Coverage verification and selection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run_node: ${{ steps.decision.outputs.run_node }}
+      run_browser: ${{ steps.decision.outputs.run_browser }}
+      decision_reason: ${{ steps.decision.outputs.decision_reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Evaluate coverage policy and validate inventory fail-closed
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python3 .github/scripts/coverage_decision.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          else
+            python3 .github/scripts/coverage_decision.py --full
+          fi
+
+  native-node:
+    name: Native Node regressions
+    needs: [coverage-decision]
+    if: needs.coverage-decision.outputs.run_node == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install Chromium browser and verify system dependencies
+        run: |
+          npx playwright install chromium
+          if ! node -e "const { chromium } = require('playwright'); (async () => { const b = await chromium.launch(); await b.close(); })()" >/dev/null 2>&1; then
+            printf '%s\n' \
+              'Acquire::Retries "1";' \
+              'Acquire::http::Timeout "15";' \
+              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+            sudo apt-get update || sudo apt-get update
+            npx playwright install-deps chromium
+          fi
+      - name: Validate exhaustive disjoint runner mapping and execute native suites
+        run: |
+          node .github/scripts/run_native_tests.mjs
+          python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 157
+      - name: Verify and sanitize native test results fail-closed
+        id: verify-native-results
+        if: always()
+        run: |
+          python .github/scripts/verify_sanitized_artifacts.py test-results/native-node/
+      - name: Save native test identities and results
+        if: always() && steps.verify-native-results.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-node-results
+          path: test-results/native-node/
+          retention-days: 7
+          if-no-files-found: warn
+
+  browser:
+    name: Chromium application regressions (${{ matrix.shard }}/4)
+    needs: [coverage-decision]
+    if: needs.coverage-decision.outputs.run_browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      ODYSSEUS_E2E_DISPOSABLE_ARTIFACTS: '1'
+      ODYSSEUS_TEST_PYTHON: python
+      CHROMADB_HOST: 127.0.0.1
+      CHROMADB_PORT: '1'
+      ODYSSEUS_DISABLE_MCP: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Validate system CA trust
+        run: |
+          python scripts/check_ca_trust.py --system
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.13.5'
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+          prune-cache: false
+      - run: |
+          uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
+          python scripts/check_ca_trust.py --python
+          uv pip install --system -r requirements.txt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install Chromium browser and verify system dependencies
+        run: |
+          npx playwright install chromium
+          if ! node -e "const { chromium } = require('playwright'); (async () => { const b = await chromium.launch(); await b.close(); })()" >/dev/null 2>&1; then
+            printf '%s\n' \
+              'Acquire::Retries "1";' \
+              'Acquire::http::Timeout "15";' \
+              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+            sudo apt-get update || sudo apt-get update
+            npx playwright install-deps chromium
+          fi
+      - name: Run Chromium shard against a fresh authenticated app
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results/browser-junit.xml
+        run: |
+          npm run test:photo-editor -- --reporter=line,junit --shard=${{ matrix.shard }}/4 --workers=1
+          python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 1
+      - name: Verify and sanitize failure diagnostics fail-closed
+        id: verify-browser-results
+        if: always()
+        run: |
+          python .github/scripts/verify_sanitized_artifacts.py test-results/
+      - name: Save per-test results and sanitized failure diagnostics
+        if: always() && steps.verify-browser-results.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chromium-results-shard-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: warn
+
+  authoritative-native-suites:
+    name: Authoritative native suites
+    if: always()
+    needs: [coverage-decision, native-node, browser]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.coverage-decision.outputs.run_browser == 'true'
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - if: needs.coverage-decision.outputs.run_browser == 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Download all Chromium shard results when browser validation executed
+        if: needs.coverage-decision.outputs.run_browser == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: chromium-results-shard-*
+          path: chromium-shard-artifacts
+      - name: Verify exhaustive Chromium shard coverage and test identities
+        if: needs.coverage-decision.outputs.run_browser == 'true'
+        run: |
+          python3 .github/scripts/verify_chromium_shards.py chromium-shard-artifacts/ --expected-shards 4
+      - name: Require all selected suites to succeed and verify permitted skips
+        env:
+          DECISION_RESULT: ${{ needs.coverage-decision.result }}
+          RUN_NODE: ${{ needs.coverage-decision.outputs.run_node }}
+          RUN_BROWSER: ${{ needs.coverage-decision.outputs.run_browser }}
+          NODE_RESULT: ${{ needs.native-node.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: |
+          python3 .github/scripts/coverage_decision.py --evaluate-gate \
+            --decision-result "$DECISION_RESULT" \
+            --run-node "$RUN_NODE" \
+            --run-browser "$RUN_BROWSER" \
+            --node-result "$NODE_RESULT" \
+            --browser-result "$BROWSER_RESULT"

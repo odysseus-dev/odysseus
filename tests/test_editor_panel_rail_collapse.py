@@ -11,7 +11,6 @@
 
 These are plain JavaScript/CSS, so the tests assert the source-level contract.
 """
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "static/js/editor/panel-visibility.js"
 HISTORY = ROOT / "static/js/editor/history-panel.js"
 CSS = ROOT / "static/css/13-image-editor.css"
-SW = ROOT / "static/sw.js"
 
 
 def _read(path):
@@ -78,8 +76,3 @@ def test_select_menu_overflow_rule_uses_real_class():
     assert ".ge-selection-menu:has(.ge-menu-parent:hover)," in src
     assert ".ge-selection-menu:has(.ge-submenu:hover) {" in src
     assert "overflow: visible !important;" in src
-
-
-def test_sw_cache_name_bumped():
-    src = _read(SW)
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", src)

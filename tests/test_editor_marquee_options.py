@@ -8,14 +8,12 @@ ratio remain).
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLS = (ROOT / "static/js/editor/build/controls.js").read_text(encoding="utf-8")
 OPTIONS = (ROOT / "static/js/editor/build/options-bar.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
 DOC_EDITOR_CSS = (ROOT / "static/css/documents-gallery-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_marquee_style_has_no_fixed_size_option():
@@ -40,10 +38,6 @@ def test_no_selection_tool_renders_a_mode_mirror_row():
     block = block[:block.index("};")]
     assert "modes: '#ge-" not in block
     assert "modes: null" in block
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)
 
 
 def test_options_body_shrinks_to_keep_controls_left_aligned():

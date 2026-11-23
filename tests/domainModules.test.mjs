@@ -1,6 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { escapeHtml, escapeHtmlString, escapeHtmlText, escapeHtmlDoubleQuoted } from '../frontend/src/shared/domain/html.js';
+import { compactUrlSchemeValue } from '../frontend/src/shared/domain/urlSchemes.js';
+import { formatArchiveAge, formatRecentAge } from '../frontend/src/shared/domain/relativeTime.js';
+import { normalizeCookbookModelDir } from '../static/js/cookbookModelDirectories.js';
+
+test('shared HTML encoding preserves strict string and nullish coercion contracts', () => {
+  const text = `&amp;<tag attr="one">'two'</tag>`;
+  const expected = '&amp;amp;&lt;tag attr=&quot;one&quot;&gt;&#39;two&#39;&lt;/tag&gt;';
+  assert.equal(escapeHtmlString(text), expected);
+  assert.equal(escapeHtml(text), expected);
+  assert.equal(escapeHtml(''), '');
+  assert.equal(escapeHtml(null), '');
+  assert.equal(escapeHtml(undefined), '');
+  assert.equal(escapeHtml(0), '0');
+  assert.equal(escapeHtml(false), 'false');
+  assert.throws(() => escapeHtmlString(42), TypeError);
+});
+
+test('contextual encoders preserve the existing text and quoted-attribute spellings', () => {
+  const text = `<node attr="x">' &amp;</node>`;
+  assert.equal(escapeHtmlText(text), `&lt;node attr="x"&gt;' &amp;amp;&lt;/node&gt;`);
+  assert.equal(escapeHtmlDoubleQuoted(text), `&lt;node attr=&quot;x&quot;&gt;' &amp;amp;&lt;/node&gt;`);
+});
+
+test('scheme comparison removes the existing control ranges and keeps punctuation', () => {
+  assert.equal(compactUrlSchemeValue(' HT\tTPS:\u007f//EXAMPLE.TEST/PaTh?x=A '), 'https://example.test/path?x=a');
+  assert.equal(compactUrlSchemeValue('a\u00a0b'), 'a\u00a0b');
+  assert.equal(compactUrlSchemeValue(false), '');
+});
+
+test('Cookbook directory normalization preserves non-Unix and already-rooted paths', () => {
+  assert.equal(normalizeCookbookModelDir(' home/user/models ✕✖ '), '/home/user/models');
+  assert.equal(normalizeCookbookModelDir('/mnt/disk/models'), '/mnt/disk/models');
+  assert.equal(normalizeCookbookModelDir('~/.cache/models'), '~/.cache/models');
+  assert.equal(normalizeCookbookModelDir('C:/Models'), 'C:/Models');
+  assert.equal(normalizeCookbookModelDir(false), '');
+});
+
 import {
   AUTO_DETECT_DELAY,
   AUTO_DETECT_MIN_CHARS,
@@ -770,4 +808,23 @@ test('_RICH_COLOR_PALETTE is frozen and contains dark and light palettes', () =>
   assert.deepEqual(_RICH_COLOR_PALETTE.light[4], ['#bbf7d0', 'Mint']);
   assert.deepEqual(_RICH_COLOR_PALETTE.light[5], ['#bae6fd', 'Sky']);
   assert.deepEqual(_RICH_COLOR_PALETTE.light[6], ['#ddd6fe', 'Lavender']);
+});
+
+test('relative-age helpers preserve age boundaries and distinct archive policy', () => {
+  assert.equal(formatRecentAge(59), 'just now');
+  assert.equal(formatRecentAge(45, 45), '0m ago');
+  assert.equal(formatRecentAge(60), '1m ago');
+  assert.equal(formatRecentAge(3599), '59m ago');
+  assert.equal(formatRecentAge(3600), '1h ago');
+  assert.equal(formatRecentAge(86399), '23h ago');
+  assert.equal(formatRecentAge(86400), null);
+  assert.equal(formatRecentAge(NaN), null);
+
+  const now = Date.parse('2026-01-31T00:00:00Z');
+  assert.equal(formatArchiveAge('', now), '');
+  assert.equal(formatArchiveAge('2026-01-31T00:00:01Z', now), '-1m ago');
+  assert.equal(formatArchiveAge('2026-01-31T00:00:00Z', now), '0m ago');
+  assert.equal(formatArchiveAge('2026-01-02T00:00:00Z', now), '29d ago');
+  assert.equal(formatArchiveAge('2026-01-01T00:00:00Z', now), new Date('2026-01-01T00:00:00Z').toLocaleDateString());
+  assert.equal(formatArchiveAge('invalid', now), new Date(NaN).toLocaleDateString());
 });

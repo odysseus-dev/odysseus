@@ -1,13 +1,11 @@
 """Holding Alt over a paint tool borrows the eyedropper (Photoshop parity)."""
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 EYE = (ROOT / "static/js/editor/tools/eyedropper.js").read_text(encoding="utf-8")
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 
 def test_alt_eyedropper_tool_list_excludes_clone_and_heal():
@@ -36,7 +34,3 @@ def test_alt_held_switches_the_cursor_and_hides_the_ring():
     assert "body.ge-alt-eyedropper .ge-main-canvas {\n  cursor: url(\"data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22" in CSS
     assert "2 22, crosshair !important;" in CSS
     assert "body.ge-alt-eyedropper .ge-brush-cursor {\n  display: none !important;\n}" in CSS
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

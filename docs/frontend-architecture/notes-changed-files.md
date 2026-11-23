@@ -5,11 +5,19 @@ Changed files in PR #6713 (`refactor/notes-reference-decomposition`) against
 are byte-identical to their registered maintained sources. Image files are review
 evidence, not production dependencies.
 
+Since then the note window became the only editor and seven of the modules
+#6713 added were deleted from both trees: `application/drafts.js`,
+`application/submission.js`, `ui/checklist.js`, `ui/checklistReorder.js`,
+`ui/draftEditor.js`, `ui/editor.js` and `ui/mobileEditor.js`. They are no
+longer listed below, so the source and deployment sections count 35 files
+each; [the module inventory](notes-module-inventory.md) lists the modules
+that exist now.
+
 The unchanged foundation worktree, backend, app bootstrap, HTML, CSS, dependency
 lockfiles, Dockerfile and CI workflow are outside this diff. The only Compare
 change delegates its existing stateless confetti export to maintained shared UI.
 
-## Maintained source (42)
+## Maintained source (35)
 
 | Status | File |
 | --- | --- |
@@ -17,12 +25,10 @@ change delegates its existing stateless confetti export to maintained shared UI.
 | A | [frontend/src/features/notes/application/cardOperations.js](../../frontend/src/features/notes/application/cardOperations.js) |
 | A | [frontend/src/features/notes/application/checklistOperations.js](../../frontend/src/features/notes/application/checklistOperations.js) |
 | A | [frontend/src/features/notes/application/deletion.js](../../frontend/src/features/notes/application/deletion.js) |
-| A | [frontend/src/features/notes/application/drafts.js](../../frontend/src/features/notes/application/drafts.js) |
 | A | [frontend/src/features/notes/application/queries.js](../../frontend/src/features/notes/application/queries.js) |
 | A | [frontend/src/features/notes/application/reminders.js](../../frontend/src/features/notes/application/reminders.js) |
 | A | [frontend/src/features/notes/application/selection.js](../../frontend/src/features/notes/application/selection.js) |
 | A | [frontend/src/features/notes/application/state.js](../../frontend/src/features/notes/application/state.js) |
-| A | [frontend/src/features/notes/application/submission.js](../../frontend/src/features/notes/application/submission.js) |
 | A | [frontend/src/features/notes/application/workflows.js](../../frontend/src/features/notes/application/workflows.js) |
 | A | [frontend/src/features/notes/domain/noteRules.js](../../frontend/src/features/notes/domain/noteRules.js) |
 | A | [frontend/src/features/notes/domain/recurrence.js](../../frontend/src/features/notes/domain/recurrence.js) |
@@ -34,17 +40,12 @@ change delegates its existing stateless confetti export to maintained shared UI.
 | A | [frontend/src/features/notes/ui/cardInteractions.js](../../frontend/src/features/notes/ui/cardInteractions.js) |
 | A | [frontend/src/features/notes/ui/cardRendering.js](../../frontend/src/features/notes/ui/cardRendering.js) |
 | A | [frontend/src/features/notes/ui/cardReorder.js](../../frontend/src/features/notes/ui/cardReorder.js) |
-| A | [frontend/src/features/notes/ui/checklist.js](../../frontend/src/features/notes/ui/checklist.js) |
-| A | [frontend/src/features/notes/ui/checklistReorder.js](../../frontend/src/features/notes/ui/checklistReorder.js) |
 | A | [frontend/src/features/notes/ui/clipboard.js](../../frontend/src/features/notes/ui/clipboard.js) |
 | A | [frontend/src/features/notes/ui/colors.js](../../frontend/src/features/notes/ui/colors.js) |
-| A | [frontend/src/features/notes/ui/draftEditor.js](../../frontend/src/features/notes/ui/draftEditor.js) |
 | A | [frontend/src/features/notes/ui/drawing.js](../../frontend/src/features/notes/ui/drawing.js) |
-| A | [frontend/src/features/notes/ui/editor.js](../../frontend/src/features/notes/ui/editor.js) |
 | A | [frontend/src/features/notes/ui/filters.js](../../frontend/src/features/notes/ui/filters.js) |
 | A | [frontend/src/features/notes/ui/layout.js](../../frontend/src/features/notes/ui/layout.js) |
 | A | [frontend/src/features/notes/ui/lifecycle.js](../../frontend/src/features/notes/ui/lifecycle.js) |
-| A | [frontend/src/features/notes/ui/mobileEditor.js](../../frontend/src/features/notes/ui/mobileEditor.js) |
 | A | [frontend/src/features/notes/ui/mobileReorder.js](../../frontend/src/features/notes/ui/mobileReorder.js) |
 | A | [frontend/src/features/notes/ui/panel.js](../../frontend/src/features/notes/ui/panel.js) |
 | A | [frontend/src/features/notes/ui/quickAdd.js](../../frontend/src/features/notes/ui/quickAdd.js) |
@@ -56,7 +57,7 @@ change delegates its existing stateless confetti export to maintained shared UI.
 | A | [frontend/src/features/notes/ui/windowLayout.js](../../frontend/src/features/notes/ui/windowLayout.js) |
 | A | [frontend/src/shared/ui/confetti.js](../../frontend/src/shared/ui/confetti.js) |
 
-## Deployment copies (42)
+## Deployment copies (35)
 
 | Status | File |
 | --- | --- |
@@ -64,12 +65,10 @@ change delegates its existing stateless confetti export to maintained shared UI.
 | A | [static/js/features/notes/application/cardOperations.js](../../static/js/features/notes/application/cardOperations.js) |
 | A | [static/js/features/notes/application/checklistOperations.js](../../static/js/features/notes/application/checklistOperations.js) |
 | A | [static/js/features/notes/application/deletion.js](../../static/js/features/notes/application/deletion.js) |
-| A | [static/js/features/notes/application/drafts.js](../../static/js/features/notes/application/drafts.js) |
 | A | [static/js/features/notes/application/queries.js](../../static/js/features/notes/application/queries.js) |
 | A | [static/js/features/notes/application/reminders.js](../../static/js/features/notes/application/reminders.js) |
 | A | [static/js/features/notes/application/selection.js](../../static/js/features/notes/application/selection.js) |
 | A | [static/js/features/notes/application/state.js](../../static/js/features/notes/application/state.js) |
-| A | [static/js/features/notes/application/submission.js](../../static/js/features/notes/application/submission.js) |
 | A | [static/js/features/notes/application/workflows.js](../../static/js/features/notes/application/workflows.js) |
 | A | [static/js/features/notes/domain/noteRules.js](../../static/js/features/notes/domain/noteRules.js) |
 | A | [static/js/features/notes/domain/recurrence.js](../../static/js/features/notes/domain/recurrence.js) |
@@ -81,17 +80,12 @@ change delegates its existing stateless confetti export to maintained shared UI.
 | A | [static/js/features/notes/ui/cardInteractions.js](../../static/js/features/notes/ui/cardInteractions.js) |
 | A | [static/js/features/notes/ui/cardRendering.js](../../static/js/features/notes/ui/cardRendering.js) |
 | A | [static/js/features/notes/ui/cardReorder.js](../../static/js/features/notes/ui/cardReorder.js) |
-| A | [static/js/features/notes/ui/checklist.js](../../static/js/features/notes/ui/checklist.js) |
-| A | [static/js/features/notes/ui/checklistReorder.js](../../static/js/features/notes/ui/checklistReorder.js) |
 | A | [static/js/features/notes/ui/clipboard.js](../../static/js/features/notes/ui/clipboard.js) |
 | A | [static/js/features/notes/ui/colors.js](../../static/js/features/notes/ui/colors.js) |
-| A | [static/js/features/notes/ui/draftEditor.js](../../static/js/features/notes/ui/draftEditor.js) |
 | A | [static/js/features/notes/ui/drawing.js](../../static/js/features/notes/ui/drawing.js) |
-| A | [static/js/features/notes/ui/editor.js](../../static/js/features/notes/ui/editor.js) |
 | A | [static/js/features/notes/ui/filters.js](../../static/js/features/notes/ui/filters.js) |
 | A | [static/js/features/notes/ui/layout.js](../../static/js/features/notes/ui/layout.js) |
 | A | [static/js/features/notes/ui/lifecycle.js](../../static/js/features/notes/ui/lifecycle.js) |
-| A | [static/js/features/notes/ui/mobileEditor.js](../../static/js/features/notes/ui/mobileEditor.js) |
 | A | [static/js/features/notes/ui/mobileReorder.js](../../static/js/features/notes/ui/mobileReorder.js) |
 | A | [static/js/features/notes/ui/panel.js](../../static/js/features/notes/ui/panel.js) |
 | A | [static/js/features/notes/ui/quickAdd.js](../../static/js/features/notes/ui/quickAdd.js) |

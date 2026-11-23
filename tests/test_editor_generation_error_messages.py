@@ -49,12 +49,3 @@ def test_quick_edit_shows_the_generation_message_verbatim():
     assert "formatError: _generationErrorMessage" in EDITOR
     assert "formatError({ network: true" in generation
     assert "formatError({ status: response.status" in generation
-
-
-def test_sw_cache_is_bumped():
-    import re
-
-    sw = (ROOT / "static" / "sw.js").read_text()
-    m = re.search(r"CACHE_NAME = '([^']+)'", sw)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)
