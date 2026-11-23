@@ -22,6 +22,8 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from typing import Any
+import sys
 import xml.etree.ElementTree as ET
 import pytest
 
@@ -32,9 +34,11 @@ GATE_SCRIPT = ROOT / ".github" / "scripts" / "coverage_decision.py"
 # Import verify_chromium_shards
 v_spec = importlib.util.spec_from_file_location("verify_chromium_shards", VERIFY_SCRIPT)
 v_mod = importlib.util.module_from_spec(v_spec)
+sys.modules["verify_chromium_shards"] = v_mod
 v_spec.loader.exec_module(v_mod)
 discover_playwright_test_identities = v_mod.discover_playwright_test_identities
 verify_chromium_shards = v_mod.verify_chromium_shards
+ChromiumTestIdentity = v_mod.ChromiumTestIdentity
 
 # Import coverage_decision
 g_spec = importlib.util.spec_from_file_location("coverage_decision", GATE_SCRIPT)
@@ -43,7 +47,13 @@ g_spec.loader.exec_module(g_mod)
 evaluate_gate_compliance = g_mod.evaluate_gate_compliance
 
 
-def create_mock_shard_xml(tmp_path: Path, shard_name: str, test_cases: list[tuple[str, str]], status: str = "pass") -> Path:
+def create_mock_shard_xml(
+    tmp_path: Path,
+    shard_name: str,
+    test_cases: list[Any],
+    status: str = "pass",
+    hostname: str = "",
+) -> Path:
     """Helper to create a valid or modified JUnit XML shard report."""
     shard_file = tmp_path / f"{shard_name}.xml"
     ts = ET.Element("testsuites")
@@ -51,12 +61,28 @@ def create_mock_shard_xml(tmp_path: Path, shard_name: str, test_cases: list[tupl
         ts,
         "testsuite",
         name=shard_name,
+        hostname=hostname,
         tests=str(len(test_cases)),
         failures="1" if status == "failure" else "0",
         errors="1" if status == "error" else "0",
         skipped="1" if status == "skipped" else "0",
     )
-    for spec, title in test_cases:
+    for item in test_cases:
+        if hasattr(item, "project"):
+            proj = item.project
+            spec = item.file
+            title = item.title
+            if proj and not suite.get("hostname"):
+                suite.set("hostname", proj)
+        elif isinstance(item, tuple) and len(item) == 3:
+            proj, spec, title = item
+            if proj and not suite.get("hostname"):
+                suite.set("hostname", str(proj))
+        elif isinstance(item, tuple) and len(item) == 2:
+            spec, title = item
+        else:
+            raise ValueError(f"Unknown test case format: {item!r}")
+
         tc = ET.SubElement(suite, "testcase", classname=spec, name=title, time="1.0")
         if status == "failure":
             f = ET.SubElement(tc, "failure", message="Assertion error")
@@ -335,3 +361,78 @@ def test_scenario_16_directory_discovery_ignores_nested_fixture_xml(tmp_path, mo
     main_func = v_mod.main
     code = main_func([str(artifacts_dir), "--expected-shards", "4"])
     assert code == 0
+
+
+def test_scenario_17_identical_leaf_titles_nested_describes_distinguished(tmp_path):
+    """17. Two distinct tests with identical leaf titles under different describes are preserved."""
+    test_a = ChromiumTestIdentity("", "editor.spec.js", "Layers › should persist")
+    test_b = ChromiumTestIdentity("", "editor.spec.js", "Filters › should persist")
+    dummy_1 = ChromiumTestIdentity("", "dummy1.spec.js", "test1")
+    dummy_2 = ChromiumTestIdentity("", "dummy2.spec.js", "test2")
+    expected = {test_a, test_b, dummy_1, dummy_2}
+
+    s1 = create_mock_shard_xml(tmp_path, "shard-1", [test_a])
+    s2 = create_mock_shard_xml(tmp_path, "shard-2", [test_b])
+    s3 = create_mock_shard_xml(tmp_path, "shard-3", [dummy_1])
+    s4 = create_mock_shard_xml(tmp_path, "shard-4", [dummy_2])
+
+    ok, msg, meta = verify_chromium_shards([s1, s2, s3, s4], expected, expected_shard_count=4)
+    assert ok is True
+    assert meta["executed_tests"] == 4
+    assert len(meta["missing_identities"]) == 0
+    assert len(meta["duplicate_identities"]) == 0
+
+
+def test_scenario_18_identical_leaf_titles_collision_detected_if_one_omitted(tmp_path):
+    """18. If a test with an identical leaf title is executed twice and the other omitted, gate rejects."""
+    test_a = ChromiumTestIdentity("", "editor.spec.js", "Layers › should persist")
+    test_b = ChromiumTestIdentity("", "editor.spec.js", "Filters › should persist")
+    dummy_1 = ChromiumTestIdentity("", "dummy1.spec.js", "test1")
+    dummy_2 = ChromiumTestIdentity("", "dummy2.spec.js", "test2")
+    expected = {test_a, test_b, dummy_1, dummy_2}
+
+    # Shard 2 mistakenly executes test_a again instead of test_b
+    s1 = create_mock_shard_xml(tmp_path, "shard-1", [test_a])
+    s2 = create_mock_shard_xml(tmp_path, "shard-2", [test_a])
+    s3 = create_mock_shard_xml(tmp_path, "shard-3", [dummy_1])
+    s4 = create_mock_shard_xml(tmp_path, "shard-4", [dummy_2])
+
+    ok, msg, meta = verify_chromium_shards([s1, s2, s3, s4], expected, expected_shard_count=4)
+    assert ok is False
+    assert "Found 1 duplicate test execution(s)" in msg
+    assert any("Layers › should persist" in d for d in meta["duplicate_identities"])
+
+
+def test_scenario_19_identical_spec_basenames_in_different_directories(tmp_path):
+    """19. Tests with identical filenames in different directories are recognized as distinct."""
+    test_mobile = ChromiumTestIdentity("", "mobile/export.spec.js", "PNG export")
+    test_desktop = ChromiumTestIdentity("", "desktop/export.spec.js", "PNG export")
+    dummy_1 = ChromiumTestIdentity("", "dummy1.spec.js", "test1")
+    dummy_2 = ChromiumTestIdentity("", "dummy2.spec.js", "test2")
+    expected = {test_mobile, test_desktop, dummy_1, dummy_2}
+
+    s1 = create_mock_shard_xml(tmp_path, "shard-1", [test_mobile])
+    s2 = create_mock_shard_xml(tmp_path, "shard-2", [test_desktop])
+    s3 = create_mock_shard_xml(tmp_path, "shard-3", [dummy_1])
+    s4 = create_mock_shard_xml(tmp_path, "shard-4", [dummy_2])
+
+    ok, msg, meta = verify_chromium_shards([s1, s2, s3, s4], expected, expected_shard_count=4)
+    assert ok is True
+    assert meta["executed_tests"] == 4
+
+def test_scenario_20_identical_tests_across_projects_distinguished(tmp_path):
+    """20. Tests with identical filenames and titles across different projects are distinct."""
+    test_desk = ChromiumTestIdentity("desktop-chromium", "auth.spec.js", "login")
+    test_mob = ChromiumTestIdentity("mobile-chromium", "auth.spec.js", "login")
+    dummy_1 = ChromiumTestIdentity("", "dummy1.spec.js", "test1")
+    dummy_2 = ChromiumTestIdentity("", "dummy2.spec.js", "test2")
+    expected = {test_desk, test_mob, dummy_1, dummy_2}
+
+    s1 = create_mock_shard_xml(tmp_path, "shard-1", [test_desk], hostname="desktop-chromium")
+    s2 = create_mock_shard_xml(tmp_path, "shard-2", [test_mob], hostname="mobile-chromium")
+    s3 = create_mock_shard_xml(tmp_path, "shard-3", [dummy_1])
+    s4 = create_mock_shard_xml(tmp_path, "shard-4", [dummy_2])
+
+    ok, msg, meta = verify_chromium_shards([s1, s2, s3, s4], expected, expected_shard_count=4)
+    assert ok is True
+    assert meta["executed_tests"] == 4

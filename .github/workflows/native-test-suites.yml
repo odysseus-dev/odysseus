@@ -70,7 +70,17 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium browser and verify system dependencies
+        run: |
+          npx playwright install chromium
+          if ! npx playwright install-deps --dry-run chromium >/dev/null 2>&1; then
+            printf '%s\n' \
+              'Acquire::Retries "1";' \
+              'Acquire::http::Timeout "15";' \
+              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+            sudo apt-get update || sudo apt-get update
+            npx playwright install-deps chromium
+          fi
       - name: Validate exhaustive disjoint runner mapping and execute native suites
         run: |
           node .github/scripts/run_native_tests.mjs
@@ -112,16 +122,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
-      - name: Install FFmpeg and establish system trust
+      - name: Validate system CA trust
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            printf '%s\n' \
-              'Acquire::Retries "1";' \
-              'Acquire::http::Timeout "15";' \
-              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
-            sudo apt-get update || sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates
-          fi
           python scripts/check_ca_trust.py --system
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -142,7 +144,17 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium browser and verify system dependencies
+        run: |
+          npx playwright install chromium
+          if ! npx playwright install-deps --dry-run chromium >/dev/null 2>&1; then
+            printf '%s\n' \
+              'Acquire::Retries "1";' \
+              'Acquire::http::Timeout "15";' \
+              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+            sudo apt-get update || sudo apt-get update
+            npx playwright install-deps chromium
+          fi
       - name: Run Chromium shard against a fresh authenticated app
         env:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results/browser-junit.xml
