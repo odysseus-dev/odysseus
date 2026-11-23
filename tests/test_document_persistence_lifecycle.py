@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+_IS_WINDOWS = os.name == "nt"
 
 STARTUP_TIMEOUT = 20.0
 SCENARIO_TIMEOUT = 30.0
@@ -65,8 +66,34 @@ class LifecycleBrowserWorker:
         lines = list(self._stderr_lines)
         return "".join(lines).strip() if lines else "(no stderr output recorded)"
 
-    def _terminate_process_group(self):
-        pgid = self._pgid
+    def _terminate_process_group(self, proc=None, pgid=None):
+        proc = self._proc if proc is None else proc
+        pgid = self._pgid if pgid is None else pgid
+
+        if _IS_WINDOWS:
+            if proc is None:
+                return
+            # taskkill /T terminates Chromium descendants as well as the Node worker.
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            try:
+                proc.wait(timeout=0.5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            return
+
         if pgid is None:
             return
 
@@ -88,10 +115,10 @@ class LifecycleBrowserWorker:
             except (ProcessLookupError, OSError):
                 pass
 
-        if self._proc is not None:
+        if proc is not None:
             try:
-                self._proc.wait(timeout=0.5)
-            except Exception:
+                proc.wait(timeout=0.5)
+            except (OSError, subprocess.TimeoutExpired):
                 pass
 
     def start(self):
@@ -120,13 +147,15 @@ class LifecycleBrowserWorker:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                start_new_session=True,
+                start_new_session=(not _IS_WINDOWS),
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if _IS_WINDOWS else 0),
                 env=env,
             )
-            try:
-                self._pgid = os.getpgid(self._proc.pid)
-            except OSError:
-                self._pgid = self._proc.pid
+            if not _IS_WINDOWS:
+                try:
+                    self._pgid = os.getpgid(self._proc.pid)
+                except OSError:
+                    self._pgid = self._proc.pid
         except Exception as exc:
             raise RuntimeError(f"Failed to spawn persistence browser worker process: {exc}") from exc
 
@@ -252,32 +281,15 @@ class LifecycleBrowserWorker:
                 pass
 
         descendants_alive = False
-        if pgid is not None:
+        if not _IS_WINDOWS and pgid is not None:
             try:
                 os.killpg(pgid, 0)
                 descendants_alive = True
             except (ProcessLookupError, OSError):
-                descendants_alive = False
+                pass
 
         if (proc is not None and proc.poll() is None) or descendants_alive:
-            if pgid is not None:
-                try:
-                    os.killpg(pgid, signal.SIGTERM)
-                except (ProcessLookupError, OSError):
-                    pass
-
-                deadline = time.monotonic() + 0.8
-                while time.monotonic() < deadline:
-                    try:
-                        os.killpg(pgid, 0)
-                        time.sleep(0.05)
-                    except (ProcessLookupError, OSError):
-                        break
-                else:
-                    try:
-                        os.killpg(pgid, signal.SIGKILL)
-                    except (ProcessLookupError, OSError):
-                        pass
+            self._terminate_process_group(proc=proc, pgid=pgid)
 
         if proc is not None:
             try:
@@ -303,7 +315,7 @@ def _get_worker() -> LifecycleBrowserWorker:
     return _worker
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module")
 def _lifecycle_browser_session():
     worker = _get_worker()
     worker.start()
@@ -317,6 +329,7 @@ def _run_lifecycle_scenario(scenario_name: str) -> dict:
     return _get_worker().run_scenario(scenario_name)
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_1_autosave_identity_on_document_switch():
     """Scenario 1: Edit doc A, switch to B before autosave fires.
 
@@ -331,6 +344,7 @@ def test_scenario_1_autosave_identity_on_document_switch():
     assert data["activeValue"] == "B initial"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_2_close_active_document_flushes_pending_autosave():
     """Scenario 2: Edit doc A, close A before autosave.
 
@@ -345,6 +359,7 @@ def test_scenario_2_close_active_document_flushes_pending_autosave():
     assert "could not be saved" not in data["toast"]
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_3_close_inactive_document_preserves_active_edits():
     """Scenario 3: Close inactive doc B while active doc A has pending edits.
 
@@ -359,6 +374,7 @@ def test_scenario_3_close_inactive_document_preserves_active_edits():
     assert doc_a_puts[0]["body"]["content"] == "A pending edit"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_4_switch_session_while_save_is_pending():
     """Scenario 4: Switch sessions while a save is pending.
 
@@ -372,6 +388,7 @@ def test_scenario_4_switch_session_while_save_is_pending():
     assert len(s2_puts) == 0
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_5_slow_backend_response_resolves_safely():
     """Scenario 5: Slow backend response.
 
@@ -383,6 +400,7 @@ def test_scenario_5_slow_backend_response_resolves_safely():
     assert data["badgeText"] == "v3"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_6_failed_backend_response_and_retry_recovery():
     """Scenario 6: Failed backend response.
 
@@ -395,6 +413,7 @@ def test_scenario_6_failed_backend_response_and_retry_recovery():
     assert data["attempts"] == 2
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_7_multiple_edits_during_queued_saves_preserves_dirty():
     """Scenario 7: Multiple edits during queued saves.
 
@@ -407,6 +426,7 @@ def test_scenario_7_multiple_edits_during_queued_saves_preserves_dirty():
     assert data["stateAfterSecondCompleted"] == "saved"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_8_document_deletion_cancels_autosave_and_avoids_orphans():
     """Scenario 8: Document deletion during pending work.
 
@@ -417,6 +437,7 @@ def test_scenario_8_document_deletion_cancels_autosave_and_avoids_orphans():
     assert data["putsCount"] == 0
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_9_correct_save_state_transitions():
     """Scenario 9: Correct save-state transitions.
 
@@ -429,6 +450,7 @@ def test_scenario_9_correct_save_state_transitions():
     assert data["sSaved"] == "saved"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_scenario_10_no_updates_to_wrong_document():
     """Scenario 10: No updates to the wrong document.
 
@@ -441,6 +463,7 @@ def test_scenario_10_no_updates_to_wrong_document():
     assert target_b_puts[0]["body"]["content"] == "Doc B Stored Content"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_deletion_http_500_then_save_and_retry():
     """HTTP 500 on delete keeps doc savable and allows retrying deletion later."""
     data = _run_lifecycle_scenario("deletion_http_500_then_save_and_retry")
@@ -457,6 +480,7 @@ def test_deletion_http_500_then_save_and_retry():
     assert data["activeDocAfterSuccess"] is None
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_deletion_network_failure_preserves_doc_and_saves():
     """Network abort during delete leaves document active and savable."""
     data = _run_lifecycle_scenario("deletion_network_failure_preserves_doc_and_saves")
@@ -467,6 +491,7 @@ def test_deletion_network_failure_preserves_doc_and_saves():
     assert data["puts"][0]["content"] == "saved after network abort"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_pending_save_during_deletion_outcomes():
     """Verify pending saves during deletion: suppressed on 200, resumed on 500."""
     data = _run_lifecycle_scenario("pending_save_during_deletion_outcomes")
@@ -478,6 +503,7 @@ def test_pending_save_during_deletion_outcomes():
     assert fail_puts[-1]["content"] == "pending edit preserved on fail"
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch():
     """Delayed PDF form/annotation edits save to originating doc, not newly active tab."""
     data = _run_lifecycle_scenario("pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch")
@@ -495,6 +521,7 @@ def test_pdf_pane_delayed_autosave_targets_originating_doc_after_tab_switch():
     assert len(pdf_b_puts) == 0
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_pdf_pane_autosave_across_session_switch_and_revision_serialization():
     """Session change while PDF save is debounced persists to originating doc and serializes PUTs."""
     data = _run_lifecycle_scenario("pdf_pane_autosave_across_session_switch_and_revision_serialization")
@@ -512,6 +539,7 @@ def test_pdf_pane_autosave_across_session_switch_and_revision_serialization():
     assert end_1 < start_2
 
 
+@pytest.mark.usefixtures("_lifecycle_browser_session")
 def test_pdf_pane_annotation_undo_and_export_preserved():
     """PDF form/annotation save, undo (Ctrl+Z), and export flush remain intact."""
     data = _run_lifecycle_scenario("pdf_pane_annotation_undo_and_export_preserved")
@@ -525,20 +553,39 @@ def test_pdf_pane_annotation_undo_and_export_preserved():
     assert data["afterSecondUndoCount"] == 0
 
 
-def test_worker_cleanup_removes_descendants_when_parent_dies_abruptly():
-    """Verify worker.close() cleans up surviving descendants and reaps parent if parent dies abruptly."""
+@pytest.mark.skipif(_IS_WINDOWS, reason="POSIX-specific orphan process group probe")
+def test_worker_cleanup_removes_descendants_when_parent_dies_abruptly(tmp_path):
+    """Verify orphan descendants terminate, including where PID 1 does not reap zombies."""
+    pid_file = tmp_path / "descendant.pid"
     code = (
         "import os, subprocess, sys, time\n"
         "child = subprocess.Popen(['sleep', '30'])\n"
+        "with open(sys.argv[1], 'w') as f: f.write(str(child.pid))\n"
         "sys.stdout.write('{\"status\": \"ready\"}\\n')\n"
         "sys.stdout.flush()\n"
         "time.sleep(0.05)\n"
         "os._exit(0)\n"
     )
-    worker = LifecycleBrowserWorker(cmd=[sys.executable, "-c", code])
+    worker = LifecycleBrowserWorker(cmd=[sys.executable, "-c", code, str(pid_file)])
+
+    def descendant_running() -> bool:
+        pid = int(pid_file.read_text())
+        if sys.platform.startswith("linux"):
+            try:
+                # In a container without an init reaper, a terminated orphan can
+                # remain as a zombie. killpg(pgid, 0) does not distinguish it.
+                stat = Path(f"/proc/{pid}/stat").read_text()
+            except FileNotFoundError:
+                return False
+            return stat.rsplit(") ", 1)[1].split()[0] not in {"Z", "X", "x"}
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
     try:
         worker.start()
-        saved_pgid = worker._pgid
         proc = worker._proc
 
         deadline = time.monotonic() + 3.0
@@ -548,13 +595,7 @@ def test_worker_cleanup_removes_descendants_when_parent_dies_abruptly():
             time.sleep(0.02)
         assert proc.poll() is not None, "Parent process should have exited"
 
-        descendant_alive_before = False
-        try:
-            os.killpg(saved_pgid, 0)
-            descendant_alive_before = True
-        except (ProcessLookupError, OSError):
-            descendant_alive_before = False
-        assert descendant_alive_before is True, "Descendant process should be alive before worker cleanup"
+        assert descendant_running(), "Descendant should be running before worker cleanup"
 
         worker.close()
 
@@ -562,13 +603,10 @@ def test_worker_cleanup_removes_descendants_when_parent_dies_abruptly():
         assert worker._pgid is None
         assert proc.poll() is not None
 
-        descendant_alive_after = False
-        try:
-            os.killpg(saved_pgid, 0)
-            descendant_alive_after = True
-        except (ProcessLookupError, OSError):
-            descendant_alive_after = False
-        assert descendant_alive_after is False, "Descendant process should have been terminated by worker.close()"
+        deadline = time.monotonic() + 2.0
+        while descendant_running() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not descendant_running(), "Descendant should terminate during worker.close()"
     finally:
         worker.close()
 
@@ -648,6 +686,82 @@ process.stdout.write(JSON.stringify({ status: 'ready' }) + '\\n');
         worker.close()
 
 
+def test_windows_worker_spawn_uses_process_group_without_posix_session(monkeypatch):
+    """Windows starts a process group without invoking POSIX session management."""
+    import io
+
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self):
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO('{"status": "ready"}\n')
+            self.stderr = io.StringIO()
+            self.alive = True
+
+        def poll(self):
+            return None if self.alive else 0
+
+        def wait(self, timeout=None):
+            self.alive = False
+            return 0
+
+    kwargs_seen = []
+
+    def fake_popen(*args, **kwargs):
+        kwargs_seen.append(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(sys.modules[__name__], "_IS_WINDOWS", True)
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    worker = LifecycleBrowserWorker()
+    try:
+        worker.start()
+        assert kwargs_seen[0]["creationflags"] == 0x200
+        assert kwargs_seen[0]["start_new_session"] is False
+        assert worker._pgid is None
+    finally:
+        worker.close()
+
+
+def test_windows_worker_cleanup_terminates_process_tree(monkeypatch):
+    """Windows cleanup requests taskkill /T and does not use POSIX process groups."""
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self):
+            self.alive = True
+
+        def poll(self):
+            return None if self.alive else 0
+
+        def kill(self):
+            self.alive = False
+
+        def wait(self, timeout=None):
+            return 0
+
+    proc = FakeProcess()
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        assert kwargs["check"] is False
+        assert kwargs["timeout"] == 5
+        proc.alive = False
+
+    monkeypatch.setattr(sys.modules[__name__], "_IS_WINDOWS", True)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    worker = LifecycleBrowserWorker()
+    worker._terminate_process_group(proc=proc)
+
+    assert commands == [["taskkill", "/PID", "4321", "/T", "/F"]]
+    assert proc.poll() == 0
+
+
 def test_worker_timeout_fails_deterministically_and_cleans_up():
     """Verify worker timeouts fail with an actionable error and clean up processes."""
     hang_code = (
@@ -673,11 +787,12 @@ def test_worker_timeout_fails_deterministically_and_cleans_up():
         assert worker._pgid is None
 
         assert saved_proc.poll() is not None
-        try:
-            os.killpg(saved_pgid, 0)
-            still_alive = True
-        except (ProcessLookupError, OSError):
-            still_alive = False
-        assert still_alive is False, "Hanging worker process should have been terminated on timeout"
+        if not _IS_WINDOWS:
+            try:
+                os.killpg(saved_pgid, 0)
+                still_alive = True
+            except (ProcessLookupError, OSError):
+                still_alive = False
+            assert still_alive is False, "Hanging worker process should have been terminated on timeout"
     finally:
         worker.close()
