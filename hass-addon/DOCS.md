@@ -60,7 +60,7 @@ search_api_key: ""          # API key for brave/tavily/serper/google_pse
 llm_host: localhost         # Default LLM server host
 ollama_base_url: ""         # e.g. http://host.docker.internal:11434
 allowed_origins: []         # Extra CORS origins
-bind_address: ""            # Empty = dual-stack "::" when IPv6 is available
+bind_address: ""            # Empty = 0.0.0.0 (IPv4; what Supervisor ingress uses)
 tool_approval_gate: true    # Ask before side-effecting tools after external content
 response_compression: true  # Gzip response bodies above 1 KiB
 extra_env: []               # Free-form KEY=VALUE entries

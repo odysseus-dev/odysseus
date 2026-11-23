@@ -125,17 +125,16 @@ def test_dockerfile_builds_the_fork_not_upstream():
     assert "odysseus-dev/odysseus.git" not in dockerfile
 
 
-def test_bind_probe_proves_ipv4_reachability():
-    # Regression (1.3.2): Supervisor ingress connects to the container over
-    # IPv4. The old probe only checked that an IPv6 wildcard socket binds,
-    # which also succeeds under net.ipv6.bindv6only=1 — leaving a listener
-    # that refuses IPv4 and producing "Ingress error: Cannot connect to host
-    # 172.30.33.5:7000" → 502 in the sidebar panel. The probe must set
-    # IPV6_V6ONLY=0 and verify an IPv4 connection actually succeeds.
+def test_bind_defaults_to_ipv4_for_supervisor_ingress():
+    # Regression (1.3.2/1.3.3): Supervisor's ingress proxy connects to the
+    # add-on over IPv4 (http://172.30.33.5:7000). Binding "::" is IPv6-only
+    # whenever net.ipv6.bindv6only=1 (uvicorn does not force V6ONLY=0), which
+    # produced "Ingress error: Cannot connect to host 172.30.33.5:7000" → 502
+    # in the sidebar panel while the host port-map kept working. The default
+    # must therefore be 0.0.0.0; "::" stays available via bind_address.
     run_sh = (BASE / "hass-addon" / "run.sh").read_text(encoding="utf-8")
-    assert "IPV6_V6ONLY" in run_sh
-    assert "create_connection" in run_sh
-    assert 'BIND_ADDRESS="0.0.0.0"' in run_sh  # fallback still present
+    assert '[ -z "$BIND_ADDRESS" ] && BIND_ADDRESS="0.0.0.0"' in run_sh
+    assert 'BIND_ADDRESS="::"' not in run_sh
 
 
 def test_addon_bundles_chromadb_server():

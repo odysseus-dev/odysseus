@@ -149,41 +149,25 @@ else
 fi
 
 # --- Bind address -----------------------------------------------------------
-# Prefer a dual-stack bind. When the host advertises AAAA records, browsers try
-# IPv6 first; an IPv4-only listener (0.0.0.0) makes those clients fail instead
-# of reaching the app. Binding "::" accepts IPv6 and (on Linux, v6only=0)
-# IPv4-mapped connections.
+# Default to IPv4 (0.0.0.0). There are two reasons this is the safe default
+# and NOT "::":
 #
-# The probe must PROVE dual-stack, not merely that an IPv6 socket binds: a
-# netns with net.ipv6.bindv6only=1 accepts the "::" bind but then refuses
-# every IPv4 connection — including the Supervisor's, which is how the
-# ingress sidebar panel talks to us (it connects to the container's IPv4
-# address). That mismatch produced "Ingress error: Cannot connect to host
-# 172.30.33.5:7000" → 502 while the host port-map kept working. So bind
-# "::", then verify an IPv4 client can actually connect; otherwise fall back.
+#  1. Supervisor's ingress proxy (the sidebar panel) connects to the add-on
+#     over IPv4 at app.ip_address, e.g. http://172.30.33.5:7000. If the
+#     listener is IPv6-only, every panel request fails with
+#     "Ingress error: Cannot connect to host 172.30.33.5:7000" → 502 in the
+#     panel, even while the host port-map still works.
+#  2. Binding "::" only accepts IPv4 when net.ipv6.bindv6only=0. Many
+#     container netns have it set to 1, and uvicorn does not force
+#     IPV6_V6ONLY=0 on the socket it creates — so "::" silently becomes
+#     IPv6-only. A probe can't fix that reliably: the flag it sets on a test
+#     socket does not carry over to uvicorn's own listener.
+#
+# Operators who need IPv6 can set bind_address explicitly ("::" for a
+# dual-stack-capable netns). Everything else (browsers, Supervisor, tunnels)
+# reaches us over IPv4.
 BIND_ADDRESS="$(_opt bind_address)"
-if [ -z "$BIND_ADDRESS" ]; then
-    if python - <<'PY' 2>/dev/null
-import socket
-listener = socket.socket(socket.AF_INET6)
-try:
-    listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-    listener.bind(("::", 0))
-    listener.listen(1)
-    port = listener.getsockname()[1]
-    try:
-        socket.create_connection(("127.0.0.1", port), timeout=2).close()
-    except OSError:
-        raise SystemExit(1)
-finally:
-    listener.close()
-PY
-    then
-        BIND_ADDRESS="::"
-    else
-        BIND_ADDRESS="0.0.0.0"
-    fi
-fi
+[ -z "$BIND_ADDRESS" ] && BIND_ADDRESS="0.0.0.0"
 
 # --- Free-form extra environment -------------------------------------------
 while IFS= read -r line; do

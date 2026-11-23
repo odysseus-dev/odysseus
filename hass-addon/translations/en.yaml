@@ -86,8 +86,9 @@ configuration:
   bind_address:
     name: Bind address
     description: >-
-      Address the web server listens on. Empty = automatic (dual-stack "::" when
-      IPv6 is available, else 0.0.0.0). Set 0.0.0.0 to force IPv4 only.
+      Address the web server listens on. Empty = 0.0.0.0 (IPv4), which is what
+      Supervisor's ingress panel and normal clients use. Set "::" only if the
+      container network really supports dual-stack.
   extra_env:
     name: Extra environment variables
     description: >-

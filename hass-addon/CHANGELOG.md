@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.3
+
+- **Fix: sidebar panel 502 (for real this time)**. 1.3.2's probe disabled
+  `IPV6_V6ONLY` on its own test socket, but uvicorn creates a *fresh* socket
+  that doesn't carry that flag — so with `net.ipv6.bindv6only=1` the listener
+  stayed IPv6-only and Supervisor's IPv4 ingress connection kept failing
+  (`Ingress error: Cannot connect to host 172.30.33.5:7000`). The default bind
+  is now **`0.0.0.0`** (IPv4), which is what Supervisor's ingress proxy and
+  ordinary clients use; set `bind_address: "::"` only on a network that
+  really accepts IPv4-mapped connections.
+
 ## 1.3.2
 
 - **Fix: sidebar panel 502 "Bad Gateway"**. Supervisor's ingress proxy
