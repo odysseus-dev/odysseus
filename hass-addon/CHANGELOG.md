@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.1
+
+- **Fix: the add-on cloned upstream `dev`, not this fork** — so the 1.2.0/1.3.0
+  auth features (HA credential login, sidebar panel SSO, mount-prefix
+  awareness) never actually ran in the add-on; the image built upstream code.
+  `ODYSSEUS_REPO` now defaults to `gkmzfk6um/odysseus` (keep the `dev` branch
+  there in sync with the add-on branch).
+- **Fix: bundle a ChromaDB server** — upstream runs it as a separate compose
+  service; the add-on image now ships the server package and `run.sh` starts
+  it loopback-only on `127.0.0.1:8100` with data under `/data/chromadb`, so
+  vector memory / RAG work instead of booting degraded.
+
 ## 1.3.0
 
 - **Sidebar panel with Home Assistant single sign-on**: `ingress: true` +

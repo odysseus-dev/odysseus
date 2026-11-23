@@ -194,5 +194,25 @@ if [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASSWORD" ]; then
     python /app/setup.py || log "setup.py reported an error (continuing)"
 fi
 
+# --- Vector store (ChromaDB) -----------------------------------------------
+# Upstream runs ChromaDB as a separate docker-compose service; an add-on is a
+# single container, so the server (installed in the image) runs here, inside,
+# loopback-only. Persisted under /data so collections survive rebuilds and are
+# included in add-on backups. The app retries lazily anyway; the wait just
+# avoids the noisy startup errors in the log.
+export CHROMADB_HOST=127.0.0.1
+export CHROMADB_PORT=8100
+mkdir -p /data/chromadb /data/logs
+if command -v chromadb >/dev/null 2>&1; then
+    nohup chromadb run --path /data/chromadb --host 127.0.0.1 --port 8100 \
+        >/data/logs/chromadb.log 2>&1 &
+    for _ in $(seq 1 30); do
+        curl -fsS "http://127.0.0.1:8100/api/v2/heartbeat" >/dev/null 2>&1 && break
+        sleep 1
+    done
+else
+    log "chromadb not found — vector memory/RAG will stay degraded"
+fi
+
 log "Starting Odysseus on ${BIND_ADDRESS}:7000 (data=/data, AUTH_ENABLED=${AUTH_ENABLED})"
 exec python -m uvicorn app:app --host "$BIND_ADDRESS" --port 7000

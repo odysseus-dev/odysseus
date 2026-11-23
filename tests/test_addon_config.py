@@ -114,6 +114,29 @@ def test_addon_icon_and_logo_exist():
     assert (BASE / "hass-addon" / "logo.png").is_file()
 
 
+def test_dockerfile_builds_the_fork_not_upstream():
+    # Regression (1.3.0): the image cloned odysseus-dev/odysseus (upstream),
+    # which does not carry the add-on auth work (HA credential login, panel
+    # SSO, mount-prefix awareness) — the add-on ran upstream code and the
+    # panel/login features silently did not exist. The default must stay on
+    # this fork until upstream merges the work.
+    dockerfile = (BASE / "hass-addon" / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG ODYSSEUS_REPO=https://github.com/gkmzfk6um/odysseus.git" in dockerfile
+    assert "odysseus-dev/odysseus.git" not in dockerfile
+
+
+def test_addon_bundles_chromadb_server():
+    # Regression (1.3.1): requirements.txt only installs chromadb-client
+    # (HTTP client, cannot serve), and upstream runs ChromaDB as a separate
+    # compose service — so the add-on image must ship the server itself and
+    # run.sh must start it, or vector memory / RAG boot degraded.
+    dockerfile = (BASE / "hass-addon" / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"pip install[^\n]*chromadb", dockerfile), "server package missing from image"
+    run_sh = (BASE / "hass-addon" / "run.sh").read_text(encoding="utf-8")
+    assert "chromadb run" in run_sh, "run.sh never starts the server"
+    assert "CHROMADB_HOST=127.0.0.1" in run_sh, "server must stay loopback-only"
+
+
 # ---------------------------------------------------------------------------
 # PostgreSQL URL builder
 # ---------------------------------------------------------------------------

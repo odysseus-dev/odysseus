@@ -2,12 +2,14 @@
 #
 # Home Assistant builds an add-on with the add-on folder as the Docker build
 # context, so the application source cannot be copied from the parent repo.
-# Instead this image clones the Odysseus source at build time. Point
-# ODYSSEUS_REPO / ODYSSEUS_REF at a fork or a release tag to build something
-# other than the default branch.
+# Instead this image clones the Odysseus source at build time. The default
+# tracks THIS fork (gkmzfk6um/odysseus) so the add-on actually runs the
+# add-on-specific auth work (HA credential login, sidebar panel SSO, mount
+# prefix awareness) that upstream dev does not carry. Point ODYSSEUS_REPO /
+# ODYSSEUS_REF at upstream or a release tag to build something else.
 ARG BUILD_VERSION
 ARG BUILD_ARCH
-ARG ODYSSEUS_REPO=https://github.com/odysseus-dev/odysseus.git
+ARG ODYSSEUS_REPO=https://github.com/gkmzfk6um/odysseus.git
 ARG ODYSSEUS_REF=dev
 
 FROM python:3.14.9-slim
@@ -103,6 +105,14 @@ RUN npm install -g agent-browser@0.35.0 --omit=dev --loglevel=error
 # Pillow>=13, certifi>=2026.10.23, grpcio>=1.84.1, fastembed>=0.9.1).
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir python-magic==0.4.27
+
+# Vector store server. Upstream runs ChromaDB as a separate docker-compose
+# service (chromadb/chroma, pinned 1.5.9); an add-on is a single container,
+# so the server ships inside the image and run.sh starts it on 127.0.0.1:8100.
+# requirements.txt only installs the chromadb-client HTTP package, which
+# cannot serve.
+RUN pip install --no-cache-dir chromadb \
+    && chromadb version || true
 
 # Check gRPC's effective defaults after all Python dependencies are installed.
 RUN python scripts/check_ca_trust.py --system --python --grpc
