@@ -25,6 +25,9 @@ _PYMUPDF_MISSING = (
     "`pip install -r requirements-optional.txt` (note: PyMuPDF is AGPL-3.0)."
 )
 
+# Reserved PDF appearance-state name for an unchecked checkbox.
+_PDF_OFF_STATE = "Off"
+
 
 def _require_fitz():
     """Raise a clear error if the optional PyMuPDF dependency is absent."""
@@ -171,7 +174,7 @@ def extract_fields(path: str) -> list[dict[str, Any]]:
                     label = _infer_label(page, w.rect, words)
                 value = w.field_value if w.field_value is not None else ""
                 on_state = _widget_on_state(w) if wtype == "checkbox" else ""
-                if wtype == "checkbox" and value == "Off":
+                if wtype == "checkbox" and value == _PDF_OFF_STATE:
                     value = ""
 
                 if name not in grouped:
@@ -387,12 +390,12 @@ def fill_fields(source_path: str, output_path: str, values: dict[str, Any]) -> i
                     on_state = _widget_on_state(w)
                     if isinstance(new_value, bool):
                         # Single checkbox: bool semantics
-                        w.field_value = (on_state or "Yes") if new_value else "Off"
+                        w.field_value = (on_state or "Yes") if new_value else _PDF_OFF_STATE
                     else:
                         # Choice/radio group: only the widget whose on_state matches
                         # gets that on_state; the rest go Off.
                         chosen = "" if new_value is None else str(new_value).strip()
-                        w.field_value = on_state if on_state and on_state == chosen else "Off"
+                        w.field_value = on_state if on_state and on_state == chosen else _PDF_OFF_STATE
                 else:
                     w.field_value = "" if new_value is None else str(new_value)
                 w.update()
