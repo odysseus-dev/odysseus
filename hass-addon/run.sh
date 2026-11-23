@@ -152,10 +152,33 @@ fi
 # Prefer a dual-stack bind. When the host advertises AAAA records, browsers try
 # IPv6 first; an IPv4-only listener (0.0.0.0) makes those clients fail instead
 # of reaching the app. Binding "::" accepts IPv6 and (on Linux, v6only=0)
-# IPv4-mapped connections. Falls back to IPv4 without an IPv6 stack.
+# IPv4-mapped connections.
+#
+# The probe must PROVE dual-stack, not merely that an IPv6 socket binds: a
+# netns with net.ipv6.bindv6only=1 accepts the "::" bind but then refuses
+# every IPv4 connection — including the Supervisor's, which is how the
+# ingress sidebar panel talks to us (it connects to the container's IPv4
+# address). That mismatch produced "Ingress error: Cannot connect to host
+# 172.30.33.5:7000" → 502 while the host port-map kept working. So bind
+# "::", then verify an IPv4 client can actually connect; otherwise fall back.
 BIND_ADDRESS="$(_opt bind_address)"
 if [ -z "$BIND_ADDRESS" ]; then
-    if python -c 'import socket; s = socket.socket(socket.AF_INET6); s.bind(("::", 0)); s.close()' 2>/dev/null; then
+    if python - <<'PY' 2>/dev/null
+import socket
+listener = socket.socket(socket.AF_INET6)
+try:
+    listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    listener.bind(("::", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    except OSError:
+        raise SystemExit(1)
+finally:
+    listener.close()
+PY
+    then
         BIND_ADDRESS="::"
     else
         BIND_ADDRESS="0.0.0.0"

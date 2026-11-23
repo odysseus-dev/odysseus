@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.2
+
+- **Fix: sidebar panel 502 "Bad Gateway"**. Supervisor's ingress proxy
+  connects to the add-on container over **IPv4** (`172.30.33.5:7000`), and the
+  entrypoint probe only checked that an IPv6 wildcard socket *binds* — which
+  also succeeds when the netns has `bindv6only=1`, leaving a listener that
+  refuses every IPv4 connection. Supervisor then logged
+  `Ingress error: Cannot connect to host …:7000` and returned 502, while the
+  host port-map kept working. The probe now binds `::` with `IPV6_V6ONLY=0`
+  and then *proves* dual-stack by connecting over `127.0.0.1`, falling back to
+  `0.0.0.0` if IPv4 isn't actually accepted.
+
 ## 1.3.1
 
 - **Fix: the add-on cloned upstream `dev`, not this fork** — so the 1.2.0/1.3.0

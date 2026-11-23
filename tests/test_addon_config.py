@@ -125,6 +125,19 @@ def test_dockerfile_builds_the_fork_not_upstream():
     assert "odysseus-dev/odysseus.git" not in dockerfile
 
 
+def test_bind_probe_proves_ipv4_reachability():
+    # Regression (1.3.2): Supervisor ingress connects to the container over
+    # IPv4. The old probe only checked that an IPv6 wildcard socket binds,
+    # which also succeeds under net.ipv6.bindv6only=1 — leaving a listener
+    # that refuses IPv4 and producing "Ingress error: Cannot connect to host
+    # 172.30.33.5:7000" → 502 in the sidebar panel. The probe must set
+    # IPV6_V6ONLY=0 and verify an IPv4 connection actually succeeds.
+    run_sh = (BASE / "hass-addon" / "run.sh").read_text(encoding="utf-8")
+    assert "IPV6_V6ONLY" in run_sh
+    assert "create_connection" in run_sh
+    assert 'BIND_ADDRESS="0.0.0.0"' in run_sh  # fallback still present
+
+
 def test_addon_bundles_chromadb_server():
     # Regression (1.3.1): requirements.txt only installs chromadb-client
     # (HTTP client, cannot serve), and upstream runs ChromaDB as a separate
