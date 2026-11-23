@@ -219,17 +219,24 @@ jobs:
         run: |
           set -euo pipefail
           debs="$HOME/.cache/ci-apt-debs"
-          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v bwrap >/dev/null 2>&1; then
+          # A cache missing a top-level package (bubblewrap, say) still installs
+          # cleanly, so check the result rather than apt's exit code.
+          apt_ready() {
+            ffmpeg -version >/dev/null 2>&1 &&
+              bwrap --version >/dev/null 2>&1 &&
+              [ "$(dpkg-query -W -f='${db:Status-Status}' ca-certificates 2>/dev/null)" = "installed" ]
+          }
+          if ! apt_ready; then
             installed=false
             if [ "$CACHE_HIT" = "true" ]; then
               # The cache holds every package this image lacks: no apt-get
               # update and no mirror traffic on this path. apt checks the whole
               # set before unpacking, so an incomplete cache fails cleanly here.
               if sudo apt-get install -y --no-download --no-install-recommends \
-                -o Dir::Cache::archives="$debs" "$debs"/*.deb; then
+                -o Dir::Cache::archives="$debs" "$debs"/*.deb && apt_ready; then
                 installed=true
               else
-                echo "::warning::Cached .deb set did not install cleanly; downloading instead."
+                echo "::warning::Cached .deb set did not install cleanly or is incomplete; downloading instead."
               fi
             fi
             if [ "$installed" != "true" ]; then
@@ -256,6 +263,10 @@ jobs:
               # shellcheck disable=SC2086
               sudo apt-get install -y --no-download --no-install-recommends \
                 -o Dir::Cache::archives="$debs" $APT_PACKAGES
+              if ! apt_ready; then
+                echo "::error::ffmpeg, bwrap or ca-certificates is still missing after the apt install."
+                exit 1
+              fi
               sudo rm -rf "$debs/partial" "$debs/lock"
               sudo chown -R "$(id -u):$(id -g)" "$debs"
               echo "save=true" >> "$GITHUB_OUTPUT"
