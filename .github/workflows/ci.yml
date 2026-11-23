@@ -110,6 +110,8 @@ jobs:
           node --check scripts/check_document_references.mjs
       - name: Test frontend architecture gates and reference checks
         run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs
+      - name: Test document file processing
+        run: node --experimental-vm-modules --test tests/documentFileProcessing.test.mjs
       - name: Test document behavior suites
         run: |
           node --test tests/domainModules.test.mjs \

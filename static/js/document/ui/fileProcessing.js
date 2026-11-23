@@ -8,6 +8,13 @@
  *   - Converting Mammoth HTML output to clean Markdown.
  *   - Mapping file extensions to Odysseus document language identifiers.
  *
+ * Document Library workflow note:
+ *   The primary Document Library import flow delegates DOCX file processing to the
+ *   backend `/api/documents/import-docx` endpoint and splits multi-sheet spreadsheets
+ *   into individual document entries. The client-side DOCX and spreadsheet parsing
+ *   branches in `readFileContent()`, as well as `ensureMammoth()` and `htmlToMarkdown()`,
+ *   provide standalone/fallback capability or future direct client-side processing.
+ *
  * This module has no dependency on Document Library UI state, modal lifecycle,
  * toast notifications, or application-wide state. Callers supply file objects;
  * this module returns content strings or throws on failure.
@@ -45,6 +52,9 @@ let _mammothReady = null;
  * Ensure the Mammoth DOCX-to-HTML library is available on `window.mammoth`.
  * Returns the same promise for concurrent callers (no duplicate script tags).
  * Rejects if the script fails to load.
+ *
+ * Provides standalone/fallback client-side DOCX parsing capability when backend
+ * delegation is unavailable or direct browser processing is desired.
  *
  * @returns {Promise<void>}
  */
@@ -133,6 +143,12 @@ export function htmlToMarkdown(html) {
 /**
  * Read a local File object and return its content as a string.
  *
+ * Workflow note:
+ * The primary Document Library import workflow delegates DOCX files to the backend
+ * `/api/documents/import-docx` endpoint and splits multi-sheet spreadsheets into
+ * separate individual documents. The spreadsheet and DOCX branches below provide
+ * standalone/fallback capability for single-string file reading or direct client-side
+ * import handling:
  * - `.xlsx` / `.xls` / `.ods`: loaded with SheetJS; each sheet is serialized
  *   as CSV. Multi-sheet workbooks prepend a `# Sheet: <name>` heading before
  *   each sheet's CSV block, joined with blank lines.
