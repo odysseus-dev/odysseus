@@ -51,12 +51,48 @@ def test_lxc_marker_alone_is_not_a_container(host):
     assert host(environ={"container": "lxc"}) is False
 
 
-def test_podman_keeps_the_host_gateway_endpoint(monkeypatch, tmp_path):
-    containerenv = tmp_path / ".containerenv"
-    containerenv.touch()
-    monkeypatch.setattr("src.host_docker_access.DOCKERENV_PATH", str(tmp_path / "missing"))
-    monkeypatch.setattr("src.host_docker_access.CONTAINERENV_PATH", str(containerenv))
-    monkeypatch.setattr("src.host_docker_access.CGROUP_PATH", str(tmp_path / "missing"))
+@pytest.fixture
+def runtime(monkeypatch):
+    """Fake the real marker paths (no injected parameters), cgroup v2 host."""
+    import builtins
+    import io
+    import os
+
+    real_exists, real_open = os.path.exists, builtins.open
+    present = set()
+
+    def fake_exists(path):
+        if path in ("/.dockerenv", "/run/.containerenv"):
+            return path in present
+        return real_exists(path)
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/proc/1/cgroup":
+            return io.StringIO("0::/\n")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "exists", fake_exists)
+    monkeypatch.setattr(builtins, "open", fake_open)
     monkeypatch.delenv("container", raising=False)
-    value = "http://host.docker.internal:1234/v1"
-    assert er._rewrite_docker_host_for_native_runtime(value) == value
+    return present
+
+
+ENDPOINT = "http://host.docker.internal:1234/v1"
+
+
+def test_podman_containerenv_keeps_the_host_gateway_endpoint(runtime):
+    runtime.add("/run/.containerenv")
+    assert er._rewrite_docker_host_for_native_runtime(ENDPOINT) == ENDPOINT
+
+
+def test_podman_environment_keeps_the_host_gateway_endpoint(runtime, monkeypatch):
+    monkeypatch.setenv("container", "podman")
+    assert er._rewrite_docker_host_for_native_runtime(ENDPOINT) == ENDPOINT
+
+
+def test_native_lxc_still_rewrites_to_loopback(runtime, monkeypatch):
+    monkeypatch.setenv("container", "lxc")
+    assert (
+        er._rewrite_docker_host_for_native_runtime(ENDPOINT)
+        == "http://127.0.0.1:1234/v1"
+    )
