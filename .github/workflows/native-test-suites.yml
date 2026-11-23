@@ -73,7 +73,7 @@ jobs:
       - name: Install Chromium browser and verify system dependencies
         run: |
           npx playwright install chromium
-          if ! npx playwright install-deps --dry-run chromium >/dev/null 2>&1; then
+          if ! node -e "const { chromium } = require('playwright'); (async () => { const b = await chromium.launch(); await b.close(); })()" >/dev/null 2>&1; then
             printf '%s\n' \
               'Acquire::Retries "1";' \
               'Acquire::http::Timeout "15";' \
@@ -147,7 +147,7 @@ jobs:
       - name: Install Chromium browser and verify system dependencies
         run: |
           npx playwright install chromium
-          if ! npx playwright install-deps --dry-run chromium >/dev/null 2>&1; then
+          if ! node -e "const { chromium } = require('playwright'); (async () => { const b = await chromium.launch(); await b.close(); })()" >/dev/null 2>&1; then
             printf '%s\n' \
               'Acquire::Retries "1";' \
               'Acquire::http::Timeout "15";' \
