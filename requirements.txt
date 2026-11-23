@@ -13,7 +13,6 @@ pypdf
 pypdfium2
 # Pillow 13 fixes known image-processing advisories; keep local embeddings compatible.
 Pillow>=13.0.0
-faster-whisper
 pdfplumber
 beautifulsoup4
 charset-normalizer
