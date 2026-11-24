@@ -340,6 +340,10 @@
       "deployment": "js/document/ui/importFromDevice.js"
     },
     {
+      "source": "features/documents/ui/fileProcessing.js",
+      "deployment": "js/document/ui/fileProcessing.js"
+    },
+    {
       "source": "features/documents/ui/previewModes.js",
       "deployment": "js/document/ui/previewModes.js"
     },

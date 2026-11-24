@@ -19,6 +19,7 @@ jobs:
     name: Focused test guidance (report-only)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -72,6 +73,7 @@ jobs:
   python-syntax:
     name: Python syntax (compileall)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -87,6 +89,7 @@ jobs:
   node-syntax:
     name: JS syntax (node --check)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -110,6 +113,8 @@ jobs:
           node --check scripts/check_document_references.mjs
       - name: Test frontend architecture gates and reference checks
         run: node --test tests/frontendArchitecture.test.mjs tests/documentReferences.test.mjs
+      - name: Test document file processing
+        run: node --experimental-vm-modules --test tests/documentFileProcessing.test.mjs
       - name: Test document behavior suites
         run: |
           node --test tests/domainModules.test.mjs \
@@ -131,6 +136,11 @@ jobs:
     name: Python tests (pytest ${{ matrix.shard }})
     # Keep the namespace/AppArmor setup tied to the audited Ubuntu release.
     runs-on: ubuntu-24.04
+    # The slowest healthy shard takes ~15 min. Without a cap a stuck step runs
+    # until GitHub's 6 h default; with one it is a red shard you can re-run.
+    timeout-minutes: 30
+    env:
+      APT_PACKAGES: ffmpeg bubblewrap ca-certificates
     # Make Python test validation authoritative for the configured scope.
     strategy:
       # Report every failing section in one run instead of cancelling the rest
@@ -183,23 +193,98 @@ jobs:
           python-version: "3.11"
       # Establish system trust before dependency installers or their hooks run.
       # Keep one apt pass for FFmpeg and bubblewrap; containment is checked later.
+      # The ubuntu-24.04 image ships neither tool, so this pass runs on every
+      # shard. The regional mirror sometimes trickles at ~100 kB/s instead of
+      # failing (10+ min, once 3 h+), which apt's idle timeouts never catch.
+      # Cache the .deb files per runner image so the mirror is only hit on a
+      # miss, and bound the miss path so a slow mirror falls back or fails.
+      - name: Compute apt package cache key
+        if: steps.docs-check.outputs.docs_only != 'true'
+        id: apt-key
+        # ImageOS/ImageVersion change with every runner image update, so the
+        # cached set always matches the libraries the image already has.
+        run: |
+          packages_hash=$(printf '%s' "$APT_PACKAGES" | sha256sum | cut -c1-16)
+          printf 'key=apt-debs-v1-%s-%s-%s-%s\n' "$RUNNER_OS" "${ImageOS:-unknown}" "${ImageVersion:-unknown}" "$packages_hash" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: steps.docs-check.outputs.docs_only != 'true'
+        id: apt-cache
+        with:
+          path: ~/.cache/ci-apt-debs
+          key: ${{ steps.apt-key.outputs.key }}
       - name: Install FFmpeg and bubblewrap and validate system CA trust
         if: steps.docs-check.outputs.docs_only != 'true'
+        id: apt-install
+        timeout-minutes: 8
+        env:
+          CACHE_HIT: ${{ steps.apt-cache.outputs.cache-hit }}
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v bwrap >/dev/null 2>&1; then
-            # Ensure acquire retries and timeouts are bounded so stalled pool mirrors
-            # fail over to Canonical's fallback mirror in seconds rather than hanging.
-            # Written to zzz-ci-retries so it sorts after upstream runner configuration.
-            printf '%s\n' \
-              'Acquire::Retries "1";' \
-              'Acquire::http::Timeout "15";' \
-              'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
-            sudo apt-get update || sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap ca-certificates
+          set -euo pipefail
+          debs="$HOME/.cache/ci-apt-debs"
+          # A cache missing a top-level package (bubblewrap, say) still installs
+          # cleanly, so check the result rather than apt's exit code.
+          apt_ready() {
+            ffmpeg -version >/dev/null 2>&1 &&
+              bwrap --version >/dev/null 2>&1 &&
+              [ "$(dpkg-query -W -f='${db:Status-Status}' ca-certificates 2>/dev/null)" = "installed" ]
+          }
+          if ! apt_ready; then
+            installed=false
+            if [ "$CACHE_HIT" = "true" ]; then
+              # The cache holds every package this image lacks: no apt-get
+              # update and no mirror traffic on this path. apt checks the whole
+              # set before unpacking, so an incomplete cache fails cleanly here.
+              if sudo apt-get install -y --no-download --no-install-recommends \
+                -o Dir::Cache::archives="$debs" "$debs"/*.deb && apt_ready; then
+                installed=true
+              else
+                echo "::warning::Cached .deb set did not install cleanly or is incomplete; downloading instead."
+              fi
+            fi
+            if [ "$installed" != "true" ]; then
+              # Ensure acquire retries and timeouts are bounded so stalled pool mirrors
+              # fail over to Canonical's fallback mirror in seconds rather than hanging.
+              # Written to zzz-ci-retries so it sorts after upstream runner configuration.
+              printf '%s\n' \
+                'Acquire::Retries "1";' \
+                'Acquire::http::Timeout "15";' \
+                'Acquire::https::Timeout "15";' | sudo tee /etc/apt/apt.conf.d/zzz-ci-retries > /dev/null
+              mkdir -p "$debs/partial"
+              # Idle timeouts do not fire on a slow trickle, so bound wall time.
+              # shellcheck disable=SC2086  # APT_PACKAGES is a word list
+              download() {
+                timeout 60 sudo apt-get update &&
+                  timeout 150 sudo apt-get install -y --download-only --no-install-recommends \
+                    -o Dir::Cache::archives="$debs" $APT_PACKAGES
+              }
+              if ! download; then
+                echo "::warning::apt download from the runner mirror failed or was too slow; retrying against archive.ubuntu.com."
+                echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
+                download
+              fi
+              # shellcheck disable=SC2086
+              sudo apt-get install -y --no-download --no-install-recommends \
+                -o Dir::Cache::archives="$debs" $APT_PACKAGES
+              if ! apt_ready; then
+                echo "::error::ffmpeg, bwrap or ca-certificates is still missing after the apt install."
+                exit 1
+              fi
+              sudo rm -rf "$debs/partial" "$debs/lock"
+              sudo chown -R "$(id -u):$(id -g)" "$debs"
+              echo "save=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
           python scripts/check_ca_trust.py --system
           command -v ffmpeg
           ffmpeg -version | head -n 1
+      # Save right after the download, not in a post step, so the set is cached
+      # even when the shard's tests fail. Concurrent shards race on the same key;
+      # the losers only log a warning.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.apt-install.outputs.save == 'true'
+        with:
+          path: ~/.cache/ci-apt-debs
+          key: ${{ steps.apt-key.outputs.key }}
 
       # uv resolves the same versions as pip but installs ~5x faster, and its
       # cache keeps each shard from re-downloading the whole requirement set.
@@ -394,6 +479,7 @@ jobs:
   benchmark-gfm-security:
     name: Benchmark GFM rendering security
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

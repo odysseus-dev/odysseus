@@ -67,16 +67,9 @@ def endpoint_cost_tracked(url: str, endpoint_kind: Optional[str] = None) -> bool
 
 
 def _running_in_container() -> bool:
-    if os.path.exists("/.dockerenv"):
-        return True
-    try:
-        with open("/proc/1/cgroup", encoding="utf-8") as fh:
-            return any(
-                marker in fh.read()
-                for marker in ("docker", "containerd", "kubepods")
-            )
-    except OSError:
-        return False
+    from src.host_docker_access import running_in_container
+
+    return running_in_container()
 
 
 def _rewrite_docker_host_for_native_runtime(base: str) -> str:

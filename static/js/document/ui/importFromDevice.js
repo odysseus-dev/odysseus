@@ -3,14 +3,7 @@
  * Device file import flow (PDF, DOCX, spreadsheet deferral, and source/text files).
  */
 
-const EXT_TO_LANG = Object.freeze({
-  '.py': 'python', '.js': 'javascript', '.ts': 'typescript', '.html': 'html', '.htm': 'html',
-  '.css': 'css', '.md': 'markdown', '.json': 'json', '.yml': 'yaml', '.yaml': 'yaml',
-  '.sh': 'bash', '.bash': 'bash', '.sql': 'sql', '.rs': 'rust', '.go': 'go',
-  '.java': 'java', '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp',
-  '.rb': 'ruby', '.php': 'php', '.xml': 'xml', '.toml': 'toml', '.ini': 'ini',
-  '.txt': '', '.log': '', '.csv': 'csv', '.tsv': 'csv', '.jsx': 'javascript', '.tsx': 'typescript',
-});
+import { DEVICE_IMPORT_EXT_TO_LANG, SPREADSHEET_EXTENSIONS } from './fileProcessing.js';
 
 let _deps = {};
 
@@ -49,7 +42,7 @@ export function _importFromDevice() {
     const dotIdx = name.lastIndexOf('.');
     const ext = dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
     const baseTitle = dotIdx > 0 ? name.slice(0, dotIdx) : name;
-    const isSpreadsheet = ['.xlsx', '.xls', '.ods'].includes(ext);
+    const isSpreadsheet = SPREADSHEET_EXTENSIONS.includes(ext);
     const isPdf = ext === '.pdf';
     const isDocx = ext === '.docx';
     const ui = _getUi();
@@ -79,7 +72,7 @@ export function _importFromDevice() {
           reader.onerror = () => rej(reader.error);
           reader.readAsText(file);
         });
-        const lang = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
+        const lang = DEVICE_IMPORT_EXT_TO_LANG[ext] !== undefined ? DEVICE_IMPORT_EXT_TO_LANG[ext] : null;
         const body = { title: baseTitle, language: lang, content };
         if (sid) body.session_id = sid;
         const r = await fetch(`${apiBase}/api/document`, {

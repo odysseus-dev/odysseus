@@ -21,6 +21,7 @@ def _body(
     screenshot=False,
     media="",
     linked_issue="Fixes #5934",
+    how_to="Run the focused checker regression tests and inspect their exact assertions.",
 ):
     return f"""## Summary
 
@@ -42,7 +43,7 @@ This focused change has enough concrete summary detail for the checker.
 
 ## How to Test
 
-Run the focused checker regression tests and inspect their exact assertions.
+{how_to}
 
 ## Visual / UI changes
 
@@ -234,6 +235,56 @@ def test_ticked_screenshot_box_counts_without_the_template_bolding():
 
     assert _added_labels(calls) == {"ready for review"}
     assert not _comment(calls)
+    assert not any(call["method"] == "setFailed" for call in calls)
+
+
+def test_media_under_sub_headings_counts_as_visual_evidence():
+    media = (
+        "#### Before\n"
+        '<img alt="before" src="https://github.com/user-attachments/assets/before" />\n\n'
+        "#### After\n"
+        '<img alt="after" src="https://github.com/user-attachments/assets/after" />'
+    )
+
+    calls = _run_checker(
+        ["static/js/example.js"],
+        _body(app_ran=True, screenshot=True, media=media),
+    )
+
+    assert _added_labels(calls) == {"ready for review"}
+    assert not _comment(calls)
+
+
+def test_screenshots_section_still_ends_at_a_sibling_heading():
+    media = "### Notes\n\nhttps://github.com/user-attachments/assets/elsewhere"
+
+    calls = _run_checker(
+        ["static/js/example.js"],
+        _body(app_ran=True, screenshot=True, media=media),
+    )
+
+    assert _added_labels(calls) == {"needs visual evidence"}
+    assert "does not contain an actual attachment or link" in _comment(calls)
+
+
+def test_how_to_test_code_block_comments_are_not_headings():
+    how_to = (
+        "```bash\n"
+        "# run the checker regression tests\n"
+        "python -m pytest tests/test_pr_description_check.py\n"
+        "```"
+    )
+
+    calls = _run_checker(["README.md"], _body(how_to=how_to))
+
+    assert _added_labels(calls) == {"ready for review"}
+    assert not any(call["method"] == "setFailed" for call in calls)
+
+
+def test_body_starting_with_a_byte_order_mark_still_finds_summary():
+    calls = _run_checker(["README.md"], "\ufeff" + _body())
+
+    assert _added_labels(calls) == {"ready for review"}
     assert not any(call["method"] == "setFailed" for call in calls)
 
 
