@@ -840,17 +840,61 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             auth_mgr = getattr(request.app.state, "auth_manager", None)
             if auth_mgr and hasattr(auth_mgr, "is_user_active") and not auth_mgr.is_user_active(user):
                 raise HTTPException(403, "Account is inactive or pending deletion")
+            if auth_mgr and hasattr(auth_mgr, "get_user_created_stamp"):
+                created = auth_mgr.get_user_created_stamp(user)
+                if created is not None and hasattr(request, "state"):
+                    request.state.owner_created = created
         return user
 
-    def _commit_note_route(db_session, user_name: Optional[str] = None, owner_name: Optional[str] = None):
+    def _commit_note_route(
+        db_session,
+        user_name: Optional[str] = None,
+        owner_name: Optional[str] = None,
+        recipients: Optional[Sequence[str]] = None,
+        user_creation_stamps: Optional[dict] = None,
+    ):
         if db_session:
             try:
-                commit_note_transaction(db_session, actor=user_name, owner=owner_name)
+                commit_note_transaction(
+                    db_session,
+                    actor=user_name,
+                    owner=owner_name,
+                    recipients=recipients,
+                    user_creation_stamps=user_creation_stamps,
+                )
             except NotePermissionRevoked as exc:
                 raise HTTPException(exc.status_code, exc.message)
 
-    def _check_active_user_pre_commit(request: Request, user_name: Optional[str], db_session=None, owner_name: Optional[str] = None):
-        _commit_note_route(db_session, user_name=user_name, owner_name=owner_name)
+    def _check_active_user_pre_commit(
+        request: Request,
+        user_name: Optional[str],
+        db_session=None,
+        owner_name: Optional[str] = None,
+        recipients: Optional[Sequence[str]] = None,
+    ):
+        stamps = {}
+        owner_created = getattr(getattr(request, "state", None), "owner_created", None)
+        if owner_created is not None and user_name:
+            stamps[user_name] = owner_created
+
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        if auth_mgr and hasattr(auth_mgr, "validate_token"):
+            sess_token = getattr(getattr(request, "state", None), "session_token", None)
+            if sess_token and not auth_mgr.validate_token(sess_token):
+                if db_session:
+                    try:
+                        db_session.rollback()
+                    except Exception:
+                        pass
+                raise HTTPException(401, "Session has expired or was revoked")
+
+        _commit_note_route(
+            db_session,
+            user_name=user_name,
+            owner_name=owner_name,
+            recipients=recipients,
+            user_creation_stamps=stamps,
+        )
 
     def _checked_color(value):
         try:
@@ -1016,7 +1060,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # is the note this request wrote, not a later write's.
             result = _note_to_dict(note, user)
             _check_active_user_pre_commit(request, user, db_session=db)
-            db.commit()
             return result
         finally:
             db.close()
@@ -1310,7 +1353,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             delete_note_versions(db, [note.id])
             db.delete(note)
             _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
-            db.commit()
             return {"ok": True}
         finally:
             db.close()
@@ -1324,7 +1366,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             note, _caps = _load_note(db, note_id, user, "manage")
             note.pinned = not note.pinned
             _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
-            db.commit()
             return {"ok": True, "pinned": note.pinned}
         finally:
             db.close()
@@ -1338,7 +1379,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             note, _caps = _load_note(db, note_id, user, "manage")
             note.archived = not note.archived
             _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
-            db.commit()
             return {"ok": True, "archived": note.archived}
         finally:
             db.close()
@@ -1472,8 +1512,13 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if any(name and name not in valid for name in requested):
                 raise HTTPException(404, sharing.NO_SUCH_ACCOUNT)
             written = sharing.upsert_shares(db, note, requested, permission, valid)
-            _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
-            db.commit()
+            _check_active_user_pre_commit(
+                request,
+                user,
+                db_session=db,
+                owner_name=getattr(note, "owner", None),
+                recipients=requested,
+            )
             grants = sharing.shares_by_note(db, [note.id]).get(note.id, [])
             return {
                 "ok": True,
@@ -1497,7 +1542,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 raise HTTPException(403, "Only the note's owner can remove other people")
             sharing.remove_share(db, note.id, target)
             _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
-            db.commit()
             return {"ok": True, "left": leaving}
         finally:
             db.close()
@@ -1643,7 +1687,6 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 if note:
                     note.sort_order = i
             _check_active_user_pre_commit(request, user, db_session=db)
-            db.commit()
             return {"ok": True, "count": len(ids)}
         finally:
             db.close()

@@ -783,27 +783,25 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             except Exception:
                 pass
 
-        can_delete = getattr(auth_manager, "can_delete_user", None)
-        users_dict = getattr(auth_manager, "users", {}) or {}
-        deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
         norm_name = (body.username or "").strip().lower()
         if not norm_name:
             raise HTTPException(400, "Username is required")
 
-        is_retry = norm_name and (norm_name not in users_dict or norm_name in deleting_dict)
-        if can_delete is not None and not can_delete(body.username, user):
-            if not is_retry:
-                raise HTTPException(400, "Cannot delete user")
+        deletion_guard = auth_manager.account_deletion_guard(norm_name) if hasattr(auth_manager, "account_deletion_guard") else contextlib.nullcontext()
+        with deletion_guard:
+            if hasattr(auth_manager, "_ensure_fresh_config"):
+                auth_manager._ensure_fresh_config()
+            can_delete = getattr(auth_manager, "can_delete_user", None)
+            users_dict = getattr(auth_manager, "users", {}) or {}
+            deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
 
-        if is_retry and norm_name not in users_dict:
-            deletion_guard = auth_manager.account_deletion_guard(norm_name) if hasattr(auth_manager, "account_deletion_guard") else contextlib.nullcontext()
-            with deletion_guard:
-                # Administrative retry: clean up remaining notes and tokens
+            # Case A: Retry of user already in deleting tombstone or interrupted deletion
+            if norm_name not in users_dict:
                 try:
-                    from core.database import get_db_session
+                    from core.database import SessionLocal
                     from core.notes_sharing import purge_notes_owned_by
                     from core.auth import delete_api_tokens_for_user
-                    with get_db_session() as db:
+                    with SessionLocal() as db:
                         purged = purge_notes_owned_by(norm_name, db=db)
                         removed_tokens = delete_api_tokens_for_user(db, norm_name)
                         db.commit()
@@ -824,15 +822,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     except Exception as e:
                         logger.error("Failed to finalize deletion of %s in auth store on retry: %s", norm_name, e)
                         raise HTTPException(500, "Failed to finalize account deletion in authentication store")
+
                 if was_deleting or any(purged.values()) or removed_tokens:
-                    logger.info("Cleaned up orphaned data on retry for user %s: notes=%s, tokens=%s", norm_name, purged, removed_tokens)
+                    logger.info("Cleaned up orphaned account data on deletion retry")
                     return {"ok": True}
                 raise HTTPException(400, "Cannot delete user")
 
-        user_backup = dict(users_dict.get(norm_name, {})) if isinstance(users_dict, dict) else {}
+            if can_delete is not None and not can_delete(body.username, user):
+                raise HTTPException(400, "Cannot delete user")
 
-        deletion_guard = auth_manager.account_deletion_guard(norm_name) if hasattr(auth_manager, "account_deletion_guard") else contextlib.nullcontext()
-        with deletion_guard:
+            user_backup = dict(users_dict.get(norm_name, {})) if isinstance(users_dict, dict) else {}
             try:
                 ok = auth_manager.delete_user(norm_name, user)
             except Exception:
@@ -844,15 +843,13 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
             # Stage 1: Purge notes and tokens belonging to the account in a shared database transaction
             sql_purge_committed = False
-            purged = {}
-            removed_tokens = 0
             try:
-                from core.database import get_db_session
+                from core.database import SessionLocal
                 from core.notes_sharing import purge_notes_owned_by
                 from core.auth import delete_api_tokens_for_user
-                with get_db_session() as db:
-                    purged = purge_notes_owned_by(norm_name, db=db)
-                    removed_tokens = delete_api_tokens_for_user(db, norm_name)
+                with SessionLocal() as db:
+                    purge_notes_owned_by(norm_name, db=db)
+                    delete_api_tokens_for_user(db, norm_name)
                     db.commit()
                 sql_purge_committed = True
             except HTTPException:
@@ -885,12 +882,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     logger.error("Failed to finalize deletion of %s in auth store: %s", norm_name, e)
                     raise HTTPException(500, "Account notes were removed, but finalizing account deletion in the authentication store failed. Please retry account deletion.")
 
-            if any(purged.values()) or removed_tokens:
-                logger.info("Removed notes and tokens of user %s: %s (tokens: %s)", norm_name, purged, removed_tokens)
+            logger.info("Removed account notes and tokens")
             return {"ok": True}
-
-        _invalidate_api_token_cache()
-        return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----
 

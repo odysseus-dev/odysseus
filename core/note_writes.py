@@ -211,7 +211,13 @@ def stored_stamp(db, note_id: str) -> Any:
     return db.execute(text("SELECT updated_at FROM notes WHERE id = :id"), {"id": note_id}).scalar()
 
 
-def commit_note_transaction(db, actor: Optional[str] = None, owner: Optional[str] = None) -> None:
+def commit_note_transaction(
+    db,
+    actor: Optional[str] = None,
+    owner: Optional[str] = None,
+    recipients: Optional[Sequence[str]] = None,
+    user_creation_stamps: Optional[dict] = None,
+) -> None:
     """Commit a notes database transaction while holding the account lifecycle lease.
 
     Guarantees that a Notes write either commits while the relevant account(s) remain
@@ -220,11 +226,18 @@ def commit_note_transaction(db, actor: Optional[str] = None, owner: Optional[str
     """
     import core.auth as ca
     auth_mgr = ca.get_auth_manager()
-    if auth_mgr and hasattr(auth_mgr, "account_mutation_guard"):
-        with auth_mgr.account_mutation_guard(actor=actor, owner=owner, db=db):
+    try:
+        with auth_mgr.account_mutation_guard(
+            actor=actor,
+            owner=owner,
+            recipients=recipients,
+            user_creation_stamps=user_creation_stamps,
+            db=db,
+        ):
             db.commit()
-    else:
-        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def commit_if_unchanged(db, note: Note, stamp: Any, user: Optional[str] = None) -> None:
@@ -241,9 +254,10 @@ def commit_if_unchanged(db, note: Note, stamp: Any, user: Optional[str] = None) 
             changes[attr.columns[0].key] = getattr(note, attr.key)
     from core.notes_sharing import is_owner, normalize_user
     u = normalize_user(user)
+    owner = getattr(note, "owner", None)
 
     if not changes:
-        commit_note_transaction(db, actor=u, owner=getattr(note, "owner", None))
+        commit_note_transaction(db, actor=u, owner=owner)
         return
     table = Note.__table__
     note_id = note.id
@@ -271,30 +285,34 @@ def commit_if_unchanged(db, note: Note, stamp: Any, user: Optional[str] = None) 
 
     # Drop the ORM's own pending UPDATE, which would write unconditionally.
     db.expire(note)
+
+    import core.auth as ca
+    auth_mgr = ca.get_auth_manager()
     try:
-        rowcount = db.execute(stmt).rowcount
-    except OperationalError as exc:
-        if getattr(exc.orig, "sqlite_errorname", None) == "SQLITE_BUSY_SNAPSHOT":
-            db.rollback()
+        with auth_mgr.account_mutation_guard(actor=u, owner=owner, db=db):
+            try:
+                rowcount = db.execute(stmt).rowcount
+            except OperationalError as exc:
+                if getattr(exc.orig, "sqlite_errorname", None) == "SQLITE_BUSY_SNAPSHOT":
+                    db.rollback()
+                    if u and not is_owner(u, note):
+                        check_collaborator_permission(db, note_id, u)
+                    raise NoteChanged(note_id)
+                raise
+
+            if rowcount != 1:
+                db.rollback()
+                if u and not is_owner(u, note):
+                    check_collaborator_permission(db, note_id, u)
+                raise NoteChanged(note_id)
+
             if u and not is_owner(u, note):
                 check_collaborator_permission(db, note_id, u)
-            raise NoteChanged(note_id)
-        raise
 
-    if rowcount != 1:
+            db.commit()
+    except Exception:
         db.rollback()
-        if u and not is_owner(u, note):
-            check_collaborator_permission(db, note_id, u)
-        raise NoteChanged(note_id)
-
-    if u and not is_owner(u, note):
-        try:
-            check_collaborator_permission(db, note_id, u)
-        except NotePermissionRevoked:
-            db.rollback()
-            raise
-
-    commit_note_transaction(db, actor=u, owner=getattr(note, "owner", None))
+        raise
 
 
 def _callable_accepts_user(fn: Callable) -> bool:
