@@ -8,7 +8,7 @@ import logging
 import functools
 import threading
 from collections import OrderedDict
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response

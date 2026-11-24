@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, UploadFile, Fil
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
+import contextlib
 import logging
 import os
 import tempfile

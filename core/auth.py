@@ -12,7 +12,7 @@ import time
 import logging
 import contextlib
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Sequence
 
 _TOKEN_CACHE_INVALIDATOR: Optional[Callable[[], None]] = None
 
