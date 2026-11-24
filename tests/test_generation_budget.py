@@ -95,6 +95,27 @@ def test_context_error_parser_reads_parenthesized_vllm_counts():
     assert details.input_tokens == 37184
 
 
+def test_context_error_parser_reads_llamacpp_available_context_size():
+    details = parse_context_error(
+        "request (12345 tokens) exceeds available context size (8192 tokens)"
+    )
+
+    assert details is not None
+    assert details.input_tokens == 12345
+    assert details.context_limit == 8192
+
+    plan = plan_context_recovery(
+        "request (12345 tokens) exceeds available context size (8192 tokens)",
+        4096,
+        [{"role": "user", "content": "work"}],
+    )
+
+    assert plan is not None
+    assert plan.context_limit == 8192
+    assert plan.observed_input_tokens == 12345
+    assert 1 <= plan.max_tokens < 4096
+
+
 def test_context_error_parser_reads_vllm_is_only_limit_wording():
     details = parse_context_error(
         "You passed 30721 input tokens and requested 2048 output tokens. "
