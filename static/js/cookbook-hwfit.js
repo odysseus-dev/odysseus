@@ -1581,7 +1581,7 @@ export function _hwfitRenderList(el, models) {
         // buries qwen/gemma-sized rows below absurd impossible footprints.
         sel.dataset.reverse = sortKey === 'vram' ? '1' : '0';
       }
-      _hwfitFetch();
+      _rerenderHwfitFromCacheOrFetch();
     });
   });
 }
@@ -2251,6 +2251,15 @@ function _bindHwfitEnginePicker(engine) {
   renderMenu();
 }
 
+function _rerenderHwfitFromCacheOrFetch() {
+  const list = document.getElementById('hwfit-list');
+  if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
+    _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
+    return;
+  }
+  _hwfitFetch();
+}
+
 export function _hwfitInit() {
   const uc = document.getElementById('hwfit-usecase');
   const sort = document.getElementById('hwfit-sort');
@@ -2267,7 +2276,7 @@ export function _hwfitInit() {
   }
   if (sort && !sort.dataset.hwfitScanBound) {
     sort.dataset.hwfitScanBound = '1';
-    sort.addEventListener('change', () => _hwfitFetch());
+    sort.addEventListener('change', () => _rerenderHwfitFromCacheOrFetch());
   }
   if (qpref && !qpref.dataset.hwfitScanBound) {
     qpref.dataset.hwfitScanBound = '1';
