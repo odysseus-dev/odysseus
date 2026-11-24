@@ -46,6 +46,7 @@ def auth_system(tmp_path, monkeypatch):
     mgr = AuthManager(auth_path=str(auth_file))
     mgr.create_user("admin", "admin-pass", is_admin=True)
     mgr.create_user("bob", "bob-pass", is_admin=False)
+    monkeypatch.setattr("core.auth._DEFAULT_AUTH_MANAGER", mgr)
 
     with disposable_database(tmp_path) as factory:
         monkeypatch.setattr(cdb, "SessionLocal", factory)
@@ -475,7 +476,7 @@ def test_finding_e_admin_retry_reports_cleanup_failures(auth_system, monkeypatch
     assert "failed" in exc1.value.detail.lower()
 
     # 2. Notes cleanup failure during retry raises HTTP 500
-    monkeypatch.undo()
+    monkeypatch.setattr(ca, "delete_api_tokens_for_user", ca.delete_api_tokens_for_user)
     import core.notes_sharing as cns
     def failing_notes_purge(*args, **kwargs):
         raise RuntimeError("Disk error during notes purge")
@@ -579,7 +580,7 @@ def test_tombstone_finalization_failure_preserves_tombstone_and_propagates_error
     assert auth_system.mgr.is_username_available("bob") is False
 
     # 2. Administrative deletion endpoint propagation
-    monkeypatch.undo()
+    monkeypatch.delattr(auth_system.mgr, "_save", raising=False)
     def failing_finish(username):
         raise RuntimeError("Simulated finalization failure in auth manager")
 
@@ -665,9 +666,16 @@ def test_single_writer_deployment_lock_enforcement(tmp_path, monkeypatch):
     p1_fd.close()
 
     # Process 2 can now acquire lock on startup without collision
-    # (disable background tasks in startup for clean testing)
-    monkeypatch.setattr(odysseus_app.webhook_manager, "set_loop", lambda loop: None)
-    asyncio.run(odysseus_app._startup_event())
+    # (stop startup after writer lock acquisition to isolate test from server tasks)
+    class StopStartup(Exception):
+        pass
+    def stop_at_webhook(loop):
+        raise StopStartup()
+    monkeypatch.setattr(odysseus_app.webhook_manager, "set_loop", stop_at_webhook)
+    try:
+        asyncio.run(odysseus_app._startup_event())
+    except StopStartup:
+        pass
     assert getattr(odysseus_app.app.state, "_writer_lock_file", None) is not None
 
     # Shutdown releases lock cleanly
@@ -915,3 +923,155 @@ def test_lifecycle_authorization_fails_closed_when_auth_store_unavailable(auth_s
     with auth_system.factory() as db:
         unchanged = db.get(Note, "n-fail-closed")
         assert unchanged.content == "Original Content"
+
+
+def test_canonical_manager_ownership_and_auxiliary_isolation(auth_system, tmp_path):
+    """P1 Section 3: Auxiliary AuthManager does not overwrite canonical manager or lifecycle lock registry."""
+    from core.auth import get_auth_manager
+    canonical = get_auth_manager()
+    assert canonical is auth_system.mgr
+    orig_locks = canonical._lifecycle_locks
+
+    # Create auxiliary AuthManager with another path
+    aux_file = tmp_path / "aux_auth.json"
+    aux_mgr = AuthManager(auth_path=str(aux_file))
+
+    # Canonical manager and lock registry remain unchanged
+    assert get_auth_manager() is canonical
+    assert get_auth_manager() is not aux_mgr
+    assert canonical._lifecycle_locks is orig_locks
+
+    # Deleting account cannot create Notes
+    with canonical._config_lock:
+        canonical._config.setdefault("deleting", {})["bob"] = {"is_admin": False}
+        canonical.users.pop("bob", None)
+        canonical._save()
+
+    import json
+    from src.tools.notes import do_manage_notes
+    res = asyncio.run(do_manage_notes(json.dumps({"action": "add", "title": "Aux Isolation", "content": "Reject"}), owner="bob"))
+    assert res.get("exit_code") == 1
+    assert "inactive or pending deletion" in res.get("error", "").lower()
+
+
+def test_fail_closed_auth_configuration_scenarios(auth_system, tmp_path):
+    """P1 Section 4: 7 fail-closed auth configuration scenarios assert mutations do not persist."""
+    import json
+    import os
+    from pathlib import Path
+    from core.note_writes import commit_note_transaction, NotePermissionRevoked
+    mgr = auth_system.mgr
+    auth_file = Path(mgr.auth_path)
+
+    # 1. Previously loaded auth.json disappears
+    with open(auth_file, "w") as f:
+        json.dump({"users": {"alice": {"password_hash": "hash1"}}}, f)
+    mgr._load()
+    assert mgr._store_established is True
+    os.remove(auth_file)
+    with pytest.raises(Exception):
+        mgr._ensure_fresh_config()
+    assert mgr.is_configured is True  # Fails closed, does not treat as first-run!
+
+    # Verify pending note mutation rolls back
+    with auth_system.factory() as db:
+        db.add(Note(id="n-fail-1", owner="alice", title="T1", content="C1"))
+        with pytest.raises(NotePermissionRevoked):
+            commit_note_transaction(db, actor="alice", owner="alice")
+        db.rollback()
+    with auth_system.factory() as db_check:
+        assert db_check.get(Note, "n-fail-1") is None
+
+    # 2. auth.json contains invalid JSON
+    with open(auth_file, "w") as f:
+        f.write("{invalid json: broken")
+    with pytest.raises(Exception):
+        mgr._ensure_fresh_config()
+    with auth_system.factory() as db:
+        db.add(Note(id="n-fail-2", owner="alice", title="T2", content="C2"))
+        with pytest.raises(NotePermissionRevoked):
+            commit_note_transaction(db, actor="alice", owner="alice")
+        db.rollback()
+    with auth_system.factory() as db_check:
+        assert db_check.get(Note, "n-fail-2") is None
+
+    # 3. auth.json contains an invalid root structure (e.g. list instead of dict)
+    with open(auth_file, "w") as f:
+        f.write(json.dumps(["not", "a", "dict"]))
+    with pytest.raises(Exception):
+        mgr._ensure_fresh_config()
+    with auth_system.factory() as db:
+        db.add(Note(id="n-fail-3", owner="alice", title="T3", content="C3"))
+        with pytest.raises(NotePermissionRevoked):
+            commit_note_transaction(db, actor="alice", owner="alice")
+        db.rollback()
+    with auth_system.factory() as db_check:
+        assert db_check.get(Note, "n-fail-3") is None
+
+    # 4. Account or tombstone mappings contain invalid records
+    with open(auth_file, "w") as f:
+        f.write(json.dumps({"users": {"bad_user": "not_a_dict"}}))
+    with pytest.raises(Exception):
+        mgr._ensure_fresh_config()
+    with auth_system.factory() as db:
+        db.add(Note(id="n-fail-4", owner="alice", title="T4", content="C4"))
+        with pytest.raises(NotePermissionRevoked):
+            commit_note_transaction(db, actor="alice", owner="alice")
+        db.rollback()
+    with auth_system.factory() as db_check:
+        assert db_check.get(Note, "n-fail-4") is None
+
+    # 5. Authentication storage becomes unreadable (permission denied)
+    valid_cfg = {"users": {"alice": {"password_hash": "hash1"}}}
+    with open(auth_file, "w") as f:
+        f.write(json.dumps(valid_cfg))
+    os.chmod(auth_file, 0o000)
+    try:
+        with pytest.raises(Exception):
+            mgr._ensure_fresh_config()
+        with auth_system.factory() as db:
+            db.add(Note(id="n-fail-5", owner="alice", title="T5", content="C5"))
+            with pytest.raises(NotePermissionRevoked):
+                commit_note_transaction(db, actor="alice", owner="alice")
+            db.rollback()
+        with auth_system.factory() as db_check:
+            assert db_check.get(Note, "n-fail-5") is None
+    finally:
+        os.chmod(auth_file, 0o644)
+
+    # 6. Lifecycle validation raises an unexpected exception
+    with open(auth_file, "w") as f:
+        f.write(json.dumps(valid_cfg))
+    mgr._ensure_fresh_config()
+
+    with auth_system.factory() as db:
+        db.add(Note(id="n-fail-6", owner="alice", title="T6", content="C6"))
+        import unittest.mock as mock
+        with mock.patch.object(mgr, "_check_active_fail_closed", side_effect=RuntimeError("Unexpected lifecycle error")):
+            with pytest.raises(NotePermissionRevoked):
+                commit_note_transaction(db, actor="alice", owner="alice")
+            db.rollback()
+        with auth_system.factory() as db_check:
+            assert db_check.get(Note, "n-fail-6") is None
+
+    # 7. Database mutation is already pending when validation fails
+    with auth_system.factory() as db:
+        db.add(Note(id="n-fail-7", owner="alice", title="T7", content="Pending Before Fail"))
+        mgr._config["deleting"] = {"alice": {"is_admin": False}}
+        mgr._config["users"].pop("alice", None)
+        with pytest.raises(NotePermissionRevoked):
+            commit_note_transaction(db, actor="alice", owner="alice")
+        db.rollback()
+    with auth_system.factory() as db_check:
+        assert db_check.get(Note, "n-fail-7") is None
+
+    # Restore clean state for subsequent tests
+    valid_restore = {
+        "users": {
+            "admin": {"password_hash": "admin-pass", "is_admin": True},
+            "bob": {"password_hash": "bob-pass", "is_admin": False},
+        }
+    }
+    with open(auth_file, "w") as f:
+        json.dump(valid_restore, f)
+    mgr._load()

@@ -31,6 +31,7 @@ def auth_env(tmp_path, monkeypatch):
     mgr.create_user("admin", "admin-pass", is_admin=True)
     mgr.create_user("alice", "alice-pass", is_admin=False)
     mgr.create_user("bob", "bob-pass", is_admin=False)
+    monkeypatch.setattr("core.auth._DEFAULT_AUTH_MANAGER", mgr)
 
     with disposable_database(tmp_path) as factory:
         monkeypatch.setattr(cdb, "SessionLocal", factory)
@@ -321,7 +322,7 @@ def test_b2_failure_after_sql_commit_preserves_tombstone_and_never_restores_user
     assert exc_reg.value.status_code == 409
 
     # Admin retries deletion: un-inject the failure so finish_delete_user succeeds
-    monkeypatch.undo()
+    monkeypatch.delattr(auth_env.mgr, "finish_delete_user", raising=False)
 
     res_retry = asyncio.run(auth_env.call_delete("alice"))
     assert res_retry == {"ok": True}
