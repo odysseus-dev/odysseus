@@ -11,6 +11,7 @@ from src.constants import DATA_DIR
 
 
 HF_COLLECTIONS_URL = "https://huggingface.co/api/collections"
+HF_MODELS_URL = "https://huggingface.co/api/models"
 HW_FIT_CACHE_DIR = Path(DATA_DIR) / "hwfit"
 MLX_COMMUNITY_CACHE = HW_FIT_CACHE_DIR / "mlx_community_models.json"
 HF_COLLECTION_MODELS_CACHE = HW_FIT_CACHE_DIR / "hf_collection_models.json"
@@ -86,6 +87,8 @@ HF_COLLECTION_SOURCES = (
         "provider": "mllama",
     },
 )
+
+GGUF_PUBLISHERS = ("unsloth", "ggml-org", "bartowski")
 
 
 def _format_params(raw):
@@ -367,6 +370,101 @@ def refresh_mlx_community_cache(force=False):
     return rows
 
 
+def fetch_publisher_gguf_repos(publisher, timeout=20, max_pages=10):
+    """Fetch public GGUF model repo IDs published by ``publisher``."""
+    params = urllib.parse.urlencode({
+        "author": publisher,
+        "filter": "gguf",
+        "limit": "1000",
+    })
+    url = f"{HF_MODELS_URL}?{params}"
+    repos = []
+    seen = set()
+    pages = 0
+    while url and pages < max_pages:
+        req = urllib.request.Request(url, headers={"User-Agent": "odysseus-hwfit/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.load(resp)
+            url = _next_link(resp.headers.get("Link"))
+        pages += 1
+        if not isinstance(payload, list):
+            break
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            repo_id = (item.get("id") or item.get("modelId") or "").strip()
+            if not repo_id or repo_id in seen:
+                continue
+            if not repo_id.lower().startswith(f"{publisher.lower()}/"):
+                continue
+            if "gguf" not in repo_id.lower():
+                continue
+            seen.add(repo_id)
+            repos.append(repo_id)
+    return repos
+
+
+def _gguf_lookup_keys(repo_id):
+    """Return normalized match keys for a base repo ``owner/model`` or GGUF repo."""
+    if "/" not in (repo_id or ""):
+        return ()
+    owner, model = repo_id.split("/", 1)
+    model_base = re.sub(r"[-_.]gguf$", "", model, flags=re.IGNORECASE).strip("_-.")
+    if not model_base:
+        return ()
+    keys = [model_base.lower()]
+    if owner:
+        keys.append(f"{owner.lower()}_{model_base.lower()}")
+    return tuple(dict.fromkeys(keys))
+
+
+def build_gguf_source_index(publishers=GGUF_PUBLISHERS, timeout=20):
+    """Map normalized model keys to ordered ``{"repo": ..., "file": ...}`` sources."""
+    index = {}
+    for publisher in publishers:
+        try:
+            repos = fetch_publisher_gguf_repos(publisher, timeout=timeout)
+        except Exception:
+            continue
+        for repo_id in repos:
+            if "/" not in repo_id:
+                continue
+            _, slug = repo_id.split("/", 1)
+            slug_base = re.sub(r"[-_.]gguf$", "", slug, flags=re.IGNORECASE).strip("_-.").lower()
+            if not slug_base:
+                continue
+            entry = {"repo": repo_id, "file": "*Q4_K_M*.gguf"}
+            existing = index.setdefault(slug_base, [])
+            if not any(src["repo"] == repo_id for src in existing):
+                existing.append(entry)
+    return index
+
+
+def attach_gguf_sources(rows, gguf_index):
+    """Attach matching ``gguf_sources`` to non-GGUF, non-MLX discovered rows."""
+    if not rows or not gguf_index:
+        return rows
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("mlx_only") or row.get("is_gguf"):
+            continue
+        if row.get("gguf_sources"):
+            continue
+        matches = []
+        seen_repos = set()
+        for key in _gguf_lookup_keys(row.get("name") or ""):
+            for src in gguf_index.get(key) or ():
+                repo = src.get("repo")
+                if repo and repo != row.get("name") and repo not in seen_repos:
+                    seen_repos.add(repo)
+                    matches.append(dict(src))
+        if matches:
+            row["gguf_sources"] = matches
+    return rows
+
+
+
 def refresh_hf_collection_models_cache(force=False):
     if not force and _cache_fresh(HF_COLLECTION_MODELS_CACHE):
         return load_cached_hf_collection_models()
@@ -381,12 +479,16 @@ def refresh_hf_collection_models_cache(force=False):
             # Keep partial refreshes useful. A temporary DNS/provider issue for
             # one brand should not invalidate the other cached collection rows.
             continue
+
+
     rows = sorted(
         rows_by_name.values(),
         key=lambda x: (x.get("hf_downloads") or 0, x.get("release_date") or ""),
         reverse=True,
     )
     if rows:
+        gguf_index = build_gguf_source_index()
+        attach_gguf_sources(rows, gguf_index)
         _write_cache(HF_COLLECTION_MODELS_CACHE, "https://huggingface.co/collections", rows)
         return rows
     return load_cached_hf_collection_models()
