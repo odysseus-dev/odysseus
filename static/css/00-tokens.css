@@ -36,6 +36,7 @@
   --bg: #282c34;
   --fg: #9cdef2;
   --panel: #111;
+  --panel-opacity: 1;
   --border: #355a66;
   --red: #e06c75;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they

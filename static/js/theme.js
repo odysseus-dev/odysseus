@@ -114,6 +114,11 @@ const THEME_DEFAULT_SPEED = {
 const THEME_DEFAULT_FROSTED = {
 };
 
+// Default panel opacity (0.1..1) per theme. Themes not listed default to 1.
+const DEFAULT_PANEL_OPACITY = 1;
+const THEME_DEFAULT_PANEL_OPACITY = {
+};
+
 // ── Custom theme persistence ──
 function _loadCustomThemes() {
   const themes = Storage.getJSON(CUSTOM_THEMES_KEY, {});
@@ -141,6 +146,7 @@ export function saveCustomTheme(name, colors, opts) {
     if (opts.bgEffectSize !== undefined) entry.bgEffectSize = opts.bgEffectSize;
     if (opts.bgEffectSpeed !== undefined) entry.bgEffectSpeed = opts.bgEffectSpeed;
     if (opts.frosted !== undefined) entry.frosted = !!opts.frosted;
+    if (opts.panelOpacity !== undefined) entry.panelOpacity = opts.panelOpacity;
   }
   ct[name] = entry;
   _saveCustomThemes(ct);
@@ -465,6 +471,20 @@ export function applyFrostedGlass(on) {
   document.body.classList.toggle('theme-frosted', !!on);
 }
 
+/** Set `--panel-opacity` (0.1..1.0) on `:root` and toggle `body.theme-custom-panel-opacity`
+ *  so panel/sidebar/popover/modal surfaces become translucent while keeping text opaque. */
+export function applyPanelOpacity(v) {
+  const n = (v === undefined || v === null || isNaN(v))
+    ? DEFAULT_PANEL_OPACITY
+    : Math.max(0.1, Math.min(1, Math.round(Number(v) * 100) / 100));
+  document.documentElement.style.setProperty('--panel-opacity', String(n));
+  document.body.classList.toggle('theme-custom-panel-opacity', n < 0.999);
+  const slider = document.getElementById('theme-panel-opacity');
+  if (slider) slider.value = String(Math.round(n * 100));
+  const readout = document.getElementById('theme-panel-opacity-val');
+  if (readout) readout.textContent = `${Math.round(n * 100)}%`;
+}
+
 // Read current size multiplier for JS effects (canvas-based).
 function _getEffectSize() {
   const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-size'));
@@ -533,6 +553,7 @@ export function save(name, colors, opts) {
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
     if (opts.bgEffectSpeed !== undefined && opts.bgEffectSpeed !== 1) obj.bgEffectSpeed = opts.bgEffectSpeed;
     if (opts.frosted) obj.frosted = true;
+    if (opts.panelOpacity !== undefined && opts.panelOpacity !== DEFAULT_PANEL_OPACITY) obj.panelOpacity = opts.panelOpacity;
   }
   Storage.setJSON(LS_KEY, obj);
   _syncToServer(obj);
@@ -751,6 +772,8 @@ export function initThemeUI() {
     if (sp) opts.bgEffectSpeed = parseFloat(sp.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
+    const po = document.getElementById('theme-panel-opacity');
+    if (po) opts.panelOpacity = parseFloat(po.value) / 100;
     return opts;
   }
   function _saveFull(name, colors) { save(name, colors, _getOpts()); }
@@ -780,12 +803,16 @@ export function initThemeUI() {
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
+        const po = (ct && ct.panelOpacity !== undefined)
+          ? ct.panelOpacity
+          : (THEME_DEFAULT_PANEL_OPACITY[name] !== undefined ? THEME_DEFAULT_PANEL_OPACITY[name] : DEFAULT_PANEL_OPACITY);
         applyFontDensity(f, d);
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
         applyBgEffectSpeed(sp);
         applyFrostedGlass(fr);
+        applyPanelOpacity(po);
         applyBgPattern(p);
         const fs = document.getElementById('theme-font-select');
         const ds = document.getElementById('theme-density-select');
@@ -795,6 +822,7 @@ export function initThemeUI() {
         const szs = document.getElementById('theme-bg-size');
         const sps = document.getElementById('theme-bg-speed');
         const frs = document.getElementById('theme-frosted-toggle');
+        const pos = document.getElementById('theme-panel-opacity');
         if (fs) fs.value = f;
         if (ds) ds.value = d;
         if (ps) ps.value = p;
@@ -803,7 +831,8 @@ export function initThemeUI() {
         if (szs) szs.value = String(Math.round(sz * 100));
         if (sps) sps.value = String(Math.round(sp * 100));
         if (frs) frs.checked = fr;
-        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, bgEffectSpeed: sp, frosted: fr });
+        if (pos) pos.value = String(Math.round(po * 100));
+        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, bgEffectSpeed: sp, frosted: fr, panelOpacity: po });
       });
     });
     g.querySelectorAll('.theme-delete-btn').forEach(btn => {
@@ -1171,12 +1200,16 @@ export function initThemeUI() {
   const _initFrosted = (saved && saved.frosted !== undefined)
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
+  const _initPanelOpacity = (saved && saved.panelOpacity !== undefined)
+    ? saved.panelOpacity
+    : (saved && THEME_DEFAULT_PANEL_OPACITY[saved.name] !== undefined ? THEME_DEFAULT_PANEL_OPACITY[saved.name] : DEFAULT_PANEL_OPACITY);
   applyFontDensity(_initFont, _initDensity);
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
   applyBgEffectSpeed(_initEffectSpeed);
   applyFrostedGlass(_initFrosted);
+  applyPanelOpacity(_initPanelOpacity);
   applyBgPattern(_initPattern);
 
   const fontSelect = document.getElementById('theme-font-select');
@@ -1271,6 +1304,17 @@ export function initThemeUI() {
     });
   }
 
+  const panelOpacitySlider = document.getElementById('theme-panel-opacity');
+  if (panelOpacitySlider) {
+    panelOpacitySlider.value = String(Math.round(_initPanelOpacity * 100));
+    const panelOpacityVal = document.getElementById('theme-panel-opacity-val');
+    if (panelOpacityVal) panelOpacityVal.textContent = `${Math.round(_initPanelOpacity * 100)}%`;
+    panelOpacitySlider.addEventListener('input', () => {
+      applyPanelOpacity(parseFloat(panelOpacitySlider.value) / 100);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
   // --- Color Harmony Generator (inside Advanced section) ---
   const harmonyGenBtnEl = document.getElementById('harmony-generate-btn');
   const harmonyAccentEl = document.getElementById('harmony-accent');
@@ -1361,6 +1405,8 @@ export function initThemeUI() {
       if (cur && cur.bgEffectIntensity !== undefined) obj.bgEffectIntensity = cur.bgEffectIntensity;
       if (cur && cur.bgEffectSize !== undefined) obj.bgEffectSize = cur.bgEffectSize;
       if (cur && cur.bgEffectSpeed !== undefined) obj.bgEffectSpeed = cur.bgEffectSpeed;
+      if (cur && cur.frosted !== undefined) obj.frosted = cur.frosted;
+      if (cur && cur.panelOpacity !== undefined) obj.panelOpacity = cur.panelOpacity;
       const json = JSON.stringify(obj, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1413,6 +1459,8 @@ export function initThemeUI() {
       if (parsed.bgEffectIntensity !== undefined) opts.bgEffectIntensity = parsed.bgEffectIntensity;
       if (parsed.bgEffectSize !== undefined) opts.bgEffectSize = parsed.bgEffectSize;
       if (parsed.bgEffectSpeed !== undefined) opts.bgEffectSpeed = parsed.bgEffectSpeed;
+      if (parsed.frosted !== undefined) opts.frosted = !!parsed.frosted;
+      if (parsed.panelOpacity !== undefined) opts.panelOpacity = parsed.panelOpacity;
       const result = saveCustomTheme(slug, colorData, opts);
       if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
       save(slug, colorData, opts);
@@ -1422,6 +1470,8 @@ export function initThemeUI() {
       applyBgEffectIntensity(opts.bgEffectIntensity);
       applyBgEffectSize(opts.bgEffectSize);
       applyBgEffectSpeed(opts.bgEffectSpeed);
+      applyFrostedGlass(!!opts.frosted);
+      applyPanelOpacity(opts.panelOpacity);
       applyBgPattern(opts.bgPattern || 'none');
       importAreaEl.classList.add('hidden');
       importActionsEl.classList.add('hidden');
@@ -2282,7 +2332,7 @@ function _initEmbers() {
 const themeModule = { initThemeUI, openPopup, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize, applyBgEffectSpeed,
-                       applyFrostedGlass,
+                       applyFrostedGlass, applyPanelOpacity,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
 

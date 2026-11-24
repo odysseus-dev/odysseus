@@ -1367,6 +1367,48 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, #000 12%, transparent) !important;
 }
 
+/* ?????????????????????????????????????????????????????????????????????????
+   Adjustable Panel Opacity ? applied when --panel-opacity is set below 1.0
+   via the Theme slider (writes `body.theme-custom-panel-opacity`). Adjusts
+   surface background alpha while keeping foreground text at full opacity.
+   ????????????????????????????????????????????????????????????????????????? */
+body.theme-custom-panel-opacity #sidebar,
+body.theme-custom-panel-opacity .modal-content,
+body.theme-custom-panel-opacity .doclib-modal-content,
+body.theme-custom-panel-opacity .gallery-modal-content,
+body.theme-custom-panel-opacity .notes-pane,
+body.theme-custom-panel-opacity .research-pane,
+body.theme-custom-panel-opacity .calendar-pane,
+body.theme-custom-panel-opacity .cookbook-pane,
+body.theme-custom-panel-opacity .doc-pane,
+body.theme-custom-panel-opacity .doc-pane-floating,
+body.theme-custom-panel-opacity .cp-popover,
+body.theme-custom-panel-opacity .dropdown,
+body.theme-custom-panel-opacity .overflow-menu,
+body.theme-custom-panel-opacity .doc-tab-dropdown,
+body.theme-custom-panel-opacity .email-reader,
+body.theme-custom-panel-opacity .admin-card,
+body.theme-custom-panel-opacity .gallery-detail-menu,
+body.theme-custom-panel-opacity #theme-popup .modal-content {
+  background-color: color-mix(in srgb, var(--panel, var(--bg)) calc(var(--panel-opacity, 1) * 100%), transparent) !important;
+}
+body.theme-custom-panel-opacity .sidebar-header,
+body.theme-custom-panel-opacity .sidebar-user-bar,
+body.theme-custom-panel-opacity .modal-header,
+body.theme-custom-panel-opacity .research-pane-header,
+body.theme-custom-panel-opacity .notes-mobile-grabber {
+  background-color: transparent !important;
+}
+body.theme-custom-panel-opacity .modal-content .admin-card,
+body.theme-custom-panel-opacity .doclib-modal-content .admin-card,
+body.theme-custom-panel-opacity .gallery-modal-content .admin-card,
+body.theme-custom-panel-opacity #theme-popup .admin-card {
+  background-color: color-mix(in srgb, var(--panel, var(--bg)) calc(var(--panel-opacity, 1) * 35%), transparent) !important;
+}
+body.theme-custom-panel-opacity .modal {
+  background: color-mix(in srgb, #000 calc(var(--panel-opacity, 1) * 38%), transparent) !important;
+}
+
 /* Mobile only: lift the Dependencies "Server" dropdown's selected text up ~2px. */
 @media (max-width: 768px) {
   #hwfit-deps-server { padding-bottom: 4px; line-height: 1; }
