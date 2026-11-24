@@ -30,10 +30,29 @@ def _message_text(content):
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        if any(isinstance(part, dict) and part.get('type') not in ('text', 'input_text') for part in content):
-            raise ValueError('This local tool adapter currently accepts text input only.')
-        return '\n'.join(str(part.get('text') or '') for part in content if isinstance(part, dict))
+        return '\n'.join(str(part.get('text') or '') for part in content
+                         if isinstance(part, dict) and part.get('type') in ('text', 'input_text'))
     return ''
+
+
+def _message_images(content):
+    """Convert OpenAI image data URLs to the base64 strings Ollama accepts."""
+    images = []
+    for part in content if isinstance(content, list) else []:
+        if not isinstance(part, dict):
+            raise ValueError('Unsupported local tool adapter message part.')
+        kind = part.get('type')
+        if kind in ('text', 'input_text'):
+            continue
+        if kind not in ('image_url', 'input_image'):
+            raise ValueError('Unsupported local tool adapter message part.')
+        image = part.get('image_url')
+        url = image.get('url') if isinstance(image, dict) else image
+        match = re.fullmatch(r'data:image/[\w.+-]+;base64,([A-Za-z0-9+/]+={0,2})', str(url or ''), re.I)
+        if not match:
+            raise ValueError('The local tool adapter requires base64 image data URLs.')
+        images.append(match.group(1))
+    return images
 
 
 def _messages(messages, tool_descriptions):
@@ -46,6 +65,9 @@ def _messages(messages, tool_descriptions):
     for item in messages:
         role = item.get('role')
         content = _message_text(item.get('content'))
+        images = _message_images(item.get('content'))
+        if images and role not in ('user', 'assistant'):
+            raise ValueError('Images are only supported in user or assistant messages.')
         if role == 'system':
             converted.append({'role': 'system', 'content': content})
         elif role == 'tool':
@@ -54,8 +76,8 @@ def _messages(messages, tool_descriptions):
             calls = item.get('tool_calls') or []
             if calls:
                 content += '\nPrevious proposed calls: ' + json.dumps(calls, ensure_ascii=False)
-            if content:
-                converted.append({'role': role, 'content': content})
+            if content or images:
+                converted.append({'role': role, 'content': content, **({'images': images} if images else {})})
     return converted
 
 
@@ -120,28 +142,8 @@ async def generate_proposal(client, request):
                        if messages[i].get('role') == 'user' and not messages[i].get('_harness_control')), -1)
     current_turn = messages[user_index:] if user_index >= 0 else []
     completed_calls = _completed_calls(current_turn)
-    latest_request = str(messages[user_index].get('content') or '') if user_index >= 0 else ''
+    latest_request = _message_text(messages[user_index].get('content')) if user_index >= 0 else ''
     latest_tool = next((m for m in reversed(current_turn) if m.get('role') == 'tool'), None)
-    # A single explicit read-and-report request is complete once its read has
-    # returned. Keep the source visible so a small model cannot omit requested
-    # parts or repeat the read. Compound requests still use the full tool set.
-    latest_tool_id = latest_tool.get('tool_call_id') if latest_tool else None
-    latest_read = any(call.get('id') == latest_tool_id and (call.get('function') or {}).get('name') == 'read_file'
-                      for message in current_turn if message.get('role') == 'assistant'
-                      for call in (message.get('tool_calls') or []))
-    simple_read = bool(latest_tool and latest_read
-        and re.match(r'^\s*(?:please\s+)?read\b', latest_request, re.I)
-        and re.search(r'\b(?:contents?|text)\b|\btitle\b.*\bsentence\b|\bsentence\b.*\btitle\b', latest_request, re.I)
-        and not re.search(r'\b(?:write|save|create|edit|send|email|delete|search|browse|compare|translate|schedule|summari[sz]e)\b', latest_request, re.I))
-    if simple_read:
-        result_text = str(latest_tool.get('content') or '')
-        try:
-            parsed_result = json.loads(result_text)
-        except (TypeError, ValueError):
-            parsed_result = None
-        failed = bool(isinstance(parsed_result, dict) and (parsed_result.get('error') or parsed_result.get('exit_code') not in (None, 0)))
-        if result_text and not failed and not re.match(r'^\s*(?:error|failed|denied)\b', result_text, re.I):
-            return {'content': result_text}
     for attempt in range(2):
         response = await client.post('http://127.0.0.1:11434/api/chat', json=payload)
         response.raise_for_status()

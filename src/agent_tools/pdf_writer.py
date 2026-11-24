@@ -27,19 +27,16 @@ def pdf_creation_requested(text: str) -> bool:
 
 
 def single_pdf_request(text: str) -> bool:
-    """Identify a simple PDF request that needs no additional operation."""
-    if not pdf_creation_requested(text):
-        return False
-    # Filenames and quoted document content are data, not follow-up actions.
-    text = re.sub(r'"[^"\n]*"|\b[\w.-]+\.[A-Za-z0-9]{1,8}\b', '', str(text or ''))
-    return not re.search(
-        r"\b(?:then|also|afterwards?|subsequently)\b|"
-        r"\b(?:send|email|upload|share|search|browse|research|download|"
-        r"summari[sz]e|translate|edit|update|delete|schedule|verify|check|inspect|test|review)\b|"
-        r"\b(?:and|plus)\s+(?:a\s+|an\s+|the\s+|another\s+)?"
-        r"(?:file|document|spreadsheet|image|presentation|csv|docx|xlsx|pdf)\b",
-        text, re.I,
-    )
+    """Short-circuit only a complete, unambiguous request for one PDF.
+
+    Anything with extra natural-language instructions must continue through
+    the model; a denylist cannot establish that all work has been completed.
+    """
+    return bool(re.fullmatch(
+        r"\s*(?:please\s+)?(?:create|make|generate|produce|build|render|write|save)\s+"
+        r"(?:a\s+)?pdf(?:\s+(?:named|called)\s+[\w.-]+\.pdf)?\s*[.!]?\s*",
+        str(text or ''), re.I,
+    ))
 
 
 def render_pdf(text: str) -> bytes:

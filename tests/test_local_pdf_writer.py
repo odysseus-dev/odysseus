@@ -263,8 +263,11 @@ def test_pdf_continuation_only_shortcuts_standalone_requests():
     from src.agent_tools.pdf_writer import single_pdf_request, pdf_creation_requested
     assert pdf_creation_requested('Use write_file to create ocean-sample-26.pdf containing Ocean')
     assert not pdf_creation_requested('Write a summary of report.pdf')
-    assert single_pdf_request('Create a PDF with a title and a sentence')
-    assert single_pdf_request('Create a PDF named auto-check-2026.pdf with the title "Verification check"')
+    assert single_pdf_request('Create a PDF')
+    assert single_pdf_request('Create a PDF named auto-check-2026.pdf')
+    assert not single_pdf_request('Create a PDF with a title and a sentence')
+    assert not single_pdf_request('Create a PDF named a.pdf and another named b.pdf')
+    assert not single_pdf_request('Create a PDF named a.pdf and explain its contents')
     assert not single_pdf_request('Create a PDF and then email it')
     assert not single_pdf_request('Create a PDF and verify it')
     assert not single_pdf_request('Create a PDF and a spreadsheet')
@@ -290,7 +293,7 @@ def test_approved_simple_pdf_finishes_without_duplicate_tool_call(tmp_path, monk
         raise AssertionError('A completed approved PDF should not be sent to the model again')
         yield
     monkeypatch.setattr(al, 'stream_llm_with_fallback', no_model)
-    request = 'Create a PDF named result.pdf in the workspace with the title Hello'
+    request = 'Create a PDF named result.pdf'
     content = json.dumps({'path':'result.pdf','format':'pdf','content':'# Hello'})
     authority = create_request_authority(request, owner='alice', session_id='pdf-s', workspace=str(tmp_path))
     store = ToolApprovalStore()
@@ -363,17 +366,20 @@ async def test_mistral_envelope_executes_pdf_writer_through_preview(tmp_path, mo
     call={'name':'write_file','arguments':{'path':'mistral-test.pdf','content':'Ocean','format':'pdf'}}
     text=marker+json.dumps([call, call])
     class Response:
+        def __init__(self, content): self.content = content
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         def raise_for_status(self): pass
         async def aiter_lines(self):
-            yield 'data: '+json.dumps({'choices':[{'delta':{'content':text}}]})
+            yield 'data: '+json.dumps({'choices':[{'delta':{'content':self.content}}]})
             yield 'data: [DONE]'
     class Client:
-        def __init__(self, **kwargs): pass
+        def __init__(self, **kwargs): self.count = 0
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
-        def stream(self, *args, **kwargs): return Response()
+        def stream(self, *args, **kwargs):
+            self.count += 1
+            return Response(text if self.count == 1 else 'The PDF is ready.')
     monkeypatch.setattr(preview.httpx, 'AsyncClient', Client)
     schemas=[s for s in FUNCTION_TOOL_SCHEMAS if s['function']['name']=='write_file']
     contract=resolve_full_inventory_contract(schemas=schemas,policy=ToolPolicy())
