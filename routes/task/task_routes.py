@@ -770,10 +770,24 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     )
                 except ValueError as exc:
                     raise HTTPException(400, str(exc)) from exc
+            schedule_changed = False
             if req.trigger_type is not None:
+                prev_trigger = task.trigger_type or "schedule"
                 # Generate webhook token when switching to webhook trigger
                 if req.trigger_type == "webhook" and not task.webhook_token:
                     task.webhook_token = secrets.token_urlsafe(32)
+                if req.trigger_type != "schedule":
+                    # Cancel any pending schedule timer so _check_due_tasks cannot
+                    # fire a task that now waits on an event or webhook (#6588).
+                    task.next_run = None
+                    if prev_trigger == "schedule":
+                        task.schedule = None
+                        task.scheduled_time = None
+                        task.scheduled_day = None
+                        task.scheduled_date = None
+                        task.cron_expression = None
+                elif prev_trigger != "schedule":
+                    schedule_changed = True
                 task.trigger_type = req.trigger_type
             if req.trigger_event is not None:
                 task.trigger_event = req.trigger_event
@@ -793,7 +807,6 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.cron_expression = req.cron_expression or None
 
             # Recompute next_run if schedule changed
-            schedule_changed = False
             if req.schedule is not None:
                 task.schedule = req.schedule
                 schedule_changed = True
