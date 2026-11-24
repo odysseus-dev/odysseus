@@ -474,13 +474,14 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         raise TypeError("Authority requires trusted request text")
     intent = interpret_request(request_text, history=history, active_document=active_document,
                                workspace=workspace, image_attachment=image_attachment)
-    families = intent.capabilities
-    if capabilities is not None:
-        families |= frozenset(capabilities)
+    extra_caps = frozenset(capabilities) - intent.capabilities if capabilities is not None else frozenset()
+    families = intent.capabilities | extra_caps
     tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in families))
     selected = intent.selected_tools
     if selected is not None:
         tools = tools & set(selected) if families else set(selected)
+        if extra_caps:
+            tools.update(*(FAMILY_TOOLS.get(f, ()) for f in extra_caps))
         if tools & {"web_search", "web_fetch"}:
             tools.add("private_browser")
     operation = intent.required_read
@@ -500,7 +501,7 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
             if re.search(r"\b(?:browser|browse|private_browser)\b", request_text, re.I):
                 actions |= frozenset(action for action in ("click", "fill", "type", "press", "evaluate", "select")
                                      if re.search(r"\b" + action + r"\b", request_text, re.I))
-        if operation is not None and name == canonical_tool(operation.tool):
+        if operation is not None and name == canonical_tool(operation.tool) and name != "web_search":
             inputs = frozenset({ExactOperation.normalize(name, _json(dict(operation.args))).input})
         grants.append(OperationGrant(name, actions, inputs))
     authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ""),

@@ -403,20 +403,38 @@ def _package_pip_update_status(
 
 
 def _prepend_user_install_bins_to_path() -> None:
-    """Make pip --user console scripts visible to dependency probes.
+    """Make pip --user and interpreter console scripts visible to dependency probes.
 
     Docker Cookbook installs vLLM with `python -m pip install --user`, which
-    drops the `vllm` CLI in /app/.local/bin. The running app process does not
-    inherit that PATH update, so `shutil.which("vllm")` can report missing even
-    after a successful install.
+    drops the `vllm` CLI in /app/.local/bin (or sysconfig scripts dirs). The
+    running app process does not inherit that PATH update, so `shutil.which("vllm")`
+    can report missing even after a successful install.
     """
+    import sys
+    import sysconfig
+
+    candidates = []
     try:
         import site
 
-        candidates = [os.path.join(site.USER_BASE, "bin")]
+        if getattr(site, "USER_BASE", None):
+            candidates.append(os.path.join(site.USER_BASE, "bin"))
     except Exception:
-        candidates = []
-    candidates.append(os.path.expanduser("~/.local/bin"))
+        pass
+    candidates.append(os.path.normpath(os.path.expanduser("~/.local/bin")))
+    if getattr(sys, "executable", None):
+        candidates.append(os.path.dirname(os.path.abspath(sys.executable)))
+    for scheme in (None, "posix_user"):
+        try:
+            scripts_dir = (
+                sysconfig.get_path("scripts", scheme)
+                if scheme
+                else sysconfig.get_path("scripts")
+            )
+            if scripts_dir:
+                candidates.append(scripts_dir)
+        except Exception:
+            pass
 
     parts = (
         os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
@@ -428,6 +446,27 @@ def _prepend_user_install_bins_to_path() -> None:
             changed = True
     if changed:
         os.environ["PATH"] = os.pathsep.join(parts)
+
+
+def _resolve_local_vllm_cli(venv: str | None = None) -> str | None:
+    """Resolve the local `vllm` executable across PATH, user-base, scripts dirs, and optional venv."""
+    _prepend_user_install_bins_to_path()
+    search_dirs: list[str] = []
+    if venv and str(venv).strip():
+        expanded = os.path.expanduser(str(venv).strip())
+        bin_sub = "Scripts" if os.name == "nt" else "bin"
+        search_dirs.append(os.path.join(expanded, bin_sub))
+    for d in search_dirs:
+        exe_name = "vllm.exe" if os.name == "nt" else "vllm"
+        candidate = os.path.join(d, exe_name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which("vllm")
+
+
+def invalidate_package_status_cache() -> None:
+    """Clear cached `/api/cookbook/packages` results (e.g. after a dependency install completes)."""
+    _PACKAGE_STATUS_CACHE.clear()
 
 
 def _package_probe_script(names: list[str]) -> str:
@@ -1875,7 +1914,7 @@ def setup_shell_routes() -> APIRouter:
                     "dists": {},
                 }
             elif pkg["name"] == "vllm":
-                _vllm_cli = shutil.which("vllm")
+                _vllm_cli = _resolve_local_vllm_cli(venv)
                 pkg["installed"] = _vllm_cli is not None
                 if pkg["installed"]:
                     try:

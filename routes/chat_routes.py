@@ -3411,12 +3411,20 @@ def setup_chat_routes(
             getattr(sess, "history", []) or [],
             message,
         )
+        from src.turn_contract import result_reference_followup as _is_result_ref_followup
+        _has_recent_web = _has_recent_web_tool_event(sess)
+        if not _has_recent_web and _is_result_ref_followup(message):
+            try:
+                _has_recent_web = _has_recent_web_tool_event(sess, limit=4)
+            except TypeError:
+                _has_recent_web = False
         _contextual_web_turn_followup = bool(
-            "search_browser" in _turn_capabilities
-            and _is_contextual_web_followup(message, sess)
-            and _has_recent_web_tool_event(sess)
+            ("search_browser" in _turn_capabilities or _is_result_ref_followup(message))
+            and _has_recent_web
             and not _explicitly_denies_web_lookup(message)
         )
+        if _contextual_web_turn_followup and "search_browser" not in _turn_capabilities:
+            _turn_capabilities = frozenset(_turn_capabilities) | frozenset({"search_browser"})
         _clean_v3_web_intent = bool(
             _clean_v3_route_requested
             and "search_browser" in _turn_capabilities
@@ -3577,6 +3585,10 @@ def setup_chat_routes(
             from src.tool_security import plan_mode_disabled_tools
             disabled_tools.update(plan_mode_disabled_tools())
 
+        if _contextual_web_turn_followup and not incognito and not (compare_mode and chat_mode == "chat"):
+            _blocked_web = set(_global_disabled) if isinstance(_global_disabled, list) else set()
+            disabled_tools.difference_update(set(WEB_TOOL_NAMES) - _blocked_web)
+
         tool_policy = build_effective_tool_policy(
             disabled_tools=disabled_tools,
             last_user_message=message,
@@ -3631,7 +3643,7 @@ def setup_chat_routes(
             image_attachment=any(str(a.get('mime') or '').startswith('image/')
                                  for a in (ctx.preprocessed.attachment_meta or [])),
             capabilities=(({"photo_editor"} if _photo_editor_active else set()) | ({'search_browser'} if (
-                _explicit_browser_intent or _external_discovery_intent
+                _explicit_browser_intent or _external_discovery_intent or _contextual_web_turn_followup
             ) else set())),
         )
         if exact_tool_approval is not None:
@@ -4734,6 +4746,7 @@ def setup_chat_routes(
                         context_resolution=(
                             _compact_context_resolution if _clean_v3_preview else None
                         ),
+                        effective_chat_mode=_effective_mode,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

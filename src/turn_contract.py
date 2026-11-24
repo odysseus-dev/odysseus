@@ -108,9 +108,9 @@ def _mentions_under_budget(text: str) -> bool:
 _FAMILY_WORDS = {
     "calendar": r"\b(?:calendar|calender|events?|appointments?|meetings?|agenda)\b",
     "notes": r"\b(?:notes?|checklists?|groceries|remind\s+me)\b",
-    "tasks": r"\b(?:tasks?|todos?|schedul(?:ed|d)\s+jobs?|automations?)\b",
+    "tasks": r"(?<!\bthis\s)(?<!\bthat\s)(?<!\bthe\s)(?<!\bcurrent\s)\btasks?\b|\b(?:todos?|schedul(?:ed|d)\s+jobs?|automations?)\b",
     "skills": r"\bskills?\b",
-    "memory": r"\b(?:memory|memories|memores|remember|forget|past\s+chats?|previous\s+conversations?)\b",
+    "memory": r"\b(?:memory|memories|memores|remember|forget|past\s+chats?|previous\s+conversations?|from\s+home|home\s+address|my\s+(?:home|address|location)|where\s+i\s+live)\b",
     "documents": r"\b(?:documents?|documets?|docs?|editor)\b",
     "email": r"\b(?:emails?|inbox|mailbox|mail|spam)\b",
     "search_browser": r"\b(?:search\s+(?:the\s+)?web|web|online|browse|browser|websites?|sites?|news|weather|youtube|arxiv|hugging\s*face)\b|https?://|\b\w+\.(?:com|org|net|io)\b",
@@ -4528,6 +4528,8 @@ def result_reference_followup(message: str) -> bool:
         r"|(?:more\s+)?(?:info(?:rmation)?|details?)(?:\s+(?:on|about)\s+(?:that|this|it))?"
         r"|(?:give|show|send)\s+(?:me\s+)?(?:the\s+)?(?:links?|sources?|urls?)(?:\s+(?:for|to)\s+(?:that|this|it|those|these))?"
         r"|(?:open|read|expand)\s+(?:that|this|it|the\s+(?:first|second|third|last)\s+(?:one|result|link|source))"
+        r"|which\s+(?:[\w'-]+\s+){0,3}(?:had|has|have|was|were|is|are|offers?|offered|lists?|listed)\s+the\s+(?:[\w'-]+\s+){1,2}(?:one|ones|price|deal|option)"
+        r"|which\s+(?:one|ones)\s+(?:is|was|had|has|are|were)\s+(?:the\s+)?(?:[\w'-]+\s*){1,3}"
         r")(?:\s+(?:please|pls))?[.!?]*\s*", str(message or ''), re.I,
     ))
 
@@ -4542,19 +4544,24 @@ def immediately_established_family(message: str, history: Iterable) -> str | Non
     rows = tuple(history or ())
     assistant_index = None
     families: set[str] = set()
+    checked_assistants = 0
     for index in range(len(rows) - 1, -1, -1):
         row = rows[index]
         role = row.get("role") if isinstance(row, dict) else getattr(row, "role", "")
         if role != "assistant":
             continue
-        assistant_index = index
+        checked_assistants += 1
         metadata = row.get("metadata") if isinstance(row, dict) else getattr(row, "metadata", None)
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
             except (TypeError, json.JSONDecodeError):
                 metadata = {}
-        for event in (metadata or {}).get("tool_events") or ():
+        tool_events = (metadata or {}).get("tool_events") or ()
+        if not tool_events and checked_assistants < 2:
+            continue
+        assistant_index = index
+        for event in tool_events:
             if event.get("error") is True or event.get("exit_code") not in (None, 0):
                 continue
             families.update(_families_for_tool(canonical_tool(event.get("tool", ""))))
@@ -6181,6 +6188,12 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     clauses = re.split(r"[;\n]|[.!?]\s+|\b(?:and|then)\s+(?=" + _ACTION_REQUEST + r")",
                        text, flags=re.I)
     families = set().union(*(_clause_capabilities(clause) for clause in clauses))
+    if re.search(
+        r"\b(?:from\s+home|home\s+address|my\s+(?:home|address|location)|where\s+i\s+live)\b",
+        text,
+        re.I,
+    ):
+        families.add("memory")
     if re.search(r"(?:file://)?/tmp_workspace(?:/|\b)", text, re.I):
         families.add("shell_files")
     if (
@@ -6280,7 +6293,13 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
                 if role == "user" and content != message:
                     families.update(requested_capabilities(content, rows[:index]))
                     break
-    if not families and (_has_action_signal(text) or _LOOKUP.search(text) or _CONVERSATIONAL_FOLLOWUP.search(text)):
+    _anaphoric_task_followup = bool(re.search(
+        r"\b(?:continue|finish|resume|proceed\s+with|help\s+with|need\s+from\s+me)\b[^?!.]{0,80}"
+        r"\b(?:this|that|the|current)\s+task\b",
+        text,
+        re.I,
+    ))
+    if not families and (_has_action_signal(text) or _LOOKUP.search(text) or _CONVERSATIONAL_FOLLOWUP.search(text) or _anaphoric_task_followup):
         rows = list(history)
         for index in range(len(rows) - 1, -1, -1):
             row = rows[index]
