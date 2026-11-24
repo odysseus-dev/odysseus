@@ -21234,6 +21234,33 @@ async def _spec_router_contract_async(turn_contract, messages, disabled_tools, e
         return turn_contract
 
 
+def _deferred_approval_calls_note(deferred_tool_calls) -> str:
+    """Tell the model which calls an approval card cut from its last batch.
+
+    The card is a turn boundary, so calls after the gated one never ran. The
+    approval covers only the sealed action; this note grants nothing. It only
+    keeps the model from treating the batch as finished, and any call it
+    re-issues goes through the normal authority and gate checks.
+    """
+    names = [str(name) for name in (deferred_tool_calls or ()) if str(name).strip()]
+    if not names:
+        return ""
+    counts: dict[str, int] = {}
+    for name in names:
+        counts[name] = counts.get(name, 0) + 1
+    summary = ", ".join(
+        f"{name} x{count}" if count > 1 else name for name, count in counts.items()
+    )
+    plural = "call" if len(names) == 1 else "calls"
+    return (
+        f"[Approval note: the user approved the action above and it ran. Your "
+        f"previous response also requested {len(names)} more tool {plural} "
+        f"({summary}) that did NOT run, because the approval request paused "
+        f"that batch. If they are still needed, issue them again now. Do not "
+        f"say they were completed unless a tool result shows it.]"
+    )
+
+
 @with_request_authority
 @with_turn_contract
 @with_teacher_takeover
@@ -25973,6 +26000,21 @@ async def stream_agent_loop(
         if approved.tool_name in _VERIFIER_EFFECTFUL_TOOLS:
             _effectful_used = True
         formatted_approved_result = format_tool_result(desc, approved_result)
+        # Calls the card cut from the original batch. When the approved action
+        # succeeded and others are still outstanding, the batch is not done:
+        # give the model a round instead of ending on "Done." or the bare
+        # approved result (#7278).
+        _deferred_after_approval = (
+            tuple(getattr(approved, "deferred_tool_calls", ()) or ())
+            if approval_matches and tool_result_is_successful(approved_result)
+            else ()
+        )
+        if _deferred_after_approval:
+            formatted_approved_result = (
+                formatted_approved_result.rstrip()
+                + "\n\n"
+                + _deferred_approval_calls_note(_deferred_after_approval)
+            )
         _append_tool_results(
             messages,
             "",
@@ -26002,7 +26044,8 @@ async def stream_agent_loop(
                 or (approved.tool_name in {"create_document", "edit_document", "update_document"})
             )
         )
-        if _approved_effectful:
+        # "Done." is only true when the approved action was the whole batch.
+        if _approved_effectful and not _deferred_after_approval:
             full_response = "Done."
             # The approval question was streamed on the original request and
             # is already rendered as its own approval card. On the approval
@@ -26016,6 +26059,7 @@ async def stream_agent_loop(
             tool_result_is_successful(approved_result)
             and _qwen38_tool_router
             and not _approved_effectful
+            and not _deferred_after_approval
             and not (
                 _approved_title_lookup
             )
@@ -33793,6 +33837,13 @@ async def stream_agent_loop(
                         request_text=_last_user,
                         request_authority=active_request_authority(),
                         client_runtime_context=client_runtime_context,
+                        # This card ends the batch (see the turn boundary
+                        # below), so record which later calls will not run.
+                        # The continuation reports them to the model instead
+                        # of replying "Done." as if the batch had finished.
+                        deferred_tool_calls=[
+                            later.tool_type for later in tool_blocks[i + 1:]
+                        ],
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
                     result = {
