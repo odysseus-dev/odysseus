@@ -4528,6 +4528,8 @@ def result_reference_followup(message: str) -> bool:
         r"|(?:more\s+)?(?:info(?:rmation)?|details?)(?:\s+(?:on|about)\s+(?:that|this|it))?"
         r"|(?:give|show|send)\s+(?:me\s+)?(?:the\s+)?(?:links?|sources?|urls?)(?:\s+(?:for|to)\s+(?:that|this|it|those|these))?"
         r"|(?:open|read|expand)\s+(?:that|this|it|the\s+(?:first|second|third|last)\s+(?:one|result|link|source))"
+        r"|which\s+(?:[\w'-]+\s+){0,3}(?:had|has|have|was|were|is|are|offers?|offered|lists?|listed)\s+the\s+(?:[\w'-]+\s+){1,2}(?:one|ones|price|deal|option)"
+        r"|which\s+(?:one|ones)\s+(?:is|was|had|has|are|were)\s+(?:the\s+)?(?:[\w'-]+\s*){1,3}"
         r")(?:\s+(?:please|pls))?[.!?]*\s*", str(message or ''), re.I,
     ))
 
@@ -4542,19 +4544,24 @@ def immediately_established_family(message: str, history: Iterable) -> str | Non
     rows = tuple(history or ())
     assistant_index = None
     families: set[str] = set()
+    checked_assistants = 0
     for index in range(len(rows) - 1, -1, -1):
         row = rows[index]
         role = row.get("role") if isinstance(row, dict) else getattr(row, "role", "")
         if role != "assistant":
             continue
-        assistant_index = index
+        checked_assistants += 1
         metadata = row.get("metadata") if isinstance(row, dict) else getattr(row, "metadata", None)
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
             except (TypeError, json.JSONDecodeError):
                 metadata = {}
-        for event in (metadata or {}).get("tool_events") or ():
+        tool_events = (metadata or {}).get("tool_events") or ()
+        if not tool_events and checked_assistants < 2:
+            continue
+        assistant_index = index
+        for event in tool_events:
             if event.get("error") is True or event.get("exit_code") not in (None, 0):
                 continue
             families.update(_families_for_tool(canonical_tool(event.get("tool", ""))))

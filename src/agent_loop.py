@@ -21292,6 +21292,7 @@ async def stream_agent_loop(
     _parent_run_id: Optional[str] = None,
     request_authority=MISSING_AUTHORITY,
     context_resolution=None,
+    effective_chat_mode: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -22045,7 +22046,8 @@ async def stream_agent_loop(
         logger.info("[agent-intent] contextual email follow-up inherited email tool surface")
     _minimal_explicit_notes_mode = (
         _looks_like_explicit_notes_only_turn(_last_user)
-        and not (_explicit_email_action_turn or _contextual_email_followup)
+        and not _contextual_email_followup
+    and not (_explicit_email_action_turn and re.search(r"\b(?:email|emails|mail|inbox|message|messages|thread|uid|draft|unread|spam|unsubscribe)\b", _last_user, re.IGNORECASE))
     )
     if _minimal_explicit_notes_mode:
         # Notes are a normal user-domain operation, not an admin request. Keep
@@ -23258,7 +23260,35 @@ async def stream_agent_loop(
             and "files" not in _intent_domains
             and not guide_only
         )
-        general_no_tool_mode = (
+        _norm_chat_mode = str(effective_chat_mode or "").strip().lower()
+        _explicit_chat_no_tool = (
+            _norm_chat_mode == "chat"
+            and not _runtime_skill_tools
+            and not doc_mode
+            and not notes_mode
+            and not guide_only
+            and not plan_mode
+            and turn_contract is None
+            and not forced_tools
+            and not relevant_tools
+            and not uploaded_files
+            and not active_document
+            and not active_email
+            and not workspace
+            and not _contextual_email_followup
+            and not (_explicit_email_action_turn and re.search(r"\b(?:email|emails|mail|inbox|message|messages|thread|uid|draft|unread|spam|unsubscribe)\b", _last_user, re.IGNORECASE))
+            and not _contextual_public_web_followup
+            and not _explicitly_named_personal_tools(_last_user)
+            and not re.search(r"\b(?:ask_teacher|chat_with_model|pipeline)\b", _last_user, re.IGNORECASE)
+            and not _looks_like_notes_turn(_last_user)
+            and not _weather_tool_relevant(messages, _last_user)
+            and not re.search(
+                r"https?://|\b(?:search|look\s*up|google|browse|fetch|scrape|youtube|weather|forecast|calendar|email|inbox|note|notes|task|tasks|remind|memory|memories|file|files|folder|directory|terminal|shell|bash|python|script|code|model|models|endpoint|download|serve)\b",
+                _last_user,
+                re.IGNORECASE,
+            )
+        )
+        general_no_tool_mode = _explicit_chat_no_tool or (
             is_ody
             and not _runtime_skill_tools
             and not doc_mode
@@ -23540,6 +23570,7 @@ async def stream_agent_loop(
         workspace and _native_local_media_inputs(_last_user, client_runtime_context)
     )
     _pure_web_turn = (
+        not _ody_general_no_tool_mode and
         _intent_domains == {"web"}
         and not _explicit_no_web_lookup
         and not _contextual_public_web_followup
@@ -23876,6 +23907,17 @@ async def stream_agent_loop(
     # artifact surface). Initialize it once at request scope so every route
     # uses the same security boundary.
     _hard_blocked_tools = set(public_blocked_tools) | _caller_disabled_tools | _caller_hard_denials
+    if _ody_general_no_tool_mode and not _native_terminal_runtime:
+        try:
+            disabled_tools.update(known_tool_names())
+        except Exception:
+            pass
+        _relevant_tools = set()
+        _base_relevant_tools = set()
+    if _relevant_tools is not None:
+        _relevant_tools.difference_update(set(disabled_tools) | _hard_blocked_tools)
+    if _base_relevant_tools is not None:
+        _base_relevant_tools.difference_update(set(disabled_tools) | _hard_blocked_tools)
 
     # Keep the small, general agent surface stable across compact-router
     # decisions. Domain RAG may add tools, but it must not make the agent
@@ -24142,6 +24184,22 @@ async def stream_agent_loop(
             _base_relevant_tools.difference_update(_DOMAIN_TOOL_MAP["files"])
 
     if _relevant_tools is not None:
+        _relevant_tools.difference_update(set(disabled_tools) | _hard_blocked_tools)
+        if _base_relevant_tools is not None:
+            _base_relevant_tools.difference_update(set(disabled_tools) | _hard_blocked_tools)
+        if request_authority is not MISSING_AUTHORITY and hasattr(request_authority, "grants"):
+            _auth_granted = {
+                str(getattr(g, "tool", "") or "").strip()
+                for g in (getattr(request_authority, "grants", None) or ())
+                if getattr(g, "tool", None)
+            }
+            _relevant_tools.intersection_update(_auth_granted)
+            if _base_relevant_tools is not None:
+                _base_relevant_tools.intersection_update(_auth_granted)
+        if _ody_general_no_tool_mode and not _native_terminal_runtime:
+            _relevant_tools.clear()
+            if _base_relevant_tools is not None:
+                _base_relevant_tools.clear()
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
     prep_timings["tool_selection"] = time.time() - _t1
@@ -24850,6 +24908,7 @@ async def stream_agent_loop(
             "ody_doc_finetune_mode": doc_mode,
             "ody_notes_finetune_mode": notes_mode,
             "ody_doc_stream_create_mode": stream_create_mode,
+            "ody_general_no_tool_mode": _general_no_tool_mode,
             "thinking_mode": thinking_mode or _thinking_mode_for_route(
                 model=candidate_model,
                 tool_surface=tool_surface,
@@ -25382,7 +25441,7 @@ async def stream_agent_loop(
             convergence_sent=_artifact_finish_convergence_sent,
         ):
             return []
-        if tool_surface == "none":
+        if tool_surface == "none" or route_state.get("ody_general_no_tool_mode"):
             return []
         if qwen38_router and not tool_surface:
             # These router LoRAs were trained with `--no-tools`: the compact
@@ -26342,6 +26401,7 @@ async def stream_agent_loop(
             "ody_doc_finetune_mode": _ody_doc_finetune_mode,
             "ody_notes_finetune_mode": _ody_notes_finetune_mode,
             "ody_doc_stream_create_mode": _ody_doc_stream_create_mode,
+            "ody_general_no_tool_mode": _ody_general_no_tool_mode,
             "compaction_state": (
                 _route_state.get("compaction_state", {})
                 if round_num == 1
@@ -26384,6 +26444,8 @@ async def stream_agent_loop(
             _routing_intentional_exclusions.update(
                 _selected_for_audit - _artifact_allowed_for_audit
             )
+        if _relevant_tools is not None:
+            _relevant_tools.difference_update(set(disabled_tools) | _hard_blocked_tools)
         _routing_audit = _tool_routing_audit_payload(
             round_num=round_num,
             retrieved_tools=_base_relevant_tools,
@@ -30374,7 +30436,13 @@ async def stream_agent_loop(
         _forced_notes_request = _parse_simple_notes_tool_request(_last_user)
         _has_notes_block = any(block.tool_type == "manage_notes" for block in tool_blocks)
         _notes_definition_answer = _notes_general_definition_answer(_last_user)
-        if _notes_definition_answer and _has_notes_block and not guide_only:
+        if (
+            _notes_definition_answer
+            and _has_notes_block
+            and not _forced_notes_request
+            and not re.search(r"\b(?:create|add|write|save|update|edit|delete|remove|list|show|search|find)\b", _last_user, re.IGNORECASE)
+            and not guide_only
+        ):
             if round_texts:
                 round_texts.pop()
             if round_models:
