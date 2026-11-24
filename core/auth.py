@@ -154,14 +154,15 @@ class SetAdminResult(enum.Enum):
 
 
 _DEFAULT_AUTH_MANAGER: Optional["AuthManager"] = None
-_REAL_AUTH_MANAGER = None
+_DEFAULT_AUTH_MANAGER_LOCK = threading.Lock()
 
 
 def get_auth_manager(auth_path: str = DEFAULT_AUTH_PATH) -> "AuthManager":
     global _DEFAULT_AUTH_MANAGER
-    if _DEFAULT_AUTH_MANAGER is None:
-        _DEFAULT_AUTH_MANAGER = AuthManager(auth_path)
-    return _DEFAULT_AUTH_MANAGER
+    with _DEFAULT_AUTH_MANAGER_LOCK:
+        if _DEFAULT_AUTH_MANAGER is None:
+            _DEFAULT_AUTH_MANAGER = AuthManager(auth_path)
+        return _DEFAULT_AUTH_MANAGER
 
 
 class _UserLifecycleLock:
@@ -173,49 +174,69 @@ class _UserLifecycleLock:
         self._readers = 0
         self._writers = 0
         self._writer_waiting = 0
+        self._reader_threads: Dict[int, int] = {}
+        self._writer_tid: Optional[int] = None
+        self._writer_depth: int = 0
 
     @contextlib.contextmanager
     def read_lock(self):
+        tid = threading.get_ident()
         with self._lock:
-            while self._writers > 0 or self._writer_waiting > 0:
-                self._readers_ok.wait()
-            self._readers += 1
+            if self._reader_threads.get(tid, 0) > 0:
+                self._reader_threads[tid] += 1
+            else:
+                while self._writers > 0 or self._writer_waiting > 0:
+                    self._readers_ok.wait()
+                self._readers += 1
+                self._reader_threads[tid] = 1
         try:
             yield
         finally:
             with self._lock:
-                self._readers -= 1
-                if self._readers == 0:
-                    self._writers_ok.notify()
+                self._reader_threads[tid] -= 1
+                if self._reader_threads[tid] == 0:
+                    del self._reader_threads[tid]
+                    self._readers -= 1
+                    if self._readers == 0:
+                        self._writers_ok.notify()
 
     @contextlib.contextmanager
     def write_lock(self):
+        tid = threading.get_ident()
         with self._lock:
-            self._writer_waiting += 1
-            while self._readers > 0 or self._writers > 0:
-                self._writers_ok.wait()
-            self._writer_waiting -= 1
-            self._writers = 1
+            if self._writer_tid == tid:
+                self._writer_depth += 1
+            else:
+                self._writer_waiting += 1
+                while self._readers > 0 or self._writers > 0:
+                    self._writers_ok.wait()
+                self._writer_waiting -= 1
+                self._writers = 1
+                self._writer_tid = tid
+                self._writer_depth = 1
         try:
             yield
         finally:
             with self._lock:
-                self._writers = 0
-                if self._writer_waiting > 0:
-                    self._writers_ok.notify()
-                else:
-                    self._readers_ok.notify_all()
+                self._writer_depth -= 1
+                if self._writer_depth == 0:
+                    self._writers = 0
+                    self._writer_tid = None
+                    if self._writer_waiting > 0:
+                        self._writers_ok.notify()
+                    else:
+                        self._readers_ok.notify_all()
 
 
 class AuthManager:
     """Manages multi-user password + session-token auth system."""
 
     def __init__(self, auth_path: str = DEFAULT_AUTH_PATH):
-        global _DEFAULT_AUTH_MANAGER
-        _DEFAULT_AUTH_MANAGER = self
         self.auth_path = auth_path
         self._last_loaded_mtime: float = 0.0
         self._last_loaded_size: int = 0
+        self._store_established: bool = False
+        self._load_error: bool = False
         self._sessions_path = os.path.join(os.path.dirname(auth_path), "sessions.json")
         self._config: Dict[str, Any] = {}
         self._sessions: Dict[str, Dict[str, Any]] = {}  # token -> {username, expiry}
@@ -232,11 +253,17 @@ class AuthManager:
         self._cross_process_lock_depth = 0
         self._lifecycle_locks: Dict[str, _UserLifecycleLock] = {}
         self._lifecycle_meta_lock = threading.Lock()
-        self._load()
-        self._load_sessions()
-        self._migrate_single_user()
-        self._drop_reserved_loaded_users()
-        self._migrate_legacy_admin_role()
+        try:
+            self._load()
+            self._load_sessions()
+            self._migrate_single_user()
+            self._drop_reserved_loaded_users()
+            self._migrate_legacy_admin_role()
+        except Exception as e:
+            logger.error("Initial auth load failed: %s", e)
+            if not os.path.exists(self.auth_path):
+                self._config = {}
+                self._load_error = False
 
     def _get_user_lifecycle_lock(self, username: str) -> _UserLifecycleLock:
         norm = (username or "").strip().lower()
@@ -257,11 +284,20 @@ class AuthManager:
             yield
 
     @contextlib.contextmanager
-    def account_mutation_guard(self, actor: Optional[str] = None, owner: Optional[str] = None, db=None):
-        """Acquire shared read lock for actor and owner, validating active status before yielding to commit."""
+    def account_mutation_guard(
+        self,
+        actor: Optional[str] = None,
+        owner: Optional[str] = None,
+        recipients: Optional[Sequence[str]] = None,
+        user_creation_stamps: Optional[Dict[str, Optional[float]]] = None,
+        db=None,
+    ):
+        """Acquire shared read lock for actor, owner, and recipients, validating active status before yielding to commit."""
+        users_raw = [actor, owner]
+        if recipients:
+            users_raw.extend(recipients)
         users_to_lock = sorted(set(filter(None, [
-            (actor or "").strip().lower(),
-            (owner or "").strip().lower(),
+            (u or "").strip().lower() for u in users_raw
         ])))
 
         @contextlib.contextmanager
@@ -275,30 +311,95 @@ class AuthManager:
                 with _acquire_all(users[1:]):
                     yield
 
+        from core.note_writes import NotePermissionRevoked
         with _acquire_all(users_to_lock):
-            if not self._check_active_fail_closed(actor, owner, db=db):
+            try:
+                active_ok = self._check_active_fail_closed(
+                    actor,
+                    owner,
+                    recipients=recipients,
+                    user_creation_stamps=user_creation_stamps,
+                    db=db,
+                )
+            except Exception as exc:
+                if isinstance(exc, NotePermissionRevoked):
+                    raise
+                if db:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                logger.error("Lifecycle validation unexpected error: %s", exc)
+                raise NotePermissionRevoked("Authentication service unavailable; operation aborted", status_code=503) from exc
+            if not active_ok:
                 return
             yield
 
-    def _check_active_fail_closed(self, actor: Optional[str], owner: Optional[str], db=None) -> bool:
+    def _check_active_fail_closed(
+        self,
+        actor: Optional[str],
+        owner: Optional[str],
+        recipients: Optional[Sequence[str]] = None,
+        db=None,
+        user_creation_stamps: Optional[Dict[str, Optional[float]]] = None,
+    ) -> bool:
         norm_actor = (actor or "").strip().lower()
         norm_owner = (owner or "").strip().lower()
+        from core.note_writes import NotePermissionRevoked
         try:
-            if not getattr(self, "is_configured", False):
+            from src.owner_identity import auth_disabled
+            if auth_disabled():
                 return True
-            if norm_actor and not self.is_user_active(norm_actor):
+
+            if getattr(self, "_load_error", False):
                 if db:
-                    db.rollback()
-                from core.note_writes import NotePermissionRevoked
-                raise NotePermissionRevoked(f"Account '{norm_actor}' is inactive or pending deletion", status_code=403)
-            if norm_owner and not self.is_user_active(norm_owner):
-                if db:
-                    db.rollback()
-                from core.note_writes import NotePermissionRevoked
-                raise NotePermissionRevoked(f"Account '{norm_owner}' is inactive or pending deletion", status_code=403)
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                raise NotePermissionRevoked("Authentication service unavailable; operation aborted", status_code=503)
+
+            if not getattr(self, "is_configured", False):
+                if getattr(self, "_store_established", False) or self.deleting_users:
+                    if db:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                    raise NotePermissionRevoked("Authentication service unavailable; operation aborted", status_code=503)
+                return True
+
+            users_to_check = set(filter(None, [norm_actor, norm_owner]))
+            if recipients:
+                for r in recipients:
+                    norm_r = (r or "").strip().lower()
+                    if norm_r:
+                        users_to_check.add(norm_r)
+
+            for u in sorted(users_to_check):
+                if not self.is_user_active(u):
+                    if db:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                    raise NotePermissionRevoked(f"Account '{u}' is inactive or pending deletion", status_code=403)
+
+            if user_creation_stamps:
+                for u, expected_stamp in user_creation_stamps.items():
+                    norm_u = (u or "").strip().lower()
+                    if norm_u and expected_stamp is not None:
+                        actual_stamp = self.get_user_created_stamp(norm_u)
+                        if actual_stamp is None or abs(actual_stamp - expected_stamp) > 1e-4:
+                            if db:
+                                try:
+                                    db.rollback()
+                                except Exception:
+                                    pass
+                            raise NotePermissionRevoked(f"Account '{norm_u}' was recreated; stale mutation aborted", status_code=403)
+
             return True
         except Exception as exc:
-            from core.note_writes import NotePermissionRevoked
             if isinstance(exc, NotePermissionRevoked):
                 raise
             if db:
@@ -315,12 +416,16 @@ class AuthManager:
             try:
                 stat = os.stat(self.auth_path)
             except FileNotFoundError:
+                if getattr(self, "_store_established", False):
+                    self._load_error = True
+                    raise RuntimeError("Auth store file disappeared")
                 return
             mtime = stat.st_mtime
             size = stat.st_size
-            if getattr(self, "_last_loaded_mtime", 0.0) != mtime or getattr(self, "_last_loaded_size", 0) != size:
+            if getattr(self, "_last_loaded_mtime", 0.0) != mtime or getattr(self, "_last_loaded_size", 0) != size or getattr(self, "_load_error", False):
                 self._load()
         except Exception as e:
+            self._load_error = True
             logger.error("Failed to verify or refresh authentication configuration: %s", e)
             raise RuntimeError(f"Unable to verify fresh authentication configuration: {e}") from e
 
@@ -360,35 +465,88 @@ class AuthManager:
                 finally:
                     lock_handle.close()
 
+    def _validate_auth_config(self, config: Any) -> Dict[str, Any]:
+        """Validate structure of auth configuration dictionary."""
+        if not isinstance(config, dict):
+            raise ValueError("Auth configuration root must be a JSON object")
+
+        # Legacy single-user compatibility
+        if "password_hash" in config and "users" not in config:
+            if not isinstance(config["password_hash"], str) or not config["password_hash"]:
+                raise ValueError("Legacy single-user config has invalid password_hash")
+            return config
+
+        if "users" in config:
+            if not isinstance(config["users"], dict):
+                raise ValueError("'users' field in auth config must be an object")
+            for uname, udata in config["users"].items():
+                if not isinstance(uname, str) or not uname.strip():
+                    raise ValueError("User entry key must be a non-empty string")
+                if not isinstance(udata, dict):
+                    raise ValueError(f"User record for '{uname}' must be an object")
+                if "password_hash" in udata and not isinstance(udata["password_hash"], str):
+                    raise ValueError(f"User record for '{uname}' has invalid password_hash")
+
+        if "deleting" in config:
+            if not isinstance(config["deleting"], dict):
+                raise ValueError("'deleting' field in auth config must be an object")
+            for uname, ddata in config["deleting"].items():
+                if not isinstance(uname, str) or not uname.strip():
+                    raise ValueError("Tombstone entry key must be a non-empty string")
+                if not isinstance(ddata, dict):
+                    raise ValueError(f"Tombstone record for '{uname}' must be an object")
+
+        return config
+
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
                 try:
                     stat = os.stat(self.auth_path)
-                    self._last_loaded_mtime = stat.st_mtime
-                    self._last_loaded_size = stat.st_size
+                    cur_mtime = stat.st_mtime
+                    cur_size = stat.st_size
                 except Exception as e:
+                    self._load_error = True
                     raise RuntimeError(f"Failed to inspect auth file status: {e}") from e
+
                 with open(self.auth_path, "r", encoding="utf-8") as f:
-                    self._config = json.load(f)
+                    raw = json.load(f)
+
+                validated = self._validate_auth_config(raw)
                 # Normalize all stored usernames to lowercase so they match
                 # the .strip().lower() applied at login/verify time. Fixes
                 # "Invalid credentials" when auth.json was written with
                 # mixed-case keys (e.g. via manual edit or a future migration).
-                if "users" in self._config:
-                    self._config["users"] = {
+                if "users" in validated:
+                    validated["users"] = {
                         k.strip().lower(): v
-                        for k, v in self._config["users"].items()
+                        for k, v in validated["users"].items()
                     }
+                if "deleting" in validated:
+                    validated["deleting"] = {
+                        k.strip().lower(): v
+                        for k, v in validated["deleting"].items()
+                    }
+                self._config = validated
+                self._last_loaded_mtime = cur_mtime
+                self._last_loaded_size = cur_size
+                self._load_error = False
+                if len(self._config.get("users", {})) > 0 or len(self._config.get("deleting", {})) > 0:
+                    self._store_established = True
                 logger.info("Auth config loaded")
             else:
+                if getattr(self, "_store_established", False):
+                    self._load_error = True
+                    raise RuntimeError("Previously established auth store has disappeared")
                 self._config = {}
                 self._last_loaded_mtime = 0.0
                 self._last_loaded_size = 0
+                self._load_error = False
                 logger.info("No auth config found — first-run setup required")
         except Exception as e:
+            self._load_error = True
             logger.error(f"Failed to load auth config: {e}")
-            self._config = {}
+            raise
 
     def _load_sessions(self):
         """Load persisted session tokens from disk, pruning expired ones."""
@@ -503,7 +661,29 @@ class AuthManager:
 
     @property
     def is_configured(self) -> bool:
+        try:
+            self._ensure_fresh_config()
+        except Exception:
+            return True
+        if getattr(self, "_load_error", False):
+            return True
+        if getattr(self, "_store_established", False):
+            return True
+        if len(self.deleting_users) > 0:
+            return True
         return len(self.users) > 0
+
+    def get_user_created_stamp(self, username: str) -> Optional[float]:
+        """Return account creation timestamp for user, if known."""
+        norm = (username or "").strip().lower()
+        if not norm:
+            return None
+        with self._config_lock:
+            self._ensure_fresh_config()
+            user = self.users.get(norm)
+            if user and isinstance(user, dict):
+                return user.get("created")
+            return None
 
     def policy(self) -> dict:
         """Return public auth policy constants for the frontend."""
@@ -564,44 +744,45 @@ class AuthManager:
         if username in RESERVED_USERNAMES:
             logger.warning("Refused to create reserved username '%s'", username)
             return False
-        with self._cross_process_lock():
-            if username in self.users or username in self._config.get("deleting", {}):
-                # Active or pending-deletion account: duplicate creation attempt never touches or deletes active data
-                return False
-
-            if clean_orphaned:
-                try:
-                    from core.database import get_db_session
-                    with get_db_session() as db:
-                        delete_api_tokens_for_user(db, username)
-                    invalidate_token_cache()
-                except Exception as exc:
-                    logger.error("Failed to clean up orphaned tokens for '%s'; creation aborted: %s", username, exc)
+        with self._get_user_lifecycle_lock(username).write_lock():
+            with self._cross_process_lock():
+                if username in self.users or username in self._config.get("deleting", {}):
+                    # Active or pending-deletion account: duplicate creation attempt never touches or deletes active data
                     return False
 
-                try:
-                    import sys
-                    cdb_mod = sys.modules.get("core.database")
-                    if cdb_mod is not None and hasattr(cdb_mod, "Note"):
-                        from core.notes_sharing import purge_notes_owned_by
-                        purge_notes_owned_by(username)
-                except Exception as exc:
-                    logger.error("Failed to clean up orphaned notes for '%s'; creation aborted: %s", username, exc)
-                    return False
+                if clean_orphaned:
+                    try:
+                        from core.database import get_db_session
+                        with get_db_session() as db:
+                            delete_api_tokens_for_user(db, username)
+                        invalidate_token_cache()
+                    except Exception as exc:
+                        logger.error("Failed to clean up orphaned tokens for '%s'; creation aborted: %s", username, exc)
+                        return False
 
-            if "users" not in self._config:
-                self._config["users"] = {}
-            self._config["users"][username] = {
-                "password_hash": _hash_password(password),
-                "created": time.time(),
-                "is_admin": is_admin,
-                "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
-            }
-            try:
-                self._save()
-            except Exception:
-                self._config["users"].pop(username, None)
-                raise
+                    try:
+                        import sys
+                        cdb_mod = sys.modules.get("core.database")
+                        if cdb_mod is not None and hasattr(cdb_mod, "Note"):
+                            from core.notes_sharing import purge_notes_owned_by
+                            purge_notes_owned_by(username)
+                    except Exception as exc:
+                        logger.error("Failed to clean up orphaned notes for '%s'; creation aborted: %s", username, exc)
+                        return False
+
+                if "users" not in self._config:
+                    self._config["users"] = {}
+                self._config["users"][username] = {
+                    "password_hash": _hash_password(password),
+                    "created": time.time(),
+                    "is_admin": is_admin,
+                    "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
+                }
+                try:
+                    self._save()
+                except Exception:
+                    self._config["users"].pop(username, None)
+                    raise
         logger.info(f"Created user '{username}' (admin={is_admin})")
         return True
 
@@ -649,9 +830,7 @@ class AuthManager:
                     with get_db_session() as own_db:
                         removed_tokens = delete_api_tokens_for_user(own_db, username)
                 if removed_tokens:
-                    logger.info(
-                        f"Revoked {removed_tokens} API token(s) owned by deleted user '{username}'"
-                    )
+                    logger.info("Revoked API tokens for deleted user")
                 invalidate_token_cache()
             except Exception:
                 logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
@@ -740,15 +919,19 @@ class AuthManager:
         if new_username in RESERVED_USERNAMES:
             logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
             return False
-        with self._cross_process_lock():
-            if old_username not in self.users:
-                return False
-            if new_username in self.users:
-                return False
-            if not self.users.get(requesting_user, {}).get("is_admin"):
-                return False
-            self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
-            self._save()
+        ordered_locks = [self._get_user_lifecycle_lock(u) for u in sorted([old_username, new_username])]
+        with contextlib.ExitStack() as stack:
+            for lk in ordered_locks:
+                stack.enter_context(lk.write_lock())
+            with self._cross_process_lock():
+                if old_username not in self.users:
+                    return False
+                if new_username in self.users:
+                    return False
+                if not self.users.get(requesting_user, {}).get("is_admin"):
+                    return False
+                self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
+                self._save()
 
         renamed_sessions = 0
         with self._sessions_lock:
@@ -852,9 +1035,7 @@ class AuthManager:
                 with get_db_session() as db:
                     removed_tokens = delete_api_tokens_for_user(db, username)
                 if removed_tokens:
-                    logger.info(
-                        f"Revoked {removed_tokens} API token(s) owned by demoted admin '{username}'"
-                    )
+                    logger.info("Revoked API tokens for demoted admin")
             # Write order matters for lock-free readers: get_privileges()
             # reads without _config_lock and trusts is_admin, so the admin
             # flag must be flipped while the stored map is safe to expose —

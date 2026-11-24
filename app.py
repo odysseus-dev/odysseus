@@ -76,7 +76,7 @@ from core.middleware import (
     path_is_route_or_child,
     with_asgi_root_path,
 )
-from core.auth import AuthManager, normalize_known_username
+from core.auth import AuthManager, get_auth_manager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
@@ -293,7 +293,7 @@ app.add_middleware(_SlowRequestLogMiddleware)
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
 
-auth_manager = AuthManager()
+auth_manager = get_auth_manager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = not auth_disabled()
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
@@ -1224,25 +1224,24 @@ async def _startup_event():
 
     # Enforce single-writer deployment contract across processes
     _writer_lock_path = os.path.join(DATA_DIR, "odysseus.lock")
-    if not (os.getenv("ODYSSEUS_DISABLE_WRITER_LOCK", "0").lower() in ("1", "true", "yes")):
-        os.makedirs(DATA_DIR, exist_ok=True)
-        _lock_f = open(_writer_lock_path, "a+b")
-        if os.name != "nt":
-            import fcntl
-            try:
-                fcntl.flock(_lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                app.state._writer_lock_file = _lock_f
-                logger.info("Acquired single-writer deployment lock (%s)", _writer_lock_path)
-            except (BlockingIOError, OSError) as e:
-                _lock_f.close()
-                logger.error(
-                    "Another Odysseus process holds the writer lock (%s). "
-                    "Odysseus enforces a single-writer deployment: %s",
-                    _writer_lock_path, e
-                )
-                raise RuntimeError(
-                    f"Concurrent writer deployment detected on {_writer_lock_path}; another process is running. Aborting startup."
-                ) from e
+    os.makedirs(DATA_DIR, exist_ok=True)
+    _lock_f = open(_writer_lock_path, "a+b")
+    if os.name != "nt":
+        import fcntl
+        try:
+            fcntl.flock(_lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            app.state._writer_lock_file = _lock_f
+            logger.info("Acquired single-writer deployment lock (%s)", _writer_lock_path)
+        except (BlockingIOError, OSError) as e:
+            _lock_f.close()
+            logger.error(
+                "Another Odysseus process holds the writer lock (%s). "
+                "Odysseus enforces a single-writer deployment: %s",
+                _writer_lock_path, e
+            )
+            raise RuntimeError(
+                f"Concurrent writer deployment detected on {_writer_lock_path}; another process is running. Aborting startup."
+            ) from e
 
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Wipe any leftover incognito sessions from previous process — they're

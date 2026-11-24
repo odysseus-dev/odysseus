@@ -399,18 +399,6 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                          "body_revision": note_body_revision(note), "exit_code": 0}, note)
 
         elif action == "add":
-            if owner:
-                try:
-                    import core.auth as ca
-                    if getattr(ca, "AuthManager", None) is getattr(ca, "_REAL_AUTH_MANAGER", None):
-                        auth_mgr = ca.get_auth_manager()
-                    else:
-                        auth_mgr = ca.AuthManager()
-                    if auth_mgr and getattr(auth_mgr, "is_configured", False):
-                        if hasattr(auth_mgr, "is_user_active") and not auth_mgr.is_user_active(owner):
-                            return {"error": f"Account '{owner}' is inactive or pending deletion. Nothing was saved.", "exit_code": 1}
-                except Exception:
-                    pass
             # Accept the various field names models emit: `text` is the most
             # common stand-in for "title or body content" when the model
             # treats the note as a single string. If text was supplied and
