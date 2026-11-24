@@ -4860,7 +4860,8 @@ import { invalidateSettings } from './appConfig.js';
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews
-                const _ub = document.querySelector('#chat-history .msg-user:last-of-type');
+                const _userBubbles = document.querySelectorAll('#chat-history .msg-user');
+                const _ub = _userBubbles[_userBubbles.length - 1] || null;
                 if (_ub) {
                   const _aw = _ub.querySelector('.attach-cards');
                   if (_aw) {
