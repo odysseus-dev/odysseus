@@ -193,3 +193,47 @@ def test_router_reports_non_calendar_categories():
     assert classify_tool_intent("reply to that email").category == "email"
     assert classify_tool_intent("open my calendar").category == "ui"
     assert classify_tool_intent("research cost effective local models").category == "research"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "du bist kurt",
+        "Du hast recht",
+        "Du kannst mir das kurz erkl\u00e4ren",
+        "Top danke",
+        "Top! Vielen Dank",
+        "Free trial available?",
+        "Find me a good pasta recipe",
+        "ID please",
+        "Cat videos are funny",
+        "Build a workout plan for beginners",
+    ],
+)
+def test_prose_sentences_starting_with_ambiguous_cli_words_do_not_trigger_shell(prompt: str) -> None:
+    intent = classify_tool_intent(prompt)
+    assert intent.category != "shell"
+    assert "shell_files" not in requested_capabilities(prompt)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "du -sh /",
+        "top",
+        "free -h",
+        "ps aux",
+        "cat notes.txt",
+        "kill 1234",
+        "ping 8.8.8.8",
+        "dig example.com",
+        "ip addr",
+        "cd /var/log",
+        "find . -name '*.py'",
+    ],
+)
+def test_real_shell_commands_with_ambiguous_names_still_promote_to_shell(prompt: str) -> None:
+    intent = classify_tool_intent(prompt)
+    assert intent.needs_tools
+    assert intent.category == "shell"
+    assert intent.reason == "bare shell command request"
