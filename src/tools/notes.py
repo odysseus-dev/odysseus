@@ -12,6 +12,20 @@ from typing import Dict, Optional
 from src.tools._common import _parse_tool_args
 from src.tool_utils import get_upload_handler
 from src.upload_handler import reserve_upload_references
+from core.notes_markdown import (
+    apply_items_to_content,
+    derive_note_type,
+    effective_content,
+    fold_image_url,
+    fold_legacy_columns,
+    keep_task_lines,
+    merge_items_into_content,
+    normalize_note_color,
+    parse_task_lines,
+    strip_task_lines,
+    toggle_task,
+)
+from core.note_writes import NOTE_BODY_CONFLICT, guard_note_body, note_body_revision
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +48,6 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
     from core.database import SessionLocal, Note
-    from sqlalchemy.orm.attributes import flag_modified
 
     try:
         args = _parse_tool_args(content)
@@ -51,8 +64,17 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         "save": "add",
         "remind": "add",
         "remove": "delete",
+        "get": "view",
+        "read": "view",
+        "show": "view",
+        "open": "view",
     }
     action = _NOTE_ACTION_ALIASES.get(action, action)
+    if action in ("add", "update") and args.get("color") is not None:
+        try:
+            args["color"] = normalize_note_color(args["color"])
+        except ValueError as exc:
+            return {"error": f"{exc}. Nothing was saved.", "exit_code": 1}
     if action == "add" and any(args.get(key) for key in ("id", "note_id", "noteId")):
         return {
             "error": 'Nothing saved. add creates a new note and cannot take an existing note ID. '
@@ -82,6 +104,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     if bound is not None:
         bound.validate()
     db = SessionLocal()
+
+    def _body_conflict():
+        return {"error": NOTE_BODY_CONFLICT, "conflict": True, "exit_code": 1}
 
     def _norm_note_title(value: str) -> str:
         text = (value or "").strip().lower()
@@ -151,8 +176,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         if owner is not None:
             q = q.filter(Note.owner == owner)
         target_title = _norm_note_title(title)
-        target_content = _norm_note_text(content_value)
-        target_items = _norm_note_items(items_value)
+        # Items are task lines in content, so one comparison covers both.
+        target_content = _norm_note_text(
+            merge_items_into_content(content_value, _norm_note_items(items_value))
+        )
         target_label = label or None
         target_due = due_date or None
         target_color = color or None
@@ -170,9 +197,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 continue
             if bool(existing.pinned) != target_pinned:
                 continue
-            if _norm_note_text(existing.content) != target_content:
-                continue
-            if _norm_note_items(existing.items) != target_items:
+            if _norm_note_text(effective_content(existing.content, existing.items, getattr(existing, "image_url", None))) != target_content:
                 continue
             return existing
         return None
@@ -180,8 +205,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     def _format_note_list(notes, *, full_content: bool = False) -> str:
         lines = []
         for n in notes:
+            content = effective_content(n.content, n.items, getattr(n, "image_url", None))
             pin = " [PINNED]" if n.pinned else ""
-            typ = " [checklist]" if n.note_type == "checklist" else ""
+            typ = " [checklist]" if derive_note_type(n.note_type, content) == "checklist" else ""
             lbl = f" #{n.label}" if n.label else ""
             title = n.title or "(untitled)"
             lines.append(f"- [{n.id}] **{title}**{pin}{typ}{lbl}")
@@ -189,16 +215,17 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             # a model cannot satisfy an explicit read request without the
             # required second call, and so large checklists do not flood the
             # next model context.
-            if full_content and n.note_type == "checklist" and n.items:
-                try:
-                    items = json.loads(n.items)
-                    for i, item in enumerate(items):
-                        mark = "x" if item.get("done") else " "
-                        lines.append(f"  [{mark}] {i}: {item.get('text', '')}")
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            elif full_content and n.content:
-                lines.append(f"  {n.content}")
+            if not full_content:
+                continue
+            lines.append(f"  Body revision: {note_body_revision(n)}")
+            # The prose first, then every task line with the index that
+            # toggle_item takes.
+            prose = strip_task_lines(content)
+            if prose:
+                lines.append(f"  {prose}")
+            for task in parse_task_lines(content):
+                mark = "x" if task["done"] else " "
+                lines.append(f"  [{mark}] {task['index']}: {task['text']}")
         return "\n".join(lines)
 
     try:
@@ -256,7 +283,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
-            return {"results": _format_note_list([note], full_content=True), "exit_code": 0}
+            return {"results": _format_note_list([note], full_content=True),
+                    "body_revision": note_body_revision(note), "exit_code": 0}
 
         elif action == "add":
             # Accept the various field names models emit: `text` is the most
@@ -390,8 +418,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 id=str(_uuid.uuid4()),
                 owner=owner,
                 title=title,
-                content=content_raw,
-                items=items_json,
+                content=(
+                    merge_items_into_content(content_raw, items_raw)
+                    if items_raw else content_raw
+                ),
+                items=None,
                 note_type=note_type,
                 color=args.get("color"),
                 label=args.get("label"),
@@ -459,9 +490,25 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     "error": f"Referenced upload is no longer available: {missing_id}",
                     "exit_code": 1,
                 }
+            new_items = args.get("checklist_items")
+            if new_items is None:
+                new_items = args.get("items")
+            revision = args.get("body_revision")
+            if args.get("content") is not None or new_items is not None or args.get("note_type") is not None or revision is not None:
+                if (revision is not None and revision != note_body_revision(note)) or not guard_note_body(db, note):
+                    return _body_conflict()
+            if args.get("content") is not None or new_items is not None:
+                fold_legacy_columns(note)
+            previous_content = note.content
             for field in ("title", "content", "note_type", "color", "label"):
                 if field in args and args[field] is not None:
                     setattr(note, field, args[field])
+            # `view` shows the prose and the tasks apart, so text sent on its
+            # own keeps the task lines; clearing them takes checklist_items: [].
+            if args.get("content") is not None and new_items is None:
+                note.content = keep_task_lines(previous_content, note.content)
+            if args.get("content") is not None and note.image_url:
+                note.content = fold_image_url(note.content, note.image_url)
             # Parse due_date the same way the `add` action does. The schema
             # advertises natural language ("tomorrow at 9am"), and naive ISO
             # strings need the user's tz offset attached so the frontend's
@@ -475,12 +522,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     note.due_date = _pdt_user(due_raw)
                 except Exception:
                     note.due_date = due_raw  # fall through; trust the model
-            new_items = args.get("checklist_items")
-            if new_items is None:
-                new_items = args.get("items")
+            # checklist_items is the complete remaining list: it rewrites the
+            # task lines in content, appending new ones and dropping the rest.
             if new_items is not None:
-                note.items = json.dumps(new_items)
-                flag_modified(note, "items")
+                note.content = apply_items_to_content(
+                    note.content, new_items if isinstance(new_items, list) else _norm_note_items(new_items)
+                )
+                note.items = None
             if "pinned" in args:
                 note.pinned = args["pinned"]
             if "archived" in args:
@@ -539,22 +587,27 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
-            if not note.items:
-                return {"error": "Note has no checklist items", "exit_code": 1}
-            items = json.loads(note.items)
-            if index < 0 or index >= len(items):
-                return {"error": f"Item index {index} out of range (0-{len(items)-1})", "exit_code": 1}
             if "done" in args and not isinstance(args["done"], bool):
                 return {"error": "done must be a boolean (true or false)", "exit_code": 1}
-            items[index]["done"] = args["done"] if "done" in args else not items[index].get("done", False)
-            note.items = json.dumps(items)
-            flag_modified(note, "items")
-            db.commit()
-            mark = "done" if items[index]["done"] else "undone"
-            return {"response": f"Item '{items[index].get('text', '')}' marked {mark}", "exit_code": 0}
+            if args.get("body_revision") != note_body_revision(note) or not guard_note_body(db, note):
+                return _body_conflict()
+            fold_legacy_columns(note)
+            content = note.content or ""
+            tasks = parse_task_lines(content)
+            if not tasks:
+                return {"error": "Note has no checklist items", "exit_code": 1}
+            if index < 0 or index >= len(tasks):
+                return {"error": f"Item index {index} out of range (0-{len(tasks)-1})", "exit_code": 1}
+            item = tasks[index]
+            if "done" not in args or args["done"] != item["done"]:
+                content, item = toggle_task(content, index)
+                note.content = content
+                db.commit()
+            mark = "done" if item["done"] else "undone"
+            return {"response": f"Item '{item['text']}' marked {mark}", "exit_code": 0}
 
         else:
-            return {"error": f"Unknown action: {action}. Use list/search/view/add/update/delete/toggle_item", "exit_code": 1}
+            return {"error": f"Unknown action: {action}. Use list/search/get/add/update/delete/toggle_item", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_notes error: {e}")
         return {"error": str(e), "exit_code": 1}

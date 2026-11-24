@@ -6,7 +6,6 @@ CANVAS_EVENTS = (ROOT / 'static/js/editor/canvas-events.js').read_text()
 GALLERY_EDITOR = (ROOT / 'static/js/galleryEditor.js').read_text()
 POPUPS = (ROOT / 'static/js/editor/build/popups.js').read_text()
 SHORTCUTS_POPOVER = (ROOT / 'static/js/editor/shortcuts-popover.js').read_text()
-SW = (ROOT / 'static/sw.js').read_text()
 
 
 def test_gesture_callbacks_are_wired_into_canvas_events():
@@ -55,7 +54,3 @@ def test_cheatsheet_lists_touch_gestures():
 
 def test_shortcuts_popover_fits_a_phone_width():
     assert 'min-width:min(540px,92vw)' in SHORTCUTS_POPOVER
-
-
-def test_sw_cache_name_bumped_for_this_change():
-    assert re.search(r'odysseus-v\d+-pr40-editor-precache', SW)

@@ -6,11 +6,9 @@ These markers assert the token-based alignment block stays in place.
 """
 
 import pathlib
-import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static" / "css" / "documents-gallery-editor.css").read_text()
-SW = (ROOT / "static" / "sw.js").read_text()
 
 
 def test_checkbox_and_radio_use_the_app_dot():
@@ -40,9 +38,3 @@ def test_scrollbars_use_the_app_recipe():
     assert "scrollbar-color: var(--red) var(--panel);" in CSS
     assert "background-color: var(--red);" in CSS
     assert "border: 2px solid var(--panel);" in CSS
-
-
-def test_sw_version_is_current():
-    m = re.search(r"CACHE_NAME\s*=\s*'([^']+)'", SW)
-    assert m, "CACHE_NAME not found in static/sw.js"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1))

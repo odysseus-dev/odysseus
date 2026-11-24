@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests.helpers.document_source import document_source
+from tests.helpers.document_source import document_source, function_body
 from tests.helpers.js_modules import email_library_source, js_function_source
 
 
@@ -122,7 +122,7 @@ def test_library_reply_open_carries_immutable_mailbox_context():
 
 def test_attachment_warning_only_checks_authored_reply_text():
     source = document_source()
-    helper = source[source.index("function _bodyMentionsAttachment"):source.index("\n\n  function _clearMissingAttachmentWarnings", source.index("function _bodyMentionsAttachment"))]
+    helper = function_body("_bodyMentionsAttachment")
 
     assert "_emailReplyOwnText(text)" in helper
     assert "text.split(/^>|^On .* wrote:/m)" not in helper
@@ -130,7 +130,7 @@ def test_attachment_warning_only_checks_authored_reply_text():
 
 def test_email_send_saves_recovery_draft_before_send_and_retains_it_on_failure():
     source = document_source()
-    send = source[source.index("async function _sendEmail"):source.index("\n\n  async function _saveDraft", source.index("async function _sendEmail"))]
+    send = function_body("_sendEmail")
 
     assert "async function _saveEmailDraftForRecovery" in source
     assert send.index("_saveEmailDraftForRecovery({") < send.index("fetch(`${API_BASE}/api/email/send`")

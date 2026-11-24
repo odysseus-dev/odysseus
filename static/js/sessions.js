@@ -1,6 +1,8 @@
 // Session Management Functions
 // This module handles all session-related operations
 
+import { formatArchiveAge } from './shared/domain/relativeTime.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
 import Storage from './storage.js';
 import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260916largetoolscroll1';
 import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
@@ -1066,13 +1068,10 @@ function createSessionItem(s) {
         await navigator.clipboard.writeText(text);
       } catch (_clipErr) {
         // Fallback for non-secure contexts
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;left:-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
+        withClipboardTextarea(text, 'position:fixed;left:-9999px', field => {
+          field.select();
+          document.execCommand('copy');
+        });
       }
       uiModule.showToast('Chat copied to clipboard');
     } catch (e) {
@@ -3312,15 +3311,7 @@ function _showDropdown(anchorEl, items) {
 const _arc = { data: [], total: 0, search: '', offset: 0, sort: 'recent', model: '', debounce: null, selectMode: false, selected: new Set(), allModelCounts: null };
 
 function _arcRelativeTime(iso) {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return formatArchiveAge(iso, Date.now());
 }
 
 // ── Actions (pure side-effects, no DOM creation) ──

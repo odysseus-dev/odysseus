@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun, NotificationLog
 from core.constants import internal_api_base
+from core.guard_deco import content_type, suspicious_frequency, usage_monitor
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.endpoint_resolver import resolve_owner_registered_endpoint_url
@@ -21,8 +22,7 @@ from src.task_action_policy import (
     owner_has_admin_task_privileges,
 )
 from src.task_scheduler import compute_next_run, is_valid_cron, HOUSEKEEPING_DEFAULTS
-from routes.prefs_routes import _load_for_user, _save_for_user
-from core.guard_deco import content_type, suspicious_frequency, usage_monitor
+from routes.prefs_routes import _load_for_user, _save_for_user, _update_off_loop
 
 logger = logging.getLogger(__name__)
 
@@ -394,12 +394,14 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     @content_type(["application/json"])
     async def update_tasks_onboarding(request: Request, body: dict):
         user = _owner(request)
-        prefs = _load_for_user(user) or {}
-        prefs["tasks_opened"] = True
         enable = bool(body.get("enabled"))
+        # Onboarding owns only these keys. Writing them as a locked partial
+        # update keeps a concurrent Settings save from being overwritten by
+        # a stale copy of the whole record.
+        onboarding_updates = {"tasks_opened": True}
         if enable:
-            prefs["tasks_enabled"] = True
-        _save_for_user(user, prefs)
+            onboarding_updates["tasks_enabled"] = True
+        prefs = await _update_off_loop(user, onboarding_updates)
         if user:
             await task_scheduler.ensure_defaults(user)
 

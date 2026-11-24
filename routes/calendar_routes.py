@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from datetime import datetime, date, timedelta, timezone
-from typing import Optional, List
+from typing import Optional, List, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent, Note
+from core.notes_markdown import items_to_markdown
 from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 from src.upload_handler import reserve_upload_references
@@ -770,7 +771,7 @@ def _create_calendar_reminder_for_event(db, owner: str, ev: CalendarEvent, minut
         id=str(uuid.uuid4()),
         owner=owner,
         title=f"Calendar reminder: {summary}",
-        items=json.dumps([{"text": f"{summary}{loc} — {start_fmt}", "done": False, "checked": False}]),
+        content=items_to_markdown([{"text": f"{summary}{loc} — {start_fmt}", "done": False}]),
         note_type="todo",
         label="calendar",
         due_date=due_date,
@@ -1005,16 +1006,25 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
 
     # ── CalDAV multi-account helpers ─────────────────────────────────────────
 
-    def _get_caldav_accounts(owner: str) -> list:
+    async def _get_caldav_accounts(owner: str) -> list:
+        from starlette.concurrency import run_in_threadpool
         from src.caldav_sync import _load_caldav_accounts
-        return _load_caldav_accounts(owner)
+        return await run_in_threadpool(_load_caldav_accounts, owner)
 
-    def _save_caldav_accounts(owner: str, accounts: list) -> None:
-        from routes.prefs_routes import _load_for_user, _save_for_user
-        prefs = _load_for_user(owner) or {}
-        prefs["caldav_accounts"] = accounts
-        prefs.pop("caldav", None)
-        _save_for_user(owner, prefs)
+    async def _mutate_caldav_accounts(owner: str, mutator) -> Any:
+        # Run the complete CalDAV read-modify-write sequence inside a single
+        # store transaction off the event-loop thread.
+        from routes.prefs_routes import _mutate_off_loop
+        from src.caldav_sync import _extract_caldav_accounts
+
+        def _transaction(user_prefs: dict) -> Any:
+            accounts = _extract_caldav_accounts(user_prefs)
+            result, new_accounts = mutator(accounts)
+            user_prefs["caldav_accounts"] = new_accounts
+            user_prefs.pop("caldav", None)
+            return result
+
+        return await _mutate_off_loop(owner, _transaction)
 
     # ── CalDAV config routes (backward-compat single-account API) ────────────
 
@@ -1022,7 +1032,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def get_config(request: Request):
         """Legacy single-account endpoint — returns the first configured account."""
         owner = _require_user(request)
-        accounts = _get_caldav_accounts(owner)
+        accounts = await _get_caldav_accounts(owner)
         if not accounts:
             return {"url": "", "username": "", "password": "", "has_password": False, "local": True}
         first = accounts[0]
@@ -1049,28 +1059,39 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         """Legacy single-account endpoint — upserts the first account."""
         owner = _require_user(request)
         body = await _json_object_body(request)
-        accounts = _get_caldav_accounts(owner)
-        if not (body.get("url") or "").strip():
-            _save_caldav_accounts(owner, [])
-            return {"ok": True, "cleared": True}
+        raw_url = (body.get("url") or "").strip()
+        if not raw_url:
+            def _mutate_clear(accounts: list):
+                return {"ok": True, "cleared": True}, []
+
+            return await _mutate_caldav_accounts(owner, _mutate_clear)
+
         from src.caldav_sync import validate_caldav_url
         try:
-            validated_url = validate_caldav_url(body.get("url", ""))
+            validated_url = validate_caldav_url(raw_url)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        if accounts:
-            acc = dict(accounts[0])
-        else:
-            import uuid as _uuid
-            acc = {"id": str(_uuid.uuid4()), "label": "CalDAV"}
-        acc["url"] = validated_url
-        acc["username"] = (body.get("username") or "").strip()
+
+        username = (body.get("username") or "").strip()
+        encrypted_pw = None
         if body.get("password"):
             from src.secret_storage import encrypt
-            acc["password"] = encrypt(body["password"])
-        new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
-        _save_caldav_accounts(owner, new_accounts)
-        return {"ok": True}
+            encrypted_pw = encrypt(body["password"])
+
+        def _mutate_upsert(accounts: list):
+            import uuid as _uuid
+            if accounts:
+                acc = dict(accounts[0])
+            else:
+                acc = {"id": str(_uuid.uuid4()), "label": "CalDAV"}
+            acc["url"] = validated_url
+            acc["username"] = username
+            if encrypted_pw:
+                acc["password"] = encrypted_pw
+            new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
+            return {"ok": True}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_upsert)
 
     # ── CalDAV multi-account CRUD ─────────────────────────────────────────────
 
@@ -1078,7 +1099,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def list_caldav_accounts(request: Request):
         """Return all configured CalDAV accounts (passwords never returned)."""
         owner = _require_user(request)
-        accounts = _get_caldav_accounts(owner)
+        accounts = await _get_caldav_accounts(owner)
         safe = []
         for acc in accounts:
             pw = acc.get("password") or ""
@@ -1121,10 +1142,13 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             "username": (body.get("username") or "").strip(),
             "password": encrypt(body["password"]),
         }
-        accounts = _get_caldav_accounts(owner)
-        accounts.append(new_acc)
-        _save_caldav_accounts(owner, accounts)
-        return {"ok": True, "id": new_acc["id"]}
+
+        def _mutate_add(accounts: list):
+            new_accounts = list(accounts)
+            new_accounts.append(new_acc)
+            return {"ok": True, "id": new_acc["id"]}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_add)
 
     @router.put("/config/accounts/{account_id}")
     @content_type(["application/json"])
@@ -1133,38 +1157,49 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         """Update an existing CalDAV account by id."""
         owner = _require_user(request)
         body = await _json_object_body(request)
-        accounts = _get_caldav_accounts(owner)
-        idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
-        if idx is None:
-            raise HTTPException(404, "Account not found")
-        acc = dict(accounts[idx])
+        validated_url = None
         if body.get("url"):
             from src.caldav_sync import validate_caldav_url
             try:
-                acc["url"] = validate_caldav_url(body["url"])
+                validated_url = validate_caldav_url(body["url"])
             except ValueError as e:
                 raise HTTPException(400, str(e))
-        if body.get("label") is not None:
-            acc["label"] = (body.get("label") or "").strip() or "CalDAV"
-        if body.get("username") is not None:
-            acc["username"] = (body.get("username") or "").strip()
+        encrypted_pw = None
         if body.get("password"):
             from src.secret_storage import encrypt
-            acc["password"] = encrypt(body["password"])
-        accounts[idx] = acc
-        _save_caldav_accounts(owner, accounts)
-        return {"ok": True}
+            encrypted_pw = encrypt(body["password"])
+
+        def _mutate_update(accounts: list):
+            idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
+            if idx is None:
+                raise HTTPException(404, "Account not found")
+            new_accounts = list(accounts)
+            acc = dict(new_accounts[idx])
+            if validated_url:
+                acc["url"] = validated_url
+            if body.get("label") is not None:
+                acc["label"] = (body.get("label") or "").strip() or "CalDAV"
+            if body.get("username") is not None:
+                acc["username"] = (body.get("username") or "").strip()
+            if encrypted_pw:
+                acc["password"] = encrypted_pw
+            new_accounts[idx] = acc
+            return {"ok": True}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_update)
 
     @router.delete("/config/accounts/{account_id}")
     async def delete_caldav_account(account_id: str, request: Request):
         """Remove a CalDAV account by id."""
         owner = _require_user(request)
-        accounts = _get_caldav_accounts(owner)
-        new_accounts = [a for a in accounts if a.get("id") != account_id]
-        if len(new_accounts) == len(accounts):
-            raise HTTPException(404, "Account not found")
-        _save_caldav_accounts(owner, new_accounts)
-        return {"ok": True}
+
+        def _mutate_delete(accounts: list):
+            new_accounts = [a for a in accounts if a.get("id") != account_id]
+            if len(new_accounts) == len(accounts):
+                raise HTTPException(404, "Account not found")
+            return {"ok": True}, new_accounts
+
+        return await _mutate_caldav_accounts(owner, _mutate_delete)
 
     @router.post("/test")
     @content_type(["application/json"])
@@ -1181,7 +1216,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         pw = body.get("password") or ""
         if not (url and user and pw):
             # Look up a saved account: by id if supplied, else first account.
-            accounts = _get_caldav_accounts(owner)
+            accounts = await _get_caldav_accounts(owner)
             acc = None
             if body.get("account_id"):
                 acc = next((a for a in accounts if a.get("id") == body["account_id"]), None)

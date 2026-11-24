@@ -1,0 +1,785 @@
+{
+ "_comment": "Shared task-line vectors. Consumed by tests/test_notes_markdown.py, tests/notesMarkdownTasks.test.mjs and tests/notesMarkdownRender.test.mjs. Regenerate only by hand-checking each expected value.",
+ "parse": [
+  {
+   "name": "empty",
+   "content": "",
+   "tasks": [],
+   "has_tasks": false,
+   "note_type": "note"
+  },
+  {
+   "name": "plain text",
+   "content": "Just a note\nwith two lines",
+   "tasks": [],
+   "has_tasks": false,
+   "note_type": "note"
+  },
+  {
+   "name": "simple list",
+   "content": "- [ ] Milk\n- [x] Bread\n- [X] Eggs",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "Milk",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    },
+    {
+     "index": 1,
+     "text": "Bread",
+     "done": true,
+     "indent": 0,
+     "line": 1
+    },
+    {
+     "index": 2,
+     "text": "Eggs",
+     "done": true,
+     "indent": 0,
+     "line": 2
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "checklist"
+  },
+  {
+   "name": "bullets and spacing",
+   "content": "* [ ] star\n+ [x] plus\n-\t[ ] tab after bullet\n- [ ]no space after box\n- [ ]",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "star",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    },
+    {
+     "index": 1,
+     "text": "plus",
+     "done": true,
+     "indent": 0,
+     "line": 1
+    },
+    {
+     "index": 2,
+     "text": "tab after bullet",
+     "done": false,
+     "indent": 0,
+     "line": 2
+    },
+    {
+     "index": 3,
+     "text": "no space after box",
+     "done": false,
+     "indent": 0,
+     "line": 3
+    },
+    {
+     "index": 4,
+     "text": "",
+     "done": false,
+     "indent": 0,
+     "line": 4
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "checklist"
+  },
+  {
+   "name": "not tasks",
+   "content": "-[ ] no space before box\n- [y] wrong box\n1. [ ] ordered\n- [] empty box\n> - [ ] quoted",
+   "tasks": [],
+   "has_tasks": false,
+   "note_type": "note"
+  },
+  {
+   "name": "nested",
+   "content": "- [ ] top\n  - [x] two spaces\n    - [ ] four spaces\n\t- [ ] tab\n   - [ ] three spaces",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "top",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    },
+    {
+     "index": 1,
+     "text": "two spaces",
+     "done": true,
+     "indent": 1,
+     "line": 1
+    },
+    {
+     "index": 2,
+     "text": "four spaces",
+     "done": false,
+     "indent": 2,
+     "line": 2
+    },
+    {
+     "index": 3,
+     "text": "tab",
+     "done": false,
+     "indent": 1,
+     "line": 3
+    },
+    {
+     "index": 4,
+     "text": "three spaces",
+     "done": false,
+     "indent": 1,
+     "line": 4
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "checklist"
+  },
+  {
+   "name": "mixed text",
+   "content": "Intro line\n\n- [ ] a\nmiddle\n- [x] b\n\nOutro",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "a",
+     "done": false,
+     "indent": 0,
+     "line": 2
+    },
+    {
+     "index": 1,
+     "text": "b",
+     "done": true,
+     "indent": 0,
+     "line": 4
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "backtick fence",
+   "content": "- [ ] real\n```md\n- [ ] sample\n```\n- [x] after",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    },
+    {
+     "index": 1,
+     "text": "after",
+     "done": true,
+     "indent": 0,
+     "line": 4
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "tilde fence",
+   "content": "~~~\n- [ ] sample\n~~~\n- [ ] real",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": false,
+     "indent": 0,
+     "line": 3
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "long fence with short inner",
+   "content": "````\n```\n- [ ] still code\n```\n````\n- [ ] real",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": false,
+     "indent": 0,
+     "line": 5
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "other char inside fence",
+   "content": "```\n~~~\n- [ ] code\n~~~\n```\n- [ ] real",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": false,
+     "indent": 0,
+     "line": 5
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "indented fence",
+   "content": "  ```\n- [ ] code\n  ```\n- [ ] real",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": false,
+     "indent": 0,
+     "line": 3
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "unclosed fence",
+   "content": "- [ ] before\n```\n- [ ] swallowed\n- [ ] also swallowed",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "before",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "crlf",
+   "content": "- [ ] one\r\n- [x] two\r\n",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "one",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    },
+    {
+     "index": 1,
+     "text": "two",
+     "done": true,
+     "indent": 0,
+     "line": 1
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "checklist"
+  },
+  {
+   "name": "trailing newline",
+   "content": "- [ ] one\n",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "one",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "checklist"
+  },
+  {
+   "name": "images and tasks",
+   "content": "![](/api/upload/abc)\n- [ ] after image",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "after image",
+     "done": false,
+     "indent": 0,
+     "line": 1
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "unicode text",
+   "content": "- [ ] café — résumé\n- [x] 日本",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "café — résumé",
+     "done": false,
+     "indent": 0,
+     "line": 0
+    },
+    {
+     "index": 1,
+     "text": "日本",
+     "done": true,
+     "indent": 0,
+     "line": 1
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "checklist"
+  },
+  {
+   "name": "fence opener with a carriage return",
+   "content": "```\rfoo\n- [ ] sample\n```\n- [ ] real",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": false,
+     "indent": 0,
+     "line": 3
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  },
+  {
+   "name": "fence opener with a line separator",
+   "content": "~~~\u2028x\n- [ ] sample\n~~~\n- [x] real",
+   "tasks": [
+    {
+     "index": 0,
+     "text": "real",
+     "done": true,
+     "indent": 0,
+     "line": 3
+    }
+   ],
+   "has_tasks": true,
+   "note_type": "note"
+  }
+ ],
+ "toggle": [
+  {
+   "name": "first",
+   "content": "- [ ] a\n- [x] b",
+   "index": 0,
+   "content_after": "- [x] a\n- [x] b",
+   "item": {
+    "index": 0,
+    "text": "a",
+    "done": true,
+    "indent": 0,
+    "line": 0
+   }
+  },
+  {
+   "name": "second done",
+   "content": "- [ ] a\n- [x] b",
+   "index": 1,
+   "content_after": "- [ ] a\n- [ ] b",
+   "item": {
+    "index": 1,
+    "text": "b",
+    "done": false,
+    "indent": 0,
+    "line": 1
+   }
+  },
+  {
+   "name": "skips fenced",
+   "content": "```\n- [ ] code\n```\n- [ ] real",
+   "index": 0,
+   "content_after": "```\n- [ ] code\n```\n- [x] real",
+   "item": {
+    "index": 0,
+    "text": "real",
+    "done": true,
+    "indent": 0,
+    "line": 3
+   }
+  },
+  {
+   "name": "keeps bullet and indent",
+   "content": "Intro\n    * [X] deep\n",
+   "index": 0,
+   "content_after": "Intro\n    * [ ] deep\n",
+   "item": {
+    "index": 0,
+    "text": "deep",
+    "done": false,
+    "indent": 2,
+    "line": 1
+   }
+  },
+  {
+   "name": "out of range",
+   "content": "- [ ] a",
+   "index": 1,
+   "error": "IndexError"
+  },
+  {
+   "name": "negative",
+   "content": "- [ ] a",
+   "index": -1,
+   "error": "IndexError"
+  },
+  {
+   "name": "no tasks",
+   "content": "text",
+   "index": 0,
+   "error": "IndexError"
+  },
+  {
+   "name": "text containing box",
+   "content": "- [ ] buy [x] later",
+   "index": 0,
+   "content_after": "- [x] buy [x] later",
+   "item": {
+    "index": 0,
+    "text": "buy [x] later",
+    "done": true,
+    "indent": 0,
+    "line": 0
+   }
+  }
+ ],
+ "apply_items": [
+  {
+   "name": "unchanged keeps bytes",
+   "content": "- [ ] a\n*   [x] b\n",
+   "items": [
+    {
+     "text": "a"
+    },
+    {
+     "text": "b",
+     "done": true
+    }
+   ],
+   "content_after": "- [ ] a\n*   [x] b\n"
+  },
+  {
+   "name": "rewrite text and done",
+   "content": "- [ ] a\n- [ ] b",
+   "items": [
+    {
+     "text": "A",
+     "done": true
+    },
+    {
+     "text": "b"
+    }
+   ],
+   "content_after": "- [x] A\n- [ ] b"
+  },
+  {
+   "name": "checked alias",
+   "content": "- [ ] a",
+   "items": [
+    {
+     "text": "a",
+     "checked": true
+    }
+   ],
+   "content_after": "- [x] a"
+  },
+  {
+   "name": "append extra after last task",
+   "content": "Intro\n- [ ] a\n\nOutro",
+   "items": [
+    {
+     "text": "a"
+    },
+    {
+     "text": "new"
+    }
+   ],
+   "content_after": "Intro\n- [ ] a\n- [ ] new\n\nOutro"
+  },
+  {
+   "name": "append to text only",
+   "content": "Just text",
+   "items": [
+    {
+     "text": "x"
+    }
+   ],
+   "content_after": "Just text\n\n- [ ] x"
+  },
+  {
+   "name": "append to empty",
+   "content": "",
+   "items": [
+    {
+     "text": "x",
+     "indent": 1
+    }
+   ],
+   "content_after": "  - [ ] x"
+  },
+  {
+   "name": "drop past end",
+   "content": "- [ ] a\nkeep me\n- [ ] b\n- [ ] c",
+   "items": [
+    {
+     "text": "a"
+    }
+   ],
+   "content_after": "- [ ] a\nkeep me"
+  },
+  {
+   "name": "empty array drops all",
+   "content": "Title\n- [ ] a\n- [x] b",
+   "items": [],
+   "content_after": "Title"
+  },
+  {
+   "name": "fenced untouched",
+   "content": "```\n- [ ] code\n```\n- [ ] a",
+   "items": [
+    {
+     "text": "z"
+    }
+   ],
+   "content_after": "```\n- [ ] code\n```\n- [ ] z"
+  },
+  {
+   "name": "indent change",
+   "content": "- [ ] a",
+   "items": [
+    {
+     "text": "a",
+     "indent": 2
+    }
+   ],
+   "content_after": "    - [ ] a"
+  },
+  {
+   "name": "bad indent coerced",
+   "content": "",
+   "items": [
+    {
+     "text": "a",
+     "indent": "oops"
+    },
+    {
+     "text": "b",
+     "indent": null
+    },
+    {
+     "text": "c",
+     "indent": 2.7
+    },
+    {
+     "text": "d",
+     "indent": 99
+    }
+   ],
+   "content_after": "- [ ] a\n- [ ] b\n    - [ ] c\n      - [ ] d"
+  },
+  {
+   "name": "skips blank and non-dict items",
+   "content": "- [ ] a",
+   "items": [
+    {
+     "text": "  "
+    },
+    "junk",
+    {
+     "text": "b"
+    }
+   ],
+   "content_after": "- [ ] b"
+  },
+  {
+   "name": "newline in item text",
+   "content": "",
+   "items": [
+    {
+     "text": "one\ntwo"
+    }
+   ],
+   "content_after": "- [ ] one two"
+  },
+  {
+   "name": "unclosed fence is closed first",
+   "content": "notes\n```\ncode",
+   "items": [
+    {
+     "text": "buy milk"
+    }
+   ],
+   "content_after": "notes\n```\ncode\n```\n\n- [ ] buy milk"
+  }
+ ],
+ "append": [
+  {
+   "name": "after last task",
+   "content": "- [ ] a\n\nnotes",
+   "text": "b",
+   "indent": 0,
+   "content_after": "- [ ] a\n- [ ] b\n\nnotes",
+   "item": {
+    "index": 1,
+    "text": "b",
+    "done": false,
+    "indent": 0,
+    "line": 1
+   }
+  },
+  {
+   "name": "to plain text",
+   "content": "notes",
+   "text": "b",
+   "indent": 1,
+   "content_after": "notes\n\n  - [ ] b",
+   "item": {
+    "index": 0,
+    "text": "b",
+    "done": false,
+    "indent": 1,
+    "line": 2
+   }
+  },
+  {
+   "name": "to empty",
+   "content": "",
+   "text": "first",
+   "indent": 0,
+   "content_after": "- [ ] first",
+   "item": {
+    "index": 0,
+    "text": "first",
+    "done": false,
+    "indent": 0,
+    "line": 0
+   }
+  },
+  {
+   "name": "ignores fenced tasks",
+   "content": "```\n- [ ] code\n```",
+   "text": "real",
+   "indent": 0,
+   "content_after": "```\n- [ ] code\n```\n\n- [ ] real",
+   "item": {
+    "index": 0,
+    "text": "real",
+    "done": false,
+    "indent": 0,
+    "line": 4
+   }
+  },
+  {
+   "name": "unclosed fence is closed first",
+   "content": "notes\n```\ncode",
+   "text": "buy milk",
+   "indent": 0,
+   "content_after": "notes\n```\ncode\n```\n\n- [ ] buy milk",
+   "item": {
+    "index": 0,
+    "text": "buy milk",
+    "done": false,
+    "indent": 0,
+    "line": 5
+   }
+  },
+  {
+   "name": "unclosed tilde fence with a longer run",
+   "content": "~~~~\n~~~\n- [ ] code",
+   "text": "real",
+   "indent": 0,
+   "content_after": "~~~~\n~~~\n- [ ] code\n~~~~\n\n- [ ] real",
+   "item": {
+    "index": 0,
+    "text": "real",
+    "done": false,
+    "indent": 0,
+    "line": 5
+   }
+  }
+ ],
+ "merge": [
+  {
+   "name": "append to text",
+   "content": "Groceries",
+   "items": [
+    {
+     "text": "Milk"
+    },
+    {
+     "text": "Bread",
+     "done": true
+    }
+   ],
+   "content_after": "Groceries\n\n- [ ] Milk\n- [x] Bread"
+  },
+  {
+   "name": "already present",
+   "content": "- [ ] Milk",
+   "items": [
+    {
+     "text": "Milk"
+    },
+    {
+     "text": "Eggs"
+    }
+   ],
+   "content_after": "- [ ] Milk\n- [ ] Eggs"
+  },
+  {
+   "name": "fenced only tasks",
+   "content": "```\n- [ ] Milk\n```",
+   "items": [
+    {
+     "text": "Milk"
+    }
+   ],
+   "content_after": "```\n- [ ] Milk\n```\n\n- [ ] Milk"
+  },
+  {
+   "name": "empty content",
+   "content": null,
+   "items": [
+    {
+     "text": "A",
+     "indent": 1
+    }
+   ],
+   "content_after": "  - [ ] A"
+  },
+  {
+   "name": "unclosed fence is closed first",
+   "content": "Code:\n```python\nprint('hi')",
+   "items": [
+    {
+     "text": "after"
+    }
+   ],
+   "content_after": "Code:\n```python\nprint('hi')\n```\n\n- [ ] after"
+  },
+  {
+   "name": "crlf kept",
+   "content": "a\r\n- [ ] b\r\n",
+   "items": [
+    {
+     "text": "c"
+    }
+   ],
+   "content_after": "a\r\n- [ ] b\r\n- [ ] c\r\n"
+  },
+  {
+   "name": "done state differs",
+   "content": "- [ ] milk",
+   "items": [
+    {
+     "text": "milk",
+     "done": true
+    }
+   ],
+   "content_after": "- [ ] milk\n- [x] milk"
+  }
+ ]
+}

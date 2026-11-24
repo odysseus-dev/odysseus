@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_mobile_notes_checklist_rows_remain_tappable():
     css = app_css()
-    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
+    notes = notes_source("ui/cardChecklist", "ui/mobileReorder", "ui/selection", "ui/drawing")
 
     assert "body.notes-mobile-mode .note-card .note-checkbox {" in css
     assert "pointer-events: auto;" in css
@@ -20,22 +20,16 @@ def test_mobile_notes_checklist_rows_remain_tappable():
     assert re.search(r"if \(state.selectMode\) return; // let card-level handler take over\n\s+e.preventDefault\(\);", notes)
 
 
-def test_mobile_edit_checklist_toggle_marks_form_dirty():
-    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
-
-    assert "container.dispatchEvent(new Event('input', { bubbles: true }));" in notes
-
-
-def test_completed_mobile_todo_uses_finish_action():
-    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
-
-    assert "const _isFinishedTodo = () =>" in notes
-    assert "const label = _isFinishedTodo() ? 'Finish' : 'Archive';" in notes
-    assert "if (_isFinishedTodo()) _enterArchive();" in notes
+# The fullscreen mobile form is gone. Its checklist toggles (formerly checked
+# here as "marks the form dirty") are now note-window toggles through the
+# toggle endpoint, exercised in tests/notesDraftAutosave.test.mjs and on a
+# phone viewport in tests/browser/notesNative.mjs. The mobile Finish/Archive
+# morph of the form's save button went with the form; archive is the window
+# footer's button.
 
 
 def test_mobile_long_press_enters_select_mode_for_that_note():
-    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
+    notes = notes_source("ui/cardChecklist", "ui/mobileReorder", "ui/selection", "ui/drawing")
 
     assert "function _enterSelectMode(initialId = null)" in notes
     assert "app.setSuppressNextNoteTapId(card.dataset.noteId);" in notes
@@ -60,13 +54,12 @@ def test_notes_mobile_checklist_asset_versions_are_bumped():
     assert stylesheet_cache_version() == app_versions[0]
 
 
-def test_drawing_edits_mark_notes_dirty_and_keep_one_gallery_image():
-    notes = notes_source("ui/cardChecklist", "ui/checklist", "ui/editor", "ui/mobileEditor", "ui/mobileReorder", "ui/selection", "ui/drawing")
+def test_drawing_edits_mark_the_canvas_dirty_and_uploads_keep_their_gallery():
+    notes = notes_source("ui/drawing")
     upload = (ROOT / "routes" / "upload_routes.py").read_text(encoding="utf-8")
     note_routes = (ROOT / "routes" / "note" / "note_routes.py").read_text(encoding="utf-8")
 
     assert "const _markCanvasDirty = () => container.dispatchEvent(new Event('input', { bubbles: true }));" in notes
-    assert "_uploadCanvasAsPng(canvas, note?.gallery_id || null)" in notes
     assert "fd.append('gallery_id', galleryId)" in notes
     assert "if gallery_id:" in upload
     assert "note.gallery_id = body.gallery_id" in note_routes

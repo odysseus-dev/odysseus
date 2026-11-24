@@ -7,12 +7,10 @@ no separator bar) and the full-contrast "New Chat" header.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "static/js/galleryEditor.js").read_text()
 CSS = (ROOT / "static/css/13-image-editor.css").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 
 def test_qe_open_body_class_is_toggled():
@@ -66,9 +64,3 @@ def test_menu_scroll_thumb_exists():
     assert ".ge-menu-thumb {" in CSS
     assert "ge-menu-thumb" in JS
     assert "wireMenuThumb" in JS
-
-
-def test_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)

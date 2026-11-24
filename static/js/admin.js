@@ -13,6 +13,8 @@ import {
   renderUsageCardHtml as renderChatgptUsageCardHtml,
 } from './chatgptSubscriptionUsage.js';
 import { getSettings, getTools, invalidateSettings, invalidateTools } from './appConfig.js';
+import { initModelCustomization } from './settings/modelCustomization.js';
+import { withClipboardTextarea } from './shared/platform/clipboard.js';
 
 let initialized = false;
 let modalEl = null;
@@ -29,6 +31,19 @@ function esc(s) { return uiModule.esc(s); }
 
 // Clipboard API is unavailable on the HTTP LAN URL; keep copy actions usable
 // there with the browser's synchronous fallback.
+function _copyWithFocusedTextarea(text, readOnly) {
+  return withClipboardTextarea(text,
+    'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;',
+    field => {
+      field.focus();
+      field.select();
+      try { field.setSelectionRange(0, text.length); } catch (_) {}
+      try { return document.execCommand('copy'); } catch (_) { return false; }
+    },
+    { readOnly },
+  );
+}
+
 async function copyNotificationText(value) {
   const text = String(value ?? '');
   try {
@@ -38,18 +53,7 @@ async function copyNotificationText(value) {
     }
   } catch (_) {}
 
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  try { textarea.setSelectionRange(0, text.length); } catch (_) {}
-  let copied = false;
-  try { copied = document.execCommand('copy'); } catch (_) {}
-  textarea.remove();
-  return copied;
+  return _copyWithFocusedTextarea(text, true);
 }
 
 /* ═══════════════════════════════════════════
@@ -1035,7 +1039,7 @@ async function loadEndpoints() {
       if (listLocal) listLocal.innerHTML = empty;
       if (listApi) listApi.innerHTML = '<div class="admin-empty">None</div>';
       refreshDependentModelUi();
-      return;
+      return res.ok;
     }
     const rowHtml = data.map(ep => {
       const epModels = Array.isArray(ep.models) ? ep.models : [];
@@ -1084,6 +1088,7 @@ async function loadEndpoints() {
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
               ${_endpointSelectMode ? '' : `
+                ${ep.model_type === 'image' || isChatgptAccount || ep.provider === 'chatgpt-subscription' || (typeof ep.base_url === 'string' && ep.base_url.includes('chatgpt.com/backend-api')) ? '' : `<button type="button" class="admin-btn-sm" data-adm-tools-ep="${ep.id}" data-adm-tools-state="${ep.supports_tools === true ? 'on' : ep.supports_tools === false ? 'off' : 'auto'}" aria-label="Native tool calling: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}" title="Native tool calling for this endpoint.&#10;Auto: decide from the model name / endpoint host.&#10;On: send function schemas by default (needed for local endpoints like Ollama that aren't auto-detected).&#10;Off: use text parsing by default (explicit per-model tool settings and Odysseus models still apply).">Tools: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}</button>`}
                 <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
                 <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
                 ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
@@ -1203,6 +1208,80 @@ async function loadEndpoints() {
         await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' });
         await _refreshAfterEndpointChange();
         loadEndpoints();
+      });
+    });
+    queryAll('[data-adm-tools-ep]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (btn.disabled) return;
+        const epId = btn.dataset.admToolsEp;
+        const cur = btn.dataset.admToolsState;
+        // Cycle Auto -> On -> Off -> Auto (supports_tools null -> true -> false -> null).
+        const next = cur === 'auto' ? true : cur === 'on' ? false : null;
+        let confirmedState = null;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/model-endpoints/${encodeURIComponent(epId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ supports_tools: next }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.detail || 'Failed to update tool setting');
+          }
+          // The PATCH response contains the persisted endpoint state.
+          // Retain it in case the subsequent list reload fails.
+          const saved = await res.json();
+          if (String(saved?.id) !== String(epId) ||
+              !Object.prototype.hasOwnProperty.call(saved, 'supports_tools') ||
+              ![true, false, null].includes(saved.supports_tools)) {
+            throw new Error('Tool update response did not confirm persisted state');
+          }
+          confirmedState = saved.supports_tools === true ? 'on'
+            : saved.supports_tools === false ? 'off' : 'auto';
+          await _refreshAfterEndpointChange();
+        } catch (err) {
+          if (typeof uiModule !== 'undefined' && uiModule && typeof uiModule.showError === 'function') {
+            uiModule.showError(err.message || 'Failed to update tool setting');
+          } else {
+            console.error('Failed to update tool setting', err);
+          }
+        } finally {
+          let reloaded = false;
+          try {
+            reloaded = await loadEndpoints();
+            if (!reloaded &&
+                typeof uiModule !== 'undefined' &&
+                uiModule &&
+                typeof uiModule.showError === 'function') {
+              uiModule.showError('Failed to reload endpoints');
+            }
+          } catch (reloadErr) {
+            console.error('Failed to reload endpoints after tool update', reloadErr);
+            if (typeof uiModule !== 'undefined' && uiModule && typeof uiModule.showError === 'function') {
+              uiModule.showError(reloadErr.message || 'Failed to reload endpoints');
+            }
+          } finally {
+            const targetSel = (typeof CSS !== 'undefined' && CSS.escape)
+              ? `[data-adm-tools-ep="${CSS.escape(epId)}"]`
+              : `[data-adm-tools-ep="${epId}"]`;
+            const updatedBtn = document.querySelector(targetSel);
+            const targetBtn = updatedBtn || (document.contains(btn) ? btn : null);
+            if (targetBtn) {
+              if (!reloaded && confirmedState !== null) {
+                const stateLabel = confirmedState[0].toUpperCase() + confirmedState.slice(1);
+                targetBtn.dataset.admToolsState = confirmedState;
+                targetBtn.textContent = `Tools: ${stateLabel}`;
+                targetBtn.setAttribute('aria-label', `Native tool calling: ${stateLabel}`);
+              }
+              // Never repeat a write when both confirmation and reload failed.
+              targetBtn.disabled = !reloaded && confirmedState === null;
+              targetBtn.focus();
+            }
+          }
+        }
       });
     });
     queryAll('[data-adm-rename-ep]').forEach(btn => {
@@ -1488,9 +1567,16 @@ async function loadEndpoints() {
     });
     refreshDependentModelUi();
   } catch (e) {
-    const err = '<div class="admin-error">Failed to load</div>';
-    [listLocal, listApi].forEach(c => { if (c) c.innerHTML = err; });
+    const hasMounted = [listLocal, listApi].some(c => c && c.querySelector('[data-adm-ep-id]'));
+    if (!hasMounted) {
+      const err = '<div class="admin-error">Failed to load</div>';
+      [listLocal, listApi].forEach(c => { if (c) c.innerHTML = err; });
+    }
+    console.error('Failed to load endpoints', e);
+    return false;
   }
+  initModelCustomization();
+  return true;
 }
 
 async function _saveEpModelState(epId, panel) {
@@ -1569,15 +1655,7 @@ function _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl) {
     if (!ok) {
       // navigator.clipboard is unavailable in non-secure contexts (HTTP
       // self-host over a LAN IP), so fall back to execCommand('copy').
-      const ta = document.createElement('textarea');
-      ta.value = code;
-      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      try { ta.setSelectionRange(0, code.length); } catch (e) {}
-      try { ok = document.execCommand('copy'); } catch (e) {}
-      ta.remove();
+      ok = _copyWithFocusedTextarea(code, false);
     }
     copyBtn.textContent = ok ? 'Copied' : 'Failed';
     setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
@@ -4164,9 +4242,11 @@ function initLogsView() {
     });
   }
 
-  // Initial fetch on view loading
+  // Initial fetch on view loading. The log routes are admin-only, and this
+  // runs for anyone who reaches an admin-managed panel (Integrations), so a
+  // caller who may not manage settings loads nothing here.
   setSystemLogTab('terminal');
-  loadLogs(false);
+  if (_canLoadAdminData()) loadLogs(false);
 }
 
 /* ═══════════════════════════════════════════
@@ -4186,7 +4266,20 @@ function initAll() {
   refreshAll();
 }
 
+let _adminDataLoaded = false;
+
+// Whether the caller may read the admin-only routes. Unknown counts as no, so
+// nothing restricted is requested before /api/auth/status has answered.
+function _canLoadAdminData() {
+  return !!(window._canManageSettings ?? window._isAdmin);
+}
+
 function refreshAll() {
+  // Everything below reads admin-only routes. Signed-in users still reach
+  // admin-managed panels such as Integrations, whose own setup runs in
+  // initAll(); loading admin data for them only produces refused requests.
+  if (!_canLoadAdminData()) return;
+  _adminDataLoaded = true;
   loadUsers();
   loadEndpoints();
   loadBuiltinTools();
@@ -4216,5 +4309,5 @@ export function close() {
 
 export { shouldDisplayEndpointBaseUrl, isFeatherlessEndpoint, endpointDetailHtml, renderFeatherlessPanel };
 
-const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
+const adminModule = { open, close, _initData, get _initialized() { return initialized && (!_canLoadAdminData() || _adminDataLoaded); } };
 export default adminModule;

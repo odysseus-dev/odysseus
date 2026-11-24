@@ -3,15 +3,15 @@ const { openBlankEditor } = require('./helpers.js');
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-test('setup checklist remains usable above the mobile layers sheet', async ({ page }) => {
+test('AI settings modal remains usable above the mobile layers sheet', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('#ge-setup-btn').click();
-  const checklist = page.locator('.ge-preflight');
-  const start = checklist.locator('[data-preflight-start]');
-  await expect(checklist).toBeVisible();
-  await start.scrollIntoViewIfNeeded();
-  await expect(start).toHaveCSS('white-space', 'nowrap');
-  expect(await start.evaluate(button => button.scrollWidth <= button.clientWidth)).toBe(true);
-  await start.click();
-  await expect(checklist).toBeHidden();
+  await page.locator('#ge-ai-settings-btn').click();
+  const aiSettings = page.locator('.ge-ai-settings');
+  const done = aiSettings.locator('.ge-ai-settings-done');
+  await expect(aiSettings).toBeVisible();
+  await done.scrollIntoViewIfNeeded();
+  await expect(done).toBeVisible();
+  expect(await done.evaluate(button => button.scrollWidth <= button.clientWidth)).toBe(true);
+  await done.click();
+  await expect(aiSettings).toBeHidden();
 });

@@ -1,10 +1,10 @@
 // Search Chat Module — Ctrl+K command palette for searching conversations
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
+import { debounceTrailing } from './shared/platform/debounce.js';
 import sessionModule from './sessions.js';
 
 let API_BASE = '';
-let debounceTimer = null;
 let selectedIndex = -1;
 let results = [];
 
@@ -180,25 +180,25 @@ function handleKeydown(e) {
   }
 }
 
+const searchAfterPause = debounceTrailing(async (query) => {
+  try {
+    const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=20`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderResults(data, query);
+  } catch (err) {
+    console.error('Search error:', err);
+  }
+}, 300);
+
 function handleInput(e) {
   const query = e.target.value.trim();
-  if (debounceTimer) clearTimeout(debounceTimer);
-
   if (!query) {
+    searchAfterPause.cancel();
     renderResults([], '');
     return;
   }
-
-  debounceTimer = setTimeout(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=20`);
-      if (!res.ok) return;
-      const data = await res.json();
-      renderResults(data, query);
-    } catch (err) {
-      console.error('Search error:', err);
-    }
-  }, 300);
+  searchAfterPause(query);
 }
 
 export function init(apiBase) {

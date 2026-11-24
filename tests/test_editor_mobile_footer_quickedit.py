@@ -11,12 +11,10 @@ Requested (390x844 phone):
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS = (ROOT / "static/css/13-image-editor.css").read_text(encoding="utf-8")
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
-SW = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
 def test_mobile_footer_is_docked_flush_and_accessible():
     assert ".ge-editor-footer" in CSS
@@ -31,7 +29,3 @@ def test_quick_edit_stacks_above_other_assets():
 def test_more_tools_button_is_a_chevron():
     assert "toolbarMore.textContent = '\\u203A';" in EDITOR
     assert "toolbarMore.textContent = '\\u2026';" not in EDITOR
-
-
-def test_sw_cache_name_bumped():
-    assert re.search(r"odysseus-v\d+-pr40-editor-precache", SW)

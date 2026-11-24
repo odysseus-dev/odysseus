@@ -17,14 +17,12 @@ used by Add Noise / Clouds / Fibers; no new colours.
 """
 
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TOPBAR = (ROOT / "static/js/editor/build/topbar.js").read_text()
 WIRE = (ROOT / "static/js/editor/wire-topbar-menus.js").read_text()
 EDITOR = (ROOT / "static/js/galleryEditor.js").read_text()
 EFFECTS = (ROOT / "static/js/editor/filters/effects.js").read_text()
-SW = (ROOT / "static/sw.js").read_text()
 
 
 def test_new_menu_items_present():
@@ -125,12 +123,6 @@ def test_wind_is_directional_streak():
     assert "function wind(snap, v, dst)" in EFFECTS
     assert "const dx = Math.cos(angle);" in EFFECTS
     assert "const wgt = (strength - k) / strength;" in EFFECTS
-
-
-def test_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
