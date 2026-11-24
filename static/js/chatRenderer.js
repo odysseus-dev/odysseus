@@ -3495,10 +3495,20 @@ export function addMessage(role, content, modelName, metadata) {
       return null;
     }
 
-    // Discuss sessions carry the full research report in a seeded system
-    // message. Render it through the same thinking block used by model
-    // reasoning, rather than introducing a second collapsible UI.
-    if (role === 'system' && metadata?.research_spinoff_from) {
+    // Discuss sessions carry the full research report in a seeded context
+    // message (guarded user-role message, or legacy system-role message).
+    // Render it through the same thinking block used by model reasoning,
+    // rather than introducing a second collapsible UI.
+    if ((role === 'system' || role === 'user') && metadata?.research_spinoff_from) {
+      let displayText = String(textRaw || '');
+      const guardMatch = displayText.match(
+        /<<<UNTRUSTED_SOURCE_DATA>>>\s*(?:Source:[^\n]*\n)?([\s\S]*?)\s*<<<END_UNTRUSTED_SOURCE_DATA>>>/
+      );
+      if (guardMatch) {
+        displayText = guardMatch[1]
+          .replace(/<<<_UNTRUSTED_DATA>>>/g, '<<<UNTRUSTED_SOURCE_DATA>>>')
+          .replace(/<<<_END_UNTRUSTED_DATA>>>/g, '<<<END_UNTRUSTED_SOURCE_DATA>>>');
+      }
       const wrap = document.createElement('div');
       wrap.className = 'msg msg-ai';
       const roleEl = document.createElement('div');
@@ -3506,7 +3516,7 @@ export function addMessage(role, content, modelName, metadata) {
       roleEl.textContent = 'Research Context';
       const body = document.createElement('div');
       body.className = 'content';
-      body.innerHTML = markdownModule.createCollapsible(String(textRaw || ''), 'Research Context', true);
+      body.innerHTML = markdownModule.createCollapsible(displayText, 'Research Context', true);
       const hint = document.createElement('div');
       hint.className = 'research-context-continue-hint';
       hint.innerHTML = 'Continue conversation below <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>';

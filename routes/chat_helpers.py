@@ -1107,7 +1107,7 @@ def _session_is_research_spinoff(sess) -> bool:
         role = getattr(m, "role", None)
         if role is None and isinstance(m, dict):
             role = m.get("role")
-        if role != "system":
+        if role not in ("user", "system"):
             continue
         md = getattr(m, "metadata", None)
         if md is None and isinstance(m, dict):
