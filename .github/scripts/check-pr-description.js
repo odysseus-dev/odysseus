@@ -19,9 +19,36 @@ module.exports = async ({ github, context, core }) => {
 
   // Extract the text content of a Section. Matches any heading depth (#, ##,
   // ###, …) so the check doesn't break if the template's heading level changes.
+  // The section runs until the next heading of the same or a higher level, so
+  // sub-headings the author adds inside it (e.g. "#### Before" / "#### After"
+  // under Screenshots / clips) stay part of it. Lines inside fenced code blocks
+  // are never headings, so a "# comment" in a shell snippet does not end it.
   function section(heading) {
-    const m = body.match(new RegExp(`#+\\s+${heading}[\\s\\S]*?(?=\\n#+\\s+|$)`, 'i'));
-    return strip(m?.[0].replace(new RegExp(`#+\\s+${heading}`, 'i'), '') ?? '');
+    // \uFEFF: some editors prefix the pasted body with a byte-order mark.
+    const start = new RegExp(`^\\uFEFF? {0,3}(#+)\\s+${heading}`, 'i');
+    const lines = body.split('\n');
+    let level = 0;
+    let fence = '';
+    const content = [];
+    for (const line of lines) {
+      if (!level) {
+        const m = line.match(start);
+        if (m) {
+          level = m[1].length;
+          content.push(line.replace(start, ''));
+        }
+        continue;
+      }
+      const fenceMark = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+      if (fenceMark && (!fence || fenceMark[0] === fence[0] && fenceMark.length >= fence.length)) {
+        fence = fence ? '' : fenceMark;
+      } else if (!fence) {
+        const h = line.match(/^ {0,3}(#+)\s/);
+        if (h && h[1].length <= level) break;
+      }
+      content.push(line);
+    }
+    return strip(content.join('\n'));
   }
 
   const descriptionProblems = [];
