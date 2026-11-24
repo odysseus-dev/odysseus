@@ -703,6 +703,7 @@ export function createNoteWindow({
   // conflict (the draft stays on this device and Restore offers it), or the
   // note is opened again (its new window offers the draft).
   const unsent = new Set();
+  const closing = new Set();
   const settled = ctx => !ctx.session.dirty || !!ctx.session.conflict || ctx.session.gone;
 
   /** The connection is back: send what failed to save, in the open window and in the closed ones. */
@@ -717,11 +718,17 @@ export function createNoteWindow({
   function close() {
     const ctx = current;
     if (!ctx) return Promise.resolve();
+    closing.add(ctx);
     teardown(ctx);
     return ctx.session.close().then(() => {
+      closing.delete(ctx);
       if (!settled(ctx)) unsent.add(ctx);
       effects.render();
       restoreFocus(ctx);
+    }).catch(err => {
+      closing.delete(ctx);
+      if (!settled(ctx)) unsent.add(ctx);
+      throw err;
     });
   }
 
@@ -804,9 +811,18 @@ export function createNoteWindow({
 
   /** Something typed here that the server does not have yet: pending, held back, in conflict, or a title or body that differs from the saved one. Focus alone is not unsaved. */
   function hasUnsaved(ctx) {
-    const saved = ctx.session.saved;
-    return ctx.session.dirty || !!ctx.session.conflict || ctx.holding || ctx.els.title.value !== saved.title
-      || (ctx.editor.edited && ctx.editor.getMarkdown() !== saved.content);
+    if (!ctx || !ctx.session) return false;
+    const saved = ctx.session.saved || {};
+    const titleVal = ctx.els?.title?.value;
+    const editorEdited = ctx.editor?.edited;
+    const markdown = typeof ctx.editor?.getMarkdown === 'function' ? ctx.editor.getMarkdown() : null;
+    return Boolean(
+      ctx.session.dirty ||
+      ctx.session.conflict ||
+      ctx.holding ||
+      (titleVal !== undefined && titleVal !== saved.title) ||
+      (editorEdited && markdown !== null && markdown !== saved.content)
+    );
   }
 
   /** An agent edit to this note, or its undo, just landed. Shown at once unless the user has typed something not yet saved, which is never overwritten: their save then meets the newer version and gets the usual conflict choice. */
@@ -918,7 +934,25 @@ export function createNoteWindow({
     /** The page is being hidden or unloaded: keep the open note's draft. */
     flushDraft: () => current?.session.flushBackup(),
     /** Before a card writes to the open note: its pending save, if any, goes first. */
-    settle: id => (current && current.session.id === id ? current.session.flush() : undefined),
+    settle: async id => {
+      const target = (current && current.session?.id === id)
+        ? current
+        : (Array.from(closing).find(c => c && c.session && c.session.id === id)
+           || Array.from(unsent).find(c => c && c.session && c.session.id === id));
+      if (!target) return { ok: true };
+      await target.session.flush();
+      if (target.session.conflict) {
+        const err = new Error('conflict');
+        err.conflict = true;
+        throw err;
+      }
+      if (hasUnsaved(target) || target.session.dirty) {
+        const err = new Error('save failed');
+        err.saveFailed = true;
+        throw err;
+      }
+      return { ok: true };
+    },
     isOpenOn: id => !!current && current.session.id === id,
     isOpen: () => !!current,
     /** Open and on screen (not minimised to its dock chip). */

@@ -30,7 +30,24 @@ export function createNoteHistory({ api, app, state, noteWindow, clock, effects 
    * collaborator's) gets a 409 instead of being overwritten.
    */
   async function restore(id, versionId, { at = null, undoing = false, base } = {}) {
-    try { await noteWindow.settle(id); } catch {}
+    try {
+      const settled = await noteWindow?.settle?.(id);
+      if (settled && settled.ok === false) {
+        if (settled.conflict) {
+          effects.showError('Resolve the conflict before restoring an earlier version.');
+        } else {
+          effects.showError(undoing ? 'Could not save your changes, so the restore was not undone.' : 'Could not save your changes, so nothing was restored.');
+        }
+        return false;
+      }
+    } catch (settleError) {
+      if (settleError?.conflict || settleError?.message === 'conflict') {
+        effects.showError('Resolve the conflict before restoring an earlier version.');
+      } else {
+        effects.showError(undoing ? 'Could not save your changes, so the restore was not undone.' : 'Could not save your changes, so nothing was restored.');
+      }
+      return false;
+    }
     try {
       const expected = base !== undefined ? base : (stateNote(id)?.updated_at ?? null);
       const { undo_version_id: undoId = null, ...note } = await api.restoreVersion(id, versionId, expected);
