@@ -5,7 +5,7 @@ import { createNotesState } from '../frontend/src/features/notes/application/sta
 import { createNoteSession } from '../frontend/src/features/notes/application/noteSession.js';
 import { createNotesPersistence } from '../frontend/src/features/notes/infrastructure/storage.js';
 
-function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', content: '- [ ] item 1', body_revision: 'r1' }, apiOverrides = {} } = {}) {
+export function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', content: '- [ ] item 1', body_revision: 'r1' }, apiOverrides = {} } = {}) {
   const listeners = {};
   const attrs = {};
   const classList = new Set();
@@ -61,6 +61,7 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
 
   const prevDoc = globalThis.document;
   const prevNode = globalThis.Node;
+  const prevCSS = globalThis.CSS;
   const bodyEl = makeEl('body');
   globalThis.document = {
     createElement: tag => makeEl(tag),
@@ -70,6 +71,7 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
     querySelectorAll: () => [],
   };
   globalThis.Node = { ELEMENT_NODE: 1 };
+  if (!globalThis.CSS) globalThis.CSS = { escape: s => s };
 
   const app = createNotesState();
   const currentNote = { ...note };
@@ -146,6 +148,9 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
     dismissOrRemove: () => {},
     richBody,
     noteTags: { mount: () => ({ destroy: () => {}, set: () => {} }) },
+    sharePopover: { open: () => {}, close: () => {} },
+    agentUi: { closeAsk: () => {} },
+    navigation: { closed: () => {}, opened: () => {} },
     createSession: createSessionWrapper,
     wireReminderPicker: () => ({ refresh: () => {} }),
     drawing: { _buildDrawHtml: () => '', _wireCanvas: () => {} },
@@ -174,13 +179,17 @@ function setupWindowTest({ note = { id: 'note-sync-1', title: 'Sync Note', conte
     getEditorMarkdown: () => editorMarkdown,
     setEditorMarkdown: (md, markEdited = true) => {
       editorMarkdown = md;
-      if (markEdited) editorEdited = true;
+      if (markEdited) {
+        editorEdited = true;
+        sessionInstance?.markDirty();
+      }
     },
     getSession: () => sessionInstance,
     Modals,
     cleanup: () => {
-      if (prevDoc) globalThis.document = prevDoc; else delete globalThis.document;
-      if (prevNode) globalThis.Node = prevNode; else delete globalThis.Node;
+      if (prevDoc) globalThis.document = prevDoc;
+      if (prevNode) globalThis.Node = prevNode;
+      if (prevCSS) globalThis.CSS = prevCSS;
     },
   };
 }

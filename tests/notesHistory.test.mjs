@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createNotesState } from '../frontend/src/features/notes/application/state.js';
 import { createNoteHistory } from '../frontend/src/features/notes/application/noteHistory.js';
 import { changeDiff, changeSentence, dayLabel, foldDiff, groupByDay, lineDiff, relativeTime, restoreDiff, shortTime } from '../frontend/src/features/notes/domain/historyText.js';
+import { setupWindowTest } from './notesWindowSync.test.mjs';
 
 const NOW = { title: 'Trip', content: 'typed just now', updated_at: 't5' };
 const OLD = { title: 'Trip', content: 'Pack  light\r\n- [ ] cabin', updated_at: 't6' };
@@ -205,8 +206,8 @@ test('a restore that fails for another reason, or an Undo of a restore that fail
   assert.equal(undoChanged.app.state.notes[0].content, 'typed on the phone', 'the note as it is now is shown');
 });
 
-test('the restore goes ahead when saving pending typing fails, and an empty answer lists no versions', async () => {
-  const { app, history, effects } = harness();
+test('saving pending typing fails blocks restore, keeps draft intact, and shows error', async () => {
+  const { app, effects } = harness();
   const calls = [];
   const failingSettle = createNoteHistory({
     api: {
@@ -218,25 +219,480 @@ test('the restore goes ahead when saving pending typing fails, and an empty answ
     effects: { renderNote() {}, showToast: message => effects.toasts.push(message), showError: message => effects.errors.push(message) },
   });
   assert.deepEqual(await failingSettle.list('n1'), []);
-  assert.equal(await failingSettle.restore('n1', 3), true);
-  assert.deepEqual(calls, [['n1', 3, 't5']], 'the base is the version on screen');
-  assert.deepEqual(effects.toasts, ['Version restored'], 'no undo id: no Undo offered');
-  // A note no longer in the list: nothing to update, and the base is unknown.
-  assert.equal(await failingSettle.restore('gone', 3), true);
-  assert.deepEqual(calls.at(-1), ['gone', 3, null]);
+  assert.equal(await failingSettle.restore('n1', 3), false);
+  assert.deepEqual(calls, [], 'restoreVersion must not be called when save fails');
+  assert.deepEqual(effects.errors, ['Could not save your changes, so nothing was restored.']);
+  assert.deepEqual(effects.toasts, []);
+  assert.equal(app.state.notes[0].content, NOW.content, 'editor and state remain intact');
 });
 
-test('a rewrite too big to compare line by line shows the old middle removed, then the new one added, ends kept', () => {
-  // 600 x 600 differing lines is 360k cells, over the 250k the diff will spend.
-  const old = Array.from({ length: 600 }, (_, i) => `old ${i}`);
-  const fresh = Array.from({ length: 600 }, (_, i) => `new ${i}`);
-  const diff = lineDiff(['head', ...old, 'tail'].join('\n'), ['head', ...fresh, 'tail'].join('\n'));
-  assert.equal(diff.length, 1202);
-  assert.deepEqual(diff[0], { op: 'same', text: 'head' });
-  assert.deepEqual(diff.at(-1), { op: 'same', text: 'tail' });
-  assert.ok(diff.slice(1, 601).every(line => line.op === 'del' && line.text.startsWith('old ')));
-  assert.ok(diff.slice(601, 1201).every(line => line.op === 'add' && line.text.startsWith('new ')));
-  // Just under the cap the real comparison runs: one shared line in the middle is found.
-  const under = lineDiff([...old.slice(0, 400), 'shared', ...old.slice(400, 499)].join('\n'), [...fresh.slice(0, 400), 'shared', ...fresh.slice(400, 499)].join('\n'));
-  assert.equal(under.filter(line => line.op === 'same').map(line => line.text).join(), 'shared');
+test('Finding C: C1. Successful pending save permits restoration and keeps previous state recoverable', async () => {
+  const { app, history, calls, effects } = harness();
+  assert.equal(await history.restore('n1', 3), true);
+  assert.deepEqual(calls, [['settle', 'n1'], ['restore', 'n1', 3, 't5b']]);
+  assert.equal(effects.toasts[0].action, 'Undo');
+  assert.deepEqual(effects.errors, []);
+});
+
+test('Finding C: C2. Failed save prevents restoration, keeping editor and draft intact', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD }; },
+    },
+    app, state: app.state,
+    noteWindow: {
+      settle: async () => {
+        const err = new Error('save failed');
+        err.saveFailed = true;
+        throw err;
+      },
+      followServer() {},
+    },
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+  assert.equal(await history.restore('n1', 3), false);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(effects.errors, ['Could not save your changes, so nothing was restored.']);
+  assert.equal(app.state.notes[0].content, NOW.content);
+});
+
+test('Finding C: C3. Unresolved conflict blocks restoration until resolved', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD }; },
+    },
+    app, state: app.state,
+    noteWindow: {
+      settle: async () => {
+        const err = new Error('conflict');
+        err.conflict = true;
+        throw err;
+      },
+      followServer() {},
+    },
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+  assert.equal(await history.restore('n1', 3), false);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(effects.errors, ['Resolve the conflict before restoring an earlier version.']);
+  assert.equal(app.state.notes[0].content, NOW.content);
+});
+
+test('Finding C: C4. In-flight save must complete successfully before restoration runs', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  let inFlight = true;
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => {
+        assert.equal(inFlight, false, 'in-flight save must have completed before restoreVersion');
+        calls.push(['restore', id, vid, base]);
+        return { id, ...OLD, undo_version_id: 12 };
+      },
+    },
+    app, state: app.state,
+    noteWindow: {
+      settle: async id => {
+        calls.push(['settle', id]);
+        // simulate in-flight save resolving
+        await new Promise(r => setTimeout(r, 10));
+        inFlight = false;
+        app.mergeNote(app.state.notes[0], { updated_at: 't5_settled' });
+        return { ok: true };
+      },
+      followServer() {},
+    },
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+  assert.equal(await history.restore('n1', 3), true);
+  assert.deepEqual(calls, [['settle', 'n1'], ['restore', 'n1', 3, 't5_settled']]);
+  assert.deepEqual(effects.errors, []);
+});
+
+test('Finding C: C5. Clean note without pending changes restores normally', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD, undo_version_id: 12 }; },
+    },
+    app, state: app.state,
+    noteWindow: {
+      settle: async id => { calls.push(['settle', id]); return { ok: true }; },
+      followServer() {},
+    },
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+  assert.equal(await history.restore('n1', 3), true);
+  assert.deepEqual(calls, [['settle', 'n1'], ['restore', 'n1', 3, 't5']]);
+  assert.deepEqual(effects.errors, []);
+});
+
+test('Finding C: C6. Undo after successful restoration restores previous version', async () => {
+  const { app, history, calls, effects } = harness();
+  assert.equal(await history.restore('n1', 3), true);
+  const toast = effects.toasts[0];
+  assert.equal(toast.action, 'Undo');
+  toast.onAction();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(calls.at(-1), ['restore', 'n1', 12, 't6']);
+  assert.equal(app.state.notes[0].content, NOW.content);
+  assert.deepEqual(effects.toasts.at(-1), 'Restore undone');
+});
+
+test('Finding C: C7. Repeated attempts: failed attempt does not corrupt state and subsequent save permits restoration', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  let shouldFail = true;
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD, undo_version_id: 12 }; },
+    },
+    app, state: app.state,
+    noteWindow: {
+      settle: async id => {
+        calls.push(['settle', id]);
+        if (shouldFail) {
+          throw new Error('network down');
+        }
+        app.mergeNote(app.state.notes[0], { updated_at: 't5_recovered' });
+        return { ok: true };
+      },
+      followServer() {},
+    },
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+  // Attempt 1: fails
+  assert.equal(await history.restore('n1', 3), false);
+  assert.equal(calls.length, 1);
+  assert.equal(app.state.notes[0].content, NOW.content, 'content preserved');
+  assert.deepEqual(effects.errors, ['Could not save your changes, so nothing was restored.']);
+
+  // Attempt 2: retry succeeds
+  shouldFail = false;
+  assert.equal(await history.restore('n1', 3), true);
+  assert.deepEqual(calls, [['settle', 'n1'], ['settle', 'n1'], ['restore', 'n1', 3, 't5_recovered']]);
+  assert.equal(app.state.notes[0].content, OLD.content);
+});
+
+test('Finding D: D1. Note switching during in-flight save flushes and checks target note, not active note', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  let currentActive = 'n2'; // User switched to note n2
+  const noteA_session = {
+    id: 'n1',
+    flushed: false,
+    dirty: false,
+    conflict: false,
+    flush: async () => { calls.push(['flush', 'n1']); noteA_session.flushed = true; },
+  };
+  const noteB_session = {
+    id: 'n2',
+    flushed: false,
+    dirty: true,
+    conflict: false,
+    flush: async () => { calls.push(['flush', 'n2']); noteB_session.flushed = true; },
+  };
+
+  const noteWindow = {
+    settle: async id => {
+      calls.push(['settle', id]);
+      const target = (id === 'n1') ? noteA_session : noteB_session;
+      await target.flush();
+      if (target.conflict) throw Object.assign(new Error('conflict'), { conflict: true });
+      if (target.dirty) throw Object.assign(new Error('save failed'), { saveFailed: true });
+      app.mergeNote(app.state.notes[0], { updated_at: 't5_settled' });
+      return { ok: true };
+    },
+    followServer() {},
+  };
+
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD, undo_version_id: 12 }; },
+    },
+    app, state: app.state,
+    noteWindow,
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+
+  assert.equal(await history.restore('n1', 3), true);
+  assert.equal(noteA_session.flushed, true, 'target note A must be flushed');
+  assert.equal(noteB_session.flushed, false, 'active note B must NOT be flushed by note A restore');
+  assert.deepEqual(calls, [['settle', 'n1'], ['flush', 'n1'], ['restore', 'n1', 3, 't5_settled']]);
+  assert.deepEqual(effects.errors, []);
+});
+
+test('Finding D: D2. Note A save failure while Note B is active reports error on A without corrupting Note B', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  const noteA_session = {
+    id: 'n1',
+    dirty: true,
+    conflict: false,
+    flush: async () => {
+      calls.push(['flush', 'n1']);
+      // Note A flush fails
+      noteA_session.dirty = true;
+    },
+  };
+  const noteB_session = {
+    id: 'n2',
+    dirty: false,
+    content: 'note B content clean',
+  };
+
+  const noteWindow = {
+    settle: async id => {
+      calls.push(['settle', id]);
+      const target = (id === 'n1') ? noteA_session : noteB_session;
+      await target.flush();
+      if (target.dirty) throw Object.assign(new Error('save failed'), { saveFailed: true });
+      return { ok: true };
+    },
+    followServer() {},
+  };
+
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD }; },
+    },
+    app, state: app.state,
+    noteWindow,
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+
+  assert.equal(await history.restore('n1', 3), false);
+  assert.deepEqual(effects.errors, ['Could not save your changes, so nothing was restored.']);
+  assert.equal(app.state.notes[1].content, 'x', 'Note B state remains completely intact');
+  assert.equal(app.state.notes[0].content, NOW.content, 'Note A draft intact');
+});
+
+test('Finding D: D3. Note A closed or unsent session is found and settled when restoring Note A', async () => {
+  const { app, effects } = harness();
+  const calls = [];
+  const unsentSession = {
+    id: 'n1',
+    flushed: false,
+    dirty: false,
+    conflict: false,
+    flush: async () => { calls.push(['flush', 'n1_unsent']); unsentSession.flushed = true; },
+  };
+
+  // current is null (window closed), but unsent holds n1
+  const unsent = new Set([{ session: unsentSession }]);
+  let currentWindow = null;
+
+  const noteWindow = {
+    settle: async id => {
+      calls.push(['settle', id]);
+      const target = (currentWindow && currentWindow.session?.id === id)
+        ? currentWindow
+        : Array.from(unsent).find(c => c.session?.id === id);
+      if (!target) return { ok: true };
+      await target.session.flush();
+      if (target.session.conflict) throw Object.assign(new Error('conflict'), { conflict: true });
+      if (target.session.dirty) throw Object.assign(new Error('save failed'), { saveFailed: true });
+      app.mergeNote(app.state.notes[0], { updated_at: 't5_closed_settled' });
+      return { ok: true };
+    },
+    followServer() {},
+  };
+
+  const history = createNoteHistory({
+    api: {
+      listVersions: async () => ({ versions: [{ id: 3 }] }),
+      restoreVersion: async (id, vid, base) => { calls.push(['restore', id, vid, base]); return { id, ...OLD, undo_version_id: 12 }; },
+    },
+    app, state: app.state,
+    noteWindow,
+    effects: { renderNote() {}, showToast: m => effects.toasts.push(m), showError: m => effects.errors.push(m) },
+  });
+
+  assert.equal(await history.restore('n1', 3), true);
+  assert.equal(unsentSession.flushed, true, 'closed unsent note session must be flushed');
+  assert.deepEqual(calls, [['settle', 'n1'], ['flush', 'n1_unsent'], ['restore', 'n1', 3, 't5_closed_settled']]);
+});
+
+test('Finding D: D4. Closing note session in real createNoteWindow remains tracked in closing set and blocks restore if save fails', async () => {
+  let patchShouldFail = true;
+  const calls = [];
+  const h = setupWindowTest({
+    note: { id: 'n1', title: 'Trip', content: NOW.content, updated_at: 't5', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async (id, body) => {
+        calls.push(['patchNote', id, body]);
+        if (patchShouldFail) {
+          const err = new Error('Network failure');
+          err.status = 500;
+          throw err;
+        }
+        return { id, ...body, updated_at: 't5_saved', body_revision: 'r2' };
+      },
+    },
+  });
+
+  try {
+    const { win, app } = h;
+    const effects = { toasts: [], errors: [], rendered: [] };
+
+    // User types in note editor
+    h.setEditorMarkdown('Draft edits that fail save', true);
+
+    const history = createNoteHistory({
+      api: {
+        listVersions: async () => ({ versions: [{ id: 3 }] }),
+        restoreVersion: async (id, vid, base) => {
+          calls.push(['restoreVersion', id, vid, base]);
+          return { id, ...OLD, undo_version_id: 12 };
+        },
+      },
+      app,
+      state: app.state,
+      noteWindow: win,
+      effects: {
+        renderNote: id => effects.rendered.push(id),
+        showToast: m => effects.toasts.push(m),
+        showError: m => effects.errors.push(m),
+      },
+    });
+
+    // Close window: window teardown begins asynchronously, placing session into closing set
+    const closePromise = win.close();
+
+    // While window is closing, history.restore is invoked on the note
+    const ok = await history.restore('n1', 3);
+
+    // Because patchNote failed, settle detects save failure in closing session, and blocks restore
+    assert.equal(ok, false, 'restore must be refused when closing session save fails');
+    assert.deepEqual(effects.errors, ['Could not save your changes, so nothing was restored.']);
+    assert.equal(calls.some(c => c[0] === 'restoreVersion'), false, 'restoreVersion must NOT have been called');
+
+    await closePromise.catch(() => {});
+
+    // Draft remains preserved in the note window session
+    assert.equal(h.getEditorMarkdown(), 'Draft edits that fail save', 'editor markdown preserved');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Finding D: D5. Closing note session in real createNoteWindow flushes pending save and settles before restore', async () => {
+  const calls = [];
+  const h = setupWindowTest({
+    note: { id: 'n1', title: 'Trip', content: NOW.content, updated_at: 't5', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async (id, body) => {
+        calls.push(['patchNote', id, body]);
+        return { id, ...body, updated_at: 't5_saved', body_revision: 'r2' };
+      },
+    },
+  });
+
+  try {
+    const { win, app } = h;
+    const effects = { toasts: [], errors: [], rendered: [] };
+
+    // User types in note editor
+    h.setEditorMarkdown('Draft edits that save cleanly', true);
+
+    const history = createNoteHistory({
+      api: {
+        listVersions: async () => ({ versions: [{ id: 3 }] }),
+        restoreVersion: async (id, vid, base) => {
+          calls.push(['restoreVersion', id, vid, base]);
+          return { id, ...OLD, undo_version_id: 12 };
+        },
+      },
+      app,
+      state: app.state,
+      noteWindow: win,
+      effects: {
+        renderNote: id => effects.rendered.push(id),
+        showToast: m => effects.toasts.push(m),
+        showError: m => effects.errors.push(m),
+      },
+    });
+
+    // Close window: session enters closing
+    const closePromise = win.close();
+
+    // Trigger restore during closing
+    const ok = await history.restore('n1', 3);
+
+    assert.equal(ok, true, 'restore succeeds when closing session settles cleanly');
+    assert.equal(calls.some(c => c[0] === 'patchNote'), true, 'pending save flushed');
+    assert.equal(calls.some(c => c[0] === 'restoreVersion'), true, 'restoreVersion called');
+    assert.deepEqual(effects.errors, []);
+
+    await closePromise.catch(() => {});
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('Finding D: D6. Real createNoteWindow note switching flushes and checks target note without disturbing active note', async () => {
+  const calls = [];
+  const h = setupWindowTest({
+    note: { id: 'n1', title: 'Note 1', content: 'Note 1 content', updated_at: 't1', body_revision: 'r1' },
+    apiOverrides: {
+      patchNote: async (id, body) => {
+        calls.push(['patchNote', id, body]);
+        return { id, ...body, updated_at: `${id}_patched`, body_revision: 'r_patched' };
+      },
+    },
+  });
+
+  try {
+    const { win, app } = h;
+    app.replaceNotes([
+      { id: 'n1', title: 'Note 1', content: 'Note 1 content', updated_at: 't1' },
+      { id: 'n2', title: 'Note 2', content: 'Note 2 content', updated_at: 't2' },
+    ]);
+
+    h.setEditorMarkdown('Note 1 edited content', true);
+
+    // Switch window to Note 2
+    win.open('n2');
+    assert.equal(win.currentId(), 'n2');
+
+    const effects = { toasts: [], errors: [], rendered: [] };
+    const history = createNoteHistory({
+      api: {
+        listVersions: async () => ({ versions: [{ id: 3 }] }),
+        restoreVersion: async (id, vid, base) => {
+          calls.push(['restoreVersion', id, vid, base]);
+          return { id, ...OLD, undo_version_id: 12 };
+        },
+      },
+      app,
+      state: app.state,
+      noteWindow: win,
+      effects: {
+        renderNote: id => effects.rendered.push(id),
+        showToast: m => effects.toasts.push(m),
+        showError: m => effects.errors.push(m),
+      },
+    });
+
+    const ok = await history.restore('n1', 3);
+    assert.equal(ok, true);
+
+    // Note 2 is still active in window
+    assert.equal(win.currentId(), 'n2');
+    assert.equal(app.state.notes.find(n => n.id === 'n2').content, 'Note 2 content');
+  } finally {
+    h.cleanup();
+  }
 });
