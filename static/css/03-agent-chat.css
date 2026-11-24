@@ -692,6 +692,12 @@ button.hamburger {
 }
 .attach-image-preview {
   margin: 4px 0;
+  /* The photo fills this box (max-width: 100%), which is capped at 300px and
+     at the bubble's width. As a flex item in .attach-cards it may shrink, so
+     on a phone, or beside the edit box, the photo fits instead of running
+     past the bubble's edge. Its corner Caption button stays on the photo. */
+  max-width: min(300px, 100%);
+  min-width: 0;
 }
 .attach-image-preview img {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2);
