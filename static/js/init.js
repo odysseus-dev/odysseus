@@ -438,3 +438,37 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
   else window.addEventListener('load', release);
   setTimeout(release, 1200);  // hard fallback — never leave the splash hidden
 })();
+
+/* Open deep-linked notes (`#open=notes&note=<id>` or `#open=notes`) on fresh page
+   load (for example when tapping an ntfy reminder notification on mobile). */
+(function () {
+  function _openNoteFromHash() {
+    const hash = window.location.hash || '';
+    const match = hash.match(/^#open=notes(?:&note=([^&]+))?$/);
+    if (!match) return;
+    let noteId = '';
+    if (match[1]) {
+      try { noteId = decodeURIComponent(String(match[1]).replace(/\+/g, ' ')); } catch (_) { noteId = match[1]; }
+    }
+    import('./notes.js').then((mod) => {
+      if (noteId) {
+        const openNote = mod.openNote || (mod.default && mod.default.openNote);
+        if (openNote) openNote(noteId);
+      } else {
+        const openPanel = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
+        if (openPanel) openPanel();
+      }
+      try {
+        if (/^#open=notes(?:&note=|$)/.test(window.location.hash || '')) {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+      } catch (_) {}
+    }).catch(() => {});
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _openNoteFromHash, { once: true });
+  } else {
+    _openNoteFromHash();
+  }
+  window.addEventListener('hashchange', _openNoteFromHash);
+})();

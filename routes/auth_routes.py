@@ -1006,6 +1006,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 "Tags": "white_check_mark",
                 "Priority": "default",
             }
+            public_url = (settings.get("app_public_url") or "").strip().rstrip("/")
+            if public_url.startswith(("https://", "http://")):
+                headers["Click"] = f"{public_url}/"
             if api_key:
                 if auth_type == "bearer":
                     headers["Authorization"] = f"Bearer {api_key}"

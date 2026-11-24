@@ -521,6 +521,11 @@ async def dispatch_reminder(
                 # ntfy Title is an ASCII HTTP header; sanitize Unicode and cap its length.
                 _clean_title = (title or "Reminder").encode("ascii", "replace").decode("ascii")[:200]
                 hdrs = {"Title": _clean_title, "Priority": "high", "Tags": "bell"}
+                _public_url = (settings.get("app_public_url") or "").strip().rstrip("/")
+                if _public_url.startswith(("https://", "http://")):
+                    from urllib.parse import quote as _url_quote
+                    _safe_note_id = _url_quote(str(note_id), safe="") if note_id else ""
+                    hdrs["Click"] = f"{_public_url}/#open=notes&note={_safe_note_id}" if _safe_note_id else f"{_public_url}/"
                 api_key = intg.get("api_key", "")
                 if api_key:
                     hdrs["Authorization"] = f"Bearer {api_key}"
