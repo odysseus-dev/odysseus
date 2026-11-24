@@ -1041,6 +1041,12 @@ class ResearchHandler:
                 minimum=15,
                 maximum=3600,
             )
+            _synthesis_timeout = _bounded_int(
+                get_setting("research_synthesis_timeout_seconds", 600),
+                default=600,
+                minimum=30,
+                maximum=86400,
+            )
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
@@ -1053,6 +1059,7 @@ class ResearchHandler:
                 extraction_timeout=_extraction_timeout,
                 planning_timeout=_planning_timeout,
                 query_timeout=_query_timeout,
+                synthesis_timeout=_synthesis_timeout,
                 extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,

@@ -113,6 +113,11 @@ DEFAULT_SETTINGS = {
     # the old 30s/60s per-call defaults.
     "research_planning_timeout_seconds": 90,
     "research_query_timeout_seconds": 90,
+    # Heavy report synthesis / final-report generation calls produce up to
+    # research_max_tokens (16k+ tokens) in one pass. A 180s hard cap killed
+    # slow local models mid-generation; 600s gives ample headroom while staying
+    # well inside research_run_timeout_seconds (1800s) (#6986).
+    "research_synthesis_timeout_seconds": 600,
     "research_extraction_concurrency": 3,
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
