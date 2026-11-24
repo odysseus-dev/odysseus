@@ -63,11 +63,15 @@ def _size(size: str) -> tuple[int, int]:
         return int(_args.width), int(_args.height)
 
 
-def _cli_for_model(model: str) -> str:
-    lower = model.lower()
-    if "qwen" in lower:
+def _cli_for_model(model: str, base_model: str = "") -> str:
+    combined = f"{model or ''} {base_model or ''}".lower()
+    if "qwen" in combined:
         return "mflux-generate-qwen"
-    if "flux" in lower:
+    if "z-image-turbo" in combined or "z_image_turbo" in combined or "z-image" in combined:
+        return "mflux-generate-z-image-turbo"
+    if "flux.2" in combined or "flux2" in combined:
+        return "mflux-generate-flux2"
+    if "flux" in combined:
         return "mflux-generate"
     return "mflux-generate"
 
@@ -346,7 +350,7 @@ def generate(req: ImageRequest):
             elif _is_lama_inpaint(model) or _is_ddcolor(model):
                 raise _unsupported_swift_mlx_runtime(model)
             else:
-                cli = _cli_for_model(model)
+                cli = _cli_for_model(model, getattr(_args, 'base_model', ''))
                 cli_path = _resolve_cli(cli)
                 if not cli_path:
                     raise HTTPException(
