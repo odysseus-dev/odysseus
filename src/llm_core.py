@@ -722,7 +722,7 @@ def _is_ollama_native_url(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if _host_match(url, "ollama.com"):
         return True
-    if path.startswith("/v1"):
+    if path == "/v1" or path.startswith("/v1/") or path == "/api/v1" or path.startswith("/api/v1/"):
         return False
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
     return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
