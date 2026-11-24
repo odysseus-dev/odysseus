@@ -67,13 +67,15 @@ def endpoint_cost_tracked(url: str, endpoint_kind: Optional[str] = None) -> bool
 
 
 def _running_in_container() -> bool:
-    if os.path.exists("/.dockerenv"):
+    if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+        return True
+    if (os.environ.get("container") or "").strip():
         return True
     try:
         with open("/proc/1/cgroup", encoding="utf-8") as fh:
             return any(
                 marker in fh.read()
-                for marker in ("docker", "containerd", "kubepods")
+                for marker in ("docker", "containerd", "kubepods", "podman", "libpod")
             )
     except OSError:
         return False

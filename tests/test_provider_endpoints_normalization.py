@@ -40,6 +40,24 @@ def test_docker_saved_endpoint_stays_host_gateway_in_container(monkeypatch):
     assert er._rewrite_docker_host_for_native_runtime(value) == value
 
 
+def test_podman_containerenv_preserves_host_docker_internal(monkeypatch):
+    """#6673: Podman creates /run/.containerenv rather than /.dockerenv."""
+    monkeypatch.delenv("container", raising=False)
+    monkeypatch.setattr(er.os.path, "exists", lambda p: p == "/run/.containerenv")
+    value = "http://host.docker.internal:1234/v1"
+    assert er._running_in_container() is True
+    assert er._rewrite_docker_host_for_native_runtime(value) == value
+
+
+def test_podman_container_env_var_preserves_host_docker_internal(monkeypatch):
+    """#6673: Podman/OCI sets container=podman without /.dockerenv or cgroup markers."""
+    monkeypatch.setenv("container", "podman")
+    monkeypatch.setattr(er.os.path, "exists", lambda _p: False)
+    value = "http://host.docker.internal:1234/v1"
+    assert er._running_in_container() is True
+    assert er._rewrite_docker_host_for_native_runtime(value) == value
+
+
 # ── provider-root helpers ──
 
 @pytest.mark.parametrize("base,expected", [
