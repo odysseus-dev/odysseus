@@ -181,9 +181,27 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
-        ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
-        if not ok:
+        norm_username = body.username.strip().lower()
+        users_dict = getattr(auth_manager, "users", {}) or {}
+        deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+        if norm_username in users_dict or norm_username in deleting_dict:
             raise HTTPException(409, "Username already taken")
+        try:
+            ok = await asyncio.to_thread(
+                auth_manager.create_user,
+                norm_username,
+                body.password,
+                is_admin=False,
+                clean_orphaned=True,
+            )
+        except Exception:
+            raise HTTPException(500, "Failed to initialize account; registration aborted")
+        if not ok:
+            users_dict = getattr(auth_manager, "users", {}) or {}
+            deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+            if norm_username in users_dict or norm_username in deleting_dict:
+                raise HTTPException(409, "Username already taken")
+            raise HTTPException(500, "Failed to clean up previous account data for username; registration aborted")
         return {"ok": True, "message": "Account created"}
 
     @router.post("/login")
@@ -354,9 +372,26 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
-        ok = auth_manager.create_user(body.username, body.password, body.is_admin)
-        if not ok:
+        norm_username = body.username.strip().lower()
+        users_dict = getattr(auth_manager, "users", {}) or {}
+        deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+        if norm_username in users_dict or norm_username in deleting_dict:
             raise HTTPException(409, "Username already taken")
+        try:
+            ok = auth_manager.create_user(
+                norm_username,
+                body.password,
+                body.is_admin,
+                clean_orphaned=True,
+            )
+        except Exception:
+            raise HTTPException(500, "Failed to initialize account; creation aborted")
+        if not ok:
+            users_dict = getattr(auth_manager, "users", {}) or {}
+            deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+            if norm_username in users_dict or norm_username in deleting_dict:
+                raise HTTPException(409, "Username already taken")
+            raise HTTPException(500, "Failed to clean up previous account data for username; user creation aborted")
         return {"ok": True}
 
     @router.put("/users/{username}/password")
@@ -748,55 +783,112 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             except Exception:
                 pass
 
-        # One note has one owner: the notes the account owned go with it, in
-        # one transaction with their grants and legacy backup rows, and grants
-        # on other people's notes naming it are dropped, so a later account
-        # created under the same name starts with nothing. Legacy notes with
-        # no owner are never touched. This runs before the account is removed:
-        # if it fails, the account stays and the admin can retry, instead of
-        # the name being freed while its notes remain.
         can_delete = getattr(auth_manager, "can_delete_user", None)
+        users_dict = getattr(auth_manager, "users", {}) or {}
+        deleting_dict = getattr(auth_manager, "deleting_users", {}) or {}
+        norm_name = (body.username or "").strip().lower()
+        if not norm_name:
+            raise HTTPException(400, "Username is required")
+
+        is_retry = norm_name and (norm_name not in users_dict or norm_name in deleting_dict)
         if can_delete is not None and not can_delete(body.username, user):
-            raise HTTPException(400, "Cannot delete user")
-        try:
-            from core.notes_sharing import purge_notes_owned_by
-            purged = purge_notes_owned_by(body.username)
-            if any(purged.values()):
-                logger.info("Removed notes data of user %s before deleting the account: %s", body.username, purged)
-        except Exception as e:
-            logger.error("Failed to remove notes of user %s; account kept: %s", body.username, e)
-            raise HTTPException(
-                500,
-                "The account's notes could not be removed, so the account was kept. "
-                "Check the server log and try again.",
-            )
-        try:
-            ok = auth_manager.delete_user(body.username, user)
-        except Exception:
-            # delete_user can touch ApiToken rows before a later auth-store write
-            # fails. Dirty the bearer cache anyway so a partial token purge does
-            # not leave already-cached tokens authenticating until restart.
+            if not is_retry:
+                raise HTTPException(400, "Cannot delete user")
+
+        if is_retry and norm_name not in users_dict:
+            deletion_guard = auth_manager.account_deletion_guard(norm_name) if hasattr(auth_manager, "account_deletion_guard") else contextlib.nullcontext()
+            with deletion_guard:
+                # Administrative retry: clean up remaining notes and tokens
+                try:
+                    from core.database import get_db_session
+                    from core.notes_sharing import purge_notes_owned_by
+                    from core.auth import delete_api_tokens_for_user
+                    with get_db_session() as db:
+                        purged = purge_notes_owned_by(norm_name, db=db)
+                        removed_tokens = delete_api_tokens_for_user(db, norm_name)
+                        db.commit()
+                except Exception as e:
+                    logger.error("Administrative retry failed to clean up data for %s: %s", norm_name, e)
+                    _invalidate_api_token_cache()
+                    raise HTTPException(500, "Failed to clean up account data during retry; operation aborted")
+
+                _invalidate_api_token_cache()
+                was_deleting = norm_name in deleting_dict
+                if hasattr(auth_manager, "finish_delete_user"):
+                    try:
+                        res = auth_manager.finish_delete_user(norm_name)
+                        if res is False:
+                            raise HTTPException(500, "Failed to finalize account deletion in authentication store")
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error("Failed to finalize deletion of %s in auth store on retry: %s", norm_name, e)
+                        raise HTTPException(500, "Failed to finalize account deletion in authentication store")
+                if was_deleting or any(purged.values()) or removed_tokens:
+                    logger.info("Cleaned up orphaned data on retry for user %s: notes=%s, tokens=%s", norm_name, purged, removed_tokens)
+                    return {"ok": True}
+                raise HTTPException(400, "Cannot delete user")
+
+        user_backup = dict(users_dict.get(norm_name, {})) if isinstance(users_dict, dict) else {}
+
+        deletion_guard = auth_manager.account_deletion_guard(norm_name) if hasattr(auth_manager, "account_deletion_guard") else contextlib.nullcontext()
+        with deletion_guard:
+            try:
+                ok = auth_manager.delete_user(norm_name, user)
+            except Exception:
+                _invalidate_api_token_cache()
+                raise
+
+            if not ok:
+                raise HTTPException(400, "Cannot delete user")
+
+            # Stage 1: Purge notes and tokens belonging to the account in a shared database transaction
+            sql_purge_committed = False
+            purged = {}
+            removed_tokens = 0
+            try:
+                from core.database import get_db_session
+                from core.notes_sharing import purge_notes_owned_by
+                from core.auth import delete_api_tokens_for_user
+                with get_db_session() as db:
+                    purged = purge_notes_owned_by(norm_name, db=db)
+                    removed_tokens = delete_api_tokens_for_user(db, norm_name)
+                    db.commit()
+                sql_purge_committed = True
+            except HTTPException:
+                _invalidate_api_token_cache()
+                if hasattr(auth_manager, "restore_user") and user_backup and not sql_purge_committed:
+                    auth_manager.restore_user(norm_name, user_backup)
+                raise
+            except Exception as e:
+                logger.error("Failed to remove notes/tokens of user %s before commit; restoring account: %s", norm_name, e)
+                _invalidate_api_token_cache()
+                if hasattr(auth_manager, "restore_user") and user_backup and not sql_purge_committed:
+                    auth_manager.restore_user(norm_name, user_backup)
+                raise HTTPException(
+                    500,
+                    "The account's notes could not be removed, so the account was kept. "
+                    "Check the server log and try again.",
+                )
+
+            # Stage 2: Finalize deletion tombstone in auth store.
+            # SQL commit has completed. Never call restore_user after SQL purge commits!
             _invalidate_api_token_cache()
-            raise
-        if not ok:
-            # The notes are already gone; deleting again finishes the job.
-            raise HTTPException(400, "Cannot delete user")
-        # The account could still write between the purge and its removal (a
-        # signed-in tab, a request already past its auth check). delete_user
-        # revoked its sessions and tokens, so sweep once more: a note or grant
-        # left under the freed name would go to the next account given it.
-        try:
-            late = purge_notes_owned_by(body.username)
-            if any(late.values()):
-                logger.info("Removed notes data user %s wrote during its deletion: %s", body.username, late)
-        except Exception as e:
-            logger.error("Second notes purge for deleted user %s failed; run it again before reusing the name: %s",
-                         body.username, e)
-        # delete_user removes the user's ApiToken rows, but the bearer-auth
-        # middleware serves from an in-memory prefix->token cache that only
-        # rebuilds when flagged dirty. Without this, a deleted user's already
-        # cached token keeps authenticating until some other token op or a
-        # restart clears the cache. Mirror what the token routes do.
+            if hasattr(auth_manager, "finish_delete_user"):
+                try:
+                    res = auth_manager.finish_delete_user(norm_name)
+                    if res is False:
+                        raise HTTPException(500, "Account notes were removed, but finalizing account deletion in the authentication store failed. Please retry account deletion.")
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error("Failed to finalize deletion of %s in auth store: %s", norm_name, e)
+                    raise HTTPException(500, "Account notes were removed, but finalizing account deletion in the authentication store failed. Please retry account deletion.")
+
+            if any(purged.values()) or removed_tokens:
+                logger.info("Removed notes and tokens of user %s: %s (tokens: %s)", norm_name, purged, removed_tokens)
+            return {"ok": True}
+
         _invalidate_api_token_cache()
         return {"ok": True}
 

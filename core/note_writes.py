@@ -18,10 +18,11 @@ read the row again and re-apply.
 """
 
 import hashlib
+import inspect as py_inspect
 import json
 from typing import Any, Callable, Optional, Sequence
 
-from sqlalchemy import DateTime, String, bindparam, inspect, text, update
+from sqlalchemy import DateTime, String, bindparam, func, inspect, text, update
 from sqlalchemy.exc import OperationalError
 
 from core.database import Note, utcnow_naive
@@ -113,7 +114,7 @@ def note_body_revision(note: Note) -> str:
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()
 
 
-def guard_note_body(db, note: Note, expected: Optional[Sequence] = None) -> bool:
+def guard_note_body(db, note: Note, expected: Optional[Sequence] = None, user: Optional[str] = None) -> bool:
     """Acquire the row for writing only if the body still matches the read.
 
     `expected` is `body_snapshot(note)` taken when the note was read; without
@@ -131,11 +132,28 @@ def guard_note_body(db, note: Note, expected: Optional[Sequence] = None) -> bool
         .values(content=Note.content, updated_at=Note.updated_at)
         .execution_options(synchronize_session=False)
     )
+    from core.notes_sharing import is_owner, normalize_user
+    u = normalize_user(user)
+    if u and not is_owner(u, note):
+        from core.database import NoteShare
+        share_cond = (
+            db.query(NoteShare.id)
+            .filter(
+                NoteShare.note_id == note.id,
+                func.lower(func.trim(NoteShare.shared_with)) == u,
+                NoteShare.permission == "edit",
+            )
+            .exists()
+        )
+        stmt = stmt.where(share_cond)
     try:
         # The note's pending changes must not be flushed by this probe: they
         # are written by the compare-and-swap UPDATE, or not at all.
         with db.no_autoflush:
-            return db.execute(stmt).rowcount == 1
+            matched = db.execute(stmt).rowcount == 1
+        if not matched and u and not is_owner(u, note):
+            check_collaborator_permission(db, note.id, u)
+        return matched
     except OperationalError as exc:
         # A SQLite read transaction cannot upgrade a stale WAL snapshot.
         if getattr(exc.orig, "sqlite_errorname", None) == "SQLITE_BUSY_SNAPSHOT":
@@ -145,6 +163,42 @@ def guard_note_body(db, note: Note, expected: Optional[Sequence] = None) -> bool
 
 class NoteChanged(Exception):
     """Another write landed between this request's read and its commit."""
+
+
+class NotePermissionRevoked(Exception):
+    """The collaborator's permission was revoked or downgraded before modification committed."""
+
+    def __init__(self, message: str = "This note is no longer shared with you", status_code: int = 403):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+def check_collaborator_permission(db, note_id: str, user: Optional[str]) -> None:
+    """Validate that `user` still has edit permission on `note_id`.
+
+    Raises NotePermissionRevoked with 404 if the share was removed, or 403 if
+    downgraded to view-only.
+    """
+    from core.notes_sharing import normalize_user
+    from core.database import NoteShare
+    u = normalize_user(user)
+    if not u:
+        return
+    query = (
+        db.query(NoteShare)
+        .filter(
+            NoteShare.note_id == note_id,
+            func.lower(func.trim(NoteShare.shared_with)) == u,
+        )
+    )
+    if hasattr(query, "with_for_update"):
+        query = query.with_for_update()
+    share = query.first()
+    if share is None:
+        raise NotePermissionRevoked("Note not found", status_code=404)
+    if share.permission != "edit":
+        raise NotePermissionRevoked("This note is shared with you as view only", status_code=403)
 
 
 def stored_stamp(db, note_id: str) -> Any:
@@ -157,19 +211,39 @@ def stored_stamp(db, note_id: str) -> Any:
     return db.execute(text("SELECT updated_at FROM notes WHERE id = :id"), {"id": note_id}).scalar()
 
 
-def commit_if_unchanged(db, note: Note, stamp: Any) -> None:
+def commit_note_transaction(db, actor: Optional[str] = None, owner: Optional[str] = None) -> None:
+    """Commit a notes database transaction while holding the account lifecycle lease.
+
+    Guarantees that a Notes write either commits while the relevant account(s) remain
+    valid and will be included in deletion cleanup, or rolls back before persisting
+    if deletion has begun or auth service is unavailable (fail closed).
+    """
+    import core.auth as ca
+    auth_mgr = ca.get_auth_manager()
+    if auth_mgr and hasattr(auth_mgr, "account_mutation_guard"):
+        with auth_mgr.account_mutation_guard(actor=actor, owner=owner, db=db):
+            db.commit()
+    else:
+        db.commit()
+
+
+def commit_if_unchanged(db, note: Note, stamp: Any, user: Optional[str] = None) -> None:
     """Write `note`'s pending column changes only if its row still carries `stamp`.
 
-    Raises NoteChanged (after a rollback) when the row moved on. Without
-    pending changes this is a plain commit.
+    Raises NoteChanged (after a rollback) when the row moved on, or
+    NotePermissionRevoked if a collaborator's write permission was revoked or
+    downgraded. Without pending changes this commits under account lifecycle protection.
     """
     state = inspect(note)
     changes = {}
     for attr in state.mapper.column_attrs:
         if state.attrs[attr.key].history.has_changes():
             changes[attr.columns[0].key] = getattr(note, attr.key)
+    from core.notes_sharing import is_owner, normalize_user
+    u = normalize_user(user)
+
     if not changes:
-        db.commit()
+        commit_note_transaction(db, actor=u, owner=getattr(note, "owner", None))
         return
     table = Note.__table__
     note_id = note.id
@@ -181,24 +255,70 @@ def commit_if_unchanged(db, note: Note, stamp: Any) -> None:
         stamp_type = String() if isinstance(stamp, str) else DateTime()
         same_version = table.c.updated_at == bindparam("expected_stamp", stamp, type_=stamp_type)
     stmt = update(table).where(table.c.id == note_id).where(same_version).values(**changes)
+
+    if u and not is_owner(u, note):
+        from core.database import NoteShare
+        share_cond = (
+            db.query(NoteShare.id)
+            .filter(
+                NoteShare.note_id == note_id,
+                func.lower(func.trim(NoteShare.shared_with)) == u,
+                NoteShare.permission == "edit",
+            )
+            .exists()
+        )
+        stmt = stmt.where(share_cond)
+
     # Drop the ORM's own pending UPDATE, which would write unconditionally.
     db.expire(note)
-    if db.execute(stmt).rowcount != 1:
+    try:
+        rowcount = db.execute(stmt).rowcount
+    except OperationalError as exc:
+        if getattr(exc.orig, "sqlite_errorname", None) == "SQLITE_BUSY_SNAPSHOT":
+            db.rollback()
+            if u and not is_owner(u, note):
+                check_collaborator_permission(db, note_id, u)
+            raise NoteChanged(note_id)
+        raise
+
+    if rowcount != 1:
         db.rollback()
+        if u and not is_owner(u, note):
+            check_collaborator_permission(db, note_id, u)
         raise NoteChanged(note_id)
-    db.commit()
+
+    if u and not is_owner(u, note):
+        try:
+            check_collaborator_permission(db, note_id, u)
+        except NotePermissionRevoked:
+            db.rollback()
+            raise
+
+    commit_note_transaction(db, actor=u, owner=getattr(note, "owner", None))
+
+
+def _callable_accepts_user(fn: Callable) -> bool:
+    try:
+        sig = py_inspect.signature(fn)
+        return "user" in sig.parameters or any(
+            p.kind == py_inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+    except Exception:
+        return False
 
 
 def write_with_retry(db, note_id: str, load: Callable[[], Note], apply: Callable[[Note], Optional[Any]],
                      attempts: int = NOTE_WRITE_ATTEMPTS,
-                     guard: Optional[Callable[[Any, Note, tuple], bool]] = None):
+                     guard: Optional[Callable[..., bool]] = None,
+                     user: Optional[str] = None):
     """Load, apply and commit-if-unchanged, re-reading and re-applying on a lost race.
 
     `apply(note)` changes the loaded note and returns a value for the caller;
     it must be safe to run again on a fresher row. `guard(db, note, expected)`
     (normally `guard_note_body`) runs right before the commit with the body
     as loaded; False counts as a lost race. Raises NoteChanged when every
-    attempt lost.
+    attempt lost, or NotePermissionRevoked immediately without retry if
+    permission was lost.
     """
     for _ in range(attempts):
         # The stamp before the row: a write landing in between fails the
@@ -207,12 +327,17 @@ def write_with_retry(db, note_id: str, load: Callable[[], Note], apply: Callable
         note = load()
         expected = body_snapshot(note)
         result = apply(note)
-        if guard is not None and not guard(db, note, expected):
-            db.rollback()
-            db.expire_all()
-            continue
+        if guard is not None:
+            guard_ok = guard(db, note, expected, user=user) if _callable_accepts_user(guard) else guard(db, note, expected)
+            if not guard_ok:
+                db.rollback()
+                db.expire_all()
+                continue
         try:
-            commit_if_unchanged(db, note, stamp)
+            if _callable_accepts_user(commit_if_unchanged):
+                commit_if_unchanged(db, note, stamp, user=user)
+            else:
+                commit_if_unchanged(db, note, stamp)
         except NoteChanged:
             db.expire_all()
             continue

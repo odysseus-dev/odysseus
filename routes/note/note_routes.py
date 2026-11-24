@@ -19,8 +19,11 @@ from core.note_writes import (
     NOTE_BODY_CONFLICT,
     NOTE_WRITE_ATTEMPTS,
     NoteChanged,
+    NotePermissionRevoked,
+    _callable_accepts_user,
     body_snapshot,
     commit_if_unchanged,
+    commit_note_transaction,
     guard_note_body,
     note_body_revision,
     size_refusal,
@@ -832,7 +835,22 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         # unconfigured first-run) still resolve to None, the single-user
         # path. fire_reminder below already gated this way; the CRUD routes
         # did not.
-        return require_user(request) or None
+        user = require_user(request) or None
+        if user:
+            auth_mgr = getattr(request.app.state, "auth_manager", None)
+            if auth_mgr and hasattr(auth_mgr, "is_user_active") and not auth_mgr.is_user_active(user):
+                raise HTTPException(403, "Account is inactive or pending deletion")
+        return user
+
+    def _commit_note_route(db_session, user_name: Optional[str] = None, owner_name: Optional[str] = None):
+        if db_session:
+            try:
+                commit_note_transaction(db_session, actor=user_name, owner=owner_name)
+            except NotePermissionRevoked as exc:
+                raise HTTPException(exc.status_code, exc.message)
+
+    def _check_active_user_pre_commit(request: Request, user_name: Optional[str], db_session=None, owner_name: Optional[str] = None):
+        _commit_note_route(db_session, user_name=user_name, owner_name=owner_name)
 
     def _checked_color(value):
         try:
@@ -997,6 +1015,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # Read before the commit, so the payload (and its body revision)
             # is the note this request wrote, not a later write's.
             result = _note_to_dict(note, user)
+            _check_active_user_pre_commit(request, user, db_session=db)
             db.commit()
             return result
         finally:
@@ -1057,6 +1076,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         for _attempt in range(NOTE_WRITE_ATTEMPTS):
             try:
                 return _update_note_once(user, note_id, body)
+            except NotePermissionRevoked as exc:
+                raise HTTPException(exc.status_code, exc.message)
             except NoteChanged:
                 if body.base_updated_at is not None:
                     break
@@ -1077,9 +1098,9 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             return True
         return body_revision is not None and body_revision != note_body_revision(note)
 
-    def _guard_body(db, note: Note, expected: tuple) -> bool:
+    def _guard_body(db, note: Note, expected: tuple, user: Optional[str] = None) -> bool:
         # Looked up at call time, so a test can pause or fail the guard.
-        return guard_note_body(db, note, expected)
+        return guard_note_body(db, note, expected, user=user)
 
     def _update_note_once(user: Optional[str], note_id: str, body: NoteUpdate) -> Dict[str, Any]:
         db = SessionLocal()
@@ -1163,10 +1184,13 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             _reserve_new_note_uploads(user, refs_before, note)
             record_version(db, note, before, SOURCE_USER, author=user)
             # Right before the compare-and-swap: the guard takes the write lock.
-            if guarded and not _guard_body(db, note, expected_body):
+            if guarded and not _guard_body(db, note, expected_body, user=user):
                 db.rollback()
                 raise NoteChanged(note_id)
-            commit_if_unchanged(db, note, stamp)
+            if _callable_accepts_user(commit_if_unchanged):
+                commit_if_unchanged(db, note, stamp, user=user)
+            else:
+                commit_if_unchanged(db, note, stamp)
             db.refresh(note)
             return _note_dict_for(db, note, user)
         finally:
@@ -1285,6 +1309,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             sharing.delete_note_shares(db, note.id)
             delete_note_versions(db, [note.id])
             db.delete(note)
+            _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             db.commit()
             return {"ok": True}
         finally:
@@ -1298,6 +1323,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         try:
             note, _caps = _load_note(db, note_id, user, "manage")
             note.pinned = not note.pinned
+            _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             db.commit()
             return {"ok": True, "pinned": note.pinned}
         finally:
@@ -1311,6 +1337,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
         try:
             note, _caps = _load_note(db, note_id, user, "manage")
             note.archived = not note.archived
+            _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             db.commit()
             return {"ok": True, "archived": note.archived}
         finally:
@@ -1356,7 +1383,9 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 return item
 
             try:
-                note, item = write_with_retry(db, note_id, load, flip, guard=_guard_body)
+                note, item = write_with_retry(db, note_id, load, flip, guard=_guard_body, user=user)
+            except NotePermissionRevoked as exc:
+                raise HTTPException(exc.status_code, exc.message)
             except NoteChanged:
                 note = load()
                 raise _note_conflict(db, note, user)
@@ -1395,7 +1424,9 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 return item
 
             try:
-                note, item = write_with_retry(db, note_id, load, add, guard=_guard_body)
+                note, item = write_with_retry(db, note_id, load, add, guard=_guard_body, user=user)
+            except NotePermissionRevoked as exc:
+                raise HTTPException(exc.status_code, exc.message)
             except NoteChanged:
                 note = load()
                 raise _note_conflict(db, note, user)
@@ -1441,6 +1472,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if any(name and name not in valid for name in requested):
                 raise HTTPException(404, sharing.NO_SUCH_ACCOUNT)
             written = sharing.upsert_shares(db, note, requested, permission, valid)
+            _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             db.commit()
             grants = sharing.shares_by_note(db, [note.id]).get(note.id, [])
             return {
@@ -1464,6 +1496,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if "share" not in caps and not leaving:
                 raise HTTPException(403, "Only the note's owner can remove other people")
             sharing.remove_share(db, note.id, target)
+            _check_active_user_pre_commit(request, user, db_session=db, owner_name=getattr(note, "owner", None))
             db.commit()
             return {"ok": True, "left": leaving}
         finally:
@@ -1609,6 +1642,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 note = q.first()
                 if note:
                     note.sort_order = i
+            _check_active_user_pre_commit(request, user, db_session=db)
             db.commit()
             return {"ok": True, "count": len(ids)}
         finally:

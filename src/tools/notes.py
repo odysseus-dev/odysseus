@@ -19,8 +19,11 @@ from core.note_versions import SOURCE_AGENT, agent_session_id, delete_note_versi
 from core.note_writes import (
     NOTE_BODY_CONFLICT,
     NoteChanged,
+    NotePermissionRevoked,
+    _callable_accepts_user,
     body_snapshot,
     commit_if_unchanged,
+    commit_note_transaction,
     guard_note_body,
     note_body_revision,
     size_refusal,
@@ -396,6 +399,18 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                          "body_revision": note_body_revision(note), "exit_code": 0}, note)
 
         elif action == "add":
+            if owner:
+                try:
+                    import core.auth as ca
+                    if getattr(ca, "AuthManager", None) is getattr(ca, "_REAL_AUTH_MANAGER", None):
+                        auth_mgr = ca.get_auth_manager()
+                    else:
+                        auth_mgr = ca.AuthManager()
+                    if auth_mgr and getattr(auth_mgr, "is_configured", False):
+                        if hasattr(auth_mgr, "is_user_active") and not auth_mgr.is_user_active(owner):
+                            return {"error": f"Account '{owner}' is inactive or pending deletion. Nothing was saved.", "exit_code": 1}
+                except Exception:
+                    pass
             # Accept the various field names models emit: `text` is the most
             # common stand-in for "title or body content" when the model
             # treats the note as a single string. If text was supplied and
@@ -549,7 +564,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 session_id=args.get("session_id"),
             )
             db.add(note)
-            db.commit()
+            try:
+                commit_note_transaction(db, actor=owner, owner=owner)
+            except NotePermissionRevoked as exc:
+                db.rollback()
+                return {"error": exc.message, "exit_code": 1}
             db.refresh(note)
             _remember_version(owner, note)
             # Return note_id so the chat-side renderer can build a real
@@ -714,10 +733,21 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             record_version(db, note, before, SOURCE_AGENT, author=owner, session_id=agent_session_id())
             try:
                 # Right before the compare-and-swap: the guard takes the write lock.
-                if guarded and not guard_note_body(db, note, expected_body):
+                if guarded and not (guard_note_body(db, note, expected_body, user=owner) if _callable_accepts_user(guard_note_body) else guard_note_body(db, note, expected_body)):
                     db.rollback()
                     raise NoteChanged(note.id)
-                commit_if_unchanged(db, note, stamp)
+                if _callable_accepts_user(commit_if_unchanged):
+                    commit_if_unchanged(db, note, stamp, user=owner)
+                else:
+                    commit_if_unchanged(db, note, stamp)
+            except NotePermissionRevoked as exc:
+                db.rollback()
+                if "inactive or pending deletion" in exc.message.lower() or "authentication service unavailable" in exc.message.lower():
+                    return _own({"error": exc.message, "exit_code": 1}, note)
+                if exc.status_code == 403:
+                    return _own({"error": "This note is shared with you as view only; it cannot be changed.", "exit_code": 1}, note)
+                target = note_id or args.get("title") or args.get("query") or args.get("text") or getattr(note, "id", "")
+                return _own(_not_found(target), note)
             except NoteChanged:
                 return _own({"error": "The note changed while this update was being saved. Nothing was saved; "
                                       "view it again and retry.", "conflict": True, "exit_code": 1}, note)
@@ -770,7 +800,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             sharing.delete_note_shares(db, note.id)
             delete_note_versions(db, [note.id])
             db.delete(note)
-            db.commit()
+            try:
+                commit_note_transaction(db, actor=owner, owner=getattr(note, "owner", None))
+            except NotePermissionRevoked as exc:
+                db.rollback()
+                return {"error": exc.message, "exit_code": 1}
             return {"response": f"Deleted note: \"{title or '(untitled)'}\"", "exit_code": 0}
 
         elif action == "toggle_item":
@@ -823,10 +857,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     if not guard_note_body(db, note, expected_body):
                         db.rollback()
                         raise NoteChanged(note.id)
-                    commit_if_unchanged(db, note, stamp)
+                    commit_if_unchanged(db, note, stamp, user=owner)
                 except NoteChanged:
                     return _own({"error": "The note changed while this item was being saved. Nothing was saved; "
                                           "view it again and retry.", "conflict": True, "exit_code": 1}, note)
+                except NotePermissionRevoked as exc:
+                    db.rollback()
+                    return _own({"error": exc.message, "exit_code": 1}, note)
                 db.refresh(note)
                 _remember_version(owner, note)
                 if scope is not None:

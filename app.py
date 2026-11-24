@@ -350,6 +350,8 @@ if AUTH_ENABLED:
     app.state.invalidate_token_cache = _token_cache_invalidate
     app.state._token_cache = _token_cache
     app.state._token_cache_dirty = True
+    from core.auth import register_token_cache_invalidator
+    register_token_cache_invalidator(_token_cache_invalidate)
 
     def _refresh_token_cache():
         """Rebuild the prefix→[(id,hash)] map from the DB."""
@@ -462,10 +464,25 @@ if AUTH_ENABLED:
                     return JSONResponse(status_code=401, content={"error": "Invalid API token"})
                 prefix = raw_token[:8]
                 try:
+                    dirty_marker = Path(DATA_DIR) / "tokens.dirty"
+                    if dirty_marker.exists():
+                        try:
+                            if dirty_marker.stat().st_mtime > getattr(app.state, "_token_cache_mtime", 0.0):
+                                app.state._token_cache_dirty = True
+                        except Exception:
+                            pass
+                    auth_mgr = getattr(app.state, "auth_manager", None)
+                    if auth_mgr and hasattr(auth_mgr, "_last_loaded_mtime"):
+                        if getattr(app.state, "_token_cache_auth_mtime", 0.0) != auth_mgr._last_loaded_mtime:
+                            app.state._token_cache_dirty = True
+
                     if app.state._token_cache_dirty:
                         async with _token_cache_lock:
                             if app.state._token_cache_dirty:
                                 await _asyncio.to_thread(_refresh_token_cache)
+                                app.state._token_cache_mtime = time.time()
+                                if auth_mgr and hasattr(auth_mgr, "_last_loaded_mtime"):
+                                    app.state._token_cache_auth_mtime = auth_mgr._last_loaded_mtime
                     candidates = list(_token_cache.get(prefix, ()))
                     matched_id = None
                     matched_owner = None
@@ -477,6 +494,10 @@ if AUTH_ENABLED:
                             matched_scopes = scopes or []
                             break
                     if matched_id:
+                        auth_mgr = getattr(app.state, "auth_manager", None) or auth_manager
+                        if auth_mgr and hasattr(auth_mgr, "is_user_active") and not auth_mgr.is_user_active(matched_owner):
+                            app.state._token_cache_dirty = True
+                            return JSONResponse(status_code=401, content={"error": "API token owner account is inactive or pending deletion"})
                         # Update last_used_at off the hot path. Doing it
                         # inline used to keep the request open across an
                         # extra commit; do it fire-and-forget instead.
@@ -1200,6 +1221,29 @@ app.router.lifespan_context = _lifespan
 async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
+
+    # Enforce single-writer deployment contract across processes
+    _writer_lock_path = os.path.join(DATA_DIR, "odysseus.lock")
+    if not (os.getenv("ODYSSEUS_DISABLE_WRITER_LOCK", "0").lower() in ("1", "true", "yes")):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        _lock_f = open(_writer_lock_path, "a+b")
+        if os.name != "nt":
+            import fcntl
+            try:
+                fcntl.flock(_lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                app.state._writer_lock_file = _lock_f
+                logger.info("Acquired single-writer deployment lock (%s)", _writer_lock_path)
+            except (BlockingIOError, OSError) as e:
+                _lock_f.close()
+                logger.error(
+                    "Another Odysseus process holds the writer lock (%s). "
+                    "Odysseus enforces a single-writer deployment: %s",
+                    _writer_lock_path, e
+                )
+                raise RuntimeError(
+                    f"Concurrent writer deployment detected on {_writer_lock_path}; another process is running. Aborting startup."
+                ) from e
+
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.
@@ -1484,6 +1528,17 @@ async def _shutdown_event():
         await mcp_manager.disconnect_all()
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
+
+    _lock_f = getattr(app.state, "_writer_lock_file", None)
+    if _lock_f:
+        try:
+            if os.name != "nt":
+                import fcntl
+                fcntl.flock(_lock_f, fcntl.LOCK_UN)
+            _lock_f.close()
+        except Exception:
+            pass
+
     logger.info("Application shutdown complete")
 
 

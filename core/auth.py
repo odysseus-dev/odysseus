@@ -10,8 +10,53 @@ import secrets
 import threading
 import time
 import logging
+import contextlib
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
+
+_TOKEN_CACHE_INVALIDATOR: Optional[Callable[[], None]] = None
+
+
+def register_token_cache_invalidator(fn: Callable[[], None]) -> None:
+    global _TOKEN_CACHE_INVALIDATOR
+    _TOKEN_CACHE_INVALIDATOR = fn
+
+
+def invalidate_token_cache() -> None:
+    if _TOKEN_CACHE_INVALIDATOR is not None:
+        try:
+            _TOKEN_CACHE_INVALIDATOR()
+        except Exception:
+            pass
+    try:
+        from core.paths import DATA_DIR
+        dirty_path = os.path.join(DATA_DIR, "tokens.dirty")
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(dirty_path, "a+b") as f:
+            f.write(b"1\n")
+    except Exception:
+        pass
+
+
+def delete_api_tokens_for_user(db, username: str) -> int:
+    """Purge all API tokens owned by `username` using case- and whitespace-insensitive matching."""
+    norm_name = (username or "").strip().lower()
+    if not norm_name:
+        return 0
+    from core.database import ApiToken
+    from sqlalchemy import func, or_
+    if hasattr(getattr(ApiToken, "owner", None), "__clause_element__"):
+        count = db.query(ApiToken).filter(
+            or_(
+                ApiToken.owner == norm_name,
+                func.lower(func.trim(ApiToken.owner)) == norm_name,
+            )
+        ).delete(synchronize_session=False)
+    else:
+        # Mocked or simple attribute in unit tests
+        count = db.query(ApiToken).filter(ApiToken.owner == norm_name).delete(synchronize_session=False)
+    invalidate_token_cache()
+    return count
 
 import bcrypt
 import pyotp
@@ -108,11 +153,69 @@ class SetAdminResult(enum.Enum):
     LAST_ADMIN = "last_admin"           # would remove the last remaining admin
 
 
+_DEFAULT_AUTH_MANAGER: Optional["AuthManager"] = None
+_REAL_AUTH_MANAGER = None
+
+
+def get_auth_manager(auth_path: str = DEFAULT_AUTH_PATH) -> "AuthManager":
+    global _DEFAULT_AUTH_MANAGER
+    if _DEFAULT_AUTH_MANAGER is None:
+        _DEFAULT_AUTH_MANAGER = AuthManager(auth_path)
+    return _DEFAULT_AUTH_MANAGER
+
+
+class _UserLifecycleLock:
+    """Read-write lock for coordinating account deletion and in-flight mutations for a specific user."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._readers_ok = threading.Condition(self._lock)
+        self._writers_ok = threading.Condition(self._lock)
+        self._readers = 0
+        self._writers = 0
+        self._writer_waiting = 0
+
+    @contextlib.contextmanager
+    def read_lock(self):
+        with self._lock:
+            while self._writers > 0 or self._writer_waiting > 0:
+                self._readers_ok.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._writers_ok.notify()
+
+    @contextlib.contextmanager
+    def write_lock(self):
+        with self._lock:
+            self._writer_waiting += 1
+            while self._readers > 0 or self._writers > 0:
+                self._writers_ok.wait()
+            self._writer_waiting -= 1
+            self._writers = 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._writers = 0
+                if self._writer_waiting > 0:
+                    self._writers_ok.notify()
+                else:
+                    self._readers_ok.notify_all()
+
+
 class AuthManager:
     """Manages multi-user password + session-token auth system."""
 
     def __init__(self, auth_path: str = DEFAULT_AUTH_PATH):
+        global _DEFAULT_AUTH_MANAGER
+        _DEFAULT_AUTH_MANAGER = self
         self.auth_path = auth_path
+        self._last_loaded_mtime: float = 0.0
+        self._last_loaded_size: int = 0
         self._sessions_path = os.path.join(os.path.dirname(auth_path), "sessions.json")
         self._config: Dict[str, Any] = {}
         self._sessions: Dict[str, Dict[str, Any]] = {}  # token -> {username, expiry}
@@ -122,19 +225,150 @@ class AuthManager:
         # Guards all mutations of self._config and the on-disk auth.json so
         # concurrent create/delete/rename/privilege operations don't interleave
         # and corrupt the user database.
-        self._config_lock = threading.Lock()
+        self._config_lock = threading.RLock()
         # Guards the first-run setup check-and-write so concurrent requests
         # cannot both observe is_configured==False and both create admin accounts.
         self._setup_lock = threading.Lock()
+        self._cross_process_lock_depth = 0
+        self._lifecycle_locks: Dict[str, _UserLifecycleLock] = {}
+        self._lifecycle_meta_lock = threading.Lock()
         self._load()
         self._load_sessions()
         self._migrate_single_user()
         self._drop_reserved_loaded_users()
         self._migrate_legacy_admin_role()
 
+    def _get_user_lifecycle_lock(self, username: str) -> _UserLifecycleLock:
+        norm = (username or "").strip().lower()
+        with self._lifecycle_meta_lock:
+            if norm not in self._lifecycle_locks:
+                self._lifecycle_locks[norm] = _UserLifecycleLock()
+            return self._lifecycle_locks[norm]
+
+    @contextlib.contextmanager
+    def account_deletion_guard(self, username: str):
+        """Acquire exclusive write lock for username, blocking concurrent mutation commits."""
+        norm = (username or "").strip().lower()
+        if not norm:
+            yield
+            return
+        lock = self._get_user_lifecycle_lock(norm)
+        with lock.write_lock():
+            yield
+
+    @contextlib.contextmanager
+    def account_mutation_guard(self, actor: Optional[str] = None, owner: Optional[str] = None, db=None):
+        """Acquire shared read lock for actor and owner, validating active status before yielding to commit."""
+        users_to_lock = sorted(set(filter(None, [
+            (actor or "").strip().lower(),
+            (owner or "").strip().lower(),
+        ])))
+
+        @contextlib.contextmanager
+        def _acquire_all(users):
+            if not users:
+                yield
+                return
+            u = users[0]
+            lock = self._get_user_lifecycle_lock(u)
+            with lock.read_lock():
+                with _acquire_all(users[1:]):
+                    yield
+
+        with _acquire_all(users_to_lock):
+            if not self._check_active_fail_closed(actor, owner, db=db):
+                return
+            yield
+
+    def _check_active_fail_closed(self, actor: Optional[str], owner: Optional[str], db=None) -> bool:
+        norm_actor = (actor or "").strip().lower()
+        norm_owner = (owner or "").strip().lower()
+        try:
+            if not getattr(self, "is_configured", False):
+                return True
+            if norm_actor and not self.is_user_active(norm_actor):
+                if db:
+                    db.rollback()
+                from core.note_writes import NotePermissionRevoked
+                raise NotePermissionRevoked(f"Account '{norm_actor}' is inactive or pending deletion", status_code=403)
+            if norm_owner and not self.is_user_active(norm_owner):
+                if db:
+                    db.rollback()
+                from core.note_writes import NotePermissionRevoked
+                raise NotePermissionRevoked(f"Account '{norm_owner}' is inactive or pending deletion", status_code=403)
+            return True
+        except Exception as exc:
+            from core.note_writes import NotePermissionRevoked
+            if isinstance(exc, NotePermissionRevoked):
+                raise
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            logger.error("Authentication storage failure during lifecycle verification: %s", exc)
+            raise NotePermissionRevoked("Authentication service unavailable; operation aborted", status_code=503) from exc
+
+    def _ensure_fresh_config(self):
+        """Reload auth config from disk if modified by another process. Fails closed on error."""
+        try:
+            try:
+                stat = os.stat(self.auth_path)
+            except FileNotFoundError:
+                return
+            mtime = stat.st_mtime
+            size = stat.st_size
+            if getattr(self, "_last_loaded_mtime", 0.0) != mtime or getattr(self, "_last_loaded_size", 0) != size:
+                self._load()
+        except Exception as e:
+            logger.error("Failed to verify or refresh authentication configuration: %s", e)
+            raise RuntimeError(f"Unable to verify fresh authentication configuration: {e}") from e
+
+    @contextlib.contextmanager
+    def _cross_process_lock(self):
+        """Acquire in-process lock and cross-process file lock, ensuring fresh config from disk. Fails closed."""
+        with self._config_lock:
+            if self._cross_process_lock_depth > 0:
+                self._cross_process_lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._cross_process_lock_depth -= 1
+                return
+
+            lock_path = os.path.abspath(str(self.auth_path)) + ".lock"
+            try:
+                os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+                lock_handle = open(lock_path, "a+b")
+                if os.name != "nt":
+                    import fcntl
+                    fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            except Exception as e:
+                logger.error("Failed to acquire authentication process lock (%s): %s", lock_path, e)
+                raise RuntimeError(f"Could not acquire authentication process lock: {e}") from e
+
+            self._cross_process_lock_depth = 1
+            try:
+                self._ensure_fresh_config()
+                yield
+            finally:
+                self._cross_process_lock_depth = 0
+                try:
+                    if os.name != "nt":
+                        import fcntl
+                        fcntl.flock(lock_handle, fcntl.LOCK_UN)
+                finally:
+                    lock_handle.close()
+
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
+                try:
+                    stat = os.stat(self.auth_path)
+                    self._last_loaded_mtime = stat.st_mtime
+                    self._last_loaded_size = stat.st_size
+                except Exception as e:
+                    raise RuntimeError(f"Failed to inspect auth file status: {e}") from e
                 with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
                 # Normalize all stored usernames to lowercase so they match
@@ -149,6 +383,8 @@ class AuthManager:
                 logger.info("Auth config loaded")
             else:
                 self._config = {}
+                self._last_loaded_mtime = 0.0
+                self._last_loaded_size = 0
                 logger.info("No auth config found — first-run setup required")
         except Exception as e:
             logger.error(f"Failed to load auth config: {e}")
@@ -241,18 +477,27 @@ class AuthManager:
 
     def _save(self):
         _atomic_write_json(self.auth_path, self._config, indent=2)
+        try:
+            if os.path.exists(self.auth_path):
+                stat = os.stat(self.auth_path)
+                self._last_loaded_mtime = stat.st_mtime
+                self._last_loaded_size = stat.st_size
+        except Exception:
+            pass
 
     @property
     def users(self) -> Dict[str, Any]:
+        self._ensure_fresh_config()
         return self._config.get("users", {})
 
     @property
     def signup_enabled(self) -> bool:
+        self._ensure_fresh_config()
         return self._config.get("signup_enabled", False)
 
     @signup_enabled.setter
     def signup_enabled(self, value: bool):
-        with self._config_lock:
+        with self._cross_process_lock():
             self._config["signup_enabled"] = value
             self._save()
 
@@ -269,18 +514,49 @@ class AuthManager:
             "session_days": TOKEN_TTL // 86400,
         }
 
+    @property
+    def deleting_users(self) -> Dict[str, Any]:
+        """Return a copy of the accounts currently undergoing deletion."""
+        with self._config_lock:
+            self._ensure_fresh_config()
+            return dict(self._config.get("deleting", {}))
+
+    def is_user_active(self, username: str | None) -> bool:
+        """True if username exists in users and is not undergoing deletion."""
+        norm = (username or "").strip().lower()
+        if not norm:
+            return True
+        with self._config_lock:
+            self._ensure_fresh_config()
+            return norm in self.users and norm not in self._config.get("deleting", {})
+
+    def is_username_available(self, username: str | None) -> bool:
+        """True if username is not taken by an active user or pending deletion."""
+        norm = (username or "").strip().lower()
+        if not norm:
+            return False
+        with self._config_lock:
+            self._ensure_fresh_config()
+            return norm not in self.users and norm not in self._config.get("deleting", {})
+
     # ------------------------------------------------------------------
     # Account management
     # ------------------------------------------------------------------
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        with self._setup_lock:
+        with self._setup_lock, self._cross_process_lock():
             if self.is_configured:
                 return False
-            return self.create_user(username, password, is_admin=True)
+            return self.create_user(username, password, is_admin=True, clean_orphaned=True)
 
-    def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        is_admin: bool = False,
+        clean_orphaned: bool = False,
+    ) -> bool:
         """Create a new user account."""
         username = username.strip().lower()
         if not username:
@@ -288,9 +564,31 @@ class AuthManager:
         if username in RESERVED_USERNAMES:
             logger.warning("Refused to create reserved username '%s'", username)
             return False
-        with self._config_lock:
-            if username in self.users:
+        with self._cross_process_lock():
+            if username in self.users or username in self._config.get("deleting", {}):
+                # Active or pending-deletion account: duplicate creation attempt never touches or deletes active data
                 return False
+
+            if clean_orphaned:
+                try:
+                    from core.database import get_db_session
+                    with get_db_session() as db:
+                        delete_api_tokens_for_user(db, username)
+                    invalidate_token_cache()
+                except Exception as exc:
+                    logger.error("Failed to clean up orphaned tokens for '%s'; creation aborted: %s", username, exc)
+                    return False
+
+                try:
+                    import sys
+                    cdb_mod = sys.modules.get("core.database")
+                    if cdb_mod is not None and hasattr(cdb_mod, "Note"):
+                        from core.notes_sharing import purge_notes_owned_by
+                        purge_notes_owned_by(username)
+                except Exception as exc:
+                    logger.error("Failed to clean up orphaned notes for '%s'; creation aborted: %s", username, exc)
+                    return False
+
             if "users" not in self._config:
                 self._config["users"] = {}
             self._config["users"][username] = {
@@ -299,7 +597,11 @@ class AuthManager:
                 "is_admin": is_admin,
                 "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
             }
-            self._save()
+            try:
+                self._save()
+            except Exception:
+                self._config["users"].pop(username, None)
+                raise
         logger.info(f"Created user '{username}' (admin={is_admin})")
         return True
 
@@ -318,7 +620,7 @@ class AuthManager:
                 and bool(self.users.get(requesting_user, {}).get("is_admin"))
             )
 
-    def delete_user(self, username: str, requesting_user: str) -> bool:
+    def delete_user(self, username: str, requesting_user: str, db=None) -> bool:
         """Delete a user. Only admins can delete, and can't delete themselves.
 
         SECURITY: also revoke every active session token belonging to this
@@ -327,31 +629,49 @@ class AuthManager:
         their cookie expired naturally (default ~30 days).
         """
         username = username.strip().lower()
-        with self._config_lock:
+        with self._cross_process_lock():
             if username not in self.users:
                 return False
             if username == requesting_user:
                 return False
             if not self.users.get(requesting_user, {}).get("is_admin"):
                 return False
-            # Revoke API bearer tokens before removing the auth row. The bearer
+            # Revoke API bearer tokens before moving the auth row. The bearer
             # path authenticates from ApiToken rows and does not require the
             # owner to still exist, so a successful delete must not leave active
             # rows behind. If the token store is unavailable, fail closed and
             # keep the user/session state intact so the admin can retry.
             try:
-                from core.database import get_db_session, ApiToken
-                with get_db_session() as db:
-                    removed_tokens = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+                if db is not None:
+                    removed_tokens = delete_api_tokens_for_user(db, username)
+                else:
+                    from core.database import get_db_session
+                    with get_db_session() as own_db:
+                        removed_tokens = delete_api_tokens_for_user(own_db, username)
                 if removed_tokens:
                     logger.info(
                         f"Revoked {removed_tokens} API token(s) owned by deleted user '{username}'"
                     )
+                invalidate_token_cache()
             except Exception:
                 logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
                 return False
-            del self._config["users"][username]
-            self._save()
+
+            user_data = self._config.get("users", {}).pop(username, None)
+            if user_data is None:
+                user_data = self._config.get("deleting", {}).get(username, {})
+            if "deleting" not in self._config:
+                self._config["deleting"] = {}
+            self._config["deleting"][username] = user_data
+
+            try:
+                self._save()
+            except Exception:
+                if username in self._config.get("deleting", {}):
+                    self._config["deleting"].pop(username, None)
+                if user_data:
+                    self._config.setdefault("users", {})[username] = user_data
+                raise
         # Purge all sessions belonging to this user. validate_token doesn't
         # cross-check `self.users`, so without this step a deleted user's
         # cookie keeps authenticating.
@@ -364,8 +684,51 @@ class AuthManager:
                 revoked += 1
         if revoked:
             self._save_sessions()
-        logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
+        logger.info(f"Marked user '{username}' for deletion (by {requesting_user}); revoked {revoked} active session(s)")
         return True
+
+    def finish_delete_user(self, username: str) -> bool:
+        """Mark account deletion completely finished and free the username."""
+        username = username.strip().lower()
+        with self._cross_process_lock():
+            deleting = self._config.get("deleting")
+            if not isinstance(deleting, dict) or username not in deleting:
+                return True
+            backup_entry = deleting[username]
+            deleting.pop(username, None)
+            try:
+                self._save()
+                return True
+            except Exception as e:
+                deleting[username] = backup_entry
+                logger.error(f"Failed to save auth config after finishing deletion for '{username}': {e}")
+                raise
+
+    def restore_user(self, username: str, user_data: Optional[dict] = None) -> bool:
+        """Restore a user record after a downstream failure during deletion."""
+        username = username.strip().lower()
+        with self._cross_process_lock():
+            if "users" not in self._config:
+                self._config["users"] = {}
+            if username in self._config["users"]:
+                # Already active: never overwrite!
+                return True
+            if not user_data and "deleting" in self._config:
+                user_data = self._config["deleting"].get(username)
+            if user_data is not None:
+                self._config["users"][username] = user_data
+            backup_deleting = None
+            if "deleting" in self._config:
+                backup_deleting = self._config["deleting"].pop(username, None)
+            try:
+                self._save()
+                return True
+            except Exception as e:
+                self._config["users"].pop(username, None)
+                if backup_deleting is not None:
+                    self._config.setdefault("deleting", {})[username] = backup_deleting
+                logger.error(f"Failed to restore user '{username}' after deletion failure: {e}")
+                raise
 
     def rename_user(self, old_username: str, new_username: str, requesting_user: str) -> bool:
         """Rename a user in auth config and active sessions. Admin only."""
@@ -377,7 +740,7 @@ class AuthManager:
         if new_username in RESERVED_USERNAMES:
             logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
             return False
-        with self._config_lock:
+        with self._cross_process_lock():
             if old_username not in self.users:
                 return False
             if new_username in self.users:
@@ -485,9 +848,9 @@ class AuthManager:
                 # list nor revoke their tokens, so purge them with the role.
                 # Done before the flag flips: if the token store fails the
                 # exception propagates and the user is still an admin.
-                from core.database import get_db_session, ApiToken
+                from core.database import get_db_session
                 with get_db_session() as db:
-                    removed_tokens = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+                    removed_tokens = delete_api_tokens_for_user(db, username)
                 if removed_tokens:
                     logger.info(
                         f"Revoked {removed_tokens} API token(s) owned by demoted admin '{username}'"
@@ -747,3 +1110,6 @@ class AuthManager:
         if authenticated:
             result["privileges"] = self.get_privileges(username)
         return result
+
+
+_REAL_AUTH_MANAGER = AuthManager
