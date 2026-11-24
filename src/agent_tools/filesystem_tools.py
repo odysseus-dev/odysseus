@@ -426,6 +426,35 @@ class WriteFileTool:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"write_file: {e}", "exit_code": 1}
+        try:
+            options = json.loads(original) if original.lstrip().startswith("{") else {}
+        except (TypeError, ValueError):
+            options = {}
+        output_format = options.get("format", "text") if isinstance(options, dict) else "text"
+        if output_format not in {"text", "pdf"}:
+            return {"error": "write_file: format must be text or pdf", "exit_code": 1}
+        if output_format == "pdf":
+            if os.path.splitext(path)[1].casefold() != ".pdf":
+                return {"error": "write_file: PDF output path must end in .pdf", "exit_code": 1}
+            try:
+                from src.agent_tools.pdf_writer import publish_new_pdf, render_pdf
+                data = await asyncio.to_thread(render_pdf, body)
+                # Revalidate the sealed target immediately before publication.
+                await asyncio.to_thread(publish_new_pdf, path, data, bound.validate if bound else None)
+            except FileExistsError:
+                stem, ext = os.path.splitext(raw_path)
+                return {"error": f"write_file: PDF already exists; choose another path, such as {stem}-2{ext}",
+                        "exit_code": 1}
+            except (ValueError, RuntimeError, OSError) as error:
+                return {"error": f"write_file: PDF creation failed: {error}", "exit_code": 1}
+            try:
+                from src.agent_tools.pdf_writer import register_pdf_download
+                download_url = await asyncio.to_thread(register_pdf_download, data, path, ctx.get("owner"))
+            except Exception as error:
+                return {"output": f"Created PDF at {_display_tool_path(path)}, but the chat download could not be prepared: {error}",
+                        "exit_code": 0, "download_error": True}
+            return {"output": f"PDF ready: [Download PDF]({download_url})",
+                    "download_url": download_url, "exit_code": 0}
         body = _unwrap_fenced_source_body(body, path)
         # A frequent multimodal artifact failure is writing SVG markup to a
         # path whose extension promises a raster image. The file exists, so

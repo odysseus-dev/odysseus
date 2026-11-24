@@ -155,6 +155,15 @@ def _filesystem_scope(bound: Any) -> tuple[tuple[ResourceRef, ...], tuple[Postco
     refs = tuple(resource_ref(b.resource, b.role) for b in bound.bindings)
     obligations: list[Postcondition] = []
     if tool == "write_file":
+        try:
+            write_args = json.loads(bound.execution_input)
+        except (TypeError, ValueError):
+            write_args = {}
+        if isinstance(write_args, dict) and write_args.get("format") == "pdf":
+            # The user supplied text is rendered to binary PDF bytes, so its
+            # text digest is not a truthful postcondition on the file bytes.
+            obligations.append(Postcondition(refs[0], Predicate.EXISTS))
+            return refs, tuple(obligations)
         expected = _write_file_digest(bound.execution_input, bound.bindings[0].resource.path)
         intent = bound.write_intent
         if intent is not None:
