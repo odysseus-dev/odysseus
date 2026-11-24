@@ -6,6 +6,7 @@ from starlette.concurrency import run_in_threadpool
 from core.atomic_io import atomic_write_json, store_transaction
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
+from core.guard_deco import content_type
 
 PREFS_FILE = USER_PREFS_FILE
 _MAX_PATCH_KEYS = 32
@@ -243,6 +244,7 @@ def setup_prefs_routes():
         return {"key": key, "value": prefs.get(key)}
 
     @router.put("/{key}")
+    @content_type(["application/json"])
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
         val = body.get("value") if isinstance(body, dict) else None

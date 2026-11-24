@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun, NotificationLog
 from core.constants import internal_api_base
+from core.guard_deco import content_type, suspicious_frequency, usage_monitor
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.endpoint_resolver import resolve_owner_registered_endpoint_url
@@ -21,7 +22,7 @@ from src.task_action_policy import (
     owner_has_admin_task_privileges,
 )
 from src.task_scheduler import compute_next_run, is_valid_cron, HOUSEKEEPING_DEFAULTS
-from routes.prefs_routes import _load_for_user, _update_off_loop
+from routes.prefs_routes import _load_for_user, _save_for_user, _update_off_loop
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +391,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         }
 
     @router.post("/onboarding")
+    @content_type(["application/json"])
     async def update_tasks_onboarding(request: Request, body: dict):
         user = _owner(request)
         enable = bool(body.get("enabled"))
@@ -461,6 +463,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         return target.id
 
     @router.post("")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def create_task(request: Request, req: TaskCreate):
         user = _owner(request)
 
@@ -732,6 +736,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             db.close()
 
     @router.put("/{task_id}")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def update_task(request: Request, task_id: str, req: TaskUpdate):
         user = _owner(request)
         db = SessionLocal()
@@ -1118,6 +1124,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         ]}
 
     @router.post("/{task_id}/webhook/{token}")
+    @suspicious_frequency(0.5, 60, "log")
     async def webhook_trigger(task_id: str, token: str):
         """Unauthenticated endpoint — the token IS the auth."""
         db = SessionLocal()
@@ -1162,6 +1169,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     # --- PARSE NATURAL LANGUAGE → TASK DRAFT (AI) ---
     @router.post("/parse")
+    @content_type(["application/json"])
     async def parse_task(request: Request) -> Dict[str, Any]:
         """Turn a free-form description ("every weekday at 7am research the top
         AI news and summarize it") into a structured task draft the frontend
