@@ -8,6 +8,7 @@ grant access over REST and then drive the tool as the collaborator. Routes are d
 httpx.ASGITransport for the reasons given in tests/test_notes_fail_closed_auth.py.
 """
 import asyncio
+import contextlib
 import json
 from types import SimpleNamespace
 
@@ -60,6 +61,16 @@ class _Auth:
     def is_admin(self, user):
         return user in self.admins
 
+    # Notes commits run under the account lifecycle lease. These suites test
+    # sharing, not account deletion, so the lease admits every write.
+    @contextlib.contextmanager
+    def account_mutation_guard(self, actor=None, owner=None, recipients=None, user_creation_stamps=None, db=None):
+        yield
+
+    @contextlib.contextmanager
+    def account_deletion_guard(self, username):
+        yield
+
 
 class _Uploads:
     """Upload handler stand-in for the note-scoped media route and for upload
@@ -106,6 +117,9 @@ def env(monkeypatch, tmp_path):
         # By dotted path: other suites swap core.auth in sys.modules, and the
         # tool imports AuthManager from whatever is there at call time.
         monkeypatch.setattr("core.auth.AuthManager", lambda *a, **kw: auth)
+        # Notes commits take the lease from get_auth_manager(); without this
+        # they get whichever manager an earlier test left in the singleton.
+        monkeypatch.setattr("core.auth._DEFAULT_AUTH_MANAGER", auth)
         app = FastAPI()
         app.state.auth_manager = auth
         uploads = _Uploads(uploads_dir)

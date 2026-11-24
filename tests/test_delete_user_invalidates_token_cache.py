@@ -35,6 +35,7 @@ def _auth_manager(delete_result):
         get_username_for_token=lambda token: "admin",
         is_admin=lambda user: True,
         delete_user=lambda username, requesting_user: delete_result,
+        users={"admin": {"is_admin": True}, "bob": {}},
     )
 
 
@@ -46,6 +47,7 @@ def _auth_manager_raising():
         get_username_for_token=lambda token: "admin",
         is_admin=lambda user: True,
         delete_user=_delete_user,
+        users={"admin": {"is_admin": True}, "bob": {}},
     )
 
 
