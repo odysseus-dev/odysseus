@@ -3,16 +3,16 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
-import uiModule from './js/ui.js?v=20260916largetoolscroll1';
+import uiModule from './js/ui.js?v=20261125largetoolscroll1';
 import workspaceModule from './js/workspace.js';
-import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
+import fileHandlerModule from './js/fileHandler.js?v=20261125mobileattachmentedit1';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
-import presetsModule from './js/presets.js?v=20260908personaname1';
+import presetsModule from './js/presets.js?v=20261125personaname1';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260917toolttft1';
-import compareModule from './js/compare/index.js?v=20260909mobilepaneaddscroll1';
-import documentModule from './js/document.js?v=20260916docctx2';
+import chatModule from './js/chat.js?v=20261125toolttft1';
+import compareModule from './js/compare/index.js?v=20261125mobilepaneaddscroll1';
+import documentModule from './js/document.js?v=20261125docctx2';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import {
@@ -22,7 +22,7 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer from './js/chatRenderer.js?v=20261125metricssummary1';
 // Keep this specifier identical to every consumer (especially chat.js).
 // Different query strings create separate ES-module instances with separate
 // current-session state, so the picker can display one model while chat sends
@@ -32,20 +32,20 @@ import { startBackgroundToolJobs } from './js/backgroundToolJobs.js';
 import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js?v=20260910promptcopy1';
-import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=20260829chatstyle12';
-import tasksModule from './js/tasks.js?v=20260914taskmodel1';
-import calendarModule from './js/calendar.js?v=20260914emailsource11';
-import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
-import adminModule from './js/admin.js?v=20260929csssplit';
-import settingsModule from './js/settings.js?v=20260912writingstyle3';
+import galleryModule from './js/gallery.js?v=20261125promptcopy1';
+import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=20261125chatstyle12';
+import tasksModule from './js/tasks.js?v=20261125taskmodel1';
+import calendarModule from './js/calendar.js?v=20261125emailsource11';
+import notesModule from './js/notes.js?v=20261125notesselectioncancel1';
+import adminModule from './js/admin.js?v=20261125csssplit';
+import settingsModule from './js/settings.js?v=20261125writingstyle3';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
-import './js/chipScroll.js?v=20260903calendarchips1';
-import './js/mobileBulkSelect.js?v=20260910selecthold1';
+import './js/chipScroll.js?v=20261125calendarchips1';
+import './js/mobileBulkSelect.js?v=20261125selecthold1';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
-import './js/tileManager.js?v=20260910responsivebounds1';
-import themeModule from './js/theme.js?v=20260911organsrain1';
+import './js/tileManager.js?v=20261125responsivebounds1';
+import themeModule from './js/theme.js?v=20261125organsrain1';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two
@@ -53,12 +53,12 @@ import themeModule from './js/theme.js?v=20260911organsrain1';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260913researchrailerrors1';
+import * as researchPanelModule from './js/research/panel.js?v=20261125researchrailerrors1';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';
+import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20261125chatstyle12';
 import { getSettings } from './js/appConfig.js';
-import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260910sidebarbounce1';
+import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20261125sidebarbounce1';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress

@@ -5,7 +5,7 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary, prewarmUnreadEmails } from './emailLibrary.js?v=20260915trashmove2';
+import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary, prewarmUnreadEmails } from './emailLibrary.js?v=20261125trashmove2';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
@@ -50,7 +50,7 @@ function _withoutMyAddresses(raw, myAddresses) {
 function _openCalendarEventFromEmail(uid) {
   const target = String(uid || '').trim();
   if (!target) return;
-  import('./calendar.js?v=20260914emailsource11').then(mod => {
+  import('./calendar.js?v=20261125emailsource11').then(mod => {
     const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
     if (open) open(target);
   }).catch(() => {});
@@ -818,7 +818,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     if (!isCurrentOpen()) return;
     if (data.error) {
       console.error('Failed to read email:', data.error);
-      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not load email: ' + data.error)).catch(() => {});
+      import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Could not load email: ' + data.error)).catch(() => {});
       return;
     }
     // The list row is already populated from the durable email index. Some
@@ -857,7 +857,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       if (data.cached_ai_reply && !noteHint && !activeReplyAccount) {
         aiSuggestedBody = _cleanAiReplyText(data.cached_ai_reply);
       } else {
-      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showToast && m.showToast('Writing AI reply', {
+      import('./ui.js?v=20261125largetoolscroll1').then(m => m.showToast && m.showToast('Writing AI reply', {
         duration: 8000,
         leadingIcon: 'spinner',
         aiReplyProgress: true,
@@ -903,13 +903,13 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
               ? 'AI returned empty response.'
               : _rawMsg;
             console.error('AI reply generation failed:', _msg);
-            import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
+            import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
             return;
           }
         } catch (e) {
           if (!isCurrentOpen()) return;
           console.error('AI reply generation failed:', e);
-          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
+          import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
           return;
         }
       }
@@ -1084,7 +1084,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
         if (!isCurrentOpen()) return;
         if (!activeSid) {
           console.error('reply: could not obtain a session_id');
-          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
+          import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
           return;
         }
 
@@ -1118,7 +1118,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           // import pattern the rest of this file uses. (Previously this
           // referenced a bare `uiModule`, throwing a ReferenceError that
           // the outer catch swallowed → reply silently did nothing.)
-          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
+          import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
           return;
         }
         const doc = await docRes.json();
@@ -1153,7 +1153,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     // look like "nothing happened". Dynamic import — uiModule isn't a
     // static import in this file.
     const msg = e && e.message ? e.message : String(e);
-    import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(() => {});
+    import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(() => {});
   } finally {
     if (spinner) { spinner.destroy(); spinner.element.remove(); }
     if (itemEl) {
@@ -1300,7 +1300,7 @@ async function _createReplyReminder(em, dueDate) {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed');
-    const { showToast } = await import('./ui.js?v=20260916largetoolscroll1');
+    const { showToast } = await import('./ui.js?v=20261125largetoolscroll1');
     const fmt = dueDate.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     showToast(`Reminder set for ${fmt}`);
     // Request notification permission if needed
@@ -1308,7 +1308,7 @@ async function _createReplyReminder(em, dueDate) {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
-    const { showError } = await import('./ui.js?v=20260916largetoolscroll1');
+    const { showError } = await import('./ui.js?v=20261125largetoolscroll1');
     showError('Failed to create reminder');
   }
 }
@@ -1330,18 +1330,18 @@ async function _spamEmail(em) {
     if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();
-    const { showToast } = await import('./ui.js?v=20260916largetoolscroll1');
+    const { showToast } = await import('./ui.js?v=20261125largetoolscroll1');
     showToast('Moved to Spam');
   } catch (e) {
     console.error('Failed to mark as spam:', e);
-    const { showError } = await import('./ui.js?v=20260916largetoolscroll1');
+    const { showError } = await import('./ui.js?v=20261125largetoolscroll1');
     showError('Failed to move email to Spam');
   }
 }
 
 async function _deleteEmail(em) {
   const subject = em.subject || '(no subject)';
-  const { styledConfirm } = await import('./ui.js?v=20260916largetoolscroll1');
+  const { styledConfirm } = await import('./ui.js?v=20261125largetoolscroll1');
   const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
   if (!ok) return;
   const row = document.querySelector(`.email-item[data-uid="${CSS.escape(String(em.uid))}"]`);
@@ -1478,7 +1478,7 @@ async function _composeNew() {
     let sid = await _createEmailChat({ subject: 'New Email' });
     if (!sid) {
       console.error('compose: could not obtain a session_id');
-      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
+      import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
       return;
     }
     const createComposeDoc = (sessionId) => fetch(`${API_BASE}/api/document`, {
@@ -1499,7 +1499,7 @@ async function _composeNew() {
     }
     if (!res.ok) {
       console.error('compose POST failed', res.status, await res.text().catch(() => ''));
-      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
+      import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
       return;
     }
     const doc = await res.json();

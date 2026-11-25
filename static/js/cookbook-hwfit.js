@@ -32,7 +32,7 @@ import {
   // importer uses. A query mismatch loads cookbook.js twice as two separate modules
   // (two _envState objects), which silently sent downloads to the wrong server.
 } from './cookbook.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';

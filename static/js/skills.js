@@ -5,7 +5,7 @@
 // content), publish/draft toggle, delete, and "run as slash" via the
 // /<skill-name> path.
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import * as spinnerModule from './spinner.js';
 import {
   bindMenuDismiss,
@@ -23,7 +23,7 @@ import {
   skillNeedsReview,
   skillSavedTurnsValue,
   skillsSummaryMetrics,
-} from './skillsMetrics.js?v=20260908autonomousskills1';
+} from './skillsMetrics.js?v=20261125autonomousskills1';
 
 const API = window.location.origin;
 let skills = [];

@@ -6,22 +6,22 @@
  */
 
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import { readEmailReplyResponse } from './emailReplyStream.js';
 import markdownModule from './markdown.js';
-import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
-import { langIcon } from './langIcons.js?v=20260831richtexttools91';
+import codeRunnerModule from './codeRunner.js?v=20261125richtexttools91';
+import { langIcon } from './langIcons.js?v=20261125richtexttools91';
 import spinnerModule from './spinner.js';
-import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js?v=20260911librarybulkdelete1';
+import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js?v=20261125librarybulkdelete1';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
 import { bindMenuDismiss, dismissOrRemove, dismissTopMenu } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
-import { getDocumentStats } from './documentStats.js?v=20260831richtexttools91';
-import { parseMarkdownOutline } from './documentOutline.js?v=20260831richtexttools91';
-import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
+import { getDocumentStats } from './documentStats.js?v=20261125richtexttools91';
+import { parseMarkdownOutline } from './documentOutline.js?v=20261125richtexttools91';
+import { attachColorPicker } from './colorPicker.js?v=20261125eyedropper1';
 
   let API_BASE = '';
   let isOpen = false;
@@ -6419,7 +6419,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
         _clearMissingAttachmentWarnings();
         // The send endpoint appends the message to Sent, but an already-open
         // email library needs an explicit fresh load to show it immediately.
-        import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
+        import('./emailLibrary.js?v=20261125trashmove2').then(mod => {
           const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
           if (refresh) return refresh();
           return undefined;
@@ -6431,7 +6431,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
             toastClass: 'toast-message-sent',
             action: 'View Message',
             onAction: async () => {
-        import('./emailLibrary.js?v=20260915trashmove2').then(async mod => {
+        import('./emailLibrary.js?v=20261125trashmove2').then(async mod => {
                 const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
                 const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
                 if (open) open({
@@ -7373,7 +7373,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       }
     } catch (_) {}
     if (!document.getElementById('notes-pane') && !document.getElementById('notes-pane-backdrop')) return;
-    import('./notes.js?v=20260911notesselectioncancel1')
+    import('./notes.js?v=20261125notesselectioncancel1')
       .then(mod => {
         const close = mod.closeNotes || mod.closePanel || mod.default?.closeNotes || mod.default?.closePanel;
         if (typeof close === 'function') close('down');

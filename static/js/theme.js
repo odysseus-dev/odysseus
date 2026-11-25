@@ -2,11 +2,11 @@
 // ES6 module
 
 import Storage from './storage.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
-import { initColorPickers, attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
+import { initColorPickers, attachColorPicker } from './colorPicker.js?v=20261125eyedropper1';
 import { hexToRgb } from './color/hex.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
+import { snapModalToZone } from './tileManager.js?v=20261125responsivebounds1';
 import { toggle as restoreMinimizedModal } from './modalManager.js';
 import { showModal, hideModal } from './modalVisibility.js';
 

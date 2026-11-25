@@ -25,7 +25,7 @@
  *   }
  */
 
-import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
+import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js?v=20261125responsivebounds1';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ } from './toolWindowZOrder.js';

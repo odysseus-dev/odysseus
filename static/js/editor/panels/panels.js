@@ -6,7 +6,7 @@
 
 import { drawHistogram } from '../fx/histogram.js';
 import { applyCanvasPan } from '../canvas-navigation.js';
-import { attachColorPicker, getRecentColors, suggestColorsFor, recordRecentColor } from '../../colorPicker.js?v=20260910eyedropper1';
+import { attachColorPicker, getRecentColors, suggestColorsFor, recordRecentColor } from '../../colorPicker.js?v=20261125eyedropper1';
 
 const SWATCHES = [
   '#000000', '#404040', '#808080', '#c0c0c0', '#ffffff', '#ff0000', '#ff8000',

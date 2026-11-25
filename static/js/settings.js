@@ -1,7 +1,7 @@
 // static/js/settings.js — Settings panel module (ES6)
 // User-facing preferences: AI models, search, appearance
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import searchModule from './search.js';
 import { byId } from './settings/dom.js';
 import { postSettings as _postSettings } from './settings/api.js';
@@ -2210,7 +2210,7 @@ async function initReminderSettings() {
     const personaSel = el('set-reminder-llm-persona');
     if (personaSel) {
       try {
-        const presetsMod = await import('./presets.js?v=20260908personaname1');
+        const presetsMod = await import('./presets.js?v=20261125personaname1');
         const tpl = presetsMod.PROMPT_TEMPLATES || [];
         const chars = tpl.filter(t => t.isCharacter);
         for (const c of chars) {
@@ -2414,7 +2414,7 @@ async function initEmailAccountsSettings() {
   if (emailPreferences && emailPreferences.dataset.emailSettingsBound !== '1') {
     emailPreferences.dataset.emailSettingsBound = '1';
     try {
-      const mod = await import('./emailLibrary.js?v=20260915trashmove2');
+      const mod = await import('./emailLibrary.js?v=20261125trashmove2');
       if (typeof mod.mountEmailSettings === 'function') {
         await mod.mountEmailSettings(emailPreferences);
       }
@@ -2432,7 +2432,7 @@ async function initEmailAccountsSettings() {
     tasksBtn.dataset.bound = '1';
     tasksBtn.addEventListener('click', async () => {
       try {
-        const mod = await import('./tasks.js?v=20260914taskmodel1');
+        const mod = await import('./tasks.js?v=20261125taskmodel1');
         const openTasks = mod.openTasks || (mod.default && mod.default.openTasks);
         if (typeof openTasks === 'function') openTasks(null, { filter: 'Email' });
         else document.getElementById('tool-tasks-btn')?.click();

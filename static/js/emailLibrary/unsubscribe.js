@@ -12,7 +12,7 @@
 
 import spinnerModule from '../spinner.js';
 import { emailApiUrl } from '../emailShared.js';
-import { showToast, styledConfirm } from '../ui.js?v=20260916largetoolscroll1';
+import { showToast, styledConfirm } from '../ui.js?v=20261125largetoolscroll1';
 import { state } from './state.js';
 import { _esc } from './utils.js';
 import { _libCacheWriteBack, _renderGrid, isOpen, refreshEmailLibrary } from './index.js';

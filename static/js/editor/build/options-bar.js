@@ -13,7 +13,7 @@
  * On phones (<= 820px) the bar is hidden by CSS and the right-panel
  * bottom sheet remains the single surface, exactly as before.
  */
-import { TOOLS } from './toolbar.js?v=20261010brushpresets';
+import { TOOLS } from './toolbar.js?v=20261125brushpresets';
 import { state } from '../state.js';
 
 // Per-tool option sources. Each value is a CSS selector for an existing

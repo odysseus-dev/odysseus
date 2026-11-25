@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.5
+
+- **Fix: rebuilt images still served the old frontend.** Every JS module is
+  loaded with a `?v=<date>` cache-bust parameter and the service worker
+  precaches `/static/…` under a pinned `CACHE_NAME` — neither was bumped with
+  1.3.4, so after a rebuild the browser kept running the pre-ingress JS:
+  same 404s, same endless spinner. All 325 version params are bumped
+  (`20260916…` → `20261125…`) and the precache name moves to
+  `odysseus-v1138-ingress-apibase-precache`, so the old caches are dropped.
+
 ## 1.3.4
 
 - **Fix: 404s and endless spinner in the sidebar panel.** Fifteen frontend

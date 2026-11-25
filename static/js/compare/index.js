@@ -17,11 +17,11 @@ import { EVAL_PROMPTS, WAVE_FRAMES,
   ICON_PARALLEL, ICON_SEQUENTIAL,
   EYE_OPEN, EYE_CLOSED, SAVE_ICON, CHAT_ICON,
   SEND_SVG, VOTES_STORAGE_KEY,
-} from './icons.js?v=20260908compareprompts1';
+} from './icons.js?v=20261125compareprompts1';
 import { fetchModels, _persistSelections, _modelDisplayNames, getExcludedModels, setExcludedModels } from './models.js';
-import { showModelSelector, disableToolToggles, restoreToolToggles, _syncToolbarIndicator } from './selector.js?v=20260903compareprobe4';
+import { showModelSelector, disableToolToggles, restoreToolToggles, _syncToolbarIndicator } from './selector.js?v=20261125compareprobe4';
 import { _checkUnprobed, _clearProbeWaves } from './probe.js';
-import { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions } from './stream.js?v=20260908panestatspopup2';
+import { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions } from './stream.js?v=20261125panestatspopup2';
 import {
   stopAll, stopPane, rerollPane, shufflePanePositions, resetCompare,
   _addPane, _removePane, toggleExpandPane, togglePanePreview, copyPaneResponse,
@@ -29,17 +29,17 @@ import {
   mountMobilePaneTabs, syncShuffleButtonPlacement,
   paneSettingsButtonHtml, togglePaneSettings,
   registerPaneActions,
-} from './panes.js?v=20260908compareheader1';
-import { handleVote, buildVoteBar, addFinishBadge, spawnConfetti, _saveVote, registerCompareActions } from './vote.js?v=20260828resendcaldrag1';
-import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
+} from './panes.js?v=20261125compareheader1';
+import { handleVote, buildVoteBar, addFinishBadge, spawnConfetti, _saveVote, registerCompareActions } from './vote.js?v=20261125resendcaldrag1';
+import { showScoreboard } from './scoreboard.js?v=20261125voteconfirmalign1';
 
 // ── External dependency imports ──
 import Storage from '../storage.js';
-import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import uiModule from '../ui.js?v=20261125largetoolscroll1';
 import sessionModule from '../sessions.js';
 import spinnerModule from '../spinner.js';
-import themeModule from '../theme.js?v=20260911organsrain1';
-import presetsModule from '../presets.js?v=20260908personaname1';
+import themeModule from '../theme.js?v=20261125organsrain1';
+import presetsModule from '../presets.js?v=20261125personaname1';
 import markdownModule from '../markdown.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
 

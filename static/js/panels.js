@@ -15,7 +15,7 @@
  */
 
 const LOADERS = {
-  editor: () => import('./galleryEditor.js?v=20260909movepicklayer1'),
+  editor: () => import('./galleryEditor.js?v=20261125movepicklayer1'),
 };
 
 /**

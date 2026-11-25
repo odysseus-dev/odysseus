@@ -74,7 +74,7 @@ function _wireAttachmentHandlers(reader, folder) {
         try { uiModule.showToast && uiModule.showToast(`Downloading ${count || 'all'} attachments`); } catch (_) {}
       } catch (e) {
         console.error('attachments zip download error', e);
-        try { const { showError } = await import('../ui.js?v=20260916largetoolscroll1'); showError('Could not download attachments'); } catch (_) {}
+        try { const { showError } = await import('../ui.js?v=20261125largetoolscroll1'); showError('Could not download attachments'); } catch (_) {}
       } finally {
         delete btn.dataset.downloading;
         btn.classList.remove('is-loading');
@@ -126,7 +126,7 @@ function _wireAttachmentHandlers(reader, folder) {
       } catch (e) {
         console.error('calendar attachment import failed', e);
         try {
-          const { showError } = await import('../ui.js?v=20260916largetoolscroll1');
+          const { showError } = await import('../ui.js?v=20261125largetoolscroll1');
           showError(`Couldn't add ${name} to calendar: ${e?.message || 'Import failed'}`);
         } catch (_) {}
       } finally {
@@ -171,7 +171,7 @@ function _wireAttachmentHandlers(reader, folder) {
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.doc_id) {
           const msg = (json && json.error) || `HTTP ${res.status}`;
-          try { const { showError } = await import('../ui.js?v=20260916largetoolscroll1'); showError(`Couldn't open ${name}: ${msg}`); } catch (_) { alert(`Couldn't open ${name}: ${msg}`); }
+          try { const { showError } = await import('../ui.js?v=20261125largetoolscroll1'); showError(`Couldn't open ${name}: ${msg}`); } catch (_) { alert(`Couldn't open ${name}: ${msg}`); }
           return;
         }
         try {
@@ -187,7 +187,7 @@ function _wireAttachmentHandlers(reader, folder) {
               ownerModal.classList.add('hidden');
             }
           }
-          const docMod = await import('../document.js?v=20260916docctx2');
+          const docMod = await import('../document.js?v=20261125docctx2');
           const load = (docMod && docMod.loadDocument) || (docMod && docMod.default && docMod.default.loadDocument);
           if (typeof load === 'function') {
             await load(json.doc_id);
@@ -196,14 +196,14 @@ function _wireAttachmentHandlers(reader, folder) {
           }
         } catch (e) {
           console.error('Open document failed:', e);
-          try { const { showError } = await import('../ui.js?v=20260916largetoolscroll1'); showError('Document opened but panel could not mount'); } catch (_) {}
+          try { const { showError } = await import('../ui.js?v=20261125largetoolscroll1'); showError('Document opened but panel could not mount'); } catch (_) {}
         }
       } catch (e) {
         console.error('attachment-as-doc error', e);
         const msg = e && e.name === 'AbortError'
           ? `Opening ${name} timed out. Try downloading it instead.`
           : `Couldn't open ${name}`;
-        try { const { showError } = await import('../ui.js?v=20260916largetoolscroll1'); showError(msg); } catch (_) {}
+        try { const { showError } = await import('../ui.js?v=20261125largetoolscroll1'); showError(msg); } catch (_) {}
       } finally {
         delete openBtn.dataset.opening;
         openBtn.classList.remove('is-loading');

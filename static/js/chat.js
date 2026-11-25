@@ -6,24 +6,24 @@
 // ES6 module — IIFE removed
 
 import Storage from './storage.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
-import chatStream from './chatStream.js?v=20261026devsync1';
+import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20261125metricssummary1';
+import chatStream from './chatStream.js?v=20261125devsync1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
-import presetsModule from './presets.js?v=20260908personaname1';
-import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
+import presetsModule from './presets.js?v=20261125personaname1';
+import fileHandlerModule from './fileHandler.js?v=20261125mobileattachmentedit1';
 import searchModule from './search.js';
-import documentModule from './document.js?v=20260916docctx2';
-import * as emailInbox from './emailInbox.js?v=20260914aireply4';
-import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260921chatgptusage1';
-import createResearchSynapse from './researchSynapse.js?v=20260910roundlabels2';
+import documentModule from './document.js?v=20261125docctx2';
+import * as emailInbox from './emailInbox.js?v=20261125aireply4';
+import codeRunnerModule from './codeRunner.js?v=20261125richtexttools91';
+import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20261125chatgptusage1';
+import createResearchSynapse from './researchSynapse.js?v=20261125roundlabels2';
 import { createStreamRenderer } from './streamingRenderer.js';
-import { createTurnRendering, startsContinuationRound } from './turnRendering.js?v=20260910round1stable1';
-import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
+import { createTurnRendering, startsContinuationRound } from './turnRendering.js?v=20261125round1stable1';
+import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20261125promptrecall';
 import {
   createIncrementalDisplayProjector,
   createLiveThinkingThrottle,
@@ -36,7 +36,7 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
-import { loadPanel } from './panels.js?v=20260909movepicklayer1';
+import { loadPanel } from './panels.js?v=20261125movepicklayer1';
 import { invalidateSettings } from './appConfig.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
@@ -297,7 +297,7 @@ import { invalidateSettings } from './appConfig.js';
         }
 
         if (typeof window.gePhotoEditorApply !== 'function') {
-          await import(appUrl('/static/js/galleryEditor.js?v=20260909movepicklayer1'));
+          await import(appUrl('/static/js/galleryEditor.js?v=20261125movepicklayer1'));
         }
         await window.gePhotoEditorApply({
           imageId: (action && (action.imageId || action.image_id)) || null,
@@ -5377,7 +5377,7 @@ import { invalidateSettings } from './appConfig.js';
 
               } else if (json.type === 'email_open') {
                 if (_isBg) continue;
-                import('./emailLibrary.js?v=20260915trashmove2').then(mod =>
+                import('./emailLibrary.js?v=20261125trashmove2').then(mod =>
                   mod.openEmailFromTool(json, () => sessionModule.getCurrentSessionId() === streamSessionId)
                 ).catch(err => uiModule.showToast(`Could not open email: ${err.message}`));
 
@@ -8519,7 +8519,7 @@ import { invalidateSettings } from './appConfig.js';
       }
     } catch (e) {
       console.error('open attachment as document failed', e);
-      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
+      import('./ui.js?v=20261125largetoolscroll1').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
       window.open(url, '_blank');  // fallback so the file is still reachable
     }
   }

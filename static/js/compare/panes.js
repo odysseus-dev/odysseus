@@ -1,14 +1,14 @@
 // compare/panes.js — pane lifecycle, actions, layout
 import state from './state.js';
 import { _persistSelections } from './models.js';
-import { buildVoteBar } from './vote.js?v=20260828resendcaldrag1';
+import { buildVoteBar } from './vote.js?v=20261125resendcaldrag1';
 import {
   ICON_REROLL, ICON_COPY, ICON_EXPAND, ICON_COLLAPSE, ICON_CLOSE,
   ICON_PLAY, ICON_CODE, SEND_SVG, ICON_DICE,
-} from './icons.js?v=20260908compareprompts1';
+} from './icons.js?v=20261125compareprompts1';
 import { _clearProbeWaves } from './probe.js';
 import Storage from '../storage.js';
-import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import uiModule from '../ui.js?v=20261125largetoolscroll1';
 import spinnerModule from '../spinner.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
 

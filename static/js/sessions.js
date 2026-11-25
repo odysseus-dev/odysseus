@@ -2,11 +2,11 @@
 // This module handles all session-related operations
 
 import Storage from './storage.js';
-import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260916largetoolscroll1';
-import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
+import uiModule, { autoResize, styledPrompt } from './ui.js?v=20261125largetoolscroll1';
+import chatRenderer from './chatRenderer.js?v=20261125metricssummary1';
 import { providerLogo } from './providers.js';
-import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260909routeidentity1';
-import themeModule from './theme.js?v=20260911organsrain1';
+import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20261125routeidentity1';
+import themeModule from './theme.js?v=20261125organsrain1';
 import spinnerModule from './spinner.js';
 import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.js';
 import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.js';
@@ -1228,7 +1228,7 @@ function createSessionItem(s) {
     _skipAutoSelect = true;
     // Clean up persistent chat mapping
     try {
-      const pm = await import('./presets.js?v=20260908personaname1');
+      const pm = await import('./presets.js?v=20261125personaname1');
       if (pm.removePersistentChat) pm.removePersistentChat(s.id);
     } catch (e) {}
     // On mobile, close sidebar if we deleted the active session so user sees welcome screen
@@ -2220,7 +2220,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     _forceExitIncognitoUi();
     // Restore character preset for persistent chats
     try {
-      const presetsModule = window.presetsModule || (await import('./presets.js?v=20260908personaname1')).default;
+      const presetsModule = window.presetsModule || (await import('./presets.js?v=20261125personaname1')).default;
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
@@ -2842,7 +2842,7 @@ export async function deleteCurrentSessionFromTopMenu() {
   _removeSessionFromLocalState(sid);
   _skipAutoSelect = true;
   try {
-    const pm = await import('./presets.js?v=20260908personaname1');
+    const pm = await import('./presets.js?v=20261125personaname1');
     if (pm.removePersistentChat) pm.removePersistentChat(sid);
   } catch (e) {}
   try {

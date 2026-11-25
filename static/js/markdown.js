@@ -4,7 +4,7 @@
  * Markdown rendering and content processing utilities
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import { splitTableRow } from './markdown/tableRow.js';
 import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
 

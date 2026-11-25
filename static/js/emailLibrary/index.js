@@ -7,9 +7,9 @@
  */
 
 import spinnerModule from '../spinner.js';
-import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20260916largetoolscroll1';
-import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20260914aireply4';
-import settingsModule from '../settings.js?v=20260912writingstyle3';
+import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20261125largetoolscroll1';
+import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20261125aireply4';
+import settingsModule from '../settings.js?v=20261125writingstyle3';
 import * as Modals from '../modalManager.js';
 import { makeWindowDraggable } from '../windowDrag.js';
 import {
@@ -181,7 +181,7 @@ export function _showEmailReaderLoadError(reader, message, onRetry) {
 export function _openCalendarEventFromEmail(uid) {
   const target = String(uid || '').trim();
   if (!target) return;
-  import('../calendar.js?v=20260914emailsource11').then(mod => {
+  import('../calendar.js?v=20261125emailsource11').then(mod => {
     const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
     if (open) open(target);
   }).catch(() => {});
@@ -279,7 +279,7 @@ export function _loadedEmailsHaveVisibleTags() {
 
 export async function _openTasksForEmailTags() {
   try {
-    const mod = await import('../tasks.js?v=20260914taskmodel1');
+    const mod = await import('../tasks.js?v=20261125taskmodel1');
     const openTasks = mod.openTasks || mod.default?.openTasks;
     if (typeof openTasks === 'function') {
       openTasks(null, { filter: 'Email', focusAction: 'check_email_urgency' });
@@ -5239,7 +5239,7 @@ async function _loadScheduled(grid, sp) {
     cancelBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     cancelBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const { styledConfirm } = await import('../ui.js?v=20260916largetoolscroll1');
+      const { styledConfirm } = await import('../ui.js?v=20261125largetoolscroll1');
       const ok = await styledConfirm(`Cancel scheduled email "${subject}"?`, { confirmText: 'Cancel Send', cancelText: 'Keep', danger: true });
       if (!ok) return;
       try {

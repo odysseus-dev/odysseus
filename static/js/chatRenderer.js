@@ -1,19 +1,19 @@
 // static/js/chatRenderer.js
 // Extracted from chat.js — message rendering, sources, images, metrics
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import markdownModule from './markdown.js';
 import { generatedImageResult } from './generatedImageResult.js';
 import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
 import { providerLogo, providerLabel } from './providers.js';
-import settingsModule from './settings.js?v=20260912writingstyle3';
+import settingsModule from './settings.js?v=20261125writingstyle3';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
-import { loadPanel } from './panels.js?v=20260909movepicklayer1';
+import { loadPanel } from './panels.js?v=20261125movepicklayer1';
 import { matchModelKey } from './model/matchKey.js';
 import { getTools } from './appConfig.js';
-import { getShowPersonaName } from './presets.js?v=20260908personaname1';
+import { getShowPersonaName } from './presets.js?v=20261125personaname1';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -1854,7 +1854,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
     } else if (panel === 'skills') {
       document.getElementById('tool-skills-btn')?.click();
     } else if (panel === 'research') {
-        import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+        import('./research/panel.js?v=20261125researchrailerrors1').then(mod => {
         const open = mod.openPanel || (mod.default && mod.default.openPanel);
         if (open) open();
       }).catch(() => {});
@@ -1902,14 +1902,14 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       } catch {}
     });
   } else if (kind === 'document') {
-    import('./document.js?v=20260916docctx2').then(mod => {
+    import('./document.js?v=20261125docctx2').then(mod => {
       const open = mod.loadDocument
         || mod.openDocument
         || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'note') {
-      import('./notes.js?v=20260911notesselectioncancel1').then(mod => {
+      import('./notes.js?v=20261125notesselectioncancel1').then(mod => {
       const open = mod.openNote || (mod.default && mod.default.openNote);
       if (open) open(id);
       try {
@@ -1924,12 +1924,12 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'image') {
-    import('./gallery.js?v=20260910promptcopy1').then(mod => {
+    import('./gallery.js?v=20261125promptcopy1').then(mod => {
       const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'email') {
-    import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
+    import('./emailLibrary.js?v=20261125trashmove2').then(mod => {
       const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
       if (!open) return;
       const parts = String(id || '').split(':');
@@ -1943,23 +1943,23 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       }
     }).catch(() => {});
   } else if (kind === 'event') {
-    import('./calendar.js?v=20260914emailsource11').then(mod => {
+    import('./calendar.js?v=20261125emailsource11').then(mod => {
       const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'task') {
-    import('./tasks.js?v=20260914taskmodel1').then(mod => {
+    import('./tasks.js?v=20261125taskmodel1').then(mod => {
       const open = mod.openTasks || (mod.default && mod.default.openTasks);
       if (open) open(id);
       else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
     }).catch(() => { const b = document.getElementById('tasks-btn'); if (b) b.click(); });
   } else if (kind === 'skill') {
-    import('./skills.js?v=20260909kebabconsistency1').then(mod => {
+    import('./skills.js?v=20261125kebabconsistency1').then(mod => {
       const open = mod.openSkill || (mod.default && mod.default.openSkill);
       if (open) open(id);
     }).catch(() => {});
   } else if (kind === 'research') {
-    import('./research/panel.js?v=20260913researchrailerrors1').then(mod => {
+    import('./research/panel.js?v=20261125researchrailerrors1').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
     }).catch(() => {});
@@ -2123,7 +2123,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
         : 'png';
       const base = (prompt || 'generated-image').slice(0, 36).replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'generated-image';
       const file = new File([blob], `${base}.${ext}`, { type: blob.type || 'image/png', lastModified: Date.now() });
-      const mod = await import('./fileHandler.js?v=20260909mobileattachmentedit1');
+      const mod = await import('./fileHandler.js?v=20261125mobileattachmentedit1');
       const addFiles = mod.addFiles || (mod.default && mod.default.addFiles);
       if (!addFiles) throw new Error('attachment handler unavailable');
       await addFiles([file], { skipCrop: true });
@@ -2150,7 +2150,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     e.stopPropagation();
     try {
       const [galleryMod, editorMod] = await Promise.all([
-        import('./gallery.js?v=20260910promptcopy1'),
+        import('./gallery.js?v=20261125promptcopy1'),
         loadPanel('editor'),
       ]);
       // Ensure the Gallery modal is open so the editor has a container
@@ -2184,7 +2184,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     galleryBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       try {
-        const mod = await import('./gallery.js?v=20260910promptcopy1');
+        const mod = await import('./gallery.js?v=20261125promptcopy1');
         const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
         if (open) open(imageId);
       } catch (err) {
@@ -3677,7 +3677,7 @@ export function addMessage(role, content, modelName, metadata) {
 
       b.querySelectorAll('[data-doc-edit-ref]').forEach(button => {
         button.addEventListener('click', () => {
-          import('./document.js?v=20260916docctx2').then(mod => {
+          import('./document.js?v=20261125docctx2').then(mod => {
             const restore = mod.restoreSelectionReference
               || mod.default?.restoreSelectionReference;
             return restore?.(button.dataset.docEditRef || '', {

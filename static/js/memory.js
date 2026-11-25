@@ -1,11 +1,11 @@
 // Memory Management Functions
 // This module handles all memory-related operations
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
+import { snapModalToZone } from './tileManager.js?v=20261125responsivebounds1';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
 import { bindMenuDismiss } from './escMenuStack.js';
@@ -274,7 +274,7 @@ export function openMemoryModal(tabName = 'browse') {
   if (tab) {
     tab.click();
   } else if (target === 'skills') {
-    import('./skills.js?v=20260909kebabconsistency1').then(m => {
+    import('./skills.js?v=20261125kebabconsistency1').then(m => {
       if (m.loadSkills) m.loadSkills(true);
       else if (m.default?.loadSkills) m.default.loadSkills(true);
     });
@@ -1615,7 +1615,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       // Lazy-load skills tab (cascade=true → play the domino-in entrance)
       if (target === 'skills') {
-        import('./skills.js?v=20260909kebabconsistency1').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
+        import('./skills.js?v=20261125kebabconsistency1').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
       }
     });
   });

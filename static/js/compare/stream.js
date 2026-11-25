@@ -1,12 +1,12 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
 import { consumeCompareEvents } from './sse.js';
-import { addFinishBadge } from './vote.js?v=20260828resendcaldrag1';
-import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260914metricssummary1';
+import { addFinishBadge } from './vote.js?v=20261125resendcaldrag1';
+import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20261125metricssummary1';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
-import uiModule from '../ui.js?v=20260916largetoolscroll1';
-import presetsModule from '../presets.js?v=20260908personaname1';
+import uiModule from '../ui.js?v=20261125largetoolscroll1';
+import presetsModule from '../presets.js?v=20261125personaname1';
 
 var escapeHtml = uiModule.esc;
 

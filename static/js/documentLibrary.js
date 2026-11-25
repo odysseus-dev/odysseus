@@ -5,12 +5,12 @@
  */
 
 import { topPortalZ } from './toolWindowZOrder.js';
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { langIcon } from './langIcons.js?v=20260831richtexttools91';
+import { langIcon } from './langIcons.js?v=20261125richtexttools91';
 import {
   registerMenuDismiss,
   dismissOrRemove,

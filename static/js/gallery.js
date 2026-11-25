@@ -2,14 +2,14 @@
  * Gallery Module — photo backup + AI-generated image library.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
-import { loadPanel } from './panels.js?v=20260909movepicklayer1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
+import { loadPanel } from './panels.js?v=20261125movepicklayer1';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import sessionModule from './sessions.js';
-import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
+import fileHandlerModule from './fileHandler.js?v=20261125mobileattachmentedit1';
 
 const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 const ACTIVE_EDITOR_SESSION_KEY = 'odysseus-gallery-active-editor-v1';
@@ -2626,7 +2626,7 @@ export function openGallery() {
   if (visionLink) {
     visionLink.addEventListener('click', (e) => {
       e.preventDefault();
-      import('./settings.js?v=20260912writingstyle3').then(m => {
+      import('./settings.js?v=20261125writingstyle3').then(m => {
         m.open('ai');
         // The gallery modal gets a bumped z-index from modalManager; settings
         // opens with its lower static z-index and lands BEHIND it. Raise it above.

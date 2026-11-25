@@ -76,7 +76,7 @@ export function bindOpenPromptModalLink({ getModal, closeSettings } = {}) {
     }
 
     try {
-      const module = await import('../presets.js?v=20260908personaname1');
+      const module = await import('../presets.js?v=20261125personaname1');
       const openPrompt = module.openCustomPresetModal
         || (module.default && module.default.openCustomPresetModal);
       if (typeof openPrompt === 'function') openPrompt();

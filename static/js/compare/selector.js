@@ -2,12 +2,12 @@
 import state from './state.js';
 import Storage from '../storage.js';
 import { fetchModels, _persistSelections, getExcludedModels } from './models.js';
-import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
-import { EYE_OPEN, EYE_CLOSED, ICON_DICE, ICON_PARALLEL, ICON_SEQUENTIAL, SAVE_ICON, WAVE_FRAMES, CHAT_ICON } from './icons.js?v=20260908compareprompts1';
+import { showScoreboard } from './scoreboard.js?v=20261125voteconfirmalign1';
+import { EYE_OPEN, EYE_CLOSED, ICON_DICE, ICON_PARALLEL, ICON_SEQUENTIAL, SAVE_ICON, WAVE_FRAMES, CHAT_ICON } from './icons.js?v=20261125compareprompts1';
 import { _clearProbeWaves } from './probe.js';
-import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import uiModule from '../ui.js?v=20261125largetoolscroll1';
 import spinnerModule from '../spinner.js';
-import themeModule from '../theme.js?v=20260911organsrain1';
+import themeModule from '../theme.js?v=20261125organsrain1';
 
 const escapeHtml = uiModule.esc;
 

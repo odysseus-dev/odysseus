@@ -2,10 +2,10 @@
  * Gallery Editor — canvas-based image editor with layers, brush, eraser, text, crop, inpaint mask.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
-import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
+import { attachColorPicker } from './colorPicker.js?v=20261125eyedropper1';
 import modalManager from './modalManager.js';
 import { canvasCoords as _canvasCoords, invalidateCanvasCoordsCache } from './editor/canvas-coords.js';
 import { pickTopmostLayerAt as _pickTopmostLayerAt } from './editor/layer-hit-test.js';
@@ -129,13 +129,13 @@ import {
   drawAdjustmentLayerAsync as _drawAdjustmentLayerAsync,
   normalizeAdjustmentData as _normalizeAdjustmentData,
 } from './editor/adjustment-layer.js';
-import { buildToolbar as _buildToolbar, TOOLS as _TOOLS } from './editor/build/toolbar.js?v=20261010brushpresets';
-import { buildOptionsBar as _buildOptionsBar, renderOptionsBar as _renderOptionsBar } from './editor/build/options-bar.js?v=20261009autoselect';
+import { buildToolbar as _buildToolbar, TOOLS as _TOOLS } from './editor/build/toolbar.js?v=20261125brushpresets';
+import { buildOptionsBar as _buildOptionsBar, renderOptionsBar as _renderOptionsBar } from './editor/build/options-bar.js?v=20261125autoselect';
 import { buildTopbar as _buildTopbar, buildZoomFooter as _buildZoomFooter } from './editor/build/topbar.js';
 import {
   controlsHTML as _controlsHTML,
   layerPanelHTML as _layerPanelHTML,
-} from './editor/build/controls.js?v=20260830editor2';
+} from './editor/build/controls.js?v=20261125editor2';
 import {
   transformPopupHTML as _transformPopupHTML,
   attachSpinRepeat as _attachSpinRepeat,
@@ -283,14 +283,14 @@ import { createImageGenerationAction } from './editor/image-generation.js';
 import { finishQuickEditJob } from './editor/quick-edit-job.js';
 import { imageResultGeometry } from './editor/image-result-geometry.js';
 import { lookRecipeSteps } from './editor/look-recipes.js';
-import { wireInpaintButtons } from './editor/ai-inpaint.js?v=20260708match1';
+import { wireInpaintButtons } from './editor/ai-inpaint.js?v=20261125match1';
 import { wireAIToolsMisc } from './editor/ai-tools-misc.js';
 import { wireRembgAndSharpen } from './editor/ai-rembg.js';
 import { wireStrokeToolSliders } from './editor/stroke-tool-sliders.js';
 import { wireImport } from './editor/wire-import.js';
 import { wireMergeButtons, mergeLayersByIds as _mergeLayersByIds } from './editor/wire-merge-buttons.js';
 import { wireSelectionControls } from './editor/wire-selection-controls.js';
-import { wireInpaintControls } from './editor/wire-inpaint-controls.js?v=20260708match1';
+import { wireInpaintControls } from './editor/wire-inpaint-controls.js?v=20261125match1';
 import { wireTopbar, closeOtherTopbarMenus as _closeOtherTopbarMenus } from './editor/wire-topbar.js';
 import { wireTopbarOverflow } from './editor/wire-topbar-overflow.js';
 import { wireTopbarMenus } from './editor/wire-topbar-menus.js';

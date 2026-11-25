@@ -1,6 +1,6 @@
 // static/js/codeRunner.js
 
-import * as uiModule from './ui.js?v=20260916largetoolscroll1';
+import * as uiModule from './ui.js?v=20261125largetoolscroll1';
 
 /**
  * In-browser code runner for Python (Pyodide), JavaScript, and HTML

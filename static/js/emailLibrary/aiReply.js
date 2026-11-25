@@ -10,7 +10,7 @@
 
 import spinnerModule from '../spinner.js';
 import { topPortalZ } from '../toolWindowZOrder.js';
-import { showToast } from '../ui.js?v=20260916largetoolscroll1';
+import { showToast } from '../ui.js?v=20261125largetoolscroll1';
 import { state } from './state.js';
 import { _esc, _extractName } from './utils.js';
 import { _snapEmailModalToLeftSidebar, _translateEmail } from './index.js';
@@ -433,7 +433,7 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed');
-    const { showToast } = await import('../ui.js?v=20260916largetoolscroll1');
+    const { showToast } = await import('../ui.js?v=20261125largetoolscroll1');
     if (dueDate) {
       const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
       showToast(`Todo reminder set for ${fmt}`);
@@ -444,7 +444,7 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
-    const { showError } = await import('../ui.js?v=20260916largetoolscroll1');
+    const { showError } = await import('../ui.js?v=20261125largetoolscroll1');
     showError('Failed to create reminder');
   }
 }

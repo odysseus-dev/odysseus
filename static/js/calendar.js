@@ -2,12 +2,12 @@
  * Calendar Module — CalDAV-backed month/week/year calendar.
  */
 
-import uiModule from './ui.js?v=20260916largetoolscroll1';
+import uiModule from './ui.js?v=20261125largetoolscroll1';
 import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
+import { attachColorPicker } from './colorPicker.js?v=20261125eyedropper1';
 import { bindMenuDismiss } from './escMenuStack.js';
 import {
   WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
@@ -3605,7 +3605,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     e.preventDefault();
     const taskId = e.currentTarget?.dataset?.taskId || '';
     try {
-      const m = await import(appUrl('/static/js/tasks.js?v=20260914taskmodel1'));
+      const m = await import(appUrl('/static/js/tasks.js?v=20261125taskmodel1'));
       const openTasks = m.openTasks || m.default?.openTasks;
       if (typeof openTasks === 'function') { openTasks(taskId); return; }
     } catch (_) {}
