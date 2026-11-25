@@ -37,7 +37,7 @@ import {
 } from './utils.js';
 import { _disableInlineImages } from './settingsPage.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 /**
  * Wrap a probable signature block in a collapsed <details> so it stops

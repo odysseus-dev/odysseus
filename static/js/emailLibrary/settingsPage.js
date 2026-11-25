@@ -31,7 +31,7 @@ import {
 } from './index.js';
 import { _openUnsubscribeReviewModal } from './unsubscribe.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 function _emailInlineImagesStorageKey(accountId = state._libAccountId) {
   return `odysseus.email.viewInlineImages.${String(accountId || 'default')}`;

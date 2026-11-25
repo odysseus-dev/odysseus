@@ -15,7 +15,7 @@ import { _esc } from './utils.js';
 import { _acct, _openCalendarEventFromEmail, _prepareEmailWindowForDocument } from './index.js';
 import { _openEmailAsTab, _openEmailWindow } from './reader.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 // Wire click handlers for attachment chips + "open in editor" sub-buttons
 // inside a reader. Safe to call multiple times — uses dataset.wired flag to

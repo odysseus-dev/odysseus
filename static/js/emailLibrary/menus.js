@@ -40,7 +40,7 @@ import {
 } from './index.js';
 import { _openEmailAsTab } from './reader.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 export function _showReaderMoreMenu(em, card, reader, anchor, data) {
   // Toggle: if a dropdown for THIS anchor is already open, close it.

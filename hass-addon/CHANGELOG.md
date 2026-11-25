@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.4
+
+- **Fix: 404s and endless spinner in the sidebar panel.** Fifteen frontend
+  modules still derived their API base from `window.location.origin`
+  (`sessions`, `modelPicker`, `gallery`, `galleryEditor`, `emailInbox`, the
+  whole `emailLibrary/*` set, `signature`, `tasks`, `workspace`,
+  `chatRenderer`'s consumer). Under the ingress prefix that produced
+  `https://<ha>/api/...` — outside the panel path — so the app hit Home
+  Assistant core instead of Odysseus: "Failed to load sessions: Session
+  request failed (HTTP 404)", and sending a message never opened
+  `/api/chat_stream`, leaving the spinner running forever. All of them now use
+  `window.__odysseusAppBase` (empty direct, mount prefix under ingress), the
+  same source the bootstrap in `index.html` already provides.
+- A guard test fails the build if any module reintroduces
+  `... = window.location.origin` for an API base.
+
 ## 1.3.3
 
 - **Fix: sidebar panel 502 (for real this time)**. 1.3.2's probe disabled

@@ -15,7 +15,7 @@ import { state } from './state.js';
 import { _esc, _extractName } from './utils.js';
 import { _snapEmailModalToLeftSidebar, _translateEmail } from './index.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 export function _aiReplyIcon(data) {
   return '<svg class="email-ai-reply-icon" width="14" height="14" viewBox="0 0 24 24" fill="var(--accent-primary, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';

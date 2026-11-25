@@ -11,7 +11,7 @@ import { topPortalZ } from './toolWindowZOrder.js';
 import sessionModule from './sessions.js';
 import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 const ACTIVE_EDITOR_SESSION_KEY = 'odysseus-gallery-active-editor-v1';
 let _open = false;
 let _galleryResizeHandler = null;

@@ -12,7 +12,7 @@ import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 const _acct = () => emailAccountQuery('&');
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';

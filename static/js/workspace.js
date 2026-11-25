@@ -9,7 +9,7 @@ import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { makeWindowDraggable } from './windowDrag.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 // Same folder glyph as the overflow menu item + pill (not an emoji).
 const _FOLDER_SVG = '<svg class="workspace-row-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 let _modal = null;

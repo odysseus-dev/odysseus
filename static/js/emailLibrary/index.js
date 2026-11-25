@@ -65,7 +65,7 @@ import {
   _syncEmailSettingsAccountPicker,
 } from './settingsPage.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 let _emailUnreadChipClickWired = false;
 let _libLoadSeq = 0;
 let _emailMailboxGeneration = 0;

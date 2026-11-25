@@ -11,7 +11,7 @@ import spinnerModule from './spinner.js';
 import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.js';
 import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 let sessions = [];
 let currentSessionId = null;

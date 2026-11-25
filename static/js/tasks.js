@@ -18,7 +18,7 @@ import {
 import { getSettings, invalidateSettings } from './appConfig.js';
 import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 let _open = false;
 let _tasksCascadeNext = false;   // play the domino-in entrance on the next render
 let _tasks = [];

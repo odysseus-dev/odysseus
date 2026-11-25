@@ -12,7 +12,7 @@
 // derived from pointer velocity (slower → thicker), which gives signatures
 // their characteristic ink-bleed feel.
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 function _esc(s) {
   return String(s ?? '')

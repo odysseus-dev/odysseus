@@ -50,7 +50,7 @@ import {
 } from './index.js';
 import { _showReaderMoreMenu } from './menus.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 // "Open in new tab" — the email opens in the library (expanded inline)
 // AND a separate floating "email viewer" overlay modal is created. The

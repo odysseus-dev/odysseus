@@ -303,7 +303,7 @@ import { applyWorkspace as _applyWorkspace } from './editor/workspaces.js';
 import { createPrecisionGuides } from './editor/precision-guides.js';
 import { wireViewMenu } from './editor/wire-view-menu.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 // Plain-language image-generation failures — shared by the Quick Edit card and
 // the low-level AI ops so a generation failure is NEVER silent, never spins

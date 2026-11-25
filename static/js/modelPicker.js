@@ -7,7 +7,7 @@ import settingsModule from './settings.js?v=20260912writingstyle3';
 import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
 
-const API_BASE = window.location.origin;
+const API_BASE = window.__odysseusAppBase; // '' direct, mount prefix under HA ingress
 
 // ── Recent + Favorites persistence ──
 // Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
