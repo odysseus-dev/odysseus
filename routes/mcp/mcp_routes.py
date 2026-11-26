@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
+# Tools exposed by the admin-only call route. Keep this list narrow: the route
+# is for direct operator control of the local PowerShell remote console, not a
+# general-purpose replacement for the model tool loop.
+CALLABLE_REMOTE_CONSOLE_TOOLS = frozenset({
+    "accept_remote_console",
+    "connect_remote_console",
+    "disconnect_remote_console",
+    "execute_remote_command",
+    "cancel_remote_command",
+    "wait_for_completion",
+    "get_current_location",
+    "close_console",
+})
+CALLABLE_REMOTE_CONSOLE_SERVER = "powershell01"
+
 
 def _mcp_oauth_base_dir() -> Path:
     """Directory that may contain OAuth files managed by Odysseus."""
@@ -441,6 +456,49 @@ def setup_mcp_routes(mcp_manager: McpManager):
             return {"id": server_id, "disabled_count": len(disabled)}
         finally:
             db.close()
+
+    @router.post("/servers/{server_id}/call")
+    async def call_server_tool(server_id: str, request: Request):
+        """Call one allowlisted tool on the local PowerShell MCP server.
+
+        This route gives an authenticated admin direct access to the remote
+        console when the model tool loop is unavailable. It does not accept
+        arbitrary servers or tools.
+        """
+        require_admin(request)
+        if server_id != CALLABLE_REMOTE_CONSOLE_SERVER:
+            raise HTTPException(404, "Server not found")
+
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv or not srv.is_enabled:
+                raise HTTPException(404, "Server not found")
+        finally:
+            db.close()
+
+        body = await request.json()
+        tool = str(body.get("tool") or "").strip()
+        arguments = body.get("arguments") or {}
+        if tool not in CALLABLE_REMOTE_CONSOLE_TOOLS:
+            raise HTTPException(400, f"Tool is not callable through this route: {tool}")
+        if not isinstance(arguments, dict):
+            raise HTTPException(400, "arguments must be an object")
+
+        disabled_map = _load_disabled_map()
+        if tool in disabled_map.get(server_id, set()):
+            raise HTTPException(403, "Tool is disabled")
+
+        status = mcp_manager.get_server_status(server_id)
+        if status.get("status") != "connected":
+            raise HTTPException(409, f"MCP server is not connected: {status.get('status', 'disconnected')}")
+
+        available = mcp_manager.get_all_tools()
+        if not any(t.get("server_id") == server_id and t.get("name") == tool for t in available):
+            raise HTTPException(404, f"Tool is not available on this server: {tool}")
+
+        result = await mcp_manager.call_tool(f"mcp__{server_id}__{tool}", arguments)
+        return result
 
     # ── OAuth flow for Google MCP servers ──────────────────────────
 
