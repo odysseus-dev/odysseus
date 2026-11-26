@@ -20,6 +20,7 @@ SQLite always; PostgreSQL when ODYSSEUS_TEST_PG_URL names a server (each
 test gets its own schema).
 """
 import asyncio
+import importlib
 import json
 import os
 import threading
@@ -38,7 +39,6 @@ from sqlalchemy.pool import NullPool
 import core.auth as ca
 import core.database as cdb
 import routes.note.note_routes as nr
-from core.auth import AuthManager
 from core.database import Note, NoteShare, NoteVersion
 from core.note_writes import note_body_revision
 from routes.auth_routes import DeleteUserRequest, SESSION_COOKIE, setup_auth_routes
@@ -187,6 +187,11 @@ class _Pauses:
 
 @pytest.fixture(params=["sqlite", "postgresql"])
 def env(request, tmp_path, monkeypatch):
+    # The live module, not the one imported at collection: an earlier test
+    # may have re-imported core.auth or core.database, and the code under
+    # test resolves them at call time.
+    ca = importlib.import_module("core.auth")
+    cdb = importlib.import_module("core.database")
     if request.param == "sqlite":
         engine, drop = _sqlite_engine(tmp_path)
     else:
@@ -213,7 +218,7 @@ def env(request, tmp_path, monkeypatch):
         monkeypatch.setattr(cdb, "get_db_session", _get_db)
         monkeypatch.setattr(nr, "SessionLocal", factory)
 
-        mgr = AuthManager(auth_path=str(tmp_path / "auth.json"))
+        mgr = ca.AuthManager(auth_path=str(tmp_path / "auth.json"))
         mgr.create_user("admin", "admin-pass-123", is_admin=True)
         mgr.create_user("alice", "alice-pass-123")
         mgr.create_user("bob", "bob-pass-123")

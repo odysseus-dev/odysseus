@@ -8,6 +8,7 @@ refused instead of writing into the new account (#7376 review, P2). The
 username alone could not tell the two accounts apart.
 """
 import asyncio
+import importlib
 import json
 import threading
 from contextlib import contextmanager
@@ -28,6 +29,11 @@ WAIT = 10.0
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    # The live module, not the one imported at collection: an earlier test
+    # may have re-imported core.auth or core.database, and the code under
+    # test resolves them at call time.
+    ca = importlib.import_module("core.auth")
+    cdb = importlib.import_module("core.database")
     monkeypatch.setattr(ca, "_hash_password", lambda password: f"hash:{password}")
     monkeypatch.setattr(ca, "_verify_password", lambda password, hashed: hashed == f"hash:{password}")
     monkeypatch.setenv("AUTH_ENABLED", "true")

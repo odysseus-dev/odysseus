@@ -12,6 +12,7 @@ migration, so no Notes write and no deletion can interleave with it.
 Real AuthManager, the real auth and notes routes, a disposable database.
 """
 import asyncio
+import importlib
 import json
 import sys
 import threading
@@ -42,6 +43,11 @@ def _endpoint(router, method, path):
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    # The live module, not the one imported at collection: an earlier test
+    # may have re-imported core.auth or core.database, and the code under
+    # test resolves them at call time.
+    ca = importlib.import_module("core.auth")
+    cdb = importlib.import_module("core.database")
     monkeypatch.setattr(ca, "_hash_password", lambda password: f"hash:{password}")
     monkeypatch.setattr(ca, "_verify_password", lambda password, hashed: hashed == f"hash:{password}")
     monkeypatch.setenv("AUTH_ENABLED", "true")
@@ -200,7 +206,7 @@ def _paused_rename(env, monkeypatch):
         assert resume.wait(WAIT)
         return original(db, old, new)
 
-    monkeypatch.setattr(notes_sharing, "rename_shared_user", paused)
+    monkeypatch.setattr("core.notes_sharing.rename_shared_user", paused)
     out = {}
 
     def run():
@@ -277,7 +283,7 @@ def test_a_failed_migration_rolls_back_under_the_same_lock(env, monkeypatch):
             held.append(lock._writer_tid == threading.get_ident())
         return original(old, new, requesting_user)
 
-    monkeypatch.setattr(notes_sharing, "rename_shared_user", failing)
+    monkeypatch.setattr("core.notes_sharing.rename_shared_user", failing)
     monkeypatch.setattr(env.mgr, "rename_user", spy)
     assert _status(env.rename, "alice", "carol") == 500
     # Both the rename and its rollback ran with the lock already held.
