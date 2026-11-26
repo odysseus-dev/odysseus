@@ -442,118 +442,132 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, name_error)
         if old_username == new_username:
             return {"ok": True, "username": new_username, "renamed_self": old_username == user}
-        if old_username not in auth_manager.users:
-            raise HTTPException(404, "User not found")
-        if new_username in auth_manager.users:
-            raise HTTPException(409, "Username already taken")
+        # Both names stay locked from the auth change through the ownership
+        # migration and its rollback: no Notes write, deletion or second
+        # rename of either account can interleave with it. Nothing below
+        # awaits while the lock is held.
+        rename_guard = (
+            auth_manager.account_rename_guard(old_username, new_username)
+            if hasattr(auth_manager, "account_rename_guard")
+            else contextlib.nullcontext()
+        )
+        with rename_guard:
+            users_now = auth_manager.users
+            deleting_now = getattr(auth_manager, "deleting_users", {}) or {}
+            if old_username in deleting_now:
+                raise HTTPException(409, "Account is pending deletion")
+            if old_username not in users_now:
+                raise HTTPException(404, "User not found")
+            if new_username in users_now or new_username in deleting_now:
+                raise HTTPException(409, "Username already taken")
 
-        # Gate on auth first. Every mutation below is contingent on this
-        # succeeding — doing it last meant a rejected rename (e.g. reserved
-        # username) left file-backed owner fields already rewritten with no
-        # way to roll them back.
-        ok = auth_manager.rename_user(old_username, new_username, user)
-        if not ok:
-            raise HTTPException(400, "Cannot rename user")
+            # Gate on auth first. Every mutation below is contingent on this
+            # succeeding: doing it last meant a rejected rename (e.g. reserved
+            # username) left file-backed owner fields already rewritten with no
+            # way to roll them back.
+            ok = auth_manager.rename_user(old_username, new_username, user)
+            if not ok:
+                raise HTTPException(400, "Cannot rename user")
 
-        def _rollback_auth_rename() -> bool:
-            # On self-rename the admin session has already moved to the new
-            # username, so the rollback must authenticate as the new user.
-            rollback_user = new_username if user == old_username else user
+            def _rollback_auth_rename() -> bool:
+                # On self-rename the admin session has already moved to the new
+                # username, so the rollback must authenticate as the new user.
+                rollback_user = new_username if user == old_username else user
+                try:
+                    return bool(auth_manager.rename_user(new_username, old_username, rollback_user))
+                except Exception as rollback_err:
+                    logger.error(
+                        "Failed to roll back auth rename %s -> %s after owner migration failure: %s",
+                        new_username, old_username, rollback_err,
+                    )
+                    return False
+
+            # Usernames are ownership keys for user data. Rename the common
+            # owner-scoped DB rows so the account keeps access to its sessions,
+            # docs, email accounts, tasks, etc.
             try:
-                return bool(auth_manager.rename_user(new_username, old_username, rollback_user))
-            except Exception as rollback_err:
-                logger.error(
-                    "Failed to roll back auth rename %s -> %s after owner migration failure: %s",
-                    new_username, old_username, rollback_err,
+                from sqlalchemy import func
+                from core.database import (
+                    Base,
+                    EmailAccount,
+                    SessionLocal,
+                    lock_email_account_owner_mutations,
                 )
-                return False
-
-        # Usernames are ownership keys for user data. Rename the common
-        # owner-scoped DB rows so the account keeps access to its sessions,
-        # docs, email accounts, tasks, etc.
-        try:
-            from sqlalchemy import func
-            from core.database import (
-                Base,
-                EmailAccount,
-                SessionLocal,
-                lock_email_account_owner_mutations,
-            )
-            from core.notes_sharing import rename_shared_user
-            db = SessionLocal()
-            try:
-                # Email-account defaults are protected by per-owner mutex rows.
-                # A rename crosses two owner partitions, so lock both in the
-                # shared helper's canonical order before inspecting either.
-                lock_email_account_owner_mutations(
-                    db, old_username, new_username
-                )
-
-                source_default_ids = [
-                    row[0]
-                    for row in (
-                        db.query(EmailAccount.id)
-                        .filter(
-                            func.lower(EmailAccount.owner) == old_username,
-                            EmailAccount.is_default == True,  # noqa: E712
-                        )
-                        .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
-                        .all()
-                    )
-                ]
-                destination_default_ids = [
-                    row[0]
-                    for row in (
-                        db.query(EmailAccount.id)
-                        .filter(
-                            func.lower(EmailAccount.owner) == new_username,
-                            EmailAccount.is_default == True,  # noqa: E712
-                        )
-                        .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
-                        .all()
-                    )
-                ]
-                if destination_default_ids:
-                    clear_default_ids = (
-                        destination_default_ids[1:] + source_default_ids
-                    )
-                else:
-                    clear_default_ids = source_default_ids[1:]
-                if clear_default_ids:
-                    (
-                        db.query(EmailAccount)
-                        .filter(EmailAccount.id.in_(clear_default_ids))
-                        .update(
-                            {EmailAccount.is_default: False},
-                            synchronize_session=False,
-                        )
+                from core.notes_sharing import rename_shared_user
+                db = SessionLocal()
+                try:
+                    # Email-account defaults are protected by per-owner mutex rows.
+                    # A rename crosses two owner partitions, so lock both in the
+                    # shared helper's canonical order before inspecting either.
+                    lock_email_account_owner_mutations(
+                        db, old_username, new_username
                     )
 
-                for mapper in Base.registry.mappers:
-                    model = mapper.class_
-                    if not hasattr(model, "owner"):
-                        continue
-                    (
-                        db.query(model)
-                        .filter(func.lower(model.owner) == old_username)
-                        .update({"owner": new_username}, synchronize_session=False)
+                    source_default_ids = [
+                        row[0]
+                        for row in (
+                            db.query(EmailAccount.id)
+                            .filter(
+                                func.lower(EmailAccount.owner) == old_username,
+                                EmailAccount.is_default == True,  # noqa: E712
+                            )
+                            .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
+                            .all()
+                        )
+                    ]
+                    destination_default_ids = [
+                        row[0]
+                        for row in (
+                            db.query(EmailAccount.id)
+                            .filter(
+                                func.lower(EmailAccount.owner) == new_username,
+                                EmailAccount.is_default == True,  # noqa: E712
+                            )
+                            .order_by(EmailAccount.created_at.asc(), EmailAccount.id.asc())
+                            .all()
+                        )
+                    ]
+                    if destination_default_ids:
+                        clear_default_ids = (
+                            destination_default_ids[1:] + source_default_ids
+                        )
+                    else:
+                        clear_default_ids = source_default_ids[1:]
+                    if clear_default_ids:
+                        (
+                            db.query(EmailAccount)
+                            .filter(EmailAccount.id.in_(clear_default_ids))
+                            .update(
+                                {EmailAccount.is_default: False},
+                                synchronize_session=False,
+                            )
+                        )
+
+                    for mapper in Base.registry.mappers:
+                        model = mapper.class_
+                        if not hasattr(model, "owner"):
+                            continue
+                        (
+                            db.query(model)
+                            .filter(func.lower(model.owner) == old_username)
+                            .update({"owner": new_username}, synchronize_session=False)
+                        )
+                    # Notes shared with the account follow it to the new name.
+                    rename_shared_user(db, old_username, new_username)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
+                if not _rollback_auth_rename():
+                    logger.error(
+                        "Auth rename %s -> %s could not be rolled back after owner migration failure",
+                        old_username, new_username,
                     )
-                # Notes shared with the account follow it to the new name.
-                rename_shared_user(db, old_username, new_username)
-                db.commit()
-            except Exception:
-                db.rollback()
-                raise
-            finally:
-                db.close()
-        except Exception as e:
-            logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
-            if not _rollback_auth_rename():
-                logger.error(
-                    "Auth rename %s -> %s could not be rolled back after owner migration failure",
-                    old_username, new_username,
-                )
-            raise HTTPException(500, "Failed to rename user data")
+                raise HTTPException(500, "Failed to rename user data")
 
         # Per-user prefs are JSON-backed, not SQL-backed.
         try:

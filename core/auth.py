@@ -291,6 +291,22 @@ class AuthManager:
             yield
 
     @contextlib.contextmanager
+    def account_rename_guard(self, old_username: str, new_username: str):
+        """Exclusive lifecycle lock on both names of a rename, in sorted order.
+
+        Held by the rename route from the auth change through the ownership
+        migration and its rollback, so no Notes write and no deletion of
+        either account can interleave with it. Reentrant for the holder.
+        """
+        names = sorted(set(filter(None, [
+            (u or "").strip().lower() for u in (old_username, new_username)
+        ])))
+        with contextlib.ExitStack() as stack:
+            for name in names:
+                stack.enter_context(self._get_user_lifecycle_lock(name).write_lock())
+            yield
+
+    @contextlib.contextmanager
     def account_mutation_guard(
         self,
         actor: Optional[str] = None,
@@ -926,29 +942,35 @@ class AuthManager:
         if new_username in RESERVED_USERNAMES:
             logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
             return False
-        ordered_locks = [self._get_user_lifecycle_lock(u) for u in sorted([old_username, new_username])]
-        with contextlib.ExitStack() as stack:
-            for lk in ordered_locks:
-                stack.enter_context(lk.write_lock())
+        with self.account_rename_guard(old_username, new_username):
             with self._cross_process_lock():
                 if old_username not in self.users:
                     return False
                 if new_username in self.users:
+                    return False
+                # A deletion tombstone reserves its name until the cleanup
+                # finishes, for either side of the rename.
+                deleting = self._config.get("deleting", {})
+                if old_username in deleting or new_username in deleting:
+                    logger.warning(
+                        "Refused to rename '%s' -> '%s': an account with one of these names is pending deletion",
+                        old_username, new_username,
+                    )
                     return False
                 if not self.users.get(requesting_user, {}).get("is_admin"):
                     return False
                 self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
                 self._save()
 
-        renamed_sessions = 0
-        with self._sessions_lock:
-            for sess in self._sessions.values():
-                sess_user = str((sess or {}).get("username") or "").strip().lower()
-                if sess_user == old_username:
-                    sess["username"] = new_username
-                    renamed_sessions += 1
-        if renamed_sessions:
-            self._save_sessions()
+            renamed_sessions = 0
+            with self._sessions_lock:
+                for sess in self._sessions.values():
+                    sess_user = str((sess or {}).get("username") or "").strip().lower()
+                    if sess_user == old_username:
+                        sess["username"] = new_username
+                        renamed_sessions += 1
+            if renamed_sessions:
+                self._save_sessions()
         logger.info(
             "Renamed user '%s' -> '%s' (by %s); updated %d active session(s)",
             old_username, new_username, requesting_user, renamed_sessions,
