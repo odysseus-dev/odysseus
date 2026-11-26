@@ -2629,6 +2629,12 @@ def setup_chat_routes(
                     or _native_runtime_requires_local_browser(client_runtime_context)
                 )
             )
+        # The approved default enables web search, so an explicit message-level
+        # denial must still turn it off for this turn.
+        if isinstance(message, str) and _explicitly_denies_web_lookup(message):
+            _search_enabled = False
+            allow_web_search = "false"
+            _explicit_web_intent = False
         _allow_browser_for_web_turn = bool(
             _explicit_browser_intent
             or _local_browser_render_intent

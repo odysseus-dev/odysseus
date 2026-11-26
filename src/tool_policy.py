@@ -42,17 +42,29 @@ def is_web_search_explicitly_denied(allow_web_search: object) -> bool:
     return tool_toggle_explicitly_denied(allow_web_search)
 
 
-def web_search_enabled_for_turn(allow_web_search: object, use_web: object = None) -> bool:
-    """Return true only when this request explicitly enables web search.
+# User-approved default: web research is available on every turn unless the
+# caller or the message explicitly denies it. Explicit false values always win.
+WEB_SEARCH_DEFAULT_ENABLED = True
 
-    Agent mode sends ``allow_web_search``; chat-mode pre-search sends
-    ``use_web``. If both are present, an explicit ``allow_web_search=false``
-    wins so a stale or conflicting intent path cannot re-enable web tools.
+
+def web_search_enabled_for_turn(allow_web_search: object, use_web: object = None) -> bool:
+    """Return true unless this request or message explicitly denies web search.
+
+    Agent mode sends ``allow_web_search``; chat mode sends ``use_web``. An
+    explicit false value wins so a stale or conflicting intent path cannot
+    re-enable web tools. When neither value is present, the approved default
+    enables web search.
     """
 
     if is_web_search_explicitly_denied(allow_web_search):
         return False
-    return tool_toggle_enabled(allow_web_search) or tool_toggle_enabled(use_web)
+    if use_web is not None and not tool_toggle_enabled(use_web):
+        return False
+    return (
+        tool_toggle_enabled(allow_web_search)
+        or tool_toggle_enabled(use_web)
+        or WEB_SEARCH_DEFAULT_ENABLED
+    )
 
 
 def web_intent_may_enable_for_turn(

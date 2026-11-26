@@ -2263,7 +2263,9 @@ function initializeEventListeners() {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
-    return mode === 'agent'; // default: ON in agent, OFF in chat
+    // Web search is ON by default in both modes. Shell remains agent-only.
+    if (stateKey === 'web') return true;
+    return mode === 'agent';
   }
 
   function saveToolPref(stateKey, mode, value) {

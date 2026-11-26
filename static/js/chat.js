@@ -2645,14 +2645,13 @@ import { invalidateSettings } from './appConfig.js';
 	        fd.append('approved_plan', _pendingApprovedPlan.slice(0, 8192));
 	        _pendingApprovedPlan = '';
 	      }
-	      if (el('web-toggle').checked) {
-	        if (!isAgentMode) {
-	          fd.append('use_web', 'true');
-        }
-      }
-      if (isAgentMode) {
-        fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false');
-      }
+	      // Web search is on by default. Send an explicit value in both modes so a
+	      // user who turns it off is not overridden by the server default.
+	      if (!isAgentMode) {
+	        fd.append('use_web', el('web-toggle').checked ? 'true' : 'false');
+	      } else {
+	        fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false');
+	      }
 	      if (!approvalForSend && el('research-toggle').checked) {
 	        fd.append('use_research', 'true');
 	        // Research always runs in chat mode — override agent if set

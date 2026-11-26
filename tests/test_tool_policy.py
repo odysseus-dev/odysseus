@@ -187,7 +187,8 @@ def test_normal_policy_preserves_existing_disabled_tools():
 
 
 def test_web_search_enabled_for_turn_requires_explicit_enable():
-    assert web_search_enabled_for_turn(None, None) is False
+    assert web_search_enabled_for_turn(None, None) is True
+    assert web_search_enabled_for_turn(None, "false") is False
     assert web_search_enabled_for_turn("true", None) is True
     assert web_search_enabled_for_turn(None, "true") is True
     assert web_search_enabled_for_turn(True, None) is True
