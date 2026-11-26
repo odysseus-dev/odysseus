@@ -261,9 +261,15 @@ async def test_failed_approved_action_returns_to_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rejected_approved_action_still_ends_turn(monkeypatch):
-    implementation = AsyncMock(return_value=("web_search", {"error": "Tool disabled", "exit_code": 1,
-                                                            "blocked": True}))
+@pytest.mark.parametrize("dispatch_result", [
+    ("web_search", {"error": "Tool disabled", "exit_code": 1, "blocked": True}),
+    # Dispatch rejections that return "<tool>: BLOCKED" without "blocked".
+    ("web_search: BLOCKED", {"error": "Tool 'web_search' is disabled by user.", "exit_code": 1}),
+    ("web_search: BLOCKED", {"error": "Tool 'web_search' is outside the requested turn capabilities.",
+                             "exit_code": 1, "failure_kind": "turn_contract_denied"}),
+], ids=["blocked", "disabled_by_user", "turn_contract_denied"])
+async def test_rejected_approved_action_still_ends_turn(monkeypatch, dispatch_result):
+    implementation = AsyncMock(return_value=dispatch_result)
     loop, model_rounds = _patch_loop(monkeypatch, ["unexpected"], implementation)
     store = loop.tool_approval_store
     authority = _authority()
